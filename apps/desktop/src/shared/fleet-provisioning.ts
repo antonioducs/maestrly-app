@@ -8,7 +8,7 @@ export interface MacInventory {
     localOnly: boolean
   }>
   copies: Array<{ id: string; kind: 'github-copilot' | 'cursor'; label: string; expiresAt: string | null }>
-  logins: Array<{ id: string; kind: 'codex' | 'claude' | 'grok'; label: string; email: string | null }>
+  logins: Array<{ id: string; kind: 'codex' | 'claude' | 'grok' | 'antigravity'; label: string; email: string | null }>
   skills: Array<{
     name: string
     description: string
@@ -72,6 +72,7 @@ export const macProvisioningErrorCodes = [
   'login-unexpected-page',
   'login-cancelled',
   'login-page-unavailable',
+  'login-port-unavailable',
 ] as const
 export type MacProvisioningErrorCode = (typeof macProvisioningErrorCodes)[number]
 

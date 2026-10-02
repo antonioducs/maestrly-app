@@ -97,7 +97,12 @@ export class Lifecycle {
    */
   private readonly instances = new Map<
     string,
-    { appVersion: string; capabilities: string[]; runtimes: FleetRuntimeInfo[] | null }
+    {
+      appVersion: string
+      capabilities: string[]
+      runtimes: FleetRuntimeInfo[] | null
+      additionalRuntimes?: FleetRuntimeInfo[]
+    }
   >()
   /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
@@ -221,11 +226,19 @@ export class Lifecycle {
   }
   /** A status with runtimes updates its environment's; devices hear of it only when they changed. */
   private updateRuntimes(id: string, status: FleetInstanceStatus) {
-    if (!status.runtimes) return
+    if (!status.runtimes && !status.additionalRuntimes) return
     const environmentId = this.store.getBot(id)?.environmentId
     const instance = environmentId ? this.instances.get(environmentId) : undefined
-    if (!environmentId || !instance || JSON.stringify(instance.runtimes) === JSON.stringify(status.runtimes)) return
-    instance.runtimes = status.runtimes
+    if (!environmentId || !instance) return
+    const runtimes = status.runtimes ?? instance.runtimes
+    const additionalRuntimes = status.additionalRuntimes ?? instance.additionalRuntimes
+    if (
+      JSON.stringify(instance.runtimes) === JSON.stringify(runtimes) &&
+      JSON.stringify(instance.additionalRuntimes) === JSON.stringify(additionalRuntimes)
+    )
+      return
+    instance.runtimes = runtimes
+    instance.additionalRuntimes = additionalRuntimes
     this.emitEnvironment(environmentId, false)
   }
   private stopLink(environmentId: string) {
@@ -482,6 +495,7 @@ export class Lifecycle {
         pendingSince: environment.updateRequestedAt,
       },
       runtimes: instance?.runtimes ?? null,
+      additionalRuntimes: instance?.additionalRuntimes,
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,
@@ -1932,6 +1946,7 @@ export class Lifecycle {
       appVersion: health.appVersion,
       capabilities: health.capabilities,
       runtimes: this.instances.get(id)?.runtimes ?? null,
+      additionalRuntimes: this.instances.get(id)?.additionalRuntimes,
     })
     const lingering = await this.installMembers(id, client, null, true)
     this.updateEnvironment(id, { lifecycle: 'running', setup: environmentSetup('ready') })

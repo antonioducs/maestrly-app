@@ -20,7 +20,15 @@ const FAKE_PROFILE: RuntimeReleaseProfile = {
     id,
     url: fakeUrl(version, id),
     archive: 'tar.gz',
-    hash: { algorithm: 'sha512', digest: metadata.sha512Base64, encoding: 'base64' },
+    hash: {
+      algorithm: 'sha512',
+      digest:
+        metadata.sha512Base64 ??
+        (() => {
+          throw new Error('Fixture requires npm integrity')
+        })(),
+      encoding: 'base64',
+    },
     downloadBytes: metadata.downloadBytes,
     maxDownloadBytes: metadata.maxDownloadBytes,
     unpackedBytes: metadata.unpackedBytes,

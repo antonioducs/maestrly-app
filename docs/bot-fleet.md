@@ -4,6 +4,11 @@ A bot is a Maestrly agent that runs in Docker on this computer or on a Linux ser
 
 **Experimental:** The **Bots** tab shows a flask icon titled **Experimental**. Back up your bot data before changing or removing a server.
 
+A bot's conversation header offers **Open chat in new window**. The window stays
+open while you view other bots or workspaces, including live messages and pending
+questions. Closing it returns the conversation to the main app and preserves
+unsent text and attachments. See [separate chat windows](chat-context.md#separate-chat-windows).
+
 ## Set up the bot server
 
 Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
@@ -79,11 +84,21 @@ When bots can be updated, the **Bots** tab shows an arrow icon, and the bots sid
 
 While an environment waits, the Bots tab and its sidebar entry show a clock, and its environment view shows **Update scheduled** with the bots it waits for and since when. Messages you send still arrive and start turns. Scheduled routine runs are skipped as busy, and messages between bots wait on the server until the environment has restarted. **Update now** restarts the environment at once and interrupts what its bots are doing; **Cancel update** keeps it on its current image. The server finishes a scheduled update on its own, even while your computer is off. A stopped or failed environment moves to the new image the next time it starts. An environment on a server that cannot schedule updates keeps **Update environment**, which restarts it at once after you confirm.
 
-#### Claude Code and Codex updates
+#### Model runtime updates
 
 Bots keep Claude Code and Codex current on their own, without waiting for a Maestrly release, so new models such as a new Claude Opus work as soon as their provider publishes the runtime they need. About a minute after an environment starts, and every six hours after that, it checks the latest stable release of each runtime on npm. A newer release is downloaded into the environment's home volume, checked against its published SHA-512 hash, and tested before it is used: the binary must report its version and, for Claude Code, start a session that lists models, without any account. Nothing is interrupted: a turn in progress finishes on the version it started with. Claude Code switches for the next turn; Codex switches once none of the environment's bots is working, waiting for you, or compacting.
 
-A bot never runs an older version than its image ships. After **Update bots** moves an environment to a newer image, the image's version is used again when it is not older, and the downloaded one is removed once nothing uses it. The bot's own settings window (**Settings → Components**) shows each runtime's version, "Included in the bot image" while the image's is in use, and offers **Check for updates**, **Update automatically**, and **Go back** to the previous downloaded version. A release that fails its checks or that you go back from is skipped by automatic updates until a newer one appears. On your computer, the environment view's **Claude Code and Codex** section shows the version of each runtime the bots run, whether it comes from the bot image or was updated, the installed version they switch to when work in progress still keeps the previous one, its last check, and **Check for updates**, which asks the environment to check at once (and install, when its automatic updates are on). The section needs a server and a bot image that report runtimes; update both, and restart the environment onto the new image, to see it. On a server you manage, `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` stops automatic checks in every environment; manual checks in a bot's settings still work.
+A bot never runs an older version than its image ships. After **Update bots** moves an environment to a newer image, the image's version is used again when it is not older, and the downloaded one is removed once nothing uses it. The bot's own settings window (**Settings → Components**) shows each runtime's version, "Included in the bot image" while the image's is in use, and offers **Check for updates**, **Update automatically**, and **Go back** to the previous downloaded version. A release that fails its checks or that you go back from is skipped by automatic updates until a newer one appears. On your computer, the environment view's **Model runtimes** section shows the version of each runtime the bots run, whether it comes from the bot image or was updated, the installed version they switch to when work in progress still keeps the previous one, its last check, and **Check for updates**, which asks the environment to check at once (and install, when its automatic updates are on). The section needs a server and a bot image that report runtimes; update both, and restart the environment onto the new image, to see it. On a server you manage, `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` stops automatic checks in every environment; manual checks in a bot's settings still work.
+
+Google Antigravity ACP uses the same update controls and schedule after it is
+installed by a Google AI sign-in. It is downloaded on demand rather than included
+in the image. New versions come from the ACP registry and canonical Google HTTPS
+archives, which have no published checksums; Maestrly records their digest only
+after download and compatibility validation. Future verification and repair use
+that recorded digest. Existing account sessions survive updates, and ACP
+processes switch only when every bot is idle. See [Google AI runtime
+updates](antigravity.md#runtime) for the trust boundary and Desktop controls.
+
 
 Maestrly never downgrades a server. It compares the app with the version the connected gateway reports and with the gateway image named in the server's files, so a server another computer already moved to a newer version is left alone: update the desktop app instead. **Set up again** lets you repeat setup if access needs repair.
 
@@ -334,8 +349,8 @@ and choose **Bring from this computer…** under **Environment accounts** or
 **Skills and MCP**. On a gateway from before environments, use the bot's
 **Settings → Bot accounts** or **Settings → Skills and MCP** instead. API keys
 (including their provider format and base URL), GitHub Copilot and Cursor
-credentials, global skills and MCP servers are copied. ChatGPT (Codex), Claude
-and Grok instead start a separate sign-in in the environment. Model
+credentials, global skills and MCP servers are copied. ChatGPT (Codex), Claude,
+Grok and Google AI (Antigravity) instead start a separate sign-in in the environment. Model
 selections and other settings on your computer are not imported. Everything brought over is
 shared by the environment's bots.
 
@@ -384,13 +399,13 @@ Skills brought over appear as **From a computer**.
 ## Sign in to subscriptions
 
 Under **Environment accounts**, choose **Sign in with ChatGPT (Codex)**,
-**Sign in with Claude**, or **Sign in with Grok**. The environment gets its own
-session, which its bots share; Maestrly never copies your computer's Codex, Claude or
-Grok session. These sessions still use the owner's subscription quota. The
+**Sign in with Claude**, **Sign in with Grok**, or **Sign in with Google AI (Antigravity)**.
+The environment gets its own session, which its bots share; Maestrly never copies
+your computer's Codex, Claude, Grok or Google AI session. These sessions still use the owner's subscription quota. The
 provider's terms apply to using a subscription on a server; a separate session
 does not create another quota.
 
-For Codex and Claude, Maestrly on your computer opens the provider in your browser and relays the
+For Codex, Claude and Google AI, Maestrly on your computer opens the provider in your browser and relays the
 loopback callback through the gateway to the environment. The relay redirects
 only to allowlisted provider origins and otherwise shows its own **Done** or
 failure page, never content returned by the environment. If Codex ends on its
@@ -406,6 +421,14 @@ settings. Codex browser sign-ins are serialized on your computer. For Claude, ex
 the code and choose **Send code**. This fallback opens automatically when its
 callback port is busy. Grok always uses a device code and opens the pre-filled
 verification page.
+
+Google AI first downloads the ACP server in the environment, then opens Google's
+page in your computer's browser. Setup remains cancellable while downloading.
+If the callback port is busy, close the other sign-in and retry; Google AI has
+no device-code fallback. The credential stays in the environment's account home,
+separate from the runtime. The same sign-in is offered after **Create bot** when
+you select a Google AI account from this computer. Update the desktop, gateway
+and bot image together to enable this provider. See [Google AI](antigravity.md).
 
 Each environment allows one pending sign-in per provider, three in total,
 lasting up to 15 minutes. Sign-in uses the default slot when disconnected, or
@@ -590,7 +613,7 @@ compatible. See [memory storage](local-data.md#memory-storage),
 | "This server cannot schedule updates yet. Update the server first." | The gateway predates scheduled updates. Update the server (**Update bots** for a server Maestrly installed, otherwise both images as described above), or use **Update environment** to restart each environment at once. |
 | **This server is newer than Maestrly** | Another computer updated the server past this app. Update the desktop app; Maestrly never moves a server back to an older version. |
 | Screen remains under your control after disconnect | Reconnect and **Give back**, or wait five minutes for automatic release after the control connection is lost. |
-| A new Claude model fails with "requires Claude Code X or newer", or shows fewer efforts or a smaller context than on your computer | The environment still runs an older Claude Code. Use **Check for updates** in the environment view's **Claude Code and Codex** section, or on the environment screen open **Settings → Components → Claude Code runtime**. An update that fails keeps the current version; check the environment's internet access and free disk space. If the server sets `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`, bots only update when you check by hand. |
+| A new Claude model fails with "requires Claude Code X or newer", or shows fewer efforts or a smaller context than on your computer | The environment still runs an older Claude Code. Use **Check for updates** in the environment view's **Model runtimes** section, or on the environment screen open **Settings → Components → Claude Code runtime**. An update that fails keeps the current version; check the environment's internet access and free disk space. If the server sets `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`, bots only update when you check by hand. |
 | Bot image missing or Docker unavailable | Run `doctor`. Confirm the configured bot image is loaded, the Docker socket works, and the fleet network exists. |
 
 ## Verify the installation

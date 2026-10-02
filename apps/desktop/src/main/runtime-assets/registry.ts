@@ -6,11 +6,16 @@ import type { RuntimeArtifactMetadata } from './release-profile'
 export type RuntimeTargetId = 'mac-arm64' | 'mac-x64' | 'linux-arm64' | 'linux-x64' | 'win-arm64' | 'win-x64'
 export type ArchiveFormat = 'tar.gz' | 'zip' | 'file'
 
+/** Pending Google artifacts have HTTPS provenance, not a publisher signature or an accepted digest. */
+export type RuntimeArtifactHash =
+  | Readonly<{ algorithm: 'sha256' | 'sha512'; digest: string; encoding: 'hex' | 'base64'; provenance?: never }>
+  | Readonly<{ algorithm: 'sha256'; encoding: 'hex'; provenance: 'google-origin-pending'; digest?: never }>
+
 export interface RuntimeAssetTarget {
   readonly id: RuntimeTargetId
   readonly url: string
   readonly archive: ArchiveFormat
-  readonly hash: Readonly<{ algorithm: 'sha256' | 'sha512'; digest: string; encoding: 'hex' | 'base64' }>
+  readonly hash: RuntimeArtifactHash
   /** Estimated compressed archive size, used for download progress when Content-Length is unavailable. */
   readonly downloadBytes: number
   /** Maximum compressed archive size accepted by the downloader and reserved by the disk preflight. */
@@ -162,13 +167,9 @@ export function codexArtifactUrl(version: string, id: RuntimeTargetId): string {
 export function createCodexTarget(
   id: RuntimeTargetId,
   version: string,
-  metadata: {
-    readonly sha512Base64: string
-    readonly downloadBytes: number
-    readonly maxDownloadBytes: number
-    readonly unpackedBytes: number
-  }
+  metadata: RuntimeArtifactMetadata
 ): RuntimeAssetTarget {
+  if (!metadata.sha512Base64) throw new Error('Missing npm SHA-512 integrity')
   const executable = `bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`
   return Object.freeze({
     id,
@@ -221,6 +222,7 @@ export function createClaudeCodeTarget(
   version: string,
   metadata: RuntimeArtifactMetadata
 ): RuntimeAssetTarget {
+  if (!metadata.sha512Base64) throw new Error('Missing npm SHA-512 integrity')
   return Object.freeze({
     id,
     url: claudeCodeArtifactUrl(version, id),
@@ -301,6 +303,53 @@ const localMlTargets = Object.freeze(
   ) as Partial<Record<RuntimeTargetId, RuntimeAssetTarget>>
 )
 
+export const ANTIGRAVITY_ACP_VERSION = '1.2.1'
+/**
+ * Google publishes no checksums for these archives: the digests and sizes below were measured on 2026-09-30
+ * and must be re-measured when this reference version changes. Independent updates record their own accepted digest.
+ */
+const antigravityAcp = [
+  ['mac-arm64', 'macos', 'darwin-arm64', '0fab9938812e6b32b3b543e65e4f3a0025ceef755413db13542d9a9b81ea803c'],
+  ['mac-x64', 'macos', 'darwin-x86_64', 'd09bf99bdea7b82021e1afcff829da35e4aa583d8f0984ef364dc3a7c064e07e'],
+  ['linux-arm64', 'linux', 'linux-arm64', '7e7ef4088bc185e1af4204029e0f4ec4210af20724f3ff262186ac0bcea6aa0e'],
+  ['linux-x64', 'linux', 'linux-x86_64', '9fbf0bd584a26478161f637cabd75113f72541c842d148f578ef1a6a9edcb843'],
+  ['win-arm64', 'windows', 'windows-arm64', '21db37ae246284053212f2670e05c4de8d6ee9488b000bf304e1fe4ea191f7b8'],
+  ['win-x64', 'windows', 'windows-x86_64', '9b82493819bc14613baa76264d55ad307ddd8ab4a8d6e110edb32da35498c07b'],
+] as const
+const antigravityAcpArchiveBytes: Readonly<Record<RuntimeTargetId, number>> = {
+  'mac-arm64': 111_725_488,
+  'mac-x64': 117_493_869,
+  'linux-arm64': 321_280_184,
+  'linux-x64': 333_590_110,
+  'win-arm64': 124_945_935,
+  'win-x64': 124_869_770,
+}
+/** Sum of the two extracted executables, measured from each pinned archive. */
+const antigravityAcpUnpackedBytes: Readonly<Record<RuntimeTargetId, number>> = {
+  'mac-arm64': 397_584_640,
+  'mac-x64': 407_317_424,
+  'linux-arm64': 1_046_993_459,
+  'linux-x64': 1_052_767_112,
+  'win-arm64': 222_828_616,
+  'win-x64': 228_295_160,
+}
+const antigravityAcpTargets = targetRecord(antigravityAcp, ([id, os, suffix, digest]) => {
+  const target = id as RuntimeTargetId
+  const windows = target.startsWith('win-')
+  const server = windows ? 'agy_acp_server.exe' : 'agy_acp_server.par'
+  return {
+    id: target,
+    url: `https://dl.google.com/agy-extensions/releases/${os}/agy-acp-server-${ANTIGRAVITY_ACP_VERSION}-${suffix}.zip`,
+    archive: 'zip',
+    hash: { algorithm: 'sha256', digest, encoding: 'hex' },
+    downloadBytes: antigravityAcpArchiveBytes[target],
+    maxDownloadBytes: downloadCap(antigravityAcpArchiveBytes[target]),
+    unpackedBytes: antigravityAcpUnpackedBytes[target],
+    criticalPaths: [server, windows ? 'localharness_external.exe' : 'localharness_external'],
+    executablePath: server,
+  }
+})
+
 /** whisper.cpp speech model file, pinned to an immutable Hugging Face revision and installed as one file. */
 export const WHISPER_MODEL_FILE = 'ggml-large-v3-turbo-q5_0.bin'
 const WHISPER_MODEL_BYTES = 574_041_195
@@ -342,6 +391,11 @@ export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAsse
     targets: localMlTargets,
   }),
   'whisper-model': Object.freeze({ id: 'whisper-model', version: 'large-v3-turbo-q5', targets: whisperModelTargets }),
+  'antigravity-acp-runtime': Object.freeze({
+    id: 'antigravity-acp-runtime',
+    version: ANTIGRAVITY_ACP_VERSION,
+    targets: antigravityAcpTargets,
+  }),
 })
 
 export function hostRuntimeTarget(

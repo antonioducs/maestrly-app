@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { UpdatableRuntimeAssetId } from '../../src/shared/runtime-assets'
 
 const mocks = vi.hoisted(() => ({
-  listeners: new Set<(id: 'codex-runtime' | 'claude-code-runtime') => void>(),
+  listeners: new Set<(id: UpdatableRuntimeAssetId) => void>(),
   refresh: vi.fn<() => Promise<boolean>>(),
   notifyClaudeRuntimeChanged: vi.fn(),
   selectedCodex: '/managed/codex-runtime/versions/0.160.0-linux-arm64/bin/codex',
@@ -10,13 +11,26 @@ const mocks = vi.hoisted(() => ({
     vi.fn<(stale: (runtimePath: string) => boolean, unusedSince?: unknown) => Promise<boolean>>(),
   uses: { handedOut: 0 },
   resolving: null as Promise<void> | null,
+  antigravityManagers: [] as {
+    runtimeUseCount: number
+    runtimeConnecting: boolean
+    connectedRuntime: { command: string } | null
+    recycleRuntime: ReturnType<typeof vi.fn>
+  }[],
+  selectedAntigravity: '/managed/antigravity/1.2.2/agy_acp_server.par',
 }))
 
 vi.mock('../../src/main/runtime-assets/app-service', () => ({
-  onRuntimeUpdateChanged: (listener: (id: 'codex-runtime' | 'claude-code-runtime') => void) => {
+  onRuntimeUpdateChanged: (listener: (id: UpdatableRuntimeAssetId) => void) => {
     mocks.listeners.add(listener)
     return () => mocks.listeners.delete(listener)
   },
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
+  listAntigravitySubscriptionManagers: () => mocks.antigravityManagers,
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/runtime', () => ({
+  selectedAntigravityRuntimePath: async () => mocks.selectedAntigravity,
 }))
 vi.mock('../../src/main/chat/claude-agent-sdk/runtime-selection', () => ({
   botClaudeRuntime: () => ({ refresh: mocks.refresh }),
@@ -46,7 +60,7 @@ const idle = {
   compaction: null,
 } as unknown as FleetInstanceStatus
 
-function emit(id: 'codex-runtime' | 'claude-code-runtime') {
+function emit(id: UpdatableRuntimeAssetId) {
   for (const listener of mocks.listeners) listener(id)
 }
 
@@ -58,12 +72,61 @@ beforeEach(() => {
   mocks.managers = []
   mocks.uses = { handedOut: 0 }
   mocks.resolving = null
+  mocks.antigravityManagers = []
 })
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllEnvs()
 })
 
 describe('startBotRuntimes', () => {
+  it('keeps an ACP update pending while a bot works, then recycles using its admission snapshot', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let working = true
+    const manager = {
+      runtimeUseCount: 7,
+      runtimeConnecting: false,
+      connectedRuntime: { command: '/managed/antigravity/1.2.1/agy_acp_server.par' },
+      recycleRuntime: vi.fn(async () => true),
+    }
+    mocks.antigravityManagers = [manager]
+    const statuses = vi.fn(async () => [working ? ({ ...idle, turn: { state: 'running' } } as typeof idle) : idle])
+    const stop = startBotRuntimes({ botStatuses: statuses })
+    try {
+      emit('antigravity-acp-runtime')
+      await vi.waitFor(() => expect(statuses).toHaveBeenCalled())
+      expect(manager.recycleRuntime).not.toHaveBeenCalled()
+      expect(mocks.recycleCodexConnections).not.toHaveBeenCalled()
+      working = false
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(manager.recycleRuntime).toHaveBeenCalledWith(mocks.selectedAntigravity, 7)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(manager.recycleRuntime).toHaveBeenCalledTimes(1)
+    } finally {
+      stop()
+    }
+  })
+
+  it('keeps retrying an ACP handshake in progress and stops following updates when disposed', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const manager = {
+      runtimeUseCount: 1,
+      runtimeConnecting: true,
+      connectedRuntime: null,
+      recycleRuntime: vi.fn(async () => false),
+    }
+    mocks.antigravityManagers = [manager]
+    const stop = startBotRuntimes({ botStatuses: async () => [idle] })
+    emit('antigravity-acp-runtime')
+    await vi.waitFor(() => expect(manager.recycleRuntime).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(manager.recycleRuntime).toHaveBeenCalledTimes(2)
+    stop()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(manager.recycleRuntime).toHaveBeenCalledTimes(2)
+  })
   it('does nothing outside bots', () => {
     const stop = startBotRuntimes({ botStatuses: async () => [idle] })
     expect(mocks.refresh).not.toHaveBeenCalled()

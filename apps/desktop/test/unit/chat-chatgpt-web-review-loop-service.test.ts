@@ -166,6 +166,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
     (providerId: string) => providerId === 'builtin_github_copilot_subscription'
   ),
   isCursorSubscriptionProvider: vi.fn(() => false),
+  isAntigravitySubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn((providerId: string) => providerId.startsWith('builtin_codex_subscription')),
   isManagedProvider: vi.fn((providerId: string) => providerId.startsWith('builtin_codex_subscription')),
@@ -272,7 +273,9 @@ vi.mock('../../src/main/chat/provider', () => ({
     harnessProfile: 'legacy',
     capabilities: {},
     // No reasoning manifest: the catalog metadata stays authoritative for the effort axis.
-    harness: { reasoning: { manifestEfforts: null, nonSerializableEfforts: [], nativeUltra: false, effectiveEfforts: [] } },
+    harness: {
+      reasoning: { manifestEfforts: null, nonSerializableEfforts: [], nativeUltra: false, effectiveEfforts: [] },
+    },
   })),
   resolveLanguageModel: vi.fn(),
 }))
@@ -728,9 +731,18 @@ describe('review loop internal service API', () => {
   it('rejects standalone code review before runtime admission', async () => {
     h.getConversation.mockReturnValue({ id: 'chat', scope: 'standalone', workspaceId: null, cwd })
     expect(await validateReviewLoopStart('chat')).toEqual({ ok: false, error: 'project-required' })
-    expect(await startInternalChatTurn({ conversationId: 'chat', prompt: 'review', selection: SELECTION,
-      source: 'chatgpt-web-review-loop', loopId: 'loop', iteration: 1, maxIterations: 1,
-      signal: new AbortController().signal })).toEqual({ ok: false, error: 'project-required' })
+    expect(
+      await startInternalChatTurn({
+        conversationId: 'chat',
+        prompt: 'review',
+        selection: SELECTION,
+        source: 'chatgpt-web-review-loop',
+        loopId: 'loop',
+        iteration: 1,
+        maxIterations: 1,
+        signal: new AbortController().signal,
+      })
+    ).toEqual({ ok: false, error: 'project-required' })
   })
 
   it('persists final summaries with stable loop IDs and Agent mode', async () => {

@@ -1,5 +1,7 @@
 import type { FleetInstanceStatus } from '@maestrly/bot-fleet-protocol'
 import { notifyClaudeRuntimeChanged } from '../chat/claude-agent-sdk/manager'
+import { listAntigravitySubscriptionManagers } from '../chat/antigravity-subscription/manager'
+import { selectedAntigravityRuntimePath } from '../chat/antigravity-subscription/runtime'
 import { botClaudeRuntime } from '../chat/claude-agent-sdk/runtime-selection'
 import { resolveBotCodexRuntime } from '../chat/codex-subscription/bot-runtime'
 import {
@@ -29,8 +31,8 @@ async function staleCodexRuntime(): Promise<(runtimePath: string) => boolean> {
 }
 
 /**
- * Moves a bot's conversations to the Claude Code and Codex versions its runtime updates activate, without
- * interrupting them: Claude switches for the next query; Codex connections are recycled once every bot of the
+ * Moves a bot's conversations to the runtime versions its updates activate, without
+ * interrupting them: Claude switches for the next query; Codex and ACP connections are recycled once every bot of the
  * environment is idle. Returns the function that stops following updates. Does nothing outside bots.
  */
 export function startBotRuntimes(options: BotRuntimesOptions): () => void {
@@ -70,15 +72,41 @@ export function startBotRuntimes(options: BotRuntimesOptions): () => void {
       })
       .catch((error: unknown) => log('Unable to select the Codex runtime', error))
 
+  const antigravity = new RuntimeRecycleScheduler({
+    uses: () => new Map(listAntigravitySubscriptionManagers().map((manager) => [manager, manager.runtimeUseCount])),
+    statuses: options.botStatuses,
+    recycle: async (unusedSince) => {
+      const selected = await selectedAntigravityRuntimePath()
+      const results = await Promise.all(
+        listAntigravitySubscriptionManagers().map((manager) =>
+          manager.recycleRuntime(selected, unusedSince.get(manager))
+        )
+      )
+      const recycled = results.every(Boolean)
+      if (recycled) options.onRuntimesChanged?.()
+      return recycled
+    },
+  })
+  const recycleAntigravityIfStale = () => {
+    // A check or preference change before the first installation must not try to resolve a missing asset.
+    if (
+      listAntigravitySubscriptionManagers().some((manager) => manager.runtimeConnecting || manager.connectedRuntime)
+    ) {
+      antigravity.request()
+    }
+  }
+
   // A version activated before this process restarted is picked up at once.
   refreshClaude()
   const unsubscribe = onRuntimeUpdateChanged((id) => {
     if (id === 'claude-code-runtime') refreshClaude()
-    else recycleCodexIfStale()
+    else if (id === 'codex-runtime') recycleCodexIfStale()
+    else if (id === 'antigravity-acp-runtime') recycleAntigravityIfStale()
     options.onRuntimesChanged?.()
   })
   return () => {
     unsubscribe()
     codex.dispose()
+    antigravity.dispose()
   }
 }

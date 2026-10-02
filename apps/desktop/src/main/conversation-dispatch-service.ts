@@ -3,6 +3,9 @@ import type { Conversation, ProjectConversation } from '../shared/conversation'
 import {
   conversationDispatchBranchSlug,
   conversationDispatchFingerprintInput,
+  conversationDispatchBatchSchema,
+  type ConversationDispatchTarget,
+  type ConversationDispatchWorkspaceOption,
   type ConversationDispatchBatch,
   type ConversationDispatchBatchResult,
   type ConversationDispatchItemResult,
@@ -44,6 +47,10 @@ export interface ConversationDispatchServiceDeps {
   ): Promise<ResolvedConversationDispatchSettings>
   /** Commit checked out by `cwd`; null when it cannot be resolved. */
   resolveHead(cwd: string): Promise<string | null>
+  getWorkspace(id: string): { id: string; path: string; defaultBranch: string } | undefined
+  resolveBranch(cwd: string, branch: string): Promise<string | null>
+  validateBranch(branch: string): Promise<boolean>
+  branchExists(cwd: string, branch: string): Promise<boolean>
   hasUncommittedChanges(cwd: string): Promise<boolean>
   createShared(sourceConversationId: string, options: { id: string; name: string }): Promise<ProjectConversation>
   createIsolated(args: {
@@ -55,8 +62,6 @@ export interface ConversationDispatchServiceDeps {
   }): Promise<ProjectConversation>
   /** `preserveWorktree` keeps a checkout the destination only borrowed (shared placement). */
   deleteConversation(id: string, options: { preserveWorktree: boolean }): Promise<void>
-  /** Remove what a failed isolated allocation may have left (its unique worktree and branch). */
-  cleanupIsolated(workspaceId: string, branch: string): Promise<void>
   applySettings(conversationId: string, settings: ConversationDispatchSettings): void
   readSettings(conversationId: string): ConversationDispatchSettings | null
   startTurn(input: {
@@ -78,6 +83,7 @@ export interface ConversationDispatchServiceDeps {
 }
 
 export type ConversationDispatchErrorCode =
+  | 'target-invalid'
   | 'source-not-found'
   | 'project-required'
   | 'bot-conversation'
@@ -117,6 +123,8 @@ export interface PrepareDispatchInput {
   placement: ConversationDispatchPlacement
   /** Requested settings (fingerprinted). Plans pass fully explicit settings. */
   settings: ConversationDispatchSettingsRequest
+  target?: ConversationDispatchTarget
+  destination?: { workspaceId: string; baseRevision: string | null; branch: string | null }
   sourceRef?: ConversationDispatchSourceRef
   /** Pre-resolved settings (batch validation happens before any allocation). */
   resolved?: { settings: ConversationDispatchSettings; inherited: string[] }
@@ -149,6 +157,7 @@ function fingerprintOf(input: PrepareDispatchInput): string {
         placement: input.placement,
         settings: input.settings,
         source: input.sourceRef,
+        target: input.target,
       })
     )
     .update(`\0${input.kind}`)
@@ -168,23 +177,32 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
   const starting = new Map<string, Promise<unknown>>()
 
   /** Restrictions of the source conversation; placement-specific ones only where they matter. */
-  function assertSource(sourceConversationId: string, placement: ConversationDispatchPlacement): ProjectConversation {
+  function assertSource(
+    sourceConversationId: string,
+    placement: ConversationDispatchPlacement,
+    target?: ConversationDispatchTarget
+  ): Conversation {
     const source = deps.getConversation(sourceConversationId)
     if (!source) throw new ConversationDispatchError('source-not-found', 'The source conversation no longer exists.')
-    if (source.scope !== 'project')
+    if (source.scope !== 'project' && (placement === 'shared' || !target?.workspaceId))
       throw new ConversationDispatchError(
         'project-required',
-        'This conversation has no project. Open a project conversation to start development conversations.'
+        'A standalone conversation requires an explicit workspaceId and worktree placement.'
       )
+    if (placement === 'shared' && target && Object.values(target).some((field) => field !== undefined))
+      throw new ConversationDispatchError('target-invalid', 'Targets require worktree placement.')
     if (source.botOrigin)
       throw new ConversationDispatchError(
         'bot-conversation',
-        "Bot conversations own their worktree exclusively and cannot start other conversations."
+        'Bot conversations own their worktree exclusively and cannot start other conversations.'
       )
     if (deps.isWebManaged(sourceConversationId))
       throw new ConversationDispatchError('web-managed', 'This conversation is managed in the Kanban web chat.')
     if (source.archived === 1)
-      throw new ConversationDispatchError('source-archived', 'Unarchive this conversation before starting others from it.')
+      throw new ConversationDispatchError(
+        'source-archived',
+        'Unarchive this conversation before starting others from it.'
+      )
     if (deps.isMigrating(sourceConversationId))
       throw new ConversationDispatchError(
         'conversation-migrating',
@@ -203,14 +221,14 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     return source
   }
 
-  function destinationName(source: ProjectConversation, input: PrepareDispatchInput): string {
+  function destinationName(source: Conversation, input: PrepareDispatchInput): string {
     const title = input.title.trim().replace(/\s+/g, ' ').slice(0, 80)
     return input.kind === 'plan' ? `${source.name} · ${title}` : title
   }
 
   async function allocate(
     record: ConversationDispatchRecord,
-    source: ProjectConversation,
+    source: Conversation,
     input: PrepareDispatchInput
   ): Promise<PreparedDispatch> {
     input.assertCurrent?.()
@@ -256,7 +274,10 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       if (rowCreated || deps.getConversation(record.conversationId)) {
         await deps.deleteConversation(record.conversationId, { preserveWorktree: record.placement === 'shared' })
       } else if (record.placement === 'worktree' && record.branch) {
-        await deps.cleanupIsolated(record.workspaceId, record.branch)
+        // A failed git worktree add may have raced another allocator. A branch name is not ownership.
+        throw new Error(
+          'Allocation ownership is uncertain; inspect the journal destination before removing any resources.'
+        )
       }
       transitionConversationDispatch(
         record.dispatchId,
@@ -274,8 +295,47 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     }
   }
 
+  async function resolveDestination(
+    source: Conversation,
+    input: Pick<PrepareDispatchInput, 'placement' | 'target' | 'title' | 'baseRevision'>
+  ) {
+    const target = input.target
+    const workspaceId = target?.workspaceId ?? source.workspaceId
+    if (!workspaceId) throw new ConversationDispatchError('target-invalid', 'Choose a registered workspace.')
+    if (input.placement === 'shared') return { workspaceId, branch: source.branch, baseRevision: null }
+    const explicit = target && Object.values(target).some((field) => field !== undefined)
+    let baseRevision = input.baseRevision ?? null
+    if (explicit) {
+      const workspace = deps.getWorkspace(workspaceId)
+      if (!workspace)
+        throw new ConversationDispatchError('target-invalid', 'The requested workspace is not registered.')
+      const base = target.baseBranch ?? workspace.defaultBranch
+      if (!(await deps.validateBranch(base)))
+        throw new ConversationDispatchError('target-invalid', 'Invalid base branch name.')
+      baseRevision = await deps.resolveBranch(workspace.path, base)
+      if (target.branch) {
+        if (!(await deps.validateBranch(target.branch)))
+          throw new ConversationDispatchError('target-invalid', 'Invalid destination branch name.')
+        if (await deps.branchExists(workspace.path, target.branch))
+          throw new ConversationDispatchError('target-invalid', `Branch "${target.branch}" already exists.`)
+      }
+    } else {
+      baseRevision ??= await deps.resolveHead(source.cwd)
+    }
+    if (!baseRevision)
+      throw new ConversationDispatchError(
+        'source-revision-unavailable',
+        'The requested base branch or source commit could not be resolved.'
+      )
+    return {
+      workspaceId,
+      baseRevision,
+      branch: target?.branch ?? `task/${conversationDispatchBranchSlug(input.title)}-${randomUUID().slice(0, 8)}`,
+    }
+  }
+
   async function prepareOnce(input: PrepareDispatchInput): Promise<PreparedDispatch> {
-    const source = assertSource(input.sourceConversationId, input.placement)
+    const source = assertSource(input.sourceConversationId, input.placement, input.target)
     const fingerprint = fingerprintOf(input)
     const existing = findConversationDispatch(input.sourceConversationId, input.originKey, input.requestKey)
     if (existing) {
@@ -296,19 +356,8 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       resolved = { settings: result.settings, inherited: result.inherited }
     }
     const dispatchId = existing?.dispatchId ?? randomUUID()
-    let baseRevision: string | null = null
-    let branch: string | null = null
-    if (input.placement === 'worktree') {
-      baseRevision = input.baseRevision ?? (await deps.resolveHead(source.cwd))
-      if (!baseRevision)
-        throw new ConversationDispatchError(
-          'source-revision-unavailable',
-          'The current commit of the source checkout could not be resolved.'
-        )
-      branch = `task/${conversationDispatchBranchSlug(input.title)}-${randomUUID().slice(0, 8)}`
-    } else {
-      branch = source.branch
-    }
+    const destination = input.destination ?? (await resolveDestination(source, input))
+    const { baseRevision, branch } = destination
     const next = {
       conversationId: randomUUID(),
       conversationName: destinationName(source, input),
@@ -316,13 +365,12 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       baseRevision,
       settings: resolved.settings,
       inherited: resolved.inherited,
-      workspaceId: source.workspaceId,
+      workspaceId: destination.workspaceId,
     }
     let record: ConversationDispatchRecord
     try {
       if (existing) {
-        if (!renewDiscardedConversationDispatch(existing.dispatchId, next))
-          return prepareOnce(input) // a concurrent attempt renewed it first
+        if (!renewDiscardedConversationDispatch(existing.dispatchId, next)) return prepareOnce(input) // a concurrent attempt renewed it first
         record = getConversationDispatch(existing.dispatchId)!
       } else {
         const reserved = reserveConversationDispatch({
@@ -350,7 +398,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
   /** Replay semantics for a request that already has a journal entry. */
   async function replay(
     record: ConversationDispatchRecord,
-    source: ProjectConversation,
+    source: Conversation,
     input: PrepareDispatchInput
   ): Promise<PreparedDispatch> {
     const conversation = () => deps.getConversation(record.conversationId)
@@ -429,10 +477,12 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       source: source?.name ?? '',
       title: record.title,
       reference: record.sourceRef
-        ? deps.text('conversationDispatch.reference', {
-            label: record.sourceRef.label,
-            url: record.sourceRef.url ?? '',
-          }).trim()
+        ? deps
+            .text('conversationDispatch.reference', {
+              label: record.sourceRef.label,
+              url: record.sourceRef.url ?? '',
+            })
+            .trim()
         : '',
       workspace,
       prompt: record.prompt,
@@ -533,12 +583,12 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
         } else if (record.placement === 'shared') {
           transitionConversationDispatch(record.dispatchId, ['allocating'], 'discarded')
         } else {
-          // Git work may exist for this branch; never guess. The branch name is unique to this allocation.
+          // Git work may exist, but branch names alone never establish allocation ownership.
           transitionConversationDispatch(
             record.dispatchId,
             ['allocating'],
             'recovery',
-            `Interrupted while creating worktree branch ${record.branch}. Remove that branch/worktree if it exists, then retry.`
+            `Interrupted while creating worktree branch ${record.branch}. Inspect allocation ownership before removing any resources.`
           )
         }
         break
@@ -579,6 +629,8 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       conversationId: record.conversationId,
       conversationName: deps.getConversation(record.conversationId)?.name ?? record.conversationName,
       placement: record.placement,
+      workspaceId: record.workspaceId,
+      ...(record.baseRevision ? { baseRevision: record.baseRevision } : {}),
       ...(record.branch ? { branch: record.branch } : {}),
       settings: record.settings,
       inherited: record.inherited,
@@ -596,16 +648,20 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     signal?: AbortSignal
     assertCurrent: () => void
   }): Promise<ConversationDispatchBatchResult> {
-    const { grant, batch } = input
+    const { grant } = input
+    const parsed = conversationDispatchBatchSchema.safeParse(input.batch)
+    if (!parsed.success) return { ok: false, error: parsed.error.message, items: [] }
+    const batch = parsed.data
     const sourceId = grant.conversationId
     const defaultPlacement: ConversationDispatchPlacement = batch.placement ?? 'worktree'
     const tasks = batch.tasks.map((task) => ({
       ...task,
       placement: task.placement ?? defaultPlacement,
       settings: { ...(batch.defaults ?? {}), ...(task.settings ?? {}) },
+      target: { ...batch.target, ...task.target },
     }))
     try {
-      for (const placement of new Set(tasks.map((task) => task.placement))) assertSource(sourceId, placement)
+      for (const task of tasks) assertSource(sourceId, task.placement, task.target)
     } catch (error) {
       return { ok: false, error: errorText(error), items: [] }
     }
@@ -626,34 +682,59 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     // Validate every new item's settings before allocating anything.
     const resolved = new Map<string, { settings: ConversationDispatchSettings; inherited: string[] }>()
     const problems: ConversationDispatchItemResult[] = []
+    const destinations = new Map<string, Awaited<ReturnType<typeof resolveDestination>>>()
+    const requestedBranches = new Set<string>()
+    const source = deps.getConversation(sourceId)!
+    let sourceBase: string | undefined
+    const notes: string[] = []
     for (const task of tasks) {
       const existing = findConversationDispatch(sourceId, grant.originKey, task.requestKey)
-      if (existing && existing.phase !== 'discarded') continue
-      const result = await deps.resolveSettings(sourceId, task.settings)
-      if (result.ok) resolved.set(task.requestKey, { settings: result.settings, inherited: result.inherited })
-      else problems.push({ requestKey: task.requestKey, title: task.title, status: 'failed', error: result.message })
+      try {
+        const fingerprint = fingerprintOf({
+          ...task,
+          sourceConversationId: sourceId,
+          originKey: grant.originKey,
+          kind: 'task',
+          sourceRef: task.source,
+        })
+        if (existing && existing.fingerprint !== fingerprint)
+          throw new ConversationDispatchError(
+            'request-conflict',
+            `Request "${task.requestKey}" was already used for different content; use a new request key.`
+          )
+        const branchKey = task.target.branch
+          ? JSON.stringify([task.target.workspaceId ?? source.workspaceId, task.target.branch])
+          : null
+        if (branchKey && requestedBranches.has(branchKey))
+          throw new ConversationDispatchError('target-invalid', 'Multiple tasks request the same destination branch.')
+        if (branchKey) requestedBranches.add(branchKey)
+        if (existing && existing.phase !== 'discarded') continue
+        const result = await deps.resolveSettings(sourceId, task.settings)
+        if (!result.ok) throw new ConversationDispatchError('settings-invalid', result.message)
+        resolved.set(task.requestKey, { settings: result.settings, inherited: result.inherited })
+        const implicit = !Object.values(task.target).some((field) => field !== undefined)
+        const destination = await resolveDestination(source, {
+          ...task,
+          ...(implicit && sourceBase ? { baseRevision: sourceBase } : {}),
+        })
+        destinations.set(task.requestKey, destination)
+        if (implicit && task.placement === 'worktree' && !sourceBase) {
+          sourceBase = destination.baseRevision!
+          if (await deps.hasUncommittedChanges(source.cwd).catch(() => false))
+            notes.push(
+              `New worktrees start at commit ${sourceBase.slice(0, 12)}; uncommitted changes in this conversation's checkout are NOT included in them.`
+            )
+        }
+      } catch (error) {
+        problems.push({ requestKey: task.requestKey, title: task.title, status: 'failed', error: errorText(error) })
+      }
     }
     if (problems.length) {
       return {
         ok: false,
-        error: 'No conversation was created: fix the settings below (or ask the person) and call again.',
+        error:
+          'No conversation was created: fix the destinations or settings below (or ask the person) and call again.',
         items: problems,
-      }
-    }
-
-    const notes: string[] = []
-    let baseRevision: string | undefined
-    if (tasks.some((task) => task.placement === 'worktree')) {
-      const source = deps.getConversation(sourceId) as ProjectConversation
-      baseRevision = (await deps.resolveHead(source.cwd)) ?? undefined
-      if (!baseRevision) {
-        return { ok: false, error: 'The current commit of the source checkout could not be resolved.', items: [] }
-      }
-      if (await deps.hasUncommittedChanges(source.cwd).catch(() => false)) {
-        notes.push(
-          `New worktrees start at commit ${baseRevision.slice(0, 12)}; uncommitted changes in this conversation's ` +
-            'checkout are NOT included in them.'
-        )
       }
     }
 
@@ -678,7 +759,8 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
           settings: task.settings,
           ...(task.source ? { sourceRef: task.source } : {}),
           ...(resolved.has(task.requestKey) ? { resolved: resolved.get(task.requestKey) } : {}),
-          ...(baseRevision ? { baseRevision } : {}),
+          target: task.target,
+          destination: destinations.get(task.requestKey),
           signal: input.signal,
           assertCurrent: input.assertCurrent,
         })
@@ -687,7 +769,9 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
         const status = started.status === 'started' ? 'started' : 'start-failed'
         const error =
           started.error ??
-          (started.status === 'starting' ? 'The first turn is still being admitted; check the conversation.' : undefined)
+          (started.status === 'starting'
+            ? 'The first turn is still being admitted; check the conversation.'
+            : undefined)
         items.push(
           itemFromRecord(started.record, status, {
             ...(prepared.replayed || started.replayed ? { replayed: true } : {}),
@@ -717,9 +801,13 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     }
   }
 
-  function status(conversationId: string): { phase: string; error: string | null; sourceConversationId: string } | null {
+  function status(
+    conversationId: string
+  ): { phase: string; error: string | null; sourceConversationId: string } | null {
     const record = getConversationDispatchByDestination(conversationId)
-    return record ? { phase: record.phase, error: record.error, sourceConversationId: record.sourceConversationId } : null
+    return record
+      ? { phase: record.phase, error: record.error, sourceConversationId: record.sourceConversationId }
+      : null
   }
 
   return { prepare, start, discard, dispatchBatch, retryStart, reconcile, status }
@@ -752,6 +840,23 @@ export async function listConversationDispatchModels(): Promise<ConversationDisp
     if (modelCatalog?.value === value) modelCatalog = null
   })
   return value
+}
+
+/** Registered repositories only. Missing repositories remain visible with no available branches. */
+export async function listConversationDispatchWorkspaces(): Promise<ConversationDispatchWorkspaceOption[]> {
+  const [store, git] = await Promise.all([import('./store'), import('./git-service')])
+  return Promise.all(
+    store.listWorkspaces().map(async (workspace) => {
+      const branches = await git.listBranches(workspace.path, { includeLocalRemotes: true })
+      return {
+        workspaceId: workspace.id,
+        name: workspace.name,
+        path: workspace.path,
+        defaultBranch: workspace.defaultBranch,
+        branches: [...new Set([...branches.local, ...branches.remoteRefs.map((ref) => `${ref.remote}/${ref.name}`)])],
+      }
+    })
+  )
 }
 
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
@@ -791,6 +896,10 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
         },
       }),
     resolveHead: (cwd) => git.resolveCommit(cwd),
+    getWorkspace: store.getWorkspace,
+    resolveBranch: git.resolveDispatchBranch,
+    validateBranch: git.isValidDispatchBranch,
+    branchExists: git.branchExists,
     hasUncommittedChanges: async (cwd) => (await git.gitEnvInfo(cwd))?.dirty === true,
     createShared: (sourceConversationId, options) =>
       workspace.createSiblingConversation(sourceConversationId, {
@@ -809,13 +918,26 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
         experience: 'standard',
         name: args.name,
       }),
-    deleteConversation: (id, options) => workspace.deleteConversation(id, options),
-    cleanupIsolated: async (workspaceId, branch) => {
-      const owner = store.getWorkspace(workspaceId)
-      if (!owner) return
-      const tree = (await git.listWorktrees(owner.path)).find((item) => item.branch === branch)
-      if (tree) await git.removeWorktree(owner.path, tree.path, true)
-      if (await git.branchExists(owner.path, branch)) await git.deleteBranch(owner.path, branch)
+    deleteConversation: async (id, options) => {
+      if (!options.preserveWorktree) {
+        const record = dispatchStore.getConversationDispatchByDestination(id)
+        const conversation = store.getConversation(id)
+        const owner = record && store.getWorkspace(record.workspaceId)
+        const { externalWorktreeDir } = await import('./app-paths')
+        if (
+          !record ||
+          !conversation ||
+          !owner ||
+          !record.branch ||
+          !record.baseRevision ||
+          conversation.cwd !== externalWorktreeDir(owner.id, `dispatch-${id}`)
+        )
+          throw new Error('Dispatch allocation ownership cannot be verified; manual recovery is required.')
+        if (store.countOtherConversationsInCwd(conversation.cwd, id) > 0)
+          throw new Error('Another conversation is using this allocation; manual recovery is required.')
+        await git.removeDispatchWorktree(owner.path, conversation.cwd, record.branch, record.baseRevision)
+      }
+      await workspace.deleteConversation(id, { preserveWorktree: true })
     },
     applySettings: (conversationId, selected) => {
       chat.primeChatTurnSelection(conversationId, selected)

@@ -6,6 +6,7 @@ import {
   type ConversationDispatchItemResult,
 } from '../../../shared/conversation-dispatch'
 import { cn } from '@/lib/utils'
+import { useChatSourceFocus } from '@/lib/chat-window-context'
 import { ToolCallCard } from './ToolCallCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
@@ -32,7 +33,12 @@ export function ConversationDispatchCard({
   messageId: string
 }) {
   const { t } = useTranslation('chat')
-  if (part.state.status === 'pending' || part.state.status === 'running' || part.state.status === 'awaiting-permission') {
+  const focusSource = useChatSourceFocus()
+  if (
+    part.state.status === 'pending' ||
+    part.state.status === 'running' ||
+    part.state.status === 'awaiting-permission'
+  ) {
     return (
       <div className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px] text-muted-foreground">
         <Loader2 className="size-3.5 animate-spin" /> {t('dispatch.cardRunning')}
@@ -89,7 +95,10 @@ export function ConversationDispatchCard({
             {item.conversationId && item.status !== 'failed' && (
               <button
                 type="button"
-                onClick={() => openConversationById(item.conversationId!)}
+                onClick={() => {
+                  openConversationById(item.conversationId!)
+                  focusSource()
+                }}
                 className="flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] text-primary hover:bg-white/[0.06]"
               >
                 {t('dispatch.open')} <ArrowUpRight className="size-3" />

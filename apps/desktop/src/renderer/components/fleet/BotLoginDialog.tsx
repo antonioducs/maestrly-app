@@ -112,7 +112,7 @@ export function BotLoginDialog({
               </div>
             )}
             <p role="status" className="text-sm text-muted-foreground">
-              {t('login.waiting')}
+              {t(login.preparing ? 'login.preparingGoogle' : 'login.waiting')}
             </p>
           </>
         )}

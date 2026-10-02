@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock } from 'lucide-react'
@@ -47,6 +48,7 @@ export function ChatContextMeter({
 
   onLimitChange?: () => void
 }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const stats = useMemo(() => {
     let totalIn = 0
@@ -98,9 +100,9 @@ export function ChatContextMeter({
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
+    ownerDocument.addEventListener('mousedown', onDoc)
+    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+  }, [ownerDocument, open])
 
   // Load the current limit and raw ceilings when opening.
   useEffect(() => {

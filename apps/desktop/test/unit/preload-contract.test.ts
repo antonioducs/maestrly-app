@@ -7,6 +7,7 @@ import * as electron from 'electron' // Alias to the same stub instance imported
 import { localDataApi } from '../../src/preload/api-local-data'
 import { appApi } from '../../src/preload/api-app'
 import { chatApi } from '../../src/preload/api-chat'
+import { chatWindowApi } from '../../src/preload/api-chat-window'
 import { conversationMigrationApi } from '../../src/preload/api-conversation-migration'
 import { drawerApi } from '../../src/preload/api-drawer'
 import { memoryApi } from '../../src/preload/api-memory'
@@ -60,6 +61,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['soundApi', soundApi],
   ['updateApi', updateApi],
   ['chatApi', chatApi],
+  ['chatWindowApi', chatWindowApi],
   ['platformApi', platformApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
@@ -138,6 +140,32 @@ const preloadText = [...preloadFiles.values()].join('\n')
 // Verify the exposed API includes core workspace wrappers.
 // ---------------------------------------------------------------------------
 describe('preload API — exposure', () => {
+  it('forwards chat window identity and unsubscribes lifecycle events', async () => {
+    const target = { kind: 'conversation', id: 'chat', title: 'Chat' }
+    await api.chatWindowPrepare(target)
+    await api.chatWindowFocus('conversation:chat')
+    await api.chatWindowShowSource('conversation:chat')
+    await api.chatWindowClose('conversation:chat')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['chat-window:prepare', target],
+      ['chat-window:focus', 'conversation:chat'],
+      ['chat-window:show-source', 'conversation:chat'],
+      ['chat-window:close', 'conversation:chat'],
+    ])
+    for (const [method, channel] of [
+      ['onChatWindowCloseRequested', 'chat-window:close-requested'],
+      ['onChatWindowClosed', 'chat-window:closed'],
+    ]) {
+      const callback = vi.fn()
+      const off = api[method](callback) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1] as Fn
+      expect(onSpy).toHaveBeenCalledWith(channel, listener)
+      listener({}, 'conversation:chat')
+      expect(callback).toHaveBeenCalledWith('conversation:chat')
+      off()
+      expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
+    }
+  })
   it('exposes an api object through contextBridge with conversation wrappers', () => {
     expect(typeof api).toBe('object')
     expect(typeof api.onConversationOpen).toBe('function')
@@ -269,7 +297,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(511)
+    expect(keys).toHaveLength(517)
     expect(keys.sort()).toMatchSnapshot()
   })
 

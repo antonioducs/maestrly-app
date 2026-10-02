@@ -39,6 +39,8 @@ import {
   renameSubscriptionAccount,
   subscriptionProviderIdFor,
 } from '../../chat/catalog'
+import { ensureRuntimeAsset } from '../../runtime-assets/app-service'
+import { getAntigravitySubscriptionManager } from '../../chat/antigravity-subscription/manager'
 import { getClaudeSubscriptionManager } from '../../chat/claude-agent-sdk/manager'
 import { getCodexSubscriptionManager } from '../../chat/codex-subscription/manager'
 import { apiKeyStorageMode, clearApiKey, setApiKey } from '../../chat/credentials'
@@ -171,6 +173,8 @@ export class EnvironmentRuntime {
     removeSlot: cleanupBotSubscriptionSlot,
     slotExists: (kind, id) =>
       listSubscriptionAccounts().some((slot) => slot.id === id && slot.kind === SUBSCRIPTION_PROVIDER_KIND[kind]),
+    antigravity: getAntigravitySubscriptionManager,
+    ensureAntigravity: (signal) => ensureRuntimeAsset('antigravity-acp-runtime', signal),
     codex: getCodexSubscriptionManager,
     claude: getClaudeSubscriptionManager,
     grok: getGrokSubscriptionManager,
@@ -569,7 +573,9 @@ export class EnvironmentRuntime {
     return result
   }
   async removeSubscription(kind: FleetSubscriptionKind, slot: string): Promise<void> {
-    await removeBotSubscription(kind, slot)
+    const remove = () => removeBotSubscription(kind, slot)
+    if (kind === 'github-copilot' || kind === 'cursor') await remove()
+    else await this.logins.removeAccount(kind, slot === 'default' ? null : slot, remove)
     this.accountsChanged()
   }
   skills(): Promise<FleetBotSkills> {

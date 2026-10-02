@@ -13,7 +13,10 @@ Production, beta, and development profiles are separate.
 Application-managed credentials stay in the Electron main process and are
 persisted using operating-system encryption through `safeStorage`. Persistence
 fails closed when encryption is unavailable. Provider CLIs, Git helpers, SSH
-agents, browsers, and MCP servers maintain independent credential stores.
+agents, browsers, and MCP servers maintain independent credential stores. The
+Google Antigravity ACP server keeps each Google account's sign-in in a file
+inside the profile, in a directory with owner-only permissions rather than
+operating-system encryption.
 
 Logs stay local unless deliberately shared. Redaction cannot remove every
 sensitive filename, project name, path, model name, or content excerpt; review
@@ -25,6 +28,7 @@ and sanitize diagnostics before posting them.
 | --- | --- |
 | AI providers | Prompts, selected conversation history, instructions, attachments, and allowed project/tool context go to the configured provider under its terms. |
 | ChatGPT Web | The enabled integration uses OpenAI's tunnel client to connect ChatGPT to a token-protected loopback MCP bridge. |
+| Google AI (Antigravity) | Google's Antigravity ACP server, downloaded from `dl.google.com` at sign-in or update (version checks use `raw.githubusercontent.com`), sends prompts to Google and reaches Maestrly's tools through a token-protected loopback MCP endpoint. |
 | Personal bots | An optional HTTP endpoint inside Desktop shares authorized bot conversations and events with the connected bot. You provide external HTTPS access; no hosted Maestrly relay is required. Model credentials remain in Desktop. |
 | Shared artifacts | Pages you choose to share are served by Desktop or your paired bot server to the people you invite, or to anyone with the link. You provide external access; no hosted Maestrly relay is required. The selected host stores each person's name, a coarse device label, and visit times, and no IP address. |
 | Model metadata | `models.dev` may receive metadata requests for model limits and pricing. |

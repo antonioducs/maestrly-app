@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { broadcastGlobal } from './window-ipc'
 import { personalMemoryService } from './memory/personal-memory-service'
 import {
   readPersonalMemorySettings,
@@ -50,9 +50,7 @@ export function registerMemoryIpc(reg: IpcRegistrar): void {
   )
 
   onPersonalMemorySettingsChanged((settings) => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('personal-memory:settings-changed', settings)
-    }
+    broadcastGlobal('personal-memory:settings-changed', settings)
   })
   // Legacy aliases retained for one release; the new renderer does not use them.
   reg.handle('memory:read', (_event, workspaceId: string) => {

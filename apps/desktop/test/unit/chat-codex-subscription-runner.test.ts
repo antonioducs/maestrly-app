@@ -110,6 +110,23 @@ vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({
   },
 }))
 vi.mock('../../src/main/chat/cursor-subscription/subagent-runner', () => ({ runCursorSubagent: cursorH.run }))
+const antigravityH = vi.hoisted(() => ({
+  run: vi.fn(),
+  managerCalls: vi.fn(),
+  manager: {
+    getAccountIdentity: vi.fn(() => ({ fingerprint: 'google-project', epoch: 4 })),
+    assertAccountIdentity: vi.fn(),
+  },
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
+  getAntigravitySubscriptionManager: (accountId: string | null) => {
+    antigravityH.managerCalls(accountId)
+    return antigravityH.manager
+  },
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/subagent-runner', () => ({
+  runAntigravitySubagent: antigravityH.run,
+}))
 vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/main/chat/subagent-execution-profile')>()
   return { ...original, resolveSubagentExecutionProfile: vi.fn(original.resolveSubagentExecutionProfile) }
@@ -967,10 +984,11 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          '42cba7322c11a5ce7eb88ab4b8df2019a7de3a61845353907fb3e4cb6dac23cc'
+          '31b3dde16993675ac1d7fab5ef72ca687a47497017faec1cfc1efdabc3448886'
         )
         expect(request.baseInstructions).toBeUndefined()
         expect(request.developerInstructions).toContain('general assistant')
+        expect(request.developerInstructions).toContain('when start_conversations is exposed')
         expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
         expect(request.developerInstructions).not.toContain('# Durable project memory')
         expect(request.developerInstructions).toContain('app tools are disabled')
@@ -6598,6 +6616,82 @@ describe('Codex subscription runner', () => {
       await running
     }
   )
+
+  it('dispatches Google AI additional-account children instead of the API-key runner', async () => {
+    antigravityH.run.mockReset()
+    antigravityH.managerCalls.mockClear()
+    antigravityH.manager.assertAccountIdentity.mockClear()
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_codex_to_google', 'Use Gemini as a worker', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_codex_to_google', notifications: [] })
+    const profile = {
+      version: 1 as const,
+      agentName: 'general-purpose',
+      effective: {
+        providerId: 'builtin_antigravity_subscription@acc_child',
+        modelId: 'gemini-3.1-pro',
+        configuredEffort: 'high',
+        sentEffort: 'high',
+        source: 'conversation-default' as const,
+        candidateIndex: 0,
+      },
+      attempts: [],
+    }
+    resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+      definition: {
+        name: 'general-purpose',
+        description: 'Worker',
+        prompt: 'Complete the delegated task.',
+        source: 'built-in',
+        tools: ['read', 'grep'],
+      },
+      profile,
+    })
+    antigravityH.run.mockResolvedValueOnce({
+      text: 'Gemini result',
+      model: { providerId: 'builtin_antigravity_subscription@acc_child', modelId: 'gemini-3.1-pro' },
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.mode = 'agent'
+    args.acquirePhysicalProvider = vi.fn()
+    args.releasePhysicalProvider = vi.fn()
+    const running = runCodexSubscriptionChat(args)
+
+    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+    await expect(
+      client.serverRequest({
+        id: 'task_codex_to_google',
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread_1',
+          itemId: 'task_codex_to_google',
+          callId: 'task_codex_to_google',
+          tool: 'task',
+          arguments: { agent: 'general-purpose', prompt: 'Review the flow with Gemini.' },
+        },
+      })
+    ).resolves.toMatchObject({ success: true })
+    expect(antigravityH.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile,
+        agentName: 'general-purpose',
+        task: 'Review the flow with Gemini.',
+        accountIdentity: { fingerprint: 'google-project', epoch: 4 },
+        allowSkillLoader: false,
+      })
+    )
+    expect(antigravityH.managerCalls).toHaveBeenCalledWith('acc_child')
+    expect(antigravityH.manager.assertAccountIdentity).toHaveBeenCalledTimes(2)
+    expect(args.acquirePhysicalProvider).toHaveBeenCalledWith('builtin_antigravity_subscription@acc_child')
+    expect(args.releasePhysicalProvider).toHaveBeenCalledWith('builtin_antigravity_subscription@acc_child')
+    expect(Object.keys(antigravityH.run.mock.calls[0][0].tools)).not.toContain('task')
+    expect(runSubagentMock).not.toHaveBeenCalled()
+
+    client.emit(completedNotification('thread_1', 'turn_codex_to_google'))
+    await running
+  })
 
   it('preserves the snapshot and releases the ephemeral thread when the Codex subagent fails', async () => {
     const workspace = makeWorkspace()

@@ -8,6 +8,7 @@ import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles
 import type { GeneratedImageEmission, GeneratedImageUsage } from './tools/util'
 import type { ChatAgent } from './agents'
 import {
+  isAntigravitySubscriptionProvider,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isCursorSubscriptionProvider,
@@ -43,6 +44,9 @@ import { resolveCodexSubagentServiceTier } from './subscription-failover/codex-a
 import type { CursorSubscriptionAccountIdentity, CursorSubscriptionManager } from './cursor-subscription/manager'
 import { getCursorSubscriptionManager } from './cursor-subscription/manager'
 import { runCursorSubagent } from './cursor-subscription/subagent-runner'
+import type { AntigravityAccountIdentity, AntigravitySubscriptionManager } from './antigravity-subscription/manager'
+import { getAntigravitySubscriptionManager } from './antigravity-subscription/manager'
+import { runAntigravitySubagent } from './antigravity-subscription/subagent-runner'
 import type { GitHubCopilotAccountIdentity, GitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { runGitHubCopilotSubagent } from './github-copilot/subagent-runner'
@@ -74,6 +78,7 @@ export interface SubagentExecutorAccountContext {
   claude?: { manager: ClaudeSubscriptionManager; identity: ClaudeSubscriptionAccountIdentity }
   cursor?: { manager: CursorSubscriptionManager; identity: CursorSubscriptionAccountIdentity }
   copilot?: { manager: GitHubCopilotSubscriptionManager; identity: GitHubCopilotAccountIdentity }
+  antigravity?: { manager: AntigravitySubscriptionManager; identity: AntigravityAccountIdentity }
 }
 
 /** Provider boundary for one already-resolved child execution. Profile resolution, coordinator leases,
@@ -381,6 +386,30 @@ export async function executeSubagent(args: {
             args.broker.pendingFor(args.conversationId).length ||
               args.questionBroker.pendingFor(args.conversationId).length
           ),
+        tools,
+        allowSkillLoader: args.mode === 'maestro',
+        progress,
+        onTextUpdate,
+      })
+      manager.assertAccountIdentity(identity)
+      return result
+    }
+
+    if (isAntigravitySubscriptionProvider(effective.providerId)) {
+      const parent = effective.providerId === args.account?.parentProviderId ? args.account.antigravity : undefined
+      const manager = parent?.manager ?? getAntigravitySubscriptionManager(subscriptionAccountId(effective.providerId))
+      const identity = parent?.identity ?? manager.getAccountIdentity()
+      if (!identity.fingerprint) {
+        return { text: '', error: 'Google AI subscription is not authenticated.', errorCode: 'agent-unavailable' }
+      }
+      manager.assertAccountIdentity(identity)
+      const result = await runAntigravitySubagent({
+        ...args,
+        task: resumeFor(effective.providerId, null).task,
+        definition: effectiveDefinition,
+        readOnly: effectiveReadOnly,
+        manager,
+        accountIdentity: identity,
         tools,
         allowSkillLoader: args.mode === 'maestro',
         progress,

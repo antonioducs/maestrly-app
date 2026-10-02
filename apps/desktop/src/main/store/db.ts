@@ -798,6 +798,20 @@ function initializeSchema(): void {
         updated_at = excluded.updated_at;
     END;
 
+    -- Antigravity ACP sessions live in the account's app-owned GEMINI_HOME; the host deletes their files before
+    -- the conversation row, so no cleanup queue is needed.
+    CREATE TABLE IF NOT EXISTS chat_antigravity_sessions (
+      conversation_id     TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      account_id          TEXT NOT NULL DEFAULT '',
+      account_fingerprint TEXT NOT NULL,
+      session_id          TEXT NOT NULL,
+      model_value         TEXT NOT NULL,
+      tool_signature      TEXT NOT NULL,
+      instruction_hash    TEXT NOT NULL,
+      last_message_id     TEXT,
+      updated_at          INTEGER NOT NULL
+    );
+
     -- Durable tool results keyed by call_id prevent repeated side effects when sampling resumes after tool
     -- completion but before provider confirmation.
     CREATE TABLE IF NOT EXISTS chat_tool_executions (

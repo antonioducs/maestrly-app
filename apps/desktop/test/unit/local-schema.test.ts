@@ -26,6 +26,7 @@ const LOCAL_TABLES = [
   'bot_oauth_requests',
   'bot_oauth_tokens',
   'bot_question_bindings',
+  'chat_antigravity_sessions',
   'chat_background_compaction',
   'chat_claude_message_map',
   'chat_claude_session_cleanup',

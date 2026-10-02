@@ -25,6 +25,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron'
 import { resolvePreload } from './resolve-preload'
+import { ChatWindowManager, registerChatWindowIpc } from './chat-window-manager'
 import { killAllPtys } from './pty-manager'
 import {
   initTerminalManager,
@@ -215,6 +216,7 @@ if (process.platform === 'linux') {
 const registry = new AgentRegistry()
 
 let mainWindow: BrowserWindow | null = null
+let chatWindowManager: ChatWindowManager | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 
@@ -552,7 +554,17 @@ async function createWindow(): Promise<void> {
   wc.on('did-fail-load', (_e, code, desc, url) => console.error(`[did-fail-load] ${code} ${desc} ${url}`))
   wc.on('preload-error', (_e, p, err) => console.error(`[preload-error] ${p}`, err))
 
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+  chatWindowManager?.dispose()
+  chatWindowManager = new ChatWindowManager(wc, {
+    targetExists: (target) =>
+      target.kind === 'bot'
+        ? fleetClientService.getSnapshot().bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived')
+        : !!getConversation(target.id),
+    focusSource: focusMainWindow,
+    workArea: (bounds) =>
+      (bounds ? screen.getDisplayMatching(bounds) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()))
+        .workArea,
+  })
   wc.on('will-navigate', (e) => e.preventDefault())
 
   const sendFullscreen = () => wc.send('window:fullscreen', mainWindow?.isFullScreen() ?? false)
@@ -634,6 +646,7 @@ async function createWindow(): Promise<void> {
     }
     if (!confirmQuitOnce(() => e.preventDefault())) return
 
+    chatWindowManager?.dispose()
     floatingManager.flushPendingFloatPersists()
     floatingManager.disposeAll()
     popupManager.disposeAll()
@@ -648,6 +661,7 @@ async function createWindow(): Promise<void> {
 }
 
 function registerIpc(): void {
+  registerChatWindowIpc(ipcMain, () => chatWindowManager)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mhandle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
     ipcMain.handle(channel, guardHandle(fn))
@@ -1077,6 +1091,8 @@ app.on('before-quit', (e) => {
     return
   }
   if (!confirmQuitOnce(() => e.preventDefault())) return
+
+  chatWindowManager?.dispose()
 
   if (!projectSetupsFlushed && cancelProjectSetupsAndWait) {
     e.preventDefault()

@@ -11,6 +11,7 @@ import {
   type ConversationDispatchBatchResult,
   type ConversationDispatchModelOption,
   type ConversationDispatchSettings,
+  type ConversationDispatchWorkspaceOption,
 } from '../../../shared/conversation-dispatch'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import {
@@ -23,13 +24,14 @@ import { CONVERSATION_DISPATCH_TOOL_NAMES, conversationDispatchToolsAllowed } fr
 import { defineTool } from './util'
 
 export interface ConversationDispatchToolRuntime {
+  listWorkspaces(): Promise<ConversationDispatchWorkspaceOption[]>
   listModels(): Promise<{ models: ConversationDispatchModelOption[]; current: ConversationDispatchSettings | null }>
   startConversations(batch: ConversationDispatchBatch, signal: AbortSignal): Promise<ConversationDispatchBatchResult>
 }
 
 /**
  * Runtime for the turn currently admitted in `conversationId`, or undefined when the tools must not be offered:
- * restricted/Maestro modes, and every turn that was not started by text the person typed.
+ * Plan/Maestro modes, Ask without an explicit handoff request, and non-human turns.
  */
 export function conversationDispatchRuntimeFor(
   conversationId: string,
@@ -38,7 +40,12 @@ export function conversationDispatchRuntimeFor(
   if (!conversationDispatchToolsAllowed(mode)) return undefined
   const origin = currentHumanTurnOrigin(conversationId)
   if (!origin) return undefined
+  if (mode === 'ask' && !evaluateConversationDispatchGrant(origin).ok) return undefined
   return {
+    async listWorkspaces() {
+      const { listConversationDispatchWorkspaces } = await import('../../conversation-dispatch-service')
+      return listConversationDispatchWorkspaces()
+    },
     async listModels() {
       const [service, chat] = await Promise.all([
         import('../../conversation-dispatch-service'),
@@ -84,8 +91,29 @@ export function enableConversationDispatchTools(
 }
 
 const UNAVAILABLE =
-  'Starting conversations is not available here. It only works in the main agent turn of a project conversation, ' +
+  'Starting conversations is not available here. It only works in the main agent turn of a standalone or project conversation, ' +
   'started by a message the person typed.'
+
+export const listConversationWorkspacesTool = defineTool<
+  z.ZodObject<Record<string, never>>,
+  { workspaces: ConversationDispatchWorkspaceOption[] } | { error: string }
+>({
+  name: 'list_conversation_workspaces',
+  description:
+    'List registered development workspaces with canonical workspaceId, name, path, defaultBranch and branches. ' +
+    'Call before targeting a workspace with start_conversations. Match the requested project to a canonical ID; ' +
+    'ask the person when names are ambiguous. Never invent a workspaceId.',
+  parameters: z.object({}).strict(),
+  execute: async (_args, ctx) => {
+    if (!ctx.conversationDispatch) return { error: UNAVAILABLE }
+    try {
+      return { workspaces: await ctx.conversationDispatch.listWorkspaces() }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  toModelText: (_args, result) => JSON.stringify(result, null, 2),
+})
 
 export const listConversationModelsTool = defineTool<
   z.ZodObject<Record<string, never>>,

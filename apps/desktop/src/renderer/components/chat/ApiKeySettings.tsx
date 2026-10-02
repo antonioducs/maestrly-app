@@ -72,6 +72,7 @@ const inputCls =
 const PROVIDER_RUNTIME_ASSET: Partial<Record<ChatSubscriptionProviderKind, RuntimeAssetId>> = {
   'codex-subscription': 'codex-runtime',
   'github-copilot-subscription': 'github-copilot-runtime',
+  'antigravity-subscription': 'antigravity-acp-runtime',
 }
 
 const PROVIDER_KINDS: Exclude<ChatProviderKind, ChatSubscriptionProviderKind>[] = [
@@ -88,6 +89,7 @@ const kindLabelKey: Record<ChatProviderKind, string> = {
   'claude-subscription': 'settings.apiFormatClaudeSubscription',
   'grok-subscription': 'settings.apiFormatGrokSubscription',
   'cursor-subscription': 'settings.apiFormatCursorSubscription',
+  'antigravity-subscription': 'settings.apiFormatAntigravitySubscription',
 }
 
 const subscriptionProviderCopy: Record<
@@ -99,6 +101,7 @@ const subscriptionProviderCopy: Record<
       | 'claudeSubscription'
       | 'grokSubscription'
       | 'cursorSubscription'
+      | 'antigravitySubscription'
     borderClass: string
     buttonClass: string
   }
@@ -127,6 +130,11 @@ const subscriptionProviderCopy: Record<
     prefix: 'grokSubscription',
     borderClass: 'border-zinc-400/25 bg-zinc-400/[0.04]',
     buttonClass: 'bg-zinc-700 hover:bg-zinc-600',
+  },
+  'antigravity-subscription': {
+    prefix: 'antigravitySubscription',
+    borderClass: 'border-blue-500/25 bg-blue-500/[0.04]',
+    buttonClass: 'bg-blue-600 hover:bg-blue-500',
   },
 }
 

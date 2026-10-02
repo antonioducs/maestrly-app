@@ -174,7 +174,7 @@ export const FLEET_REASONING_QUERY = 'reasoning'
  * Codex runtimes and can be asked to check for newer releases.
  */
 export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
-export const FLEET_RUNTIME_IDS = ['claude-code', 'codex'] as const
+export const FLEET_RUNTIME_IDS = ['claude-code', 'codex', 'antigravity-acp'] as const
 /** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
 export const FLEET_RUNTIME_STATES = [
   'idle',
