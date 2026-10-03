@@ -14,6 +14,7 @@ export const ARTIFACT_ERROR_CODES = [
   'not_found',
   'version_conflict',
   'version_limit',
+  'already_exists',
   'quota_exceeded',
   'limit_reached',
   'port_in_use',

@@ -1,11 +1,9 @@
-/** What the Artifacts center shows, derived from the list and the host status. No React, so it is tested directly. */
-import type { ArtifactHostProblem, ArtifactHostStatus, ArtifactListItem } from '../../../shared/artifacts'
+/** What the Artifacts center shows, derived from the list and the bot server's state. No React, so it is tested directly. */
+import type { ArtifactListItem, ArtifactServerStatus, LegacyArtifactView } from '../../../shared/artifacts'
 
-export type HostFilter = 'all' | 'local' | 'server'
-export const ARTIFACT_HOSTS: readonly HostFilter[] = ['all', 'local', 'server']
-
-export function artifactSource(item: ArtifactListItem): 'bot' | 'elsewhere' | 'local' | 'server' {
-  return item.bot ? 'bot' : item.elsewhere ? 'elsewhere' : item.host
+/** Who published an artifact, when it was not this computer's own agents: a bot, or another paired computer. */
+export function artifactSource(item: ArtifactListItem): 'bot' | 'elsewhere' | 'own' {
+  return item.bot ? 'bot' : item.elsewhere ? 'elsewhere' : 'own'
 }
 
 export type ArtifactSort = 'updated' | 'created' | 'title' | 'size'
@@ -63,7 +61,7 @@ export function projectOptions(items: readonly ArtifactListItem[], locale: strin
 
 export function visibleArtifacts(
   items: readonly ArtifactListItem[],
-  options: { query: string; project: ProjectFilter; sort: ArtifactSort; locale: string; host?: HostFilter }
+  options: { query: string; project: ProjectFilter; sort: ArtifactSort; locale: string }
 ): ArtifactListItem[] {
   const needle = options.query.trim().toLocaleLowerCase(options.locale)
   const compare: Record<ArtifactSort, (a: ArtifactListItem, b: ArtifactListItem) => number> = {
@@ -75,7 +73,6 @@ export function visibleArtifacts(
   return items
     .filter(
       (item) =>
-        (!options.host || options.host === 'all' || item.host === options.host) &&
         matchesProject(item, options.project) &&
         (!needle || `${item.title}\n${item.description}`.toLocaleLowerCase(options.locale).includes(needle))
     )
@@ -86,13 +83,13 @@ export function showToolbar(count: number, query: string, project: ProjectFilter
   return count >= TOOLBAR_MIN_ARTIFACTS || query.trim() !== '' || project !== ALL_PROJECTS
 }
 
-export function nearQuota(status: ArtifactHostStatus | null): boolean {
-  if (status?.state !== 'running' || !status.quotaBytes) return false
-  return (status.storageBytes ?? 0) / status.quotaBytes >= QUOTA_WARNING_RATIO
+export function nearQuota(server: ArtifactServerStatus | null): boolean {
+  if (server?.state !== 'ready' || !server.quotaBytes) return false
+  return server.storageBytes / server.quotaBytes >= QUOTA_WARNING_RATIO
 }
 
-/** Why the list cannot be shown: a host problem, or a host that is not running for another reason. */
-export type UnavailableReason = ArtifactHostProblem | 'stopped'
+/** Why the list cannot be shown: the bot server is missing, too old, out of reach, off, or its host failed. */
+export type UnavailableReason = 'absent' | 'unsupported' | 'unreachable' | 'off' | 'problem'
 
 export type CenterBody =
   | { kind: 'loading' }
@@ -101,24 +98,70 @@ export type CenterBody =
   | { kind: 'no-match' }
   | { kind: 'grid' }
 
+/** The bot server's state as a reason the center cannot list artifacts, or null when it can. */
+export function serverUnavailableReason(server: ArtifactServerStatus | null): UnavailableReason | null {
+  if (!server) return 'unreachable'
+  if (server.state === 'ready') return server.problem ? 'problem' : null
+  return server.state
+}
+
 /**
- * The list comes from the host, so an empty list only means "no artifacts" while the host runs. Otherwise the
- * center explains why it cannot list them, instead of claiming there are none.
+ * Artifacts live on the bot server, so an empty list only means "no artifacts" while the server is ready and listed
+ * them. Otherwise the center explains why it cannot list them, instead of claiming there are none.
  */
 export function centerBody(input: {
   loading: boolean
-  serverReady?: boolean
-  status: ArtifactHostStatus | null
+  server: ArtifactServerStatus | null
   listed: boolean
   total: number
   visible: number
 }): CenterBody {
-  const { status } = input
-  if (input.loading || (status?.state === 'starting' && !input.serverReady)) return { kind: 'loading' }
-  if (status?.problem && !input.serverReady) return { kind: 'unavailable', reason: status.problem }
-  if (!input.listed) return { kind: 'unavailable', reason: 'stopped' }
+  if (input.loading) return { kind: 'loading' }
+  const reason = serverUnavailableReason(input.server)
+  if (reason) return { kind: 'unavailable', reason }
+  if (!input.listed) return { kind: 'unavailable', reason: 'unreachable' }
   if (input.total === 0) return { kind: 'empty' }
   return input.visible === 0 ? { kind: 'no-match' } : { kind: 'grid' }
+}
+
+/** What the offer to move this computer's artifacts can do with the bot server as it is. */
+export interface MoveDialogModel {
+  /** Why moving cannot start now; null when it can. */
+  blocked: 'absent' | 'unsupported' | 'unreachable' | null
+  /** Hosting on the server is off: moving turns it on first. */
+  enableFirst: boolean
+  neededBytes: number
+  /** Free space on the server, while it is known. */
+  freeBytes: number | null
+  /** False only when the server is known to lack the space. */
+  fits: boolean
+  /** Artifacts that become private when they move, because their links change. */
+  shared: LegacyArtifactView[]
+}
+
+export function moveDialogModel(
+  items: readonly LegacyArtifactView[],
+  server: ArtifactServerStatus | null
+): MoveDialogModel {
+  const neededBytes = items.reduce((sum, item) => sum + item.storageBytes, 0)
+  const shared = items.filter((item) => item.shared)
+  const blocked: MoveDialogModel['blocked'] =
+    !server || server.state === 'unreachable' || (server.state === 'ready' && server.problem)
+      ? 'unreachable'
+      : server.state === 'absent'
+        ? 'absent'
+        : server.state === 'unsupported' || !server.canMove
+          ? 'unsupported'
+          : null
+  const freeBytes = server?.state === 'ready' && !blocked ? Math.max(0, server.quotaBytes - server.storageBytes) : null
+  return {
+    blocked,
+    enableFirst: server?.state === 'off',
+    neededBytes,
+    freeBytes,
+    fits: freeBytes === null || neededBytes <= freeBytes,
+    shared,
+  }
 }
 
 export type Arrival = 'artifact' | 'version'

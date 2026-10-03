@@ -1,313 +1,173 @@
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { access } from 'node:fs/promises'
-import { createServer as createNetServer } from 'node:net'
-import { createServer, type Server, type ServerResponse } from 'node:http'
-import os from 'node:os'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { removeTempDirEventually } from './helpers/temp-cleanup'
+import { openArtifactHost } from '@maestrly/artifact-host'
+import { expect, test } from '@playwright/test'
+import { type ArtifactApp, launchArtifactApp } from './helpers/artifact-app'
 
-const desktop = fileURLToPath(new URL('../..', import.meta.url))
-const REQUEST = 'PUBLISH_ARTIFACT: make a probe page.'
-const PAGE =
-  '<!doctype html><html><head><link rel="stylesheet" href="app.css"></head><body><h1 id="t">Artifact probe</h1></body></html>'
+const encode = (text: string) => new TextEncoder().encode(text)
+const PAGE = (heading: string) =>
+  `<!doctype html><html><head><link rel="stylesheet" href="app.css"></head><body><h1 id="t">${heading}</h1></body></html>`
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7, 7])
 
-interface ModelRequest {
-  lastUser: string
-  tools: string[]
-  toolResults: Record<string, string>
-}
-
-async function freePort(): Promise<number> {
-  const server = createNetServer()
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const { port } = server.address() as { port: number }
-  await new Promise((resolve) => server.close(resolve))
-  return port
+/** Waits for the drawer to show an artifact's page, and returns its heading from inside the sandboxed frame. */
+async function renderedHeading(owner: ArtifactApp, id: string): Promise<string | null> {
+  return owner.app.evaluate(async ({ webContents }, id) => {
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline) {
+      for (const contents of webContents.getAllWebContents()) {
+        if (contents.isOffscreen() || !contents.getURL().includes(`/a/${id}`)) continue
+        const frame = contents.mainFrame.framesInSubtree.find((candidate) => candidate.url.includes('/c/'))
+        const heading = await frame
+          ?.executeJavaScript(`document.getElementById('t')?.textContent ?? null`)
+          .catch(() => null)
+        if (heading) return heading as string
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+    return null
+  }, id)
 }
 
 /**
- * An agent publishes an artifact through the real tool path; the chat card opens it in the drawer browser, where
- * the page renders inside an opaque-origin sandbox that can neither read cookies, call the host API, nor navigate
- * the viewer. The Artifacts center then lists and deletes it, and its content URL stops working.
+ * Without a bot server there is nowhere to publish: the agent is told to ask for one instead of improvising, nothing is
+ * kept on this computer, and the app offers to set up a server for artifacts alone.
  */
-test('publishes, isolates, lists and deletes an artifact', async () => {
+test('asks for a bot server instead of publishing on this computer', async () => {
   test.setTimeout(180_000)
-  await access(path.join(desktop, 'out/main/index.js'))
-  const root = mkdtempSync(path.join(os.tmpdir(), 'maestrly-artifacts-'))
-  const repository = path.join(root, 'repo')
-  mkdirSync(repository)
-  const git = (args: string[]) => execFileSync('git', args, { cwd: repository, stdio: 'pipe' }).toString().trim()
-  git(['init', '-q', '-b', 'main'])
-  writeFileSync(path.join(repository, 'README.md'), '# fixture\n')
-  git(['add', '-A'])
-  git(['-c', 'user.name=E2E', '-c', 'user.email=e2e@example.test', 'commit', '-q', '-m', 'fixture'])
-
-  const requests: ModelRequest[] = []
-  let app: ElectronApplication | undefined
-  let page!: Page
-
-  const chunk = (res: ServerResponse, delta: unknown, finish: string | null = null) =>
-    res.write(
-      `data: ${JSON.stringify({
-        id: 'artifact-fixture',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'artifact-model',
-        choices: [{ index: 0, delta, finish_reason: finish }],
-      })}\n\n`
-    )
-  const end = (res: ServerResponse, text: string) => {
-    chunk(res, { role: 'assistant', content: text })
-    chunk(res, {}, 'stop')
-    res.end('data: [DONE]\n\n')
-  }
-  const call = (res: ServerResponse, id: string, name: string, args: unknown) => {
-    chunk(res, {
-      role: 'assistant',
-      tool_calls: [{ index: 0, id, type: 'function', function: { name, arguments: JSON.stringify(args) } }],
-    })
-    chunk(res, {}, 'tool_calls')
-    res.end('data: [DONE]\n\n')
-  }
-  const text = (content: unknown): string =>
-    typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('\n')
-        : ''
-
-  const model: Server = createServer(async (req, res) => {
-    if (req.url === '/v1/models') {
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ data: [{ id: 'artifact-model' }] }))
-      return
-    }
-    if (req.url !== '/v1/chat/completions') {
-      res.writeHead(404).end()
-      return
-    }
-    let body = ''
-    for await (const part of req) body += part
-    const input = JSON.parse(body) as {
-      messages: Array<{ role: string; content: unknown; tool_call_id?: string }>
-      tools?: Array<{ function: { name: string } }>
-    }
-    const lastUser = text([...input.messages].reverse().find((message) => message.role === 'user')?.content)
-    const toolResults = Object.fromEntries(
-      input.messages
-        .filter((message) => message.role === 'tool' && message.tool_call_id)
-        .map((message) => [message.tool_call_id!, text(message.content)])
-    )
-    requests.push({ lastUser, tools: (input.tools ?? []).map((tool) => tool.function.name), toolResults })
-    res.setHeader('content-type', 'text/event-stream')
-    if (lastUser.includes('PUBLISH_ARTIFACT') && !('art-1' in toolResults))
-      return call(res, 'art-1', 'artifact_create', {
-        title: 'Probe',
-        files: [
-          { path: 'index.html', content: PAGE },
-          { path: 'app.css', content: 'h1{color:rgb(1,2,3)}' },
-        ],
-      })
-    end(res, 'Published.')
-  })
-
-  const api = (name: string, ...args: unknown[]) =>
-    page.evaluate(({ name, args }) => (window as any).api[name](...args), { name, args }) as Promise<any>
-
+  let owner: ArtifactApp | undefined
   try {
-    await new Promise<void>((resolve) => model.listen(0, '127.0.0.1', resolve))
-    app = await electron.launch({
-      args: [path.join(desktop, 'out/main/index.js')],
-      env: {
-        ...process.env,
-        AGENTS_E2E: '1',
-        AGENTS_CHANNEL: 'dev',
-        AGENTS_INSTANCE: `artifacts-${Date.now().toString(36)}`,
-        AGENTS_USERDATA: path.join(root, 'profile'),
-        AGENTS_LOCALE: 'en',
-        ELECTRON_RENDERER_URL: '',
-        OPENAI_API_KEY: '',
-        ANTHROPIC_API_KEY: '',
-      },
+    owner = await launchArtifactApp({
+      name: 'artifacts-no-server',
+      server: false,
+      respond: (request) =>
+        'art-1' in request.toolResults
+          ? { text: 'Told the user.' }
+          : {
+              call: {
+                id: 'art-1',
+                name: 'artifact_create',
+                args: { title: 'Probe', files: [{ path: 'index.html', content: PAGE('Probe') }] },
+              },
+            },
     })
-    const mainLog: string[] = []
-    app.process().stdout?.on('data', (d) => mainLog.push(String(d)))
-    app.process().stderr?.on('data', (d) => mainLog.push(String(d)))
-    page = await app.firstWindow()
-    await page.waitForFunction(() => Boolean((window as any).api))
-    await api('setOnboardingDone', true)
+    const { page } = owner
+    await owner.send('PUBLISH_ARTIFACT: make a probe page.', 'Told the user.')
+    const result = owner.requests.find((request) => 'art-1' in request.toolResults)!.toolResults['art-1']!
+    expect(result).toContain('No bot server is connected')
+    expect(existsSync(path.join(owner.profile, 'artifacts'))).toBe(false)
 
-    // A free port keeps parallel runs and a developer's own Maestrly from colliding on 4010.
-    const port = await freePort()
-    await page.evaluate(async (port) => {
-      const artifacts = (window as any).api.artifacts
-      await artifacts.setSettings({ ...(await artifacts.getSettings()), hostEnabled: true, port, quotaGb: 2 })
-    }, port)
-
-    const provider = await api('chatAddProvider', {
-      name: 'Artifact fixture',
-      kind: 'openai',
-      key: 'fixture-key',
-      baseURL: `http://127.0.0.1:${(model.address() as { port: number }).port}/v1`,
-    })
-    expect(provider.ok).toBe(true)
-    await api('chatSetDefault', { providerId: provider.id, modelId: 'artifact-model' })
-    const workspace = await api('addWorkspace', repository)
-    const conversation = await api('createConversation', {
-      workspaceId: workspace.id,
-      branch: 'feat/artifacts',
-      isNewBranch: true,
-      mode: 'worktree',
-      experience: 'standard',
-      name: 'Artifacts',
-    })
-    await api('chatSetSelection', conversation.id, { providerId: provider.id, modelId: 'artifact-model' })
-    expect((await api('chatSetPermMode', conversation.id, 'full')).ok).toBe(true)
-    // Artifact tools are Maestrly app tools, which are off until the conversation enables them.
-    expect((await api('chatSetConvTools', conversation.id, { app: true })).ok).toBe(true)
-    await page.reload()
-    await page.waitForFunction(() => Boolean((window as any).api))
-    await page.locator('li.conv-item', { hasText: 'Artifacts' }).first().click()
-
-    expect((await api('chatSend', conversation.id, REQUEST)).ok).toBe(true)
-    await expect(page.getByText('Published.')).toBeVisible({ timeout: 60_000 })
-    const published = requests.find((request) => 'art-1' in request.toolResults)!
-    expect(published.tools).toContain('artifact_create')
-    const result = JSON.parse(published.toolResults['art-1']!)
-    expect(result).toMatchObject({ ok: true, artifact: { title: 'Probe', version: 1 } })
-    const artifactId = result.artifact.id as string
-
-    // The desktop renders the new version offscreen and keeps a preview of it; the preview shows the page, not a
-    // blank frame.
-    await expect
-      .poll(
-        async () =>
-          (
-            (await page.evaluate(() => (window as any).api.artifacts.list())) as Array<{
-              id: string
-              thumbnailVersion: number | null
-            }>
-          ).find((item) => item.id === artifactId)?.thumbnailVersion,
-        { timeout: 45_000 }
-      )
-      .toBe(1)
-    const preview = await page.evaluate(async (id) => {
-      const thumbnail = await (window as any).api.artifacts.thumbnail(id)
-      const image = new Image()
-      image.src = thumbnail.dataUrl
-      await image.decode()
-      const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
-      const context = canvas.getContext('2d')!
-      context.drawImage(image, 0, 0)
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-      let dark = 0
-      for (let i = 0; i < pixels.length; i += 4)
-        if (pixels[i]! < 80 && pixels[i + 1]! < 80 && pixels[i + 2]! < 80) dark++
-      return { type: thumbnail.dataUrl.slice(0, 15), version: thumbnail.version, width: image.naturalWidth, dark }
-    }, artifactId)
-    expect(preview).toMatchObject({ type: 'data:image/jpeg', version: 1, width: 640 })
-    // The heading's dark text, on the page's white background.
-    expect(preview.dark).toBeGreaterThan(50)
-
-    // The card opens the owner view in this conversation's drawer browser.
-    const card = page.getByTestId('artifact-card').last()
-    await expect(card).toContainText('Probe')
-    await card.getByRole('button', { name: 'Open' }).click()
-
-    const probe = await app.evaluate(async ({ webContents }, id) => {
-      const deadline = Date.now() + 20_000
-      while (Date.now() < deadline) {
-        for (const contents of webContents.getAllWebContents()) {
-          // The offscreen thumbnail capture also shows this artifact; only the drawer counts here.
-          if (contents.isOffscreen() || !contents.getURL().includes(`/a/${id}`)) continue
-          const frame = contents.mainFrame.framesInSubtree.find((candidate) => candidate.url.includes('/c/'))
-          if (!frame) continue
-          const heading = await frame
-            .executeJavaScript(`document.getElementById('t')?.textContent ?? null`)
-            .catch(() => null)
-          if (heading !== 'Artifact probe') continue
-          // The heading is parsed before app.css finishes loading; computed styles are final only after `load`.
-          const ready = await frame.executeJavaScript('document.readyState').catch(() => null)
-          if (ready !== 'complete') continue
-          const inside = (await frame.executeJavaScript(`(async () => {
-            const heading = document.getElementById('t')
-            let cookie
-            try { cookie = document.cookie } catch { cookie = 'denied' }
-            const api = await fetch('/a/${id}/api/state').then((response) => response.status, () => 'blocked')
-            return { color: getComputedStyle(heading).color, cookie, origin: self.origin, api }
-          })()`)) as { color: string; cookie: string; origin: string; api: unknown }
-          await frame.executeJavaScript(`try { top.location.href = 'about:blank' } catch {} ; true`).catch(() => null)
-          await new Promise((resolve) => setTimeout(resolve, 500))
-          return { ...inside, viewerUrl: contents.getURL(), contentUrl: frame.url }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250))
-      }
-      return {
-        diagnostics: webContents
-          .getAllWebContents()
-          .map((contents) =>
-            [contents.getURL(), ...contents.mainFrame.framesInSubtree.map((f) => `  ${f.url}`)].join('\n')
-          ),
-      }
-    }, artifactId)
-
-    if ('diagnostics' in probe)
-      throw new Error(
-        `The artifact frame never rendered:\n${(probe.diagnostics ?? []).join('\n')}\ncard: ${await card.textContent()}\nmain process:\n${mainLog.join('').slice(-3000)}`
-      )
-    expect(probe.color).toBe('rgb(1, 2, 3)')
-    expect(['', 'denied']).toContain(probe.cookie)
-    expect(probe.origin).toBe('null')
-    expect(probe.api).toBe('blocked')
-    expect(probe.viewerUrl).toContain(`/a/${artifactId}`)
-    // The single-use ticket never stays in the address bar.
-    expect(probe.viewerUrl).not.toContain('#o=')
-    expect(probe.contentUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${port}/c/`))
-
-    // The Artifacts center shows the artifact as a card with its preview and conversation, and details it.
+    // The center explains what is missing, and leads to the setup.
     await page.getByTestId('sidebar-artifacts').click()
     const center = page.getByTestId('artifacts-center')
-    await expect(center).toBeVisible()
-    const centerCard = center.locator(`[data-testid="artifact-card"][data-artifact-id="${artifactId}"]`)
-    await expect(centerCard).toContainText('Probe')
-    await expect(centerCard).toContainText('Artifacts')
-    await expect(centerCard.getByTestId('artifact-thumbnail')).toBeVisible()
-    await expect(center.getByTestId('artifacts-host-chip')).toContainText(`127.0.0.1:${port}`)
-    await centerCard.getByTestId('artifact-card-select').click()
-    const detail = center.getByTestId('artifact-detail')
-    await expect(detail).toContainText('Probe')
-    await expect(detail.getByTestId('artifact-versions')).toContainText('v1')
-    await page.keyboard.press('Escape')
-    await expect(detail).toHaveCount(0)
-
-    // Deleting it from the card menu removes it, and its content URL stops working.
-    await centerCard.getByTestId('artifact-menu').click()
-    await page.getByTestId('artifact-delete').click()
-    await page.getByRole('dialog').getByRole('button', { name: 'Delete artifact' }).click()
-    await expect(centerCard).toHaveCount(0)
-    await expect(center.getByTestId('artifacts-empty')).toContainText('No artifacts yet')
-    expect((await fetch(probe.contentUrl)).status).toBe(404)
-
-    // A suggested request opens a new conversation with the request in its composer and Maestrly tools on.
-    const before = new Set(
-      ((await api('listStandaloneConversations')) as Array<{ id: string }>).map((conversation) => conversation.id)
-    )
-    await center.getByTestId('artifact-suggestion').first().click()
+    await expect(center.getByTestId('artifacts-unavailable')).toHaveAttribute('data-reason', 'absent')
+    await expect(center.getByTestId('artifacts-server-chip')).toContainText('Not connected')
+    await center.getByRole('button', { name: 'Set up a bot server' }).click()
     await expect(center).toHaveCount(0)
-    await expect(page.locator('.chat-input:visible').first()).toContainText('clickable prototype of a sign-in screen')
-    const created = ((await api('listStandaloneConversations')) as Array<{ id: string }>).find(
-      (conversation) => !before.has(conversation.id)
-    )
-    expect(created).toBeTruthy()
-    expect((await api('chatGetConvTools', created!.id)).app).toBe(true)
+
+    // Settings → Artifacts offers the installer's choices, and opens the server setup for artifacts alone.
+    const settings = page.getByTestId('artifacts-settings')
+    await expect(settings.getByTestId('artifacts-server-setup')).toBeVisible()
+    await expect(settings.getByTestId('artifacts-server')).toHaveCount(0)
+    await settings.getByRole('button', { name: /On a server \(VPS\)/ }).click()
+    await expect(page.getByRole('radio', { name: /Artifacts only/ })).toBeChecked()
   } finally {
-    await app?.close().catch(() => {})
-    await new Promise((resolve) => model.close(resolve))
-    await removeTempDirEventually(root)
+    await owner?.close()
+  }
+})
+
+/**
+ * Artifacts an earlier version published on this computer no longer open, until the owner moves them: they reach the
+ * bot server with the same IDs, versions, comments and previews, shared ones become private, and the local folder goes.
+ */
+test('moves what an earlier version left on this computer to the bot server', async () => {
+  test.setTimeout(240_000)
+  const ids: { shared: string; plain: string } = { shared: '', plain: '' }
+  let owner: ArtifactApp | undefined
+  try {
+    owner = await launchArtifactApp({
+      name: 'artifacts-move',
+      prepare: async (profile) => {
+        const local = await openArtifactHost({
+          dataDir: path.join(profile, 'artifacts'),
+          port: 0,
+          quotaBytes: 10 * 1024 * 1024,
+        })
+        try {
+          const origin = { workspaceId: null, conversationId: 'earlier-chat', conversationTitle: 'Earlier chat' }
+          const files = (heading: string) => [
+            { path: 'index.html', bytes: encode(PAGE(heading)) },
+            { path: 'app.css', bytes: encode('h1{color:rgb(1,2,3)}') },
+          ]
+          ids.shared = (
+            await local.admin.create({
+              title: 'Shared report',
+              owner: { kind: 'local', id: 'local' },
+              origin,
+              files: files('Shared v1'),
+            })
+          ).id
+          await local.admin.update({
+            id: ids.shared,
+            baseVersion: 1,
+            change: { kind: 'edits', edits: [{ path: 'index.html', oldText: 'Shared v1', newText: 'Shared v2' }] },
+          })
+          await local.admin.setThumbnail(ids.shared, 2, PNG)
+          await local.admin.addComment(ids.shared, { author: 'owner', version: 2, body: 'Check the totals' })
+          await local.admin.setSharing(ids.shared, { visibility: 'link' })
+          await local.admin.createInvite(ids.shared, { name: 'Maria' })
+          ids.plain = (
+            await local.admin.create({
+              title: 'Plain page',
+              owner: { kind: 'local', id: 'local' },
+              origin,
+              files: files('Plain'),
+            })
+          ).id
+        } finally {
+          await local.close()
+        }
+      },
+      respond: () => ({ text: 'Nothing to do.' }),
+    })
+    const { page } = owner
+
+    // The center reminds the owner, and leads to the move.
+    await page.getByTestId('sidebar-artifacts').click()
+    const center = page.getByTestId('artifacts-center')
+    await expect(center.getByTestId('artifacts-legacy-banner')).toContainText('2 artifacts are still on this computer')
+    await expect(center.getByTestId('artifacts-server-chip')).toContainText('Ready')
+    await center.getByTestId('artifacts-legacy-banner').getByRole('button', { name: 'Move or delete' }).click()
+
+    const notice = page.getByTestId('artifacts-legacy')
+    await expect(notice).toContainText('2 artifacts are still on this computer')
+    await notice.getByTestId('artifacts-legacy-move').click()
+    const dialog = page.getByTestId('artifacts-move-dialog')
+    await expect(dialog.getByTestId('artifacts-move-list')).toContainText('Shared report')
+    await expect(dialog).toContainText('“Shared report” is shared. It becomes private')
+    await dialog.getByTestId('artifacts-move-confirm').click()
+    await expect(dialog.getByTestId('artifacts-move-result')).toBeVisible({ timeout: 60_000 })
+    await expect(dialog).toContainText('2 artifacts moved')
+    await expect(dialog).toContainText('“Shared report” became private')
+    await dialog.getByRole('button', { name: 'Done' }).click()
+    await expect(notice).toHaveCount(0)
+    await expect.poll(() => existsSync(path.join(owner!.profile, 'artifacts')), { timeout: 15_000 }).toBe(false)
+
+    // On the server, with the same IDs, history, comments and preview; the shared one is private now.
+    const listed = (await owner.artifacts('list')) as Array<{ id: string; visibility: string; versionCount: number }>
+    expect(listed.map((item) => item.id).sort()).toEqual([ids.shared, ids.plain].sort())
+    expect(listed.find((item) => item.id === ids.shared)).toMatchObject({ visibility: 'private', versionCount: 2 })
+    expect((await owner.artifacts('detail', ids.shared)).versions).toHaveLength(2)
+    expect((await owner.artifacts('comments', ids.shared)).map((comment: { body: string }) => comment.body)).toEqual([
+      'Check the totals',
+    ])
+    expect(await owner.artifacts('thumbnail', ids.shared, 2)).toMatchObject({ version: 2 })
+    expect((await owner.artifacts('sharing', ids.shared)).people).toEqual([])
+    expect(await owner.artifacts('legacyList')).toEqual([])
+
+    // Its page opens again, from the bot server, by the same ID an old chat card holds.
+    await owner.artifacts('openInConversation', owner.conversationId, ids.shared)
+    expect(await renderedHeading(owner, ids.shared)).toBe('Shared v2')
+  } finally {
+    await owner?.close()
   }
 })

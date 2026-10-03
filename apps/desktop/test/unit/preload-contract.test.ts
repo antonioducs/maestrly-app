@@ -263,30 +263,31 @@ describe('preload API — exposure', () => {
   })
   it('forwards artifact calls to their channels in argument order', async () => {
     const artifacts = (api as unknown as { artifacts: Record<string, Fn> }).artifacts
-    const settings = { hostEnabled: true, port: 4010, quotaGb: 2 }
     await artifacts.list()
     await artifacts.detail('artifact')
     await artifacts.remove('artifact')
     await artifacts.openExternal('artifact', 2)
     await artifacts.openInConversation('conversation', 'artifact', 3)
-    await artifacts.status()
-    await artifacts.start()
-    await artifacts.getSettings()
-    await artifacts.setSettings(settings)
+    await artifacts.legacyList()
+    await artifacts.legacyState()
+    await artifacts.legacyMove(['artifact'])
+    await artifacts.legacyStop()
+    await artifacts.legacyDelete()
     expect(invokeSpy.mock.calls).toEqual([
       ['artifacts:list'],
       ['artifacts:detail', 'artifact'],
       ['artifacts:delete', 'artifact'],
       ['artifacts:open-external', 'artifact', 2],
       ['artifacts:open-in-conversation', 'conversation', 'artifact', 3],
-      ['artifacts:status'],
-      ['artifacts:start'],
-      ['artifacts:settings-get'],
-      ['artifacts:settings-set', settings],
+      ['artifacts:legacy-list'],
+      ['artifacts:legacy-state'],
+      ['artifacts:legacy-move', ['artifact']],
+      ['artifacts:legacy-stop'],
+      ['artifacts:legacy-delete', undefined],
     ])
     for (const [subscribe, channel] of [
       ['onChanged', 'artifacts:changed'],
-      ['onStatus', 'artifacts:status'],
+      ['onLegacyState', 'artifacts:legacy-state'],
     ] as const) {
       const off = artifacts[subscribe](vi.fn()) as () => void
       expect(onSpy).toHaveBeenLastCalledWith(channel, expect.any(Function))

@@ -2,9 +2,9 @@
 
 An artifact is a web page (HTML, CSS, JavaScript, and assets) that an agent
 publishes for you. Every change creates a new version, and earlier versions are
-kept. Maestrly serves artifacts from this computer while the app is open, or
-from your paired bot server while that server is running. An artifact is private
-until you [share](#sharing) it.
+kept. Artifacts are hosted on your [bot server](#hosting), so they stay
+available while that server runs, even when this computer sleeps. An artifact is
+private until you [share](#sharing) it.
 
 ## Asking for an artifact
 
@@ -25,6 +25,10 @@ edit and send. The agent uses these tools:
 | `artifact_comments` | Reads the [comments](#comments) people left: each thread with the passage it quotes or the element it was placed on, its version, its author, and its replies. Open threads by default. |
 | `artifact_comment_reply` | Replies to a thread on your behalf. The reply is shown as written by your agent. |
 | `artifact_comment_resolve` | Marks a thread as resolved. |
+
+Publishing needs a bot server with artifact hosting on. Without one, the tools
+tell the agent that a server is missing, and it asks you to connect one instead
+of publishing the page some other way. Nothing is published on this computer.
 
 Reading, listing, and reading comments never ask for permission. Publishing,
 updating, opening, replying, and resolving follow the conversation's permission
@@ -51,11 +55,13 @@ publication card in the desktop opens the external viewer.
   of which opens in your browser. From a card or its details you can also go to
   an available conversation, share the artifact, or delete it.
 
-The center combines local and server artifacts. Use **Host** to choose **All
-hosts**, **This computer**, or **Bot server**. Server cards identify their bot
-or show **Other computer** when another paired device published them. Owner
-management is available from the desktop; agent access remains scoped to the
-publishing device and project or conversation, or to the owning bot.
+The center lists the server's artifacts and shows the server's state next to
+its title. Cards name their bot, or show **Other computer** when another paired
+device published them. Every paired desktop manages all of the server's
+artifacts; agent access remains scoped to the publishing device and project or
+conversation, or to the owning bot. When the server is missing, unreachable, too
+old, or has hosting off, the center says so instead of listing artifacts, and
+offers the fix. Nothing is deleted in those cases.
 
 The page opens in a viewer. Its top bar shows the title and who published it,
 the version on screen (step back and forth, or choose one from a list that shows
@@ -71,87 +77,108 @@ address bar immediately.
 ### Previews
 
 After each publication, Maestrly renders the new version in a hidden window on
-this computer and keeps an image of it as the card's preview, without comments.
-Until then, and if
-a page never finishes loading, the card shows an outline instead. Rendering runs
-the page's scripts and loads what it loads, including libraries and fonts from
-the allowed CDNs, even if you never open the page yourself.
-
-For server artifacts, the desktop also queues a missing preview when it first
-lists that version in the center. Rendering takes place on your computer when
-the viewer is reachable, not in the gateway. This can run a remote page and
-contact its allowed CDNs before you explicitly open it.
+this computer, through its connection to the server, and stores an image of it
+on the server as the card's preview, without comments. The desktop also queues a
+missing preview when it first lists a version in the center, such as one a bot
+published. Until then, and if a page never finishes loading, the card shows an
+outline instead. Rendering takes place on your computer, not in the gateway: it
+runs the page's scripts and loads what it loads, including libraries and fonts
+from the allowed CDNs, even if you never open the page yourself.
 
 ## Hosting
 
-### This computer
+Artifacts live on your [bot server](bot-fleet.md#artifact-hosting); the desktop
+does not host them. Configure hosting in **Settings → Artifacts**.
 
-The artifact host runs in a separate process and listens only on
-`127.0.0.1`, on the port set in **Settings → Artifacts** (4010 by default). It
-starts when an agent publishes or when you open an artifact, and at launch when
-artifacts exist. The Artifacts center shows the host's state next to its title.
-When the host cannot run, the center says why instead of listing artifacts, and
-offers the fix: turn hosting on, choose another port if the port is in use, or
-restart the host after repeated failures. Nothing is deleted in those cases.
-Turning hosting off stops the host: agents cannot publish, and existing artifacts
-do not open until you turn it on again.
+Without a bot server, that page offers to set one up on this computer, with
+Docker, or on a server that stays on. The setup opens with **Artifacts only**
+chosen, so it downloads only the gateway image; the bot runtime downloads when
+you create your first bot. **I already have a server configured** pairs this
+computer with an existing server instead.
 
-The desktop host never listens on another network interface. For other people to reach a
-shared artifact, you expose the host yourself and tell Maestrly the address in
-**Settings → Artifacts → Public address**: for example, the HTTPS address of
-[Tailscale Serve](https://tailscale.com/kb/1312/serve) pointed at the host's
-port. Maestrly builds shared links on that address and accepts requests sent to
-it. Without a public address, links work only on this computer.
+With a server, the page shows its state and how many artifacts it holds, and
+**Host artifacts on the bot server** turns hosting on or off. A fresh installer
+setup turns it on; existing servers start with hosting off after an upgrade.
+Turning hosting off stops publication and viewing but keeps stored data. When
+the server cannot be reached, is too old to host artifacts, or its artifact host
+stopped, the page says so and offers to try again or update the server; agents
+cannot publish until then, and nothing is published on this computer instead.
 
-### Bot server
-
-In **Settings → Artifacts → Bot server**, turn on **Host artifacts on the bot
-server**. Existing servers start with hosting off after an upgrade. A fresh
-installer setup enables it and copies only your sharing name and default link
-expiry; joining an existing server preserves its settings.
-
-Use **Copy from this computer** to copy those two values later, or edit the
-server's **Your name** and default link expiry separately. Set its storage limit
-and **Public address** independently: copying settings does not copy pages,
-public addresses, or storage limits. The server's default storage limit is 2 GB.
-Turning hosting off stops publication and viewing but keeps stored data.
-
-Choose **Publish new artifacts to → This computer** or **Bot server** for
-publications from desktop conversations. Changing this does not move existing
-artifacts; updates go to the host that already owns them. If the chosen server
-is off, unsupported, or unreachable, publication fails with a host error; it
-never silently publishes on this computer instead.
+The same page sets the server's **Public address** (see
+[Reach the server from another device](#reach-the-server-from-another-device)),
+**Your name** as shown to the people you share with, the default link expiry,
+and the storage limit (2 GB by default). Each field is saved on the server when
+you leave it.
 
 In a bot's settings, turn **Publish artifacts** on or off. Newly created bots
 default to the server's hosting setting; existing bots keep this permission off
 when upgraded. Both server hosting and the bot's permission must be on. Turning
 the bot's permission off preserves its existing pages.
 
-You can install a server for artifacts alone, without downloading the bot
-runtime image. See [bot server setup](bot-fleet.md#artifact-hosting) for ports,
-updates, and adding a first bot. Server pages remain available while your
-computer sleeps, as long as the server and the visitor's network route run.
-Unpairing the desktop leaves the server running. Explicitly removing the server
-and its data deletes its artifacts too.
+See [bot server setup](bot-fleet.md#artifact-hosting) for ports, updates, and
+adding a first bot. Server pages remain available while your computer sleeps, as
+long as the server and the visitor's network route run. Unpairing the desktop
+leaves the server running. Explicitly removing the server and its data deletes
+its artifacts too.
+
+### Artifacts from earlier versions
+
+Earlier versions hosted artifacts on this computer, under `artifacts/` in the
+application profile. After upgrading they stay there untouched, but they no
+longer open or receive new versions, and agents are told why. **Settings →
+Artifacts** lists them, with their size, and the Artifacts center reminds you
+while any remain. Choose one of:
+
+- **Move to the server**: copies each artifact with its ID, versions, comments,
+  and previews, so cards in earlier conversations and agents keep reaching the
+  same artifact. An artifact leaves this computer only after its copy on the
+  server was read back and matches. Shared artifacts become private: the people,
+  devices, personal links, access requests, access code, and recent activity are
+  not moved, so the links you sent stop working; share them again from the
+  Artifacts center. Comments keep their author names. If hosting is off, it is
+  turned on first, and the move needs room under the server's storage limit;
+  otherwise it offers **Raise the limit**. You can stop after the current
+  artifact. If the move fails or the app quits, what has not moved stays on this
+  computer, and moving again picks up from there. Once nothing is left, the
+  `artifacts/` folder is removed.
+- **Delete from this computer**: deletes them with every version and comment,
+  which cannot be undone. What is on the server does not change.
+
+Moving needs a bot server that hosts artifacts and can be reached; until then,
+you can still delete them.
 
 ### Reach the server from another device
 
-Set up external access yourself; Maestrly does not install or configure
-Tailscale or discover a public address. For example, on an installed VPS with
-Tailscale already configured, expose its loopback artifact port to your tailnet:
+The gateway serves the artifact viewer on its own port (7443 by default), next
+to the bot API, so one route to the gateway reaches both. Set up that route
+yourself; Maestrly does not install or configure Tailscale or discover a public
+address. For example, on a server with Tailscale already configured, expose the
+gateway's loopback port to your tailnet:
 
 ```sh
-tailscale serve --bg --https=8443 http://127.0.0.1:4010
+tailscale serve --bg http://127.0.0.1:7443
 ```
 
-Use the HTTPS address printed by the command, including `:8443`, as the server's
-**Public address**. This separate HTTPS port avoids replacing a gateway service
-on 443. Substitute your configured artifact port if it differs from 4010. See
-[Tailscale Serve commands](https://tailscale.com/docs/reference/tailscale-cli/serve)
-for setup and syntax. Serve provides access within your tailnet; a shared link
-alone does not grant network access. Keep Docker's published port on loopback.
-An SSH tunnel lets your paired desktop open pages but does not give visitors a
-route to them. Server sharing requires a configured public address.
+Use the HTTPS address printed by the command as the server's **Public address**,
+for example `https://my-server.example.ts.net`. The artifact host accepts only
+loopback addresses and its public address, so pages open through that route only
+when the two match. Maestrly also builds shared links on it. Your paired
+desktops keep opening pages through their own connection to the gateway, which
+already follows the SSH tunnel to a VPS.
+
+Serve provides access within your tailnet; a shared link alone does not grant
+network access. [Tailscale Funnel](https://tailscale.com/docs/reference/tailscale-cli/funnel)
+publishes the same route to the internet instead, including the gateway's bot
+API and pairing, which still require a paired device's token or a one-use code.
+See [Tailscale Serve commands](https://tailscale.com/docs/reference/tailscale-cli/serve)
+for setup and syntax. Keep Docker's published ports on loopback. Server sharing
+requires a configured public address.
+
+The separate artifact port (4010 inside Docker) stays available for older
+desktops. A gateway that predates serving the viewer on its own port answers
+only there: update the server, or keep a route such as
+`tailscale serve --bg --https=8443 http://127.0.0.1:4010` with its address as
+the **Public address**.
 
 ## Isolation
 
@@ -172,7 +199,7 @@ version for its preview.
 
 ## Storage and limits
 
-Local artifacts are stored under `artifacts/` in the application profile, separately
+Artifacts are stored under `/data/artifacts/` in the gateway volume, separately
 from conversations: deleting a conversation keeps its artifacts. A version holds
 up to 500 files, 10 MiB per file and 50 MiB in total, and an artifact keeps up to
 200 versions. The storage limit (2 GB by default) is set in **Settings →
@@ -181,9 +208,9 @@ of it. Files are stored once, however many versions or artifacts share them, so
 deleting an artifact frees only what no other artifact uses. Previews are stored
 with the artifact and count toward the limit.
 
-Server artifacts use `/data/artifacts/` in the gateway volume and have their own
-storage limit. Desktop export and reset cover only local artifacts; back up
-server data separately.
+Desktop export and reset do not cover the server's artifacts; back up server
+data separately. They cover only what [earlier versions](#artifacts-from-earlier-versions)
+left on this computer.
 
 Deleting an artifact removes all of its versions and files, and its links stop
 working. See [Local data and recovery](local-data.md#artifacts) for export and
@@ -199,9 +226,8 @@ reset.
 | **People you invite** | Each person opens it with a personal link, or asks for access and waits for your approval. |
 | **Anyone with the link** | Whoever has the link opens it as a guest, until the link expires. Invited people keep their access. |
 
-Local links work while Maestrly is open and this computer is awake; server
-links work while the server runs. Other people need a route to the
-[public address](#hosting) you set for the corresponding host.
+Links work while the server runs. Other people need a route to the
+[public address](#reach-the-server-from-another-device) you set for the server.
 
 ### Personal links
 

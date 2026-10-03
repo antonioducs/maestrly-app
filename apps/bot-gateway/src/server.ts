@@ -1,4 +1,5 @@
 import { artifactRoute } from './artifact-routes.js'
+import { isArtifactViewerRequest, viewerUnavailable } from './artifact-viewer-proxy.js'
 import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { FleetNetwork } from './network.js'
@@ -125,6 +126,13 @@ export function createGatewayServers(ctx: GatewayContext) {
           : network.insideFleet(req.socket.remoteAddress)
       )
         throw new GatewayError('FORBIDDEN', 'Network access forbidden')
+      // The artifact viewer shares the public port. Its host checks Host, Origin, sessions and capabilities itself,
+      // and its writes must carry the viewer's Origin; the fleet API below still refuses any Origin.
+      if (!internal && isArtifactViewerRequest(req.url ?? '/')) {
+        if (ctx.artifacts) await ctx.artifacts.serveViewer(req, res)
+        else viewerUnavailable(res)
+        return
+      }
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const url = new URL(req.url ?? '/', 'http://gateway')
       const match = matchRoute(internal ? FLEET_INTERNAL_ROUTES : FLEET_GATEWAY_ROUTES, req.method ?? '', url.pathname)

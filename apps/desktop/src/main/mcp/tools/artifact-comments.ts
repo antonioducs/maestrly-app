@@ -85,7 +85,7 @@ export function registerArtifactCommentTools(
   resolveService: () => ArtifactsService = getArtifactsService
 ): void {
   const { server, convId, t } = ctx
-  const failure = artifactToolFailure(t, resolveService)
+  const failure = artifactToolFailure(t)
 
   server.registerTool(
     'artifact_comments',

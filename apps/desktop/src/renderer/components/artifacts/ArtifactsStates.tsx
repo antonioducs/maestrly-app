@@ -3,14 +3,15 @@ import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowUpCircle,
   BarChart3,
   FileText,
-  HardDrive,
   LayoutTemplate,
   Loader2,
   Plug,
   Power,
   RotateCw,
+  Server,
   Wrench,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -157,72 +158,58 @@ export function EmptyState({
   )
 }
 
+/** Why the list cannot show, from the bot server's state, with the way out of it. Nothing is ever deleted here. */
 export function UnavailableState({
   reason,
-  port,
   busy,
   onEnable,
   onRetry,
-  onChangePort,
   onOpenSettings,
 }: {
   reason: UnavailableReason
-  port: number
   busy: boolean
   onEnable: () => void
   onRetry: () => void
-  onChangePort: () => void
   onOpenSettings: () => void
 }) {
   const { t } = useTranslation('ui')
   const view = {
-    disabled: { icon: <Power />, tone: 'plain' as const },
-    port_in_use: { icon: <Plug />, tone: 'warn' as const },
-    crashed: { icon: <AlertTriangle />, tone: 'bad' as const },
-    storage: { icon: <HardDrive />, tone: 'bad' as const },
-    stopped: { icon: <Power />, tone: 'plain' as const },
+    absent: { icon: <Server />, tone: 'plain' as const },
+    unsupported: { icon: <ArrowUpCircle />, tone: 'warn' as const },
+    unreachable: { icon: <Plug />, tone: 'bad' as const },
+    off: { icon: <Power />, tone: 'plain' as const },
+    problem: { icon: <AlertTriangle />, tone: 'bad' as const },
   }[reason]
   const spinner = busy ? <Loader2 className="size-3.5 animate-spin" /> : null
-  const settings = (
-    <Button variant="ghost" onClick={onOpenSettings}>
-      {t('artifacts.unavailable.settings')}
+  const settings = (primary: boolean, label = t('artifacts.unavailable.settings')) => (
+    <Button variant={primary ? 'default' : 'ghost'} onClick={onOpenSettings}>
+      {label}
     </Button>
   )
   return (
     <div className="artifact-state is-entering" role="alert" data-testid="artifacts-unavailable" data-reason={reason}>
       <StackIllustration muted mark={<Mark tone={view.tone}>{view.icon}</Mark>} />
       <h2 className="mb-2 mt-[26px] text-[19px] font-semibold tracking-tight text-foreground">
-        {t(`artifacts.unavailable.${reason}.title`, { port })}
+        {t(`artifacts.unavailable.${reason}.title`)}
       </h2>
-      <p className="text-[13.5px] text-muted-foreground">
-        {t(`artifacts.unavailable.${reason}.text`)} {t('artifacts.unavailable.kept')}
-      </p>
+      <p className="text-[13.5px] text-muted-foreground">{t(`artifacts.unavailable.${reason}.text`)}</p>
       <div className="mt-[18px] flex flex-wrap justify-center gap-2">
-        {reason === 'disabled' && (
+        {reason === 'absent' && settings(true, t('artifacts.unavailable.setUp'))}
+        {reason === 'unsupported' && settings(true, t('artifacts.unavailable.update'))}
+        {reason === 'off' && (
           <>
             <Button onClick={onEnable} disabled={busy}>
               {spinner ?? <Power className="size-3.5" />} {t('artifacts.unavailable.enable')}
             </Button>
-            {settings}
+            {settings(false)}
           </>
         )}
-        {reason === 'port_in_use' && (
-          <>
-            <Button onClick={onChangePort} disabled={busy}>
-              {t('artifacts.unavailable.changePort')}
-            </Button>
-            <Button variant="outline" onClick={onRetry} disabled={busy}>
-              {spinner ?? <RotateCw className="size-3.5" />} {t('artifacts.unavailable.retry')}
-            </Button>
-          </>
-        )}
-        {(reason === 'crashed' || reason === 'storage' || reason === 'stopped') && (
+        {(reason === 'unreachable' || reason === 'problem') && (
           <>
             <Button onClick={onRetry} disabled={busy}>
-              {spinner ?? <RotateCw className="size-3.5" />}{' '}
-              {reason === 'storage' ? t('artifacts.unavailable.retry') : t('artifacts.unavailable.restart')}
+              {spinner ?? <RotateCw className="size-3.5" />} {t('artifacts.unavailable.retry')}
             </Button>
-            {settings}
+            {settings(false)}
           </>
         )}
       </div>

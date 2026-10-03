@@ -61,6 +61,10 @@ export const FLEET_FILE_LIMITS = {
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 
 export const FLEET_ARTIFACTS_FEATURE = 'artifacts'
+/** The gateway also serves the artifact viewer on its public port, so one address reaches bots and artifacts. */
+export const FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE = 'artifacts-gateway-viewer'
+/** A paired device can move an artifact in with its ID, history and comments (`exportArtifact`, `importArtifact`). */
+export const FLEET_ARTIFACTS_TRANSFER_FEATURE = 'artifacts-transfer'
 /** JSON body limit for artifact uploads, including base64 encoding. */
 export const FLEET_ARTIFACT_BODY_MAX = 72 * 1024 * 1024
 

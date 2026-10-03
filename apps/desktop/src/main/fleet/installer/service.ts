@@ -8,6 +8,7 @@ import { app } from 'electron'
 import {
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_PORTS,
   FLEET_PROTOCOL_VERSION,
 } from '@maestrly/bot-fleet-protocol'
 import {
@@ -30,7 +31,6 @@ import {
   type LocalDockerCheck,
 } from '../../../shared/fleet-installer'
 import { compareSemver } from '../../../shared/update'
-import { getArtifactSettings } from '../../artifacts/settings'
 import { broadcast } from '../../window-ipc'
 import { fleetClientService, type FleetClientService } from '../client/service'
 import { DockerHost, lastLine } from './docker-host'
@@ -87,7 +87,6 @@ export interface FleetInstallerDeps {
   env: NodeJS.ProcessEnv
   /** Read when used: the app sets its data directory after modules load. */
   userDataDir: () => string
-  desktopArtifactSettings?: () => { ownerName: string; linkExpiryDays: number | null }
   desktopArtifactsPort: () => number
   hostname: string
   timezone: string | undefined
@@ -578,8 +577,7 @@ export class FleetInstallerService {
   private async initializeArtifacts(): Promise<void> {
     if (!this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) return
     try {
-      const settings = this.deps.desktopArtifactSettings?.() ?? { ownerName: '', linkExpiryDays: null }
-      await this.deps.fleet.call('artifactHostPatch', { body: { enabled: true, ...settings } })
+      await this.deps.fleet.call('artifactHostPatch', { body: { enabled: true } })
     } catch {
       if (this.job) this.job.warning = 'artifacts-enable-failed'
       this.emit()
@@ -1076,11 +1074,8 @@ export const fleetInstallerService = new FleetInstallerService({
   isPackaged: app.isPackaged,
   env: process.env,
   userDataDir: () => app.getPath('userData'),
-  desktopArtifactsPort: () => getArtifactSettings().port,
-  desktopArtifactSettings: () => {
-    const { ownerName, linkExpiryDays } = getArtifactSettings()
-    return { ownerName, linkExpiryDays }
-  },
+  // Earlier versions hosted artifacts here on 4010; a server installed on this computer keeps clear of it.
+  desktopArtifactsPort: () => FLEET_PORTS.artifacts,
   hostname: os.hostname(),
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   localRunner,

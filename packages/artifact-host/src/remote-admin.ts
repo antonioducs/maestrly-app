@@ -3,7 +3,14 @@ import { ArtifactHostError, type SerializedArtifactError } from './errors.js'
 import { ADMIN_METHODS, type AdminMethod, serializeAdminError } from './rpc.js'
 
 export type AdminResult = { ok: true; value: unknown } | { ok: false; error: SerializedArtifactError }
-export const UPLOAD_METHODS = ['create', 'update', 'setThumbnail'] as const satisfies readonly AdminMethod[]
+/** Calls that carry file bytes or a whole artifact's manifest, and so need the larger upload body limit. */
+export const UPLOAD_METHODS = [
+  'create',
+  'update',
+  'setThumbnail',
+  'putBlobs',
+  'importArtifact',
+] as const satisfies readonly AdminMethod[]
 
 const MAX_DEPTH = 16
 const invalid = (message: string) => new ArtifactHostError('invalid_input', message)

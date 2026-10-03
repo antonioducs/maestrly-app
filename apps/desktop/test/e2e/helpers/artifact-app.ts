@@ -2,11 +2,11 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { createServer, type Server, type ServerResponse } from 'node:http'
-import { createServer as createNetServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron as electron, type ElectronApplication, expect, type Page } from '@playwright/test'
+import { FakeGateway } from './fake-bot-server'
 import { removeTempDirEventually } from './temp-cleanup'
 
 const desktop = fileURLToPath(new URL('../../..', import.meta.url))
@@ -25,8 +25,12 @@ export type ModelReply = { call: { id: string; name: string; args: unknown } } |
 export interface ArtifactApp {
   app: ElectronApplication
   page: Page
-  /** The loopback port of the artifact host. */
+  /** The paired bot server, with a real artifact host behind its gateway port. */
+  gateway: FakeGateway
+  /** The gateway's loopback port, which also serves the artifact viewer. */
   port: number
+  /** The isolated profile, where earlier versions kept artifacts in `artifacts/`. */
+  profile: string
   conversationId: string
   requests: ModelRequest[]
   api(name: string, ...args: unknown[]): Promise<any>
@@ -39,25 +43,26 @@ export interface ArtifactApp {
   close(): Promise<void>
 }
 
-async function freePort(): Promise<number> {
-  const server = createNetServer()
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const { port } = server.address() as { port: number }
-  await new Promise((resolve) => server.close(resolve))
-  return port
-}
-
 /**
- * Launches the built app on an isolated profile with a project conversation whose model is scripted by `respond`,
- * with Maestrly tools on and the artifact host on a free port. Agents then publish through the real tool path.
+ * Launches the built app on an isolated profile with a project conversation whose model is scripted by `respond`, with
+ * Maestrly tools on. Artifacts are hosted on a bot server: a fake gateway with a real artifact host, paired and with
+ * hosting on unless `server` is false. Agents then publish through the real tool path. `prepare` runs before launch,
+ * with the profile directory, to leave what earlier versions kept on this computer.
  */
 export async function launchArtifactApp(options: {
   name: string
   locale?: string
+  /** Pairs a bot server with artifact hosting on; true by default. */
+  server?: boolean
+  prepare?: (profile: string) => Promise<void>
   respond: (request: ModelRequest) => ModelReply
 }): Promise<ArtifactApp> {
   await access(path.join(desktop, 'out/main/index.js'))
   const root = mkdtempSync(path.join(os.tmpdir(), `maestrly-${options.name}-`))
+  const profile = path.join(root, 'profile')
+  mkdirSync(profile)
+  await options.prepare?.(profile)
+  const gateway = new FakeGateway('artifact-e2e-host', { artifacts: true, gatewayViewer: true, transfer: true })
   const repository = path.join(root, 'repo')
   mkdirSync(repository)
   const git = (args: string[]) => execFileSync('git', args, { cwd: repository, stdio: 'pipe' }).toString().trim()
@@ -140,6 +145,7 @@ export async function launchArtifactApp(options: {
   const close = async () => {
     await app?.close().catch(() => {})
     await new Promise((resolve) => model.close(resolve))
+    await gateway.close()
     await removeTempDirEventually(root)
   }
 
@@ -151,7 +157,7 @@ export async function launchArtifactApp(options: {
         AGENTS_E2E: '1',
         AGENTS_CHANNEL: 'dev',
         AGENTS_INSTANCE: `${options.name}-${Date.now().toString(36)}`,
-        AGENTS_USERDATA: path.join(root, 'profile'),
+        AGENTS_USERDATA: profile,
         AGENTS_LOCALE: options.locale ?? 'en',
         ELECTRON_RENDERER_URL: '',
         OPENAI_API_KEY: '',
@@ -166,14 +172,18 @@ export async function launchArtifactApp(options: {
       page.evaluate(({ name, args }) => (window as any).api.artifacts[name](...args), { name, args }) as Promise<any>
     await api('setOnboardingDone', true)
 
-    // A free port keeps parallel runs and a developer's own Maestrly from colliding on 4010.
-    const port = await freePort()
-    await artifacts('setSettings', {
-      ...(await artifacts('getSettings')),
-      hostEnabled: true,
-      port,
-      ownerName: 'Antonio',
-    })
+    // The gateway listens on a free port, so parallel runs and a developer's own servers never collide.
+    const port = await gateway.start(0)
+    if (options.server !== false) {
+      const connected = await api('fleetConnect', {
+        url: `http://127.0.0.1:${port}`,
+        code: gateway.issueCode(),
+        deviceName: 'Artifact owner',
+      })
+      expect(connected.features).toContain('artifacts')
+      await artifacts('setServerHost', { enabled: true, ownerName: 'Antonio' })
+      await expect.poll(async () => (await artifacts('serverStatus')).state).toBe('ready')
+    }
 
     const provider = await api('chatAddProvider', {
       name: 'Artifact fixture',
@@ -203,7 +213,9 @@ export async function launchArtifactApp(options: {
     return {
       app,
       page,
+      gateway,
       port,
+      profile,
       conversationId: conversation.id,
       requests,
       api,

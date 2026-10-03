@@ -5,8 +5,8 @@ import { type ArtifactHost, ArtifactHostError, openArtifactHost } from '@maestrl
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { InviteVault } from '../../src/main/artifacts/invite-vault'
 import { ArtifactsService } from '../../src/main/artifacts/service'
+import { type ArtifactSource, createDesktopSources, serverUnavailable } from '../../src/main/artifacts/sources'
 import { deleteConversation, getConversation, insertConversation } from '../../src/main/store'
-import { type ArtifactHostStatus, type ArtifactSettings, DEFAULT_ARTIFACT_SETTINGS } from '../../src/shared/artifacts'
 import type { Conversation, StandaloneConversation } from '../../src/shared/conversation'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -16,22 +16,18 @@ const page = [{ path: 'index.html', bytes: encode('<h1>Hello</h1>') }]
 
 let root: string
 let host: ArtifactHost
-let settings: ArtifactSettings
-let hostState: ArtifactHostStatus['state']
+/** The bot server's address for other people, and whether it is ready. */
+let publicAddress: string | null
+let serverReady: boolean
 function makeDeps() {
   return {
-    host: {
-      ensureStarted: vi.fn(async () => host.admin),
-      status: (): ArtifactHostStatus => ({ state: hostState, port: 4010 }),
-      stop: vi.fn(async () => {
-        hostState = 'stopped'
-      }),
-      restart: vi.fn(async () => {}),
-    },
+    serverAdmin: vi.fn(async () => {
+      if (!serverReady) throw serverUnavailable('server_unreachable')
+      return host.admin
+    }),
     openExternal: vi.fn(async (_url: string) => {}),
     openInDrawer: vi.fn((_convId: string, _url: string, _activate: boolean) => {}),
     resolveDirectory: vi.fn(async (_conversation: Conversation, relative: string) => path.join(root, relative)),
-    emitStatus: vi.fn((_status: ArtifactHostStatus) => {}),
     requestThumbnail: vi.fn((_id: string, _version: number) => {}),
   }
 }
@@ -86,9 +82,19 @@ beforeEach(async () => {
   freshDb()
   root = mkdtempSync(path.join(os.tmpdir(), 'artifacts-service-'))
   host = await openArtifactHost({ dataDir: path.join(root, 'artifacts'), port: 0, quotaBytes: 1024 * 1024 })
-  settings = { ...DEFAULT_ARTIFACT_SETTINGS }
-  hostState = 'running'
+  publicAddress = null
+  serverReady = true
   deps = makeDeps()
+  // The bot server, played by a host in this process; the computer reaches its viewer on port 4010.
+  const server: ArtifactSource = {
+    key: 'server',
+    owner: { kind: 'device', id: 'device-1' },
+    ready: () => serverReady,
+    admin: deps.serverAdmin,
+    viewerBase: () => 'http://127.0.0.1:4010',
+    publicBase: () => publicAddress,
+    linkExpiryDays: () => 30,
+  }
   const stored = new Map<string, string>()
   vault = new InviteVault({
     get: (key) => stored.get(key) ?? null,
@@ -99,20 +105,17 @@ beforeEach(async () => {
     remove: (key) => stored.delete(key),
   })
   service = new ArtifactsService({
+    sources: createDesktopSources({
+      server: () => (serverReady ? server : null),
+      unavailable: () => serverUnavailable('server_unreachable'),
+    }),
     vault,
-    host: deps.host,
-    settings: () => settings,
-    saveSettings: (input) => {
-      settings = input as ArtifactSettings
-      return settings
-    },
     getConversation,
     workspaceName: (id) => (id === 'gone' ? undefined : `Project ${id.slice(0, 4)}`),
     requestThumbnail: deps.requestThumbnail,
     resolveDirectory: deps.resolveDirectory,
     openExternal: deps.openExternal,
     openInDrawer: deps.openInDrawer,
-    emitStatus: deps.emitStatus,
   })
 })
 
@@ -129,7 +132,8 @@ describe('ArtifactsService', () => {
     const { detail, skipped } = await service.create(conversation.id, { title: 'Landing', files: page })
     expect(skipped).toEqual([])
     expect(detail).toMatchObject({
-      ownerKind: 'local',
+      ownerKind: 'device',
+      ownerId: 'device-1',
       workspaceId: workspace.id,
       conversationId: conversation.id,
       conversationTitle: 'Landing page chat',
@@ -164,7 +168,6 @@ describe('ArtifactsService', () => {
     const [item] = await service.listAll()
     expect(item).toMatchObject({
       id: detail.id,
-      host: 'local',
       visibility: 'private',
       versionCount: 1,
       conversation: { id: conversation.id, title: 'Gone soon', exists: false },
@@ -236,21 +239,6 @@ describe('ArtifactsService', () => {
     )
   })
 
-  it('applies settings to the running host', async () => {
-    await service.setSettings({ ...settings, port: 5000 })
-    expect(deps.host.restart).toHaveBeenCalledTimes(1)
-    await service.setSettings({ ...settings, ownerName: 'Antonio' })
-    expect(deps.host.restart).toHaveBeenCalledTimes(2)
-    await service.setSettings({ ...settings, publicAddress: 'https://mac.example' })
-    expect(deps.host.restart).toHaveBeenCalledTimes(3)
-    // The default link expiry only matters to the desktop.
-    await service.setSettings({ ...settings, linkExpiryDays: 7 })
-    expect(deps.host.restart).toHaveBeenCalledTimes(3)
-    await service.setSettings({ ...settings, hostEnabled: false })
-    expect(deps.host.stop).toHaveBeenCalledTimes(1)
-    expect(deps.emitStatus).toHaveBeenCalled()
-  })
-
   it('invites a person with a link it can show again', async () => {
     const conversation = makeConversation(makeWorkspace().id)
     const { detail } = await service.create(conversation.id, { title: 'Shared', files: page })
@@ -294,7 +282,7 @@ describe('ArtifactsService', () => {
   it('builds links on the public address when there is one', async () => {
     const conversation = makeConversation(makeWorkspace().id)
     const { detail } = await service.create(conversation.id, { title: 'Public', files: page })
-    settings = { ...settings, publicAddress: 'https://mac.tail1234.ts.net' }
+    publicAddress = 'https://mac.tail1234.ts.net'
     const invite = await service.createInvite(detail.id, 'Maria')
     expect(invite.link.startsWith(`https://mac.tail1234.ts.net/a/${detail.id}#i=`)).toBe(true)
     expect(await service.sharing(detail.id)).toMatchObject({
@@ -467,10 +455,11 @@ describe('ArtifactsService', () => {
     expect(all[204]?.body).toBe('#204')
   })
 
-  it('counts nothing, and starts nothing, while the host is not running', async () => {
-    hostState = 'stopped'
+  it('counts nothing, and asks nothing, while the server is not ready', async () => {
+    serverReady = false
     expect(await service.unseenCount()).toBe(0)
-    expect(deps.host.ensureStarted).not.toHaveBeenCalled()
+    expect(await service.events()).toEqual([])
+    expect(deps.serverAdmin).not.toHaveBeenCalled()
   })
 
   it('asks for a thumbnail of every version it publishes, and of listed artifacts that lack one', async () => {
@@ -535,17 +524,5 @@ describe('ArtifactsService', () => {
     expect(await service.remove(shared.detail.id)).toEqual({ removed: true, freedBytes: 0 })
     expect(await service.remove(twin.detail.id)).toEqual({ removed: true, freedBytes: 14 })
     expect(await service.remove(twin.detail.id)).toEqual({ removed: false, freedBytes: 0 })
-  })
-
-  it('reports storage use while the host runs', async () => {
-    const conversation = makeConversation(makeWorkspace().id)
-    await service.create(conversation.id, { title: 'Counted', files: page })
-    expect(await service.status()).toEqual({
-      state: 'running',
-      port: 4010,
-      artifactCount: 1,
-      storageBytes: 14,
-      quotaBytes: 1024 * 1024,
-    })
   })
 })
