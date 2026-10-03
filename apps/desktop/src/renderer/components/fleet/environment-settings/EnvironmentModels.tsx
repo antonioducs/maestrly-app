@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -41,6 +41,18 @@ function ModelsEditor({
   const [provider, setProvider] = useState('all')
   const [visibility, setVisibility] = useState('all')
   const [conflict, setConflict] = useState(false)
+  // Whoever saves or discards this draft from outside (the panel's save bar, a leave guard) goes through the same
+  // conflict handling as the section's own buttons.
+  const actions = useRef({ save: async () => false, discard: () => {} })
+  const reportDirty = useCallback<NonNullable<EnvironmentSettingsSectionProps['onDirtyChange']>>(
+    (dirty) =>
+      onDirtyChange?.(
+        dirty,
+        () => actions.current.save(),
+        () => actions.current.discard()
+      ),
+    [onDirtyChange]
+  )
   const editor = useSettingsDraft(
     Object.fromEntries(initial.providers.map((p) => [p.providerId, p.hiddenModelIds])),
     async (draft) => {
@@ -54,7 +66,7 @@ function ModelsEditor({
       }
       setCatalog(current.current)
     },
-    onDirtyChange
+    reportDirty
   )
   useEffect(() => {
     if (observed.current === initial) return
@@ -86,6 +98,8 @@ function ModelsEditor({
     editor.reset(Object.fromEntries(catalog.providers.map((p) => [p.providerId, p.hiddenModelIds])))
     setConflict(false)
   }
+  const save = async () => (conflict ? false : editor.save())
+  actions.current = { save, discard }
   const filtered = catalog.providers
     .filter((p) => provider === 'all' || p.providerId === provider)
     .map((p) => ({
@@ -184,7 +198,7 @@ function ModelsEditor({
         </div>
       ))}
       {!filtered.length && <p className="text-xs text-muted-foreground">{t('environmentSettings.empty')}</p>}
-      <SaveDiscard {...editor} discard={discard} save={async () => (conflict ? false : editor.save())} />
+      <SaveDiscard {...editor} discard={discard} save={save} />
     </SettingsPanel>
   )
 }

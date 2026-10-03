@@ -35,16 +35,30 @@ const apiCard = () =>
     .locator('div.rounded-lg')
     .filter({ hasText: /Estúdio Google AI|Estúdio principal|Second keyboard save|Saved on close/ })
     .first()
+/** The environment settings panel, open over its environment's view. */
+const sheet = () => page.getByRole('dialog', { name: /^Configurações de / })
+/** A tab of the settings panel, by its label; its name goes on to say when it has unsaved changes. */
+const tab = (name: keyof typeof sections) =>
+  sheet()
+    .getByRole('tablist', { name: 'Seções das configurações do ambiente', exact: true })
+    .getByRole('tab', { name: new RegExp(`^${sections[name]}\\b`) })
 const section = async (name: keyof typeof sections) => {
-  await page.getByRole('tab', { name: sections[name], exact: true }).click()
+  await tab(name).click()
 }
+/** The one bar that saves every section of the panel with unsaved changes. */
+const saveBar = () => sheet().getByRole('region', { name: 'Alterações não salvas', exact: true })
 async function openEnvironment(name = gateway.environments.find((environment) => environment.id === 'studio')!.name) {
+  // Another environment is reached from the sidebar, past the panel of the current one.
+  if (await sheet().isVisible()) {
+    await sheet().getByRole('button', { name: 'Fechar configurações', exact: true }).click()
+    await expect(sheet()).toBeHidden()
+  }
   await page
     .getByRole('group', { name, exact: true })
     .getByRole('button', { name: new RegExp(`^Ambiente ${name} ·`) })
     .click()
-  await page.getByRole('tab', { name: 'Configurações', exact: true }).click()
-  await expect(page.getByRole('tablist', { name: 'Seções das configurações do ambiente' })).toBeVisible()
+  await page.getByRole('button', { name: 'Configurações do ambiente', exact: true }).click()
+  await expect(sheet().getByRole('tablist', { name: 'Seções das configurações do ambiente' })).toBeVisible()
 }
 async function launch(pair = true) {
   app = await electron.launch({
@@ -110,9 +124,9 @@ test.afterEach(async () => {
 
 test('six remote sections expose shared scope and capture the real Electron renderer', async () => {
   await mkdir(captures, { recursive: true })
-  for (const [key, label] of Object.entries(sections)) {
+  for (const key of Object.keys(sections)) {
     await section(key as keyof typeof sections)
-    await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(tab(key as keyof typeof sections)).toHaveAttribute('aria-selected', 'true')
     const content = {
       accounts: 'Estúdio Google AI',
       models: 'Gemini Pro',
@@ -127,7 +141,7 @@ test('six remote sections expose shared scope and capture the real Electron rend
         .first()
     ).toBeVisible()
     await expect(
-      page.getByText('As configurações deste computador continuam separadas.', { exact: false })
+      sheet().getByText('As configurações deste computador continuam separadas.', { exact: false })
     ).toBeVisible()
     await page.screenshot({ animations: 'disabled', scale: 'css', path: path.join(captures, `real-${key}.png`) })
   }
@@ -206,6 +220,61 @@ test('six remote sections expose shared scope and capture the real Electron rend
   }
 })
 
+test('the overview sums up what the bots share and opens where each part changes', async () => {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1400, 900))
+  await sheet().getByRole('button', { name: 'Fechar configurações', exact: true }).click()
+  await expect(sheet()).toHaveCount(0)
+  const overview = page.getByRole('region', { name: 'Visão geral de Estúdio Dev', exact: true })
+  // Its bots occupy the bays of the environment; the next bay creates a bot in it.
+  await expect(overview.getByText('2 de 8 bots', { exact: true })).toBeVisible()
+  await expect(overview.getByRole('button', { name: /^Scout/ })).toBeVisible()
+  await expect(overview.getByRole('button', { name: /^Atlas/ })).toBeVisible()
+  await expect(overview.getByRole('button', { name: 'Novo bot neste ambiente', exact: true })).toBeEnabled()
+  // What every bot shares, read from the environment.
+  const tile = (label: string) => overview.getByRole('button', { name: new RegExp(`^${label}`) })
+  await expect(tile('Contas')).toContainText('2 contas')
+  await expect(tile('Contas')).toContainText('Google AI · Estúdio Google AI')
+  await expect(tile('Modelos')).toContainText('2 visíveis')
+  await expect(tile('Modelos')).toContainText('Nenhum oculto')
+  await expect(tile('Skills')).toContainText('1 skill')
+  await expect(tile('Ferramentas')).toContainText('1 servidor MCP')
+  await expect(tile('Ferramentas')).toContainText('Todos ligados')
+  await test.info().attach('environment-overview.png', {
+    body: await page.screenshot({ path: test.info().outputPath('environment-overview.png') }),
+    contentType: 'image/png',
+  })
+  // Each opens its tab of the settings panel; what changed there shows once the panel closes.
+  await tile('Modelos').click()
+  await expect(tab('models')).toHaveAttribute('aria-selected', 'true')
+  await panel()
+    .getByRole('checkbox', { name: /^Gemini Flash/ })
+    .uncheck()
+  await expect(saveBar()).toBeVisible()
+  await expect(sheet()).toHaveCSS('opacity', '1')
+  await test.info().attach('environment-settings-sheet.png', {
+    body: await page.screenshot({ path: test.info().outputPath('environment-settings-sheet.png') }),
+    contentType: 'image/png',
+  })
+  await saveBar()
+    .getByRole('button', { name: /^Salvar alterações/ })
+    .click()
+  await expect(saveBar()).toHaveCount(0)
+  await sheet().getByRole('button', { name: 'Fechar configurações', exact: true }).click()
+  await expect(tile('Modelos')).toContainText('1 visível')
+  await expect(tile('Modelos')).toContainText('1 oculto de 2')
+  // Archiving lives in the panel's last tab, and asks first.
+  await page.getByRole('button', { name: 'Configurações do ambiente', exact: true }).click()
+  await sheet().getByRole('tab', { name: 'Arquivar', exact: true }).click()
+  await sheet().getByRole('button', { name: 'Arquivar Estúdio Dev', exact: true }).click()
+  const confirm = page.getByRole('dialog', { name: 'Arquivar ambiente?', exact: true })
+  await expect(confirm).toContainText('Scout')
+  await expect(confirm).toContainText('Atlas')
+  await confirm.getByRole('button', { name: 'Cancelar', exact: true }).click()
+  await expect(confirm).toHaveCount(0)
+  await expect(sheet()).toBeVisible()
+  expect(gateway.requests.filter((request) => request.key === 'environmentArchive')).toEqual([])
+})
+
 test('account edits omit unchanged secrets, cancel removal, and preserve state on failures and conflicts', async () => {
   await apiCard().getByRole('button', { name: 'Editar', exact: true }).click()
   await expect(panel().getByLabel('Nova chave de API')).toHaveValue('')
@@ -240,8 +309,10 @@ test('account edits omit unchanged secrets, cancel removal, and preserve state o
   await expect(panel().getByText('Estúdio principal', { exact: false })).toBeVisible()
   expect(gateway.requests.filter((r) => r.key === 'settingsPatchAccount').at(-1)!.body).not.toHaveProperty('apiKey')
   await apiCard().getByRole('button', { name: 'Remover', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText('Scout, Atlas')
-  await page.getByRole('dialog').getByRole('button', { name: 'Cancelar', exact: true }).click()
+  // The confirmation opens over the settings panel.
+  const removal = page.getByRole('dialog', { name: 'Remover', exact: true })
+  await expect(removal).toContainText('Scout, Atlas')
+  await removal.getByRole('button', { name: 'Cancelar', exact: true }).click()
   expect(gateway.requests.filter((r) => r.key === 'settingsRemoveAccount')).toHaveLength(0)
   await apiCard().getByRole('button', { name: 'Editar', exact: true }).click()
   await panel().getByLabel('Nome', { exact: true }).fill('Stale rename')
@@ -251,35 +322,45 @@ test('account edits omit unchanged secrets, cancel removal, and preserve state o
   expect(gateway.states.get('studio')!.accounts.apiKeys[0].name).toBe('Estúdio principal')
   await panel().getByRole('button', { name: 'Descartar', exact: true }).click()
   await apiCard().getByRole('button', { name: 'Remover', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: 'Remover', exact: true }).click()
+  await removal.getByRole('button', { name: 'Remover', exact: true }).click()
   await expect(panel().getByText('Estúdio principal', { exact: false })).toHaveCount(0)
   expect(gateway.states.get('research')!.accounts.apiKeys[0].name).toBe('Radar Google AI')
 })
 
-test('model visibility saves, discards, and guards navigation without losing active usage', async () => {
+test('model visibility drafts survive other tabs, save from one bar, and guard leaving the panel', async () => {
   await section('models')
   const model = panel().getByRole('checkbox', { name: /^Gemini Pro/ })
   await expect(model).toBeChecked()
   await model.uncheck()
+  // Another tab keeps the draft: no question, the tab says it has unsaved changes and the bar names it.
   await section('skills')
   const guard = page.getByRole('dialog', { name: 'Salvar antes de sair?' })
-  await expect(guard).toBeVisible()
-  await guard.getByRole('button', { name: 'Continuar editando' }).click()
-  await panel().getByRole('button', { name: 'Descartar', exact: true }).click()
+  await expect(guard).toHaveCount(0)
+  await expect(tab('models')).toHaveAccessibleName(/^Modelos\s*, alterações não salvas$/)
+  await saveBar().getByRole('button', { name: 'Modelos', exact: true }).click()
+  await expect(tab('models')).toHaveAttribute('aria-selected', 'true')
+  await expect(model).not.toBeChecked()
+  await saveBar().getByRole('button', { name: 'Descartar', exact: true }).click()
   await expect(model).toBeChecked()
+  await expect(saveBar()).toHaveCount(0)
   await model.uncheck()
-  await panel().getByRole('button', { name: 'Salvar alterações' }).click()
+  await section('accounts')
+  await saveBar()
+    .getByRole('button', { name: /^Salvar alterações/ })
+    .click()
   await expect.poll(() => gateway.states.get('studio')!.models.providers[0].hiddenModelIds).toEqual(['gemini-pro'])
+  await expect(saveBar()).toHaveCount(0)
+  await section('models')
   await expect(panel().getByText('Em uso por Scout, Atlas')).toBeVisible()
   expect(gateway.bots.find((bot) => bot.id === 'scout')!.selection?.modelId).toBe('gemini-pro')
   expect(gateway.requests.filter((r) => r.key === 'botPatch')).toEqual([])
+  // Leaving the panel with a draft asks first; outside it, a press closes it.
   await model.check()
-  await page
-    .getByRole('group', { name: 'Pesquisa Radar', exact: true })
-    .getByRole('button', { name: /^Ambiente/ })
-    .click()
+  await page.mouse.click(10, 400)
   await expect(guard).toBeVisible()
+  await expect(guard).toContainText('Modelos')
   await guard.getByRole('button', { name: 'Descartar e sair' }).click()
+  await expect(sheet()).toHaveCount(0)
   await openEnvironment('Pesquisa Radar')
   await section('models')
   await expect(panel().getByText('Radar Google AI')).toBeVisible()
@@ -319,15 +400,17 @@ test('MCP editors never reveal secrets and fixture connection results stay bound
   }
 })
 
-test('compaction drafts are guarded and a shared default survives revisiting settings', async () => {
+test('a compaction draft survives other tabs and a shared default survives revisiting settings', async () => {
   await section('preferences')
   await panel().getByRole('button', { name: 'Modelo de compactação', exact: true }).click()
   await page.getByRole('option', { name: /Gemini Flash/ }).click()
+  // The section's own buttons give way to the panel's bar.
+  await expect(panel().getByRole('button', { name: 'Salvar padrão' })).toHaveCount(0)
   await section('accounts')
-  const guard = page.getByRole('dialog', { name: 'Salvar antes de sair?' })
-  await expect(guard).toBeVisible()
-  await guard.getByRole('button', { name: 'Salvar e continuar', exact: true }).click()
-  await expect(guard).not.toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Salvar antes de sair?' })).toHaveCount(0)
+  await expect(tab('preferences')).toHaveAccessibleName(/alterações não salvas$/)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s')
+  await expect(saveBar()).toHaveCount(0)
   expect(gateway.environments.find((environment) => environment.id === 'studio')!.compaction?.modelId).toBe(
     'gemini-flash'
   )
@@ -356,7 +439,9 @@ test('runtime actions poll and cancel remotely; preferences survive relaunch and
   await panel().getByRole('button', { name: 'Cancelar', exact: true }).click()
   await section('preferences')
   await panel().getByRole('switch', { name: 'Geração de imagens', exact: true }).click()
-  await panel().getByRole('button', { name: 'Salvar alterações', exact: true }).first().click()
+  await saveBar()
+    .getByRole('button', { name: /^Salvar alterações/ })
+    .click()
   await expect.poll(() => gateway.states.get('studio')!.preferences.imageGenEnabled).toBe(false)
   await app.close()
   await launch(false)
@@ -368,7 +453,7 @@ test('runtime actions poll and cancel remotely; preferences survive relaunch and
 test('closing the app with an unsaved draft is never blocked', async () => {
   await section('preferences')
   await panel().getByRole('switch', { name: 'Geração de imagens', exact: true }).click()
-  await expect(panel().getByRole('button', { name: 'Salvar alterações', exact: true }).first()).toBeEnabled()
+  await expect(saveBar().getByRole('button', { name: /^Salvar alterações/ })).toBeEnabled()
   // A beforeunload guard would cancel the window close silently, so quitting would hang.
   await Promise.race([
     app.close(),
@@ -377,10 +462,12 @@ test('closing the app with an unsaved draft is never blocked', async () => {
 })
 
 test('switching environments drops delayed responses and old images cannot write settings', async () => {
+  // The overview already read the models for its summary; the delay applies to the panel's own read.
+  const reads = gateway.requests.filter((r) => r.key === 'settingsModels').length
   gateway.controls.delayNext = 'settingsModels'
   gateway.controls.delayMs = 1500
   await section('models')
-  await expect.poll(() => gateway.requests.filter((r) => r.key === 'settingsModels').length).toBe(1)
+  await expect.poll(() => gateway.requests.filter((r) => r.key === 'settingsModels').length).toBe(reads + 1)
   await openEnvironment('Pesquisa Radar')
   await section('models')
   await expect(panel().getByText('Radar Google AI')).toBeVisible()
@@ -391,7 +478,7 @@ test('switching environments drops delayed responses and old images cannot write
   environment.capabilities = ['environments', 'provisioning']
   gateway.emit({ type: 'environment.updated', at: new Date().toISOString(), environment })
   await expect(
-    page.getByText('Reinicie este ambiente com a imagem atualizada para configurá-lo pelo app.')
+    sheet().getByText('Reinicie este ambiente com a imagem atualizada para configurá-lo pelo app.')
   ).toBeVisible()
   const writes = gateway.requests.filter((r) => r.key.startsWith('settings') && Object.keys(r.body).length).length
   await expect(page.getByRole('checkbox')).toHaveCount(0)
@@ -467,7 +554,7 @@ test('offline gateway retains remote scope and blocks writes without local fallb
   const before = gateway.requests.length
   gateway.disconnect()
   await expect(
-    page.getByText('Sem conexão. As últimas configurações continuam visíveis; reconecte para editar.')
+    sheet().getByText('Sem conexão. As últimas configurações continuam visíveis; reconecte para editar.')
   ).toBeVisible()
   await expect(panel()).toHaveAttribute('inert', '')
   await expect(panel().getByRole('switch', { name: 'Geração de imagens', exact: true })).toBeChecked()
@@ -482,7 +569,7 @@ test('gateway without settings capability offers an update and makes no settings
   gateway.controls.capable = false
   gateway.requests.length = 0
   await launch(false)
-  await expect(page.getByText('Atualize o servidor dos bots para configurar este ambiente pelo app.')).toBeVisible()
+  await expect(sheet().getByText('Atualize o servidor dos bots para configurar este ambiente pelo app.')).toBeVisible()
   for (const key of Object.keys(sections)) await section(key as keyof typeof sections)
   expect(gateway.requests.filter((r) => r.key.startsWith('settings'))).toEqual([])
 })

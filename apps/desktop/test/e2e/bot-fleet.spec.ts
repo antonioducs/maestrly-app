@@ -3059,7 +3059,13 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .poll(() => requests.find((item) => item.key === 'environmentUiOpen'))
       .toMatchObject({ path: '/v1/environments/acme/ui/open', body: { target: 'skills' } })
     await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Tela', exact: true })).toHaveAttribute('aria-selected', 'true')
+    // The environment's screen opens beside its overview.
+    await expect(page.getByRole('region', { name: 'Tela de Acme', exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Visão geral de Acme', exact: true })).toBeVisible()
+    await test.info().attach('environment-screen.png', {
+      body: await page.screenshot({ path: test.info().outputPath('environment-screen.png') }),
+      contentType: 'image/png',
+    })
     await expect
       .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
       .toEqual({ mode: 'view' })
@@ -3080,6 +3086,16 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
       .toEqual({ mode: 'control' })
     expect(requests.filter((item) => ['botTakeover', 'botUiOpen'].includes(item.key))).toHaveLength(0)
+    // Closing the screen ends its control and leaves the overview; the header opens it again, to watch.
+    const environmentScreen = page.getByRole('region', { name: 'Tela de Acme', exact: true })
+    await environmentScreen.getByRole('button', { name: 'Fechar tela', exact: true }).click()
+    await expect(environmentScreen).toBeHidden()
+    await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
+    await expect(environmentScreen).toBeVisible()
+    await expect(environmentScreen.getByRole('button', { name: 'Assumir controle', exact: true })).toBeVisible()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'view' })
 
     // On the unified desktop a bot has one screen, its apps: nothing to choose, and the bar says who is in control.
     await group('Acme').getByRole('button', { name: /Scout/ }).click()
@@ -3151,8 +3167,12 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(page.getByRole('row').filter({ hasText: 'Scout' })).toContainText('—')
 
     // Archiving an environment archives its bots with it; restoring brings them back.
+    // Archiving is the last tab of the environment's settings.
     await header('Home').click()
-    await page.getByRole('button', { name: 'Arquivar Home' }).click()
+    await page.getByRole('button', { name: 'Configurações do ambiente', exact: true }).click()
+    const homeSettings = page.getByRole('dialog', { name: 'Configurações de Home', exact: true })
+    await homeSettings.getByRole('tab', { name: 'Arquivar', exact: true }).click()
+    await homeSettings.getByRole('button', { name: 'Arquivar Home' }).click()
     const archiveEnvironment = page.getByRole('dialog', { name: 'Arquivar ambiente?' })
     await expect(archiveEnvironment).toContainText('Diary')
     await archiveEnvironment.getByRole('button', { name: 'Arquivar' }).click()
@@ -3219,7 +3239,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
 
     // The environment waits for its bots; the owner can cancel, schedule again, or update now.
     await header('Acme').click()
-    const lifecycle = page.getByRole('region', { name: 'Iniciar e parar', exact: true })
+    const lifecycle = page.getByRole('region', { name: 'Atualização', exact: true })
     await expect(lifecycle.getByText('Atualização agendada', { exact: true })).toBeVisible()
     await lifecycle.getByRole('button', { name: 'Cancelar atualização' }).click()
     await expect
@@ -3311,7 +3331,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(claudeRow).toContainText('Verificando…')
     await expect(check).toBeDisabled()
     await header('Home').click()
-    await expect(page.getByRole('region', { name: 'Iniciar e parar', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Runtimes dos modelos', exact: true })).toHaveCount(0)
   } finally {
     await app?.close()
@@ -3688,10 +3708,10 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await expect(
       page.getByText('Reinicie este ambiente para atualizá-lo antes de fazer login na tela dele.')
     ).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Abrir tela do ambiente' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Novo bot neste ambiente' })).toBeDisabled()
     await expect(page.getByText('Reinicie este ambiente para atualizá-lo antes de adicionar bots.')).toBeVisible()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    // Its screen still opens, to say why it shows nothing yet.
+    await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
     await expect(page.getByText('Reinicie este ambiente para atualizá-lo antes de abrir esta tela.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Assumir controle' })).toBeDisabled()
     expect(environmentTickets('legacy')).toEqual([])
@@ -3748,7 +3768,7 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     // Another Mac takes the shared display between this Mac's control ticket and its use: this Mac watches instead
     // of retrying control, and says why.
     await header('Acme').click()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
     await expect.poll(() => environmentTickets('acme')).toEqual([{ mode: 'view' }])
     await page.getByRole('button', { name: 'Assumir controle' }).click()
     await expect(

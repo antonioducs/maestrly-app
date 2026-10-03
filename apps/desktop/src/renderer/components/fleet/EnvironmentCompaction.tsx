@@ -18,7 +18,7 @@ import { contextLimitAvailability, environmentCompactionAvailability } from '@/l
 import { formatNames } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import type { EnvironmentSettingsSectionProps } from './environment-settings/shared'
+import { useOwnSaveButtons, type EnvironmentSettingsSectionProps } from './environment-settings/shared'
 import { CompactionFields } from './CompactionFields'
 
 /**
@@ -39,6 +39,8 @@ export function EnvironmentCompaction({
   onDirtyChange?: EnvironmentSettingsSectionProps['onDirtyChange']
 }) {
   const { t, i18n } = useTranslation('fleet')
+  // In the environment settings panel its bar saves this section with the others.
+  const ownButtons = useOwnSaveButtons() || !onDirtyChange
   const availability = environmentCompactionAvailability(fleet, environment)
   const ready = availability === 'ready'
   const contextLimit = contextLimitAvailability(fleet, environment)
@@ -168,10 +170,12 @@ export function EnvironmentCompaction({
             <p className="text-xs text-muted-foreground">{t('environment.compaction.noModels')}</p>
           )}
           <div className="flex items-center gap-3">
-            <Button size="sm" disabled={!value || !dirty || busy} onClick={() => void save()}>
-              {t('environment.compaction.save')}
-            </Button>
-            {onDirtyChange && (
+            {ownButtons && (
+              <Button size="sm" disabled={!value || !dirty || busy} onClick={() => void save()}>
+                {t('environment.compaction.save')}
+              </Button>
+            )}
+            {ownButtons && onDirtyChange && (
               <Button size="sm" variant="ghost" disabled={!dirty || busy} onClick={discard}>
                 {t('environmentSettings.discard')}
               </Button>

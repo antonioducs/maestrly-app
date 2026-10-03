@@ -1,29 +1,10 @@
-import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Boxes, Clock } from 'lucide-react'
-import {
-  FLEET_ENVIRONMENT_LIMITS,
-  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
-  type FleetBot,
-  type FleetEnvironment,
-} from '@maestrly/bot-fleet-protocol'
+import { Boxes, Monitor, Play, RotateCcw, Settings, Square } from 'lucide-react'
+import { FLEET_ENVIRONMENT_SETTINGS_FEATURE, type FleetBot, type FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-
 import { fleetErrorText } from '@/lib/fleet/errors'
-import {
-  createKeyWatcher,
-  environmentBots,
-  environmentUpdateAvailable,
-  formatNames,
-  memoryLimitChoices,
-  memoryLimitFromValue,
-  memoryLimitValue,
-  type ProvisioningSubject,
-} from '@/lib/fleet/environments'
-import { gb } from '@/lib/fleet/format'
-import { formatUptime } from '@/lib/fleet/forms'
+import { createKeyWatcher, environmentBots, type ProvisioningSubject } from '@/lib/fleet/environments'
 import {
   environmentJoinAvailability,
   environmentJoinHint,
@@ -32,186 +13,400 @@ import {
   provisioningAvailability,
   useFleetProvisioning,
 } from '@/lib/fleet/provisioning'
-import { environmentUpdateState, updateBlockers } from '@/lib/fleet/updates'
+import { useEnvironmentWorkspaceLayout } from '@/lib/fleet/use-bot-workspace-layout'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
+import { cn } from '@/lib/utils'
 import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
+import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { EnvironmentCompaction } from './EnvironmentCompaction'
+import { EnvironmentConfirm, type EnvironmentConfirmKind } from './EnvironmentConfirm'
+import { EnvironmentRack } from './EnvironmentRack'
+import { EnvironmentResources } from './EnvironmentResources'
 import { EnvironmentRuntimes } from './EnvironmentRuntimes'
-import { EnvironmentSettings } from './EnvironmentSettings'
 import { EnvironmentScreen } from './EnvironmentScreen'
+import { EnvironmentSettingsSheet } from './EnvironmentSettings'
+import { EnvironmentSharedSummary } from './EnvironmentSharedSummary'
+import { EnvironmentUpdateNotice } from './EnvironmentUpdateNotice'
+import { SplitWorkspace } from './SplitWorkspace'
+import type { EnvironmentSettingsSection } from './environment-settings/sections'
 
-const tabs = ['overview', 'screen', 'settings'] as const
-/** `update` restarts on a gateway that cannot schedule updates; `updateNow` forces a scheduled one. */
-type Confirm = 'restart' | 'update' | 'updateNow' | 'stop' | 'archive'
-
-/** An environment: its bots, the accounts, skills and MCP servers they share, its screen and its lifecycle. */
-export function EnvironmentView({
-  environment,
-  view,
-  fleet,
-  onView,
-  onOpenBot,
-  onCreateBot,
-}: {
+type EnvironmentViewProps = {
   environment: FleetEnvironment
   view: Extract<FleetView, { kind: 'environment' }>
   fleet: FleetController
   onView: (view: FleetView) => void
   onOpenBot: (id: string) => void
   onCreateBot: (environmentId: string) => void
-}) {
-  const { t } = useTranslation('fleet')
-  const tab = view.tab
-  const setTab = (next: typeof tab) => {
-    if (next !== tab) onView({ kind: 'environment', environmentId: environment.id, tab: next })
-  }
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const index = tabs.indexOf(tab)
-    const next =
-      event.key === 'ArrowRight'
-        ? tabs[(index + 1) % tabs.length]
-        : event.key === 'ArrowLeft'
-          ? tabs[(index + tabs.length - 1) % tabs.length]
-          : event.key === 'Home'
-            ? tabs[0]
-            : event.key === 'End'
-              ? tabs[tabs.length - 1]
-              : null
-    if (!next) return
-    event.preventDefault()
-    setTab(next)
-    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#fleet-environment-tab-${next}`)?.focus()
-  }
-  const host = fleet.state.snapshot.host?.hostname
+}
+
+export function EnvironmentView(props: EnvironmentViewProps) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b border-border px-5 py-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-elevated text-muted-foreground">
-            <Boxes className="size-4" aria-hidden="true" />
-          </span>
-          <div className="min-w-0 shrink-0">
-            <h1 className="truncate text-sm font-semibold">{environment.name}</h1>
-            <p className="max-w-40 truncate text-xs text-muted-foreground">
-              {t('environment.label')} · {t('environment.botCount', { count: environment.botIds.length })}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => onView({ kind: 'server' })}
-            className="max-w-36 truncate rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-            title={host ?? t('view.server')}
-          >
-            {host ?? t('view.server')}
-          </button>
-          <div
-            role="tablist"
-            aria-label={t('environment.views')}
-            className="flex min-w-0 items-center gap-1 rounded-lg border border-border p-0.5"
-          >
-            {tabs.map((name) => (
-              <button
-                key={name}
-                id={`fleet-environment-tab-${name}`}
-                type="button"
-                role="tab"
-                aria-selected={tab === name}
-                tabIndex={tab === name ? 0 : -1}
-                aria-controls={`fleet-environment-panel-${name}`}
-                onClick={() => setTab(name)}
-                onKeyDown={onKeyDown}
-                className={`rounded-md px-3 py-1.5 text-xs focus-visible:ring-2 focus-visible:ring-ring ${tab === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                {name === 'overview'
-                  ? t('environment.overview')
-                  : name === 'screen'
-                    ? t('environment.screen')
-                    : t('environmentSettingsShell.tab')}
-              </button>
-            ))}
-          </div>
-          <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
-            {t(`environment.lifecycle.${environment.lifecycle}`)}
-          </span>
-        </div>
-      </header>
+    <EnvironmentViewContent key={JSON.stringify([props.fleet.state.connection.url, props.environment.id])} {...props} />
+  )
+}
+
+/** The dot before an environment's state: running, on its way, or at rest. */
+function lifecycleDot(lifecycle: FleetEnvironment['lifecycle']): string {
+  return lifecycle === 'running'
+    ? 'bg-status-ready'
+    : lifecycle === 'failed'
+      ? 'bg-destructive'
+      : lifecycle === 'stopped' || lifecycle === 'archived'
+        ? 'bg-muted-foreground'
+        : 'bg-amber-400 animate-pulse motion-reduce:animate-none'
+}
+
+/**
+ * An environment, laid out as a bot is: its overview (its bots, what they share, its resources) beside its screen,
+ * each under its own header, and its settings in a panel over both. The `screen` destination opens the screen,
+ * `settings` opens the panel on a section, and `overview` only closes that panel.
+ */
+function EnvironmentViewContent({ environment, view, fleet, onView, onOpenBot, onCreateBot }: EnvironmentViewProps) {
+  const { t } = useTranslation('fleet')
+  const layout = useEnvironmentWorkspaceLayout(
+    fleet.state.connection.url,
+    environment.id,
+    view.tab === 'screen' ? 'split' : 'chat'
+  )
+  const { openComputer, closeComputer, showPane } = layout
+  useEffect(() => {
+    if (view.tab === 'screen') openComputer()
+  }, [view.tab, openComputer])
+  const settingsOpen = view.tab === 'settings'
+  const environmentView = (
+    tab: 'overview' | 'screen' | 'settings',
+    section?: EnvironmentSettingsSection
+  ): FleetView => ({
+    kind: 'environment',
+    environmentId: environment.id,
+    tab,
+    ...(section ? { section } : {}),
+  })
+  const showScreen = () => {
+    openComputer()
+    onView(environmentView('screen'))
+  }
+  const hideScreen = () => {
+    closeComputer()
+    onView(environmentView('overview'))
+  }
+  // What the overview sums up is read again once the settings panel closes, with what changed there.
+  const [summaryRevision, setSummaryRevision] = useState(0)
+  const closeSettings = () => {
+    setSummaryRevision((value) => value + 1)
+    onView(environmentView('overview'))
+  }
+  const openSettings = (section?: EnvironmentSettingsSection) => onView(environmentView('settings', section))
+  const onShowPane = (pane: BotPane) => (pane === 'computer' ? showScreen() : showPane('chat'))
+  const activePane: BotPane = layout.showChat ? 'chat' : 'computer'
+  const [confirm, setConfirm] = useState<EnvironmentConfirmKind | null>(null)
+  const archived = () => onView({ kind: 'server' })
+  return (
+    <div data-environment-view className="flex min-h-0 min-w-0 flex-1 flex-col bg-chat-canvas">
       {fleet.actionError?.environmentId === environment.id && (
         <p role="alert" className="px-5 py-2 text-xs text-destructive">
           {fleetErrorText(fleet.actionError.message, t)}
         </p>
       )}
-      <div
-        id={`fleet-environment-panel-${tab}`}
-        role="tabpanel"
-        aria-labelledby={`fleet-environment-tab-${tab}`}
-        className="flex min-h-0 flex-1 flex-col"
+      <SplitWorkspace
+        layout={layout}
+        primaryId="fleet-environment-overview"
+        labels={{
+          primary: t('environment.overviewRegion', { name: environment.name }),
+          secondary: t('environment.screenRegion', { name: environment.name }),
+          resize: t('environment.resize'),
+        }}
+        attributes={{ 'data-environment-workspace': environment.id }}
+        primary={
+          <>
+            <EnvironmentHeader
+              environment={environment}
+              fleet={fleet}
+              narrow={layout.narrow}
+              activePane={activePane}
+              screenOpen={layout.mode !== 'chat'}
+              onShowPane={onShowPane}
+              onOpenScreen={showScreen}
+              onOpenSettings={() => openSettings()}
+              onOpenServer={() => onView({ kind: 'server' })}
+              onConfirm={setConfirm}
+            />
+            <EnvironmentOverview
+              environment={environment}
+              fleet={fleet}
+              summaryRevision={summaryRevision}
+              onOpenBot={onOpenBot}
+              onCreateBot={() => onCreateBot(environment.id)}
+              onOpenScreen={showScreen}
+              onOpenSettings={openSettings}
+              onOpenInbox={() => onView({ kind: 'inbox' })}
+              onConfirm={setConfirm}
+            />
+          </>
+        }
+        secondary={
+          layout.computerOpened ? (
+            <EnvironmentScreen
+              environment={environment}
+              fleet={fleet}
+              streaming={layout.mode !== 'chat'}
+              // The panel covers the screen: it keeps streaming, but takes no input meanwhile.
+              visible={layout.showComputer && !settingsOpen}
+              maximized={layout.mode === 'computer'}
+              narrow={layout.narrow}
+              activePane={activePane}
+              onShowPane={onShowPane}
+              onMaximize={layout.maximize}
+              onRestore={layout.restore}
+              onClose={hideScreen}
+            />
+          ) : null
+        }
+      />
+      {settingsOpen && (
+        <EnvironmentSettingsSheet
+          environment={environment}
+          fleet={fleet}
+          section={view.section}
+          onClose={closeSettings}
+          onOpenScreen={() => {
+            setSummaryRevision((value) => value + 1)
+            showScreen()
+          }}
+          onOpenBot={onOpenBot}
+          onArchived={archived}
+        />
+      )}
+      {confirm && (
+        <EnvironmentConfirm
+          kind={confirm}
+          environment={environment}
+          fleet={fleet}
+          onCancel={() => setConfirm(null)}
+          onDone={(kind) => {
+            setConfirm(null)
+            if (kind === 'archive') archived()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The overview's header: the environment and how it is doing, on which server, and what can be done with it — start,
+ * restart or stop it with every bot in it, change its settings, and open its screen while that is closed.
+ */
+function EnvironmentHeader({
+  environment,
+  fleet,
+  narrow,
+  activePane,
+  screenOpen,
+  onShowPane,
+  onOpenScreen,
+  onOpenSettings,
+  onOpenServer,
+  onConfirm,
+}: {
+  environment: FleetEnvironment
+  fleet: FleetController
+  narrow: boolean
+  activePane: BotPane
+  screenOpen: boolean
+  onShowPane: (pane: BotPane) => void
+  onOpenScreen: () => void
+  onOpenSettings: () => void
+  onOpenServer: () => void
+  onConfirm: (kind: EnvironmentConfirmKind) => void
+}) {
+  const { t } = useTranslation('fleet')
+  const host = fleet.state.snapshot.host?.hostname ?? t('view.server')
+  const running = environment.lifecycle === 'running'
+  const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
+  const quiet = 'h-[30px] text-muted-foreground hover:text-foreground'
+  return (
+    <header className="@container flex h-[52px] shrink-0 items-center gap-2.5 pl-4 pr-3">
+      <span
+        aria-hidden="true"
+        className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] border border-border-strong bg-white/[0.04] text-foreground/75"
       >
-        {tab === 'overview' ? (
-          <EnvironmentOverview
-            key={environment.id}
-            environment={environment}
-            fleet={fleet}
-            onOpenBot={onOpenBot}
-            onCreateBot={onCreateBot}
-            onOpenScreen={() => setTab('screen')}
-            onOpenInbox={() => onView({ kind: 'inbox' })}
-            onOpenSettings={() => setTab('settings')}
-            onArchived={() => onView({ kind: 'server' })}
+        <Boxes className="size-4" />
+      </span>
+      <div className="min-w-0 overflow-hidden">
+        <h1 className="truncate text-sm font-semibold leading-tight">{environment.name}</h1>
+        <p className="mt-px flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11.5px] text-muted-foreground">
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-foreground/75">
+            <span aria-hidden="true" className={cn('size-1.5 rounded-full', lifecycleDot(environment.lifecycle))} />
+            {t(`environment.lifecycle.${environment.lifecycle}`)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            onClick={onOpenServer}
+            title={host}
+            className="min-w-0 max-w-36 truncate rounded-sm hover:text-foreground hover:underline hover:underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {host}
+          </button>
+        </p>
+      </div>
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {narrow && (
+          <BotPaneSwitch
+            active={activePane}
+            onChange={onShowPane}
+            labels={{
+              group: t('workspace.panes'),
+              chat: t('environment.overview'),
+              computer: t('environment.screen'),
+            }}
           />
-        ) : tab === 'settings' ? (
-          <EnvironmentSettings
-            key={environment.id}
-            environment={environment}
-            fleet={fleet}
-            section={view.section}
-            onSection={(section) =>
-              onView({ kind: 'environment', environmentId: environment.id, tab: 'settings', section })
-            }
-            onOpenScreen={() => setTab('screen')}
-            onOpenBot={onOpenBot}
-          />
+        )}
+        {stopped ? (
+          <Button size="sm" className="h-[30px]" onClick={() => void fleet.environmentAction(environment.id, 'start')}>
+            <Play className="size-3.5" />
+            {t('environment.start')}
+          </Button>
         ) : (
-          <EnvironmentScreen key={environment.id} environment={environment} fleet={fleet} />
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              className={quiet}
+              disabled={!running}
+              aria-label={t('environment.restart')}
+              title={t('environment.restart')}
+              onClick={() => onConfirm('restart')}
+            >
+              <RotateCcw className="size-3.5" />
+              <span className="hidden @lg:inline">{t('environment.restartButton')}</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className={quiet}
+              disabled={!running}
+              aria-label={t('environment.stop')}
+              title={t('environment.stop')}
+              onClick={() => onConfirm('stop')}
+            >
+              <Square className="size-3.5" />
+              <span className="hidden @lg:inline">{t('environment.stopButton')}</span>
+            </Button>
+          </>
+        )}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-[30px] text-muted-foreground hover:text-foreground"
+          aria-label={t('environmentSettingsShell.title')}
+          title={t('environmentSettingsShell.title')}
+          onClick={onOpenSettings}
+        >
+          <Settings />
+        </Button>
+        {!screenOpen && !narrow && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-[30px]"
+            aria-label={t('environment.openScreen')}
+            title={t('environment.openScreen')}
+            onClick={onOpenScreen}
+          >
+            <Monitor className="size-3.5" />
+            {t('environment.screen')}
+          </Button>
         )}
       </div>
-    </div>
+    </header>
   )
 }
 
 function EnvironmentOverview({
   environment,
   fleet,
+  summaryRevision,
   onOpenBot,
   onCreateBot,
   onOpenScreen,
-  onOpenInbox,
   onOpenSettings,
-  onArchived,
+  onOpenInbox,
+  onConfirm,
 }: {
   environment: FleetEnvironment
   fleet: FleetController
+  summaryRevision: number
   onOpenBot: (id: string) => void
-  onCreateBot: (environmentId: string) => void
+  onCreateBot: () => void
   onOpenScreen: () => void
+  onOpenSettings: (section?: EnvironmentSettingsSection) => void
   onOpenInbox: () => void
-  onOpenSettings: () => void
-  onArchived: () => void
+  onConfirm: (kind: EnvironmentConfirmKind) => void
 }) {
-  const { t, i18n } = useTranslation('fleet')
+  const { t } = useTranslation('fleet')
   const bots = environmentBots(environment, fleet.state.snapshot.bots)
   const modernSettings =
     fleet.state.connection.features.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE) &&
     environment.capabilities.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
-  const running = environment.lifecycle === 'running'
-  const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
-  const availability = provisioningAvailability(fleet, environment)
-  const lists = useFleetProvisioning(
-    { environmentId: environment.id },
-    !modernSettings && availability === 'ready' && running
+  const join = environmentJoinAvailability(fleet, environment)
+  const joinHint = join === 'ready' ? null : environmentJoinHint(join)
+  return (
+    <div className="@container min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-[880px] flex-col gap-[34px] px-7 pb-12 pt-2.5 @max-lg:px-[18px]">
+        <EnvironmentUpdateNotice
+          environment={environment}
+          fleet={fleet}
+          onConfirm={onConfirm}
+          onOpenInbox={onOpenInbox}
+        />
+        <EnvironmentRack
+          bots={bots}
+          joinHint={joinHint ? t(joinHint.key, joinHint.values) : null}
+          onOpenBot={onOpenBot}
+          onCreateBot={onCreateBot}
+        />
+        {modernSettings ? (
+          <EnvironmentSharedSummary
+            key={summaryRevision}
+            environment={environment}
+            fleet={fleet}
+            bots={bots}
+            onOpenSettings={onOpenSettings}
+            onOpenScreen={onOpenScreen}
+          />
+        ) : (
+          <LegacySharedSetup environment={environment} fleet={fleet} bots={bots} onOpenScreen={onOpenScreen} />
+        )}
+        <EnvironmentResources environment={environment} fleet={fleet} />
+      </div>
+    </div>
   )
+}
+
+/**
+ * What the bots share, as a gateway or an image without app-managed environment settings offers it: the environment's
+ * accounts, skills, MCP servers and default compaction model, managed in place, and the runtimes it reports.
+ */
+function LegacySharedSetup({
+  environment,
+  fleet,
+  bots,
+  onOpenScreen,
+}: {
+  environment: FleetEnvironment
+  fleet: FleetController
+  bots: FleetBot[]
+  onOpenScreen: () => void
+}) {
+  const { t } = useTranslation('fleet')
+  const running = environment.lifecycle === 'running'
+  const availability = provisioningAvailability(fleet, environment)
+  const lists = useFleetProvisioning({ environmentId: environment.id }, availability === 'ready' && running)
   // The shared lists reload when the environment's Maestrly or its bots' accounts change, never on resource samples.
   const listsKey = environmentProvisioningKey(environment, fleet.state.snapshot.bots)
   const [listsChanged] = useState(() => createKeyWatcher(listsKey))
@@ -223,39 +418,10 @@ function EnvironmentOverview({
     name: environment.name,
     running,
   }
-  const join = environmentJoinAvailability(fleet, environment)
-  const joinHint = join === 'ready' ? null : environmentJoinHint(join)
   // An image from before environments has no environment screen: its settings open in its bot's browser area.
   const oldImage = environmentScreenAvailability(environment) === 'restart-environment'
-  const host = fleet.state.snapshot.host
-  const update = environmentUpdateAvailable(environment, host)
-  // A gateway that schedules updates reports them; an older one only restarts, as before.
-  const schedulable = environment.update !== null
-  const updateState = environmentUpdateState(environment, host)
-  const blockers = updateBlockers(environment, fleet.state.snapshot.bots)
-  const pendingSince = environment.update?.pendingSince ?? null
-  const names =
-    formatNames(
-      bots.map((bot) => bot.name),
-      i18n.language
-    ) || t('environment.noBotsNamed')
-  const blockerNames = formatNames(
-    blockers.map((bot) => bot.name),
-    i18n.language
-  )
-  const [confirm, setConfirm] = useState<Confirm | null>(null)
-  // Stable: the dialog refocuses on a new callback, and this view re-renders with every resource sample.
-  const cancelConfirm = useCallback(() => setConfirm(null), [])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
   const [screenBusy, setScreenBusy] = useState(false)
   const [screenError, setScreenError] = useState('')
-  const [limitBusy, setLimitBusy] = useState(false)
-  const [limitSaved, setLimitSaved] = useState(false)
-  const [limitError, setLimitError] = useState('')
-  const { memoryBytes, cpuPercent, startedAt } = environment.resources
-  const uptime = startedAt ? formatUptime(Date.now() - Date.parse(startedAt)) : null
-
   async function logInOnScreen() {
     setScreenBusy(true)
     setScreenError('')
@@ -268,364 +434,57 @@ function EnvironmentOverview({
       setScreenBusy(false)
     }
   }
-  async function saveLimit(value: string) {
-    if (limitBusy) return
-    setLimitBusy(true)
-    setLimitSaved(false)
-    setLimitError('')
-    try {
-      const updated = await window.api.fleetPatchEnvironment(environment.id, {
-        memoryLimitBytes: memoryLimitFromValue(value),
-      })
-      fleet.dispatch({
-        type: 'event',
-        value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
-      })
-      setLimitSaved(true)
-    } catch (cause) {
-      setLimitError(fleetErrorText(cause, t))
-    } finally {
-      setLimitBusy(false)
-    }
-  }
-  async function confirmAction() {
-    if (!confirm || busy) return
-    setBusy(true)
-    setError('')
-    try {
-      // On a gateway that cannot schedule updates, updating is a restart: the environment comes back on the image the
-      // server offers. Updating now does the same through the update route, which also drops a waiting update.
-      const updated =
-        confirm === 'updateNow'
-          ? await window.api.fleetEnvironmentUpdate(environment.id, 'now')
-          : await window.api.fleetEnvironmentAction(environment.id, confirm === 'update' ? 'restart' : confirm)
-      fleet.dispatch({
-        type: 'event',
-        value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
-      })
-      setConfirm(null)
-      if (confirm === 'archive') onArchived()
-    } catch (cause) {
-      setError(fleetErrorText(cause, t))
-    } finally {
-      setBusy(false)
-    }
-  }
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto p-6">
-      <div className="mx-auto max-w-3xl space-y-8">
-        <section className="space-y-3" aria-labelledby="fleet-environment-bots">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 id="fleet-environment-bots" className="font-semibold">
-              {t('environment.bots')}
-            </h2>
-            <span className="text-xs text-muted-foreground">
-              {t('environment.capacity', {
-                count: environment.botIds.length,
-                max: FLEET_ENVIRONMENT_LIMITS.botsMax,
-              })}
-            </span>
-          </div>
-          {bots.length ? (
-            <ul className="divide-y divide-border rounded-lg border border-border bg-surface-elevated">
-              {bots.map((bot) => (
-                <li key={bot.id}>
-                  <BotRow bot={bot} onOpen={() => onOpenBot(bot.id)} />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-muted-foreground">{t('environment.noBots')}</p>
-          )}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" disabled={join !== 'ready'} onClick={() => onCreateBot(environment.id)}>
-              {t('environment.newBotHere')}
-            </Button>
-            {joinHint && <p className="text-xs text-muted-foreground">{t(joinHint.key, joinHint.values)}</p>}
-          </div>
-          <p className="text-xs text-muted-foreground">{t('environment.sharedNote')}</p>
-        </section>
-        {modernSettings ? (
-          <section className="space-y-3 border-t border-border pt-6">
-            <h2 className="font-semibold">{t('environmentSettingsShell.title')}</h2>
-            <p className="text-xs text-muted-foreground">{t('environmentSettingsShell.overviewLink')}</p>
-            <Button size="sm" variant="outline" onClick={onOpenSettings}>
-              {t('environmentSettingsShell.open')}
-            </Button>
-          </section>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-6">
-              <p className="text-xs text-muted-foreground">{t('environment.sharedConfig')}</p>
-              <Button size="sm" variant="ghost" disabled={availability !== 'ready' || !running} onClick={lists.refresh}>
-                {t('environment.refresh')}
-              </Button>
-            </div>
-            <BotAccountsSection
-              key={environment.id}
-              subject={subject}
-              lists={lists}
-              availability={availability}
-              onChanged={fleet.refresh}
-            >
-              <ApiKeyAccountForm
-                target={subject.target}
-                onAdded={async () => {
-                  lists.refresh()
-                  await fleet.refresh()
-                }}
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={screenBusy || !running || oldImage}
-                onClick={() => void logInOnScreen()}
-              >
-                {t('environment.loginOnScreen')}
-              </Button>
-              {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
-              {screenError && (
-                <p role="alert" className="text-xs text-destructive">
-                  {screenError}
-                </p>
-              )}
-            </BotAccountsSection>
-            <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
-            <EnvironmentCompaction
-              key={`compaction-${environment.id}`}
-              environment={environment}
-              bots={bots}
-              fleet={fleet}
-              optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
-            />
-          </>
-        )}
-        <section className="space-y-2" aria-labelledby="fleet-environment-screen">
-          <h2 id="fleet-environment-screen" className="font-semibold">
-            {t('environment.screenTitle')}
+    <section aria-labelledby="fleet-environment-shared" className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 id="fleet-environment-shared" className="text-[15px] font-semibold">
+            {t('environment.sharedTitle')}
           </h2>
-          <p className="text-xs text-muted-foreground">{t('environment.screenDescription')}</p>
-          <Button size="sm" variant="outline" disabled={oldImage} onClick={onOpenScreen}>
-            {t('environment.openScreen')}
-          </Button>
-          {oldImage && <p className="text-xs text-muted-foreground">{t('screen.restartEnvironment')}</p>}
-        </section>
-        <section className="space-y-3" aria-labelledby="fleet-environment-resources">
-          <h2 id="fleet-environment-resources" className="font-semibold">
-            {t('environment.resources')}
-          </h2>
-          <p className="rounded-lg border border-border p-4 text-sm">
-            {t('server.memory')} {memoryBytes === null ? '—' : `${gb(memoryBytes)} GB`} · {t('server.cpu')}{' '}
-            {cpuPercent === null ? '—' : `${Math.round(cpuPercent)}%`} · {t('server.uptime')}{' '}
-            {uptime ? t(uptime.long ? 'server.uptimeDays' : 'server.uptimeValue', uptime) : '—'}
-            {environment.appVersion && ` · ${t('environment.version', { version: environment.appVersion })}`}
-          </p>
-          <div>
-            <label className="mb-2 block text-sm font-medium" htmlFor="fleet-environment-memory-limit">
-              {t('environment.memoryLimit')}
-            </label>
-            <div className="flex items-center gap-3">
-              <Select
-                value={memoryLimitValue(environment.memoryLimitBytes)}
-                disabled={limitBusy}
-                onValueChange={(value) => void saveLimit(value)}
-              >
-                <SelectTrigger
-                  id="fleet-environment-memory-limit"
-                  aria-label={t('environment.memoryLimit')}
-                  className="w-48"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {memoryLimitChoices(environment.memoryLimitBytes).map((choice) => (
-                    <SelectItem key={choice.value} value={choice.value}>
-                      {choice.gb === null
-                        ? t('environment.memoryLimitDefault')
-                        : t('environment.memoryLimitValue', { value: choice.gb })}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {limitSaved && (
-                <span role="status" className="text-xs text-primary">
-                  {t('environment.saved')}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">{t('environment.memoryLimitNote')}</p>
-            {limitError && (
-              <p role="alert" className="mt-1 text-xs text-destructive">
-                {limitError}
-              </p>
-            )}
-          </div>
-        </section>
-        {!modernSettings && <EnvironmentRuntimes environment={environment} fleet={fleet} />}
-        <section className="space-y-3" aria-labelledby="fleet-environment-lifecycle">
-          <h2 id="fleet-environment-lifecycle" className="font-semibold">
-            {t('environment.lifecycleTitle')}
-          </h2>
-          <p className="text-xs text-muted-foreground">{t('environment.lifecycleNote')}</p>
-          <div className="flex flex-wrap gap-2">
-            {stopped ? (
-              <Button size="sm" onClick={() => void fleet.environmentAction(environment.id, 'start')}>
-                {t('environment.start')}
-              </Button>
-            ) : (
-              <>
-                <Button size="sm" variant="outline" disabled={!running} onClick={() => setConfirm('restart')}>
-                  {t('environment.restart')}
-                </Button>
-                {schedulable
-                  ? updateState === 'available' && (
-                      // Nothing is interrupted: the update waits for the environment's bots on the server.
-                      <Button size="sm" onClick={() => void fleet.updateEnvironment(environment.id, 'idle')}>
-                        {t('environment.update')}
-                      </Button>
-                    )
-                  : update && (
-                      <Button size="sm" disabled={!running} onClick={() => setConfirm('update')}>
-                        {t('environment.update')}
-                      </Button>
-                    )}
-                <Button size="sm" variant="outline" disabled={!running} onClick={() => setConfirm('stop')}>
-                  {t('environment.stop')}
-                </Button>
-              </>
-            )}
-          </div>
-          {(updateState === 'available' || updateState === 'next-start') && host?.botImageVersion && (
-            <p className="text-xs text-muted-foreground">
-              {t('environment.updateAvailable', { version: host.botImageVersion })}
-            </p>
-          )}
-          {updateState === 'next-start' && <p className="text-xs text-muted-foreground">{t('updates.nextStart')}</p>}
-          {updateState === 'pending' && (
-            <div role="status" className="space-y-2 rounded-lg border border-border bg-surface-elevated p-3 text-sm">
-              <p className="flex items-center gap-2 font-medium">
-                <Clock aria-hidden="true" className="size-4 shrink-0 text-primary" />
-                {t('updates.pendingTitle')}
-              </p>
-              <p className="text-xs text-muted-foreground">{t('updates.pendingNote')}</p>
-              {pendingSince && (
-                <p className="text-xs text-muted-foreground">
-                  {t('updates.waitingSince', {
-                    time: new Date(pendingSince).toLocaleTimeString(i18n.language, {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    }),
-                  })}
-                </p>
-              )}
-              {blockers.length > 0 && (
-                <ul className="space-y-1 text-xs">
-                  {blockers.map((bot) => (
-                    <li key={bot.id} className="flex flex-wrap items-center gap-2">
-                      <span>{t(`updates.busy.${bot.status}`, { name: bot.name })}</span>
-                      {bot.status === 'waiting' && (
-                        <button
-                          type="button"
-                          onClick={onOpenInbox}
-                          className="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          {t('sidebar.awaiting')}
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => setConfirm('updateNow')}>
-                  {t('updates.updateNow')}
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => void fleet.cancelEnvironmentUpdate(environment.id)}>
-                  {t('updates.cancel')}
-                </Button>
-              </div>
-            </div>
-          )}
-        </section>
-        <section className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">
-          <p className="text-xs text-muted-foreground">{t('environment.archiveNote')}</p>
-          <Button variant="destructive" size="sm" onClick={() => setConfirm('archive')}>
-            {t('environment.archive', { name: environment.name })}
-          </Button>
-        </section>
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
+          <p className="text-xs text-muted-foreground">{t('environment.sharedConfig')}</p>
+        </div>
+        <Button size="sm" variant="ghost" disabled={availability !== 'ready' || !running} onClick={lists.refresh}>
+          {t('environment.refresh')}
+        </Button>
       </div>
-      {confirm && (
-        <ConfirmDialog
-          title={
-            confirm === 'restart'
-              ? t('environment.confirmRestartTitle', { name: environment.name })
-              : confirm === 'update'
-                ? t('environment.confirmUpdateTitle', { name: environment.name })
-                : confirm === 'updateNow'
-                  ? t('updates.confirmNowTitle', { name: environment.name })
-                  : confirm === 'stop'
-                    ? t('environment.confirmStopTitle', { name: environment.name })
-                    : t('environment.confirmArchiveTitle')
-          }
-          message={
-            confirm === 'restart'
-              ? t('environment.confirmRestart', { bots: names })
-              : confirm === 'update'
-                ? t('environment.confirmUpdate', { bots: names })
-                : confirm === 'updateNow'
-                  ? blockers.length
-                    ? t('updates.confirmNow', { bots: blockerNames, count: blockers.length })
-                    : t('updates.confirmNowIdle', { bots: names })
-                  : confirm === 'stop'
-                    ? t('environment.confirmStop', { bots: names })
-                    : t('environment.confirmArchive', { bots: names })
-          }
-          confirmLabel={
-            confirm === 'restart'
-              ? t('environment.restartButton')
-              : confirm === 'update'
-                ? t('environment.updateButton')
-                : confirm === 'updateNow'
-                  ? t('updates.updateNow')
-                  : confirm === 'stop'
-                    ? t('environment.stopButton')
-                    : t('environment.archiveButton')
-          }
-          destructive={confirm === 'archive' || confirm === 'stop' || (confirm === 'updateNow' && blockers.length > 0)}
-          busy={busy}
-          onCancel={cancelConfirm}
-          onConfirm={() => void confirmAction()}
-        />
-      )}
-    </section>
-  )
-}
-
-function BotRow({ bot, onOpen }: { bot: FleetBot; onOpen: () => void }) {
-  const { t } = useTranslation('fleet')
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex w-full items-center gap-3 p-3 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span
-        aria-hidden="true"
-        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-semibold text-white"
-        style={{ background: bot.tint }}
+      <BotAccountsSection
+        key={environment.id}
+        subject={subject}
+        lists={lists}
+        availability={availability}
+        onChanged={fleet.refresh}
       >
-        {bot.name.charAt(0).toUpperCase()}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{bot.name}</span>
-        {bot.role && <span className="block truncate text-xs text-muted-foreground">{bot.role}</span>}
-      </span>
-      <span className="shrink-0 text-xs text-muted-foreground">{t(`status.${bot.status}`)}</span>
-    </button>
+        <ApiKeyAccountForm
+          target={subject.target}
+          onAdded={async () => {
+            lists.refresh()
+            await fleet.refresh()
+          }}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={screenBusy || !running || oldImage}
+          onClick={() => void logInOnScreen()}
+        >
+          {t('environment.loginOnScreen')}
+        </Button>
+        {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
+        {screenError && (
+          <p role="alert" className="text-xs text-destructive">
+            {screenError}
+          </p>
+        )}
+      </BotAccountsSection>
+      <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
+      <EnvironmentCompaction
+        key={`compaction-${environment.id}`}
+        environment={environment}
+        bots={bots}
+        fleet={fleet}
+        optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
+      />
+      <EnvironmentRuntimes environment={environment} fleet={fleet} />
+    </section>
   )
 }

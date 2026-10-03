@@ -167,7 +167,9 @@ describe('fleet renderer wiring', () => {
     expect(resources['pt-BR'].fleet.botServer.panel.update).toBe('Atualizar bots')
   })
   it('schedules, forces and cancels an environment update from its view, naming the bots it waits for', () => {
-    const view = source('components/fleet/EnvironmentView.tsx')
+    const view = ['EnvironmentView', 'EnvironmentUpdateNotice', 'EnvironmentConfirm']
+      .map((name) => source(`components/fleet/${name}.tsx`))
+      .join('\n')
     for (const text of [
       'environmentUpdateState(',
       'updateBlockers(',

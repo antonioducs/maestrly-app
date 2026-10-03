@@ -21,7 +21,23 @@ function savedRatio(key: string): number {
 
 /** The owning workspace is keyed by server and bot; only its preferred split ratio survives remounting. */
 export function useBotWorkspaceLayout(server: string | null, botId: string, initialMode: BotWorkspaceMode) {
-  const storageKey = `fleet.botWorkspace.v1:${JSON.stringify([server, botId])}`
+  return useWorkspaceLayout(`fleet.botWorkspace.v1:${JSON.stringify([server, botId])}`, initialMode)
+}
+
+/**
+ * An environment's overview beside its screen, laid out as a bot's conversation beside its computer: `chat` is the
+ * overview alone and `computer` the screen alone.
+ */
+export function useEnvironmentWorkspaceLayout(
+  server: string | null,
+  environmentId: string,
+  initialMode: BotWorkspaceMode
+) {
+  return useWorkspaceLayout(`fleet.environmentWorkspace.v1:${JSON.stringify([server, environmentId])}`, initialMode)
+}
+
+/** A main pane beside a screen pane; only the preferred split ratio, stored under `storageKey`, survives remounting. */
+function useWorkspaceLayout(storageKey: string, initialMode: BotWorkspaceMode) {
   const [ratio, setPreferredRatio] = useState(() => savedRatio(storageKey))
   const [mode, setMode] = useState(initialMode)
   const [lastVisiblePane, setLastVisiblePane] = useState<Pane>(initialMode === 'chat' ? 'chat' : 'computer')

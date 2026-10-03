@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -8,6 +8,20 @@ export interface EnvironmentSettingsSectionProps {
   environment: FleetEnvironment
   fleet: FleetController
   onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>, discard: () => void) => void
+}
+/**
+ * Whether a section's editors show their own save and discard buttons. In the environment settings panel one bar saves
+ * every section, so the section's own buttons give way to it; an editor in a dialog of its own keeps them.
+ */
+const OwnSaveButtons = createContext(true)
+export function SharedSaveBarScope({ children }: { children: ReactNode }) {
+  return <OwnSaveButtons.Provider value={false}>{children}</OwnSaveButtons.Provider>
+}
+export function OwnSaveButtonsScope({ children }: { children: ReactNode }) {
+  return <OwnSaveButtons.Provider value={true}>{children}</OwnSaveButtons.Provider>
+}
+export function useOwnSaveButtons(): boolean {
+  return useContext(OwnSaveButtons)
 }
 export const settingsInput =
   'w-full rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] outline-none focus:border-indigo-500/60'
@@ -56,6 +70,7 @@ export function SaveDiscard({
   discard: () => void
 }) {
   const { t } = useTranslation('fleet')
+  if (!useOwnSaveButtons()) return null
   return (
     <div className="flex gap-2">
       <Button size="sm" disabled={!dirty || busy} onClick={() => void save()}>
