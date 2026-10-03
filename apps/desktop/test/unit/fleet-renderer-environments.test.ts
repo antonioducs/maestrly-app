@@ -533,6 +533,8 @@ describe('environment UI wiring', () => {
     const environmentScreen = source('components/fleet/EnvironmentScreen.tsx')
     expect(environmentScreen).toContain('useFleetScreen(')
     expect(environmentScreen).toContain("t('screen.conflict')")
+    // Its settings window starts hidden: opening the screen asks for it, or the tile shows black.
+    expect(environmentScreen).toContain("fleetEnvironmentUiOpen(environment.id, 'main')")
     // The environment screen shows Maestrly's settings: no bot is held.
     expect(environmentScreen).not.toContain('fleetTakeover')
   })

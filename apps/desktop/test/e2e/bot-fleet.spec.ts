@@ -3090,8 +3090,18 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     const environmentScreen = page.getByRole('region', { name: 'Tela de Acme', exact: true })
     await environmentScreen.getByRole('button', { name: 'Fechar tela', exact: true }).click()
     await expect(environmentScreen).toBeHidden()
+    const shown = requests.filter((item) => item.key === 'environmentUiOpen').length
     await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
     await expect(environmentScreen).toBeVisible()
+    // Opening the screen asks the environment to show its settings window, hidden until asked, on no section.
+    await expect
+      .poll(() =>
+        requests
+          .filter((item) => item.key === 'environmentUiOpen')
+          .slice(shown)
+          .map((item) => item.body)
+      )
+      .toContainEqual({ target: 'main' })
     await expect(environmentScreen.getByRole('button', { name: 'Assumir controle', exact: true })).toBeVisible()
     await expect
       .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)

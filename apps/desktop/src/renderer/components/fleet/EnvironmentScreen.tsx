@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Maximize2, Minimize2, Monitor, X } from 'lucide-react'
 import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
@@ -69,6 +69,16 @@ export function EnvironmentScreen({
   const shaded = environment.lifecycle !== 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
   const oldImage = environmentScreenAvailability(environment) === 'restart-environment'
+  const running = environment.lifecycle === 'running'
+  // The environment's Maestrly starts with its settings window hidden, and that window's close button hides it again:
+  // without asking for it, its screen shows an empty, black tile. Showing it opens no section and, while another
+  // screen of the environment is controlled, does not take the keyboard. Failing only leaves the tile as it was.
+  const showSettingsWindow = useCallback(() => {
+    void window.api.fleetEnvironmentUiOpen(environment.id, 'main').catch(() => {})
+  }, [environment.id])
+  useEffect(() => {
+    if (streaming && running && !oldImage) showSettingsWindow()
+  }, [streaming, running, oldImage, showSettingsWindow])
   const screen = useFleetScreen({
     container: target,
     kind: 'environment',
@@ -205,6 +215,7 @@ export function EnvironmentScreen({
                 className="h-9 rounded-full px-[18px] text-[13.5px]"
                 disabled={shaded || oldImage}
                 onClick={() => {
+                  showSettingsWindow()
                   screen.retryControl()
                   setMode('control')
                 }}
