@@ -84,11 +84,18 @@ async function openComputer(page: Page) {
   await expect(page.locator('[data-workspace-mode]')).not.toHaveAttribute('data-workspace-mode', 'chat')
 }
 
-/** Opens the bot's settings panel and returns it. */
-async function openBotSettings(page: Page, name: string) {
+/** Opens the bot's settings panel, on one of its tabs when given, and returns it. */
+async function openBotSettings(page: Page, name: string, tab?: string) {
   await page.getByRole('button', { name: 'Ajustes do bot', exact: true }).click()
-  return page.getByRole('dialog', { name: `Ajustes do ${name}` })
+  const settings = page.getByRole('dialog', { name: `Ajustes do ${name}` })
+  if (tab) await settingsTab(settings, tab).click()
+  return settings
 }
+/** A tab of the bot settings, by its label; its name may go on to say it has unsaved changes. */
+const settingsTab = (settings: Locator, label: string) =>
+  settings
+    .getByRole('tablist', { name: 'Seções dos ajustes', exact: true })
+    .getByRole('tab', { name: new RegExp(`^${label}\\b`) })
 
 test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', () =>
   runFleetScenario(false))
@@ -1532,6 +1539,76 @@ async function runFleetScenario(workspaceOnly: boolean) {
         expect(screenSockets.size).toBe(1)
         expect(requests.filter((request) => request.key === 'botPatch')).toHaveLength(0)
       })
+      await test.step('the settings show one section at a time, in tabs that keep unsaved changes', async () => {
+        const settings = await openBotSettings(page, 'Scout')
+        const tab = (label: string) => settingsTab(settings, label)
+        await expect(settings.getByRole('tablist', { name: 'Seções dos ajustes' }).getByRole('tab')).toHaveText([
+          'Identidade',
+          'Autonomia',
+          'Modelo',
+          'Conversas',
+          'Rotinas',
+          'Memória',
+          'Onde roda',
+          'Arquivar',
+        ])
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        const name = settings.getByLabel('Nome', { exact: true })
+        await expect(name).toBeVisible()
+        // Only the selected section shows.
+        await expect(settings.getByRole('tabpanel')).toHaveCount(1)
+        await expect(settings.getByRole('heading', { name: 'Autonomia', exact: true })).toHaveCount(0)
+        // Accounts and skills live in the model tab.
+        await tab('Modelo').click()
+        await expect(tab('Modelo')).toHaveAttribute('aria-selected', 'true')
+        await expect(settings.getByRole('region', { name: 'Contas do bot', exact: true })).toBeVisible()
+        await expect(settings.getByRole('region', { name: 'Skills e MCP', exact: true })).toBeVisible()
+        await expect(name).toBeHidden()
+        await test.info().attach('bot-settings-model-tab.png', {
+          body: await page.screenshot({ path: test.info().outputPath('bot-settings-model-tab.png') }),
+          contentType: 'image/png',
+        })
+        // A change waits for the save button on every tab, and its tab says it has one.
+        await tab('Identidade').click()
+        await name.fill('Tabbed Scout')
+        await expect(tab('Identidade')).toHaveAccessibleName(/^Identidade\s*, alterações não salvas$/)
+        await tab('Conversas').click()
+        await expect(name).toBeHidden()
+        const saveBar = settings.getByRole('region', { name: 'Alterações não salvas', exact: true })
+        await expect(saveBar).toBeVisible()
+        // The save bar names the field, which takes the owner back to its tab and into it.
+        await saveBar.getByRole('button', { name: 'Nome', exact: true }).click()
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        await expect(name).toBeFocused()
+        await expect(name).toHaveValue('Tabbed Scout')
+        // Arrow keys, Home and End move between the tabs, and only the selected one is in the tab order.
+        await tab('Identidade').focus()
+        await page.keyboard.press('ArrowRight')
+        await expect(tab('Autonomia')).toBeFocused()
+        await expect(tab('Autonomia')).toHaveAttribute('aria-selected', 'true')
+        await expect(tab('Identidade')).toHaveAttribute('tabindex', '-1')
+        await page.keyboard.press('End')
+        await expect(tab('Arquivar')).toHaveAttribute('aria-selected', 'true')
+        await expect(settings.getByRole('button', { name: 'Arquivar Scout', exact: true })).toBeVisible()
+        await page.keyboard.press('ArrowRight')
+        await expect(tab('Identidade')).toBeFocused()
+        await page.keyboard.press('ArrowLeft')
+        await expect(tab('Arquivar')).toBeFocused()
+        await page.keyboard.press('Home')
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        await saveBar.getByRole('button', { name: 'Descartar', exact: true }).click()
+        await expect(saveBar).toHaveCount(0)
+        await expect(tab('Identidade')).toHaveAccessibleName('Identidade')
+        // Closed on another tab, the settings open again on the first one.
+        await tab('Memória').click()
+        await settings.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
+        await expect(settings).toBeHidden()
+        await openBotSettings(page, 'Scout')
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        await settings.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
+        await expect(settings).toBeHidden()
+        expect(requests.filter((request) => request.key === 'botPatch')).toHaveLength(0)
+      })
       await test.step('a controlled computer stays open behind settings and returns control before closing', async () => {
         await page.getByRole('button', { name: 'Assumir controle', exact: true }).click()
         await page
@@ -1682,7 +1759,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
     await expect(gone).toBeVisible()
     expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
     await expect(page.getByText('Lembrou: Portal login')).toBeVisible()
-    await openBotSettings(page, 'Scout')
+    const scoutSettings = await openBotSettings(page, 'Scout', 'Rotinas')
     await page.getByRole('button', { name: 'Mais ações para Scout check', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Histórico', exact: true }).click()
     await expect(page.getByText('Concluída', { exact: true })).toBeVisible()
@@ -1703,6 +1780,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
     emit({ type: 'bot.updated', at: now(), bot: runningScout })
     await expect(page.getByText('Cancelada', { exact: true })).toBeVisible()
     await expect(page.getByText('Em andamento', { exact: true })).toHaveCount(0)
+    await settingsTab(scoutSettings, 'Memória').click()
     const botMemory = page.getByRole('region', { name: 'Memória do bot', exact: true })
     await expect(botMemory.getByText('Portal login', { exact: true })).toBeVisible()
     await expect(botMemory.getByText('Automática', { exact: true })).toBeVisible()
@@ -2003,7 +2081,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
       .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1)?.body)
       .toEqual({ mode: 'view', surface: 'browser' })
     expect(requests.filter((item) => item.key === 'botTakeoverRelease')).toHaveLength(1)
-    await openBotSettings(page, 'Orders')
+    const ordersSettings = await openBotSettings(page, 'Orders', 'Modelo')
     const accountsSection = page.getByRole('region', { name: 'Contas do bot', exact: true })
     const resourcesSection = page.getByRole('region', { name: 'Skills e MCP', exact: true })
     await expect(accountsSection.getByText(/Mac fixture key.*…sion/)).toBeVisible()
@@ -2169,6 +2247,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
       .getByRole('button', { name: 'Remover' })
       .click()
     await expect.poll(() => requests.filter((item) => item.key === 'botAccountRemove').length).toBe(2)
+    await settingsTab(ordersSettings, 'Rotinas').click()
     await page.getByRole('button', { name: 'Adicionar rotina' }).click()
     await expect(page.getByText('A cada 1 h 30 min')).toBeVisible()
     await expect(page.getByText('Criada pelo bot')).toBeVisible()
@@ -2235,6 +2314,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
     await expect(page.getByText('A cada 30 min').first()).toBeVisible()
 
     // Archive, restore, and delete forever.
+    await settingsTab(ordersSettings, 'Arquivar').click()
     await page.getByRole('button', { name: 'Arquivar Orders' }).click()
     await page.getByRole('dialog', { name: 'Arquivar bot?' }).getByRole('button', { name: 'Arquivar' }).click()
     // The dialog closes once the archive reply is back, after the removal event it must not undo.
@@ -3022,12 +3102,15 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await group('Acme')
       .getByRole('button', { name: /Partner/ })
       .click()
-    await openBotSettings(page, 'Partner')
+    const partnerSettings = await openBotSettings(page, 'Partner', 'Ambiente')
     await expect(
       page.getByRole('region', { name: 'Ambiente', exact: true }).getByRole('button', { name: 'Abrir ambiente' })
     ).toBeVisible()
+    // An environment's bots get their accounts, skills and MCP servers from it.
+    await settingsTab(partnerSettings, 'Modelo').click()
     await expect(page.getByRole('region', { name: 'Contas do bot', exact: true })).toHaveCount(0)
     await expect(page.getByRole('region', { name: 'Skills e MCP', exact: true })).toHaveCount(0)
+    await settingsTab(partnerSettings, 'Arquivar').click()
     await page.getByRole('button', { name: 'Arquivar Partner' }).click()
     const archiveBot = page.getByRole('dialog', { name: 'Arquivar bot?' })
     await expect(archiveBot).toContainText('Este bot sai do ambiente')
@@ -4055,7 +4138,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await createDialog.getByRole('button', { name: 'Criar bot' }).click()
     await expect(page.getByRole('heading', { name: 'Helper', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Escolher modelo de compactação' })).toHaveCount(0)
-    await openBotSettings(page, 'Helper')
+    await openBotSettings(page, 'Helper', 'Modelo')
     const botCompaction = page.getByRole('region', { name: 'Compactação', exact: true })
     const saveBar = () => page.getByRole('region', { name: 'Alterações não salvas', exact: true })
     const saveChanges = () =>
@@ -4073,7 +4156,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await group('Acme')
       .getByRole('button', { name: /Partner/ })
       .click()
-    await openBotSettings(page, 'Partner')
+    await openBotSettings(page, 'Partner', 'Modelo')
     await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Padrão do ambiente · Shared · Model B', exact: true }).click()
@@ -4104,7 +4187,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
       section().getByText('Ainda não definido. O primeiro modelo escolhido para um dos bots dele vira o padrão.')
     ).toBeVisible()
     await group('Home').getByRole('button', { name: /Diary/ }).click()
-    await openBotSettings(page, 'Diary')
+    await openBotSettings(page, 'Diary', 'Modelo')
     await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · ainda não definido')
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Shared · Model A', exact: true }).click()
@@ -4122,7 +4205,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
 
     // A bot with its own model is never offered an environment default that does not exist.
     await group('Old').getByRole('button', { name: /Relic/ }).click()
-    await openBotSettings(page, 'Relic')
+    await openBotSettings(page, 'Relic', 'Modelo')
     await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
     await modelPicker(botCompaction).click()
     await expect(page.getByRole('option', { name: 'Shared · Model B', exact: true })).toBeVisible()

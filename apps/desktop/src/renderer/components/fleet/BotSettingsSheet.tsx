@@ -53,7 +53,8 @@ export function BotSettingsSheet({
         }}
         className="left-auto right-0 top-0 flex h-full w-[min(780px,94vw)] max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-y-0 border-r-0 p-0 shadow-[-30px_0_60px_rgba(0,0,0,0.45)] data-[state=open]:slide-in-from-right-8 sm:rounded-none"
       >
-        <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border pl-[18px] pr-3">
+        {/* The tab strip of the settings draws the line under the title. */}
+        <header className="flex h-14 shrink-0 items-center gap-2.5 pl-[18px] pr-3">
           <DialogTitle className="text-[15px] leading-none tracking-normal">
             {t('settingsSheet.title', { name: bot.name })}
           </DialogTitle>
