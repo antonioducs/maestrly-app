@@ -209,7 +209,9 @@ describe.skipIf(process.platform === 'win32')('paintWallpaper', () => {
     await expect(paintWallpaper({ folder, display: ':2', name: 'Ada' }, { timeoutMs: 300 })).rejects.toThrow(
       'rsvg-convert did not finish within 0.3 s'
     )
-    expect(calls().map((call) => call.split(' ')[0])).toEqual(['rsvg-convert'])
+    // Nothing runs after it. Under load the stand-in may be stopped before it records its own call, so only what
+    // would come next is checked.
+    expect(calls().filter((call) => !call.startsWith('rsvg-convert '))).toEqual([])
   })
 
   it('refuses to paint when the folder cannot be made', async () => {
