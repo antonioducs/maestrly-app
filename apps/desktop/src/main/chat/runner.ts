@@ -46,6 +46,7 @@ import { resolveChatModel } from './provider'
 import { getProvider, isAnthropicProvider, isClaudeSubscriptionProvider } from './catalog'
 import type { QuestionBroker } from './question-broker'
 import { buildAppTools, buildMcpTools } from './mcp'
+import { resolveAppToolAccess } from './app-tool-access'
 import { buildOpenAIProjectContext, buildProjectContext } from './project-context'
 import { renderSkillContext, skillCatalogLine } from './skills'
 import { effectiveSkills, findEffectiveSkill } from './skill-state'
@@ -780,10 +781,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     })
   }
 
-  // PER-CONVERSATION tool overrides (ui_prefs.chat.tools): app-tools on/off + disabled MCP servers.
+  // PER-CONVERSATION tool overrides (ui_prefs.chat.tools): app-tools on/off + groups + disabled MCP servers.
   const convTools = getConvUiPrefs(conversationId).chat?.tools
   const mcpDisabled = new Set(convTools?.mcpDisabled ?? [])
-  const appToolsEnabled = convTools?.app ?? getAppFlag('chat.appTools', false)
+  const appAccess = resolveAppToolAccess(conversationId)
+  const appToolsEnabled = appAccess.enabled
 
   // MCP servers follow enabled + conversation override. Wrapper retains everything in Agent, filters
   // defensively by annotations in Plan/Ask; all calls remain gated under action 'mcp'.
@@ -798,12 +800,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
       })
 
-  // General app tools remain opt-in; personal memory is independently enabled. The wrapper applies the mode
-  // allowlist. Blocking MCP review_plan is always excluded; Plan uses built-in submit & release.
+  // General app tools follow the switch and its groups; personal memory is independently enabled. The wrapper
+  // applies the mode allowlist. Blocking MCP review_plan is always excluded; Plan uses built-in submit & release.
   const app =
     !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(conversationId))
       ? await buildAppTools({
           only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
+          disabledGroups: appAccess.disabledGroups,
           conversationId,
           mode,
           gate: mcpGate,
@@ -1425,6 +1428,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     scope: projectId === null ? 'standalone' : 'project',
     cwd,
     appToolsEnabled,
+    disabledAppToolGroups: appAccess.disabledGroups,
     mode,
     hasNotesTab,
   })
@@ -1459,6 +1463,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         cwd,
         mode,
         appToolsEnabled,
+        disabledAppToolGroups: appAccess.disabledGroups,
         hasNotesTab,
         projectContext,
         skillsContext: skillsCatalog,

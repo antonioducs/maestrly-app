@@ -71,9 +71,11 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { addProvider, getProviderKind } from '../../src/main/chat/catalog'
 import { clearApiKey, setApiKey } from '../../src/main/chat/credentials'
 import { buildOpenAIProviderFingerprint } from '../../src/main/chat/provider'
-import { getDb, patchConvUiPrefs } from '../../src/main/store'
+import { getConvUiPrefs, getDb, patchConvUiPrefs, setAppFlag } from '../../src/main/store'
+import { resolveAppToolAccess } from '../../src/main/chat/app-tool-access'
 import {
   toolOutputImages,
+  type ChatConvTools,
   type ChatHistoryStats,
   type ChatMessage,
   type MessagePart,
@@ -106,6 +108,46 @@ const FP = 'a'.repeat(64)
 /** What the window was told about one conversation, in order. */
 const announcements = (conversationId: string) =>
   pushed.filter(([channel]) => channel.endsWith(`:${conversationId}`)).map(([channel, payload]) => [channel, payload])
+
+describe('Maestrly app-tool groups', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('pins only the toggled group per conversation and keeps the others inheriting the global default', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    const handlers = register()
+    const tools = () => handlers.get('chat:get-conv-tools')!({}, conversation.id) as ChatConvTools
+    const stored = () => getConvUiPrefs(conversation.id).chat?.tools?.appGroups
+
+    expect(tools().app).toBe(true)
+    expect(Object.values(tools().appGroups!)).toEqual(Array(8).fill(true))
+
+    await handlers.get('chat:set-conv-tools')!({}, conversation.id, { appGroups: { debug: false, computer: false } })
+    await handlers.get('chat:set-conv-tools')!({}, conversation.id, { appGroups: { browser: false } })
+    expect(stored()).toEqual({ debug: false, browser: false })
+
+    // Global changes reach every group the conversation did not pin.
+    handlers.get('chat:set-app-tool-group')!({}, 'terminal', false)
+    handlers.get('chat:set-app-tool-group')!({}, 'debug', true)
+    expect(tools().appGroups).toMatchObject({ debug: false, browser: false, terminal: false, memory: true })
+    expect(resolveAppToolAccess(conversation.id).disabledGroups).toEqual(['terminal', 'browser', 'debug'])
+
+    // Unrelated patches keep the pinned groups.
+    await handlers.get('chat:set-conv-tools')!({}, conversation.id, { mcpDisabled: ['server-1'] })
+    expect(stored()).toEqual({ debug: false, browser: false })
+  })
+
+  it('ignores group settings in bot mode, where every app tool stays on', () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    setAppFlag('chat.appTools.group.browser', false)
+    patchConvUiPrefs(conversation.id, { chat: { tools: { appGroups: { debug: false } } } })
+    expect(resolveAppToolAccess(conversation.id).disabledGroups).toEqual(['browser', 'debug'])
+
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(resolveAppToolAccess(conversation.id)).toMatchObject({ enabled: true, disabledGroups: [] })
+  })
+})
 
 describe('conversation settings the person did not choose', () => {
   it('announces an account, effort and mode moved by something other than the picker', async () => {

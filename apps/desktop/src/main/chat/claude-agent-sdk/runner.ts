@@ -25,7 +25,8 @@ import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { MaestroLiveRunPort } from '../maestro-live'
 import { applyChatEvent, toolOutputText } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
-import { getAppFlag, getConversation, getConvUiPrefs } from '../../store'
+import { getConversation, getConvUiPrefs } from '../../store'
+import { resolveAppToolAccess } from '../app-tool-access'
 import { gitEnvInfo } from '../../git-service'
 import { stagePlan } from '../../plan-broker'
 import type { ChatAgent } from '../agents'
@@ -600,7 +601,8 @@ async function prepareRuntime(
     })
   }
   const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
-  const appToolsEnabled = !args.reviewerRuntime && (prefs?.app ?? getAppFlag('chat.appTools', false))
+  const appAccess = resolveAppToolAccess(args.conversationId)
+  const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp = args.reviewerRuntime
     ? { tools: {}, close: async () => {} }
@@ -622,6 +624,7 @@ async function prepareRuntime(
     !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
       ? await buildAppTools({
           only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
+          disabledGroups: appAccess.disabledGroups,
           conversationId: args.conversationId,
           mode: args.mode,
           gate,
@@ -780,6 +783,7 @@ async function prepareRuntime(
         harness,
         cwd: args.cwd,
         appToolsEnabled,
+        disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: Boolean(getConversation(args.conversationId)),
       }),

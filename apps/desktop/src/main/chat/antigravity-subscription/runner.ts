@@ -27,7 +27,8 @@ import type { ChatBehavior } from '../../../shared/conversation-experience'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import { responseDurationMs } from '../../../shared/response-duration'
 import { stagePlan } from '../../plan-broker'
-import { getAppFlag, getConvUiPrefs } from '../../store'
+import { getConvUiPrefs } from '../../store'
+import { resolveAppToolAccess } from '../app-tool-access'
 import { AcpRpcError } from '../acp/client'
 import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, type AcpSessionSetupResult } from '../acp/protocol'
 import { createBackgroundCompactionPrefixNotifier } from '../background-compaction/runner'
@@ -343,7 +344,8 @@ export async function runAntigravitySubscriptionChat(
     const describeImage = (image: Parameters<typeof describeEphemeralToolImage>[0]['image']) =>
       describeEphemeralToolImage({ image, conversationId: args.conversationId, cwd: args.cwd, signal: args.signal })
     const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
-    const appToolsEnabled = !args.reviewerRuntime && (prefs?.app ?? getAppFlag('chat.appTools', false))
+    const appAccess = resolveAppToolAccess(args.conversationId)
+    const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
     const mcp = args.reviewerRuntime
       ? { tools: {}, close: async () => {} }
       : await buildMcpTools({
@@ -360,6 +362,7 @@ export async function runAntigravitySubscriptionChat(
       !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
         ? await buildAppTools({
             only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
+            disabledGroups: appAccess.disabledGroups,
             conversationId: args.conversationId,
             mode: args.mode,
             gate,
@@ -389,6 +392,7 @@ export async function runAntigravitySubscriptionChat(
           maestrlyUltra: args.maestrlyUltra,
           harness: args.harness,
           appToolsEnabled,
+          disabledAppToolGroups: appAccess.disabledGroups,
         })
 
     const skillTools: ToolSet = skills.length

@@ -31,7 +31,7 @@ import {
 } from '../../src/main/chat/github-copilot/session-store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { patchConvUiPrefs } from '../../src/main/store'
+import { patchConvUiPrefs, setAppFlag } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 
@@ -161,6 +161,8 @@ describe('GitHub Copilot official runner', () => {
   beforeEach(() => {
     vi.mocked(chatDiag).mockClear()
     freshDb()
+    // These cases predate the default-on app tools; their tool-surface counts assume no app catalog.
+    setAppFlag('chat.appTools', false)
     cwd = mkdtempSync(path.join(os.tmpdir(), 'maestrly-copilot-runner-'))
   })
 

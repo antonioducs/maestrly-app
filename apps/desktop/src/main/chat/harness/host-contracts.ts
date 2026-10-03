@@ -6,6 +6,8 @@ import { renderDesignModePrompt } from '../design-mode-prompt'
 import { MAESTRO_SYSTEM_SPEC } from '../maestro-prompt'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import type { ResolvedHarness } from './types'
+import type { AppToolGroup } from '../../../shared/app-tool-groups'
+import { appToolPromptGroups, listJoin } from './app-tool-prompt'
 
 /**
  * Host contracts are composed outside the replaceable profile text. Mode limits, the actually
@@ -81,28 +83,32 @@ export function hostCapabilitySection(mode: ChatBehavior): string {
 
 export const HOST_RENDERING = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
 
-export function hostAppToolsSection(appToolsEnabled: boolean, hasNotesTab: boolean, mode: ChatBehavior): string {
+export function hostAppToolsSection(
+  appToolsEnabled: boolean,
+  hasNotesTab: boolean,
+  mode: ChatBehavior,
+  disabledGroups: readonly AppToolGroup[] = []
+): string {
   if (isBotMode())
     return `\n\nMaestrly app tools: ${appToolsEnabled ? BOT_APP_TOOLS_GUIDANCE : 'Use only tools actually exposed in this turn.'}`
   const capabilityMode = capabilityBehaviorFor(mode)
-  const appToolGroups = hasNotesTab ? 'terminal, browser, notes, memory, debug' : 'terminal, browser, memory, debug'
-  const appToolPrefixes = hasNotesTab
-    ? 'terminal_*, browser_*, notes_*, memory_*, debug_*'
-    : 'terminal_*, browser_*, memory_*, debug_*'
-  const preferredDrawerTools = hasNotesTab ? 'terminal_*/memory_*/notes_*' : 'terminal_*/memory_*'
-  const restrictedAppTools =
-    mode === 'maestro'
-      ? hasNotesTab
-        ? 'notes list/read, memory search/list/read, browser inspection/read, and terminal read'
-        : 'memory search/list/read, browser inspection/read, and terminal read'
-      : hasNotesTab
-        ? 'notes list/read/create/write/append, memory search/list/read, browser navigation/read, and terminal read'
-        : 'memory search/list/read, browser navigation/read, and terminal read'
-  return `\n\nMaestrly app tools (${appToolGroups}): ${
+  const groups = appToolPromptGroups(hasNotesTab, mode, disabledGroups)
+  const appToolGroups = groups.listed.join(', ')
+  const appToolPrefixes = groups.listed.map((group) => `${group}_*`).join(', ')
+  const preferredDrawerTools = groups.preferred.map((group) => `${group}_*`).join('/')
+  const agentOn = !groups.listed.length
+    ? 'ON — use only the app tools actually exposed in your tool set.'
+    : `ON — you receive them NATIVELY in your tool set (${appToolPrefixes}). Use them directly.${
+        preferredDrawerTools
+          ? ` PREFER ${preferredDrawerTools} over your equivalent native tools (bash/read/edit and your own memory) when the user should see, follow or edit the result in the drawer — running a server, a long build, a script, recording a decision or a durable project rule: that way they follow along in the UI. A quick internal one-off (e.g. git status) can stay on the native tools.`
+          : ''
+      }`
+  const restrictedOn = groups.restricted.length
+    ? `ON with this mode's restricted catalog: ${listJoin(groups.restricted)}. Use only the tools actually exposed; mutating tools outside this list remain unavailable.`
+    : "ON, but none of this mode's restricted catalog is enabled. Use only the tools actually exposed."
+  return `\n\nMaestrly app tools${appToolGroups ? ` (${appToolGroups})` : ''}: ${
     appToolsEnabled
-      ? capabilityMode === 'agent'
-        ? `ON — you receive them NATIVELY in your tool set (${appToolPrefixes}). Use them directly. PREFER ${preferredDrawerTools} over your equivalent native tools (bash/read/edit and your own memory) when the user should see, follow or edit the result in the drawer — running a server, a long build, a script, recording a decision or a durable project rule: that way they follow along in the UI. A quick internal one-off (e.g. git status) can stay on the native tools.`
-        : `ON with this mode's restricted catalog: ${restrictedAppTools}. Use only the tools actually exposed; mutating tools outside this list remain unavailable.`
+      ? (capabilityMode === 'agent' ? agentOn : restrictedOn) + groups.disabledNote
       : 'OFF right now. If you need them, ASK the user to enable "Maestrly tools" in Settings › Maestrly Chat.'
   }\nNEVER try to reach the app via curl/HTTP or inspect legacy local credentials. The app tools, when on, already arrive ready in your toolset (no network, no token).`
 }
@@ -112,6 +118,8 @@ export interface MaestrlyBasePromptInput {
   cwd: string
   scope?: 'project' | 'standalone'
   appToolsEnabled: boolean
+  /** App-tool groups the user turned off; the prompt stops naming their tools. */
+  disabledAppToolGroups?: readonly AppToolGroup[]
   mode: ChatBehavior
   hasNotesTab: boolean
 }
@@ -183,7 +191,7 @@ ${discovery} Online research requires an actually available tool; webfetch reads
     base +
     hostCapabilitySection(input.mode) +
     HOST_RENDERING +
-    hostAppToolsSection(input.appToolsEnabled, input.hasNotesTab, input.mode) +
+    hostAppToolsSection(input.appToolsEnabled, input.hasNotesTab, input.mode, input.disabledAppToolGroups) +
     `\n\n${MEMORY_TOOL_GUIDANCE}` +
     (designPrompt ? `\n\n${designPrompt}` : '')
   )

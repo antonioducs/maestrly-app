@@ -301,7 +301,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(521)
+    expect(keys).toHaveLength(522)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1091,6 +1091,16 @@ describe('preload API — chat pagination (#559)', () => {
 
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('chat:cursor-subscription:auth-changed', listener)
+  })
+
+  it('chatSetAppToolGroup(group, enabled) -> chat:set-app-tool-group preserves both arguments', () => {
+    api.chatSetAppToolGroup('debug', false)
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-app-tool-group', 'debug', false)
+  })
+
+  it('chatSetConvTools(id, patch) -> chat:set-conv-tools forwards app-tool group overrides', () => {
+    api.chatSetConvTools('conversation-1', { appGroups: { browser: false } })
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-conv-tools', 'conversation-1', { appGroups: { browser: false } })
   })
 
   it('chatSetBashFilters(enabled) -> chat:set-bash-filters preserves the boolean', () => {

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import type { ChatMessage } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
+import type { AppToolGroup } from '../../../shared/app-tool-groups'
 import { getConversation } from '../../store'
 import { gitEnvInfo } from '../../git-service'
 import { nativeSeedContextText, renderNativeSeedTranscript } from '../message'
@@ -96,6 +97,7 @@ export interface BuildCursorHarnessContextArgs {
   maestrlyUltra?: boolean
   harness?: ResolvedHarness
   appToolsEnabled?: boolean
+  disabledAppToolGroups?: readonly AppToolGroup[]
 }
 
 export async function buildCursorHarnessContext(
@@ -143,6 +145,7 @@ export async function buildCursorHarnessContext(
       cwd: args.cwd,
       mode: args.mode,
       appToolsEnabled: args.appToolsEnabled ?? false,
+      ...(args.disabledAppToolGroups ? { disabledAppToolGroups: args.disabledAppToolGroups } : {}),
       hasNotesTab: notes,
       projectContext,
       skillsContext: skillContext,

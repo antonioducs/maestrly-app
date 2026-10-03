@@ -482,6 +482,35 @@ describe('MCP app tools inventory', () => {
     }
   })
 
+  it('omits the app-tool groups the user turned off, even from an explicit allowlist', async () => {
+    const app = await buildAppTools({
+      conversationId: convId,
+      mode: 'agent',
+      gate: async () => {},
+      disabledGroups: ['terminal', 'browser'],
+    })
+    try {
+      expect(Object.keys(app.tools).sort()).toEqual(
+        EXPECTED_TOOL_NAMES.filter((name) => !/^(terminal_|browser_)/.test(name)).sort()
+      )
+    } finally {
+      await app.close()
+    }
+
+    const memory = await buildAppTools({
+      conversationId: convId,
+      mode: 'agent',
+      gate: async () => {},
+      only: new Set(['memory_search', 'memory_read', 'notes_list_pages']),
+      disabledGroups: ['memory'],
+    })
+    try {
+      expect(Object.keys(memory.tools)).toEqual(['notes_list_pages'])
+    } finally {
+      await memory.close()
+    }
+  })
+
   it('keeps critical Plan/Ask policy sentinels explicit', () => {
     expect(appToolAllowed('plan', 'notes_write_page')).toBe(true)
     expect(appToolAllowed('ask', 'memory_search')).toBe(true)

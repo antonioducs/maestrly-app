@@ -1,9 +1,20 @@
 import { useChatDocument } from '@/lib/chat-window-context'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, ImageIcon, Bot, ExternalLink, Loader2, ArrowLeft, Shield, SlidersHorizontal } from 'lucide-react'
+import {
+  Plus,
+  ImageIcon,
+  Bot,
+  ExternalLink,
+  Loader2,
+  ArrowLeft,
+  Shield,
+  SlidersHorizontal,
+  ChevronRight,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
+import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../../../shared/app-tool-groups'
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { startChatGptWebCompanion } from '@/lib/chatgpt-web'
@@ -69,6 +80,9 @@ export function ChatPlusMenu({
     null
   )
   const [app, setApp] = useState(false)
+  const [appGroups, setAppGroups] = useState<AppToolGroupState | null>(null)
+  const [appGroupsOpen, setAppGroupsOpen] = useState(false)
+  const appGroupsId = useId()
   const [imageGen, setImageGen] = useState(true)
   const [mcpDisabled, setMcpDisabled] = useState<string[]>([])
   const [subagentProfilesEnabled, setSubagentProfilesEnabled] = useState(true)
@@ -91,6 +105,7 @@ export function ChatPlusMenu({
     source.chatGetConvTools().then((t) => {
       if (conversationIdRef.current !== targetConversationId) return
       setApp(t.app)
+      setAppGroups(t.appGroups ?? null)
       setImageGen(t.imageGen)
       setMcpDisabled(t.mcpDisabled)
     })
@@ -133,7 +148,10 @@ export function ChatPlusMenu({
     }
   }, [ownerDocument, activePanel])
 
-  useEffect(() => setActivePanel(null), [conversationId])
+  useEffect(() => {
+    setActivePanel(null)
+    setAppGroupsOpen(false)
+  }, [conversationId])
 
   useEffect(() => {
     let alive = true
@@ -158,6 +176,15 @@ export function ChatPlusMenu({
     const next = !app
     setApp(next)
     source.chatSetConvTools({ app: next })
+  }
+
+  // Groups exist only for local conversations (bots always run with every app tool), so this bypasses `source`.
+  const toggleAppGroup = (group: AppToolGroup) => {
+    if (!appGroups) return
+    const patch: Partial<AppToolGroupState> = {}
+    patch[group] = !appGroups[group]
+    setAppGroups({ ...appGroups, ...patch })
+    void window.api.chatSetConvTools(conversationId, { appGroups: patch })
   }
 
   const toggleImageGen = () => {
@@ -264,7 +291,7 @@ export function ChatPlusMenu({
       {activePanel === 'menu' && (
         <div
           role="menu"
-          className="absolute bottom-full left-0 z-50 mb-1 w-72 overflow-hidden rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl"
+          className="absolute bottom-full left-0 z-50 mb-1 max-h-[min(80vh,44rem)] w-72 overflow-y-auto rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl"
         >
           <button
             type="button"
@@ -381,9 +408,30 @@ export function ChatPlusMenu({
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
             <div className="min-w-0">
               <div className="text-[13px] text-foreground">{t('plusMenu.appToolsLabel')}</div>
-              <div className="text-[11px] text-muted-foreground">
-                {source.bot ? t('plusMenu.appToolsBotLocked') : t('plusMenu.appToolsDesc')}
-              </div>
+              {source.bot || !appGroups ? (
+                <div className="text-[11px] text-muted-foreground">
+                  {source.bot ? t('plusMenu.appToolsBotLocked') : t('plusMenu.appToolsDesc')}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAppGroupsOpen((open) => !open)}
+                  aria-expanded={appGroupsOpen}
+                  aria-controls={appGroupsId}
+                  title={appGroupsOpen ? t('plusMenu.appToolGroupsHide') : t('plusMenu.appToolGroupsShow')}
+                  className="flex max-w-full items-center gap-0.5 rounded text-left text-[11px] text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronRight className={cn('h-3 w-3 shrink-0 transition-transform', appGroupsOpen && 'rotate-90')} />
+                  <span className="truncate">
+                    {APP_TOOL_GROUPS.every((group) => appGroups[group])
+                      ? t('plusMenu.appToolsDesc')
+                      : t('plusMenu.appToolGroupsSome', {
+                          on: APP_TOOL_GROUPS.filter((group) => appGroups[group]).length,
+                          total: APP_TOOL_GROUPS.length,
+                        })}
+                  </span>
+                </button>
+              )}
             </div>
             {/* A bot always runs with them (its browser, screen and help tools); its own Maestrly re-enables them. */}
             <Toggle
@@ -393,6 +441,27 @@ export function ChatPlusMenu({
               disabled={Boolean(source.bot)}
             />
           </div>
+          {!source.bot && appGroups && appGroupsOpen && (
+            <div id={appGroupsId} className="mb-1 ml-4 border-l border-white/[0.08] pl-1">
+              {APP_TOOL_GROUPS.map((group) => {
+                const label = t(`appToolGroups.${group}.label`)
+                const desc = t(`appToolGroups.${group}.desc`)
+                return (
+                  <div
+                    key={group}
+                    className={cn('flex items-center justify-between gap-2 rounded-md px-2 py-1', !app && 'opacity-50')}
+                    title={desc}
+                  >
+                    <span className="min-w-0 truncate">
+                      <span className="text-[12px] text-foreground">{label}</span>
+                      <span className="ml-1.5 text-[11px] text-muted-foreground">{desc}</span>
+                    </span>
+                    <Toggle on={appGroups[group]} onClick={() => toggleAppGroup(group)} label={label} disabled={!app} />
+                  </div>
+                )
+              })}
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
             <div className="min-w-0">
               <div className="text-[13px] text-foreground">{t('plusMenu.imageGenLabel')}</div>

@@ -21,6 +21,7 @@ import type {
 import { runGitHubCopilotChat } from '../../src/main/chat/github-copilot/runner'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { closeDb, freshDb } from '../helpers/db'
+import { setAppFlag } from '../../src/main/store'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 vi.mock('../../src/main/chat/subagent-execution-profile', () => ({
@@ -242,6 +243,8 @@ describe('GitHub Copilot host-managed task orchestration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     freshDb()
+    // Task orchestration cases predate the default-on app tools and never exercise the in-process registry.
+    setAppFlag('chat.appTools', false)
     cwd = mkdtempSync(path.join(os.tmpdir(), 'maestrly-copilot-managed-task-'))
     mkdirSync(path.join(cwd, '.claude', 'agents'), { recursive: true })
     writeFileSync(

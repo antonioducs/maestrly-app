@@ -8,8 +8,9 @@ private until you [share](#sharing) it.
 
 ## Asking for an artifact
 
-Artifact tools are Maestrly app tools, so they are available when app tools are
-on for the conversation. Ask an agent for a prototype, a report, a dashboard, or
+Artifact tools are Maestrly app tools, so they are available when app tools and
+the Artifacts group are on for the conversation. Both are enabled by default.
+Ask an agent for a prototype, a report, a dashboard, or
 any other page worth viewing in a browser. While you have no artifacts, the
 Artifacts center suggests a few requests: choosing one opens a new standalone
 conversation with Maestrly tools on and the request in its message box, ready to
