@@ -8,8 +8,12 @@ import {
 } from '../../src/shared/fleet-targets'
 
 const mocks = vi.hoisted(() => ({
+  hasFeature: vi.fn(() => false),
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
+  downloadFile: vi.fn(async () => {}),
+  revealDownload: vi.fn(),
+  getDownload: vi.fn(async () => null),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
 }))
 vi.mock('../../src/main/fleet/client/service', () => ({
@@ -22,7 +26,11 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     getSnapshot: vi.fn(),
     refresh: vi.fn(),
     call: mocks.call,
+    hasFeature: mocks.hasFeature,
     getImage: mocks.getImage,
+    downloadFile: mocks.downloadFile,
+    revealDownload: mocks.revealDownload,
+    getDownload: mocks.getDownload,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
   },
@@ -37,6 +45,31 @@ afterEach(() => {
 })
 
 describe('fleet IPC validation', () => {
+  it('accepts only bot and opaque file ids for downloads, without a renderer-selected destination', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    const download = mutations.get('fleet:downloadFile')!
+    expect(() => download({}, '../bot', 'f-file')).toThrow()
+    expect(() => download({}, 'bot', '../../secret')).toThrow()
+    expect(mocks.downloadFile).not.toHaveBeenCalled()
+    await download({}, 'bot', 'f-file', '/arbitrary/destination')
+    expect(mocks.downloadFile).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    const reveal = mutations.get('fleet:revealDownload')!
+    expect(() => reveal({}, '/arbitrary/path')).toThrow()
+    expect(mocks.revealDownload).not.toHaveBeenCalled()
+    await reveal({}, '550e8400-e29b-41d4-a716-446655440000')
+    expect(mocks.revealDownload).toHaveBeenCalledExactlyOnceWith('550e8400-e29b-41d4-a716-446655440000')
+    const lookup = reads.get('fleet:getDownload')!
+    expect(() => lookup({}, '../bot', 'f-file')).toThrow()
+    expect(() => lookup({}, 'bot', '../file')).toThrow()
+    await lookup({}, 'bot', 'f-file')
+    expect(mocks.getDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+  })
   it('validates all login mutations before dispatch', () => {
     process.env.MAESTRLY_BOT_MODE = '1'
     const mutations = new Map<string, (...args: unknown[]) => unknown>()
@@ -114,14 +147,21 @@ describe('fleet IPC validation', () => {
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({ sender: {} }, ...args)
-    const data = new Uint8Array([137, 80, 78, 71])
+    const data = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     await invoke('fleet:sendMessage', 'bot', '', [{ name: 'small.png', mediaType: 'image/png', data }])
     expect(mocks.call).toHaveBeenCalledWith('botMessageSend', {
       params: { id: 'bot' },
       body: {
         text: '',
         idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
-        attachments: [{ name: 'small.png', mediaType: 'image/png', dataBase64: Buffer.from(data).toString('base64') }],
+        attachments: [
+          {
+            kind: 'image',
+            name: 'small.png',
+            mediaType: 'image/png',
+            dataBase64: Buffer.from(data).toString('base64'),
+          },
+        ],
       },
     })
     expect(() => invoke('fleet:sendMessage', 'bot', '', [])).toThrow()
@@ -133,6 +173,46 @@ describe('fleet IPC validation', () => {
     await invoke('fleet:getImage', 'bot', 't-valid')
     expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid')
     expect(() => invoke('fleet:getImage', 'bot', '../bad')).toThrow()
+  })
+  it('gates documents on gateway and bot support and rejects corrupt binary text', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const send = (data = new TextEncoder().encode('Olá')) =>
+      handlers.get('fleet:sendMessage')?.({}, 'bot', '', [
+        { kind: 'text', name: 'code.ts', mediaType: 'text/plain', data },
+      ])
+    mocks.hasFeature.mockReturnValue(false)
+    expect(() => send()).toThrow('FLEET_FILES_UNSUPPORTED')
+    expect(mocks.call).not.toHaveBeenCalled()
+    mocks.hasFeature.mockReturnValue(true)
+    mocks.call.mockResolvedValueOnce({ capabilities: [] })
+    await expect(send()).rejects.toThrow('FLEET_FILES_UNSUPPORTED')
+    expect(mocks.call).not.toHaveBeenCalledWith('botMessageSend', expect.anything())
+    mocks.call.mockResolvedValueOnce({ capabilities: ['files'] })
+    await send()
+    expect(mocks.call).toHaveBeenCalledWith(
+      'botMessageSend',
+      expect.objectContaining({
+        body: expect.objectContaining({
+          text: '',
+          attachments: [
+            {
+              kind: 'text',
+              name: 'code.ts',
+              mediaType: 'text/plain',
+              dataBase64: Buffer.from('Olá').toString('base64'),
+            },
+          ],
+        }),
+      })
+    )
+    expect(() => send(new Uint8Array([0xff]))).toThrow('FLEET_ATTACHMENT_INVALID')
+    expect(() => send(new Uint8Array([0]))).toThrow('FLEET_ATTACHMENT_INVALID')
+    mocks.hasFeature.mockReturnValue(false)
   })
   it('lists archived bots, and restores or deletes one only through trusted, validated calls', async () => {
     const reads = new Map<string, (...args: unknown[]) => unknown>()

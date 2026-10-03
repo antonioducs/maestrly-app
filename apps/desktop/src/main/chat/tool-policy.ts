@@ -88,6 +88,7 @@ export const APP_TOOL_POLICY = {
   computer_key: policy(false, false, false),
   bot_peers_list: policy(true, true, false),
   bot_peers_send: policy(false, false, false),
+  bot_share_file: policy(true, false, false),
   owner_memory_save: policy(false, false, false),
   owner_memory_forget: policy(false, false, false),
   routine_report: policy(true, false, false),
@@ -235,11 +236,12 @@ export const EXTERNAL_MCP_RESTRICTED_METADATA = { readOnly: true, parallelSafe: 
 
 /**
  * Built-in, parent-only tools that start persistent conversations. They mutate (worktrees, conversations, turns),
- * so they never enter read-only modes, the structurally read-only Maestro parent, subagents or Maestro workers.
+ * so they never enter Plan, the structurally read-only Maestro parent, subagents or Maestro workers.
+ * Ask receives this narrow handoff capability only for an explicit human dispatch request.
  * Runners add them only for a turn admitted from text the person typed (see conversation-dispatch-authorization).
  */
-export const CONVERSATION_DISPATCH_TOOL_NAMES = ['list_conversation_models', 'start_conversations'] as const
+export const CONVERSATION_DISPATCH_TOOL_NAMES = ['list_conversation_models', 'list_conversation_workspaces', 'start_conversations'] as const
 
 export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
-  return mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent'
+  return mode === 'ask' || (mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent')
 }

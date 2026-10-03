@@ -45,10 +45,26 @@ export const FLEET_IMAGE_LIMITS = {
   imageReadMaxBytes: 32 * 1024 * 1024,
   imagesPerItemMax: 8,
 } as const
+/** Gateway and instance capability for document attachments and private file downloads. */
+export const FLEET_FILES_FEATURE = 'files'
+export const FLEET_FILE_LIMITS = {
+  pdfMaxBytes: 10 * 1024 * 1024,
+  pdfsMax: 4,
+  textMaxBytes: 256 * 1024,
+  attachmentsMax: 8,
+  attachmentsTotalMaxBytes: 20 * 1024 * 1024,
+  downloadMaxBytes: 100 * 1024 * 1024,
+  publishedTotalMaxBytes: 1024 * 1024 * 1024,
+  publishedCountMax: 200,
+} as const
 /** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 
 export const FLEET_ARTIFACTS_FEATURE = 'artifacts'
+/** The gateway also serves the artifact viewer on its public port, so one address reaches bots and artifacts. */
+export const FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE = 'artifacts-gateway-viewer'
+/** A paired device can move an artifact in with its ID, history and comments (`exportArtifact`, `importArtifact`). */
+export const FLEET_ARTIFACTS_TRANSFER_FEATURE = 'artifacts-transfer'
 /** JSON body limit for artifact uploads, including base64 encoding. */
 export const FLEET_ARTIFACT_BODY_MAX = 72 * 1024 * 1024
 
@@ -180,7 +196,7 @@ export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
  * Apps areas.
  */
 export const FLEET_UNIFIED_DESKTOP_FEATURE = 'unified-desktop'
-export const FLEET_RUNTIME_IDS = ['claude-code', 'codex'] as const
+export const FLEET_RUNTIME_IDS = ['claude-code', 'codex', 'antigravity-acp'] as const
 /** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
 export const FLEET_RUNTIME_STATES = [
   'idle',
@@ -212,3 +228,6 @@ export const FLEET_ENVIRONMENT_LIMITS = {
  * settings); tile k (1 to 8) holds the browser of the bot in slot k.
  */
 export const FLEET_ENVIRONMENT_DISPLAY = { columns: 3, rows: 3, width: 3840, height: 2400 } as const
+
+/** Typed, revision-aware environment configuration, independent of any bot. */
+export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'

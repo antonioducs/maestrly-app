@@ -1230,19 +1230,13 @@ describe('artifact-only installation', () => {
   const localInput = { deviceName: 'Mac', allowPrivateNetwork: false, hosts: 'artifacts-only' as const }
   const remoteInput = { ...localInput, target, credentials: { kind: 'password' as const, password: 'synthetic' } }
 
-  it('pulls only the gateway, initializes hosting from desktop settings, and provisions the first bot on demand', async () => {
-    const { service, local, stored, fleetState } = setup({
-      connection: { features: ['artifacts'] },
-      deps: { desktopArtifactSettings: () => ({ ownerName: 'Synthetic owner', linkExpiryDays: 7 }) },
-    })
+  it('pulls only the gateway, turns hosting on with the server defaults, and provisions the first bot on demand', async () => {
+    const { service, local, stored, fleetState } = setup({ connection: { features: ['artifacts'] } })
     fleetState.responses.artifactHostPatch = {}
     expect((await service.installLocal(localInput)).job?.state).toBe('succeeded')
     expect(local.commands(['pull'])).toEqual([['pull', images.gateway]])
     expect(stored.record?.artifactsOnly).toBe(true)
-    expect(fleetState.calls).toContainEqual([
-      'artifactHostPatch',
-      { body: { enabled: true, ownerName: 'Synthetic owner', linkExpiryDays: 7 } },
-    ])
+    expect(fleetState.calls).toContainEqual(['artifactHostPatch', { body: { enabled: true } }])
     local.on(['pull', images.bot], fail('Synthetic download failure'))
     expect((await service.provideBotEnvironment()).job).toMatchObject({ kind: 'bot-environment', state: 'failed' })
     expect(stored.record?.artifactsOnly).toBe(true)

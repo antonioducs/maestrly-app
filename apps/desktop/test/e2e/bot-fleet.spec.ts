@@ -1609,6 +1609,29 @@ async function runFleetScenario(workspaceOnly: boolean) {
         await expect(settings).toBeHidden()
         expect(requests.filter((request) => request.key === 'botPatch')).toHaveLength(0)
       })
+      await test.step('the conversation moves to a window of its own while the computer stays and streams', async () => {
+        await draft.fill('Draft that travels with the window')
+        const streamsBefore = screenConnections
+        const opened = app!.waitForEvent('window')
+        await conversation.getByRole('button', { name: 'Abrir chat em nova janela', exact: true }).click()
+        const child = await opened
+        const placeholder = conversation.getByText('Esta conversa está aberta em outra janela.', { exact: true })
+        await expect(placeholder).toBeVisible()
+        // The draft and the composer are in the new window; the computer and its stream stay in the main one.
+        await expect(child.locator('[data-placeholder="Mensagem para Scout…"]')).toHaveText(
+          'Draft that travels with the window'
+        )
+        await expect(computer).toBeVisible()
+        await expect(computer.locator('canvas')).toBeVisible()
+        expect(screenConnections).toBe(streamsBefore)
+        // The header button and the placeholder both bring the window forward.
+        await expect(conversation.getByRole('button', { name: 'Focar janela do chat', exact: true })).toHaveCount(2)
+        await child.getByRole('button', { name: 'Voltar ao app', exact: true }).click()
+        await expect(placeholder).toBeHidden()
+        await expect(draft).toHaveText('Draft that travels with the window')
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await draft.fill('')
+      })
       await test.step('a controlled computer stays open behind settings and returns control before closing', async () => {
         await page.getByRole('button', { name: 'Assumir controle', exact: true }).click()
         await page
@@ -3244,8 +3267,26 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         error: null,
       },
     ]
-    upsertEnvironment(fleetEnvironmentSchema.parse({ ...environments.find((item) => item.id === 'acme')!, runtimes }))
-    const runtimesSection = page.getByRole('region', { name: 'Claude Code e Codex', exact: true })
+    upsertEnvironment(
+      fleetEnvironmentSchema.parse({
+        ...environments.find((item) => item.id === 'acme')!,
+        runtimes,
+        additionalRuntimes: [
+          {
+            id: 'antigravity-acp',
+            version: '1.2.1',
+            source: 'managed',
+            pendingVersion: '1.2.2',
+            automatic: true,
+            state: 'up-to-date',
+            availableVersion: null,
+            lastCheckedAt: now(),
+            error: null,
+          },
+        ],
+      })
+    )
+    const runtimesSection = page.getByRole('region', { name: 'Runtimes dos modelos', exact: true })
     const claudeRow = runtimesSection.locator('[data-fleet-runtime="claude-code"]')
     await expect(claudeRow).toContainText('v2.1.285 · da imagem do bot')
     await expect(claudeRow).toContainText('Atualizado')
@@ -3257,6 +3298,11 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(codexRow.locator('[data-fleet-runtime-pending]')).toHaveCount(0)
     await expect(codexRow).toContainText('v0.161.0 disponível')
     await expect(codexRow).toContainText('Atualização automática desligada')
+    const googleRow = runtimesSection.locator('[data-fleet-runtime="antigravity-acp"]')
+    await expect(googleRow).toContainText('Google Antigravity ACP')
+    await expect(googleRow).toContainText('v1.2.1 · atualizado')
+    await expect(googleRow.locator('[data-fleet-runtime-pending]')).toContainText('v1.2.2 instalada')
+    await expect(googleRow).not.toContainText('Atualização automática desligada')
     const check = runtimesSection.getByRole('button', { name: 'Verificar atualizações' })
     await check.click()
     await expect
@@ -3266,7 +3312,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(check).toBeDisabled()
     await header('Home').click()
     await expect(page.getByRole('region', { name: 'Iniciar e parar', exact: true })).toBeVisible()
-    await expect(page.getByRole('region', { name: 'Claude Code e Codex', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Runtimes dos modelos', exact: true })).toHaveCount(0)
   } finally {
     await app?.close()
     for (const stream of streams) stream.end()

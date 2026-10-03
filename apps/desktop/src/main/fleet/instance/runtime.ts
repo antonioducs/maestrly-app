@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
+import { Readable } from 'node:stream'
 import { app } from 'electron'
 import {
   FLEET_PROTOCOL_VERSION,
@@ -25,6 +27,7 @@ import {
   type FleetUsage,
   type FleetConversationCallRequest,
   type FleetCompactionState,
+  type FleetFileRef,
 } from '@maestrly/bot-fleet-protocol'
 import type { LocalMemory } from '../../../shared/memory'
 import type { BackgroundCompactionConfig } from '../../../shared/background-compaction'
@@ -46,6 +49,7 @@ import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
 import { getHiddenChatModelsFor } from '../../store/settings'
 import { createStandaloneConversation } from '../../standalone-conversation-service'
+import { createConversationFileScope } from '../../conversation-file-scope'
 import {
   acquireChatConversationSlot,
   getChatPermissionBroker,
@@ -85,7 +89,7 @@ import { observeChatHost } from '../../chat/host-events'
 import { presentationForTool, presentsOnCompletion, type PresentationRequest } from './desktop/presentation'
 import { setConversationShellEnv, type ConversationShellEnv } from '../../chat/conversation-env'
 import { setConversationScreen, type ScreenArea } from '../../conversation-screen'
-import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents } from './server'
+import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents, type InstanceFile } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } from './transcript'
@@ -94,6 +98,8 @@ import { InstanceHelpStore } from './help'
 import { clearBotIdentity, setBotIdentity, type BotIdentityPeer } from './identity'
 import type { GatewayConfig } from './gateway-client'
 import { FleetImageStore } from './images'
+import { FleetFileStore } from './files'
+import { readConversationFile } from './attachment-files'
 import { botToolsPatchRefusal, validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
 import {
   botPaths,
@@ -106,7 +112,7 @@ import {
   type StoredProfile,
 } from './registry'
 import { inspectSubagentProfile } from '../../chat/subagent-profile-ipc'
-import { fleetRuntimeInfo } from './runtimes'
+import { fleetRuntimeReport } from './runtimes'
 import {
   getConversationSubagentProfileRules,
   setConversationSubagentProfilesEnabled,
@@ -148,7 +154,8 @@ export function visibleFleetModels<T extends { providerId: string; modelId: stri
 export function effectiveFleetSelection(
   options: FleetSelectionOption[],
   saved: FleetSelection | null,
-  defaults: { providerId: string | null; modelId: string | null; reasoning: string | null; fastMode: boolean }
+  defaults: { providerId: string | null; modelId: string | null; reasoning: string | null; fastMode: boolean },
+  visibleOptions: FleetSelectionOption[] = options
 ): FleetSelection | null {
   const option = saved && options.find((item) => item.providerId === saved.providerId && item.modelId === saved.modelId)
   if (option)
@@ -158,7 +165,8 @@ export function effectiveFleetSelection(
       fastMode: option.fastMode && saved!.fastMode,
     }
   const fallback =
-    options.find((item) => item.providerId === defaults.providerId && item.modelId === defaults.modelId) ?? options[0]
+    visibleOptions.find((item) => item.providerId === defaults.providerId && item.modelId === defaults.modelId) ??
+    visibleOptions[0]
   if (!fallback) return null
   return {
     providerId: fallback.providerId,
@@ -169,9 +177,9 @@ export function effectiveFleetSelection(
 }
 
 /** The models the environment's accounts offer, as bots choose them; the accounts are shared by every bot. */
-export async function loadFleetAccountOptions(): Promise<FleetSelectionOption[]> {
+export async function loadFleetAccountOptions(includeHidden = false): Promise<FleetSelectionOption[]> {
   const models = await listChatRunnerCapabilities(true)
-  return visibleFleetModels(models, getHiddenChatModelsFor).map((model) => ({
+  return (includeHidden ? models : visibleFleetModels(models, getHiddenChatModelsFor)).map((model) => ({
     id: `${model.providerId}::${model.modelId}`,
     providerId: model.providerId,
     providerLabel: model.providerLabel,
@@ -230,7 +238,7 @@ export interface BotRuntimeHost {
   /** The environment's event stream; each bot event carries its bot id. */
   readonly events: InstanceEvents
   readonly gatewayUrl: string | null
-  /** The models of the environment's accounts; `force` asks for a fresh list. */
+  /** Complete catalog, including user-hidden models; `force` asks for a fresh list. */
   accountOptions(force: boolean): Promise<FleetSelectionOption[]>
   /** The other bots of the environment. */
   peers(botId: string): BotIdentityPeer[]
@@ -257,6 +265,7 @@ export class BotRuntime {
   readonly help: InstanceHelpStore
   readonly holdManager: InstanceHoldManager
   readonly images: FleetImageStore
+  readonly files: FleetFileStore
   readonly live: LiveTranscript
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
@@ -316,6 +325,7 @@ export class BotRuntime {
     this.ownerMemory = new OwnerMemoryClient(() => this.gatewayConfig)
     this.queue = new InstanceInputQueue(paths.inputs, paths.attachments)
     this.images = new FleetImageStore(paths.images)
+    this.files = new FleetFileStore(path.join(paths.folder, 'files'))
     this.extras = new InstanceTranscriptExtras(paths.transcript, (item) =>
       this.publish({ type: 'transcript.upsert', item })
     )
@@ -347,6 +357,15 @@ export class BotRuntime {
   /** The bot's color for its desktop (`#rrggbb`), or null when the gateway sent none. */
   get tint(): string | null {
     return this.stored?.profile.tint ?? null
+  }
+  /** Read-only usage for the environment editor; no conversation or credentials cross this boundary. */
+  settingsUsage() {
+    return {
+      id: this.botId,
+      name: this.name ?? this.botId,
+      selection: this.currentSelection(),
+      compaction: this.stored?.profile.compaction ?? null,
+    }
   }
   get artifactsEnabled(): boolean {
     return this.stored?.profile.gateway.artifactsEnabled ?? false
@@ -410,6 +429,7 @@ export class BotRuntime {
   async start(): Promise<void> {
     await this.queue.load()
     await this.images.load()
+    await this.files.load()
     await this.extras.load()
     for (const item of this.extras.list()) {
       if (item.kind === 'permission' && item.state === 'pending')
@@ -598,18 +618,35 @@ export class BotRuntime {
     }
   }
   private currentSelection(): FleetSelection | null {
-    return effectiveFleetSelection(this.accountOptions, this.stored?.profile.selection ?? null, {
-      providerId: getAppSetting('chat.defaultProvider'),
-      modelId: getAppSetting('chat.defaultModel'),
-      reasoning: getAppSetting('chat.defaultReasoning'),
-      fastMode: getAppSetting('chat.defaultFastMode') === '1',
-    })
+    return effectiveFleetSelection(
+      this.accountOptions,
+      this.stored?.profile.selection ?? null,
+      {
+        providerId: getAppSetting('chat.defaultProvider'),
+        modelId: getAppSetting('chat.defaultModel'),
+        reasoning: getAppSetting('chat.defaultReasoning'),
+        fastMode: getAppSetting('chat.defaultFastMode') === '1',
+      },
+      visibleFleetModels(this.accountOptions, getHiddenChatModelsFor)
+    )
   }
   async profile(value: FleetInstanceProfile): Promise<FleetInstanceStatus> {
     if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
     const profile = fleetInstanceProfileSchema.parse(value)
     if (profile.botId !== this.botId)
       throw new InstanceHttpError(400, 'INVALID_REQUEST', 'The profile names another bot.')
+    for (const field of ['selection', 'compaction'] as const) {
+      const selection = profile[field]
+      const previous = this.stored?.profile[field]
+      if (
+        selection &&
+        !(field === 'compaction' && profile.compactionInherited) &&
+        getHiddenChatModelsFor(selection.providerId).includes(selection.modelId) &&
+        (previous?.providerId !== selection.providerId || previous?.modelId !== selection.modelId)
+      ) {
+        throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Hidden models cannot be selected for new settings.')
+      }
+    }
     this.stored = { profile, primaryConversationId: this.stored?.primaryConversationId ?? null }
     writeStoredProfile(this.botId, this.stored)
     // An install carries the bot's final settings: once they apply, a conversation an uninstall suspended resumes.
@@ -727,7 +764,10 @@ export class BotRuntime {
   }
   async selections(): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }> {
     await this.refreshAccounts(true)
-    return { options: this.accountOptions, current: this.currentSelection() }
+    return {
+      options: visibleFleetModels(this.accountOptions, getHiddenChatModelsFor),
+      current: this.currentSelection(),
+    }
   }
   /** The environment's accounts changed: the bot reads its models again and may start queued work. */
   accountsChanged(): void {
@@ -896,11 +936,14 @@ export class BotRuntime {
       ]).values(),
     ]
     const pending = this.pending()
-    const queue = this.queue.list().map((item) => ({
-      inputId: item.id,
-      source: item.input.source,
-      preview: summarizeText(item.input.text, FLEET_QUEUE_PREVIEW_MAX),
-    }))
+    const queue = this.queue
+      .list()
+      .filter((item) => !item.attachmentError)
+      .map((item) => ({
+        inputId: item.id,
+        source: item.input.source,
+        preview: summarizeText(item.input.text, FLEET_QUEUE_PREVIEW_MAX),
+      }))
     const activity: FleetInstanceStatus['activity'] =
       this.holdManager.state.state !== 'none'
         ? queue.length
@@ -935,7 +978,7 @@ export class BotRuntime {
       ceiling: this.stored?.profile.ceiling ?? 'ask',
       profile: this.stored ? { botId: this.stored.profile.botId, name: this.stored.profile.name } : null,
       conversationId: this.primaryConversationId,
-      runtimes: await fleetRuntimeInfo().catch(() => null),
+      ...(await fleetRuntimeReport()),
       turn: {
         state: this.cancelling ? 'cancelling' : this.turning ? 'running' : 'idle',
         startedAt: this.turnStartedAt,
@@ -1014,6 +1057,35 @@ export class BotRuntime {
     if (!result) throw new InstanceHttpError(404, 'NOT_FOUND', 'Image not found.')
     return result
   }
+
+  async publishFile(relativePath: string, name?: string): Promise<FleetFileRef> {
+    const id = this.primaryConversationId
+    const conversation = id ? getConversation(id) : null
+    if (!conversation) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot conversation not found.')
+    const scope = await createConversationFileScope(conversation)
+    const source = await scope.resolveBridgePath(relativePath)
+    return this.files.publish({ root: source.root, target: path.resolve(source.root, relativePath) }, name)
+  }
+
+  private async attachmentFile(fileId: string) {
+    const id = this.primaryConversationId
+    if (!id) return null
+    return (await this.queue.readFile(fileId)) ?? readConversationFile(id, fileId, this.live.fileMessages(fileId))
+  }
+
+  async fileMeta(fileId: string): Promise<FleetFileRef> {
+    const result = this.files.meta(fileId) ?? (await this.attachmentFile(fileId))?.ref
+    if (!result) throw new InstanceHttpError(404, 'NOT_FOUND', 'File not found.')
+    return result
+  }
+
+  async file(fileId: string): Promise<InstanceFile> {
+    const published = await this.files.open(fileId)
+    if (published) return { ref: published.ref, stream: published.handle.createReadStream() }
+    const attached = await this.attachmentFile(fileId)
+    if (!attached) throw new InstanceHttpError(404, 'NOT_FOUND', 'File not found.')
+    return { ref: attached.ref, stream: Readable.from([attached.bytes]) }
+  }
   /**
    * The user messages the queue may map its started inputs to: every one created since the oldest input still
    * unmapped (a second before it), none when every input is mapped.
@@ -1052,7 +1124,7 @@ export class BotRuntime {
       )
     )
       return
-    const item = this.queue.list()[0]
+    const item = this.queue.list().find((candidate) => !candidate.attachmentError)
     if (!item) return
     this.turning = true
     this.turnStartedAt = new Date().toISOString()
@@ -1140,9 +1212,22 @@ export class BotRuntime {
       void this.refreshUsage()
     } catch (error) {
       this.retryAt = Date.now() + 5_000
-      await this.queue.reconcile(this.nativeUsersForQueue()).catch(() => {
-        console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Input recovery failed' }))
-      })
+      await this.queue
+        .reconcile(this.nativeUsersForQueue())
+        .then(async () => {
+          if (
+            !this.turnAbort?.signal.aborted &&
+            error instanceof Error &&
+            (error.message === 'invalid-attachment' || error.message === 'pdf-unreadable')
+          ) {
+            await this.queue.failAttachment(item.id, error.message)
+            this.retryAt = 0
+            this.publish({ type: 'reset' })
+          }
+        })
+        .catch(() => {
+          console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Input recovery failed' }))
+        })
       const cancelled = this.turnAbort?.signal.aborted === true
       await this.system(
         cancelled ? 'turn_cancelled' : 'turn_failed',
@@ -1167,7 +1252,7 @@ export class BotRuntime {
       this.activeTool = null
       settle()
       this.changed()
-      if (this.queue.list().length) void this.tick()
+      if (this.queue.list().some((candidate) => !candidate.attachmentError)) void this.tick()
     }
   }
   async cancel(): Promise<void> {

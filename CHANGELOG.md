@@ -5,8 +5,34 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** artifacts are hosted only on the bot server. Without a paired
+  server, agents ask you to connect one instead of publishing on this computer,
+  and **Settings → Artifacts** offers an artifact-only server setup. Artifacts
+  that earlier versions hosted on this computer no longer open until you move
+  them to the server, with their IDs, versions, comments, and previews, or
+  delete them; shared ones become private. See
+  [artifacts from earlier versions](docs/artifacts.md#artifacts-from-earlier-versions).
+
 ### Added
 
+- The bot server's own port now also serves the artifact viewer, so one route
+  to the server, such as Tailscale Serve, reaches bots and artifacts. See
+  [reach the server from another device](docs/artifacts.md#reach-the-server-from-another-device).
+- Clicking outside the artifact details panel closes it.
+
+## [0.13.0] - 2026-10-01
+
+### Added
+
+- Connect Google AI Pro or Ultra accounts through Google's official Antigravity
+  ACP server and use its Gemini models in chat, Maestro, subagents, and bot
+  environments. The runtime downloads on first sign-in; accounts and bot
+  sign-ins remain separate. See [Google AI](docs/antigravity.md).
+- Check, update, or roll back the Antigravity runtime in Components. Bots update
+  installed runtimes automatically and switch existing processes when the
+  environment is idle. Failed updates keep the current version and account data.
 - Host artifacts on a paired bot server so shared pages stay available while
   your computer sleeps. Choose where desktop conversations publish, control
   publication per bot, and browse both hosts in the Artifacts center. Existing
@@ -14,7 +40,7 @@ User-visible changes by version. Downloads are on
 - Install an artifact-only server with just the gateway image; creating the
   first bot downloads its runtime later. Installer updates add the artifact
   viewer port, with a separate SSH tunnel for VPS setups. Public addresses and
-  Tailscale access remain manual. See [server artifacts](docs/artifacts.md#bot-server).
+  Tailscale access remain manual. See [server artifacts](docs/artifacts.md#hosting).
 
 ## [0.12.0] - 2026-09-30
 

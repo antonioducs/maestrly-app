@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CornerUpRight, Loader2, OctagonX, Route, ShieldCheck, X } from 'lucide-react'
@@ -46,6 +47,7 @@ export function MaestroActivityPill({
   onJumpToMessage?: (messageId: string) => void
   liveState?: MaestroLiveState | null
 }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const sessions = useSubagentSessions()
   const [open, setOpen] = useState(false)
@@ -63,13 +65,13 @@ export function MaestroActivityPill({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
+    ownerDocument.addEventListener('mousedown', onPointerDown)
+    ownerDocument.addEventListener('keydown', onKeyDown)
     return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
+      ownerDocument.removeEventListener('mousedown', onPointerDown)
+      ownerDocument.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [ownerDocument, open])
 
   if (runs.length === 0 && !active) return null
 

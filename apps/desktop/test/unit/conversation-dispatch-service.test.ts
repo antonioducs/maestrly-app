@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { deleteConversation as deleteConversationRow, getConversation, getDb } from '../../src/main/store'
+import {
+  deleteConversation as deleteConversationRow,
+  getConversation,
+  getWorkspace,
+  getDb,
+  insertConversation,
+} from '../../src/main/store'
 import {
   createConversationDispatchService,
+  listConversationDispatchWorkspaces,
   type ConversationDispatchServiceDeps,
 } from '../../src/main/conversation-dispatch-service'
 import {
@@ -27,7 +34,12 @@ vi.mock('../../src/main/conversation-dispatch-store', async (importOriginal) => 
   }
 })
 
-const SETTINGS: ConversationDispatchSettings = { providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: false }
+const SETTINGS: ConversationDispatchSettings = {
+  providerId: 'claude',
+  modelId: 'opus',
+  reasoning: 'high',
+  fastMode: false,
+}
 
 let workspaceId: string
 let source: ProjectConversation
@@ -44,20 +56,28 @@ function harness(overrides: Partial<ConversationDispatchServiceDeps> = {}) {
       inherited: requested.modelId ? [] : ['model'],
     })),
     resolveHead: vi.fn(async () => 'a'.repeat(40)),
+    getWorkspace,
+    resolveBranch: vi.fn(async () => 'b'.repeat(40)),
+    validateBranch: vi.fn(async () => true),
+    branchExists: vi.fn(async () => false),
     hasUncommittedChanges: vi.fn(async () => true),
     createShared: vi.fn(async (_sourceId, options) => {
       calls.push(`createShared:${options.id}`)
-      return makeConversation(workspaceId, { id: options.id, name: options.name, cwd: source.cwd, branch: source.branch })
+      return makeConversation(workspaceId, {
+        id: options.id,
+        name: options.name,
+        cwd: source.cwd,
+        branch: source.branch,
+      })
     }),
     createIsolated: vi.fn(async (args) => {
       calls.push(`createIsolated:${args.branch}`)
-      return makeConversation(workspaceId, { id: args.id, name: args.name, branch: args.branch })
+      return makeConversation(args.workspaceId, { id: args.id, name: args.name, branch: args.branch })
     }),
     deleteConversation: vi.fn(async (id) => {
       calls.push(`delete:${id}`)
       deleteConversationRow(id)
     }),
-    cleanupIsolated: vi.fn(async () => undefined),
     applySettings: vi.fn((id, settings) => {
       calls.push(`apply:${id}`)
       persistedSettings.set(id, settings)
@@ -132,9 +152,185 @@ describe('conversation dispatch service', () => {
       expect(calls.indexOf(`apply:${id}`)).toBeLessThan(calls.indexOf(`start:${id}`))
     }
     expect(result.items[1].settings?.reasoning).toBe('max')
-    expect(persistedSettings.get(source.id)).toEqual({ providerId: 'codex', modelId: 'gpt', reasoning: 'low', fastMode: true })
+    expect(persistedSettings.get(source.id)).toEqual({
+      providerId: 'codex',
+      modelId: 'gpt',
+      reasoning: 'low',
+      fastMode: true,
+    })
     expect(vi.mocked(deps.startTurn).mock.calls[0][0]).toMatchObject({ visible: true, sourceConversationId: source.id })
-    expect(deps.openConversation).toHaveBeenCalledWith(expect.objectContaining({ id: result.items[0].conversationId }), false)
+    expect(deps.openConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: result.items[0].conversationId }),
+      false
+    )
+  })
+
+  it('lists registered unavailable repositories without substituting another checkout', async () => {
+    const other = makeWorkspace({ name: 'Unavailable repository', path: '/missing/dispatch-test-repository' })
+    const options = await listConversationDispatchWorkspaces()
+    expect(options).toHaveLength(2)
+    expect(options.find((option) => option.workspaceId === other.id)).toEqual({
+      workspaceId: other.id,
+      name: other.name,
+      path: other.path,
+      defaultBranch: 'main',
+      branches: [],
+    })
+  })
+
+  it('rolls back a successfully created isolated destination when cancelled before start', async () => {
+    const controller = new AbortController()
+    const { deps, service } = harness({
+      createIsolated: vi.fn(async (args) => {
+        const conversation = makeConversation(args.workspaceId, { id: args.id, branch: args.branch })
+        controller.abort()
+        return conversation
+      }),
+    })
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { target: { workspaceId, branch: 'cancelled' }, tasks: [task('A')] },
+      signal: controller.signal,
+      assertCurrent: () => undefined,
+    })
+    expect(result.items[0].error).toMatch(/cancelled/)
+    expect(deps.deleteConversation).toHaveBeenCalledWith(expect.any(String), { preserveWorktree: false })
+    expect(deps.startTurn).not.toHaveBeenCalled()
+    expect(findConversationDispatch(source.id, 'message:msg-1', 'A')?.phase).toBe('discarded')
+  })
+
+  it('requires a workspace for standalone sources and routes an explicit target', async () => {
+    const standalone = {
+      ...source,
+      id: 'standalone-source',
+      scope: 'standalone' as const,
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      experience: 'standard' as const,
+      isMulti: 0 as const,
+      repos: undefined,
+    }
+    insertConversation(standalone)
+    const { deps, service } = harness()
+    const standaloneGrant = { ...grant(), conversationId: standalone.id }
+    const missing = await service.dispatchBatch({
+      grant: standaloneGrant,
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
+    expect(missing).toMatchObject({ ok: false, error: expect.stringMatching(/explicit workspaceId/) })
+    const result = await service.dispatchBatch({
+      grant: standaloneGrant,
+      batch: { target: { workspaceId }, tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
+    expect(result.items[0]).toMatchObject({ status: 'started', workspaceId, baseRevision: 'b'.repeat(40) })
+    expect(deps.resolveBranch).toHaveBeenCalledWith(getWorkspace(workspaceId)!.path, 'main')
+    expect(deps.resolveHead).not.toHaveBeenCalled()
+  })
+
+  it('merges batch targets and routes to the selected project with exact branch names and pinned bases', async () => {
+    const other = makeWorkspace({ defaultBranch: 'develop' })
+    const { deps, service } = harness()
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: {
+        target: { workspaceId: other.id, baseBranch: 'release' },
+        tasks: [
+          task('A', { target: { branch: 'Feature/Exact.Name' } }),
+          task('B', { target: { baseBranch: 'develop' } }),
+        ],
+      },
+      assertCurrent: () => undefined,
+    })
+    expect(result.items[0]).toMatchObject({
+      workspaceId: other.id,
+      branch: 'Feature/Exact.Name',
+      baseRevision: 'b'.repeat(40),
+      status: 'started',
+    })
+    expect(getConversation(result.items[0].conversationId!)?.workspaceId).toBe(other.id)
+    expect(deps.resolveBranch).toHaveBeenNthCalledWith(1, other.path, 'release')
+    expect(deps.resolveBranch).toHaveBeenNthCalledWith(2, other.path, 'develop')
+    expect(deps.resolveHead).not.toHaveBeenCalled()
+  })
+
+  it('uses the project workspace for branch-only targets', async () => {
+    const { deps, service } = harness()
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A', { target: { branch: 'exact' } })] },
+      assertCurrent: () => undefined,
+    })
+    expect(result.items[0]).toMatchObject({ workspaceId, branch: 'exact', status: 'started' })
+    expect(deps.resolveBranch).toHaveBeenCalledWith(getWorkspace(workspaceId)!.path, 'main')
+  })
+
+  it.each([
+    'missing-workspace',
+    'missing-base',
+    'invalid-branch',
+    'existing-branch',
+    'duplicate-branch',
+    'shared-target',
+  ])('prevalidates all destinations before allocation: %s', async (failure) => {
+    const { deps, service } = harness()
+    if (failure === 'missing-base') vi.mocked(deps.resolveBranch).mockResolvedValue(null)
+    if (failure === 'invalid-branch') vi.mocked(deps.validateBranch).mockResolvedValue(false)
+    if (failure === 'existing-branch') vi.mocked(deps.branchExists).mockResolvedValue(true)
+    const target = { workspaceId: failure === 'missing-workspace' ? 'missing' : workspaceId, branch: 'exact' }
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: {
+        tasks: [
+          task('A', failure === 'duplicate-branch' ? { target } : {}),
+          task('B', { target, ...(failure === 'shared-target' ? { placement: 'shared' } : {}) }),
+        ],
+      },
+      assertCurrent: () => undefined,
+    })
+    expect(result.ok).toBe(false)
+    expect(deps.createIsolated).not.toHaveBeenCalled()
+    expect(deps.createShared).not.toHaveBeenCalled()
+    expect(deps.deleteConversation).not.toHaveBeenCalled()
+  })
+
+  it('replays pinned targets after refs disappear and rejects changed targets before allocating other tasks', async () => {
+    const { deps, service } = harness()
+    const batch = { target: { workspaceId, baseBranch: 'main', branch: 'exact' }, tasks: [task('A')] }
+    const first = await service.dispatchBatch({ grant: grant(), batch, assertCurrent: () => undefined })
+    vi.mocked(deps.resolveHead).mockResolvedValue(null)
+    vi.mocked(deps.resolveBranch).mockResolvedValue(null)
+    vi.mocked(deps.branchExists).mockResolvedValue(true)
+    const replay = await service.dispatchBatch({ grant: grant(), batch, assertCurrent: () => undefined })
+    expect(replay.items[0]).toMatchObject({
+      conversationId: first.items[0].conversationId,
+      replayed: true,
+      status: 'started',
+      baseRevision: 'b'.repeat(40),
+    })
+    expect(deps.resolveBranch).toHaveBeenCalledTimes(1)
+    const conflict = await service.dispatchBatch({
+      grant: grant(),
+      batch: {
+        tasks: [task('B', { placement: 'shared' }), task('A', { target: { ...batch.target, branch: 'changed' } })],
+      },
+      assertCurrent: () => undefined,
+    })
+    expect(conflict.items[0].error).toMatch(/different content/)
+    expect(deps.createIsolated).toHaveBeenCalledTimes(1)
+    expect(deps.createShared).not.toHaveBeenCalled()
+  })
+
+  it('replays legacy implicit targets without resolving source HEAD again', async () => {
+    const { deps, service } = harness()
+    const batch = { tasks: [task('A')] }
+    await service.dispatchBatch({ grant: grant(), batch, assertCurrent: () => undefined })
+    vi.mocked(deps.resolveHead).mockResolvedValue(null)
+    const replay = await service.dispatchBatch({ grant: grant(), batch, assertCurrent: () => undefined })
+    expect(replay.items[0]).toMatchObject({ replayed: true, status: 'started' })
+    expect(deps.resolveHead).toHaveBeenCalledTimes(1)
   })
 
   it('shares the source checkout on request and rolls back without removing it', async () => {
@@ -159,7 +355,7 @@ describe('conversation dispatch service', () => {
     const { deps, service } = harness()
     vi.mocked(deps.createIsolated).mockImplementationOnce(async (args) => {
       calls.push(`createIsolated:${args.branch}`)
-      return makeConversation(workspaceId, { id: args.id, name: args.name, branch: args.branch })
+      return makeConversation(args.workspaceId, { id: args.id, name: args.name, branch: args.branch })
     })
     vi.mocked(deps.createIsolated).mockImplementationOnce(async () => {
       throw new Error('worktree add failed')
@@ -171,8 +367,8 @@ describe('conversation dispatch service', () => {
     })
     expect(result.items.map((item) => item.status)).toEqual(['started', 'failed', 'started'])
     expect(result.items[1].error).toMatch(/worktree add failed/)
-    expect(deps.cleanupIsolated).toHaveBeenCalledTimes(1)
-    expect(findConversationDispatch(source.id, 'message:msg-1', 'B')?.phase).toBe('discarded')
+    expect(deps.deleteConversation).not.toHaveBeenCalled()
+    expect(findConversationDispatch(source.id, 'message:msg-1', 'B')?.phase).toBe('recovery')
   })
 
   it('stops between items when the authorizing turn ends', async () => {
@@ -209,7 +405,7 @@ describe('conversation dispatch service', () => {
     expect(deps.startTurn).toHaveBeenCalledTimes(1)
   })
 
-  it('serializes concurrent retries after a failed allocation instead of treating it as a crash', async () => {
+  it('serializes concurrent retries and preserves an uncertain failed allocation for recovery', async () => {
     const { deps, service } = harness()
     vi.mocked(deps.createIsolated).mockImplementationOnce(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5))
@@ -220,12 +416,11 @@ describe('conversation dispatch service', () => {
       [1, 2, 3].map(() => service.dispatchBatch({ grant: grant(), batch, assertCurrent: () => undefined }))
     )
     const statuses = results.map((result) => result.items[0].status)
-    expect(statuses.filter((status) => status === 'failed')).toHaveLength(1)
-    expect(statuses.filter((status) => status === 'started')).toHaveLength(2)
-    expect(new Set(results.filter((r) => r.items[0].status === 'started').map((r) => r.items[0].conversationId)).size).toBe(1)
-    expect(deps.createIsolated).toHaveBeenCalledTimes(2)
-    expect(deps.startTurn).toHaveBeenCalledTimes(1)
-    expect(findConversationDispatch(source.id, 'message:msg-1', 'PROJ-7')?.phase).toBe('started')
+    expect(statuses).toEqual(['failed', 'failed', 'failed'])
+    expect(deps.createIsolated).toHaveBeenCalledTimes(1)
+    expect(deps.deleteConversation).not.toHaveBeenCalled()
+    expect(deps.startTurn).not.toHaveBeenCalled()
+    expect(findConversationDispatch(source.id, 'message:msg-1', 'PROJ-7')?.phase).toBe('recovery')
   })
 
   it('refuses to widen a request key with different content on retry', async () => {
@@ -289,9 +484,17 @@ describe('conversation dispatch service', () => {
 
   it('does not recreate a destination the person deleted', async () => {
     const { deps, service } = harness()
-    const first = await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('A')] }, assertCurrent: () => undefined })
+    const first = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
     deleteConversationRow(first.items[0].conversationId!)
-    const retry = await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('A')] }, assertCurrent: () => undefined })
+    const retry = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
     expect(retry.items[0]).toMatchObject({ status: 'failed', error: expect.stringMatching(/deleted/) })
     expect(deps.createIsolated).toHaveBeenCalledTimes(1)
   })
@@ -301,32 +504,45 @@ describe('conversation dispatch service', () => {
       createIsolated: vi.fn(async () => {
         throw new Error('worktree add failed halfway')
       }),
-      cleanupIsolated: vi.fn(async () => {
-        throw new Error('worktree is locked')
-      }),
     })
-    const result = await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('A')] }, assertCurrent: () => undefined })
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
     expect(result.items[0]).toMatchObject({ status: 'failed' })
     expect(findConversationDispatch(source.id, 'message:msg-1', 'A')).toMatchObject({
       phase: 'recovery',
-      error: expect.stringMatching(/worktree is locked/),
+      error: expect.stringMatching(/ownership is uncertain/),
     })
-    const retry = await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('A')] }, assertCurrent: () => undefined })
-    expect(retry.items[0]).toMatchObject({ status: 'failed', error: expect.stringMatching(/worktree is locked/) })
+    const retry = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
+    expect(retry.items[0]).toMatchObject({ status: 'failed', error: expect.stringMatching(/ownership is uncertain/) })
     expect(deps.createIsolated).toHaveBeenCalledTimes(1)
   })
 
   it('reports a persistence failure without allocating anything', async () => {
     const { deps, service } = harness()
     hoisted.failReserve = true
-    const result = await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('A')] }, assertCurrent: () => undefined })
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
     expect(result.items[0]).toMatchObject({ status: 'failed', error: expect.stringMatching(/Could not record/) })
     expect(deps.createIsolated).not.toHaveBeenCalled()
   })
 
   it('honours source restrictions before creating anything', async () => {
     const { deps, service } = harness({ isWebManaged: vi.fn(() => true) })
-    const result = await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('A')] }, assertCurrent: () => undefined })
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/Kanban web chat/) })
     const reserved = harness({ isReserved: vi.fn(() => true) })
     const shared = await reserved.service.dispatchBatch({

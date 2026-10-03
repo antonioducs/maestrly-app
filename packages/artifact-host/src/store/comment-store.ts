@@ -71,6 +71,25 @@ export class CommentStore {
       )
   }
 
+  /** Comments brought with an imported artifact; the caller runs this inside the artifact's import transaction. */
+  importComments(comments: readonly CommentRecord[]): void {
+    for (const comment of comments) this.insert(comment)
+  }
+
+  /** Whether any comment, deleted ones included, already uses this ID. */
+  exists(id: string): boolean {
+    return this.db.prepare('SELECT 1 FROM comments WHERE id = ?').get(id) !== undefined
+  }
+
+  /** Every comment of an artifact that was not deleted, in the order they were written. */
+  listAll(artifactId: string): CommentRecord[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM comments WHERE artifact_id = ? AND deleted_at IS NULL ORDER BY rowid')
+        .all(artifactId) as Row[]
+    ).map(toComment)
+  }
+
   get(id: string): CommentRecord | null {
     const row = this.db.prepare('SELECT * FROM comments WHERE id = ? AND deleted_at IS NULL').get(id) as Row | undefined
     return row ? toComment(row) : null

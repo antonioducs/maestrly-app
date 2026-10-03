@@ -15,6 +15,7 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { fleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
+import { BotTranscriptFiles } from './BotTranscriptFiles'
 import { AgentActivity } from '@/components/chat/AgentActivity'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
@@ -102,11 +103,17 @@ function TranscriptRow({
           </p>
         )}
         <BotTranscriptImages botId={bot.id} images={item.images} cache={imageCache} />
+        <BotTranscriptFiles botId={bot.id} files={item.files} />
+        {item.attachmentError && (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            {t(item.attachmentError === 'pdf-unreadable' ? 'files.unreadablePdf' : 'files.invalidAttachment')}
+          </p>
+        )}
         <span className="mt-1 flex items-center justify-end gap-2 text-xs text-muted-foreground">
           {at}
           {item.queued && (
             <>
-              {t('transcript.queued')}
+              {t(item.attachmentError ? 'files.notSent' : 'transcript.queued')}
               <button
                 type="button"
                 aria-label={t('transcript.removeQueued')}
@@ -172,6 +179,7 @@ function TranscriptRow({
   // An instance that predates the checklist sends no todos; its todo_write keeps the generic row below.
   if (item.kind === 'tool' && item.name === 'todo_write' && item.todos)
     return item.id === latestTodoId ? <TodoList todos={item.todos} /> : null
+  if (item.kind === 'tool' && item.files?.length) return <BotTranscriptFiles botId={bot.id} files={item.files} />
   if (item.kind === 'tool' && ['artifact_create', 'artifact_update'].includes(baseToolName(item.name))) {
     const result = parseArtifactToolResult(item.output ?? '')
     if (result)
@@ -223,7 +231,15 @@ function TranscriptRow({
       {t(`transcript.system.${item.code}`, {
         duration: item.durationMs ? Math.round(item.durationMs / 1000) : 0,
       })}
-      {item.text && <span className="ml-1">{item.text}</span>}
+      {item.text && (
+        <span className="ml-1">
+          {item.text === 'pdf-unreadable'
+            ? t('files.unreadablePdf')
+            : item.text === 'invalid-attachment'
+              ? t('files.invalidAttachment')
+              : item.text}
+        </span>
+      )}
     </div>
   )
 }
@@ -290,6 +306,7 @@ export function BotConversation({
   onOpenSettings,
   onOpenEnvironmentScreen,
   onGiveBack,
+  onOpenEnvironmentSettings,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -300,6 +317,7 @@ export function BotConversation({
   onOpenEnvironmentScreen?: () => void
   /** The owner controls the computer: reveals it and asks about handing control back. */
   onGiveBack: () => void
+  onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
@@ -460,6 +478,7 @@ export function BotConversation({
             onOpenScreen={onOpenScreen}
             onOpenSettings={onOpenSettings}
             onOpenEnvironmentScreen={onOpenEnvironmentScreen}
+            onOpenEnvironmentSettings={onOpenEnvironmentSettings}
           />
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">

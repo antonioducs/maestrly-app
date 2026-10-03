@@ -4,6 +4,63 @@ A bot is a Maestrly agent that runs in Docker on this computer or on a Linux ser
 
 **Experimental:** The **Bots** tab shows a flask icon titled **Experimental**. Back up your bot data before changing or removing a server.
 
+A bot's conversation header offers **Open chat in new window**. The window stays
+open while you view other bots or workspaces, including live messages and pending
+questions. The bot's computer stays in the main app and keeps streaming while that
+bot is shown there. Closing the window returns the conversation to the main app and
+preserves unsent text and attachments. See [separate chat windows](chat-context.md#separate-chat-windows).
+
+## Send and download files
+
+Drag files onto a bot's message composer or choose them with **+**. You can send
+attachments without typing a message. Supported inputs are PNG, JPEG, WebP and
+GIF images, PDFs, and UTF-8 text or source-code files (including Markdown, JSON,
+CSV and YAML). DOCX, XLSX and ZIP are not supported as incoming attachments.
+
+| Limit | Maximum |
+| --- | --- |
+| Image | 5 MiB |
+| PDF | 10 MiB; four PDFs per message |
+| Text or code file | 256 KiB |
+| One message | Eight files and 20 MiB total |
+
+PDFs use the same processing as desktop chats: supported models receive the
+document; other models receive text extracted in the bot's environment. Scanned
+PDFs without a text layer need a model that can read the document; automatic OCR
+is not included. An unreadable or password-protected PDF is marked **Not sent**.
+Its queued copy stays available to download or remove, and later messages can
+continue without repeatedly retrying the invalid document.
+
+Ask the bot to share a generated file. It uses `bot_share_file` with a file in
+its conversation directory, and a download card appears in the conversation.
+Published files can be any format, including PDF, ZIP, DOCX and XLSX, up to
+100 MiB each. Clicking **Download** saves to this computer's Downloads folder.
+Existing files are preserved with a numbered suffix, and files are never opened
+automatically. Download buttons also appear on document attachments you sent.
+After downloading, **Show in folder** reveals the saved copy in your file manager,
+including its numbered suffix when an older file already existed.
+The app remembers downloads across navigation and restarts. It checks that the
+saved copy still exists when the card appears or the window regains focus; a
+deleted or moved copy is no longer shown as saved. Downloads are tracked separately
+for each paired bot server.
+
+Transfers use the paired gateway connection: the same flow works with Docker on
+this computer and with the SSH tunnel to a VPS. No public link or artifact-hosting
+setting is required. The bot's environment must be running and reachable.
+Disconnecting this computer cancels its active transfers and removes incomplete
+downloads; click **Download** again after reconnecting.
+
+Published files are snapshots, so changing the source does not change an existing
+download. They survive environment restarts and updates in the bot's persistent
+data. Each bot can retain up to 200 published files and 1 GiB total; a publication
+that would exceed either limit is refused. Permanently deleting the bot or its
+environment removes these snapshots. Include the environment volume in backups.
+
+Documents and downloads require the desktop, gateway and running environment
+image to support files. If the app asks you to update, update the server and
+restart the environment onto the current image. Older versions can continue
+exchanging images and text messages.
+
 ## Set up the bot server
 
 Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
@@ -45,26 +102,33 @@ settings alone. Upgraded servers keep hosting off until you enable it in
 port mapping to older installations; reconnect after updating if needed.
 
 The gateway embeds the artifact host and stores its pages in `/data/artifacts`
-in its persistent volume. Its third listener is port 4010 inside Docker,
-separate from the device API (7443) and bot API (7444). The container listens on
-`0.0.0.0`, but installer setups publish it only on the Docker host's loopback.
-For Docker on this computer, the installer chooses a free port starting after
-the desktop artifact port (normally 4011), leaving desktop port 4010 available.
+in its persistent volume. The device API port (7443) also serves the artifact
+viewer under `/a/`, `/c/`, `/_maestrly/shell/` and `/robots.txt`, so the
+desktop, and any route you expose to the gateway, reach bots and artifacts at one
+address. The desktop opens server pages through its gateway connection whenever
+the gateway serves the viewer.
+
+The artifact host keeps its own listener, port 4010 inside Docker, separate from
+the device API (7443) and bot API (7444), for older desktops. The container
+listens on `0.0.0.0`, but installer setups publish it only on the Docker host's
+loopback. For Docker on this computer, the installer chooses a free port starting at
+4011, leaving port 4010 to what earlier desktop versions used.
 
 For a VPS, a second, independent SSH tunnel forwards a local loopback port
 (normally 4011, or another free port) to server port 4010, or the port recorded
 in `MAESTRLY_ARTIFACTS_PORT`. An artifact tunnel failure does not take down the
-gateway tunnel. These tunnels let the desktop open pages; visitor links need
-external access and a manually configured public address. See
-[server artifact setup](artifacts.md#bot-server) and the
-[Tailscale example](artifacts.md#reach-the-server-from-another-device).
+gateway tunnel, and a current gateway does not need it: the desktop opens pages
+through the gateway tunnel. Visitor links need external access and a manually
+configured public address. See [server artifact setup](artifacts.md#hosting)
+and the [Tailscale example](artifacts.md#reach-the-server-from-another-device).
 
 Each bot has a **Publish artifacts** setting. New bots default to whether the
 server has artifact hosting enabled; migrated bots start with it off. Enabled
 bots receive seven artifact tools, excluding `artifact_open`, and can work only
 with their own artifacts. The desktop's bot publication card opens the external
-viewer. Desktop conversations independently choose their publication host in
-**Settings → Artifacts → Publish new artifacts to**.
+viewer. Desktop conversations publish on the same server, which is the only place
+artifacts are hosted; **Settings → Artifacts** offers an artifact-only setup when
+no server is paired.
 
 Turning hosting off keeps its data. Disconnecting or unpairing this computer
 leaves server hosting running. Explicit server removal with data deletion also
@@ -79,11 +143,21 @@ When bots can be updated, the **Bots** tab shows an arrow icon, and the bots sid
 
 While an environment waits, the Bots tab and its sidebar entry show a clock, and its environment view shows **Update scheduled** with the bots it waits for and since when. Messages you send still arrive and start turns. Scheduled routine runs are skipped as busy, and messages between bots wait on the server until the environment has restarted. **Update now** restarts the environment at once and interrupts what its bots are doing; **Cancel update** keeps it on its current image. The server finishes a scheduled update on its own, even while your computer is off. A stopped or failed environment moves to the new image the next time it starts. An environment on a server that cannot schedule updates keeps **Update environment**, which restarts it at once after you confirm.
 
-#### Claude Code and Codex updates
+#### Model runtime updates
 
 Bots keep Claude Code and Codex current on their own, without waiting for a Maestrly release, so new models such as a new Claude Opus work as soon as their provider publishes the runtime they need. About a minute after an environment starts, and every six hours after that, it checks the latest stable release of each runtime on npm. A newer release is downloaded into the environment's home volume, checked against its published SHA-512 hash, and tested before it is used: the binary must report its version and, for Claude Code, start a session that lists models, without any account. Nothing is interrupted: a turn in progress finishes on the version it started with. Claude Code switches for the next turn; Codex switches once none of the environment's bots is working, waiting for you, or compacting.
 
-A bot never runs an older version than its image ships. After **Update bots** moves an environment to a newer image, the image's version is used again when it is not older, and the downloaded one is removed once nothing uses it. The bot's own settings window (**Settings → Components**) shows each runtime's version, "Included in the bot image" while the image's is in use, and offers **Check for updates**, **Update automatically**, and **Go back** to the previous downloaded version. A release that fails its checks or that you go back from is skipped by automatic updates until a newer one appears. On your computer, the environment view's **Claude Code and Codex** section shows the version of each runtime the bots run, whether it comes from the bot image or was updated, the installed version they switch to when work in progress still keeps the previous one, its last check, and **Check for updates**, which asks the environment to check at once (and install, when its automatic updates are on). The section needs a server and a bot image that report runtimes; update both, and restart the environment onto the new image, to see it. On a server you manage, `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` stops automatic checks in every environment; manual checks in a bot's settings still work.
+A bot never runs an older version than its image ships. After **Update bots** moves an environment to a newer image, the image's version is used again when it is not older, and the downloaded one is removed once nothing uses it. The bot's own settings window (**Settings → Components**) shows each runtime's version, "Included in the bot image" while the image's is in use, and offers **Check for updates**, **Update automatically**, and **Go back** to the previous downloaded version. A release that fails its checks or that you go back from is skipped by automatic updates until a newer one appears. On your computer, the environment view's **Settings → Components** section (or **Model runtimes** in Overview on older environments) shows the version of each runtime the bots run, whether it comes from the bot image or was updated, the installed version they switch to when work in progress still keeps the previous one, its last check, and per-runtime **Check for updates**, **Update**, installation when missing, cancellable operations, and the available rollback. A per-runtime check discovers releases; **Update** installs the selected release. The automatic-update preference controls scheduled installation. The older Overview check still asks the environment to check and install when automatic updates are enabled. The section needs a server and a bot image that report runtimes; update both, and restart the environment onto the new image, to see it. On a server you manage, `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` stops automatic checks in every environment; manual checks in a bot's settings still work.
+
+Google Antigravity ACP uses the same update controls and schedule after it is
+installed by a Google AI sign-in. It is downloaded on demand rather than included
+in the image. New versions come from the ACP registry and canonical Google HTTPS
+archives, which have no published checksums; Maestrly records their digest only
+after download and compatibility validation. Future verification and repair use
+that recorded digest. Existing account sessions survive updates, and ACP
+processes switch only when every bot is idle. See [Google AI runtime
+updates](antigravity.md#runtime) for the trust boundary and Desktop controls.
+
 
 Maestrly never downgrades a server. It compares the app with the version the connected gateway reports and with the gateway image named in the server's files, so a server another computer already moved to a newer version is left alone: update the desktop app instead. **Set up again** lets you repeat setup if access needs repair.
 
@@ -306,7 +380,7 @@ The bot Conversation tab uses the same chat composer as desktop chats. Its model
 
 When a bot tracks multi-step work with `todo_write`, the Conversation tab shows its latest to-do list as a checklist, as desktop chats do. The checklist keeps up to 50 items of up to 500 characters. It needs the desktop app, the gateway, and the environment image from the same release; with an older gateway or image, `todo_write` appears as a plain tool row.
 
-Skills and MCP servers belong to the environment. Manage them in the environment view's **Skills and MCP** section, or take control of the environment's **Screen** tab and change them in its Maestrly window; the composer's manage actions open that screen. Changes affect every bot in the environment; your computer's local configuration remains separate.
+Skills and MCP servers belong to the environment. Manage them in **Environment → Settings → Skills** or **Tools**. The composer's manage actions open the corresponding environment section. Changes affect every bot in the environment; your computer's local configuration remains separate. An older gateway or environment keeps the previous provisioning controls and screen-based management until updated.
 
 The environment screen shows only Maestrly's **Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with a bot goes through Maestrly on your computer. It stays within tile 0 of the environment display, so it never covers a bot's browser area. Closing the window hides it; the bots keep working in their browser windows.
 
@@ -337,14 +411,15 @@ Then choose how far it goes without asking, which lists what the bot does on its
 
 **New bot in this environment** in an environment view opens the same dialog with that environment chosen. Creation continues on the server if you close the dialog. Set the bot's **Role** later in its **Settings**.
 
-The environment view has **Overview** and **Screen** tabs:
+The environment view has **Overview**, **Screen**, and **Settings** tabs:
 
-- **Overview** lists its bots, with **New bot in this environment**; **Environment accounts**; **Skills and MCP**; a link to the environment screen; **Resources**, with memory, CPU, uptime, version, and **Memory limit**; **Start and stop**; and **Archive**. **Restart environment**, **Stop environment**, and **Archive** each ask for confirmation and name every bot they affect.
+- **Overview** lists its bots, with **New bot in this environment**; a shortcut to shared settings; a link to the environment screen; **Resources**, with memory, CPU, uptime, version, and **Memory limit**; **Start and stop**; and **Archive**. **Restart environment**, **Stop environment**, and **Archive** each ask for confirmation and name every bot they affect. Older environments retain their existing account, skill, MCP, compaction, and runtime controls here.
 - **Screen** shows the environment screen. **Take control** operates it without holding or pausing any bot; **Stop controlling** returns to watching.
+- **Settings** manages the environment's accounts, models, skills, tools, components, and preferences, using the same visual controls as desktop settings. Its heading names the bots sharing these settings.
 
 A bot's view shows its **Conversation** and, beside it, its **Computer**. **Bot settings**, the gear in the conversation header, opens the bot's settings in a panel over both; the screen keeps streaming behind it. The settings keep what belongs to the bot, one section per tab: **Identity** (name, role, and what it does), **Autonomy**, **Model** (its **Main model** and **Compaction**), **Conversations**, **Routines**, **Memory**, **Environment**, and **Archive**. The panel opens on **Identity**, or on **Model** when the bot waits for a compaction model; use the arrow keys, Home, and End to move between tabs. **Autonomy** shows, for each ceiling, what the bot does on its own and what it asks you about. Changes to the identity, autonomy, models, and peers wait, across tabs, in a bar that names each changed field until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; a dot marks each tab with unsaved changes, and a field in the bar opens its tab. Closing the panel (**Close settings**, Esc, or the dark area) with unsaved changes asks first. Routines and bot memory are saved as you change them. The **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
 
-Model accounts belong to the environment. Add them under **Environment accounts** in the environment view: use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint; **Log in on the environment screen** to authenticate in the environment's Maestrly window; **Bring from this computer…**; or sign in to subscriptions as described below. Adding an API key requires secure credential storage in the environment; otherwise the request is refused. Each bot then chooses its own **Main model** among the environment's accounts in its **Settings**.
+Model accounts belong to the environment. Add them under **Environment → Settings → Accounts** (or **Environment accounts** on older environments): use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint; **Log in on the environment screen** to authenticate in the environment's Maestrly window; **Bring from this computer…**; or sign in to subscriptions as described below. Adding an API key requires secure credential storage in the environment; otherwise the request is refused. Each bot then chooses its own **Main model** among the environment's accounts in its **Settings**.
 
 Each environment has a **Default compaction model**, chosen in its environment view, which lists the bots that use it. A bot without a model of its own uses that default: its **Compaction** settings show **Environment default** with the model, a link to edit the default, and new bots start with it. Changing the default applies at once to the running bots that use it, and to the others when they start. A bot can choose its own **Compaction model** instead, and choose **Environment default** again to go back. In an environment without a default, the first model chosen for one of its bots becomes the default for that bot and its siblings without one. A bot remains in setup and queues messages until its model and account are available. The chosen model prepares conversation summaries in the background at the configured token interval. **Maximum context window** (optional, in thousand tokens, 100 to 10,000) caps the bot's conversation below its model's window, whatever model it uses; a model with a smaller window keeps its own. The bot then compacts at 90% of the smaller of the two, which bounds what each turn sends to the model and its cost. Leave it empty to use the model's window. It is part of the compaction settings: a bot that follows its environment default follows the default's window too. The bot's context meter shows the capped window with a lock. At 90% context use, if no prepared summary fits, the same model summarizes immediately. Its account pays for each summary; the bot's conversation model is not used for portable compaction. The Conversation transcript marks prepared, immediate, and manual compactions and shows their summaries. Use `/compact` in the bot composer to request a manual summary. Compaction settings apply to that bot's conversation only; background compaction settings on the environment screen are locked and managed from your computer. A runtime's own native in-turn compaction can still use the conversation model and appears as a runtime checkpoint in the transcript.
 
@@ -367,7 +442,55 @@ The **Server** page shows versions, CPU, memory, disk, and peer messages. With e
 
 While your computer is connected, bots use the **Alert sounds** in **Settings → Appearance & sound**. **Turn ready** or **Turn failed** plays when a bot finishes a message you sent, or the work it resumes after you give back control. **Permission request** plays when a bot needs you, such as a new request in **Awaiting you** or a blocked conversation between bots, whatever started its turn. Routine runs and conversations between bots end silently, and nothing that happened while your computer was off sounds when it reconnects. Turn off **Bot alerts** to silence bots without silencing your own conversations. A gateway or environment image that predates this does not report who started a turn, so every finished turn sounds, routines included, until both are updated.
 
-The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in the environment's settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. As in chats, each answer shows the bot's reasoning and tool steps as one activity line that follows the current step while the bot works and summarizes them afterwards; open it to see every step, or choose **Expanded** in **Settings → Appearance & sound → Agent activity**. Tool images stay visible under the line. Tool images are copied into the bot's folder in the environment's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
+The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows visibility filters in **Environment → Settings → Models**. Hiding a model removes it from new choices, while a bot's existing main model and compacting model keep working. Hiding every model of a provider does not sign its account out. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. As in chats, each answer shows the bot's reasoning and tool steps as one activity line that follows the current step while the bot works and summarizes them afterwards; open it to see every step, or choose **Expanded** in **Settings → Appearance & sound → Agent activity**. Tool images stay visible under the line. Tool images are copied into the bot's folder in the environment's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
+
+## Configure an environment from the app
+
+The desktop app, gateway, and running environment must all support
+`environment-settings-v1`. Update the server and restart the environment on its
+new image when the settings page requests it. The environment must be running;
+when the connection drops, any displayed settings become read-only. The Screen
+tab remains available for application interaction and browser sign-ins.
+
+- **Accounts:** connect API keys and subscriptions, reconnect signed-out
+  accounts, rename default or additional accounts, replace an API key, and
+  remove an account after reviewing its use. Google AI uses its own remote
+  sign-in and the existing callback relay; it never copies Google credentials
+  from this computer. Leaving a replacement key or protected endpoint unchanged
+  preserves the stored value.
+- **Models:** search the complete catalog, including hidden models, and save or
+  discard visibility filters per account. Models already chosen by bots remain
+  usable, including an inherited compacting model.
+- **Skills:** manage global skills and groups, search/install from the library,
+  create skills, read their manifests, edit instructions, enable/disable or
+  remove them. Editing replaces only `SKILL.md` and preserves bundled files and
+  frontmatter. Skills outside the managed directory or behind unsafe symlinks
+  are read-only. Replacing an installed library skill requires confirmation
+  against its current revision.
+- **Tools:** create or edit HTTP and stdio MCP servers, switch transports,
+  enable/disable, remove, and test connections inside the environment. Existing
+  URL, command, arguments, headers and environment values are protected;
+  omitted replacements preserve them. Header/environment keys have explicit
+  removal controls. A test lists tools without invoking them and closes its
+  separate connection. Tests are bounded and shared when the same server is
+  tested concurrently. Configuration changes let active tool calls finish
+  before retiring their old connection.
+- **Components:** see Claude Code, Codex, and Google Antigravity ACP even in an
+  environment without bots. Check/install/update a runtime, set its automatic
+  update preference, cancel a cancellable operation, or roll back when a previous
+  version is available. Installed versions wait for safe activation; the page
+  shows the version in use and any pending version. Leaving the page does not
+  cancel an operation.
+- **Preferences:** rename the environment, choose its default compaction
+  settings, and set image generation's default availability. Per-conversation
+  overrides still apply. Maestrly tools stay enabled for bots.
+
+Draft forms offer **Save changes** and **Discard**. Leaving with unsaved edits
+asks first; `Cmd/Ctrl+S` saves the current draft. Edits that conflict with another
+computer or the environment's own settings are rejected without overwriting the
+newer value. The draft remains available until saved or explicitly discarded and
+reloaded. Configuration remains in the environment's existing stores and
+survives restarting it.
 
 ## Bring from your computer
 
@@ -377,13 +500,13 @@ their names; nothing is selected until you choose. **Choose** opens the list of
 that kind, with a tab per kind, a search, and **Selected only**; items are grouped
 by what happens to them (copied or signed in again, ready or blocked, working
 anywhere or depending on your computer). **Use the recommended ones** selects
-everything that works outside your computer. For an existing environment, open its environment view
-and choose **Bring from this computer…** under **Environment accounts** or
-**Skills and MCP**. On a gateway from before environments, use the bot's
+everything that works outside your computer. For an existing environment, open **Settings → Accounts**, **Skills**, or **Tools**
+and choose **Bring from this computer…**. Older environments keep this action
+under **Environment accounts** or **Skills and MCP** in Overview. On a gateway from before environments, use the bot's
 **Settings → Bot accounts** or **Settings → Skills and MCP** instead. API keys
 (including their provider format and base URL), GitHub Copilot and Cursor
-credentials, global skills and MCP servers are copied. ChatGPT (Codex), Claude
-and Grok instead start a separate sign-in in the environment. Model
+credentials, global skills and MCP servers are copied. ChatGPT (Codex), Claude,
+Grok and Google AI (Antigravity) instead start a separate sign-in in the environment. Model
 selections and other settings on your computer are not imported. Everything brought over is
 shared by the environment's bots.
 
@@ -431,14 +554,14 @@ Skills brought over appear as **From a computer**.
 
 ## Sign in to subscriptions
 
-Under **Environment accounts**, choose **Sign in with ChatGPT (Codex)**,
-**Sign in with Claude**, or **Sign in with Grok**. The environment gets its own
-session, which its bots share; Maestrly never copies your computer's Codex, Claude or
-Grok session. These sessions still use the owner's subscription quota. The
+Under **Environment → Settings → Accounts** (or **Environment accounts** on older environments), choose **Sign in with ChatGPT (Codex)**,
+**Sign in with Claude**, **Sign in with Grok**, or **Sign in with Google AI (Antigravity)**.
+The environment gets its own session, which its bots share; Maestrly never copies
+your computer's Codex, Claude, Grok or Google AI session. These sessions still use the owner's subscription quota. The
 provider's terms apply to using a subscription on a server; a separate session
 does not create another quota.
 
-For Codex and Claude, Maestrly on your computer opens the provider in your browser and relays the
+For Codex, Claude and Google AI, Maestrly on your computer opens the provider in your browser and relays the
 loopback callback through the gateway to the environment. The relay redirects
 only to allowlisted provider origins and otherwise shows its own **Done** or
 failure page, never content returned by the environment. If Codex ends on its
@@ -454,6 +577,14 @@ settings. Codex browser sign-ins are serialized on your computer. For Claude, ex
 the code and choose **Send code**. This fallback opens automatically when its
 callback port is busy. Grok always uses a device code and opens the pre-filled
 verification page.
+
+Google AI first downloads the ACP server in the environment, then opens Google's
+page in your computer's browser. Setup remains cancellable while downloading.
+If the callback port is busy, close the other sign-in and retry; Google AI has
+no device-code fallback. The credential stays in the environment's account home,
+separate from the runtime. The same sign-in is offered after **Create bot** when
+you select a Google AI account from this computer. Update the desktop, gateway
+and bot image together to enable this provider. See [Google AI](antigravity.md).
 
 Each environment allows one pending sign-in per provider, three in total,
 lasting up to 15 minutes. Sign-in uses the default slot when disconnected, or
@@ -592,6 +723,9 @@ The memory writes listed above are explicit bot exemptions. Permanent deletion w
 
 The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
 
+Permission cards appear in the conversation while pending and disappear once
+approved, denied, or expired.
+
 ## Security and data
 
 Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. For a manually managed server, tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
@@ -638,7 +772,8 @@ compatible. See [memory storage](local-data.md#memory-storage),
 | "This server cannot schedule updates yet. Update the server first." | The gateway predates scheduled updates. Update the server (**Update bots** for a server Maestrly installed, otherwise both images as described above), or use **Update environment** to restart each environment at once. |
 | **This server is newer than Maestrly** | Another computer updated the server past this app. Update the desktop app; Maestrly never moves a server back to an older version. |
 | Screen remains under your control after disconnect | Reconnect and **Give back**, or wait five minutes for automatic release after the control connection is lost. |
-| A new Claude model fails with "requires Claude Code X or newer", or shows fewer efforts or a smaller context than on your computer | The environment still runs an older Claude Code. Use **Check for updates** in the environment view's **Claude Code and Codex** section, or on the environment screen open **Settings → Components → Claude Code runtime**. An update that fails keeps the current version; check the environment's internet access and free disk space. If the server sets `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`, bots only update when you check by hand. |
+| A new Claude model fails with "requires Claude Code X or newer", or shows fewer efforts or a smaller context than on your computer | The environment still runs an older Claude Code. Use **Check for updates** in the environment view's **Settings → Components** section (or **Model runtimes** in Overview on older environments), or on the environment screen open **Settings → Components → Claude Code runtime**. An update that fails keeps the current version; check the environment's internet access and free disk space. If the server sets `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`, bots only update when you check by hand. |
+| A Claude turn fails with "Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh" | The bots of an environment share its Claude account, and only one Claude Code process at a time can renew its sign-in. When several start together after the sign-in expired (routines at the same time, subagents, compaction), the others wait. A turn that has not produced anything yet waits and tries again for about a minute, and the sign-in stays valid, so you do not need to sign in again. If the turn had already started answering, send the message again. If it keeps failing for several minutes, restart the environment. |
 | Bot image missing or Docker unavailable | Run `doctor`. Confirm the configured bot image is loaded, the Docker socket works, and the fleet network exists. |
 
 ## Verify the installation

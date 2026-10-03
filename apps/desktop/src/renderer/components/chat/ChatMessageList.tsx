@@ -1,3 +1,4 @@
+import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { subscriptionExhaustionMessageKey } from './subscription-failover-route'
 import {
   memo,
@@ -53,6 +54,7 @@ function plainText(m: ChatMessage): string {
 }
 
 function CopyButton({ text }: { text: string }) {
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
   const [done, setDone] = useState(false)
   return (
@@ -60,7 +62,7 @@ function CopyButton({ text }: { text: string }) {
       type="button"
       title={t('messages.copy')}
       onClick={() => {
-        navigator.clipboard.writeText(text).then(() => {
+        ownerWindow.navigator.clipboard.writeText(text).then(() => {
           setDone(true)
           setTimeout(() => setDone(false), 1200)
         })
@@ -931,6 +933,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   readOnly = false,
   onRetrySteering,
 }: Props) {
+  const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null)
 
@@ -992,6 +995,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   const liveLine =
     compact && !!liveMessage && chatActivitySegments(liveMessage.parts, true).some((s) => s.kind === 'activity')
 
+  const previousOwnerWindowRef = useRef(ownerWindow)
   const nearBottomRef = useRef(true)
   const prevVisibleRef = useRef(false)
 
@@ -1026,21 +1030,31 @@ export const ChatMessageList = memo(function ChatMessageList({
     return () => el.removeEventListener('scroll', onScroll)
   }, [scrollContainerRef, hasMore, triggerLoadOlder])
 
+  useLayoutEffect(
+    () => () => {
+      if (postSendScrollRafRef.current !== null) ownerWindow.cancelAnimationFrame(postSendScrollRafRef.current)
+      postSendScrollRafRef.current = null
+    },
+    [ownerWindow]
+  )
+
   useLayoutEffect(() => {
+    const destinationChanged = previousOwnerWindowRef.current !== ownerWindow
+    previousOwnerWindowRef.current = ownerWindow
     const becameVisible = visible && !prevVisibleRef.current
     prevVisibleRef.current = visible
     if (!visible) {
-      if (postSendScrollRafRef.current !== null) cancelAnimationFrame(postSendScrollRafRef.current)
+      if (postSendScrollRafRef.current !== null) ownerWindow.cancelAnimationFrame(postSendScrollRafRef.current)
       postSendScrollRafRef.current = null
       return
     }
     if (anchorRef.current) return
     const el = scrollContainerRef?.current
     if (!el) return
-    if (visibleMessages[visibleMessages.length - 1]?.role === 'user') {
+    if (!destinationChanged && visibleMessages[visibleMessages.length - 1]?.role === 'user') {
       nearBottomRef.current = true
-      if (postSendScrollRafRef.current !== null) cancelAnimationFrame(postSendScrollRafRef.current)
-      postSendScrollRafRef.current = requestAnimationFrame(() => {
+      if (postSendScrollRafRef.current !== null) ownerWindow.cancelAnimationFrame(postSendScrollRafRef.current)
+      postSendScrollRafRef.current = ownerWindow.requestAnimationFrame(() => {
         postSendScrollRafRef.current = null
         const currentEl = scrollContainerRef?.current
         if (!currentEl || anchorRef.current) return
@@ -1049,33 +1063,26 @@ export const ChatMessageList = memo(function ChatMessageList({
       })
     }
     if (becameVisible || nearBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [visibleMessages, lastMarker, visible, scrollContainerRef])
-
-  useEffect(
-    () => () => {
-      if (postSendScrollRafRef.current !== null) cancelAnimationFrame(postSendScrollRafRef.current)
-    },
-    []
-  )
+  }, [ownerWindow, visibleMessages, lastMarker, visible, scrollContainerRef])
 
   useEffect(() => {
     const content = contentRef.current
     const scroller = scrollContainerRef?.current
-    if (!content || !scroller || typeof ResizeObserver === 'undefined') return
+    if (!content || !scroller || typeof ownerWindow.ResizeObserver === 'undefined') return
     let frame = 0
-    const observer = new ResizeObserver(() => {
+    const observer = new ownerWindow.ResizeObserver(() => {
       if (!visible || anchorRef.current || !nearBottomRef.current) return
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => {
+      ownerWindow.cancelAnimationFrame(frame)
+      frame = ownerWindow.requestAnimationFrame(() => {
         if (visible && !anchorRef.current && nearBottomRef.current) scroller.scrollTop = scroller.scrollHeight
       })
     })
     observer.observe(content)
     return () => {
       observer.disconnect()
-      cancelAnimationFrame(frame)
+      ownerWindow.cancelAnimationFrame(frame)
     }
-  }, [scrollContainerRef, visible])
+  }, [ownerWindow, scrollContainerRef, visible])
 
   useLayoutEffect(() => {
     const el = scrollContainerRef?.current

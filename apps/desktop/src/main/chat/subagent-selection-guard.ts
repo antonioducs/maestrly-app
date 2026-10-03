@@ -18,6 +18,7 @@ export type SubagentSelectionRuntime =
   | 'codex-subscription'
   | 'github-copilot'
   | 'cursor-subscription'
+  | 'antigravity-subscription'
 
 /** Mutable per-turn state: requested and already-dispatched agents. Does not persist across turns. */
 export interface ExplicitSubagentTurnState {

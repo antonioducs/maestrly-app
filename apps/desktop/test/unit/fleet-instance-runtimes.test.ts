@@ -1,3 +1,5 @@
+import { fleetInstanceStatusSchema, fleetRuntimeInfoSchema } from '@maestrly/bot-fleet-protocol'
+import { z } from 'zod'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeAssetId, RuntimeAssetInfo } from '../../src/shared/runtime-assets'
 
@@ -7,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   runtimeUpdates: vi.fn(),
   claudeInUse: [] as { version: string | null; source: 'image' | 'managed' }[],
   codexConnections: [] as ({ version: string | null; source: string } | null)[],
+  antigravityConnections: [] as ({ version: string; source: string } | null)[],
 }))
 
 vi.mock('../../src/main/runtime-assets/app-service', () => ({
@@ -20,8 +23,12 @@ vi.mock('../../src/main/chat/claude-agent-sdk/runtime-selection', () => ({
 vi.mock('../../src/main/chat/codex-subscription/manager', () => ({
   listCodexSubscriptionManagers: () => mocks.codexConnections.map((connectedRuntime) => ({ connectedRuntime })),
 }))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
+  listAntigravitySubscriptionManagers: () =>
+    mocks.antigravityConnections.map((connectedRuntime) => ({ connectedRuntime })),
+}))
 
-import { checkBotRuntimes, fleetRuntimeInfo } from '../../src/main/fleet/instance/runtimes'
+import { checkBotRuntimes, fleetRuntimeInfo, fleetRuntimeReport } from '../../src/main/fleet/instance/runtimes'
 
 function info(id: RuntimeAssetId, patch: Partial<RuntimeAssetInfo>): RuntimeAssetInfo {
   return {
@@ -40,6 +47,8 @@ beforeEach(() => {
   mocks.infos.clear()
   mocks.claudeInUse = []
   mocks.codexConnections = []
+  mocks.antigravityConnections = []
+  mocks.infos.set('antigravity-acp-runtime', info('antigravity-acp-runtime', {}))
   mocks.cycle.mockClear()
   mocks.runtimeUpdates.mockReset().mockImplementation((id: string) => ({ id, cycle: mocks.cycle }))
 })
@@ -89,6 +98,17 @@ describe('fleetRuntimeInfo', () => {
         availableVersion: null,
         lastCheckedAt: null,
         error: 'check-failed',
+      },
+      {
+        id: 'antigravity-acp',
+        version: null,
+        source: 'managed',
+        pendingVersion: null,
+        automatic: false,
+        state: 'idle',
+        availableVersion: null,
+        lastCheckedAt: null,
+        error: null,
       },
     ])
   })
@@ -143,21 +163,71 @@ describe('fleetRuntimeInfo', () => {
     expect((await fleetRuntimeInfo()).map(({ version, pendingVersion }) => ({ version, pendingVersion }))).toEqual([
       { version: '2.1.285', pendingVersion: null },
       { version: null, pendingVersion: null },
+      { version: null, pendingVersion: null },
     ])
   })
 
   it('reports no version for a runtime neither shipped nor installed', async () => {
     mocks.infos.set('claude-code-runtime', info('claude-code-runtime', {}))
     mocks.infos.set('codex-runtime', info('codex-runtime', {}))
-    expect((await fleetRuntimeInfo()).map((runtime) => runtime.version)).toEqual([null, null])
+    expect((await fleetRuntimeInfo()).map((runtime) => runtime.version)).toEqual([null, null, null])
+  })
+
+  it('reports the ACP process still in use until its idle switch completes', async () => {
+    mocks.infos.set('claude-code-runtime', info('claude-code-runtime', {}))
+    mocks.infos.set('codex-runtime', info('codex-runtime', {}))
+    mocks.infos.set(
+      'antigravity-acp-runtime',
+      info('antigravity-acp-runtime', {
+        status: { id: 'antigravity-acp-runtime', state: 'ready', version: '1.2.2', diskUsageBytes: 1 },
+        update: { state: 'up-to-date', automatic: true, restartRequired: true },
+      })
+    )
+    mocks.antigravityConnections = [{ version: '1.2.1', source: 'managed' }, null]
+    expect((await fleetRuntimeInfo())[2]).toMatchObject({
+      id: 'antigravity-acp',
+      version: '1.2.1',
+      pendingVersion: '1.2.2',
+      automatic: true,
+    })
+    mocks.antigravityConnections = [{ version: '1.2.2', source: 'managed' }]
+    expect((await fleetRuntimeInfo())[2]).toMatchObject({ version: '1.2.2', pendingVersion: null })
   })
 })
 
 describe('checkBotRuntimes', () => {
-  it('runs a forced check cycle of both runtimes', async () => {
+  it('runs a forced check cycle of every runtime', async () => {
     checkBotRuntimes()
-    await vi.waitFor(() => expect(mocks.cycle).toHaveBeenCalledTimes(2))
-    expect(mocks.runtimeUpdates.mock.calls.map(([id]) => id)).toEqual(['claude-code-runtime', 'codex-runtime'])
-    expect(mocks.cycle.mock.calls).toEqual([[true], [true]])
+    await vi.waitFor(() => expect(mocks.cycle).toHaveBeenCalledTimes(3))
+    expect(mocks.runtimeUpdates.mock.calls.map(([id]) => id)).toEqual([
+      'claude-code-runtime',
+      'codex-runtime',
+      'antigravity-acp-runtime',
+    ])
+    expect(mocks.cycle.mock.calls).toEqual([[true], [true], [true]])
+  })
+})
+
+describe('fleet runtime wire report', () => {
+  it.each([false, true])('preserves legacy parsing with Antigravity installed: %s', async (installed) => {
+    mocks.infos.set('claude-code-runtime', info('claude-code-runtime', {}))
+    mocks.infos.set('codex-runtime', info('codex-runtime', {}))
+    mocks.infos.set(
+      'antigravity-acp-runtime',
+      info(
+        'antigravity-acp-runtime',
+        installed
+          ? { status: { id: 'antigravity-acp-runtime', state: 'ready', version: '1.2.2', diskUsageBytes: 1 } }
+          : {}
+      )
+    )
+    const wire = await fleetRuntimeReport()
+    const legacy = fleetInstanceStatusSchema.pick({ runtimes: true }).extend({
+      runtimes: z.array(fleetRuntimeInfoSchema.extend({ id: z.enum(['claude-code', 'codex']) })).nullable(),
+    })
+    expect(legacy.parse(wire).runtimes?.map((runtime) => runtime.id)).toEqual(['claude-code', 'codex'])
+    expect(legacy.parse(wire)).not.toHaveProperty('additionalRuntimes')
+    expect(wire.additionalRuntimes).toMatchObject([{ id: 'antigravity-acp', version: installed ? '1.2.2' : null }])
+    expect(fleetInstanceStatusSchema.pick({ runtimes: true, additionalRuntimes: true }).parse(wire)).toEqual(wire)
   })
 })

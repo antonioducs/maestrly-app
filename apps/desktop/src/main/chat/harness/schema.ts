@@ -22,6 +22,7 @@ const PROVIDER_KINDS = [
   'claude-subscription',
   'grok-subscription',
   'cursor-subscription',
+  'antigravity-subscription',
 ] as const
 
 const identity = z

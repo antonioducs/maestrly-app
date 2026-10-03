@@ -127,7 +127,7 @@ export function conversationDispatchDenialMessage(code: ConversationDispatchDeni
       return `The person asked for at most ${limit ?? 0} conversation(s) in this turn; this request would exceed it.`
     case 'not-requested':
       return (
-        'The latest message does not explicitly ask to open/create/start other conversations. Do not start any. If it ' +
+        'The latest message does not explicitly ask to open/create/start other conversations or send work for development in a workspace. Do not start any. If it ' +
         'would help, suggest it and let the person ask explicitly (for example: "Open one conversation for each card").'
       )
   }
@@ -170,6 +170,10 @@ const CREATE_VERBS = String.raw`(?:crie|criem|cria|criar|create|spawn|spin\s+up|
 const OPEN_VERBS = String.raw`(?:abra|abram|abre|abrir|open|inicie|iniciem|inicia|iniciar|start|comece|comecem|comeca|comecar|begin|set\s+up|monte|montar)`
 /** Verbs that hand work over ("send the plan to a new conversation"); they need a target that is new. */
 const SEND_VERBS = String.raw`(?:envie|enviem|envia|enviar|mande|mandem|manda|mandar|encaminhe|encaminha|encaminhar|delegue|delega|delegar|passe|passa|passar|mova|mover|send|forward|hand\s+off|hand\s+over|move|delegate|pass)`
+
+// A handoff must name both the purpose and a workspace/project target in the same directive.
+// The name itself may have been stripped as quoted content; target selection is validated by the service.
+const DEVELOPMENT_TARGET = /^\s+(?:(?:this|the|that|este|esse|o|um)\s+(?:plan|plano|task|tarefa|work|trabalho)\s+)?(?:for|to|para|pra)\s+(?:(?:o|a)\s+)?(?:development|implementation|desenvolvimento|implementacao)\s+(?:in|to|at|no|na|em|para|pro|pra)\s+(?:(?:the|o|a)\s+)?(?:workspace|project|projeto)\b/
 
 const QUALIFIER =
   /\b(?:nova|novas|novo|novos|outra|outras|outro|outros|separad[ao]s?|propri[ao]s?|dedicad[ao]s?|diferentes?|new|another|other|separate|own|dedicated|different|fresh|\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|one|two|three|four|five|six|seven|eight|nine|ten|varias|varios|several|multiple)\b/
@@ -270,14 +274,15 @@ function segmentRequest(segment: string, sentenceBefore: string, isQuestion: boo
       const index = match.index ?? 0
       const prefix = segment.slice(0, index).trim()
       const rest = segment.slice(index + match[0].length)
+      const handoff = group.kind === 'send' && DEVELOPMENT_TARGET.test(rest)
       const nounMatch = NOUN.exec(rest)
-      if (!nounMatch) continue
-      const between = rest.slice(0, nounMatch.index)
+      if (!nounMatch && !handoff) continue
+      const between = handoff ? rest : rest.slice(0, nounMatch!.index)
       // Keep the object phrase short: "abra uma nova conversa", not a noun mentioned much later.
-      if (between.split(' ').filter(Boolean).length > 8) continue
-      const noun = nounMatch[0]
+      if (!handoff && between.split(' ').filter(Boolean).length > 8) continue
+      const noun = handoff ? '' : nounMatch![0]
       const objectPhrase = `${between}${noun}`
-      const after = rest.slice(nounMatch.index + noun.length)
+      const after = handoff ? '' : rest.slice(nounMatch!.index + noun.length)
       if (group.kind === 'open') {
         const qualified =
           QUALIFIER.test(between) ||
@@ -286,7 +291,7 @@ function segmentRequest(segment: string, sentenceBefore: string, isQuestion: boo
           (/\ban?\b/.test(between) && /^(?:conversations?|chats?)$/.test(noun))
         if (!qualified) continue
       }
-      if (group.kind === 'send' && !NEW_TARGET.test(`${objectPhrase}${after.slice(0, 40)}`)) continue
+      if (group.kind === 'send' && !handoff && !NEW_TARGET.test(`${objectPhrase}${after.slice(0, 40)}`)) continue
       if (NEGATION.test(prefix) || NEGATION.test(between)) {
         deny('negated')
         continue
@@ -308,7 +313,7 @@ function segmentRequest(segment: string, sentenceBefore: string, isQuestion: boo
         deny('question')
         continue
       }
-      return { count: requestedCount(objectPhrase, noun, after) }
+      return { count: handoff ? 1 : requestedCount(objectPhrase, noun, after) }
     }
   }
   return denial

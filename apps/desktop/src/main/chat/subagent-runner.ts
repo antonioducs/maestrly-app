@@ -8,7 +8,7 @@ import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles
 import type { ChatAgent } from './agents'
 import { getProvider } from './catalog'
 import { chatDiag } from './diag-log'
-import { MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
 import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
 import { captureHarnessFlags } from './harness/flags'
 import { harnessSubagentPrompt } from './harness/host-contracts'
@@ -443,7 +443,12 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
-    let subSystem = harnessSubagentPrompt([def.prompt, args.projectId === null ? '' : MEMORY_TOOL_GUIDANCE].filter(Boolean).join('\n\n'), subHarness)
+    let subSystem = harnessSubagentPrompt(
+      [def.prompt, args.projectId === null ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE]
+        .filter(Boolean)
+        .join('\n\n'),
+      subHarness
+    )
     chatDiag({
       kind: 'harness-behavior-profile',
       profile: subHarness.identity.behaviorProfileId ?? 'legacy',
@@ -459,7 +464,8 @@ export async function runSubagent(args: {
       ? createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
       : null
     const standalone = args.messageOwnership?.kind === 'standalone' || args.projectId === null
-    const executionStore = args.messageOwnership?.kind === 'standalone' ? createStandaloneOpenAIExecutionStore() : undefined
+    const executionStore =
+      args.messageOwnership?.kind === 'standalone' ? createStandaloneOpenAIExecutionStore() : undefined
     if (useOpenAISubagent) {
       const nativeTools = buildOpenAINativeTools({
         cwd: args.cwd,
@@ -483,7 +489,7 @@ export async function runSubagent(args: {
       const genericStablePrefix = [
         def.prompt,
         subagentCanMutate ? '' : 'This delegated run is read-only.',
-        standalone ? '' : MEMORY_TOOL_GUIDANCE,
+        standalone ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
         standalone
           ? ''
           : openAINativeToolsPromptOverlay(
@@ -551,9 +557,7 @@ export async function runSubagent(args: {
               compactionThreshold: subMeta?.contextWindow
                 ? Math.floor(subMeta.contextWindow * IN_TURN_COMPACT_RATIO)
                 : undefined,
-              ...(subHarness.runtime.promptCacheTtl
-                ? { promptCacheTtl: subHarness.runtime.promptCacheTtl }
-                : {}),
+              ...(subHarness.runtime.promptCacheTtl ? { promptCacheTtl: subHarness.runtime.promptCacheTtl } : {}),
             }
           ),
         },

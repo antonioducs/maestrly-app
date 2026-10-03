@@ -43,6 +43,12 @@ describe('fleet renderer wiring', () => {
     // The settings live in the panel; the view no longer renders them as a page of its own.
     expect(view).not.toContain('<BotSettings\n')
     expect(view).toContain("'conversation' | 'screen' | 'settings'")
+    // The conversation can move to a window of its own; a bot kept for that window while another is shown stops
+    // streaming its computer.
+    expect(view).toContain('<ChatWindowHost')
+    expect(view).toContain('streaming={active && ')
+    expect(source('components/fleet/PersistentBotViews.tsx')).toContain('active={bot.id === activeView?.botId}')
+    expect(source('components/fleet/BotChatHeader.tsx')).toContain('<ChatWindowButton')
     const sheet = source('components/fleet/BotSettingsSheet.tsx')
     expect(sheet).toContain('<BotSettings')
     expect(sheet).toContain('leaveGuard.current')
@@ -202,7 +208,7 @@ describe('fleet renderer wiring', () => {
       const copy = catalog.environment.runtimes
       for (const key of ['title', 'note', 'lastChecked', 'neverChecked', 'manual', 'check', 'unsupported', 'restart'])
         expect(copy[key as keyof typeof copy], key).toEqual(expect.any(String))
-      for (const id of ['claude-code', 'codex'] as const) {
+      for (const id of ['claude-code', 'codex', 'antigravity-acp'] as const) {
         expect(copy.name[id]).toEqual(expect.any(String))
         expect(copy.pending[id]).toContain('{{version}}')
       }

@@ -1,12 +1,14 @@
-import type { FleetRuntimeInfo } from '@maestrly/bot-fleet-protocol'
+import type { FleetInstanceStatus, FleetRuntimeInfo } from '@maestrly/bot-fleet-protocol'
 import type { UpdatableRuntimeAssetId } from '../../../shared/runtime-assets'
 import { botClaudeRuntime } from '../../chat/claude-agent-sdk/runtime-selection'
 import { listCodexSubscriptionManagers } from '../../chat/codex-subscription/manager'
+import { listAntigravitySubscriptionManagers } from '../../chat/antigravity-subscription/manager'
 import { runtimeAssetProgressInfo, runtimeUpdates } from '../../runtime-assets/app-service'
 
 const RUNTIMES: readonly (readonly [UpdatableRuntimeAssetId, FleetRuntimeInfo['id']])[] = [
   ['claude-code-runtime', 'claude-code'],
   ['codex-runtime', 'codex'],
+  ['antigravity-acp-runtime', 'antigravity-acp'],
 ]
 
 type RuntimeVersion = Pick<FleetRuntimeInfo, 'version' | 'source'>
@@ -16,8 +18,14 @@ type RuntimeVersion = Pick<FleetRuntimeInfo, 'version' | 'source'>
  * Code query until it ends, a Codex connection until no bot is working. Nothing listed means the next use starts the
  * selected version.
  */
-function runtimesInUse(id: FleetRuntimeInfo['id']): RuntimeVersion[] {
+export function runtimesInUse(id: FleetRuntimeInfo['id']): RuntimeVersion[] {
   if (id === 'claude-code') return botClaudeRuntime().inUse()
+  if (id === 'antigravity-acp') {
+    return listAntigravitySubscriptionManagers().flatMap((manager): RuntimeVersion[] => {
+      const runtime = manager.connectedRuntime
+      return runtime?.source === 'managed' ? [{ version: runtime.version ?? null, source: 'managed' }] : []
+    })
+  }
   return listCodexSubscriptionManagers().flatMap((manager): RuntimeVersion[] => {
     const runtime = manager.connectedRuntime
     return runtime ? [{ version: runtime.version, source: runtime.source === 'managed' ? 'managed' : 'image' }] : []
@@ -25,7 +33,7 @@ function runtimesInUse(id: FleetRuntimeInfo['id']): RuntimeVersion[] {
 }
 
 /**
- * The environment's Claude Code and Codex, as its bots report them: the version they run, the one they switch to once
+ * The environment's managed runtimes, as its bots report them: the version they run, the one they switch to once
  * their work in progress ends, and the release channel.
  */
 export async function fleetRuntimeInfo(): Promise<FleetRuntimeInfo[]> {
@@ -58,9 +66,19 @@ export async function fleetRuntimeInfo(): Promise<FleetRuntimeInfo[]> {
   )
 }
 
-/** Checks both runtimes now, installing newer releases when automatic updates are on; results arrive in statuses. */
+/** Checks installed runtimes now, installing newer releases when automatic updates are on. */
 export function checkBotRuntimes(): void {
   void Promise.all(RUNTIMES.map(([assetId]) => runtimeUpdates(assetId).cycle(true))).catch((error: unknown) =>
     console.warn('[bot-runtimes] Runtime check failed', error)
   )
+}
+
+/** Keep new runtime IDs out of the array validated by older gateways and desktops. */
+export async function fleetRuntimeReport(): Promise<Pick<FleetInstanceStatus, 'runtimes' | 'additionalRuntimes'>> {
+  const runtimes = await fleetRuntimeInfo().catch(() => null)
+  if (!runtimes) return { runtimes: null }
+  return {
+    runtimes: runtimes.filter((runtime) => runtime.id === 'claude-code' || runtime.id === 'codex'),
+    additionalRuntimes: runtimes.filter((runtime) => runtime.id !== 'claude-code' && runtime.id !== 'codex'),
+  }
 }

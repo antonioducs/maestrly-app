@@ -1,6 +1,7 @@
 /**
- * Desktop side of artifacts: agent scope, the owner's views and actions, and settings. Storage and HTTP stay in the
- * artifact host utility process; this service only talks to its admin interface.
+ * Desktop side of artifacts: agent scope, the owner's views and actions, and the bot server's settings. Artifacts live
+ * only on the bot server; this service talks to its admin interface, and moves what earlier versions left on this
+ * computer.
  */
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
@@ -21,27 +22,21 @@ import type {
   ArtifactCommentView,
   ArtifactDetailView,
   ArtifactEventView,
-  ArtifactHostStatus,
   ArtifactListItem,
   ArtifactRemoveResult,
-  ArtifactSettings,
   ArtifactSharingPatch,
   ArtifactSharingView,
   ArtifactThumbnailView,
+  LegacyArtifactView,
+  LegacyMoveState,
 } from '../../shared/artifacts'
 import type { FleetArtifactHost, FleetArtifactSettingsPatch } from '@maestrly/bot-fleet-protocol'
 import type { ArtifactServerStatus } from '../../shared/artifacts'
-import {
-  createDesktopSources,
-  localSource,
-  serverUnavailable,
-  type ArtifactSource,
-  type ArtifactSources,
-} from './sources'
+import { serverUnavailable, type ArtifactSource, type ArtifactSources } from './sources'
 import type { ServerArtifacts } from './server-artifacts'
 import type { Conversation } from '../../shared/conversation'
-import type { ArtifactHostProcess } from './host-process'
 import type { InviteVault } from './invite-vault'
+import type { LegacyArtifacts } from './legacy'
 
 export type ToolBundleInput = { files?: BundleFile[]; directory?: string }
 
@@ -51,15 +46,14 @@ export type ArtifactChange =
   | { kind: 'directory'; directory: string }
 
 export interface ArtifactsServiceDeps {
-  sources?: ArtifactSources
+  sources: ArtifactSources
   server?: ServerArtifacts
+  /** What earlier versions published on this computer; absent in a bot's own Maestrly. */
+  legacy?: LegacyArtifacts
   emitChanged?: () => void
   botName?: (id: string) => string | undefined
-  host: Pick<ArtifactHostProcess, 'ensureStarted' | 'status' | 'stop' | 'restart'>
   /** The tokens of personal links, kept so the owner can copy a link again. */
   vault: InviteVault
-  settings: () => ArtifactSettings
-  saveSettings: (input: unknown) => ArtifactSettings
   getConversation: (id: string) => Conversation | undefined
   /** The name of a project, or undefined once it was removed. */
   workspaceName: (id: string) => string | undefined
@@ -67,7 +61,6 @@ export interface ArtifactsServiceDeps {
   resolveDirectory: (conversation: Conversation, relative: string) => Promise<string>
   openExternal: (url: string) => Promise<void>
   openInDrawer: (convId: string, url: string, activate: boolean) => void
-  emitStatus: (status: ArtifactHostStatus) => void
   /** Asks for a preview image of a version; the capture runs later and may not happen. */
   requestThumbnail?: (id: string, version: number) => void
 }
@@ -88,21 +81,26 @@ const toCommentView = (comment: CommentView): ArtifactCommentView => ({
   createdAt: comment.createdAt,
 })
 const notFound = (message = 'Artifact not found') => new ArtifactHostError('not_found', message)
+/** An artifact an earlier version published on this computer: it opens again once moved to the bot server. */
+const onThisComputer = () =>
+  new ArtifactHostError('host_unavailable', 'The artifact is on this computer and must be moved to the bot server', {
+    reason: 'on_this_computer',
+  })
 
 export class ArtifactsService {
   private readonly sources: ArtifactSources
   private readonly locations = new Map<string, ArtifactSource>()
   constructor(private readonly deps: ArtifactsServiceDeps) {
-    this.sources =
-      deps.sources ?? createDesktopSources({ local: localSource(deps), server: () => null, settings: deps.settings })
+    this.sources = deps.sources
   }
 
   private async refreshSources(): Promise<void> {
     await this.deps.server?.refresh()
   }
 
-  private admin(): Promise<ArtifactAdmin> {
-    return this.deps.host.ensureStarted()
+  /** Not on the server: when it is among the artifacts on this computer, says so instead of "not found". */
+  private async missing(id: string): Promise<ArtifactHostError> {
+    return (await this.deps.legacy?.has(id)) ? onThisComputer() : notFound()
   }
 
   private conversation(convId: string): Conversation {
@@ -140,7 +138,7 @@ export class ArtifactsService {
   private async scoped(conversation: Conversation, id: string) {
     await this.refreshSources()
     const found = await this.find(id, this.sources.forConversation(conversation), conversation)
-    if (!found) throw notFound()
+    if (!found) throw await this.missing(id)
     return found
   }
 
@@ -155,7 +153,7 @@ export class ArtifactsService {
 
   private async requiredAt(id: string) {
     const found = await this.at(id)
-    if (!found) throw notFound()
+    if (!found) throw await this.missing(id)
     return found
   }
 
@@ -280,25 +278,12 @@ export class ArtifactsService {
     const sources = this.sources.forConversation(conversation)
     const groups = await Promise.all(
       sources.map(async (source) => {
-        try {
-          const admin = await source.admin()
-          const filter =
-            conversation.scope === 'standalone' || scope === 'conversation'
-              ? { conversationId: conversation.id }
-              : { workspaceId: conversation.workspaceId }
-          return await admin.list({ ownerKind: source.owner.kind, ownerId: source.owner.id, ...filter })
-        } catch (error) {
-          // Turning local hosting off is intentional, and must not prevent using the server.
-          if (
-            sources.length > 1 &&
-            source.key === 'local' &&
-            error instanceof ArtifactHostError &&
-            error.code === 'host_unavailable' &&
-            error.details?.reason === 'disabled'
-          )
-            return []
-          throw error
-        }
+        const admin = await source.admin()
+        const filter =
+          conversation.scope === 'standalone' || scope === 'conversation'
+            ? { conversationId: conversation.id }
+            : { workspaceId: conversation.workspaceId }
+        return admin.list({ ownerKind: source.owner.kind, ownerId: source.owner.id, ...filter })
       })
     )
     return groups.flat()
@@ -318,7 +303,6 @@ export class ArtifactsService {
       visibility: artifact.visibility,
       createdAt: artifact.createdAt,
       updatedAt: artifact.updatedAt,
-      host: source.key,
       bot:
         artifact.ownerKind === 'bot'
           ? { id: artifact.ownerId, name: this.deps.botName?.(artifact.ownerId) ?? null }
@@ -621,50 +605,49 @@ export class ArtifactsService {
     return host
   }
 
-  async status(): Promise<ArtifactHostStatus> {
-    const status = this.deps.host.status()
-    if (status.state !== 'running') return status
-    try {
-      return { ...status, ...(await (await this.admin()).status()) }
-    } catch {
-      return this.deps.host.status()
-    }
+  /** What earlier versions left on this computer, waiting to be moved or deleted. */
+  async legacyList(): Promise<LegacyArtifactView[]> {
+    return (await this.deps.legacy?.list()) ?? []
   }
 
-  getSettings(): ArtifactSettings {
-    return this.deps.settings()
+  legacyState(): LegacyMoveState {
+    return (
+      this.deps.legacy?.state() ?? { phase: 'idle', items: [], moved: [], current: null, stopping: false, error: null }
+    )
   }
 
-  async setSettings(input: unknown): Promise<ArtifactSettings> {
-    const before = this.deps.settings()
-    const after = this.deps.saveSettings(input)
-    const state = this.deps.host.status().state
-    // The host reads these when it starts, so changing any of them takes a restart.
-    const changed =
-      before.port !== after.port ||
-      before.quotaGb !== after.quotaGb ||
-      before.publicAddress !== after.publicAddress ||
-      before.ownerName !== after.ownerName
-    if (!after.hostEnabled) await this.deps.host.stop()
-    else if ((changed && state !== 'stopped') || (!before.hostEnabled && after.hostEnabled))
-      await this.deps.host.restart()
-    this.deps.emitStatus(await this.status())
-    return after
+  /**
+   * Starts moving the artifacts on this computer (all, or the given ones) to the bot server, in the main process;
+   * returns at once. The server must be ready and accept moved artifacts.
+   */
+  async legacyMove(ids?: string[]): Promise<LegacyMoveState> {
+    const legacy = this.deps.legacy
+    if (!legacy) throw notFound()
+    const state = this.legacyState()
+    if (state.phase === 'running') return state
+    await this.refreshSources()
+    const server = this.deps.server
+    const source = server?.source()
+    if (!server || !source) throw server?.unavailable() ?? serverUnavailable('server_absent')
+    const status = server.status()
+    if (status.state !== 'ready' || !status.canMove) throw serverUnavailable('server_unsupported')
+    const admin: ArtifactAdmin = await source.admin()
+    return legacy.move(() => admin, ids)
   }
 
-  /** Starts the host, clearing a crash or busy-port state. */
-  async start(): Promise<ArtifactHostStatus> {
-    if (this.deps.host.status().state === 'error') await this.deps.host.restart()
-    else await this.admin().catch(() => {})
-    const status = await this.status()
-    this.deps.emitStatus(status)
-    return status
+  legacyStop(): LegacyMoveState {
+    return this.deps.legacy?.stopAfterCurrent() ?? this.legacyState()
   }
 
-  /** Writes a consistent database snapshot to `<targetDir>/artifacts.sqlite` for a data export. */
+  /** Deletes artifacts on this computer (all, or the given ones); what is on the bot server does not change. */
+  async legacyDelete(ids?: string[]): Promise<void> {
+    await this.deps.legacy?.remove(ids)
+  }
+
+  /** Writes a consistent copy of the artifacts on this computer to `<targetDir>/artifacts.sqlite` for a data export. */
   async prepareExport(targetDir: string): Promise<boolean> {
+    if (!this.deps.legacy?.exists()) return false
     await mkdir(targetDir, { recursive: true, mode: 0o700 })
-    await (await this.admin()).snapshot(path.join(targetDir, 'artifacts.sqlite'))
-    return true
+    return this.deps.legacy.snapshot(path.join(targetDir, 'artifacts.sqlite'))
   }
 }

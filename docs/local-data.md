@@ -59,13 +59,26 @@ itself installed. Removal affects other paired computers too.
 ## Memory storage
 
 Desktop durable entries remain in `local_memories`. Its `workspace_id` now names
-a memory space: a workspace or a fleet bot's own `bot-self:<botId>` space. Bot
+a memory space: a workspace, the profile's `personal-chat` space, or a fleet bot's
+own `bot-self:<botId>` space. Bot
 profiles from before environments used a single `bot-self` space, which is
 re-keyed when the bot is adopted (see
 [bot environment data](#bot-environment-data)). The migration removes the
 workspace foreign key and preserves workspace deletion cleanup through a
 trigger. Entries can have source `auto` for automatic extraction. Conversation
 provenance does not make saved entries disappear when a transcript is deleted.
+
+Ordinary standalone chats share `personal-chat`; project and bot conversations
+do not use it. The existing schema supports this space without a new table or
+synthetic workspace. Personal configuration lives in `app_settings` under
+`chat.personalMemory`, separately from project recall/extraction configuration
+at `chat.memory`. Missing settings enable personal access and recall but leave
+extraction disabled. Unreadable or invalid personal settings disable assistant
+access without removing entries. Deleting a chat or workspace leaves personal
+entries intact. Manage and export them from **Settings → Chat → Models & agents →
+Personal memory → Manage personal memory**; exports
+include the full collection, including archived and superseded entries. There is
+no automatic import from project/bot memory and no cross-device synchronization.
 
 `conversation_memory_state` stores the frozen core, source baseline and recalled
 IDs; `memory_extraction_state` stores the extraction cursor and failure state.
@@ -142,12 +155,15 @@ data under its bot id:
 | Chromium profile of its apps screen | `~/.config/maestrly-bots/<botId>/chromium` |
 | Session bus, desktop socket, wallpaper, and the size and place of its browser window | `~/.cache/maestrly-bots/<botId>/` (`bus`, `desktop.sock`, `wallpaper.*`, `presenter.json`) |
 
-Claude Code and Codex releases a bot downloads on its own live in the
+Claude Code, Codex and Google Antigravity ACP releases a bot downloads live in the
 profile's `runtime-assets/` folder, with the accepted release metadata in the
-`runtimeAssets.claudeCodeReleases` and `runtimeAssets.codexReleases` settings.
+`runtimeAssets.claudeCodeReleases`, `runtimeAssets.codexReleases` and
+`runtimeAssets.antigravityReleases` settings.
 They are shared by the environment's bots and survive container replacement;
 Maestrly keeps the active version, the previous one, and any version a running
-turn still uses, and removes the rest.
+turn still uses, and removes the rest. Google AI credentials and ACP conversation
+files live separately under `antigravity/accounts/` in the profile. Runtime
+updates preserve those account homes; signing out removes the selected home.
 
 Two browsers keep separate data. The browser that a bot drives with `browser_*`
 runs in the environment's Maestrly process, so all bots of the environment share
@@ -202,7 +218,13 @@ dictation starts.
 
 ## Artifacts
 
-Local artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`
+Artifacts are hosted on the bot server; see [Server artifacts](#server-artifacts).
+The desktop profile holds artifacts only if an earlier version published them on
+this computer, until you [move or delete them](artifacts.md#artifacts-from-earlier-versions);
+no new ones are created there. Moving the last one, or deleting them, removes
+the folder.
+
+Those artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`
 holds artifacts, versions, sessions, and which preview image belongs to
 each version, and `blobs/` holds file contents and preview images, stored once
 by SHA-256. The directory is owner-only (`0700`), and the database
@@ -221,12 +243,11 @@ the application settings, encrypted with the operating-system keyring; without
 it they stay in memory until the app quits. Exports do not include them, so after
 restoring an export personal links must be reset.
 
-Export includes a consistent snapshot of the local artifacts database
+While that folder exists, export includes a consistent snapshot of its database
 (`artifacts/export/artifacts.sqlite`, written for the export and removed after
-it) together with `artifacts/blobs/`. If the snapshot cannot be written, for
-example because hosting is turned off, the export reports "Could not export
-artifacts." Reset stops the host and removes `artifacts/`. See
-[Artifacts](artifacts.md).
+it) together with `artifacts/blobs/`. If the snapshot cannot be written, the
+export reports "Could not export artifacts." Reset stops the host and removes
+`artifacts/`. See [Artifacts](artifacts.md).
 
 ### Server artifacts
 
@@ -235,10 +256,11 @@ state, sessions, activity, and comments in `/data/artifacts/` inside the gateway
 volume. These are separate from the desktop profile. The same artifact storage
 layout applies; the gateway owns the writes. Server settings and per-bot
 publication permissions live in the gateway's state. Artifacts carry a device
-or bot owner ID; the desktop center combines the hosts without copying the
-server's database into the desktop profile.
+or bot owner ID; the desktop center lists them without copying the server's
+database into the desktop profile. An artifact moved from this computer keeps
+its ID, versions, comments, and previews, but not its sharing state.
 
-Desktop export and reset include only local artifacts. The server API does not
+Desktop export and reset do not include server artifacts. The server API does not
 provide a database snapshot; back up the gateway volume separately while its
 writer is stopped, together with the rest of your bot server data. Turning
 hosting or a bot's publication permission off preserves pages. Unpairing leaves

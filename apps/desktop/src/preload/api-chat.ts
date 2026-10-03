@@ -1,9 +1,11 @@
 import type { MemorySettings } from '../shared/memory'
+import type { AppToolGroup } from '../shared/app-tool-groups'
 import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import type {
   ChatConfig,
   ChatConvTools,
+  ChatConvToolsPatch,
   ChatGptWebStatus,
   ChatGptWebCapabilities,
   ChatGptWebCapabilitiesInfo,
@@ -117,6 +119,12 @@ const SUBSCRIPTION_CHANNELS: Record<
     login: 'chat:grok-subscription:login',
     logout: 'chat:grok-subscription:logout',
     changed: 'chat:grok-subscription:auth-changed',
+  },
+  'antigravity-subscription': {
+    status: 'chat:antigravity-subscription:status',
+    login: 'chat:antigravity-subscription:login',
+    logout: 'chat:antigravity-subscription:logout',
+    changed: 'chat:antigravity-subscription:auth-changed',
   },
 }
 
@@ -463,6 +471,9 @@ export const chatApi = {
 
   chatSetAppTools: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-app-tools', enabled),
 
+  chatSetAppToolGroup: (group: AppToolGroup, enabled: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('chat:set-app-tool-group', group, enabled),
+
   chatSetImageGen: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-image-gen', enabled),
 
   chatSetBashFilters: (enabled: boolean): Promise<{ ok: boolean }> =>
@@ -514,10 +525,8 @@ export const chatApi = {
 
   chatGetConvTools: (conversationId: string): Promise<ChatConvTools> =>
     ipcRenderer.invoke('chat:get-conv-tools', conversationId),
-  chatSetConvTools: (
-    conversationId: string,
-    patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
-  ): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-conv-tools', conversationId, patch),
+  chatSetConvTools: (conversationId: string, patch: ChatConvToolsPatch): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('chat:set-conv-tools', conversationId, patch),
 
   chatResend: (
     conversationId: string,

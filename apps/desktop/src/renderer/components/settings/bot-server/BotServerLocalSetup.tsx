@@ -14,9 +14,11 @@ const dockerUrl = {
 }
 
 export function BotServerLocalSetup({
+  defaultHosts = 'bots-and-artifacts',
   onBack,
   onInstall,
 }: {
+  defaultHosts?: FleetInstallHosts
   onBack: () => void
   onInstall: (input: FleetInstallLocalInput) => void
 }) {
@@ -24,7 +26,7 @@ export function BotServerLocalSetup({
   const [check, setCheck] = useState<LocalDockerCheck | null>(null)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [hosts, setHosts] = useState<FleetInstallHosts>('bots-and-artifacts')
+  const [hosts, setHosts] = useState<FleetInstallHosts>(defaultHosts)
   const [deviceName, setDeviceName] = useState(t(`settings.deviceNameDefault.${window.api.platformInfo.os}`))
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(false)
   const checkDocker = useCallback(async () => {

@@ -6,6 +6,7 @@ import type { SubagentExecutionSnapshotV1 } from './subagent-profiles'
 import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
+import type { AppToolGroupState } from './app-tool-groups'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -15,10 +16,20 @@ export type ChatMode = 'agent' | 'design' | 'plan' | 'ask'
 
 export interface ChatConvTools {
   app: boolean
+  /** Resolved state of each app-tool group. Absent (bot conversations) means every group is on. */
+  appGroups?: AppToolGroupState
 
   mcpDisabled: string[]
 
   imageGen: boolean
+}
+
+/** Partial update of a conversation's tool overrides; `appGroups` merges per group. */
+export interface ChatConvToolsPatch {
+  app?: boolean
+  appGroups?: Partial<AppToolGroupState>
+  mcpDisabled?: string[]
+  imageGen?: boolean
 }
 
 export interface ChatModelRef {
@@ -700,7 +711,8 @@ export function buildProviderOptions(
     kind === 'codex-subscription' ||
     kind === 'github-copilot-subscription' ||
     kind === 'claude-subscription' ||
-    kind === 'cursor-subscription'
+    kind === 'cursor-subscription' ||
+    kind === 'antigravity-subscription'
   ) {
     return undefined
   }
@@ -762,7 +774,8 @@ export function frozenEffortReproducible(
     kind === 'codex-subscription' ||
     kind === 'github-copilot-subscription' ||
     kind === 'claude-subscription' ||
-    kind === 'cursor-subscription'
+    kind === 'cursor-subscription' ||
+    kind === 'antigravity-subscription'
   ) {
     return true
   }
@@ -1181,6 +1194,7 @@ export type ChatProviderKind =
   | 'claude-subscription'
   | 'grok-subscription'
   | 'cursor-subscription'
+  | 'antigravity-subscription'
 
 export type ChatSubscriptionProviderKind = Extract<
   ChatProviderKind,
@@ -1189,6 +1203,7 @@ export type ChatSubscriptionProviderKind = Extract<
   | 'claude-subscription'
   | 'grok-subscription'
   | 'cursor-subscription'
+  | 'antigravity-subscription'
 >
 
 export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProviderKind[] = [
@@ -1197,6 +1212,7 @@ export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProvider
   'claude-subscription',
   'grok-subscription',
   'cursor-subscription',
+  'antigravity-subscription',
 ]
 
 export function isChatSubscriptionProviderKind(kind: string | null | undefined): kind is ChatSubscriptionProviderKind {
@@ -1222,6 +1238,8 @@ export interface ChatGptWebCapabilities {
   conversation: 'off' | 'read'
   /** Local durable memory requires explicit Read; shared knowledge remains repository-jailed. */
   memory: 'off' | 'read'
+  /** Profile-local personal memory. Missing values deny access; independent of project memory. */
+  personalMemory?: ChatGptWebCapabilityScope
   /** Browser access is fail-closed and may target an isolated preview or an attached embedded local tab. */
   browser: ChatGptWebBrowserCapability
   mcp: Record<string, ChatGptWebCapabilityScope>
@@ -1276,6 +1294,7 @@ export interface ChatGptWebSessionInfo {
     ghRead: boolean
     conversation: 'off' | 'read'
     memory: 'off' | 'read'
+    personalMemory?: ChatGptWebCapabilityScope
     browser: ChatGptWebBrowserCapability
     mcpRead: number
     mcpWrite: number
@@ -1697,6 +1716,8 @@ export interface ChatConfig {
   mcpServers: McpServerInfo[]
 
   appToolsEnabled: boolean
+  /** Global state of each app-tool group. Absent means every group is on. */
+  appToolGroups?: AppToolGroupState
 
   imageGenEnabled: boolean
 

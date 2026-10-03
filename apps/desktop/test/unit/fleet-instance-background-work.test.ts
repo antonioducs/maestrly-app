@@ -299,6 +299,7 @@ describe('background work of an uninstalled bot', () => {
     const second = environment()
     await second.runtime.start()
     expect(second.runtime.bots().map((bot) => bot.botId)).toEqual(['beta'])
+    expect(memorySpaceForConversation(first.convA)).toBeNull()
     expect(new BackgroundCompactionStore().get(first.convA)).toMatchObject({ pauseReason: 'suspended' })
 
     // Installed again, it resumes with its own conversation, settings and memory space.

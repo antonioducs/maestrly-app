@@ -38,6 +38,7 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'computer_key',
   'bot_peers_list',
   'bot_peers_send',
+  'bot_share_file',
   'bot_routines_list',
   'bot_routines_create',
   'bot_routines_update',
@@ -407,7 +408,16 @@ describe('MCP app tools inventory', () => {
     expect(names).toContain('notes_write_page')
     expect(names).toContain('terminal_create')
     expect(names).toContain('browser_navigate')
-    expect(names.some((name) => /^(project_notes_|memory_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
+    expect(names.filter((name) => name.startsWith('memory_')).sort()).toEqual([
+      'memory_archive',
+      'memory_forget',
+      'memory_list',
+      'memory_read',
+      'memory_restore',
+      'memory_search',
+      'memory_upsert',
+    ])
+    expect(names.some((name) => /^(project_notes_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
   })
 
   it('keeps the registered tool names and input schema shapes stable', async () => {
@@ -469,6 +479,35 @@ describe('MCP app tools inventory', () => {
       expect(agent.tools.review_plan).toBeUndefined()
     } finally {
       await agent.close()
+    }
+  })
+
+  it('omits the app-tool groups the user turned off, even from an explicit allowlist', async () => {
+    const app = await buildAppTools({
+      conversationId: convId,
+      mode: 'agent',
+      gate: async () => {},
+      disabledGroups: ['terminal', 'browser'],
+    })
+    try {
+      expect(Object.keys(app.tools).sort()).toEqual(
+        EXPECTED_TOOL_NAMES.filter((name) => !/^(terminal_|browser_)/.test(name)).sort()
+      )
+    } finally {
+      await app.close()
+    }
+
+    const memory = await buildAppTools({
+      conversationId: convId,
+      mode: 'agent',
+      gate: async () => {},
+      only: new Set(['memory_search', 'memory_read', 'notes_list_pages']),
+      disabledGroups: ['memory'],
+    })
+    try {
+      expect(Object.keys(memory.tools)).toEqual(['notes_list_pages'])
+    } finally {
+      await memory.close()
     }
   })
 

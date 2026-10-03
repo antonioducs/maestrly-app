@@ -22,6 +22,25 @@ Archiving preserves history and files for restoration. Deleting removes that
 chat's managed files and saved permissions; deleting a project does not delete
 standalone chats. Back up the application profile to preserve these files.
 
+## Separate chat windows
+
+Use **Open chat in new window** in a conversation's header to detach a standalone
+chat, workspace agent, or fleet bot conversation. Chats and workspace conversations
+also offer this action in their sidebar menu. Each conversation has one window;
+using the action again focuses it. Different conversations can stay open side by
+side, including on different monitors, while you navigate the main app.
+
+The same chat remains active when moved: drafts, attachments, queued messages,
+and incoming responses stay with it. Close the detached window or choose
+**Return to app** to bring the conversation back without stopping its work.
+Local chats offer a button to open their tools in the main window; a pending
+plan changes that action to **Review plan**. Bot screen and settings actions
+continue to use the main app.
+
+Window positions are remembered for the current app session. Detached windows
+are not reopened automatically after restarting Maestrly, and closing the whole
+application still follows its normal shutdown behavior.
+
 ## Task lists
 
 The task card shows valid entries from the agent's latest task list. Malformed
@@ -109,7 +128,7 @@ keeps the plan.
 
 ### By asking the agent
 
-In an Agent or Design turn you can ask for new conversations in plain language,
+In an Agent, Design or Ask turn you can ask for new conversations in plain language,
 for example:
 
 - "Open one conversation for each of these cards and start development with
@@ -117,8 +136,15 @@ for example:
 - "Abra uma conversa para cada card e comece o desenvolvimento."
 - "Send this plan to a new conversation."
 
+Ask exposes these handoff tools only when your message explicitly asks to start
+conversations or send work to a project. Your current chat stays in Ask mode;
+the development conversation starts in Agent mode. File editing and shell
+commands remain unavailable in the source Ask chat.
+
 The agent starts conversations only when your latest message explicitly asks for
-them. It does not start them when you ask for analysis or planning, ask whether
+them, including an explicit handoff such as “Send this plan for development in
+workspace Example, on a new branch feat/example from main.” It does not start
+them when you ask for analysis or planning, ask whether
 it is possible, give an example, describe a feature, or quote text, code or card
 content. If you state a number ("open 3 conversations"), no more than that are
 started for that message. When the request is not explicit, the agent tells you
@@ -135,7 +161,23 @@ never means low effort.
 
 By default each task gets its own worktree and branch (`task/<title>-<id>`) from
 the current commit; uncommitted changes are not included. You can ask for the
-same checkout instead. Each new conversation receives a self-contained task
+same checkout instead when staying in the source project without a target.
+
+From standalone or project chats, you can choose a registered workspace. The
+agent discovers workspace names, paths, default branches and available branches,
+uses the canonical workspace ID, and asks when names are ambiguous. Standalone
+chats require a workspace choice. Targeting a workspace, a new branch or a base
+branch always creates a worktree; **Same checkout** is unavailable with a target.
+An explicit target starts from its workspace's configured default branch unless
+you choose a base such as `main`. The base is resolved and pinned in the target
+repository: a local branch takes precedence, and qualified remote names such as
+`origin/main` use the locally fetched remote reference. Dispatch does not fetch
+remote updates. Ambiguous remote-only names require choosing a qualified name.
+A project request without a target retains the current-commit behavior.
+Only branch/base and model/effort/Fast settings you choose are passed explicitly.
+Batch target fields apply to all tasks unless a task overrides them.
+
+Each new conversation receives a self-contained task
 from the agent, marked **Started from another conversation**, rather than a
 copy of this transcript. The agent's reply lists each conversation with its
 status and an **Open** link.
@@ -149,11 +191,16 @@ it in that conversation.
 ### Limits
 
 Up to 20 conversations can be started per request; ask again for more.
-Starting conversations requires a local project conversation. It is unavailable
-in standalone chats, bot conversations, Kanban web chats, archived
+Starting conversations is available in Agent/Design mode in local standalone
+and project chats. It is unavailable in Plan and Maestro modes,
+bot conversations, Kanban web chats, archived
 conversations, conversations with an unfinished migration and multi-repository
 conversations, and the app gives the reason. A review loop blocks only the
-**Same checkout** option. Card contents come from whatever the agent can
+**Same checkout** option. Missing or unknown workspace IDs, invalid or existing
+branch names, unresolved base branches, and targets combined with **Same
+checkout** are reported as errors rather than silently choosing another target.
+Results identify the destination workspace and resolved base revision.
+Card contents come from whatever the agent can
 already read, such as a connected MCP server or text you paste; no Jira
 integration is added. Nothing is pushed, opened as a pull request or merged
 automatically.
@@ -250,10 +297,28 @@ summaries covering changed content. Restarting preserves valid completed work;
 preparation resumes only when a conversation is used, rather than scanning and
 processing every old chat.
 
+## Maestrly tool groups
+
+Maestrly tools are enabled by default. Existing explicit global or conversation
+choices remain unchanged. **Settings → Chat → Tools** keeps the master switch
+and lets you enable or disable Terminal, Browser, Notes, Memory, Conversation
+history, Debugger, Artifacts and Kanban separately. Expand **Maestrly tools** in
+the conversation's **+** menu to change its groups. Changing one group pins only
+that group's choice; the others continue to inherit the global settings.
+
+A disabled group removes its tools from the next turn's catalog, including
+delegated workers. The existing mode limits and permission rules still apply.
+Bots keep their Maestrly tools enabled and ignore these group choices.
+
+The Memory group controls memory tools, including personal memory tools. Memory
+recall and automatic extraction have their own settings under **Models & agents**;
+turn off personal memory there to also disable context injection and background
+writes.
+
 ## Memory core and catalog
 
 Project conversations with memory enabled share their workspace's durable memory;
-standalone chats have no memory space. Fleet bots have their own space (see
+ordinary standalone chats share personal memory in the local app profile. Fleet bots have their own space (see
 [bot memory](bot-fleet.md#bot-memory)). The host includes a memory core in the
 model's context: pinned content and a catalog of other active memories by title.
 The project **Memory Center** shows an **Automatic** source for extracted entries
@@ -263,9 +328,74 @@ The pinned section has a 3,000-character budget, with content excerpts of up to
 700 characters per entry; entries that do not fit are omitted. Catalog entries
 have a 1,600-character budget, at most 40 entries and 90-character titles, ordered
 by importance, use count and last update. The agent can use `memory_read` to read
-an entry in full. The core stays stable until portable compaction; changes to
-included pinned content arrive as an update on the next turn. Updates over
-1,500 characters rebuild the core. Native compaction alone does not rebuild it.
+an entry in full. Project and bot cores stay stable until portable compaction;
+changes to included pinned content arrive as an update on the next turn. Updates
+over 1,500 characters rebuild those cores. Native compaction alone does not
+rebuild them. Personal cores refresh on each admitted turn so changes made by
+other chats reach the bounded catalog immediately.
+
+## Personal memory in Chats
+
+**Settings → Chat → Models & agents → Personal memory → Manage personal memory**
+opens the personal memory panel; selecting an entry in a message's memory
+indicator opens the panel at that entry. The panel manages facts and preferences
+that should be useful across your conversations: language, response style,
+interests and recurring habits. Every ordinary chat in the same local profile uses this collection,
+including chats with different native providers. Projects, bot-originated chats
+and fleet bots keep their existing memory scopes. Personal memory does not sync
+between devices or with the fleet gateway.
+
+Create or edit an entry in the central view, or ask an assistant in Agent or
+Design mode to save it. Personal memory tools remain available when the general
+app-tools switch is off, unless the Memory group is also disabled. Ask and Plan
+can read memories; writes retain the conversation's
+permission rules. Sharing memories does not share permission approvals or other
+chats' transcripts. Prefer replacing an outdated entry over saving contradictory
+facts. The central view supports pinning, archiving, restoring, permanent deletion
+with confirmation, and JSON/Markdown export.
+
+The personal memory panel opens a readable detail sheet before editing. Search
+and the All, Recent and Archived tabs keep the collection in one list; type,
+status and pinned filters can be combined. Type, scope and tags are under a
+collapsible section in the editor. Closing an edited draft asks before discarding
+it, and failed saves leave the draft available. Updates from other chats preserve
+fields you are editing; saving changes only the fields you touched.
+
+Use **Settings** in the panel for personal access, recall and the extraction
+model. **More options** contains separate JSON and Markdown exports and index
+rebuilding. The existing project memory settings and panel remain independent.
+
+Pinned entries enter the context; other entries appear in the bounded catalog
+and can be recalled by relevance. On the next admitted turn, personal catalog
+changes and corrections or removals of previously recalled entries reach other
+open chats. Deleting the originating chat or a project does not delete personal
+memories. Removing a memory stops future retrieval and tells chats that already
+received it to stop relying on it; it does not erase historical messages or
+information already sent to a provider.
+
+Personal memory also tracks entries returned by its read, list and search tools.
+If corrections exceed the update budget, a short notice invalidates all earlier
+personal evidence: the rebuilt core is current, and other facts must be read
+again. Assistants cannot read archived or superseded personal content; the
+central view retains that history for your review and restoration.
+
+Personal memory has separate settings from project memory. Access and automatic
+recall start enabled; background saving starts disabled and requires its own
+model selection. Turning off recall leaves the core and tools available.
+Turning off personal memory stops new assistant reads, writes, context injection
+and background extraction, while manual management remains available. Invalid
+or unreadable personal settings disable assistant access until corrected.
+
+ChatGPT Web/Companion requires its own **Personal memory** permission: Off,
+Read, or Write. It defaults to Off; project-memory permission does not grant
+personal access. Read permits retrieval, and Write additionally permits changes
+subject to the session's mode and permission policy. Changing or revoking the
+capability invalidates the corresponding session access.
+
+Companion background saving additionally requires Write and Agent/Design mode.
+It processes only user messages already persisted in the local conversation;
+it does not scrape the browser's ChatGPT history. Ending the session or revoking
+access cancels pending extraction and discards late results.
 
 ## Automatic recall
 
@@ -282,8 +412,9 @@ recalled sources.
 Turn-memory preparation has a 1,500 ms budget, including at most 800 ms for vector
 retrieval. Text search remains available without vectors. A slow recall or
 unavailable host memory provider skips that piece while preserving the memory
-core. Unreadable memory settings fall back to the defaults: recall on, automatic
-saving off. Memory failures do not prevent sending a message.
+core. Unreadable project-memory settings fall back to the defaults: recall on,
+automatic saving off. Personal settings fail closed as described above. Memory
+failures do not prevent sending a message.
 
 Recall and the read-only `memory_search`, `memory_list`, `memory_read`,
 `history_search` and `history_read` tools never prompt for approval. Disabling
@@ -310,6 +441,16 @@ choose a **Memory model**. Saving starts disabled and needs a selected model.
 Background extraction sends condensed conversation content and existing memory
 to that model; extraction and consolidation consume its quota and record usage.
 Bots use their configured compaction model instead.
+
+Personal memory uses its own background-saving switch and model. Enabling
+project extraction does not enable personal extraction. Personal extraction
+accepts entries only with a reference to a user message in the processed local
+transcript and focuses on durable facts or preferences about the user. Assistant
+claims, tool output and task-specific details are not sources of personal facts.
+This provenance check and model guidance do not prove the truth of an entry;
+review saved memories in the central view. Disabling personal access or saving
+cancels pending work and discards late model responses. Concurrent extractions
+do not replace targets changed since the extraction began.
 
 Extraction waits three minutes after the latest completed turn, with a maximum
 wait of 30 minutes from the first pending trigger. It reads messages after the

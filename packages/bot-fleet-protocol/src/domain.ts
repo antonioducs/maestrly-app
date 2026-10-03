@@ -4,6 +4,7 @@ import {
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_BOT_MEMORY_LIMITS,
   FLEET_IMAGE_LIMITS,
+  FLEET_FILE_LIMITS,
   FLEET_IMAGE_MEDIA_TYPES,
   FLEET_INSTRUCTIONS_MAX,
   FLEET_MESSAGE_TEXT_MAX,
@@ -136,6 +137,32 @@ export const fleetImageRefSchema = z.object({
   name: z.string().max(200).nullable(),
 })
 export type FleetImageRef = z.infer<typeof fleetImageRefSchema>
+
+export const fleetFileIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/)
+export const fleetFileNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => {
+    try {
+      encodeURIComponent(value)
+      return true
+    } catch {
+      return false
+    }
+  }, 'File names must be well-formed Unicode')
+/** A private, bot-scoped file reference. It never exposes a filesystem path or credentials. */
+export const fleetFileRefSchema = z.object({
+  id: fleetFileIdSchema,
+  name: fleetFileNameSchema,
+  mediaType: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/),
+  byteSize: z.number().int().nonnegative().max(FLEET_FILE_LIMITS.downloadMaxBytes),
+})
+export type FleetFileRef = z.infer<typeof fleetFileRefSchema>
 
 /** Context and cost of the bot's primary conversation, computed by the bot's own Maestrly like its composer does. */
 export const fleetUsageSchema = z.object({
@@ -372,6 +399,8 @@ export const fleetEnvironmentSchema = z.object({
   update: fleetEnvironmentUpdateSchema.nullable().default(null),
   /** Null when the gateway or the environment's image predates runtime reports. */
   runtimes: fleetRuntimesSchema.nullable().default(null),
+  /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
+  additionalRuntimes: fleetRuntimesSchema.optional(),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
@@ -487,11 +516,13 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     routine: routineRef.optional(),
     peer: peerRef.optional(),
     queued: z.boolean(),
+    attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
     memories: z
       .array(z.object({ id: z.string(), title: z.string() }))
       .max(10)
       .default([]),
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
+    files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
   }),
   z.object({ ...transcriptBase, kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
   /**
@@ -514,6 +545,7 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     output: z.string().max(FLEET_TOOL_OUTPUT_MAX).nullable(),
     // Screenshots and generated images the tool returned, viewable by the owner.
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.imagesPerItemMax).default([]),
+    files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
     // todo_write only: the list it recorded. Absent from other tools and from instances that predate it.
     todos: z.array(fleetTodoSchema).max(FLEET_TODO_LIMITS.itemsMax).optional(),
   }),

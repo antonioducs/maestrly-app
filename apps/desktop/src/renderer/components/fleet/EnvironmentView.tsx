@@ -3,20 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { Boxes, Clock } from 'lucide-react'
 import {
   FLEET_ENVIRONMENT_LIMITS,
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   type FleetBot,
   type FleetEnvironment,
-  type FleetSelectionOption,
 } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import {
-  compactionFormFrom,
-  compactionModelLabel,
-  compactionPatch,
-  compactionSourceOf,
-  sameCompactionConfig,
-} from '@/lib/fleet/compaction'
+
 import { fleetErrorText } from '@/lib/fleet/errors'
 import {
   createKeyWatcher,
@@ -31,8 +25,6 @@ import {
 import { gb } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import {
-  contextLimitAvailability,
-  environmentCompactionAvailability,
   environmentJoinAvailability,
   environmentJoinHint,
   environmentProvisioningKey,
@@ -46,11 +38,12 @@ import type { FleetView } from '@/lib/use-main-panels'
 import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
-import { CompactionFields } from './CompactionFields'
+import { EnvironmentCompaction } from './EnvironmentCompaction'
 import { EnvironmentRuntimes } from './EnvironmentRuntimes'
+import { EnvironmentSettings } from './EnvironmentSettings'
 import { EnvironmentScreen } from './EnvironmentScreen'
 
-const tabs = ['overview', 'screen'] as const
+const tabs = ['overview', 'screen', 'settings'] as const
 /** `update` restarts on a gateway that cannot schedule updates; `updateNow` forces a scheduled one. */
 type Confirm = 'restart' | 'update' | 'updateNow' | 'stop' | 'archive'
 
@@ -72,7 +65,9 @@ export function EnvironmentView({
 }) {
   const { t } = useTranslation('fleet')
   const tab = view.tab
-  const setTab = (next: typeof tab) => onView({ kind: 'environment', environmentId: environment.id, tab: next })
+  const setTab = (next: typeof tab) => {
+    if (next !== tab) onView({ kind: 'environment', environmentId: environment.id, tab: next })
+  }
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = tabs.indexOf(tab)
     const next =
@@ -94,7 +89,7 @@ export function EnvironmentView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="border-b border-border px-5 py-2">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-elevated text-muted-foreground">
             <Boxes className="size-4" aria-hidden="true" />
           </span>
@@ -124,12 +119,17 @@ export function EnvironmentView({
                 type="button"
                 role="tab"
                 aria-selected={tab === name}
+                tabIndex={tab === name ? 0 : -1}
                 aria-controls={`fleet-environment-panel-${name}`}
                 onClick={() => setTab(name)}
                 onKeyDown={onKeyDown}
                 className={`rounded-md px-3 py-1.5 text-xs focus-visible:ring-2 focus-visible:ring-ring ${tab === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               >
-                {name === 'overview' ? t('environment.overview') : t('environment.screen')}
+                {name === 'overview'
+                  ? t('environment.overview')
+                  : name === 'screen'
+                    ? t('environment.screen')
+                    : t('environmentSettingsShell.tab')}
               </button>
             ))}
           </div>
@@ -158,7 +158,20 @@ export function EnvironmentView({
             onCreateBot={onCreateBot}
             onOpenScreen={() => setTab('screen')}
             onOpenInbox={() => onView({ kind: 'inbox' })}
+            onOpenSettings={() => setTab('settings')}
             onArchived={() => onView({ kind: 'server' })}
+          />
+        ) : tab === 'settings' ? (
+          <EnvironmentSettings
+            key={environment.id}
+            environment={environment}
+            fleet={fleet}
+            section={view.section}
+            onSection={(section) =>
+              onView({ kind: 'environment', environmentId: environment.id, tab: 'settings', section })
+            }
+            onOpenScreen={() => setTab('screen')}
+            onOpenBot={onOpenBot}
           />
         ) : (
           <EnvironmentScreen key={environment.id} environment={environment} fleet={fleet} />
@@ -175,6 +188,7 @@ function EnvironmentOverview({
   onCreateBot,
   onOpenScreen,
   onOpenInbox,
+  onOpenSettings,
   onArchived,
 }: {
   environment: FleetEnvironment
@@ -183,14 +197,21 @@ function EnvironmentOverview({
   onCreateBot: (environmentId: string) => void
   onOpenScreen: () => void
   onOpenInbox: () => void
+  onOpenSettings: () => void
   onArchived: () => void
 }) {
   const { t, i18n } = useTranslation('fleet')
   const bots = environmentBots(environment, fleet.state.snapshot.bots)
+  const modernSettings =
+    fleet.state.connection.features.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE) &&
+    environment.capabilities.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
   const running = environment.lifecycle === 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
   const availability = provisioningAvailability(fleet, environment)
-  const lists = useFleetProvisioning({ environmentId: environment.id }, availability === 'ready' && running)
+  const lists = useFleetProvisioning(
+    { environmentId: environment.id },
+    !modernSettings && availability === 'ready' && running
+  )
   // The shared lists reload when the environment's Maestrly or its bots' accounts change, never on resource samples.
   const listsKey = environmentProvisioningKey(environment, fleet.state.snapshot.bots)
   const [listsChanged] = useState(() => createKeyWatcher(listsKey))
@@ -324,49 +345,61 @@ function EnvironmentOverview({
           </div>
           <p className="text-xs text-muted-foreground">{t('environment.sharedNote')}</p>
         </section>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-6">
-          <p className="text-xs text-muted-foreground">{t('environment.sharedConfig')}</p>
-          <Button size="sm" variant="ghost" disabled={availability !== 'ready' || !running} onClick={lists.refresh}>
-            {t('environment.refresh')}
-          </Button>
-        </div>
-        <BotAccountsSection
-          key={environment.id}
-          subject={subject}
-          lists={lists}
-          availability={availability}
-          onChanged={fleet.refresh}
-        >
-          <ApiKeyAccountForm
-            target={subject.target}
-            onAdded={async () => {
-              lists.refresh()
-              await fleet.refresh()
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={screenBusy || !running || oldImage}
-            onClick={() => void logInOnScreen()}
-          >
-            {t('environment.loginOnScreen')}
-          </Button>
-          {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
-          {screenError && (
-            <p role="alert" className="text-xs text-destructive">
-              {screenError}
-            </p>
-          )}
-        </BotAccountsSection>
-        <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
-        <EnvironmentCompaction
-          key={`compaction-${environment.id}`}
-          environment={environment}
-          bots={bots}
-          fleet={fleet}
-          optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
-        />
+        {modernSettings ? (
+          <section className="space-y-3 border-t border-border pt-6">
+            <h2 className="font-semibold">{t('environmentSettingsShell.title')}</h2>
+            <p className="text-xs text-muted-foreground">{t('environmentSettingsShell.overviewLink')}</p>
+            <Button size="sm" variant="outline" onClick={onOpenSettings}>
+              {t('environmentSettingsShell.open')}
+            </Button>
+          </section>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-6">
+              <p className="text-xs text-muted-foreground">{t('environment.sharedConfig')}</p>
+              <Button size="sm" variant="ghost" disabled={availability !== 'ready' || !running} onClick={lists.refresh}>
+                {t('environment.refresh')}
+              </Button>
+            </div>
+            <BotAccountsSection
+              key={environment.id}
+              subject={subject}
+              lists={lists}
+              availability={availability}
+              onChanged={fleet.refresh}
+            >
+              <ApiKeyAccountForm
+                target={subject.target}
+                onAdded={async () => {
+                  lists.refresh()
+                  await fleet.refresh()
+                }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={screenBusy || !running || oldImage}
+                onClick={() => void logInOnScreen()}
+              >
+                {t('environment.loginOnScreen')}
+              </Button>
+              {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
+              {screenError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {screenError}
+                </p>
+              )}
+            </BotAccountsSection>
+            <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
+            <EnvironmentCompaction
+              key={`compaction-${environment.id}`}
+              environment={environment}
+              bots={bots}
+              fleet={fleet}
+              optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
+            />
+          </>
+        )}
         <section className="space-y-2" aria-labelledby="fleet-environment-screen">
           <h2 id="fleet-environment-screen" className="font-semibold">
             {t('environment.screenTitle')}
@@ -428,7 +461,7 @@ function EnvironmentOverview({
             )}
           </div>
         </section>
-        <EnvironmentRuntimes environment={environment} fleet={fleet} />
+        {!modernSettings && <EnvironmentRuntimes environment={environment} fleet={fleet} />}
         <section className="space-y-3" aria-labelledby="fleet-environment-lifecycle">
           <h2 id="fleet-environment-lifecycle" className="font-semibold">
             {t('environment.lifecycleTitle')}
@@ -568,146 +601,6 @@ function EnvironmentOverview({
           onCancel={cancelConfirm}
           onConfirm={() => void confirmAction()}
         />
-      )}
-    </section>
-  )
-}
-
-/**
- * The compaction model of the environment's bots without one of their own. Its models are those of the environment's
- * accounts, read again when they change (the key of the shared lists), never on resource samples.
- */
-function EnvironmentCompaction({
-  environment,
-  bots,
-  fleet,
-  optionsKey,
-}: {
-  environment: FleetEnvironment
-  bots: FleetBot[]
-  fleet: FleetController
-  optionsKey: string
-}) {
-  const { t, i18n } = useTranslation('fleet')
-  const availability = environmentCompactionAvailability(fleet, environment)
-  const ready = availability === 'ready'
-  const contextLimit = contextLimitAvailability(fleet, environment)
-  const current = environment.compaction
-  // Null until the models of this environment are listed.
-  const [options, setOptions] = useState<FleetSelectionOption[] | null>(null)
-  const [form, setForm] = useState(() => compactionFormFrom(current))
-  const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    setForm(compactionFormFrom(current))
-  }, [
-    current?.providerId,
-    current?.modelId,
-    current?.reasoning,
-    current?.fastMode,
-    current?.intervalTokens,
-    current?.contextLimitTokens,
-  ])
-  useEffect(() => {
-    if (!ready) return
-    let alive = true
-    window.api.fleetEnvironmentSelections(environment.id).then(
-      (value) => {
-        if (!alive) return
-        setOptions(value.options)
-        setError('')
-      },
-      (cause: unknown) => {
-        if (alive) setError(fleetErrorText(cause, t))
-      }
-    )
-    return () => {
-      alive = false
-    }
-  }, [environment.id, ready, optionsKey])
-  if (availability === 'unsupported') return null
-  const value = compactionPatch(form)
-  const dirty = !sameCompactionConfig(value, current)
-  const users = bots.filter((bot) => compactionSourceOf(bot) === 'environment').map((bot) => bot.name)
-  async function save() {
-    if (!value || !dirty || busy) return
-    setBusy(true)
-    setSaved(false)
-    setError('')
-    try {
-      const updated = await window.api.fleetPatchEnvironment(environment.id, { compaction: value })
-      fleet.dispatch({
-        type: 'event',
-        value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
-      })
-      setSaved(true)
-    } catch (cause) {
-      setError(fleetErrorText(cause, t))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <section className="space-y-3" aria-labelledby="fleet-environment-compaction">
-      <h2 id="fleet-environment-compaction" className="font-semibold">
-        {t('environment.compaction.heading')}
-      </h2>
-      <p className="text-xs text-muted-foreground">{t('environment.compaction.description')}</p>
-      {!current && <p className="text-xs text-muted-foreground">{t('environment.compaction.unset')}</p>}
-      {ready ? (
-        <>
-          <CompactionFields
-            form={form}
-            onChange={(next) => {
-              setForm(next)
-              setSaved(false)
-            }}
-            options={options ?? []}
-            idPrefix="fleet-environment-compaction"
-            contextLimit={contextLimit === 'unsupported' ? undefined : contextLimit}
-          />
-          {options?.length === 0 && (
-            <p className="text-xs text-muted-foreground">{t('environment.compaction.noModels')}</p>
-          )}
-          <div className="flex items-center gap-3">
-            <Button size="sm" disabled={!value || !dirty || busy} onClick={() => void save()}>
-              {t('environment.compaction.save')}
-            </Button>
-            {saved && (
-              <span role="status" className="text-xs text-primary">
-                {t('environment.saved')}
-              </span>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          {current && (
-            <p className="rounded-lg border border-border p-4 text-sm">
-              {t('environment.compaction.current', { model: compactionModelLabel(current, options ?? []) })}
-            </p>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {availability === 'stopped'
-              ? t('environment.compaction.startToChange')
-              : availability === 'not-running'
-                ? t('environment.compaction.waitToChange')
-                : t('environment.compaction.restart')}
-          </p>
-        </>
-      )}
-      {current && (
-        <p className="text-xs text-muted-foreground">
-          {users.length
-            ? t('environment.compaction.usedBy', { bots: formatNames(users, i18n.language) })
-            : t('environment.compaction.usedByNone')}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
       )}
     </section>
   )

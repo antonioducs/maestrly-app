@@ -427,6 +427,14 @@ it('blocks fleet addresses from the public API, pairing, and screen upgrades', a
     expect((await meta.json()).code).toBe('FORBIDDEN')
     const pair = await fetch(`http://127.0.0.1:${port}/v1/pair`, { method: 'POST' })
     expect(pair.status).toBe(403)
+    // The artifact viewer shares the public port and its network rule, Origin or not.
+    for (const target of ['/a/AAAAAAAAAAAAAAAAAAAAAA', '/robots.txt', '/c/capability.signature/index.html']) {
+      const viewer = await fetch(`http://127.0.0.1:${port}${target}`, {
+        headers: { origin: `http://127.0.0.1:${port}` },
+      })
+      expect(viewer.status).toBe(403)
+      expect((await viewer.json()).code).toBe('FORBIDDEN')
+    }
     const upgrade = await new Promise<number>((resolve) => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/v1/screen?ticket=none`)
       ws.on('unexpected-response', (_request, response) => {
@@ -471,6 +479,10 @@ it('lets the host reach the public API through the bridge gateway address inside
       body: '{}',
     })
     expect(pair.status).toBe(400)
+    // The viewer is reachable the same way; this gateway hosts no artifacts, so it is unavailable.
+    const viewer = await fetch(`http://127.0.0.1:${port}/a/AAAAAAAAAAAAAAAAAAAAAA`)
+    expect(viewer.status).toBe(503)
+    expect(await viewer.text()).toBe('Artifact hosting is unavailable')
   } finally {
     await gateway.close()
     store.close()

@@ -19,7 +19,7 @@ import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
 import { recordModelCallUsage } from '../usage-diagnostics'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { claudeRuntimeErrorMessage } from './errors'
 import type { ClaudeSubscriptionAccountIdentity, ClaudeSubscriptionManager } from './manager'
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolBridge } from './tools'
@@ -177,9 +177,7 @@ async function runClaudeSubagentAttempt(
   const legacySystemPrompt = [
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-    args.conversationScope === 'standalone'
-      ? 'This is a standalone conversation without project or workspace memory.'
-      : MEMORY_TOOL_GUIDANCE,
+    args.conversationScope === 'standalone' ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',

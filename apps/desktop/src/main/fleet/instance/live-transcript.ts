@@ -150,7 +150,7 @@ export class LiveTranscript {
       ({ item }) => item.kind !== 'question' || !superseded.has(item.toolCallId)
     )
     for (const { messageId, item } of projected) {
-      const images = item.kind === 'user' || item.kind === 'tool' ? item.images : []
+      const images = item.kind === 'user' || item.kind === 'tool' ? [...item.images, ...(item.files ?? [])] : []
       for (const image of images) {
         if (!image.id.startsWith('a-') && !image.id.startsWith('g-')) continue
         this.imageOwners.delete(image.id)
@@ -174,8 +174,10 @@ export class LiveTranscript {
       routine: entry.input.routine,
       peer: entry.input.peer,
       queued: true,
+      ...(entry.attachmentError ? { attachmentError: entry.attachmentError } : {}),
       memories: [],
       images: queue.refs(entry),
+      ...(queue.fileRefs(entry).length ? { files: queue.fileRefs(entry) } : {}),
     }))
   }
 
@@ -325,6 +327,29 @@ export class LiveTranscript {
           (part.type === 'generated-image' && imageId('g', message.id, part.id) === imageIdValue)
       )
     const found = findLatestChatMessage(id, holds, { partsContaining: '"artifactId"' })
+    return found ? [found.message] : []
+  }
+
+  fileMessages(fileId: string): ChatMessage[] {
+    const id = this.options.conversationId()
+    if (!id || !fileId.startsWith('a-')) return []
+    const owner = this.imageOwners.get(fileId)
+    if (owner) {
+      const messages = getChatMessagesWithSeq(id, [owner]).map((row) => row.message)
+      if (messages.length) return messages
+    }
+    const found = findLatestChatMessage(
+      id,
+      (message) =>
+        message.role === 'user' &&
+        message.parts.some(
+          (part) =>
+            part.type === 'file' &&
+            (part.kind === 'pdf' || part.kind === 'text') &&
+            imageId('a', message.id, part.id) === fileId
+        ),
+      { partsContaining: '"type":"file"' }
+    )
     return found ? [found.message] : []
   }
 }

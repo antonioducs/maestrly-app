@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { expect, test, vi } from 'vitest'
 import { artifactRoute } from '../src/artifact-routes.js'
 import type { GatewayContext } from '../src/context.js'
@@ -336,4 +337,88 @@ test('bot ownership guard and update remain admitted together during restart', a
   expect(await h.artifacts.admin()!.get(made.id)).toMatchObject({
     currentVersion: 2,
   })
+})
+
+/** A manifest as another host exports it; its comments make it larger than the admin route's 1 MiB limit. */
+function manifest(id: string, page: Uint8Array) {
+  const sha256 = createHash('sha256').update(page).digest('hex')
+  const at = 1_800_000_000_000
+  return {
+    id,
+    title: 'Moved artifact',
+    description: '',
+    workspaceId: 'ws-1',
+    conversationId: 'conv-1',
+    conversationTitle: 'Chat',
+    commentsEnabled: true,
+    createdAt: at,
+    updatedAt: at,
+    versions: [
+      {
+        number: 1,
+        entry: 'index.html',
+        summary: '',
+        createdBy: 'agent',
+        createdAt: at,
+        files: [{ path: 'index.html', sha256, bytes: page.byteLength, contentType: 'text/html' }],
+      },
+    ],
+    thumbnails: [],
+    comments: Array.from({ length: 300 }, (_, index) => ({
+      id: `comment${String(index).padStart(15, '0')}`,
+      version: 1,
+      parentId: null,
+      authorKind: 'owner',
+      authorName: '',
+      body: 'x'.repeat(4000),
+      anchor: null,
+      status: 'open',
+      createdAt: at + index,
+    })),
+  }
+}
+
+test('a device moves an artifact in through the upload route, always under its own name', async () => {
+  const h = await harness()
+  await h.artifacts.update({ enabled: true })
+  const id = 'MovedArtifact_00000001'
+  const page = new TextEncoder().encode('<h1>Moved</h1>')
+  const input = { ...manifest(id, page), owner: { kind: 'local', id: 'spoof' } }
+  expect(JSON.stringify(input).length).toBeGreaterThan(1024 * 1024)
+
+  const blobs = await (await h.request('POST', '/v1/artifacts/upload', call('putBlobs', [[page]]))).json()
+  expect(blobs).toMatchObject({ ok: true, value: { sha256: [input.versions[0]!.files[0]!.sha256] } })
+  // The manifest exceeds the admin route's limit, and goes through the upload route.
+  expect((await h.request('POST', '/v1/artifacts/admin', call('importArtifact', [input]))).status).toBe(400)
+  const imported = await (await h.request('POST', '/v1/artifacts/upload', call('importArtifact', [input]))).json()
+  expect(imported.ok).toBe(true)
+  const device = h.store.listDevices()[0]!
+  expect(imported.value).toMatchObject({ id, ownerKind: 'device', ownerId: device.id, visibility: 'private' })
+
+  const exported = await (await h.request('POST', '/v1/artifacts/admin', call('exportArtifact', [id]))).json()
+  expect(exported.ok).toBe(true)
+  expect(exported.value).toMatchObject({ id, title: 'Moved artifact', versions: [{ number: 1 }] })
+  expect(exported.value.comments).toHaveLength(300)
+  const features = (await (await h.request('GET', '/v1/meta')).json()).features
+  expect(features).toContain('artifacts-transfer')
+})
+
+test('bots can neither export, store blobs, nor import', async () => {
+  const h = await harness()
+  await h.artifacts.update({ enabled: true })
+  await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
+  const page = new TextEncoder().encode('<h1>Bot</h1>')
+  const made = await (await h.request('POST', '/internal/v1/artifacts/upload', call('create', [bundle()]), true)).json()
+  expect(made.ok).toBe(true)
+  const attempts: [string, string, unknown[]][] = [
+    ['admin', 'exportArtifact', [made.value.id]],
+    ['upload', 'putBlobs', [[page]]],
+    ['upload', 'importArtifact', [{ ...manifest('BotImport_000000000001', page), comments: [] }]],
+  ]
+  for (const [route, method, args] of attempts)
+    expect(
+      await (await h.request('POST', `/internal/v1/artifacts/${route}`, call(method, args), true)).json(),
+      method
+    ).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+  expect(await h.artifacts.admin()!.get('BotImport_000000000001')).toBeNull()
 })

@@ -1,7 +1,13 @@
+import { useChatPortalContainer } from '@/lib/chat-window-context'
 import * as React from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { Check, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+function SelectPortal(props: React.ComponentPropsWithoutRef<typeof SelectPrimitive.Portal>) {
+  const container = useChatPortalContainer()
+  return <SelectPrimitive.Portal container={container} {...props} />
+}
 
 const Select = SelectPrimitive.Root
 const SelectValue = SelectPrimitive.Value
@@ -30,7 +36,7 @@ const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
 >(({ className, children, position = 'popper', ...props }, ref) => (
-  <SelectPrimitive.Portal>
+  <SelectPortal>
     <SelectPrimitive.Content
       ref={ref}
       data-select-content=""
@@ -52,7 +58,7 @@ const SelectContent = React.forwardRef<
         {children}
       </SelectPrimitive.Viewport>
     </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
+  </SelectPortal>
 ))
 SelectContent.displayName = SelectPrimitive.Content.displayName
 

@@ -7,6 +7,7 @@ import * as electron from 'electron' // Alias to the same stub instance imported
 import { localDataApi } from '../../src/preload/api-local-data'
 import { appApi } from '../../src/preload/api-app'
 import { chatApi } from '../../src/preload/api-chat'
+import { chatWindowApi } from '../../src/preload/api-chat-window'
 import { conversationMigrationApi } from '../../src/preload/api-conversation-migration'
 import { drawerApi } from '../../src/preload/api-drawer'
 import { memoryApi } from '../../src/preload/api-memory'
@@ -25,6 +26,8 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
+import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 
@@ -60,9 +63,11 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['soundApi', soundApi],
   ['updateApi', updateApi],
   ['chatApi', chatApi],
+  ['chatWindowApi', chatWindowApi],
   ['platformApi', platformApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
+  ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['artifactsApi', artifactsApi],
 ]
@@ -138,6 +143,32 @@ const preloadText = [...preloadFiles.values()].join('\n')
 // Verify the exposed API includes core workspace wrappers.
 // ---------------------------------------------------------------------------
 describe('preload API — exposure', () => {
+  it('forwards chat window identity and unsubscribes lifecycle events', async () => {
+    const target = { kind: 'conversation', id: 'chat', title: 'Chat' }
+    await api.chatWindowPrepare(target)
+    await api.chatWindowFocus('conversation:chat')
+    await api.chatWindowShowSource('conversation:chat')
+    await api.chatWindowClose('conversation:chat')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['chat-window:prepare', target],
+      ['chat-window:focus', 'conversation:chat'],
+      ['chat-window:show-source', 'conversation:chat'],
+      ['chat-window:close', 'conversation:chat'],
+    ])
+    for (const [method, channel] of [
+      ['onChatWindowCloseRequested', 'chat-window:close-requested'],
+      ['onChatWindowClosed', 'chat-window:closed'],
+    ]) {
+      const callback = vi.fn()
+      const off = api[method](callback) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1] as Fn
+      expect(onSpy).toHaveBeenCalledWith(channel, listener)
+      listener({}, 'conversation:chat')
+      expect(callback).toHaveBeenCalledWith('conversation:chat')
+      off()
+      expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
+    }
+  })
   it('exposes an api object through contextBridge with conversation wrappers', () => {
     expect(typeof api).toBe('object')
     expect(typeof api.onConversationOpen).toBe('function')
@@ -232,30 +263,31 @@ describe('preload API — exposure', () => {
   })
   it('forwards artifact calls to their channels in argument order', async () => {
     const artifacts = (api as unknown as { artifacts: Record<string, Fn> }).artifacts
-    const settings = { hostEnabled: true, port: 4010, quotaGb: 2 }
     await artifacts.list()
     await artifacts.detail('artifact')
     await artifacts.remove('artifact')
     await artifacts.openExternal('artifact', 2)
     await artifacts.openInConversation('conversation', 'artifact', 3)
-    await artifacts.status()
-    await artifacts.start()
-    await artifacts.getSettings()
-    await artifacts.setSettings(settings)
+    await artifacts.legacyList()
+    await artifacts.legacyState()
+    await artifacts.legacyMove(['artifact'])
+    await artifacts.legacyStop()
+    await artifacts.legacyDelete()
     expect(invokeSpy.mock.calls).toEqual([
       ['artifacts:list'],
       ['artifacts:detail', 'artifact'],
       ['artifacts:delete', 'artifact'],
       ['artifacts:open-external', 'artifact', 2],
       ['artifacts:open-in-conversation', 'conversation', 'artifact', 3],
-      ['artifacts:status'],
-      ['artifacts:start'],
-      ['artifacts:settings-get'],
-      ['artifacts:settings-set', settings],
+      ['artifacts:legacy-list'],
+      ['artifacts:legacy-state'],
+      ['artifacts:legacy-move', ['artifact']],
+      ['artifacts:legacy-stop'],
+      ['artifacts:legacy-delete', undefined],
     ])
     for (const [subscribe, channel] of [
       ['onChanged', 'artifacts:changed'],
-      ['onStatus', 'artifacts:status'],
+      ['onLegacyState', 'artifacts:legacy-state'],
     ] as const) {
       const off = artifacts[subscribe](vi.fn()) as () => void
       expect(onSpy).toHaveBeenLastCalledWith(channel, expect.any(Function))
@@ -269,7 +301,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(497)
+    expect(keys).toHaveLength(522)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -278,6 +310,17 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardRead', 'screen-channel')
     await api.fleetScreenClipboardWrite('screen-channel', 'copied text')
     expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardWrite', 'screen-channel', 'copied text')
+  })
+
+  it('exposes a fixed, environment-addressed method for every settings operation', () => {
+    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(Object.keys(FLEET_SETTINGS_OPERATIONS).sort())
+    expect(api.fleetEnvironmentSettings).toBe(fleetEnvironmentSettings)
+    const input = { expectedRevision: 'synthetic-revision' }
+    for (const [name, method] of Object.entries(fleetEnvironmentSettings)) {
+      invokeSpy.mockClear()
+      method('synthetic-environment', input as never)
+      expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, 'synthetic-environment', input)
+    }
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {
@@ -310,6 +353,16 @@ describe('preload API — exposure', () => {
 // Distinct sentinel arguments make accidental reordering fail the assertion.
 // ---------------------------------------------------------------------------
 describe('preload API — channels and argument order (ipcRenderer.invoke)', () => {
+  it('personal memory search and index wrappers never take a workspace or repository root', () => {
+    const filters = { limit: 10, pinned: true }
+    api.searchPersonalMemories('synthetic query', filters)
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:search', 'synthetic query', filters)
+    api.getPersonalMemoryIndexStatus()
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-status-get')
+    api.rebuildPersonalMemoryIndex()
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-rebuild')
+  })
+
   it('runtime assets preserve IDs and explicit channels', () => {
     api.runtimeAssetStatus('codex-runtime')
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:status', 'codex-runtime')
@@ -1038,6 +1091,16 @@ describe('preload API — chat pagination (#559)', () => {
 
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('chat:cursor-subscription:auth-changed', listener)
+  })
+
+  it('chatSetAppToolGroup(group, enabled) -> chat:set-app-tool-group preserves both arguments', () => {
+    api.chatSetAppToolGroup('debug', false)
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-app-tool-group', 'debug', false)
+  })
+
+  it('chatSetConvTools(id, patch) -> chat:set-conv-tools forwards app-tool group overrides', () => {
+    api.chatSetConvTools('conversation-1', { appGroups: { browser: false } })
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-conv-tools', 'conversation-1', { appGroups: { browser: false } })
   })
 
   it('chatSetBashFilters(enabled) -> chat:set-bash-filters preserves the boolean', () => {

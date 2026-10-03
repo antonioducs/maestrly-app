@@ -47,6 +47,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   getProviderKind: vi.fn(() => 'openai'),
   isClaudeSubscriptionProvider: vi.fn(() => false),
   isCursorSubscriptionProvider: vi.fn(() => false),
+  isAntigravitySubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isCodexSubscriptionProvider: vi.fn(() => false),
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),

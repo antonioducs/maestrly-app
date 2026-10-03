@@ -42,7 +42,7 @@ import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
 import { BotSection } from '@/components/bot/BotSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
-import { ArtifactsSettings } from '@/components/settings/ArtifactsSettings'
+import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 interface Props {
@@ -95,6 +95,8 @@ export function SettingsView({
   const [tabOrder, setTabOrder] = useState<DrawerTab[]>(DEFAULT_MAIN_ORDER)
 
   const [section, setSection] = useState<SettingsSection>(initialSection)
+  // Set when Settings → Artifacts sends the owner to set up a bot server, so its setup opens on that choice.
+  const [fleetSetup, setFleetSetup] = useState<BotServerSetupChoice | null>(null)
 
   useEffect(() => {
     setSection(initialSection)
@@ -299,6 +301,7 @@ export function SettingsView({
   const selectSection = (next: SettingsSection) => {
     if (next !== 'tools') setRecording(null)
     setSection(next)
+    setFleetSetup(null)
   }
 
   return (
@@ -382,8 +385,21 @@ export function SettingsView({
             {section === 'chat' && <MaestrlyChatSection t={t} chat={chat} />}
 
             {section === 'platform' && <PlatformSection />}
-            {section === 'artifacts' && <ArtifactsSettings />}
-            {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
+            {section === 'artifacts' && (
+              <ArtifactsSettings
+                onOpenFleet={() => selectSection('fleet')}
+                onSetupServer={(choice) => {
+                  selectSection('fleet')
+                  setFleetSetup(choice)
+                }}
+              />
+            )}
+            {section === 'fleet' && fleet && (
+              <FleetSettings
+                fleet={fleet}
+                {...(fleetSetup ? { initialSetup: fleetSetup, defaultHosts: 'artifacts-only' } : {})}
+              />
+            )}
             {section === 'bots' && (
               <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />
             )}

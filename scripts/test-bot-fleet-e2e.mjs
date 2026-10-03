@@ -75,8 +75,7 @@ function run(command, args, options = {}) {
 }
 const docker = (args, options) => {
   const environmentExec =
-    args[0] === 'exec' &&
-    args.some((arg) => /^maestrly-env-/.test(arg) || /^maestrly-bot-(?!gateway(?:$|-))/.test(arg))
+    args[0] === 'exec' && args.some((arg) => /^maestrly-env-/.test(arg) || /^maestrly-bot-(?!gateway(?:$|-))/.test(arg))
   const explicitUser = args.includes('-u') || args.includes('--user')
   return run('docker', environmentExec && !explicitUser ? ['exec', '-u', '1000', ...args.slice(1)] : args, options)
 }
@@ -634,10 +633,14 @@ async function capture(name, display = ':0', fileName = 'e2e-scout.png') {
   const target = path.join(root, '.bot-fleet-local/screens', fileName)
   mkdirSync(path.dirname(target), { recursive: true })
   await new Promise((resolve, reject) => {
-    const child = spawn('docker', ['exec', '-u', '1000', name, 'import', '-display', display, '-window', 'root', 'png:-'], {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const child = spawn(
+      'docker',
+      ['exec', '-u', '1000', name, 'import', '-display', display, '-window', 'root', 'png:-'],
+      {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    )
     const file = createWriteStream(target)
     let stderr = ''
     child.stdout.pipe(file)
@@ -862,19 +865,33 @@ async function main() {
     const hostLookup = await docker(['exec', fakeName, 'getent', 'ahostsv4', 'host.docker.internal'], {
       allowFailure: true,
     })
-    const targetHost = hostLookup.code === 0
-      ? hostLookup.stdout.trim().split(/\s+/)[0]
-      : (await docker(['network', 'inspect', '-f', '{{(index .IPAM.Config 0).Gateway}}', network])).stdout.trim()
+    const targetHost =
+      hostLookup.code === 0
+        ? hostLookup.stdout.trim().split(/\s+/)[0]
+        : (await docker(['network', 'inspect', '-f', '{{(index .IPAM.Config 0).Gateway}}', network])).stdout.trim()
     const sidecarControl = await docker(
-      ['exec', fakeName, 'node', '-e',
+      [
+        'exec',
+        fakeName,
+        'node',
+        '-e',
         "const net=require('node:net');const s=net.connect(Number(process.argv[2]),process.argv[1]);s.setTimeout(3000);s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1))",
-        targetHost, String(listenerPort)],
+        targetHost,
+        String(listenerPort),
+      ],
       { allowFailure: true }
     )
-    assert.equal(sidecarControl.code, 0, 'Cannot verify host egress here: the model sidecar cannot reach the host listener')
+    assert.equal(
+      sidecarControl.code,
+      0,
+      'Cannot verify host egress here: the model sidecar cannot reach the host listener'
+    )
     assert.equal(await canConnect(egressContainer, targetHost, listenerPort), false, 'Bot reached the host listener')
     assert.equal(await canConnect(egressContainer, '169.254.169.254', 80), false, 'Bot reached metadata address')
-    pass('egress guard', 'root container, NET_ADMIN removed from Maestrly; firewall blocks host and metadata while gateway remains reachable')
+    pass(
+      'egress guard',
+      'root container, NET_ADMIN removed from Maestrly; firewall blocks host and metadata while gateway remains reachable'
+    )
   } finally {
     await new Promise((resolve) => listener.close(resolve))
   }
@@ -1256,6 +1273,222 @@ async function main() {
     await request('GET', environmentRoute + '/mcp-servers'),
     await request('GET', provisioningRoute + '/mcp-servers')
   )
+  // Exercise settings through the public gateway and the running instance. The model/tool turn below
+  // proves omitted credentials, transport values and bundled executable files survived these edits.
+  const settingsRoute = environmentRoute + '/settings'
+  const accountsBefore = await request('GET', settingsRoute + '/accounts')
+  assert.ok(!JSON.stringify(accountsBefore).includes(modelKey), 'Settings accounts must not expose the API key')
+  const settingsAccount = accountsBefore.apiKeys.find((item) => item.providerId === selection.providerId)
+  assert.ok(settingsAccount)
+  assert.ok(settingsAccount.keyHint === null || settingsAccount.keyHint.length <= 8)
+  assert.ok(!Object.hasOwn(settingsAccount, 'apiKey') && !Object.hasOwn(settingsAccount, 'key'))
+  const renamedAccounts = await request('PATCH', settingsRoute + '/accounts/' + selection.providerId, {
+    providerId: selection.providerId,
+    expectedRevision: accountsBefore.revision,
+    name: 'E2E Settings Model',
+  })
+  assert.equal(
+    renamedAccounts.apiKeys.find((item) => item.providerId === selection.providerId)?.name,
+    'E2E Settings Model'
+  )
+  const restoredAccounts = await request('PATCH', settingsRoute + '/accounts/' + selection.providerId, {
+    providerId: selection.providerId,
+    expectedRevision: renamedAccounts.revision,
+    name: settingsAccount.name,
+  })
+  assert.ok(!JSON.stringify(restoredAccounts).includes(modelKey))
+
+  const modelsBefore = await request('GET', settingsRoute + '/models')
+  const providerModels = modelsBefore.providers.find((item) => item.providerId === selection.providerId)
+  assert.ok(providerModels)
+  assert.ok(providerModels.models.some((item) => item.id === 'e2e-model'))
+  assert.ok(
+    providerModels.models.some((item) => item.id === 'e2e-model-b'),
+    'Settings must list the full model catalog'
+  )
+  const botBeforeFilter = await bot(scoutId)
+  const hiddenModels = await request('PUT', settingsRoute + '/models/' + selection.providerId + '/filter', {
+    providerId: selection.providerId,
+    expectedRevision: providerModels.revision,
+    hiddenModelIds: [...new Set([...providerModels.hiddenModelIds, selection.modelId])],
+  })
+  const hiddenProvider = hiddenModels.providers.find((item) => item.providerId === selection.providerId)
+  assert.ok(
+    hiddenProvider.models.some((item) => item.id === selection.modelId),
+    'Hidden models remain in settings'
+  )
+  assert.ok(hiddenProvider.hiddenModelIds.includes(selection.modelId))
+  const filteredSelections = await request('GET', provisioningRoute + '/selections')
+  assert.equal(filteredSelections.current?.modelId, selection.modelId)
+  assert.equal(filteredSelections.current?.providerId, selection.providerId)
+  assert.ok(
+    !filteredSelections.options.some(
+      (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
+    )
+  )
+  const botAfterFilter = await bot(scoutId)
+  assert.deepEqual(botAfterFilter.selection, botBeforeFilter.selection)
+  assert.deepEqual(botAfterFilter.compaction, botBeforeFilter.compaction)
+  assert.equal(botAfterFilter.compactionState?.configured, true)
+  assert.equal(botAfterFilter.accounts.connected, true)
+  await request('PUT', settingsRoute + '/models/' + selection.providerId + '/filter', {
+    providerId: selection.providerId,
+    expectedRevision: hiddenProvider.revision,
+    hiddenModelIds: providerModels.hiddenModelIds,
+  })
+  assert.ok(
+    (await request('GET', provisioningRoute + '/selections')).options.some(
+      (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
+    )
+  )
+
+  const skillRoute = settingsRoute + '/skills/' + skill.name
+  const skillDocument = await request('GET', skillRoute)
+  assert.equal(skillDocument.editable, true)
+  assert.ok(skillDocument.files.includes('scripts/mcp-echo.mjs'))
+  const markdownWithMetadata = skillDocument.markdown.replace('---\n', '---\nx-e2e-unknown: retain-this-value\n')
+  const skillWithMetadata = await request('PUT', skillRoute, {
+    name: skill.name,
+    expectedRevision: skillDocument.revision,
+    markdown: markdownWithMetadata,
+  })
+  assert.equal(skillWithMetadata.markdown, markdownWithMetadata)
+  const editedMarkdown = markdownWithMetadata + '\nRemote settings E2E preserves raw **Markdown**.\n'
+  const editedSkill = await request('PUT', skillRoute, {
+    name: skill.name,
+    expectedRevision: skillWithMetadata.revision,
+    markdown: editedMarkdown,
+  })
+  assert.equal(editedSkill.markdown, editedMarkdown)
+  assert.deepEqual(editedSkill.files, skillDocument.files)
+  await request(
+    'PUT',
+    skillRoute,
+    {
+      name: skill.name,
+      expectedRevision: skillWithMetadata.revision,
+      markdown: markdownWithMetadata,
+    },
+    { status: 409 }
+  )
+  assert.equal((await request('GET', skillRoute)).markdown, editedMarkdown)
+  assert.equal(
+    (await request('GET', provisioningRoute + '/skills')).skills.find((item) => item.name === skill.name)?.files,
+    2
+  )
+
+  const settingsMcpRoute = settingsRoute + '/mcp-servers/' + server.id
+  const mcpBefore = await request('GET', settingsMcpRoute)
+  assert.equal(mcpBefore.transport, 'stdio')
+  assert.equal(mcpBefore.hasCommand, true)
+  assert.equal(mcpBefore.hasArgs, true)
+  const mcpDisabled = await request('PATCH', settingsMcpRoute, {
+    id: server.id,
+    expectedRevision: mcpBefore.revision,
+    enabled: false,
+    env: { set: { E2E_SETTINGS_SECRET: 'synthetic-settings-env-secret' } },
+  })
+  assert.equal(mcpDisabled.enabled, false)
+  const mcpEnabled = await request('PATCH', settingsMcpRoute, {
+    id: server.id,
+    expectedRevision: mcpDisabled.revision,
+    enabled: true,
+    name: 'e2e-echo',
+  })
+  assert.equal(mcpEnabled.enabled, true)
+  assert.equal(mcpEnabled.transport, mcpBefore.transport)
+  assert.equal(mcpEnabled.hasCommand, true)
+  assert.equal(mcpEnabled.hasArgs, true)
+  assert.ok(mcpEnabled.envKeys.includes('E2E_SETTINGS_SECRET'))
+  assert.deepEqual(mcpEnabled.headerKeys, [])
+  const httpMcp = await request('POST', settingsRoute + '/mcp-servers', {
+    name: 'e2e-settings-http',
+    transport: 'http',
+    enabled: false,
+    url: 'https://example.test/mcp?token=synthetic-url-secret',
+    headers: { 'X-E2E-Settings': 'synthetic-settings-header-secret' },
+  })
+  const httpMcpRenamed = await request('PATCH', settingsRoute + '/mcp-servers/' + httpMcp.id, {
+    id: httpMcp.id,
+    expectedRevision: httpMcp.revision,
+    name: 'e2e-settings-http-renamed',
+  })
+  assert.ok(httpMcpRenamed.headerKeys.includes('X-E2E-Settings'))
+  assert.equal(httpMcpRenamed.hasUrl, true)
+  const invalidMcpPatch = await request(
+    'PATCH',
+    settingsMcpRoute,
+    {
+      id: server.id,
+      expectedRevision: mcpEnabled.revision,
+      name: 'x'.repeat(101),
+      env: { set: { E2E_SETTINGS_SECRET: 'synthetic-rejected-env-secret' } },
+    },
+    { status: 400 }
+  )
+  assert.ok(
+    !JSON.stringify(invalidMcpPatch).includes('synthetic-rejected-env-secret'),
+    'Validation errors must be sanitized'
+  )
+  assert.equal((await request('GET', settingsMcpRoute)).revision, mcpEnabled.revision)
+  const mcpSummaries = await request('GET', settingsRoute + '/mcp-servers')
+  for (const summary of [...mcpSummaries.servers, mcpEnabled]) {
+    for (const field of ['url', 'command', 'args', 'headers', 'env'])
+      assert.ok(!Object.hasOwn(summary, field), 'MCP settings must omit transport and secret values')
+  }
+  for (const secret of [
+    'synthetic-settings-env-secret',
+    'synthetic-settings-header-secret',
+    'synthetic-url-secret',
+    '/home/bot/.agents/skills/e2e-toolkit/scripts/mcp-echo.mjs',
+  ])
+    assert.ok(!JSON.stringify(mcpSummaries).includes(secret), 'MCP settings summary must be sanitized')
+  assert.deepEqual(await request('POST', settingsMcpRoute + '/test', { id: server.id }), { code: 'ok', toolCount: 1 })
+  assert.deepEqual(
+    await request('DELETE', settingsRoute + '/mcp-servers/' + httpMcp.id, {
+      id: httpMcp.id,
+      expectedRevision: httpMcpRenamed.revision,
+    }),
+    { removed: true }
+  )
+
+  const preferencesBefore = await request('GET', settingsRoute + '/preferences')
+  assert.equal(typeof preferencesBefore.imageGenEnabled, 'boolean')
+  const preferencesChanged = await request('PUT', settingsRoute + '/preferences', {
+    expectedRevision: preferencesBefore.revision,
+    imageGenEnabled: !preferencesBefore.imageGenEnabled,
+  })
+  assert.equal(preferencesChanged.imageGenEnabled, !preferencesBefore.imageGenEnabled)
+  await request(
+    'PUT',
+    settingsRoute + '/preferences',
+    {
+      expectedRevision: preferencesBefore.revision,
+      imageGenEnabled: preferencesBefore.imageGenEnabled,
+    },
+    { status: 409 }
+  )
+  assert.equal(
+    (await request('GET', settingsRoute + '/preferences')).imageGenEnabled,
+    preferencesChanged.imageGenEnabled
+  )
+  await request('PUT', settingsRoute + '/preferences', {
+    expectedRevision: preferencesChanged.revision,
+    imageGenEnabled: preferencesBefore.imageGenEnabled,
+  })
+  assert.equal(
+    (await request('GET', settingsRoute + '/preferences')).imageGenEnabled,
+    preferencesBefore.imageGenEnabled
+  )
+
+  // Reads must not start runtime checks or downloads; no action endpoint is invoked here.
+  const runtimesBefore = await request('GET', settingsRoute + '/runtimes')
+  assert.deepEqual(runtimesBefore.runtimes.map((item) => item.id).sort(), ['antigravity-acp', 'claude-code', 'codex'])
+  assert.ok(
+    runtimesBefore.runtimes.every((item) => !['checking', 'installing'].includes(item.state) && item.progress === null)
+  )
+  assert.deepEqual(await request('GET', settingsRoute + '/runtimes'), runtimesBefore)
+
   // Configuration is recorded on the environment, with no bot.
   const configured = await activityEntries()
   assert.ok(
@@ -1291,6 +1524,10 @@ async function main() {
         item.state === 'done' &&
         item.output?.includes('E2E-ECHO:ping')
     )
+  )
+  pass(
+    'remote environment settings',
+    'sanitized accounts/MCP; preserved key, models, skill bundle and echo transport; revision conflicts; preferences restored; three runtime snapshots'
   )
   await request('DELETE', provisioningRoute + '/mcp-servers/' + server.id, undefined, { status: 204 })
   await request('DELETE', provisioningRoute + '/skills/' + skill.name, undefined, { status: 204 })

@@ -113,7 +113,12 @@ export type FleetCreateBotInput = Omit<FleetCreateBotRequest, 'idempotencyKey' |
 export type FleetOwnerMemoryCreateInput = { content: string; replacesId?: string; environmentId?: string | null }
 export type FleetScreenData = { channelId: string; data: ArrayBuffer }
 /** An image the owner attaches from the Mac; main base64-encodes it for the gateway. */
-export type FleetOutgoingAttachment = { name: string; mediaType: FleetImageMediaType; data: Uint8Array }
+export type FleetOutgoingAttachment = {
+  kind?: 'image' | 'pdf' | 'text'
+  name: string
+  mediaType: FleetImageMediaType | 'application/pdf' | 'text/plain'
+  data: Uint8Array
+}
 /** Bytes of a bot image (a FleetImageRef from the transcript). */
 export type FleetImageData = { mediaType: FleetImageMediaType; data: Uint8Array }
 export type FleetScreenState = {
@@ -284,6 +289,11 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
   fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
     ipcRenderer.invoke('fleet:getImage', botId, imageId),
+  fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:downloadFile', botId, fileId),
+  fleetRevealDownload: (receipt: string): Promise<void> => ipcRenderer.invoke('fleet:revealDownload', receipt),
+  fleetGetDownload: (botId: string, fileId: string): Promise<string | null> =>
+    ipcRenderer.invoke('fleet:getDownload', botId, fileId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
   fleetResolveInteraction: (

@@ -19,6 +19,7 @@ import { isBotMode } from '../../fleet/instance/config'
 import { canUseComputer, registerComputerTools } from './computer'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
+import { registerBotFileTools } from './bot-files'
 
 const reasonSchema = z.string().trim().min(1).max(500)
 const routineTitle = z.string().trim().min(1).max(FLEET_ROUTINE_TITLE_MAX).describe('Short name the owner sees.')
@@ -90,6 +91,7 @@ function weekly(
  */
 export function registerBotInstanceTools(ctx: McpToolContext, gateway?: GatewayConfig | null): void {
   const bot = () => botRuntimeForConversation(ctx.convId)
+  if (bot()) registerBotFileTools(ctx)
   const localPeerNames = new Map<string, string>()
   const peerNames = () => bot()?.peerNames ?? localPeerNames
   const gatewayFor = (): GatewayConfig => {

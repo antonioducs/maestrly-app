@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 /**
  * How many events on shared artifacts the owner has not seen: new devices, access requests, declined invitations and
- * comments. Asking never starts the host, so this stays at zero until artifacts are in use.
+ * comments. It stays at zero while the bot server is not ready.
  */
 export function useUnseenArtifactEvents(): number {
   const [count, setCount] = useState(0)
@@ -23,12 +23,12 @@ export function useUnseenArtifactEvents(): number {
     const offActivity = window.api.artifacts.onActivity(refresh)
     // Seeing the events in the center, or deleting an artifact, changes the count without new activity.
     const offChanged = window.api.artifacts.onChanged(refresh)
-    const offStatus = window.api.artifacts.onStatus(refresh)
+    const offConnection = window.api.onFleetConnection(refresh)
     return () => {
       alive = false
       offActivity()
       offChanged()
-      offStatus()
+      offConnection()
     }
   }, [])
 

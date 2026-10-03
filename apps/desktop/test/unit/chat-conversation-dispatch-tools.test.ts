@@ -5,12 +5,14 @@ const h = vi.hoisted(() => ({
   dispatchBatch: vi.fn(),
   getConversationDispatchService: vi.fn(),
   listConversationDispatchModels: vi.fn(),
+  listConversationDispatchWorkspaces: vi.fn(),
   conversationExecutionSettings: vi.fn(),
 }))
 
 vi.mock('../../src/main/conversation-dispatch-service', () => ({
   getConversationDispatchService: h.getConversationDispatchService,
   listConversationDispatchModels: h.listConversationDispatchModels,
+  listConversationDispatchWorkspaces: h.listConversationDispatchWorkspaces,
 }))
 vi.mock('../../src/main/chat/service', () => ({
   conversationExecutionSettings: h.conversationExecutionSettings,
@@ -28,6 +30,7 @@ import {
   conversationDispatchRuntimeFor,
   enableConversationDispatchTools,
   listConversationModelsTool,
+  listConversationWorkspacesTool,
   startConversationsTool,
 } from '../../src/main/chat/tools/conversation-dispatch'
 import type { ToolContext } from '../../src/main/chat/tools/util'
@@ -87,12 +90,13 @@ describe('conversation dispatch tool surface', () => {
     }
   })
 
-  it('is offered only for a human-started main turn in Agent/Design', () => {
+  it('is offered for human-started Agent/Design turns and explicitly requested Ask handoffs', () => {
     expect(conversationDispatchRuntimeFor('source', 'agent')).toBeUndefined()
     humanTurn('Abra uma conversa para cada card.')
     expect(conversationDispatchRuntimeFor('source', 'agent')).toBeDefined()
     expect(conversationDispatchRuntimeFor('source', 'design')).toBeDefined()
-    for (const mode of ['plan', 'ask', 'maestro'] as const) {
+    expect(conversationDispatchRuntimeFor('source', 'ask')).toBeDefined()
+    for (const mode of ['plan', 'maestro'] as const) {
       expect(conversationDispatchRuntimeFor('source', mode)).toBeUndefined()
     }
     const enabled = builtinToolNamesForMode('agent')
@@ -103,6 +107,16 @@ describe('conversation dispatch tool surface', () => {
     expect(CONVERSATION_DISPATCH_TOOL_NAMES.some((name) => restricted.has(name))).toBe(false)
   })
 
+  it('keeps ordinary Ask turns read-only and adds only handoff tools when explicitly requested', () => {
+    humanTurn('Explain how workspaces work.')
+    expect(conversationDispatchRuntimeFor('source', 'ask')).toBeUndefined()
+    humanTurn('Envie o plano para desenvolvimento no workspace Example.')
+    const enabled = builtinToolNamesForMode('ask')
+    expect(enableConversationDispatchTools(enabled, 'source', 'ask')).toBeDefined()
+    for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) expect(enabled.has(name)).toBe(true)
+    for (const name of ['bash', 'write', 'edit', 'review_plan']) expect(enabled.has(name)).toBe(false)
+  })
+
   it('never reaches subagents, Maestro workers or unattended turns', () => {
     const provided = new Set([...CONVERSATION_DISPATCH_TOOL_NAMES, 'read', 'bash'])
     const worker = selectSubagentToolNames({
@@ -111,7 +125,7 @@ describe('conversation dispatch tool surface', () => {
       providedHostTools: provided,
     })
     const explicit = selectSubagentToolNames({
-      definition: { name: 'custom', tools: ['start_conversations', 'list_conversation_models', 'read'] },
+      definition: { name: 'custom', tools: [...CONVERSATION_DISPATCH_TOOL_NAMES, 'read'] },
       readOnly: false,
       providedHostTools: provided,
     })
@@ -185,6 +199,39 @@ describe('conversation dispatch tool surface', () => {
     expect(await listConversationModelsTool.execute({}, context())).toEqual({
       error: expect.stringContaining('not available here'),
     })
+  })
+
+  it('discovers canonical workspaces in a standalone human turn and reports failures', async () => {
+    humanTurn('Send this plan for development in workspace Example.')
+    const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+    const workspaces = [{ workspaceId: 'ws-1', name: 'Example', path: '/example', defaultBranch: 'main', branches: ['main'] }]
+    h.listConversationDispatchWorkspaces.mockResolvedValue(workspaces)
+    const ctx = context({ projectId: null, conversationDispatch: runtime })
+    const result = await listConversationWorkspacesTool.execute({}, ctx)
+    expect(result).toEqual({ workspaces })
+    expect(listConversationWorkspacesTool.toModelText({}, result)).toBe(JSON.stringify({ workspaces }, null, 2))
+    expect(await listConversationWorkspacesTool.execute({}, context())).toEqual({
+      error: expect.stringContaining('standalone or project'),
+    })
+    h.listConversationDispatchWorkspaces.mockRejectedValue(new Error('Workspace catalog unavailable'))
+    expect(await listConversationWorkspacesTool.execute({}, ctx)).toEqual({ error: 'Workspace catalog unavailable' })
+  })
+
+  it('forwards workspace, branch, base and chosen settings from a standalone handoff', async () => {
+    humanTurn('Send this plan for development in workspace Example.')
+    const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+    const batch = {
+      ...BATCH,
+      target: { workspaceId: 'ws-1', branch: 'feat/example', baseBranch: 'main' },
+      defaults: { providerId: 'codex', modelId: 'gpt', reasoning: 'high', fastMode: true },
+    }
+    h.dispatchBatch.mockResolvedValue({ ok: true, items: [] })
+    h.getConversationDispatchService.mockResolvedValue({ dispatchBatch: h.dispatchBatch })
+    await startConversationsTool.execute(batch, context({ projectId: null, conversationDispatch: runtime }))
+    expect(h.dispatchBatch).toHaveBeenCalledWith(expect.objectContaining({
+      batch,
+      grant: expect.objectContaining({ maxConversations: 1, conversationId: 'source' }),
+    }))
   })
 
   it('rejects malformed batches at the schema boundary', () => {

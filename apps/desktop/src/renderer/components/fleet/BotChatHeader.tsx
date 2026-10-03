@@ -3,6 +3,7 @@ import { Monitor, Pause, Play, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
+import { ChatWindowButton } from '@/components/chat/ChatWindowHost'
 import { startBot } from '@/lib/fleet/environments'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -63,7 +64,8 @@ const crumb =
 
 /**
  * The conversation's header: who the bot is and how it is doing, where it runs, and what can be done with it —
- * pause or resume it, change its settings, and open its computer while that is closed.
+ * pause or resume it, move its conversation to a window of its own, change its settings, and open its computer while
+ * that is closed.
  */
 export function BotChatHeader({
   bot,
@@ -146,6 +148,7 @@ export function BotChatHeader({
             </Button>
           )
         )}
+        <ChatWindowButton target={{ kind: 'bot', id: bot.id }} />
         <Button
           size="icon"
           variant="ghost"

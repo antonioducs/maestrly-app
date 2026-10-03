@@ -90,7 +90,8 @@ vi.mock('../../src/main/chat/model-meta', () => ({
   getProviderModelMetaWithStatus: mocks.getProviderModelMetaWithStatus,
   getProviderModelMeta: async () => null,
 }))
-vi.mock('../../src/main/chat/mcp', () => ({
+vi.mock('../../src/main/chat/mcp', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/mcp')>()),
   buildMcpTools: mocks.buildMcpTools,
   buildAppTools: mocks.buildAppTools,
 }))

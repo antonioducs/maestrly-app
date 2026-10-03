@@ -1,3 +1,4 @@
+import { ModelVisibilityCheckbox } from './ModelVisibilityCheckbox'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -54,6 +55,7 @@ import type {
   McpServerInfo,
 } from '../../../shared/chat'
 import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../shared/runtime-assets'
+import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
 import { SubagentProfilesSettings } from './subagent-profiles/SubagentProfilesSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { ChatGptWebSettings } from './ChatGptWebSettings'
@@ -72,6 +74,7 @@ const inputCls =
 const PROVIDER_RUNTIME_ASSET: Partial<Record<ChatSubscriptionProviderKind, RuntimeAssetId>> = {
   'codex-subscription': 'codex-runtime',
   'github-copilot-subscription': 'github-copilot-runtime',
+  'antigravity-subscription': 'antigravity-acp-runtime',
 }
 
 const PROVIDER_KINDS: Exclude<ChatProviderKind, ChatSubscriptionProviderKind>[] = [
@@ -88,6 +91,7 @@ const kindLabelKey: Record<ChatProviderKind, string> = {
   'claude-subscription': 'settings.apiFormatClaudeSubscription',
   'grok-subscription': 'settings.apiFormatGrokSubscription',
   'cursor-subscription': 'settings.apiFormatCursorSubscription',
+  'antigravity-subscription': 'settings.apiFormatAntigravitySubscription',
 }
 
 const subscriptionProviderCopy: Record<
@@ -99,6 +103,7 @@ const subscriptionProviderCopy: Record<
       | 'claudeSubscription'
       | 'grokSubscription'
       | 'cursorSubscription'
+      | 'antigravitySubscription'
     borderClass: string
     buttonClass: string
   }
@@ -127,6 +132,11 @@ const subscriptionProviderCopy: Record<
     prefix: 'grokSubscription',
     borderClass: 'border-zinc-400/25 bg-zinc-400/[0.04]',
     buttonClass: 'bg-zinc-700 hover:bg-zinc-600',
+  },
+  'antigravity-subscription': {
+    prefix: 'antigravitySubscription',
+    borderClass: 'border-blue-500/25 bg-blue-500/[0.04]',
+    buttonClass: 'bg-blue-600 hover:bg-blue-500',
   },
 }
 
@@ -478,10 +488,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
             {!loading &&
               !failed &&
               shown.map((m) => (
-                <label key={m} className="flex cursor-pointer items-center gap-2 px-2.5 py-1 hover:bg-white/[0.04]">
-                  <input type="checkbox" checked={!hiddenSet.has(m)} onChange={() => toggle(m)} />
-                  <span className="truncate text-[12px] text-foreground">{m}</span>
-                </label>
+                <ModelVisibilityCheckbox key={m} name={m} checked={!hiddenSet.has(m)} onChange={() => toggle(m)} />
               ))}
           </div>
           {saveError && <p className="text-[11px] text-destructive">{t('settings.modelFilterSaveFailed')}</p>}
@@ -1491,6 +1498,13 @@ export function ApiKeySettings({
             onChanged={refresh}
             locked={backgroundCompactionLocked}
           />
+          <MemorySettings
+            scope="personal"
+            config={config}
+            catalogRevision={modelFilterRevision}
+            onChanged={refresh}
+            locked={backgroundCompactionLocked}
+          />
           <SubagentProfilesSettings config={config} />
         </div>
       )}
@@ -1520,6 +1534,7 @@ export function ApiKeySettings({
             onChanged={refresh}
             lockedDescriptionKey={appToolsLocked ? 'plusMenu.appToolsBotLocked' : undefined}
           />
+          {!appToolsLocked && <AppToolGroupSettings config={config} onChanged={refresh} />}
           <FlagToggle
             headingKey="settings.imageGenHeading"
             descriptionKey="settings.imageGenDescription"
@@ -1785,6 +1800,44 @@ function FlagToggle({
       >
         <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', on && 'translate-x-3')} />
       </button>
+    </div>
+  )
+}
+
+/** Global default of each app-tool group; inactive while the whole surface is off. */
+function AppToolGroupSettings({ config, onChanged }: { config: ChatConfig; onChanged: () => void }) {
+  const { t } = useTranslation('chat')
+  const inactive = !config.appToolsEnabled
+  return (
+    <div className="-mt-1 flex flex-col gap-0.5 border-l border-border pl-3" aria-disabled={inactive}>
+      <p className="mb-1 text-[11px] text-muted-foreground">{t('settings.appToolGroupsDescription')}</p>
+      {APP_TOOL_GROUPS.map((group) => {
+        const on = config.appToolGroups?.[group] ?? true
+        const label = t(`appToolGroups.${group}.label`)
+        return (
+          <div key={group} className={cn('flex items-center justify-between gap-3 py-0.5', inactive && 'opacity-50')}>
+            <div className="min-w-0 truncate">
+              <span className="text-[12px] text-foreground">{label}</span>
+              <span className="ml-1.5 text-[11px] text-muted-foreground">{t(`appToolGroups.${group}.desc`)}</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              aria-label={label}
+              disabled={inactive}
+              onClick={() => window.api.chatSetAppToolGroup(group, !on).then(onChanged)}
+              className={cn(
+                'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors disabled:cursor-not-allowed',
+                on ? 'bg-emerald-500/70' : 'bg-white/10'
+              )}
+              title={on ? t('settings.toggleOn') : t('settings.toggleOff')}
+            >
+              <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', on && 'translate-x-3')} />
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

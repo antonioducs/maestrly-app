@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { localSkillsSettingsSource, type SkillsSettingsSource } from './skills-settings-source'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
@@ -84,7 +85,17 @@ function SkillDetailPanel({ detail, onClose }: { detail: ChatSkillDetail; onClos
   )
 }
 
-export function SkillsSettings() {
+export function SkillsSettings({
+  source = localSkillsSettingsSource,
+  renderDetail,
+  onDirtyChange,
+  confirmAction = async (message) => confirm(message),
+}: {
+  source?: SkillsSettingsSource
+  renderDetail?: (detail: ChatSkillDetail, onClose: () => void) => ReactNode
+  onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>, discard: () => void) => void
+  confirmAction?: (message: string, kind?: 'remove' | 'replace') => Promise<boolean>
+} = {}) {
   const { t } = useTranslation('chat')
   const [state, setState] = useState<ChatSkillsState>({
     skills: [],
@@ -111,6 +122,7 @@ export function SkillsSettings() {
   const [editingGroup, setEditingGroup] = useState<{ id: string; name: string; description: string } | null>(null)
   const [membershipEditor, setMembershipEditor] = useState<string | null>(null)
   const [membershipQuery, setMembershipQuery] = useState('')
+  const [installedQuery, setInstalledQuery] = useState('')
   const [skillGroupPicker, setSkillGroupPicker] = useState<string | null>(null)
   const tabsId = useId()
   const tabRefs = useRef<Record<SkillsTab, HTMLButtonElement | null>>({ all: null, groups: null, library: null })
@@ -118,27 +130,63 @@ export function SkillsSettings() {
   const searchRequest = useRef(0)
   const [busyGroups, setBusyGroups] = useState<Set<string>>(new Set())
 
-  const refresh = (): Promise<void> => window.api.chatSkillsState().then(setState)
-  const notifyChanged = () => window.dispatchEvent(new Event('maestrly:skills-changed'))
+  const alive = useRef(true)
+  const refreshRequest = useRef(0)
+  const refreshing = useRef<Promise<void> | null>(null)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [source])
+  const reportError = () => {
+    if (alive.current) setError(t('settings.skillErrSearch', { error: '' }))
+  }
+  const refresh = (): Promise<void> => {
+    if (refreshing.current) return refreshing.current
+    const request = ++refreshRequest.current
+    refreshing.current = source
+      .chatSkillsState()
+      .then((value) => {
+        if (alive.current && request === refreshRequest.current) setState(value)
+      })
+      .catch(() => {
+        if (request === refreshRequest.current) reportError()
+      })
+      .finally(() => {
+        refreshing.current = null
+      })
+    return refreshing.current
+  }
+  const notifyChanged = () => source.notifyChanged()
   useEffect(() => {
     void refresh()
     const onChanged = () => void refresh()
-    window.addEventListener('maestrly:skills-changed', onChanged)
-    return () => window.removeEventListener('maestrly:skills-changed', onChanged)
-  }, [])
+    const unsubscribe = source.subscribe(onChanged)
+    const onFocus = () => {
+      if (source.remote && navigator.onLine && document.visibilityState === 'visible') void refresh()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('focus', onFocus)
+      searchRequest.current++
+    }
+  }, [source])
 
   const finishMutation = async (): Promise<void> => {
+    if (!alive.current) return
     await refresh()
-    notifyChanged()
+    if (alive.current) notifyChanged()
   }
 
   const install = async (value: string, overwrite: boolean): Promise<void> => {
     if (!value.trim()) return
     setBusy(value)
     setError('')
-    let res: Awaited<ReturnType<typeof window.api.chatSkillInstall>>
+    let res: Awaited<ReturnType<typeof source.chatSkillInstall>>
     try {
-      res = await window.api.chatSkillInstall({ slug: value, overwrite })
+      res = await source.chatSkillInstall({ slug: value, overwrite })
     } catch (cause) {
       setError(t('settings.skillErrInstall', { error: cause instanceof Error ? cause.message : String(cause) }))
       return
@@ -147,7 +195,8 @@ export function SkillsSettings() {
     }
     if (!res.ok) {
       if (res.error === 'already-exists' && !overwrite) {
-        if (confirm(t('settings.skillOverwriteConfirm', { name: res.name ?? value }))) return install(value, true)
+        if (await confirmAction(t('settings.skillOverwriteConfirm', { name: res.name ?? value }), 'replace'))
+          return install(value, true)
         return
       }
       setError(t('settings.skillErrInstall', { error: res.available?.join(', ') || res.error || '' }))
@@ -167,9 +216,9 @@ export function SkillsSettings() {
     const request = ++searchRequest.current
     setSearching(true)
     setError('')
-    let res: Awaited<ReturnType<typeof window.api.chatSkillSearch>>
+    let res: Awaited<ReturnType<typeof source.chatSkillSearch>>
     try {
-      res = await window.api.chatSkillSearch(query)
+      res = await source.chatSkillSearch(query)
     } catch (cause) {
       if (request !== searchRequest.current) return
       setError(t('settings.skillErrSearch', { error: cause instanceof Error ? cause.message : String(cause) }))
@@ -187,9 +236,10 @@ export function SkillsSettings() {
 
   const create = async (): Promise<void> => {
     setError('')
-    const res = await window.api.chatSkillCreate({ name, description })
+    const res = await source.chatSkillCreate({ name, description })
     if (!res.ok) {
       setError(t('settings.skillErrCreate', { error: res.error ?? '' }))
+      if (source.remote) throw new Error('create-failed')
       return
     }
     setCreating(false)
@@ -200,9 +250,10 @@ export function SkillsSettings() {
 
   const createGroup = async (): Promise<void> => {
     setError('')
-    const res = await window.api.chatSkillGroupCreate({ name: groupName, description: groupDescription })
+    const res = await source.chatSkillGroupCreate({ name: groupName, description: groupDescription })
     if (!res.ok) {
       setError(t('settings.skillGroupError', { error: res.error ?? '' }))
+      if (source.remote) throw new Error('create-group-failed')
       return
     }
     setCreatingGroup(false)
@@ -221,7 +272,7 @@ export function SkillsSettings() {
     setBusyGroups((current) => new Set(current).add(group.id))
     setError('')
     try {
-      const res = await window.api.chatSkillGroupUpdate(group.id, patch)
+      const res = await source.chatSkillGroupUpdate(group.id, patch)
       if (!res.ok) {
         setError(t('settings.skillGroupError', { error: res.error ?? '' }))
         return false
@@ -254,30 +305,92 @@ export function SkillsSettings() {
     let suffix = 2
     const existing = new Set(state.groups.map((item) => item.name.toLowerCase()))
     while (existing.has(name.toLowerCase())) name = `${base} ${suffix++}`
-    void window.api
+    void source
       .chatSkillGroupCreate({ name, description: group.description, skills: group.skills })
       .then(async (res) => {
         if (!res.ok) setError(t('settings.skillGroupError', { error: res.error ?? '' }))
         else await finishMutation()
       })
+      .catch(reportError)
   }
 
-  const removeGroup = (group: ChatSkillGroup): void => {
-    if (!confirm(t('settings.skillGroupConfirmRemove', { name: group.name }))) return
-    void window.api.chatSkillGroupRemove(group.id).then(async (res) => {
-      if (!res.ok) setError(t('settings.skillGroupError', { error: res.error ?? '' }))
-      else await finishMutation()
-    })
+  const removeGroup = async (group: ChatSkillGroup): Promise<void> => {
+    if (!(await confirmAction(t('settings.skillGroupConfirmRemove', { name: group.name })))) return
+    void source
+      .chatSkillGroupRemove(group.id)
+      .then(async (res) => {
+        if (!res.ok) setError(t('settings.skillGroupError', { error: res.error ?? '' }))
+        else await finishMutation()
+      })
+      .catch(reportError)
   }
 
   const availableNames = new Set(state.skills.map((skill) => skill.name))
+  const draftActions = useRef({ save: async () => true, discard: () => {} })
+  draftActions.current = {
+    save: async () => {
+      try {
+        if (creating) {
+          if (!name.trim()) return false
+          await create()
+        }
+        if (creatingGroup) {
+          if (!groupName.trim()) return false
+          await createGroup()
+        }
+        if (editingGroup) {
+          const group = state.groups.find((item) => item.id === editingGroup.id)
+          if (!group || !(await updateGroup(group, { name: editingGroup.name, description: editingGroup.description })))
+            return false
+          setEditingGroup(null)
+        }
+        return true
+      } catch {
+        reportError()
+        return false
+      }
+    },
+    discard: () => {
+      setCreating(false)
+      setName('')
+      setDescription('')
+      setCreatingGroup(false)
+      setGroupName('')
+      setGroupDescription('')
+      setEditingGroup(null)
+    },
+  }
+  useEffect(() => {
+    if (detail && renderDetail) return
+    const dirty =
+      (creating && !!(name || description)) || (creatingGroup && !!(groupName || groupDescription)) || !!editingGroup
+    onDirtyChange?.(
+      dirty,
+      () => draftActions.current.save(),
+      () => draftActions.current.discard()
+    )
+  }, [
+    creating,
+    name,
+    description,
+    creatingGroup,
+    groupName,
+    groupDescription,
+    editingGroup,
+    detail,
+    renderDetail,
+    onDirtyChange,
+  ])
+  if (detail && renderDetail) return renderDetail(detail, () => setDetail(null))
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-start justify-between gap-2">
         <div>
           <span className="text-[12px] font-medium text-foreground">{t('settings.skillsHeading')}</span>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">{t('settings.skillsDescription')}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {source.remote ? t('environmentSettings.skillsNote', { ns: 'fleet' }) : t('settings.skillsDescription')}
+          </p>
         </div>
       </div>
 
@@ -363,7 +476,7 @@ export function SkillsSettings() {
               </button>
               <button
                 type="button"
-                onClick={() => void create()}
+                onClick={() => void create().catch(reportError)}
                 disabled={!name.trim()}
                 className="rounded-md bg-indigo-500 px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               >
@@ -373,103 +486,143 @@ export function SkillsSettings() {
           </div>
         )}
         {state.skills.length === 0 && <p className="text-[11px] text-muted-foreground">{t('settings.skillsEmpty')}</p>}
-        <p className="text-[11px] text-muted-foreground/70">{t('settings.skillsProjectHint')}</p>
-        {state.skills.map((skill) => (
-          <div key={skill.name} className="rounded-lg border border-border bg-white/[0.02] px-2.5 py-1.5">
-            <div className="flex items-center gap-2">
-              <Toggle
-                on={skill.enabledGlobally}
-                onClick={() =>
-                  void window.api.chatSkillSetEnabled(skill.name, !skill.enabledGlobally).then(finishMutation)
-                }
-                label={skill.enabledGlobally ? t('settings.toggleOn') : t('settings.toggleOff')}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-[12px] text-foreground">/{skill.name}</span>
-                  <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                    {t('settings.skillScopeGlobal')}
-                  </span>
-                  {!skill.userInvocable && (
+        {!source.remote && <p className="text-[11px] text-muted-foreground/70">{t('settings.skillsProjectHint')}</p>}
+        {source.remote && (
+          <input
+            className={inputCls}
+            value={installedQuery}
+            onChange={(event) => setInstalledQuery(event.target.value)}
+            placeholder={t('settings.skillGroupSearchSkills')}
+          />
+        )}
+        {state.skills
+          .filter(
+            (skill) =>
+              !source.remote ||
+              `${skill.name} ${skill.description}`.toLowerCase().includes(installedQuery.toLowerCase())
+          )
+          .map((skill) => (
+            <div key={skill.name} className="rounded-lg border border-border bg-white/[0.02] px-2.5 py-1.5">
+              <div className="flex items-center gap-2">
+                <Toggle
+                  on={skill.enabledGlobally}
+                  onClick={() =>
+                    void source
+                      .chatSkillSetEnabled(skill.name, !skill.enabledGlobally)
+                      .then(finishMutation)
+                      .catch(reportError)
+                  }
+                  label={skill.enabledGlobally ? t('settings.toggleOn') : t('settings.toggleOff')}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono text-[12px] text-foreground">/{skill.name}</span>
                     <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                      {t('settings.skillModelOnly')}
+                      {source.remote
+                        ? t('environmentSettings.environmentScope', { ns: 'fleet' })
+                        : t('settings.skillScopeGlobal')}
                     </span>
-                  )}
-                  {!skill.modelInvocable && (
-                    <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                      {t('settings.skillUserOnly')}
-                    </span>
-                  )}
+                    {!skill.userInvocable && (
+                      <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
+                        {t('settings.skillModelOnly')}
+                      </span>
+                    )}
+                    {!skill.modelInvocable && (
+                      <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
+                        {t('settings.skillUserOnly')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="truncate text-[11px] text-muted-foreground">{skill.description || skill.source}</div>
+                  <div className="text-[10px] text-muted-foreground/70">
+                    {t('skillsMenu.resources', skill.resources)}
+                    {skill.groupIds.length ? ` · ${t('settings.skillInGroups', { count: skill.groupIds.length })}` : ''}
+                    {skill.installedFrom ? ` · ${t('settings.skillInstalledFrom', { slug: skill.installedFrom })}` : ''}
+                  </div>
                 </div>
-                <div className="truncate text-[11px] text-muted-foreground">{skill.description || skill.source}</div>
-                <div className="text-[10px] text-muted-foreground/70">
-                  {t('skillsMenu.resources', skill.resources)}
-                  {skill.groupIds.length ? ` · ${t('settings.skillInGroups', { count: skill.groupIds.length })}` : ''}
-                  {skill.installedFrom ? ` · ${t('settings.skillInstalledFrom', { slug: skill.installedFrom })}` : ''}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSkillGroupPicker(skillGroupPicker === skill.name ? null : skill.name)}
-                className="text-muted-foreground hover:text-violet-300"
-                title={t('settings.skillGroupsAction')}
-              >
-                <Layers3 className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void window.api.chatSkillRead(skill.name).then(setDetail)}
-                className="text-muted-foreground hover:text-foreground"
-                title={t('settings.skillView')}
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void window.api.chatSkillReveal(skill.name)}
-                className="text-muted-foreground hover:text-foreground"
-                title={t('settings.skillOpenFolder')}
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (confirm(t('settings.skillConfirmRemove', { name: skill.name, dir: skill.dir })))
-                    void window.api.chatSkillRemove(skill.name).then(finishMutation)
-                }}
-                className="text-muted-foreground hover:text-destructive"
-                title={t('settings.skillRemove')}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            {skillGroupPicker === skill.name && (
-              <div className="mt-2 border-t border-border/60 pt-2">
-                <div className="mb-1 text-[11px] text-muted-foreground">{t('settings.skillGroupsAction')}</div>
-                {state.groups.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">{t('settings.skillGroupsEmpty')}</p>
-                ) : (
-                  state.groups.map((group) => (
-                    <label
-                      key={group.id}
-                      className="flex cursor-pointer items-center gap-2 py-0.5 text-[12px] text-foreground"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={group.skills.includes(skill.name)}
-                        disabled={busyGroups.has(group.id)}
-                        onChange={() => toggleMembership(group, skill.name)}
-                      />
-                      {group.name}
-                    </label>
-                  ))
+                <button
+                  type="button"
+                  onClick={() => setSkillGroupPicker(skillGroupPicker === skill.name ? null : skill.name)}
+                  className="text-muted-foreground hover:text-violet-300"
+                  title={t('settings.skillGroupsAction')}
+                >
+                  <Layers3 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void source
+                      .chatSkillRead(skill.name)
+                      .then((value) => {
+                        if (alive.current) setDetail(value)
+                      })
+                      .catch(reportError)
+                  }
+                  className="text-muted-foreground hover:text-foreground"
+                  title={t('settings.skillView')}
+                  disabled={source.remote && (creating || creatingGroup || !!editingGroup)}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </button>
+                {!source.remote && (
+                  <button
+                    type="button"
+                    onClick={() => void source.chatSkillReveal(skill.name)}
+                    className="text-muted-foreground hover:text-foreground"
+                    title={t('settings.skillOpenFolder')}
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                  </button>
                 )}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (
+                      await confirmAction(
+                        source.remote
+                          ? t('environmentSettings.removeSkill', { ns: 'fleet', name: skill.name })
+                          : t('settings.skillConfirmRemove', { name: skill.name, dir: skill.dir })
+                      )
+                    )
+                      void source.chatSkillRemove(skill.name).then(finishMutation).catch(reportError)
+                  }}
+                  className="text-muted-foreground hover:text-destructive"
+                  title={t('settings.skillRemove')}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
-            )}
-          </div>
-        ))}
-        {detail && <SkillDetailPanel detail={detail} onClose={() => setDetail(null)} />}
+              {skillGroupPicker === skill.name && (
+                <div className="mt-2 border-t border-border/60 pt-2">
+                  <div className="mb-1 text-[11px] text-muted-foreground">{t('settings.skillGroupsAction')}</div>
+                  {state.groups.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground">{t('settings.skillGroupsEmpty')}</p>
+                  ) : (
+                    state.groups.map((group) => (
+                      <label
+                        key={group.id}
+                        className="flex cursor-pointer items-center gap-2 py-0.5 text-[12px] text-foreground"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={group.skills.includes(skill.name)}
+                          disabled={busyGroups.has(group.id)}
+                          onChange={() => toggleMembership(group, skill.name)}
+                        />
+                        {group.name}
+                      </label>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        {detail &&
+          (renderDetail ? (
+            renderDetail(detail, () => setDetail(null))
+          ) : (
+            <SkillDetailPanel detail={detail} onClose={() => setDetail(null)} />
+          ))}
       </div>
 
       <div
@@ -496,12 +649,14 @@ export function SkillsSettings() {
               onChange={(e) => setGroupName(e.target.value)}
               placeholder={t('settings.skillGroupNamePlaceholder')}
             />
+
             <input
               className={inputCls}
               value={groupDescription}
               onChange={(e) => setGroupDescription(e.target.value)}
               placeholder={t('settings.skillGroupDescriptionPlaceholder')}
             />
+
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -512,7 +667,7 @@ export function SkillsSettings() {
               </button>
               <button
                 type="button"
-                onClick={() => void createGroup()}
+                onClick={() => void createGroup().catch(reportError)}
                 disabled={!groupName.trim()}
                 className="rounded-md bg-indigo-500 px-2.5 py-1 text-[12px] font-medium text-white disabled:opacity-50"
               >
@@ -593,11 +748,13 @@ export function SkillsSettings() {
                         value={editingGroup.name}
                         onChange={(e) => setEditingGroup({ ...editingGroup, name: e.target.value })}
                       />
+
                       <input
                         className={inputCls}
                         value={editingGroup.description}
                         onChange={(e) => setEditingGroup({ ...editingGroup, description: e.target.value })}
                       />
+
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
@@ -736,25 +893,32 @@ export function SkillsSettings() {
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12px] text-foreground">{hit.name}</div>
               <div className="truncate text-[10px] text-muted-foreground">
-                {hit.source} · {t('settings.skillInstalls', { count: hit.installs })}
+                {hit.source}
+                {!source.remote && ` · ${t('settings.skillInstalls', { count: hit.installs })}`}
               </div>
             </div>
+            {!source.remote && (
+              <button
+                type="button"
+                onClick={() => void window.api.openExternalUrl(hit.url)}
+                title={t('settings.skillOpenInBrowser')}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => void window.api.openExternalUrl(hit.url)}
-              title={t('settings.skillOpenInBrowser')}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void install(hit.slug, hit.installed)}
+              onClick={() => void install(hit.slug, source.remote ? false : hit.installed)}
               disabled={busy === hit.slug}
               className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground disabled:opacity-60"
             >
               {busy === hit.slug ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-              {hit.installed ? t('settings.skillOverwrite') : t('settings.skillInstall')}
+              {hit.installed
+                ? source.remote
+                  ? t('environmentSettingsShell.replace', { ns: 'fleet' })
+                  : t('settings.skillOverwrite')
+                : t('settings.skillInstall')}
             </button>
           </div>
         ))}
@@ -780,7 +944,24 @@ export function SkillsSettings() {
         </div>
       </div>
 
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      {error && (
+        <div role="alert" className="space-y-2 text-[11px] text-destructive">
+          <p>{source.remote ? t('environmentSettings.failed', { ns: 'fleet' }) : error}</p>
+          {source.remote && (
+            <button
+              type="button"
+              className="rounded-md border border-border px-2.5 py-1 text-[12px]"
+              onClick={() => {
+                draftActions.current.discard()
+                setError('')
+                void refresh()
+              }}
+            >
+              {t('environmentSettings.reload', { ns: 'fleet' })}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

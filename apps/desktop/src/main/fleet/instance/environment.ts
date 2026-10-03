@@ -13,6 +13,7 @@ import {
   type FleetAddApiKeyAccountRequest,
   type FleetAddApiKeyAccountResponse,
   type FleetBotAccounts,
+  type FleetEnvironmentSettingsService,
   type FleetBotMcpServers,
   type FleetBotSkills,
   type FleetImportResults,
@@ -39,8 +40,11 @@ import {
   listSubscriptionAccounts,
   removeProvider,
   renameSubscriptionAccount,
-  subscriptionProviderIdFor,
 } from '../../chat/catalog'
+import { getHiddenChatModelsFor } from '../../store/settings'
+import { createEnvironmentSettingsService, environmentMcpChanged } from './settings/service'
+import { ensureRuntimeAsset } from '../../runtime-assets/app-service'
+import { getAntigravitySubscriptionManager } from '../../chat/antigravity-subscription/manager'
 import { getClaudeSubscriptionManager } from '../../chat/claude-agent-sdk/manager'
 import { getCodexSubscriptionManager } from '../../chat/codex-subscription/manager'
 import { apiKeyStorageMode, clearApiKey, setApiKey } from '../../chat/credentials'
@@ -51,7 +55,7 @@ import { invalidateProvider } from '../../chat/provider'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { botMemorySpaceId } from '../../memory/spaces'
 import type { ScreenFocusOwner } from '../../screen-focus'
-import { deleteLocalMemorySpace, getAppSetting, getLocale, setAppSetting } from '../../store'
+import { deleteLocalMemorySpace, getAppSetting, getLocale, setAppSetting, transaction } from '../../store'
 import { adoptLegacyBot } from './adoption'
 import type { EnvironmentInstanceConfig } from './config'
 import { paintWallpaper } from './desktop/paint-wallpaper'
@@ -70,6 +74,7 @@ import {
   cleanupBotSubscriptionSlot,
   importBotAccounts,
   listBotAccounts,
+  botSubscriptionStatus,
   removeBotSubscription,
 } from './provisioning/accounts'
 import { forwardLoginCallback } from './provisioning/callback-forwarder'
@@ -88,7 +93,7 @@ import {
   writeGatewayToken,
   writeInstalledBots,
 } from './registry'
-import { BotRuntime, loadFleetAccountOptions, type BotRuntimeHost, type BotScreen } from './runtime'
+import { BotRuntime, loadFleetAccountOptions, visibleFleetModels, type BotRuntimeHost, type BotScreen } from './runtime'
 import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
 import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
@@ -176,6 +181,7 @@ export function currentEnvironmentRuntime(): EnvironmentRuntime | null {
  */
 export class EnvironmentRuntime {
   readonly events = new InstanceEvents()
+  readonly settings: FleetEnvironmentSettingsService
   private readonly registry = new Map<string, BotRuntime>()
   /** The desktop services of the bots whose apps display runs. */
   private readonly desktops = new Map<string, BotDesktopHandle>()
@@ -193,10 +199,7 @@ export class EnvironmentRuntime {
   private readonly logins = new RemoteLogins({
     now: Date.now,
     onChanged: () => this.accountsChanged(),
-    isConnected: (kind, id) =>
-      this.options.some(
-        (option) => option.providerId === subscriptionProviderIdFor(SUBSCRIPTION_PROVIDER_KIND[kind], id)
-      ),
+    isConnected: (kind, id) => botSubscriptionStatus(kind, id)?.authenticated === true,
     createSlot: (kind) => {
       const providerKind = SUBSCRIPTION_PROVIDER_KIND[kind]
       const count = listSubscriptionAccounts().filter((slot) => slot.kind === providerKind).length
@@ -208,6 +211,8 @@ export class EnvironmentRuntime {
     removeSlot: cleanupBotSubscriptionSlot,
     slotExists: (kind, id) =>
       listSubscriptionAccounts().some((slot) => slot.id === id && slot.kind === SUBSCRIPTION_PROVIDER_KIND[kind]),
+    antigravity: getAntigravitySubscriptionManager,
+    ensureAntigravity: (signal) => ensureRuntimeAsset('antigravity-acp-runtime', signal),
     codex: getCodexSubscriptionManager,
     claude: getClaudeSubscriptionManager,
     grok: getGrokSubscriptionManager,
@@ -216,6 +221,16 @@ export class EnvironmentRuntime {
 
   constructor(private readonly deps: EnvironmentRuntimeDeps) {
     this.displays = deps.displays
+    this.settings = createEnvironmentSettingsService(
+      {
+        bots: () => this.bots().map((bot) => bot.settingsUsage()),
+        signingIn: () => this.logins.signingIn(),
+        accountsChanged: () => this.accountsChanged(),
+        removeAccount: (providerId) => this.removeAccount(providerId),
+        removeSubscription: (kind, slot) => this.removeSubscription(kind, slot),
+      },
+      deps.home
+    )
     const url = gatewayUrl(deps.config.gatewayUrl)
     if (deps.config.gatewayUrl && !url) log('error', 'The gateway URL is not an http or https URL; bots stay offline.')
     this.host = {
@@ -325,7 +340,7 @@ export class EnvironmentRuntime {
 
   /** The models of the environment's accounts, read again, for its default compaction model. */
   async selections(): Promise<{ options: FleetSelectionOption[]; current: null }> {
-    return { options: await this.accountOptions(true), current: null }
+    return { options: visibleFleetModels(await this.accountOptions(true), getHiddenChatModelsFor), current: null }
   }
 
   /**
@@ -590,7 +605,7 @@ export class EnvironmentRuntime {
     if (this.optionsLoad && (!force || this.optionsLoad.forced)) return this.optionsLoad.promise
     if (!force && this.optionsAt && Date.now() - this.optionsAt < 5_000) return Promise.resolve(this.options)
     const seq = ++this.optionsSeq
-    const promise = loadFleetAccountOptions().then((options) => {
+    const promise = loadFleetAccountOptions(true).then((options) => {
       if (seq > this.optionsApplied) {
         this.optionsApplied = seq
         this.options = options
@@ -652,7 +667,6 @@ export class EnvironmentRuntime {
   }
   accounts(): FleetBotAccounts {
     return listBotAccounts({
-      connectedProviderIds: new Set(this.options.map((option) => option.providerId)),
       signingIn: this.logins.signingIn(),
     })
   }
@@ -662,7 +676,9 @@ export class EnvironmentRuntime {
     return result
   }
   async removeSubscription(kind: FleetSubscriptionKind, slot: string): Promise<void> {
-    await removeBotSubscription(kind, slot)
+    const remove = () => removeBotSubscription(kind, slot)
+    if (kind === 'github-copilot' || kind === 'cursor') await remove()
+    else await this.logins.removeAccount(kind, slot === 'default' ? null : slot, remove)
     this.accountsChanged()
   }
   skills(): Promise<FleetBotSkills> {
@@ -678,10 +694,13 @@ export class EnvironmentRuntime {
     return listBotMcpServers()
   }
   async importMcpServers(request: FleetMcpImportRequest): Promise<FleetImportResults> {
-    return importBotMcpServers(request.servers)
+    const result = importBotMcpServers(request.servers)
+    if (result.results.some((item) => item.outcome === 'added' || item.outcome === 'updated')) environmentMcpChanged()
+    return result
   }
   async removeMcpServer(id: string): Promise<void> {
     removeBotMcpServer(id)
+    environmentMcpChanged()
   }
   async addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse> {
     if (apiKeyStorageMode() !== 'secure')
@@ -705,15 +724,21 @@ export class EnvironmentRuntime {
   async removeAccount(providerId: string): Promise<void> {
     if (!listProviders().some((provider) => provider.id === providerId))
       throw new InstanceHttpError(404, 'NOT_FOUND', 'Account does not exist.')
-    removeProvider(providerId)
-    clearApiKey(providerId)
+    try {
+      transaction(() => {
+        removeProvider(providerId)
+        if (getAppSetting('chat.defaultProvider') === providerId) {
+          setAppSetting('chat.defaultProvider', '')
+          setAppSetting('chat.defaultModel', '')
+          setAppSetting('chat.defaultReasoning', 'off')
+        }
+        clearApiKey(providerId, { requirePersisted: true })
+      })
+    } catch {
+      throw new InstanceHttpError(409, 'CONFLICT', 'The account could not be removed.')
+    }
     invalidateProvider(providerId)
     invalidateModels(providerId)
-    if (getAppSetting('chat.defaultProvider') === providerId) {
-      setAppSetting('chat.defaultProvider', '')
-      setAppSetting('chat.defaultModel', '')
-      setAppSetting('chat.defaultReasoning', 'off')
-    }
     this.options = this.options.filter((option) => option.providerId !== providerId)
     this.optionsAt = 0
     await Promise.all(this.bots().map((bot) => bot.accountRemoved(providerId)))

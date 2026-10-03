@@ -63,6 +63,17 @@ export class BlobStore {
     }
   }
 
+  /** The size of a stored blob, or null when it is not stored. */
+  size(sha: string): number | null {
+    try {
+      const stat = lstatSync(this.pathFor(sha))
+      return stat.isFile() ? stat.size : null
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw new ArtifactHostError('storage', 'Could not read a stored file')
+    }
+  }
+
   async read(sha: string): Promise<Uint8Array | null> {
     const file = this.pathFor(sha)
     try {

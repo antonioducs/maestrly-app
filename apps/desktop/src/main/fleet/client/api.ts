@@ -1,5 +1,8 @@
 import {
   FLEET_GATEWAY_ROUTES,
+  FLEET_FILE_LIMITS,
+  fleetFileIdSchema,
+  type FleetFileRef,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
   buildPath,
@@ -31,6 +34,36 @@ type RouteResponse<K extends RouteKey> = Routes[K]['response'] extends { _output
 const LIFECYCLE_TIMEOUT_MS = 300_000
 /** The gateway waits up to 30 s for sign-in pages and 60 s for a skill installation, for bots and environments. */
 const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
+  settingsInstallSkill: 130_000,
+  settingsAccounts: 35_000,
+  settingsPatchAccount: 35_000,
+  settingsRenameSubscription: 35_000,
+  settingsRemoveAccount: 35_000,
+  settingsRemoveSubscription: 35_000,
+  settingsModels: 35_000,
+  settingsSetModelFilter: 35_000,
+  settingsSkills: 35_000,
+  settingsSkill: 35_000,
+  settingsCreateSkill: 35_000,
+  settingsWriteSkill: 35_000,
+  settingsSetSkillEnabled: 35_000,
+  settingsRemoveSkill: 35_000,
+  settingsSearchSkills: 35_000,
+  settingsSkillGroups: 35_000,
+  settingsCreateSkillGroup: 35_000,
+  settingsUpdateSkillGroup: 35_000,
+  settingsRemoveSkillGroup: 35_000,
+  settingsMcpServers: 35_000,
+  settingsMcpServer: 35_000,
+  settingsCreateMcpServer: 35_000,
+  settingsPatchMcpServer: 35_000,
+  settingsRemoveMcpServer: 35_000,
+  settingsTestMcpServer: 35_000,
+  settingsRuntimes: 35_000,
+  settingsRuntimeAction: 35_000,
+  settingsSetRuntimeAutomatic: 35_000,
+  settingsPreferences: 35_000,
+  settingsSetPreferences: 35_000,
   artifactUpload: 300_000,
   artifactAdmin: 60_000,
   botLoginStart: 35_000,
@@ -73,6 +106,82 @@ export class FleetApiClient {
     return {
       'X-Maestrly-Fleet-Protocol': String(FLEET_PROTOCOL_VERSION),
       ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+    }
+  }
+
+  async getFileMeta(botId: string, fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {
+    fleetFileIdSchema.parse(fileId)
+    const ref = await this.call('botFileMeta', { params: { id: botId, fileId }, signal })
+    if (ref.id !== fileId) throw new FleetClientError('INTERNAL', 200, 'Invalid file metadata')
+    return ref
+  }
+
+  /** The caller must consume or cancel the response body. The signal covers the entire transfer. */
+  async openFile(
+    botId: string,
+    fileId: string,
+    signal?: AbortSignal
+  ): Promise<{ ref: FleetFileRef; response: Response }> {
+    const transferSignal = AbortSignal.any([AbortSignal.timeout(300_000), ...(signal ? [signal] : [])])
+    const ref = await this.getFileMeta(botId, fileId, transferSignal)
+    let response: Response | undefined
+    try {
+      response = await fetch(this.origin + buildPath(FLEET_GATEWAY_ROUTES.botFile.path, { id: botId, fileId }), {
+        headers: this.headers(),
+        redirect: 'error',
+        signal: transferSignal,
+      })
+      if (!response.ok) {
+        const parsed = fleetErrorEnvelopeSchema.safeParse(await response.json().catch(() => null))
+        throw new FleetClientError(
+          parsed.success ? parsed.data.code : response.status === 401 ? 'UNAUTHORIZED' : 'INTERNAL',
+          response.status,
+          parsed.success ? parsed.data.message : 'File unavailable'
+        )
+      }
+      const length = response.headers.get('content-length')
+      if (
+        response.status !== 200 ||
+        !response.body ||
+        length === null ||
+        !/^\d+$/.test(length) ||
+        Number(length) !== ref.byteSize ||
+        ref.byteSize > FLEET_FILE_LIMITS.downloadMaxBytes ||
+        response.headers.get('content-type') !== ref.mediaType ||
+        !/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(ref.mediaType) ||
+        (response.headers.has('content-encoding') && response.headers.get('content-encoding') !== 'identity')
+      )
+        throw new FleetClientError('INTERNAL', response.status, 'Invalid file response')
+      const reader = response.body.getReader()
+      let size = 0
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            transferSignal.throwIfAborted()
+            const next = await reader.read()
+            if (next.done) {
+              if (size !== ref.byteSize) throw new Error('Incomplete file')
+              controller.close()
+              reader.releaseLock()
+              return
+            }
+            size += next.value.byteLength
+            if (size > ref.byteSize) throw new Error('File too large')
+            controller.enqueue(next.value)
+          } catch (error) {
+            await reader.cancel().catch(() => undefined)
+            controller.error(error)
+          }
+        },
+        async cancel(reason) {
+          await reader.cancel(reason)
+        },
+      })
+      return { ref, response: new Response(body, { headers: response.headers }) }
+    } catch (error) {
+      if (response && !response.bodyUsed) await response.body?.cancel().catch(() => undefined)
+      if (error instanceof FleetClientError) throw error
+      throw new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'File download failed')
     }
   }
 
@@ -137,6 +246,7 @@ export class FleetApiClient {
       params?: Record<string, string | number>
       query?: Record<string, string | number | boolean | null | undefined>
       body?: unknown
+      signal?: AbortSignal
     } = {}
   ): Promise<RouteResponse<K>> {
     const route = FLEET_GATEWAY_ROUTES[key]
@@ -153,7 +263,10 @@ export class FleetApiClient {
         method: route.method,
         headers,
         body,
-        signal: AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000),
+        redirect: 'error',
+        signal: options.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000)])
+          : AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000),
       })
     } catch (error) {
       throw new FleetClientError(

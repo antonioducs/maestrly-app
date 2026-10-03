@@ -50,8 +50,9 @@ export function setApiKey(providerId: string, key: string): SecureStoreMode {
 }
 
 /** Remove the provider key from disk and memory. */
-export function clearApiKey(providerId: string): void {
-  secureRemove(keyName(providerId))
+export function clearApiKey(providerId: string, options: { requirePersisted?: boolean } = {}): void {
+  if (!secureRemove(keyName(providerId)) && options.requirePersisted)
+    throw new Error('The API key could not be removed.')
   memoryKeys.delete(providerId)
 }
 

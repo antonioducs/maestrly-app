@@ -1,44 +1,9 @@
-/** Artifacts shared between the main process and the renderer: settings, host status and list views. */
-
-export interface ArtifactSettings {
-  publishTo: 'local' | 'server'
-  hostEnabled: boolean
-  port: number
-  quotaGb: number
-  /** Where other people reach the host, as an origin (`https://mac.example`); empty while there is none. */
-  publicAddress: string
-  /** The name people see when an artifact is shared with them. */
-  ownerName: string
-  /** How long a new "anyone with the link" share lasts, in days; null for no expiry. */
-  linkExpiryDays: number | null
-}
-
-export const DEFAULT_ARTIFACT_SETTINGS: ArtifactSettings = {
-  publishTo: 'local',
-  hostEnabled: true,
-  port: 4010,
-  quotaGb: 2,
-  publicAddress: '',
-  ownerName: '',
-  linkExpiryDays: 30,
-}
+/** Artifacts shared between the main process and the renderer: list views, sharing, and the bot server's state. */
 
 export const MAX_ARTIFACT_NAME_CHARS = 60
 export const MIN_ACCESS_CODE_CHARS = 6
 export const MAX_ACCESS_CODE_CHARS = 64
 export const MAX_LINK_EXPIRY_DAYS = 365
-
-export type ArtifactHostState = 'stopped' | 'starting' | 'running' | 'error'
-export type ArtifactHostProblem = 'disabled' | 'port_in_use' | 'storage' | 'crashed'
-
-export interface ArtifactHostStatus {
-  state: ArtifactHostState
-  problem?: ArtifactHostProblem
-  port: number
-  artifactCount?: number
-  storageBytes?: number
-  quotaBytes?: number
-}
 
 export type ArtifactVisibility = 'private' | 'people' | 'link'
 
@@ -51,7 +16,6 @@ export interface ArtifactListItem {
   visibility: ArtifactVisibility
   createdAt: number
   updatedAt: number
-  host: 'local' | 'server'
   bot: { id: string; name: string | null } | null
   elsewhere: boolean
   /** The originating conversation; `exists` is false once it was deleted, with its last known title. */
@@ -204,17 +168,58 @@ export function parseArtifactToolResult(text: string): ArtifactToolResult | null
   return { id: artifact.id, title: artifact.title.slice(0, MAX_CARD_TITLE_CHARS), version: artifact.version }
 }
 
-/** The paired server's artifact host, kept separate from the local host's status. */
+/** The paired bot server's artifact host, where every artifact lives. */
 export type ArtifactServerStatus =
   | { state: 'absent' }
   | { state: 'unsupported' }
   | { state: 'unreachable' }
-  | { state: 'off' }
+  | {
+      state: 'off'
+      /** Whether the server accepts artifacts moved from this computer. */
+      canMove: boolean
+    }
   | {
       state: 'ready'
       canOpen: boolean
+      /** Whether the server accepts artifacts moved from this computer. */
+      canMove: boolean
       artifactCount: number
       storageBytes: number
       quotaBytes: number
       problem: string | null
     }
+
+/** An artifact an earlier version published on this computer; it no longer opens until it moves to the server. */
+export interface LegacyArtifactView {
+  id: string
+  title: string
+  versionCount: number
+  commentCount: number
+  storageBytes: number
+  /** Shared with anyone: it becomes private when it moves, because its links change. */
+  shared: boolean
+}
+
+export type LegacyMoveStep = 'upload' | 'verify' | 'remove'
+
+/** Why a move stopped; with `quota_exceeded`, how much space it needs and how much the server has left. */
+export interface LegacyMoveError {
+  code: string
+  reason?: string
+  neededBytes?: number
+  freeBytes?: number
+}
+
+/** Moving the artifacts on this computer to the bot server, one at a time, in the main process. */
+export interface LegacyMoveState {
+  phase: 'idle' | 'running' | 'done' | 'failed'
+  /** What this move covers, as listed when it started. */
+  items: LegacyArtifactView[]
+  /** IDs already on the server and gone from this computer. */
+  moved: string[]
+  /** The artifact being moved, and how far along: `progress` goes from 0 to 1 within each step. */
+  current: { id: string; step: LegacyMoveStep; progress: number } | null
+  /** Stop after the artifact being moved. */
+  stopping: boolean
+  error: LegacyMoveError | null
+}

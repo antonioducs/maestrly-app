@@ -873,6 +873,14 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 .artifact-sheet {
   animation: artifact-slide 260ms cubic-bezier(0.32, 0.72, 0, 1);
 }
+.artifact-backdrop {
+  animation: artifact-fade 200ms ease-out;
+}
+@keyframes artifact-fade {
+  from {
+    opacity: 0;
+  }
+}
 
 @keyframes artifact-rise {
   from {
@@ -915,6 +923,7 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   .is-entering .artifact-illustration-sheet,
   .artifact-arrived .artifact-thumb,
   .artifact-sheet,
+  .artifact-backdrop,
   .artifact-shimmer {
     animation: none;
   }

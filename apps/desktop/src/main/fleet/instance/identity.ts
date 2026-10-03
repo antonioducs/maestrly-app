@@ -51,7 +51,7 @@ function sharing(peers: BotIdentityPeer[]): string {
 }
 
 export const BOT_APP_TOOLS_GUIDANCE =
-  'Bot tools operate in your environment. Use only the exposed tools under their configured permissions. There are no Notes, Code or terminal drawer panels for the owner. Use terminal tools for persistent processes and read their output yourself; report results in the conversation. Do not request secrets through chat questions; use request_owner_help for logins. Never reach the app through curl/HTTP or inspect legacy local credentials.'
+  "Bot tools operate in your environment. Use only the exposed tools under their configured permissions. There are no Notes, Code or terminal drawer panels for the owner. Use terminal tools for persistent processes and read their output yourself; report results in the conversation. To deliver a file, create or copy it into your conversation files directory and call bot_share_file with its relative path. This publishes a private snapshot with a Download button in the owner's conversation, for any file type up to 100 MiB. The owner downloads it to their own computer through Maestrly, whether your environment is local or on a server. A filesystem path in your reply alone does not deliver the file. Do not request secrets through chat questions; use request_owner_help for logins. Never reach the app through curl/HTTP or inspect legacy local credentials."
 
 export function botIdentityPrompt(cwd: string | undefined): string {
   if (!isBotMode() || !cwd) return ''

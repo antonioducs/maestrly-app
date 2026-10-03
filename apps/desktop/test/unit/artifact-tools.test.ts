@@ -34,7 +34,6 @@ function fakeService() {
       { ...detail, conversationId: 'c1', updatedAt: 5, versionCount: 2, ownerKind: 'local' },
     ]),
     openInConversation: vi.fn(async () => detail),
-    getSettings: vi.fn(() => ({ hostEnabled: true, port: 4321, quotaGb: 2 })),
   }
 }
 
@@ -152,16 +151,22 @@ describe('artifact tools', () => {
     expect(conflict.isError).toBe(true)
     expect(conflict.text).toContain('Version 3')
 
-    service.create.mockRejectedValueOnce(
-      new ArtifactHostError('host_unavailable', 'off', { reason: 'disabled' }) as never
-    )
-    const disabled = await call('artifact_create', { title: 'X', directory: 'dist' })
-    expect(disabled.text).toContain('Settings → Artifacts')
-
-    service.create.mockRejectedValueOnce(
-      new ArtifactHostError('host_unavailable', 'busy', { reason: 'port_in_use' }) as never
-    )
-    expect((await call('artifact_create', { title: 'X', directory: 'dist' })).text).toContain('Port 4321')
+    const explained = async (reason: string) => {
+      service.create.mockRejectedValueOnce(
+        new ArtifactHostError('host_unavailable', 'unavailable', { reason }) as never
+      )
+      const result = await call('artifact_create', { title: 'X', directory: 'dist' })
+      expect(result.isError).toBe(true)
+      return result.text
+    }
+    // Without a bot server there is nowhere to publish, and the agent is told so instead of improvising.
+    expect(await explained('server_absent')).toContain('No bot server is connected')
+    expect(await explained('server_absent')).toContain('Settings → Artifacts')
+    expect(await explained('server_unsupported')).toContain('too old')
+    expect(await explained('server_unreachable')).toContain('unreachable')
+    expect(await explained('server_off')).toContain('turned off on the bot server')
+    expect(await explained('on_this_computer')).toContain('move')
+    expect(await explained('something_else')).toContain('unavailable')
 
     service.create.mockRejectedValueOnce(new RepositoryScopeError('path_escape', 'Path is outside the files.') as never)
     const escape = await call('artifact_create', { title: 'X', directory: '../../etc' })

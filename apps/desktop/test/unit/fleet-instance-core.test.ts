@@ -27,6 +27,7 @@ import { botIdentityPrompt, setBotIdentity } from '../../src/main/fleet/instance
 import { initialFloatingBounds } from '../../src/main/fleet/instance/window-bounds'
 import { FleetImageStore, imageId, imageMediaType } from '../../src/main/fleet/instance/images'
 import { clearEphemeralToolImages, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
+import { setHiddenChatModels } from '../../src/main/store/settings'
 import { freshDb, closeDb } from '../helpers/db'
 
 const key = () => randomUUID()
@@ -122,7 +123,70 @@ describe('fleet conversation admission', () => {
 })
 
 describe('fleet model selection', () => {
-  it('filters the bot hidden models and falls back when the saved model is hidden', () => {
+  it('rejects a new hidden main or compaction selection before persisting the bot profile', async () => {
+    freshDb()
+    try {
+      setHiddenChatModels('provider', ['hidden'])
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
+      Object.assign(runtime, { botId: 'bot', disposed: false, stored: null })
+      const profile = {
+        botId: 'bot',
+        name: 'Bot',
+        instructions: '',
+        ceiling: 'ask' as const,
+        selection: null,
+        compaction: null,
+        gateway: { peersEnabled: true, artifactsEnabled: false },
+      }
+      const selection = { providerId: 'provider', modelId: 'hidden', reasoning: null, fastMode: false }
+      await expect(runtime.profile({ ...profile, selection })).rejects.toThrow('Hidden models cannot be selected')
+      await expect(
+        runtime.profile({ ...profile, compaction: { ...selection, intervalTokens: 100000, contextLimitTokens: null } })
+      ).rejects.toThrow('Hidden models cannot be selected')
+    } finally {
+      closeDb()
+    }
+  })
+  it('keeps an already chosen environment default when a bot inherits it after it was hidden', async () => {
+    freshDb()
+    try {
+      setHiddenChatModels('provider', ['hidden'])
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
+      Object.assign(runtime, {
+        botId: 'bot',
+        disposed: false,
+        stored: null,
+        accountOptions: [],
+        ensureConversation: vi.fn(async () => {}),
+        refreshAccounts: vi.fn(async () => {}),
+        changed: vi.fn(),
+        tick: vi.fn(async () => {}),
+        status: vi.fn(async () => ({})),
+      })
+      await expect(
+        runtime.profile({
+          botId: 'bot',
+          name: 'Bot',
+          instructions: '',
+          ceiling: 'ask',
+          selection: null,
+          compaction: {
+            providerId: 'provider',
+            modelId: 'hidden',
+            reasoning: null,
+            fastMode: false,
+            intervalTokens: 100000,
+          },
+          compactionInherited: true,
+          gateway: { peersEnabled: true, artifactsEnabled: false },
+        })
+      ).resolves.toEqual({})
+      expect(runtime.settingsUsage().compaction?.modelId).toBe('hidden')
+    } finally {
+      closeDb()
+    }
+  })
+  it('preserves a hidden current selection and falls back only after its removal', () => {
     const models = [
       {
         id: 'p::hidden',
@@ -147,11 +211,17 @@ describe('fleet model selection', () => {
     expect(visible.map((item) => item.modelId)).toEqual(['visible'])
     expect(
       effectiveFleetSelection(
-        visible,
+        models,
         { providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true },
-        { providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: true }
+        { providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: true },
+        visible
       )
-    ).toEqual({ providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: false })
+    ).toEqual({ providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true })
+    const defaults = { providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true }
+    expect(effectiveFleetSelection(models, null, defaults, visible)?.modelId).toBe('visible')
+    expect(effectiveFleetSelection(visible, { ...defaults }, defaults, visible)?.modelId).toBe('visible')
+    expect(effectiveFleetSelection(models, null, defaults, [])).toBeNull()
+    expect(effectiveFleetSelection(models, { ...defaults }, defaults, [])?.modelId).toBe('hidden')
   })
 })
 describe('fleet image ids and signatures', () => {

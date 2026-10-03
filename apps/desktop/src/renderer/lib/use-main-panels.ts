@@ -1,3 +1,4 @@
+import { PERSONAL_MEMORY_SPACE_ID } from '../../shared/memory'
 /** Coordinate mutually exclusive project panels, settings, and onboarding. */
 import {
   useCallback,
@@ -9,22 +10,37 @@ import {
   type SyntheticEvent,
 } from 'react'
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
+import { requestMainNavigation } from './main-navigation'
 import type { SettingsSection } from '@/components/settings/nav'
+import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
+
+export type MemoryTarget = { kind: 'personal' } | { kind: 'workspace'; workspaceId: string }
 
 export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
-  | { kind: 'environment'; environmentId: string; tab: 'overview' | 'screen' }
+  | {
+      kind: 'environment'
+      environmentId: string
+      tab: 'overview' | 'screen' | 'settings'
+      section?: EnvironmentSettingsSection
+    }
   | { kind: 'server' }
   | { kind: 'inbox' }
   | { kind: 'memory' }
 
 type UseMainPanelsParams = {
+  standaloneConversations: Conversation[]
   workspaces: WorkspaceWithConversations[]
   setActive: Dispatch<SetStateAction<Conversation | null>>
   refreshWorkspaces: () => Promise<WorkspaceWithConversations[]>
 }
 
-export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseMainPanelsParams) {
+export function useMainPanels({
+  workspaces,
+  standaloneConversations,
+  setActive,
+  refreshWorkspaces,
+}: UseMainPanelsParams) {
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
   const [focusMemoryRequest, setFocusMemoryRequest] = useState(0)
@@ -46,12 +62,17 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   useEffect(() => {
     const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string }>).detail
-      if (!detail?.conversationId) return
+      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string; personal?: boolean }>).detail
+      if (!detail) return
       const workspace = workspaces.find((item) =>
         item.conversations.some((conversation) => conversation.id === detail.conversationId)
       )
-      if (!workspace) return
+      const personal =
+        detail.personal ||
+        standaloneConversations.some(
+          (conversation) => conversation.id === detail.conversationId && !conversation.botOrigin
+        )
+      if (!workspace && !personal) return
       setProjectNotesWs(null)
       setFleetView(null)
       setCreateBot(false)
@@ -60,11 +81,11 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setOnboardingOpen(false)
       setFocusMemoryId(detail.memoryId)
       setFocusMemoryRequest((value) => value + 1)
-      setProjectMemoryWs(workspace.id)
+      setProjectMemoryWs(personal ? PERSONAL_MEMORY_SPACE_ID : workspace!.id)
     }
     window.addEventListener('maestrly:open-memory', open)
     return () => window.removeEventListener('maestrly:open-memory', open)
-  }, [workspaces])
+  }, [workspaces, standaloneConversations])
 
   // Links to other conversations (e.g. conversations started by start_conversations) focus them in place.
   useEffect(() => {
@@ -73,7 +94,10 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       if (!conversationId) return
       const find = (items: WorkspaceWithConversations[]) =>
         items.flatMap((item) => item.conversations).find((conversation) => conversation.id === conversationId)
-      const conversation = find(workspaces) ?? find(await refreshWorkspaces())
+      const conversation =
+        standaloneConversations.find((item) => item.id === conversationId) ??
+        find(workspaces) ??
+        find(await refreshWorkspaces())
       if (!conversation) return
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
@@ -85,7 +109,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     const listener = (event: Event) => void open(event)
     window.addEventListener('maestrly:open-conversation', listener)
     return () => window.removeEventListener('maestrly:open-conversation', listener)
-  }, [refreshWorkspaces, setActive, workspaces])
+  }, [refreshWorkspaces, setActive, workspaces, standaloneConversations])
 
   const mainOverride =
     projectNotesWs ||
@@ -101,14 +125,16 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       window.api.onConversationOpen(async ({ conversation, focus }) => {
         await refreshWorkspaces()
         if (!focus) return
-        setProjectNotesWs(null)
-        setProjectMemoryWs(null)
-        setSettingsOpen(false)
-        setArtifactsOpen(false)
-        setOnboardingOpen(false)
-        setFleetView(null)
-        setCreateBot(false)
-        setActive(conversation)
+        requestMainNavigation(() => {
+          setProjectNotesWs(null)
+          setProjectMemoryWs(null)
+          setSettingsOpen(false)
+          setArtifactsOpen(false)
+          setOnboardingOpen(false)
+          setFleetView(null)
+          setCreateBot(false)
+          setActive(conversation)
+        })
       }),
     [refreshWorkspaces, setActive]
   )
@@ -116,39 +142,45 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
   const handleCreated = useCallback(
     async (conversation: Conversation) => {
       await refreshWorkspaces()
-      setSettingsOpen(false)
-      setArtifactsOpen(false)
-      if (onboardingOpenRef.current) {
-        window.api.setOnboardingDone(true)
-        setOnboardingOpen(false)
-      }
-      setFleetView(null)
-      setCreateBot(false)
-      setActive(conversation)
+      requestMainNavigation(() => {
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        if (onboardingOpenRef.current) {
+          window.api.setOnboardingDone(true)
+          setOnboardingOpen(false)
+        }
+        setFleetView(null)
+        setCreateBot(false)
+        setActive(conversation)
+      })
     },
     [refreshWorkspaces, setActive]
   )
 
   const openSettings = useCallback((sectionOrEvent: SettingsSection | SyntheticEvent = 'chat') => {
     const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
-    setFleetView(null)
-    setCreateBot(false)
-    setSettingsSection(section)
-    setProjectNotesWs(null)
-    setProjectMemoryWs(null)
-    setOnboardingOpen(false)
-    setArtifactsOpen(false)
-    setSettingsOpen(true)
+    requestMainNavigation(() => {
+      setFleetView(null)
+      setCreateBot(false)
+      setSettingsSection(section)
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setOnboardingOpen(false)
+      setArtifactsOpen(false)
+      setSettingsOpen(true)
+    })
   }, [])
 
   const openArtifacts = useCallback(() => {
-    setFleetView(null)
-    setCreateBot(false)
-    setProjectNotesWs(null)
-    setProjectMemoryWs(null)
-    setOnboardingOpen(false)
-    setSettingsOpen(false)
-    setArtifactsOpen(true)
+    requestMainNavigation(() => {
+      setFleetView(null)
+      setCreateBot(false)
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setOnboardingOpen(false)
+      setSettingsOpen(false)
+      setArtifactsOpen(true)
+    })
   }, [])
 
   useEffect(() => {
@@ -157,13 +189,15 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
   }, [openArtifacts])
 
   const openOnboarding = useCallback(() => {
-    setProjectNotesWs(null)
-    setProjectMemoryWs(null)
-    setSettingsOpen(false)
-    setArtifactsOpen(false)
-    setFleetView(null)
-    setCreateBot(false)
-    setOnboardingOpen(true)
+    requestMainNavigation(() => {
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setSettingsOpen(false)
+      setArtifactsOpen(false)
+      setFleetView(null)
+      setCreateBot(false)
+      setOnboardingOpen(true)
+    })
   }, [])
 
   useEffect(() => {
@@ -183,34 +217,40 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   const handleSelect = useCallback(
     (conversation: Conversation) => {
-      setProjectNotesWs(null)
-      setProjectMemoryWs(null)
-      setSettingsOpen(false)
-      setArtifactsOpen(false)
-      setOnboardingOpen(false)
-      setFleetView(null)
-      setCreateBot(false)
-      setActive(conversation)
+      requestMainNavigation(() => {
+        setProjectNotesWs(null)
+        setProjectMemoryWs(null)
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        setOnboardingOpen(false)
+        setFleetView(null)
+        setCreateBot(false)
+        setActive(conversation)
+      })
     },
     [setActive]
   )
 
   const openCreateBot = useCallback((environmentId: string | null = null) => {
-    setCreateBotEnvironmentId(environmentId)
-    setArtifactsOpen(false)
-    setCreateBot(true)
+    requestMainNavigation(() => {
+      setCreateBotEnvironmentId(environmentId)
+      setArtifactsOpen(false)
+      setCreateBot(true)
+    })
   }, [])
 
   const openFleetView = useCallback(
     (view: FleetView) => {
-      setProjectNotesWs(null)
-      setProjectMemoryWs(null)
-      setSettingsOpen(false)
-      setArtifactsOpen(false)
-      setOnboardingOpen(false)
-      setCreateBot(false)
-      setActive(null)
-      setFleetView(view)
+      requestMainNavigation(() => {
+        setProjectNotesWs(null)
+        setProjectMemoryWs(null)
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        setOnboardingOpen(false)
+        setCreateBot(false)
+        setActive(null)
+        setFleetView(view)
+      })
     },
     [setActive]
   )
@@ -226,6 +266,12 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     projectNotesWs,
     setProjectNotesWs,
     projectMemoryWs,
+    memoryTarget:
+      projectMemoryWs === PERSONAL_MEMORY_SPACE_ID
+        ? ({ kind: 'personal' } as MemoryTarget)
+        : projectMemoryWs
+          ? ({ kind: 'workspace', workspaceId: projectMemoryWs } as MemoryTarget)
+          : null,
     focusMemoryId,
     focusMemoryRequest,
     setProjectMemoryWs,

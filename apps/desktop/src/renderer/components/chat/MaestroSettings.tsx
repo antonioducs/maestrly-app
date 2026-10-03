@@ -1,3 +1,4 @@
+import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Save, Sparkles, Trash2 } from 'lucide-react'
@@ -116,6 +117,7 @@ function OrchestratorProfileEditor({
 }
 
 export function MaestroSettings({ config }: { config: ChatConfig }) {
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
   const [payload, setPayload] = useState<MaestroConfigPayload | null>(null)
   const [draft, setDraft] = useState<MaestroConfigV1 | null>(null)
@@ -285,7 +287,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
 
   const deleteProfile = async () => {
     if (selectedProfile?.source !== 'custom') return
-    if (!window.confirm(t('maestro.strategyProfiles.confirmDelete', { name: selectedProfile.name }))) return
+    if (!ownerWindow.confirm(t('maestro.strategyProfiles.confirmDelete', { name: selectedProfile.name }))) return
     setBusy(true)
     try {
       const result = await window.api.chatMaestroStrategyProfilesDelete(selectedProfile.id)

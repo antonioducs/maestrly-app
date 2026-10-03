@@ -3,6 +3,7 @@ import {
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
   type FleetActivityEntry,
@@ -97,7 +98,12 @@ export class Lifecycle {
    */
   private readonly instances = new Map<
     string,
-    { appVersion: string; capabilities: string[]; runtimes: FleetRuntimeInfo[] | null }
+    {
+      appVersion: string
+      capabilities: string[]
+      runtimes: FleetRuntimeInfo[] | null
+      additionalRuntimes?: FleetRuntimeInfo[]
+    }
   >()
   /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
@@ -221,11 +227,19 @@ export class Lifecycle {
   }
   /** A status with runtimes updates its environment's; devices hear of it only when they changed. */
   private updateRuntimes(id: string, status: FleetInstanceStatus) {
-    if (!status.runtimes) return
+    if (!status.runtimes && !status.additionalRuntimes) return
     const environmentId = this.store.getBot(id)?.environmentId
     const instance = environmentId ? this.instances.get(environmentId) : undefined
-    if (!environmentId || !instance || JSON.stringify(instance.runtimes) === JSON.stringify(status.runtimes)) return
-    instance.runtimes = status.runtimes
+    if (!environmentId || !instance) return
+    const runtimes = status.runtimes ?? instance.runtimes
+    const additionalRuntimes = status.additionalRuntimes ?? instance.additionalRuntimes
+    if (
+      JSON.stringify(instance.runtimes) === JSON.stringify(runtimes) &&
+      JSON.stringify(instance.additionalRuntimes) === JSON.stringify(additionalRuntimes)
+    )
+      return
+    instance.runtimes = runtimes
+    instance.additionalRuntimes = additionalRuntimes
     this.emitEnvironment(environmentId, false)
   }
   private stopLink(environmentId: string) {
@@ -482,6 +496,7 @@ export class Lifecycle {
         pendingSince: environment.updateRequestedAt,
       },
       runtimes: instance?.runtimes ?? null,
+      additionalRuntimes: instance?.additionalRuntimes,
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,
@@ -541,6 +556,9 @@ export class Lifecycle {
       ceiling: bot.ceiling,
       selection: bot.selection,
       compaction: this.effectiveCompaction(bot, environment),
+      ...(environment && this.environmentCapabilities(environment.id).includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
+        ? { compactionInherited: !bot.compaction && !!environment.compaction }
+        : {}),
       gateway: {
         peersEnabled: bot.talksTo.length > 0,
         artifactsEnabled: bot.publishArtifacts && this.artifactsEnabled(),
@@ -1288,18 +1306,28 @@ export class Lifecycle {
    */
   async patchEnvironment(
     id: string,
-    input: { name?: string; memoryLimitBytes?: number | null; compaction?: FleetCompactionConfig | null }
+    input: {
+      name?: string
+      memoryLimitBytes?: number | null
+      compaction?: FleetCompactionConfig | null
+      expected?: { name?: string; compaction?: FleetCompactionConfig | null }
+    }
   ): Promise<FleetEnvironment> {
     const environment = this.requireEnvironment(id)
     const limit = input.memoryLimitBytes
     const changesLimit = limit !== undefined && limit !== environment.memoryLimitBytes
     // A default is compared in the environment's turn: an earlier change may still be waiting for it.
-    if (!changesLimit && input.compaction === undefined) {
+    if (!changesLimit && input.compaction === undefined && !input.expected) {
       if (input.name !== undefined && input.name !== environment.name) this.updateEnvironment(id, { name: input.name })
       return this.environment(id)!
     }
     return this.exclusive(id, async () => {
       const current = this.requireEnvironment(id)
+      if (
+        (input.expected?.name !== undefined && input.expected.name !== current.name) ||
+        (input.expected?.compaction !== undefined && !sameCompaction(input.expected.compaction, current.compaction))
+      )
+        throw new GatewayError('CONFLICT', 'Environment settings changed. Reload before saving.')
       const changesCompaction = input.compaction !== undefined && !sameCompaction(input.compaction, current.compaction)
       if (!changesLimit && !changesCompaction) {
         if (input.name !== undefined && input.name !== current.name) this.updateEnvironment(id, { name: input.name })
@@ -1933,6 +1961,7 @@ export class Lifecycle {
       appVersion: health.appVersion,
       capabilities: health.capabilities,
       runtimes: this.instances.get(id)?.runtimes ?? null,
+      additionalRuntimes: this.instances.get(id)?.additionalRuntimes,
     })
     const lingering = await this.installMembers(id, client, null, true)
     this.updateEnvironment(id, { lifecycle: 'running', setup: environmentSetup('ready') })

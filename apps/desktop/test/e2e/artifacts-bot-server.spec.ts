@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { createServer as createNetServer } from 'node:net'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,16 +21,12 @@ interface ModelRequest {
   toolResults: Record<string, string>
 }
 
-async function freePort(): Promise<number> {
-  const server = createNetServer()
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const { port } = server.address() as { port: number }
-  await new Promise((resolve) => server.close(resolve))
-  return port
-}
-
-/** A paired desktop publishes on the server and opens its real isolated viewer from the chat card. */
-test('publishes to the paired bot server, opens its viewer, lists versions and deletes', async () => {
+/**
+ * A paired desktop publishes on the server, keeps a preview of the page, and opens its real isolated viewer from the
+ * chat card, through the gateway's own port: no separate artifact port or tunnel is involved, and nothing is hosted on
+ * this computer.
+ */
+test('publishes to the paired bot server, opens its viewer through the gateway port, lists versions and deletes', async () => {
   test.setTimeout(180_000)
   await access(path.join(desktop, 'out/main/index.js'))
   const root = mkdtempSync(path.join(os.tmpdir(), 'maestrly-artifacts-'))
@@ -43,7 +38,7 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
   git(['add', '-A'])
   git(['-c', 'user.name=E2E', '-c', 'user.email=e2e@example.test', 'commit', '-q', '-m', 'fixture'])
 
-  const gateway = new FakeGateway('artifact-e2e-host', { artifacts: true })
+  const gateway = new FakeGateway('artifact-e2e-host', { artifacts: true, gatewayViewer: true, transfer: true })
   const requests: ModelRequest[] = []
   let app: ElectronApplication | undefined
   let page!: Page
@@ -142,14 +137,6 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
     await api('setOnboardingDone', true)
 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
-    // Keep the local host off: publication must use the selected remote host.
-    await page.evaluate(
-      async (port) => {
-        const artifacts = window.api.artifacts
-        await artifacts.setSettings({ ...(await artifacts.getSettings()), hostEnabled: false, port })
-      },
-      await freePort()
-    )
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('button', { name: 'Bot server', exact: true }).first().click()
     await page.getByRole('button', { name: 'I already have a server', exact: true }).click()
@@ -166,17 +153,16 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
     await enabled.click()
     await expect(enabled).toHaveAttribute('aria-checked', 'true')
     expect(gateway.hostPort).not.toBeNull()
-    const hostUrl = `http://127.0.0.1:${gateway.hostPort}`
-    await page.getByTestId('artifacts-server-address').fill(hostUrl)
+    const gatewayUrl = `http://127.0.0.1:${gateway.port}`
+    // The address other people use; this computer still opens artifacts at the paired gateway.
+    const publicAddress = 'https://bots.example.test'
+    await page.getByTestId('artifacts-server-address').fill(publicAddress)
     await page.getByTestId('artifacts-server-address').press('Enter')
     await expect
       .poll(() => page.evaluate(async () => (await window.api.artifacts.serverHost())?.settings.publicAddress))
-      .toBe(hostUrl)
-    await page.getByRole('combobox', { name: 'Publish new artifacts to' }).click()
-    await page.getByRole('option', { name: 'Bot server', exact: true }).click()
-    await expect
-      .poll(() => page.evaluate(async () => (await window.api.artifacts.getSettings()).publishTo))
-      .toBe('server')
+      .toBe(publicAddress)
+    await expect(page.getByTestId('artifacts-server')).toHaveAttribute('data-state', 'ready')
+    await expect(page.getByTestId('artifacts-server')).toContainText(`127.0.0.1:${gateway.port}`)
     await page.getByRole('button', { name: 'Close', exact: true }).first().click()
 
     const provider = await api('chatAddProvider', {
@@ -221,9 +207,45 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
       async (id) => (await window.api.artifacts.list()).find((item) => item.id === id),
       artifactId
     )
-    expect(remote).toMatchObject({ host: 'server', bot: null, conversation: { id: conversation.id } })
+    expect(remote).toMatchObject({ bot: null, elsewhere: false, conversation: { id: conversation.id } })
     const input = fromWire((upload!.body as { args: unknown[] }).args) as Array<{ files: Array<{ bytes: Uint8Array }> }>
     expect(Buffer.from(input[0]!.files[0]!.bytes).toString()).toBe(PAGE)
+    // Nothing is hosted on this computer.
+    expect(existsSync(path.join(root, 'profile', 'artifacts'))).toBe(false)
+
+    // The desktop renders the new version offscreen through the gateway and keeps a preview of it on the server; the
+    // preview shows the page, not a blank frame.
+    await expect
+      .poll(
+        async () =>
+          (
+            (await page.evaluate(() => (window as any).api.artifacts.list())) as Array<{
+              id: string
+              thumbnailVersion: number | null
+            }>
+          ).find((item) => item.id === artifactId)?.thumbnailVersion,
+        { timeout: 45_000 }
+      )
+      .toBe(1)
+    const preview = await page.evaluate(async (id) => {
+      const thumbnail = await (window as any).api.artifacts.thumbnail(id)
+      const image = new Image()
+      image.src = thumbnail.dataUrl
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')!
+      context.drawImage(image, 0, 0)
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      let dark = 0
+      for (let i = 0; i < pixels.length; i += 4)
+        if (pixels[i]! < 80 && pixels[i + 1]! < 80 && pixels[i + 2]! < 80) dark++
+      return { type: thumbnail.dataUrl.slice(0, 15), version: thumbnail.version, width: image.naturalWidth, dark }
+    }, artifactId)
+    expect(preview).toMatchObject({ type: 'data:image/jpeg', version: 1, width: 640 })
+    // The heading's dark text, on the page's white background.
+    expect(preview.dark).toBeGreaterThan(50)
 
     // The card opens the owner view in this conversation's drawer browser.
     const card = page.getByTestId('artifact-card').last()
@@ -279,14 +301,20 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
     expect(['', 'denied']).toContain(probe.cookie)
     expect(probe.origin).toBe('null')
     expect(probe.api).toBe('blocked')
-    expect(probe.viewerUrl).toContain(`/a/${artifactId}`)
+    // The viewer, its page and the page's stylesheet all came through the gateway's port.
+    expect(probe.viewerUrl.startsWith(`${gatewayUrl}/a/${artifactId}`)).toBe(true)
     // The single-use ticket never stays in the address bar.
     expect(probe.viewerUrl).not.toContain('#o=')
-    expect(probe.contentUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${gateway.hostPort}/c/`))
+    expect(probe.contentUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${gateway.port}/c/[^/]+/index\\.html$`))
+    const stylesheet = await fetch(probe.contentUrl.replace(/index\.html$/, 'app.css'))
+    expect(stylesheet.status).toBe(200)
+    expect(await stylesheet.text()).toBe('h1{color:rgb(1,2,3)}')
 
-    expect(
-      (await fetch(`${hostUrl}/a/${artifactId}/api/state`, { headers: { cookie: probe.ownerCookie } })).status
-    ).toBe(200)
+    const ownerState = await fetch(`${gatewayUrl}/a/${artifactId}/api/state`, {
+      headers: { cookie: probe.ownerCookie },
+    })
+    expect(ownerState.status).toBe(200)
+    expect((await ownerState.json()).sharing.link).toBe(`${publicAddress}/a/${artifactId}`)
 
     // The Artifacts center shows the artifact as a card with its preview and conversation, and details it.
     await page.getByTestId('sidebar-artifacts').click()
@@ -295,12 +323,19 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
     const centerCard = center.locator(`[data-testid="artifact-card"][data-artifact-id="${artifactId}"]`)
     await expect(centerCard).toContainText('Probe')
     await expect(centerCard).toContainText('Artifacts')
-    await expect(centerCard.getByText('Bot server', { exact: true })).toContainText('Bot server')
+    await expect(centerCard.getByTestId('artifact-thumbnail')).toBeVisible()
+    await expect(center.getByTestId('artifacts-server-chip')).toHaveAttribute('data-state', 'ready')
+    await expect(center.getByTestId('artifacts-legacy-banner')).toHaveCount(0)
     await centerCard.getByTestId('artifact-card-select').click()
     const detail = center.getByTestId('artifact-detail')
     await expect(detail).toContainText('Probe')
     await expect(detail.getByTestId('artifact-versions')).toContainText('v1')
     await page.keyboard.press('Escape')
+    await expect(detail).toHaveCount(0)
+    // Clicking outside the details closes them too.
+    await centerCard.getByTestId('artifact-card-select').click()
+    await expect(detail).toBeVisible()
+    await center.getByTestId('artifact-detail-backdrop').click({ position: { x: 20, y: 20 } })
     await expect(detail).toHaveCount(0)
 
     // Deleting it from the card menu removes it, and its content URL stops working.
@@ -310,9 +345,22 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
     await expect(centerCard).toHaveCount(0)
     await expect(center.getByTestId('artifacts-empty')).toContainText('No artifacts yet')
     expect(
-      (await fetch(`${hostUrl}/a/${artifactId}/api/state`, { headers: { cookie: probe.ownerCookie } })).status
+      (await fetch(`${gatewayUrl}/a/${artifactId}/api/state`, { headers: { cookie: probe.ownerCookie } })).status
     ).toBe(404)
     expect((await fetch(probe.contentUrl)).status).toBe(404)
+
+    // A suggested request opens a new conversation with the request in its composer and Maestrly tools on.
+    const before = new Set(
+      ((await api('listStandaloneConversations')) as Array<{ id: string }>).map((conversation) => conversation.id)
+    )
+    await center.getByTestId('artifact-suggestion').first().click()
+    await expect(center).toHaveCount(0)
+    await expect(page.locator('.chat-input:visible').first()).toContainText('clickable prototype of a sign-in screen')
+    const created = ((await api('listStandaloneConversations')) as Array<{ id: string }>).find(
+      (conversation) => !before.has(conversation.id)
+    )
+    expect(created).toBeTruthy()
+    expect((await api('chatGetConvTools', created!.id)).app).toBe(true)
   } finally {
     await app?.close().catch(() => {})
     await gateway.close()

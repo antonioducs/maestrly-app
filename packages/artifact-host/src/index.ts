@@ -23,7 +23,10 @@ export {
   serveAdmin,
 } from './rpc.js'
 export { ARTIFACT_HEADER } from './shell/contract.js'
+export { sameContent } from './schemas.js'
 export type {
+  ArtifactContent,
+  ArtifactExport,
   ArtifactDetail,
   ArtifactFileInfo,
   ArtifactListFilter,

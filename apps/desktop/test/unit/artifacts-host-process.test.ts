@@ -1,8 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { ArtifactHostError } from '@maestrly/artifact-host'
 import { describe, expect, it } from 'vitest'
-import { ArtifactHostProcess, type UtilityLike } from '../../src/main/artifacts/host-process'
-import { type ArtifactHostStatus, type ArtifactSettings, DEFAULT_ARTIFACT_SETTINGS } from '../../src/shared/artifacts'
+import { ArtifactHostProcess, type ArtifactHostStatus, type UtilityLike } from '../../src/main/artifacts/host-process'
 
 class FakeUtility extends EventEmitter implements UtilityLike {
   sent: unknown[] = []
@@ -22,7 +21,7 @@ class FakeUtility extends EventEmitter implements UtilityLike {
   }
 }
 
-function harness(settings: Partial<ArtifactSettings> = {}) {
+function harness() {
   const children: FakeUtility[] = []
   const scheduled: { fn: () => void; ms: number }[] = []
   const statuses: ArtifactHostStatus[] = []
@@ -35,7 +34,6 @@ function harness(settings: Partial<ArtifactSettings> = {}) {
       return child
     },
     dataDir: () => '/data/artifacts',
-    settings: () => ({ ...DEFAULT_ARTIFACT_SETTINGS, ...settings }),
     onStatus: (status) => statuses.push(status),
     onEvent: (event) => events.push(event),
     schedule: (fn, ms) => scheduled.push({ fn, ms }),
@@ -61,20 +59,21 @@ async function errorOf(promise: Promise<unknown>): Promise<ArtifactHostError> {
 }
 
 describe('ArtifactHostProcess', () => {
-  it('starts one worker and resolves once it listens', async () => {
+  it('starts one worker on a free loopback port, without a public address, and resolves once it listens', async () => {
     const { host, children, last } = harness()
+    expect(host.status()).toEqual({ state: 'stopped', port: null })
     const first = host.ensureStarted()
     const second = host.ensureStarted()
     expect(children).toHaveLength(1)
     expect(last().sent[0]).toEqual({
       type: 'init',
-      config: { dataDir: '/data/artifacts', port: 4010, quotaBytes: 2 * 1024 ** 3, publicOrigins: [], ownerName: '' },
+      config: { dataDir: '/data/artifacts', port: 0, quotaBytes: 100 * 1024 ** 3, publicOrigins: [], ownerName: '' },
     })
     expect(host.status().state).toBe('starting')
-    last().reply({ type: 'ready', port: 4010 })
+    last().reply({ type: 'ready', port: 51234 })
     const admin = await first
     expect(await second).toBe(admin)
-    expect(host.status()).toEqual({ state: 'running', port: 4010 })
+    expect(host.status()).toEqual({ state: 'running', port: 51234 })
     expect(await host.ensureStarted()).toBe(admin)
     expect(children).toHaveLength(1)
   })
@@ -89,13 +88,6 @@ describe('ArtifactHostProcess', () => {
     expect(host.status()).toMatchObject({ state: 'error', problem: 'port_in_use' })
     expect(last().killed).toBe(true)
     expect(scheduled).toEqual([])
-  })
-
-  it('does not start when hosting is off', async () => {
-    const { host, children } = harness({ hostEnabled: false })
-    expect((await errorOf(host.ensureStarted())).details?.reason).toBe('disabled')
-    expect(children).toHaveLength(0)
-    expect(host.status()).toMatchObject({ state: 'stopped', problem: 'disabled' })
   })
 
   it('restarts after unexpected exits and gives up after five in two minutes', async () => {
@@ -166,23 +158,6 @@ describe('ArtifactHostProcess', () => {
       { type: 'changed', artifactId: 'A'.repeat(22) },
       { type: 'activity', artifactId: 'A'.repeat(22), kind: 'access_requested' },
     ])
-  })
-
-  it('tells the worker the public address and the owner’s name', async () => {
-    const { host, last } = harness({ publicAddress: 'https://mac.tail1234.ts.net', ownerName: 'Antonio' })
-    const start = host.ensureStarted()
-    expect(last().sent[0]).toEqual({
-      type: 'init',
-      config: {
-        dataDir: '/data/artifacts',
-        port: 4010,
-        quotaBytes: 2 * 1024 ** 3,
-        publicOrigins: ['https://mac.tail1234.ts.net'],
-        ownerName: 'Antonio',
-      },
-    })
-    last().reply({ type: 'ready', port: 4010 })
-    await start
   })
 
   it('reports status transitions', async () => {

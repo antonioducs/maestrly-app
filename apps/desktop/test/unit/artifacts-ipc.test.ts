@@ -24,10 +24,11 @@ function setup() {
     thumbnail: vi.fn(async () => null),
     openExternal: vi.fn(async () => {}),
     openInConversation: vi.fn(async () => ({})),
-    status: vi.fn(async () => ({ state: 'stopped', port: 4010 })),
-    start: vi.fn(async () => ({ state: 'running', port: 4010 })),
-    getSettings: vi.fn(() => settings),
-    setSettings: vi.fn(async (input: unknown) => input),
+    legacyList: vi.fn(async () => []),
+    legacyState: vi.fn(() => ({ phase: 'idle' })),
+    legacyMove: vi.fn(async () => ({ phase: 'running' })),
+    legacyStop: vi.fn(() => ({ phase: 'running', stopping: true })),
+    legacyDelete: vi.fn(async () => {}),
     sharing: vi.fn(async () => ({})),
     setSharing: vi.fn(async () => ({})),
     createInvite: vi.fn(async () => ({ principalId: person, link: 'link' })),
@@ -52,15 +53,6 @@ function setup() {
 
 const id = 'A'.repeat(22)
 const person = 'B'.repeat(22)
-const settings = {
-  publishTo: 'local',
-  hostEnabled: true,
-  port: 4010,
-  quotaGb: 2,
-  publicAddress: '',
-  ownerName: '',
-  linkExpiryDays: 30,
-}
 
 describe('artifacts IPC', () => {
   it('registers every channel behind the trusted-sender guard', () => {
@@ -78,6 +70,11 @@ describe('artifacts IPC', () => {
       'artifacts:invite-create',
       'artifacts:invite-link',
       'artifacts:invite-reset',
+      'artifacts:legacy-delete',
+      'artifacts:legacy-list',
+      'artifacts:legacy-move',
+      'artifacts:legacy-state',
+      'artifacts:legacy-stop',
       'artifacts:list',
       'artifacts:open-external',
       'artifacts:open-in-conversation',
@@ -87,12 +84,8 @@ describe('artifacts IPC', () => {
       'artifacts:server-host-set',
       'artifacts:server-status',
       'artifacts:sessions-revoke',
-      'artifacts:settings-get',
-      'artifacts:settings-set',
       'artifacts:sharing-get',
       'artifacts:sharing-set',
-      'artifacts:start',
-      'artifacts:status',
       'artifacts:thumbnail',
       'artifacts:unseen-count',
     ])
@@ -124,15 +117,23 @@ describe('artifacts IPC', () => {
     })
   })
 
-  it('refuses invalid settings', async () => {
+  it('validates which artifacts on this computer to move or delete', async () => {
     const { call, service } = setup()
-    await expect(call('artifacts:settings-set', { ...settings, port: 80 })).rejects.toThrow()
-    await expect(
-      call('artifacts:settings-set', { ...settings, publicAddress: 'https://x.example/path' })
-    ).rejects.toThrow()
-    expect(service.setSettings).not.toHaveBeenCalled()
-    await call('artifacts:settings-set', { ...settings, port: 5000, publicAddress: 'https://x.example/' })
-    expect(service.setSettings).toHaveBeenCalledWith({ ...settings, port: 5000, publicAddress: 'https://x.example' })
+    for (const ids of [[], ['../x'], [id, 42], 'all', Array.from({ length: 1001 }, () => id)]) {
+      await expect(call('artifacts:legacy-move', ids)).rejects.toThrow()
+      await expect(call('artifacts:legacy-delete', ids)).rejects.toThrow()
+    }
+    expect(service.legacyMove).not.toHaveBeenCalled()
+    expect(service.legacyDelete).not.toHaveBeenCalled()
+    await call('artifacts:legacy-move')
+    expect(service.legacyMove).toHaveBeenCalledWith(undefined)
+    await call('artifacts:legacy-move', [id])
+    expect(service.legacyMove).toHaveBeenLastCalledWith([id])
+    await call('artifacts:legacy-delete', [id, person])
+    expect(service.legacyDelete).toHaveBeenCalledWith([id, person])
+    expect(await call('artifacts:legacy-stop')).toEqual({ phase: 'running', stopping: true })
+    expect(await call('artifacts:legacy-state')).toEqual({ phase: 'idle' })
+    expect(await call('artifacts:legacy-list')).toEqual([])
   })
 
   it('validates comment input before reaching the service', async () => {

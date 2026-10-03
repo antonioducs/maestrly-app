@@ -1,7 +1,6 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
-import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isBotMode } from './fleet/instance/config'
@@ -25,6 +24,7 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron'
 import { resolvePreload } from './resolve-preload'
+import { ChatWindowManager, registerChatWindowIpc } from './chat-window-manager'
 import { killAllPtys } from './pty-manager'
 import {
   initTerminalManager,
@@ -173,7 +173,7 @@ import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
 import { ServerArtifacts } from './artifacts/server-artifacts'
-import { createDesktopSources, localSource } from './artifacts/sources'
+import { createDesktopSources, serverUnavailable } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
@@ -186,7 +186,7 @@ import { registerArtifactsIpc } from './artifacts/ipc'
 import { ArtifactsService } from './artifacts/service'
 import { captureArtifactThumbnail } from './artifacts/thumbnail-capture'
 import { ThumbnailQueue } from './artifacts/thumbnail-queue'
-import { getArtifactSettings, setArtifactSettings } from './artifacts/settings'
+import { LegacyArtifacts } from './artifacts/legacy'
 import { createConversationFileScope } from './conversation-file-scope'
 import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
@@ -215,6 +215,7 @@ if (process.platform === 'linux') {
 const registry = new AgentRegistry()
 
 let mainWindow: BrowserWindow | null = null
+let chatWindowManager: ChatWindowManager | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 
@@ -240,33 +241,37 @@ function placeEnvironmentScreen(window: BrowserWindow): void {
   window.setBounds(environmentScreenBounds(screen.getPrimaryDisplay().bounds))
 }
 
-// The artifact host utility process; created once the store is ready.
+// The artifact host on this computer, opened only for what earlier versions published here; created with the store.
 let artifactHost: ArtifactHostProcess | null = null
+let legacyArtifacts: LegacyArtifacts | null = null
 
 function initArtifacts(): void {
-  artifactHost = new ArtifactHostProcess({
-    fork: forkArtifactHostWorker,
-    dataDir: artifactsDataDir,
-    settings: getArtifactSettings,
-    onStatus: (status) => broadcast('artifacts:status', status),
-    onEvent: createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound }),
-  })
   let thumbnails: ThumbnailQueue | null = null
+  const vault = new InviteVault()
   const server = new ServerArtifacts({
     fleet: fleetClientService,
     viewerPort: () => fleetInstallerService.artifactsViewerPort(),
   })
-  const local = localSource({ host: artifactHost, settings: getArtifactSettings })
+  if (!isBotMode()) {
+    artifactHost = new ArtifactHostProcess({ fork: forkArtifactHostWorker, dataDir: artifactsDataDir })
+    legacyArtifacts = new LegacyArtifacts({
+      dataDir: artifactsDataDir,
+      host: artifactHost,
+      forgetPeople: (ids) => {
+        for (const id of ids) vault.remove(id)
+      },
+      onState: (state) => broadcast('artifacts:legacy-state', state),
+      onChanged: () => broadcast('artifacts:changed'),
+    })
+  }
   const sources = isBotMode()
     ? createBotSources((id) => {
         const bot = botRuntimeForConversation(id)
         return bot?.artifactsEnabled ? botArtifactSource(bot) : null
       })
     : createDesktopSources({
-        local,
         server: () => server.source(),
-        settings: getArtifactSettings,
-        unavailable: () => server.unavailable(),
+        unavailable: () => server.unavailable() ?? serverUnavailable(),
       })
   const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
   if (!isBotMode())
@@ -279,11 +284,9 @@ function initArtifacts(): void {
     sources,
     emitChanged: () => broadcast('artifacts:changed'),
     server: isBotMode() ? undefined : server,
+    legacy: legacyArtifacts ?? undefined,
     botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
-    host: artifactHost,
-    vault: new InviteVault(),
-    settings: getArtifactSettings,
-    saveSettings: setArtifactSettings,
+    vault,
     getConversation,
     workspaceName: (id) => getWorkspace(id)?.name,
     requestThumbnail: (id, version) => thumbnails?.request(id, version),
@@ -294,7 +297,6 @@ function initArtifacts(): void {
       createBrowserTab(convId, url, { activate })
       if (activate) focusBrowserDrawer(convId)
     },
-    emitStatus: (status) => broadcast('artifacts:status', status),
   })
   setArtifactsService(service)
   thumbnails = new ThumbnailQueue({
@@ -309,7 +311,7 @@ function initArtifacts(): void {
 
 async function stopAllLiveWork(): Promise<void> {
   await botHost.stop()
-  await artifactHost?.stop()
+  await legacyArtifacts?.dispose()
   await cancelProjectSetupsAndWait?.()
   await Promise.all([
     ...listAllConversations().map((conversation) => stopConversationLive(conversation.id)),
@@ -552,7 +554,17 @@ async function createWindow(): Promise<void> {
   wc.on('did-fail-load', (_e, code, desc, url) => console.error(`[did-fail-load] ${code} ${desc} ${url}`))
   wc.on('preload-error', (_e, p, err) => console.error(`[preload-error] ${p}`, err))
 
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+  chatWindowManager?.dispose()
+  chatWindowManager = new ChatWindowManager(wc, {
+    targetExists: (target) =>
+      target.kind === 'bot'
+        ? fleetClientService.getSnapshot().bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived')
+        : !!getConversation(target.id),
+    focusSource: focusMainWindow,
+    workArea: (bounds) =>
+      (bounds ? screen.getDisplayMatching(bounds) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()))
+        .workArea,
+  })
   wc.on('will-navigate', (e) => e.preventDefault())
 
   const sendFullscreen = () => wc.send('window:fullscreen', mainWindow?.isFullScreen() ?? false)
@@ -634,6 +646,7 @@ async function createWindow(): Promise<void> {
     }
     if (!confirmQuitOnce(() => e.preventDefault())) return
 
+    chatWindowManager?.dispose()
     floatingManager.flushPendingFloatPersists()
     floatingManager.disposeAll()
     popupManager.disposeAll()
@@ -648,6 +661,7 @@ async function createWindow(): Promise<void> {
 }
 
 function registerIpc(): void {
+  registerChatWindowIpc(ipcMain, () => chatWindowManager)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mhandle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
     ipcMain.handle(channel, guardHandle(fn))
@@ -971,13 +985,6 @@ app.whenReady().then(async () => {
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   void botHost.restore()
-  // Existing artifacts are served again at launch; a first artifact starts the host on demand.
-  if (
-    !isBotMode() &&
-    getArtifactSettings().hostEnabled &&
-    existsSync(path.join(artifactsDataDir(), 'artifacts.sqlite'))
-  )
-    void getArtifactsService().start()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show()
@@ -1077,6 +1084,8 @@ app.on('before-quit', (e) => {
     return
   }
   if (!confirmQuitOnce(() => e.preventDefault())) return
+
+  chatWindowManager?.dispose()
 
   if (!projectSetupsFlushed && cancelProjectSetupsAndWait) {
     e.preventDefault()

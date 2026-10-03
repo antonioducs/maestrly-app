@@ -6,13 +6,13 @@ import type {
   ArtifactCommentView,
   ArtifactDetailView,
   ArtifactEventView,
-  ArtifactHostStatus,
   ArtifactListItem,
   ArtifactRemoveResult,
-  ArtifactSettings,
   ArtifactSharingPatch,
   ArtifactSharingView,
   ArtifactThumbnailView,
+  LegacyArtifactView,
+  LegacyMoveState,
 } from '../shared/artifacts'
 
 export const artifactsApi = {
@@ -30,11 +30,11 @@ export const artifactsApi = {
       ipcRenderer.invoke('artifacts:open-external', id, version),
     openInConversation: (conversationId: string, id: string, version?: number): Promise<void> =>
       ipcRenderer.invoke('artifacts:open-in-conversation', conversationId, id, version),
-    status: (): Promise<ArtifactHostStatus> => ipcRenderer.invoke('artifacts:status'),
-    start: (): Promise<ArtifactHostStatus> => ipcRenderer.invoke('artifacts:start'),
-    getSettings: (): Promise<ArtifactSettings> => ipcRenderer.invoke('artifacts:settings-get'),
-    setSettings: (settings: ArtifactSettings): Promise<ArtifactSettings> =>
-      ipcRenderer.invoke('artifacts:settings-set', settings),
+    legacyList: (): Promise<LegacyArtifactView[]> => ipcRenderer.invoke('artifacts:legacy-list'),
+    legacyState: (): Promise<LegacyMoveState> => ipcRenderer.invoke('artifacts:legacy-state'),
+    legacyMove: (ids?: string[]): Promise<LegacyMoveState> => ipcRenderer.invoke('artifacts:legacy-move', ids),
+    legacyStop: (): Promise<LegacyMoveState> => ipcRenderer.invoke('artifacts:legacy-stop'),
+    legacyDelete: (ids?: string[]): Promise<void> => ipcRenderer.invoke('artifacts:legacy-delete', ids),
     sharing: (id: string): Promise<ArtifactSharingView> => ipcRenderer.invoke('artifacts:sharing-get', id),
     setSharing: (id: string, patch: ArtifactSharingPatch): Promise<ArtifactSharingView> =>
       ipcRenderer.invoke('artifacts:sharing-set', id, patch),
@@ -71,10 +71,10 @@ export const artifactsApi = {
       ipcRenderer.on('artifacts:activity', listener)
       return () => ipcRenderer.removeListener('artifacts:activity', listener)
     },
-    onStatus: (cb: (status: ArtifactHostStatus) => void): (() => void) => {
-      const listener = (_e: unknown, status: ArtifactHostStatus) => cb(status)
-      ipcRenderer.on('artifacts:status', listener)
-      return () => ipcRenderer.removeListener('artifacts:status', listener)
+    onLegacyState: (cb: (state: LegacyMoveState) => void): (() => void) => {
+      const listener = (_e: unknown, state: LegacyMoveState) => cb(state)
+      ipcRenderer.on('artifacts:legacy-state', listener)
+      return () => ipcRenderer.removeListener('artifacts:legacy-state', listener)
     },
   },
 }

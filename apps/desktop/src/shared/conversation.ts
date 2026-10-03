@@ -3,6 +3,7 @@ import type { SubagentProfileRulesV1 } from './subagent-profiles'
 import type { ChatGptWebCapabilities, ChatMode, ChatSkillSelection } from './chat'
 import type { ConversationExperience } from './conversation-experience'
 import type { MaestroConfigV1 } from './maestro'
+import type { AppToolGroup } from './app-tool-groups'
 
 export type ConversationMode = 'worktree' | 'local'
 export type ConversationStatus = 'idle' | 'working' | 'ready' | 'waiting' | 'asking' | 'error'
@@ -71,10 +72,15 @@ export interface ConvUiPrefs {
      */
     imagesUnsupported?: boolean
     /**
-     * Conversation app-tool enablement, disabled MCP servers, and image-generation override; absent image
-     * setting inherits global chat.imageGen.
+     * Conversation app-tool enablement, per-group app-tool overrides, disabled MCP servers, and image-generation
+     * override; absent app/appGroups/imageGen entries inherit the global chat.appTools* and chat.imageGen flags.
      */
-    tools?: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
+    tools?: {
+      app?: boolean
+      appGroups?: Partial<Record<AppToolGroup, boolean>>
+      mcpDisabled?: string[]
+      imageGen?: boolean
+    }
     /**
      * Conversation-only skill overrides map names to on/off; missing entries inherit global/base skill
      * selection.

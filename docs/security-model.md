@@ -97,7 +97,39 @@ servers retain independent credential stores. Maestrly App cannot guarantee
 their encryption, expiry, revocation, or provider retention. Renderer state sees
 connection presence and sanitized status, not credential values.
 
+The Google Antigravity ACP server is one of these stores. Each Google account
+runs its own server process with an app-owned home directory (created with
+owner-only permissions) as `HOME` and `GEMINI_HOME`, and the server writes its
+OAuth token to a file there. Maestrly reads only the `project_id` field of that
+file to identify the account and never uses the token itself. Signing out or
+resetting local data deletes the directory.
+
 ### Configuring bot environments from a paired device
+
+The environment settings API is an explicit set of validated owner operations
+under `/v1/environments/:eid/settings/`. It requires both gateway and running
+image support for `environment-settings-v1`, uses the existing paired-device
+and control-token boundary, and adds no public instance port. A bot's gateway
+token cannot call these administrator routes. Reads and writes always identify
+the environment; they cannot fall back to the controller's local profile.
+
+Settings responses contain opaque revisions. Substitutive edits and removals
+compare those revisions before changing data, including changes made by local
+settings or imports. Encrypted detail writes invalidate the same revisions.
+MCP URL/command/argument values and header/environment values remain protected;
+responses expose only presence, key names, and a sanitized HTTP host. Omitted
+replacements preserve stored secrets; removal is explicit. Credential-bearing
+writes require secure storage and preserve the previous configuration on failure.
+
+MCP connection diagnostics can start a configured stdio process or connect to its
+HTTP endpoint inside the environment. They list tools without executing them,
+use an isolated connection with a deadline, deduplicate concurrent diagnostics
+of one revision, and allow at most four active diagnostics. Reconfiguring a
+server retires its pooled connection after existing calls finish. Global skill
+editing accepts a managed skill name and bounded Markdown, never a caller's
+filesystem path. Writes validate containment, reject unsafe symlinks, preserve
+bundled resources, and replace the manifest atomically.
+
 
 Every paired device can configure every environment and bot on its gateway.
 Selected stored credentials flow from the desktop app's main process through the gateway
@@ -113,13 +145,13 @@ paired device's name and counts only, also when a desktop app from before enviro
 configures one of its bots. Unchanged imports and interactive logins do not
 create this activity; the existing API-key removal route does not create it
 either. Copilot and Cursor imports share the same credential between your computer and
-the environment. Codex, Claude and Grok sign in to separate sessions in the
+the environment. Codex, Claude, Grok and Google AI sign in to separate sessions in the
 environment. Accounts and MCP imports are refused when secure storage is
 unavailable in the environment.
 
 Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
 `claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
-subdomains for Grok. The desktop app's callback relay binds only to loopback, accepts the
+subdomains for Grok; and `accounts.google.com` for Google AI. The desktop app's callback relay binds only to loopback, accepts the
 attempt's exact callback path and closes on completion, cancellation or expiry.
 It never renders bot-provided content and redirects only to allowed provider
 origins; other responses use the desktop app's own completion or failure page. Codex
@@ -161,21 +193,28 @@ capabilities to arbitrary pages.
 The embedded VS Code server and ChatGPT Web bridge bind to loopback and use
 random tokens. The editor token file receives best-effort owner-only permissions.
 The ChatGPT bridge uses a random per-session path and validates loopback hosts.
+The Google Antigravity tool endpoint binds to `127.0.0.1`, rejects non-loopback
+`Host` headers, and requires a random bearer token per ACP session; each token
+exposes only the tools that session was granted, and every call still passes
+Maestrly's permission broker.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
 
 ## Artifacts
 
 Artifacts are active HTML, CSS, and JavaScript written by agents, so the desktop
-renders them as untrusted content. The local artifact host runs in an Electron utility
-process that receives only its configuration and holds no app credentials. It
-is not a sandbox: it runs as the same user with full Node.js access, and it
-isolates crashes and keeps secrets out of its memory.
+renders them as untrusted content. They are hosted only on the bot server. The
+desktop starts a local artifact host only for what earlier versions published on
+this computer, to list, export, move, or delete it; those artifacts never open
+in a viewer. That host runs in an Electron utility process that receives only its
+configuration and holds no app credentials. It is not a sandbox: it runs as the
+same user with full Node.js access, and it isolates crashes and keeps secrets out
+of its memory. It listens on an ephemeral `127.0.0.1` port and stops when idle.
 
-The desktop host listens on `127.0.0.1` only and refuses requests whose `Host` is
-neither a loopback name on its port nor the public address the owner configured,
-which blocks DNS rebinding. Other people reach it only through a proxy the owner
-runs, such as Tailscale Serve. Artifact IDs and tokens carry at least 128 random
+Every artifact host refuses requests whose `Host` is neither a loopback name nor
+the public address the owner configured, which blocks DNS rebinding. Other
+people reach the server's host only through a route the owner runs, such as
+Tailscale Serve. Artifact IDs and tokens carry at least 128 random
 bits, and tokens are stored as SHA-256 digests. A missing, deleted, private, or
 expired artifact, and one that is not shared with whoever asks, answer the same
 404, and responses ask crawlers not to index them.
@@ -190,6 +229,18 @@ gateway exempt so host port forwarding and proxies can reach the viewer.
 ports. Non-loopback Host values still require the exact configured public
 address allowlist; arbitrary DNS names are not accepted.
 
+The gateway's public port also forwards the viewer's paths (`/a/`, `/c/`,
+`/_maestrly/shell/`, and `/robots.txt`) to that listener over the container's
+loopback, after applying its fleet network rule to the original client. It keeps
+the request's Host, Origin, and cookies, so the host applies the same checks as
+on its own port, and limits request bodies to 1 MiB. The target is fixed, never
+taken from the request; restarting or disabling hosting cuts requests in
+progress, and requests in the meantime are answered as unavailable. The bot API
+on that port still refuses any request with an `Origin` header and requires a
+device token. Sharing an origin with the viewer gives artifact pages no access to
+it: they run with an opaque origin, and the bot API uses bearer tokens, not
+cookies.
+
 Paired devices use authenticated `/v1/artifacts/admin` and
 `/v1/artifacts/upload` RPC endpoints to manage server artifacts. New desktop
 publications are stamped with the authenticated device's owner ID. Bots use
@@ -200,6 +251,17 @@ ownership on creation, and permits replies and resolution only in that scope.
 Bots cannot mint owner viewer tickets or administer sharing or deletion. A
 paired desktop may manage all server artifacts, but its conversation tools
 remain scoped to its own device and project or standalone conversation.
+
+Moving an earlier local artifact uses three device-only methods: export
+returns an artifact's manifest, blob upload stores content under the SHA-256 the
+host computes from the bytes, within the file size and storage limits, and import
+recreates the artifact under its original ID only when every referenced blob is
+present and the manifest passes the normal path, file, version, and thumbnail
+checks. Uploaded blobs that no import references are removed when the host
+restarts. Import never overwrites a different artifact with the same ID, records
+the authenticated device as owner, and carries no
+sharing state, people, sessions, or activity, so a moved artifact starts
+private. Bots cannot call these methods.
 
 Admin request bodies are limited to 1 MiB and upload bodies to 72 MiB; normal
 artifact file and version limits still apply. The database snapshot method is
@@ -415,6 +477,37 @@ embeddings are reproducible caches, not authoritative copies. Promoting local me
 explicit write and then follows that repository's own review and disclosure
 rules.
 
+### Personal chat memory
+
+Ordinary desktop Chats share one personal memory collection in the local profile.
+The host derives its space from the calling conversation; memory tools do not
+accept a space selector. Project conversations, bot-originated conversations and
+fleet runtimes cannot use that collection through their memory tools. This is a
+host-tool access boundary, not an operating-system sandbox for agents allowed to
+run commands with the user's filesystem permissions.
+
+Personal reads remain available in Ask/Plan; mutations require Agent/Design and
+the existing permission broker. These tools do not require enabling unrelated
+app tools. A shared collection does not grant another chat's saved permissions
+or access to its transcript. The user can manage entries while assistant access
+is disabled. Disabling personal memory prevents new tool access, context
+injection and background writes; it cannot retract data already sent to a
+provider or erase historical messages.
+
+Companion has a separate personal-memory capability, disabled by default.
+Project-memory consent does not grant personal access. Read and Write are
+session-scoped, and context delivery must respect the same capability as tools.
+Revoked or ended sessions cannot continue reading or writing the collection.
+
+Personal background extraction is independently opt-in and sends local
+conversation excerpts to the selected model. Each accepted operation must cite
+a user message from the processed excerpt. This validates provenance, not the
+truth of the extracted claim. Assistant/tool text is not an authorized source of
+personal facts. Cancellation and target-version checks discard late or stale
+results. Memories remain evidence below system instructions, the user's current
+instructions and permission policy. Personal memory is not synchronized with
+the fleet gateway or other devices.
+
 ## Agent and bot memory
 
 Fleet owner memory lives in the gateway. Global entries are included in every
@@ -463,12 +556,39 @@ inherit explicit execution profiles and cannot silently become a separate
 authority. Context budgeting and redaction reduce accidental disclosure but
 cannot determine whether user-authored prompt content is sensitive.
 
+The Google Antigravity ACP server's native tools are all disabled, including its
+file viewer, which would otherwise read its working directory and the account
+home without asking. Its permission requests are approved once only for calls
+to Maestrly's own tool endpoint and rejected otherwise. The server's working
+directory is an app-owned folder, never the project, so it does not load hooks or
+settings from repository files.
+
 ## Runtime and package provenance
 
 Optional provider binaries and Local ML assets use pinned versions, target
 selection, and integrity or manifest checks where their upstream format permits.
 The package wrapper stages one target architecture, rejects foreign native
 packages, verifies resources outside the ASAR, and enforces size/leakage budgets.
+
+The Google Antigravity ACP server is downloaded on sign-in and can be updated
+independently of Maestrly. Discovery reads bounded metadata from the ACP
+registry's `antigravity-acp/agent.json` on `raw.githubusercontent.com`, requiring a
+stable version and canonical per-platform `dl.google.com` archive URLs and launch
+arguments. Google does not publish checksums for these archives. The built-in
+version has measured SHA-256 pins; new versions rely on Google's HTTPS origin
+with redirects prohibited, then record a locally computed digest after layout
+checks and a credential-free ACP handshake. This is origin trust, not publisher
+signature verification. Subsequent downloads of an accepted version must match
+its recorded digest; accepted metadata and current/previous pointers support
+offline verification and rollback. Codex and Claude still require npm's published
+SHA-512 integrity.
+
+The ACP validation process has a temporary home and working directory and no
+account credentials. It checks protocol, agent version and required advertised
+capabilities; it cannot prove authenticated model/tool behavior. An incompatible
+candidate is not activated. Desktop updates are manual by default; bots update
+installed ACP runtimes automatically. Active processes keep their leases until
+they exit. Bots recycle them only while idle; account homes and sign-in survive.
 
 The Codex runtime can also be updated independently of Maestrly releases. The
 main process reads only the `latest` stable version document of `@openai/codex`

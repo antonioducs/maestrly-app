@@ -1,3 +1,5 @@
+import { PERSONAL_MEMORY_SPACE_ID } from '../../shared/memory'
+import { readPersonalMemorySettings, onPersonalMemorySettingsChanged } from './personal-memory-settings'
 import { EventEmitter } from 'node:events'
 import { getMemoryEnabled, setMemoryEnabled } from '../store/workspaces'
 
@@ -40,4 +42,21 @@ export function onWorkspaceMemoryEnabledChanged(
 ): () => void {
   events.on('changed', listener)
   return () => events.off('changed', listener)
+}
+
+export function isMemorySpaceEnabled(spaceId: string): boolean {
+  return spaceId === PERSONAL_MEMORY_SPACE_ID ? readPersonalMemorySettings().enabled : isWorkspaceMemoryEnabled(spaceId)
+}
+
+export function onMemorySpaceEnabledChanged(
+  listener: (event: { workspaceId: string; enabled: boolean }) => void
+): () => void {
+  const workspace = onWorkspaceMemoryEnabledChanged(listener)
+  const personal = onPersonalMemorySettingsChanged((settings) =>
+    listener({ workspaceId: PERSONAL_MEMORY_SPACE_ID, enabled: settings.enabled })
+  )
+  return () => {
+    workspace()
+    personal()
+  }
 }

@@ -5,6 +5,7 @@ import { getConversation } from '../store'
 import {
   getProvider,
   getProviderKind,
+  isAntigravitySubscriptionProvider,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isCursorSubscriptionProvider,
@@ -12,6 +13,8 @@ import {
   isGrokSubscriptionProvider,
   subscriptionAccountId,
 } from './catalog'
+import { runAntigravityIsolatedPrompt } from './antigravity-subscription/isolated-prompt'
+import { getAntigravitySubscriptionManager } from './antigravity-subscription/manager'
 import { getCursorSubscriptionManager } from './cursor-subscription/manager'
 import { summarizeWithCursorRuntime } from './cursor-subscription/portable-summarizer'
 import { hasApiKey } from './credentials'
@@ -189,6 +192,24 @@ export async function runOneShotText(args: {
     })
     record('cursor-subscription', result.usage)
     return { text: result.text, usage: oneShotUsage(result.usage) }
+  }
+
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    const manager = getAntigravitySubscriptionManager(accountId)
+    if (!manager.getStatus().authenticated) throw new Error('One-shot provider is not authenticated.')
+    const identity = manager.getAccountIdentity()
+    if (!identity.fingerprint) throw new Error('One-shot provider is not authenticated.')
+    // The ACP server reports no token usage.
+    const result = await runAntigravityIsolatedPrompt({
+      manager,
+      accountIdentity: identity,
+      modelId,
+      system,
+      prompt,
+      signal,
+      ...(effort ? { reasoningEffort: effort } : {}),
+    })
+    return { text: result.text, usage: oneShotUsage(undefined) }
   }
 
   const provider = getProvider(providerId)

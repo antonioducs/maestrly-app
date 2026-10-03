@@ -19,7 +19,7 @@ export default {
     artifact_create: {
       title: 'Publish artifact',
       description:
-        "Publishes a self-contained web page (HTML, CSS, JavaScript and assets) as a versioned artifact that the user opens from the chat or the Artifacts center. Pass files inline with `files`, or publish a build output folder with `directory` (relative to this conversation's files). The entry file defaults to index.html. Artifacts are private to the user. Use it for prototypes, reports, dashboards and other pages worth viewing in a browser.",
+        "Publishes a self-contained web page (HTML, CSS, JavaScript and assets) as a versioned artifact on the user's bot server, which the user opens from the chat or the Artifacts center. Pass files inline with `files`, or publish a build output folder with `directory` (relative to this conversation's files). The entry file defaults to index.html. Artifacts are private to the user. Use it for prototypes, reports, dashboards and other pages worth viewing in a browser.",
       params: {
         title: 'short title shown to the user',
         description: 'optional one-line description',
@@ -443,7 +443,7 @@ export default {
     memory_upsert: {
       title: 'Remember durable information',
       description:
-        'Creates or updates one structured memory. Use only for explicitly durable information that can change a future decision; never store hypotheses, raw output, secrets, or temporary state.',
+        'Creates a structured memory when id is omitted, or updates an existing entry by id in the current memory space. Use only for explicitly durable information that can change a future decision; never store hypotheses, raw output, secrets, or temporary state.',
     },
     memory_archive: { title: 'Archive memory', description: 'Reversibly removes a local memory from future searches.' },
     memory_restore: { title: 'Restore memory', description: 'Restores an archived local memory to active status.' },
@@ -635,13 +635,17 @@ export default {
       invalidEncoding: '{{path}} is not valid base64.',
       inlineTooLarge: 'Inline files exceed 5 MiB in total. Write them to a folder and publish it with directory.',
       directoryRefused: 'The directory cannot be published: {{message}}',
-      serverUnavailable: 'The bot server is unavailable. Check its connection in Settings → Bots.',
+      serverAbsent:
+        'No bot server is connected, and artifacts are published only on a bot server. Tell the user to connect one in Settings → Artifacts; do not publish the page some other way unless they ask.',
+      serverUnsupported:
+        'The bot server is too old to host artifacts. Tell the user to update it in Settings → Bot server.',
+      serverUnavailable: 'The bot server is unreachable. Check its connection in Settings → Bot server.',
       serverOff: 'Artifact hosting is turned off on the bot server. Enable it in Settings → Artifacts.',
       botOff: 'Publishing artifacts is turned off for this bot. Ask the owner to enable it.',
       noViewer:
         'No viewer address is available. Check the server tunnel or set its public address in Settings → Artifacts.',
-      hostDisabled: 'Artifact hosting is turned off in Settings → Artifacts.',
-      portInUse: 'Port {{port}} is in use. Change it in Settings → Artifacts.',
+      onThisComputer:
+        'This artifact is still on this computer, from an earlier version. It opens and changes again once the user moves it to the bot server in Settings → Artifacts.',
       hostUnavailable: 'The artifact host is unavailable. Check Settings → Artifacts.',
       internal: 'The artifact operation failed unexpectedly.',
       invalid_input: 'Invalid input: {{message}}',
@@ -662,7 +666,8 @@ export default {
       version_limit: 'This artifact reached 200 versions. Publish a new artifact instead.',
       quota_exceeded:
         'The artifact storage limit was reached. The user can raise it in Settings → Artifacts or delete artifacts.',
-      port_in_use: 'Port {{port}} is in use. Change it in Settings → Artifacts.',
+      port_in_use: 'The artifact host could not start: port {{port}} is in use.',
+      already_exists: 'An artifact with this ID already exists.',
       storage: 'The artifact storage failed: {{message}}',
       host_unavailable: 'The artifact host is unavailable. Check Settings → Artifacts.',
       limit_reached: '{{message}}.',
