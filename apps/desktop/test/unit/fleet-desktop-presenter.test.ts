@@ -315,7 +315,8 @@ describe('BrowserPresenter', () => {
   })
 })
 
-describe('the desktop socket and the presenter', () => {
+// The desktop socket is a Unix socket inside the bot's Linux container; Windows cannot listen on one at a file path.
+describe.skipIf(process.platform === 'win32')('the desktop socket and the presenter', () => {
   let dir = ''
   beforeEach(async () => {
     vi.useRealTimers()

@@ -1626,7 +1626,20 @@ async function runFleetScenario(workspaceOnly: boolean) {
         expect(screenConnections).toBe(streamsBefore)
         // The header button and the placeholder both bring the window forward.
         await expect(conversation.getByRole('button', { name: 'Focar janela do chat', exact: true })).toHaveCount(2)
-        await child.getByRole('button', { name: 'Voltar ao app', exact: true }).click()
+        const closed = child.waitForEvent('close')
+        await child
+          .getByRole('button', { name: 'Voltar ao app', exact: true })
+          .click()
+          .catch((error: unknown) => {
+            // Electron may destroy the window before acknowledging the mouse-up to Playwright.
+            if (
+              !child.isClosed() ||
+              !(error instanceof Error) ||
+              !error.message.includes('Target page, context or browser has been closed')
+            )
+              throw error
+          })
+        await closed
         await expect(placeholder).toBeHidden()
         await expect(draft).toHaveText('Draft that travels with the window')
         await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
