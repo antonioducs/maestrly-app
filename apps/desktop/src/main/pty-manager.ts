@@ -27,7 +27,14 @@ const exitWaiters = new Map<string, Set<() => void>>()
 const subscribers = new Map<string, Set<WebContents>>()
 const subscribedIdsByWebContents = new Map<WebContents, Set<string>>()
 const subscriberCleanup = new Map<WebContents, () => void>()
+const outputListeners = new Map<string, Set<PtyOutputListener>>()
+const exitListeners = new Map<string, Set<PtyExitListener>>()
 const MAX_OUTPUT = 256 * 1024
+
+/** Receives the output of a PTY in the main process, with the position the snapshot reports for it. */
+export type PtyOutputListener = (data: string, meta: PtyStreamMeta) => void
+/** Receives the exit code of a PTY's current process. */
+export type PtyExitListener = (code: number) => void
 
 export interface CreateShellPtyArgs {
   id: string
@@ -55,6 +62,28 @@ function appendOutput(id: string, data: string, generation: number): PtyStreamMe
   output.data = `${output.data}${data}`.slice(-MAX_OUTPUT)
   outputs.set(id, output)
   return { generation, sequence: output.sequence }
+}
+
+function addListener<T>(registry: Map<string, Set<T>>, id: string, listener: T): () => void {
+  const listeners = registry.get(id) ?? new Set<T>()
+  listeners.add(listener)
+  registry.set(id, listeners)
+  return () => {
+    const current = registry.get(id)
+    if (!current?.delete(listener)) return
+    if (current.size === 0) registry.delete(id)
+  }
+}
+
+/** Runs the listeners of `id` over a copy, so one may cancel itself and none may break the PTY or the others. */
+function notify<T>(registry: Map<string, Set<T>>, id: string, call: (listener: T) => void): void {
+  for (const listener of [...(registry.get(id) ?? [])]) {
+    try {
+      call(listener)
+    } catch (error) {
+      console.error('[pty] Listener failed', error)
+    }
+  }
 }
 
 function rememberOwnedPty(id: string): void {
@@ -93,6 +122,7 @@ export function createShellPty(args: CreateShellPtyArgs): void {
     outputs.delete(args.id)
     args.onData(`\r\n\x1b[31m[terminal startup failed: ${(error as Error).message}]\x1b[0m\r\n`)
     args.onExit(1, true, generation)
+    notify(exitListeners, args.id, (listener) => listener(1))
     return
   }
 
@@ -102,7 +132,9 @@ export function createShellPty(args: CreateShellPtyArgs): void {
     const current = sessions.get(args.id)
     if (current?.proc !== proc || current.generation !== generation) return
     incrementPerformanceCounter('ptyChunks')
-    args.onData(data, appendOutput(args.id, data, generation))
+    const meta = appendOutput(args.id, data, generation)
+    args.onData(data, meta)
+    notify(outputListeners, args.id, (listener) => listener(data, meta))
   })
   proc.onExit(({ exitCode, signal }) => {
     const current = sessions.get(args.id)
@@ -121,7 +153,22 @@ export function createShellPty(args: CreateShellPtyArgs): void {
       console.error('[pty] Shell exited unexpectedly', { exitCode, signal })
     }
     args.onExit(exitCode, isCurrent, generation)
+    if (isCurrent) notify(exitListeners, args.id, (listener) => listener(exitCode))
   })
+}
+
+/**
+ * Listens to the output of a PTY in the main process. A listener hears each chunk after the ring buffer took it, so
+ * a snapshot read at subscription time and the chunks whose sequence is greater join without a gap. Returns the
+ * function that cancels the subscription.
+ */
+export function onPtyOutput(id: string, listener: PtyOutputListener): () => void {
+  return addListener(outputListeners, id, listener)
+}
+
+/** Listens to the end of the current process of a PTY; stays subscribed across a restart under the same id. */
+export function onPtyExit(id: string, listener: PtyExitListener): () => void {
+  return addListener(exitListeners, id, listener)
 }
 
 export function subscribePtyData(contents: WebContents, id: string): void {

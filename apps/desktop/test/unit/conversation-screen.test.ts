@@ -157,9 +157,12 @@ vi.mock('../../src/main/drawer/popup', () => ({ focusViewInMain: vi.fn() }))
 import {
   conversationScreen,
   onConversationScreenChange,
+  presentedBrowserSize,
   setConversationScreen,
+  setPresentedBrowserSize,
   type ConversationScreen,
 } from '../../src/main/conversation-screen'
+import { layoutFloatingTab } from '../../src/main/drawer-manager'
 import { centerInArea, clampToArea, environmentScreenBounds } from '../../src/main/fleet/instance/window-bounds'
 import { detach, disposeAll, getFloatWin, initFloatingManager, setFloatBounds } from '../../src/main/floating-manager'
 import { getConvUiPrefs, type FloatTab } from '../../src/main/store'
@@ -174,7 +177,7 @@ const botA: ConversationScreen = {
   height: 768,
   windowArea: { x: 1280, y: 800, width: 1280, height: 800 },
 }
-const conversations = ['bot-a', 'bot-late', 'plain', 'popup-bot', 'popup-plain']
+const conversations = ['bot-a', 'bot-late', 'plain', 'popup-bot', 'popup-plain', 'bot-presented', 'popup-presented']
 
 it('keeps the environment settings window and its native frame inside tile zero', () => {
   const bounds = environmentScreenBounds({ x: 0, y: 0, width: 3840, height: 2400 })
@@ -206,7 +209,10 @@ const withOpenboxFrame = (b: { x: number; y: number; width: number; height: numb
 })
 
 afterEach(() => {
-  for (const id of conversations) setConversationScreen(id, null)
+  for (const id of conversations) {
+    setConversationScreen(id, null)
+    setPresentedBrowserSize(id, null)
+  }
   disposeAll()
   flushPendingBrowserPersists()
   disposeBrowserTabEviction()
@@ -340,6 +346,28 @@ describe('floating windows of a conversation', () => {
     expect(getFloatWin('plain', 'browser')?.getBounds()).toEqual(h.primaryWorkArea)
   })
 
+  it('places a bot browser its desktop presents at the top left of its area, at the presented size', () => {
+    initFloatingManager({} as never)
+    setConversationScreen('bot-presented', botA)
+    setPresentedBrowserSize('bot-presented', { width: 1120, height: 672 })
+    expect(presentedBrowserSize('bot-presented')).toEqual({ width: 1120, height: 672 })
+
+    detach('bot-presented', 'browser')
+    expect(nativeWindow('bot-presented', 'browser').options).toMatchObject({ frame: false })
+    expect(getFloatWin('bot-presented', 'browser')?.getBounds()).toEqual({ x: 1280, y: 800, width: 1120, height: 672 })
+
+    // The presented window was resized on the desktop: the browser follows, and its views are laid out again even
+    // when its size did not change, since it has no identity strip any more.
+    vi.mocked(layoutFloatingTab).mockClear()
+    setPresentedBrowserSize('bot-presented', { width: 900, height: 600 })
+    expect(getFloatWin('bot-presented', 'browser')?.getBounds()).toEqual({ x: 1280, y: 800, width: 900, height: 600 })
+    expect(layoutFloatingTab).toHaveBeenCalledWith('bot-presented', 'browser', expect.anything())
+
+    setPresentedBrowserSize('bot-presented', null)
+    expect(getFloatWin('bot-presented', 'browser')?.getBounds()).toEqual(botA.windowArea)
+    expect(() => setPresentedBrowserSize('bot-presented', { width: 0, height: 600 })).toThrow()
+  })
+
   it('moves an open bot browser into an area registered after it opened', () => {
     initFloatingManager({} as never)
     detach('bot-late', 'browser')
@@ -379,6 +407,24 @@ describe('browser popups of a conversation', () => {
     expect(consent.getBounds()).toEqual({ x: 2561, y: 20, width: 1278, height: 775 })
     expect(withOpenboxFrame(consent.getBounds())).toEqual(area)
     expect(consent.center).not.toHaveBeenCalled()
+  })
+
+  it('centers the popups of a presented browser inside it, where its desktop shows them', () => {
+    const area = { x: 2560, y: 0, width: 1280, height: 800 }
+    initDrawer(mainWindow as never)
+    setConversationScreen('popup-presented', { ...botA, windowArea: area })
+    setPresentedBrowserSize('popup-presented', { width: 900, height: 600 })
+    createBrowserTab('popup-presented', 'https://site.test')
+    const signIn = popup({ x: 0, y: 0, width: 500, height: 400 })
+
+    h.views.at(-1)?.webContents.emit('did-create-window', signIn)
+
+    const framed = withOpenboxFrame(signIn.getBounds())
+    expect(framed.x).toBeGreaterThanOrEqual(area.x)
+    expect(framed.y).toBeGreaterThanOrEqual(area.y)
+    expect(framed.x + framed.width).toBeLessThanOrEqual(area.x + 900)
+    expect(framed.y + framed.height).toBeLessThanOrEqual(area.y + 600)
+    expect(signIn.getBounds()).toEqual({ x: 2760, y: 107, width: 500, height: 400 })
   })
 
   it('keeps centering popups on the display for a conversation without a screen', () => {

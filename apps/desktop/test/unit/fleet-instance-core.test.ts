@@ -43,6 +43,7 @@ describe('fleet conversation admission', () => {
         pending: () => [],
         queue: { list: () => [{ id: 'input', input: { source: 'owner', text: 'Waiting' } }] },
         holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+        host: {},
         events: { lastSeq: 0 },
         accountOptions: [
           {
@@ -97,6 +98,7 @@ describe('fleet conversation admission', () => {
         pending: () => [],
         queue: { list: () => [] },
         holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+        host: {},
         events: { lastSeq: 0 },
         accountOptions: [],
         stored: null,
@@ -310,6 +312,32 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 22')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
+  })
+
+  it('describes one desktop with the browser and terminals as windows, or else two screens', () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask' as const,
+      selection: null,
+      compaction: null,
+      gateway: { peersEnabled: false, artifactsEnabled: false },
+    }
+    let unified = true
+    setBotIdentity('/bot/desk', profile, () => [], { unifiedDesktop: () => unified })
+    const desktop = botIdentityPrompt('/bot/desk')
+    expect(desktop).toContain('one Linux desktop of your own')
+    expect(desktop).toContain('your Maestrly browser is a window there')
+    expect(desktop).toContain('terminal_*')
+    expect(desktop).toContain('browser_*')
+    expect(desktop).toContain('computer_*')
+    expect(desktop).not.toContain('two screens')
+    unified = false
+    const screens = botIdentityPrompt('/bot/desk')
+    expect(screens).toContain('two screens of your own')
+    expect(screens).not.toContain('one Linux desktop')
   })
 })
 

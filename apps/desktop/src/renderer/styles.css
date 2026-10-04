@@ -9,6 +9,7 @@
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-terminal-bg: var(--terminal-bg);
+  --color-chat-canvas: var(--chat-canvas);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -47,6 +48,7 @@
   --surface: rgba(20, 20, 22, 0.62);
   --surface-elevated: rgba(30, 30, 33, 0.82); /* cards, inputs, popovers, menus */
   --terminal-bg: rgba(10, 10, 11, 0.82);
+  --chat-canvas: #0d0d10; /* the agent chat's black, which a bot's view shares */
 
   --foreground: rgba(237, 234, 227, 0.96);
   --card: var(--surface-elevated);
@@ -927,5 +929,24 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   }
   .artifact-open {
     transition: none;
+  }
+}
+
+/* The dot before "<bot> in control" rings out in the bot's own color, which it sets as the dot's text color. */
+.fleet-holder-pulse {
+  animation: fleet-holder-ring 2s ease-out infinite;
+}
+@keyframes fleet-holder-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 70%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fleet-holder-pulse {
+    animation: none;
   }
 }

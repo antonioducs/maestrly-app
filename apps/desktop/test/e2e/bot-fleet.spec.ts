@@ -6,9 +6,10 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect, test, _electron as electron, type Locator } from '@playwright/test'
+import { expect, test, _electron as electron, type Locator, type Page } from '@playwright/test'
 import {
   FLEET_GATEWAY_ROUTES,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   fleetArchivedBotSchema,
   fleetArchivedEnvironmentSchema,
   fleetBotSchema,
@@ -76,7 +77,33 @@ function stateContrastOnDialog(locator: Locator): Promise<number> {
   })
 }
 
-test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', async () => {
+/** Opens the bot's computer beside its conversation, from the chat header when it is closed. */
+async function openComputer(page: Page) {
+  const button = page.getByRole('button', { name: 'Computador', exact: true })
+  if (await button.isVisible()) await button.click()
+  await expect(page.locator('[data-workspace-mode]')).not.toHaveAttribute('data-workspace-mode', 'chat')
+}
+
+/** Opens the bot's settings panel, on one of its tabs when given, and returns it. */
+async function openBotSettings(page: Page, name: string, tab?: string) {
+  await page.getByRole('button', { name: 'Ajustes do bot', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: `Ajustes do ${name}` })
+  if (tab) await settingsTab(settings, tab).click()
+  return settings
+}
+/** A tab of the bot settings, by its label; its name may go on to say it has unsaved changes. */
+const settingsTab = (settings: Locator, label: string) =>
+  settings
+    .getByRole('tablist', { name: 'Seções dos ajustes', exact: true })
+    .getByRole('tab', { name: new RegExp(`^${label}\\b`) })
+
+test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', () =>
+  runFleetScenario(false))
+
+test('bot split workspace preserves conversation, screen sessions and isolated layout preferences', () =>
+  runFleetScenario(true))
+
+async function runFleetScenario(workspaceOnly: boolean) {
   test.setTimeout(180_000)
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-e2e-'))
   const requests: Array<{ key: string; body: unknown; path: string; method: string | undefined }> = []
@@ -357,7 +384,33 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
   let skillSelection: { kind: 'all' | 'none' } = { kind: 'all' }
   let subagentsEnabled = true
   let subagentProfilesEnabled = true
-  let takeoverConflicts = 1
+  if (workspaceOnly) {
+    bots.push(fleetBotSchema.parse({ ...base, id: 'diary', name: 'Diary' }))
+    for (let index = 0; index < 35; index++)
+      transcript.push({
+        id: `history-${index}`,
+        at: now(),
+        kind: 'assistant',
+        text: `Workspace history ${index}\n\nA synthetic message with enough content to scroll.`,
+        streaming: false,
+      })
+    transcript.push({
+      id: 'workspace-help',
+      at: now(),
+      kind: 'help',
+      helpId: 'help-1',
+      reason: 'Sign in to the workspace fixture',
+      state: 'pending',
+      resolvedAt: null,
+      note: null,
+    })
+  }
+  const screenSockets = new Set<Duplex>()
+  let screenConnections = 0
+  let rejectRelease = false
+  let holdRelease: Promise<void> | undefined
+  let finishRelease: (() => void) | undefined
+  let takeoverConflicts = workspaceOnly ? 0 : 1
   let rejectCancellation = false
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
@@ -986,6 +1039,19 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         break
       }
       case 'botTakeoverRelease': {
+        // The gateway broadcasts this intermediate state before the instance finishes releasing.
+        if (workspaceOnly && bot)
+          emit({
+            type: 'bot.updated',
+            at: now(),
+            bot: fleetBotSchema.parse({ ...bot, takeover: { ...bot.takeover, state: 'releasing' } }),
+          })
+        if (rejectRelease) {
+          if (workspaceOnly && bot) emit({ type: 'bot.updated', at: now(), bot })
+          send(503, { code: 'UNAVAILABLE', message: 'Synthetic release failure' })
+          return
+        }
+        await holdRelease
         value = {
           state: 'none',
           deviceId: null,
@@ -1050,6 +1116,62 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       send(500, { code: 'INTERNAL', message: 'The fake gateway failed; see the test output' })
     }
   })
+  if (workspaceOnly)
+    server.on('upgrade', (request, socket: Duplex) => {
+      screenConnections++
+      screenSockets.add(socket)
+      socket.on('error', () => {})
+      socket.on('close', () => screenSockets.delete(socket))
+      const accept = createHash('sha1')
+        .update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+        .digest('base64')
+      socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
+      )
+      const send = (payload: Buffer) => socket.write(Buffer.concat([Buffer.from([0x82, payload.length]), payload]))
+      send(Buffer.from('RFB 003.008\n'))
+      let buffered = Buffer.alloc(0)
+      let stage = 0
+      // Minimal RFB 3.8 server: negotiate no authentication and a true-color desktop.
+      socket.on('data', (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk])
+        while (buffered.length >= 2) {
+          const opcode = buffered[0] & 15
+          let length = buffered[1] & 127
+          let offset = 2
+          if (length === 126) {
+            if (buffered.length < 4) return
+            length = buffered.readUInt16BE(2)
+            offset = 4
+          } else if (length === 127) {
+            socket.destroy()
+            return
+          }
+          const masked = Boolean(buffered[1] & 128)
+          const total = offset + (masked ? 4 : 0) + length
+          if (buffered.length < total) return
+          buffered = buffered.subarray(total)
+          if (opcode === 8) {
+            socket.end(Buffer.from([0x88, 0]))
+            return
+          }
+          if (opcode !== 2) continue
+          if (stage++ === 0) send(Buffer.from([1, 1]))
+          else if (stage === 2) send(Buffer.from([0, 0, 0, 0]))
+          else if (stage === 3) {
+            const init = Buffer.alloc(28)
+            init.writeUInt16BE(640, 0)
+            init.writeUInt16BE(480, 2)
+            init.set([32, 24, 0, 1], 4)
+            for (const offset of [8, 10, 12]) init.writeUInt16BE(255, offset)
+            init.set([16, 8, 0], 14)
+            init.writeUInt32BE(4, 20)
+            init.write('Test', 24)
+            send(init)
+          }
+        }
+      })
+    })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('No address')
@@ -1156,6 +1278,422 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('button', { name: /fleet-e2e-host/ })).toBeVisible()
     // A gateway without environments keeps the flat list and the views from before them.
     await expect(page.getByRole('button', { name: /^Ambiente / })).toHaveCount(0)
+    if (workspaceOnly) {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
+      await page.getByRole('button', { name: /Scout/ }).first().click()
+      const workspace = page.locator('[data-bot-workspace="scout"]')
+      const conversation = page.getByRole('region', { name: 'Conversa do Scout', exact: true })
+      const computer = page.getByRole('region', { name: 'Computador do Scout', exact: true })
+      const separator = page.getByRole('separator', { name: 'Redimensionar conversa e computador' })
+      const draft = page.locator('[data-placeholder="Mensagem para Scout…"]')
+      const scroll = page.locator('[data-bot-transcript-scroll]')
+      const ratio = async () => Number(await separator.getAttribute('aria-valuenow'))
+      const openScout = async () => {
+        await page.getByRole('tab', { name: /^Bots/ }).click()
+        await page.getByRole('button', { name: /Scout/ }).first().click()
+        await openComputer(page)
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+      }
+      await test.step('opening the screen keeps a live conversation beside one VNC session', async () => {
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await draft.fill('Keep this unsent workspace draft')
+        await page
+          .locator('input[type="file"][accept*="image/*"]')
+          .setInputFiles({ name: 'workspace.png', mimeType: 'image/png', buffer: png })
+        // A tool that worked on the computer links to it from its activity row.
+        await conversation.getByRole('button', { name: '1 captura de tela' }).first().click()
+        await conversation.getByRole('button', { name: 'Ver no computador', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect(
+          computer.getByRole('region', { name: 'Tela do Scout', exact: true }).locator('canvas')
+        ).toBeVisible()
+        await expect.poll(() => screenSockets.size).toBe(1)
+        // The bot's view is a chat header beside a computer header: no tabs, on the agent chat black.
+        await expect(page.getByRole('tablist', { name: 'Telas do bot' })).toHaveCount(0)
+        await expect(page.locator('[data-bot-view]')).toHaveCSS('background-color', 'rgb(13, 13, 16)')
+        await expect(computer.getByText('Computador · Scout', { exact: true })).toBeVisible()
+        // A gateway without environments has one display, the bot's browser: nothing to choose.
+        await expect(page.getByRole('radiogroup', { name: 'Área da tela' })).toHaveCount(0)
+        await expect
+          .poll(() => requests.filter((request) => request.key === 'botScreenTicket').at(-1)?.body)
+          .toEqual({ mode: 'view', surface: 'browser' })
+        await expect(computer.getByRole('status').filter({ hasText: 'Scout no controle' })).toBeVisible()
+        await expect(computer.getByRole('button', { name: 'Assumir controle', exact: true })).toBeVisible()
+        emit({
+          type: 'transcript.upsert',
+          botId: 'scout',
+          at: now(),
+          item: {
+            id: 'workspace-live',
+            at: now(),
+            kind: 'assistant',
+            text: 'Live response beside the computer',
+            streaming: true,
+          },
+        })
+        await expect(conversation.getByText('Live response beside the computer')).toBeVisible()
+        await test.info().attach('bot-view-split.png', {
+          body: await page.screenshot({ path: test.info().outputPath('bot-view-split.png') }),
+          contentType: 'image/png',
+        })
+      })
+      const canvas = await computer.locator('canvas').elementHandle()
+      expect(canvas).not.toBeNull()
+      const connections = screenConnections
+      const tickets = requests.filter((request) => request.key === 'botScreenTicket').length
+      await test.step('maximize and restore preserve draft, attachment, scroll and canvas', async () => {
+        await scroll.evaluate((node) => {
+          node.scrollTop = 120
+          node.dispatchEvent(new Event('scroll'))
+        })
+        const position = await scroll.evaluate((node) => node.scrollTop)
+        expect(position).toBeGreaterThan(0)
+        await page.getByRole('button', { name: 'Maximizar computador', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'computer')
+        await expect(conversation).toBeHidden()
+        await page.screenshot({ path: test.info().outputPath('bot-workspace-maximized.png') })
+        emit({
+          type: 'transcript.upsert',
+          botId: 'scout',
+          at: now(),
+          item: {
+            id: 'workspace-hidden',
+            at: now(),
+            kind: 'assistant',
+            text: 'Received while the conversation was hidden',
+            streaming: false,
+          },
+        })
+        await page.getByRole('button', { name: 'Restaurar conversa', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await expect(draft).toHaveText('Keep this unsent workspace draft')
+        await expect(page.getByAltText('workspace.png')).toBeVisible()
+        await expect(conversation.getByText('Received while the conversation was hidden')).toBeAttached()
+        await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBe(position)
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, canvas)).toBe(true)
+        expect(screenConnections).toBe(connections)
+        expect(requests.filter((request) => request.key === 'botScreenTicket')).toHaveLength(tickets)
+      })
+      let savedRatio = 0
+      await test.step('keyboard bounds and pointer cancellation do not reconnect the screen', async () => {
+        await separator.focus()
+        await separator.press('Home')
+        const minimum = Number(await separator.getAttribute('aria-valuemin'))
+        await expect.poll(ratio).toBe(minimum)
+        await separator.press('ArrowLeft')
+        await expect.poll(ratio).toBe(minimum)
+        await separator.press('End')
+        const maximum = Number(await separator.getAttribute('aria-valuemax'))
+        await expect.poll(ratio).toBe(maximum)
+        await separator.press('ArrowRight')
+        await expect.poll(ratio).toBe(maximum)
+        await separator.press('ArrowLeft')
+        expect(await ratio()).toBeLessThan(maximum)
+        const box = await separator.boundingBox()
+        expect(box).not.toBeNull()
+        await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(box!.x - 50, box!.y + box!.height / 2)
+        await separator.dispatchEvent('pointercancel', { pointerId: 1, pointerType: 'mouse', bubbles: true })
+        savedRatio = await ratio()
+        await page.mouse.move(box!.x - 150, box!.y + box!.height / 2)
+        await page.mouse.up()
+        await expect.poll(ratio).toBe(savedRatio)
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, canvas)).toBe(true)
+        expect(screenConnections).toBe(connections)
+        expect(screenSockets.size).toBe(1)
+      })
+      await test.step('narrow layouts switch both ways without losing either pane', async () => {
+        await app!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0]
+          window.setMinimumSize(600, 600)
+          window.setSize(760, 900)
+        })
+        if (await computer.isVisible()) await page.getByRole('button', { name: 'Conversa', exact: true }).click()
+        await page.getByRole('button', { name: 'Computador', exact: true }).click()
+        await expect(computer).toBeVisible()
+        await expect(conversation).toBeHidden()
+        await page.getByRole('button', { name: 'Conversa', exact: true }).click()
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeHidden()
+        await expect(draft).toHaveText('Keep this unsent workspace draft')
+        await expect(page.getByAltText('workspace.png')).toBeVisible()
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect.poll(ratio).toBe(savedRatio)
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, canvas)).toBe(true)
+        expect(screenConnections).toBe(connections)
+      })
+      await test.step('closing observation closes its stream and a help card reopens split', async () => {
+        await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await expect.poll(() => screenSockets.size).toBe(0)
+        expect(requests.filter((request) => request.key === 'botTakeoverRelease')).toHaveLength(0)
+        await conversation.getByRole('button', { name: 'Abrir a tela', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await expect.poll(() => screenSockets.size).toBe(1)
+      })
+      await test.step('the composer returns control and reveals the computer; a failed release leaves it open', async () => {
+        await page.getByRole('button', { name: 'Assumir controle', exact: true }).click()
+        await page
+          .getByRole('dialog', { name: 'Assumir a tela do Scout?' })
+          .getByRole('button', { name: 'Assumir', exact: true })
+          .click()
+        await expect(computer.getByRole('status').filter({ hasText: 'Você no controle' })).toBeVisible()
+        await expect(computer.getByRole('button', { name: 'Devolver ao Scout', exact: true })).toBeVisible()
+        // The frame turns green while the owner controls the computer.
+        const frame = computer.locator('[data-screen-frame]')
+        await expect(frame).toHaveAttribute('data-control', 'human')
+        await expect(frame).toHaveCSS('border-top-color', 'rgb(91, 214, 160)')
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(760, 900))
+        await page.getByRole('button', { name: 'Conversa', exact: true }).click()
+        await expect(computer).toBeHidden()
+        // The locked composer offers the way back: it reveals the computer, where the note is asked.
+        await conversation.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect(computer).toBeVisible()
+        const giveBack = page
+          .getByRole('dialog')
+          .filter({ has: page.getByRole('button', { name: 'Devolver', exact: true }) })
+        await expect(giveBack).toBeVisible()
+        const note = giveBack.getByRole('textbox')
+        await note.fill('Keep editing this note while the computer reconnects')
+        await expect.poll(() => screenSockets.size).toBe(1)
+        const beforeReconnect = screenConnections
+        for (const socket of screenSockets) socket.end(Buffer.from([0x88, 2, 0x0f, 0xa3]))
+        await expect.poll(() => screenConnections).toBe(beforeReconnect + 1)
+        await expect(computer.locator('canvas')).toHaveJSProperty('width', 640)
+        await expect(note).toBeFocused()
+        await expect(note).toHaveValue('Keep editing this note while the computer reconnects')
+        rejectRelease = true
+        await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect.poll(() => requests.filter((request) => request.key === 'botTakeoverRelease').length).toBe(1)
+        await expect(page.getByRole('alert')).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect(giveBack).toBeVisible()
+        rejectRelease = false
+        holdRelease = new Promise<void>((resolve) => {
+          finishRelease = resolve
+        })
+        await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect.poll(() => requests.filter((request) => request.key === 'botTakeoverRelease').length).toBe(2)
+        await expect(computer.getByRole('status').filter({ hasText: 'Scout no controle' })).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect(giveBack).toBeVisible()
+        finishRelease!()
+        await expect(giveBack).toBeHidden()
+        // Giving control back keeps the computer open, watching again.
+        await expect(computer).toBeVisible()
+        await expect(workspace).not.toHaveAttribute('data-workspace-mode', 'chat')
+        await expect(frame).toHaveAttribute('data-control', 'bot')
+        await expect.poll(() => screenSockets.size).toBe(1)
+        expect(requests.filter((request) => request.key === 'botTakeoverRelease').at(-1)?.body).toMatchObject({
+          note: 'Keep editing this note while the computer reconnects',
+          continue: true,
+        })
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeVisible()
+      })
+      await test.step('the settings panel guards unsaved changes while the computer keeps streaming', async () => {
+        const openCanvas = await computer.locator('canvas').elementHandle()
+        expect(openCanvas).not.toBeNull()
+        const settingsConnections = screenConnections
+        const settings = await openBotSettings(page, 'Scout')
+        await expect(settings).toBeVisible()
+        await expect(settings.getByRole('button', { name: 'Fechar ajustes', exact: true })).toBeVisible()
+        await settings.getByLabel('Nome', { exact: true }).fill('Uncommitted Scout name')
+        // The panel slides in: capture it at rest.
+        await expect(settings).toHaveCSS('opacity', '1')
+        await test.info().attach('bot-view-settings.png', {
+          body: await page.screenshot({ path: test.info().outputPath('bot-view-settings.png') }),
+          contentType: 'image/png',
+        })
+        const leave = page.getByRole('dialog', { name: 'Sair sem salvar?' })
+        // The close button, Escape and the dark area all ask first.
+        await settings.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
+        await expect(leave).toBeVisible()
+        await leave.getByRole('button', { name: 'Continuar editando', exact: true }).click()
+        await expect(leave).toBeHidden()
+        await expect(settings.getByLabel('Nome', { exact: true })).toHaveValue('Uncommitted Scout name')
+        await page.keyboard.press('Escape')
+        await expect(leave).toBeVisible()
+        await leave.getByRole('button', { name: 'Continuar editando', exact: true }).click()
+        await expect(leave).toBeHidden()
+        // The dialog layers settle after one frame; a press before that finds the panel's outside-press listener unset.
+        await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))))
+        await page.mouse.click(200, 500)
+        await expect(leave).toBeVisible()
+        await leave.getByRole('button', { name: 'Continuar editando', exact: true }).click()
+        await expect(leave).toBeHidden()
+        await expect(settings.getByLabel('Nome', { exact: true })).toHaveValue('Uncommitted Scout name')
+        await settings.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
+        await leave.getByRole('button', { name: 'Descartar', exact: true }).click()
+        await expect(settings).toBeHidden()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        // The same canvas kept streaming behind the panel: nothing reconnected.
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, openCanvas)).toBe(true)
+        expect(screenConnections).toBe(settingsConnections)
+        expect(screenSockets.size).toBe(1)
+        expect(requests.filter((request) => request.key === 'botPatch')).toHaveLength(0)
+      })
+      await test.step('the settings show one section at a time, in tabs that keep unsaved changes', async () => {
+        const settings = await openBotSettings(page, 'Scout')
+        const tab = (label: string) => settingsTab(settings, label)
+        await expect(settings.getByRole('tablist', { name: 'Seções dos ajustes' }).getByRole('tab')).toHaveText([
+          'Identidade',
+          'Autonomia',
+          'Modelo',
+          'Conversas',
+          'Rotinas',
+          'Memória',
+          'Onde roda',
+          'Arquivar',
+        ])
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        const name = settings.getByLabel('Nome', { exact: true })
+        await expect(name).toBeVisible()
+        // Only the selected section shows.
+        await expect(settings.getByRole('tabpanel')).toHaveCount(1)
+        await expect(settings.getByRole('heading', { name: 'Autonomia', exact: true })).toHaveCount(0)
+        // Accounts and skills live in the model tab.
+        await tab('Modelo').click()
+        await expect(tab('Modelo')).toHaveAttribute('aria-selected', 'true')
+        await expect(settings.getByRole('region', { name: 'Contas do bot', exact: true })).toBeVisible()
+        await expect(settings.getByRole('region', { name: 'Skills e MCP', exact: true })).toBeVisible()
+        await expect(name).toBeHidden()
+        await test.info().attach('bot-settings-model-tab.png', {
+          body: await page.screenshot({ path: test.info().outputPath('bot-settings-model-tab.png') }),
+          contentType: 'image/png',
+        })
+        // A change waits for the save button on every tab, and its tab says it has one.
+        await tab('Identidade').click()
+        await name.fill('Tabbed Scout')
+        await expect(tab('Identidade')).toHaveAccessibleName(/^Identidade\s*, alterações não salvas$/)
+        await tab('Conversas').click()
+        await expect(name).toBeHidden()
+        const saveBar = settings.getByRole('region', { name: 'Alterações não salvas', exact: true })
+        await expect(saveBar).toBeVisible()
+        // The save bar names the field, which takes the owner back to its tab and into it.
+        await saveBar.getByRole('button', { name: 'Nome', exact: true }).click()
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        await expect(name).toBeFocused()
+        await expect(name).toHaveValue('Tabbed Scout')
+        // Arrow keys, Home and End move between the tabs, and only the selected one is in the tab order.
+        await tab('Identidade').focus()
+        await page.keyboard.press('ArrowRight')
+        await expect(tab('Autonomia')).toBeFocused()
+        await expect(tab('Autonomia')).toHaveAttribute('aria-selected', 'true')
+        await expect(tab('Identidade')).toHaveAttribute('tabindex', '-1')
+        await page.keyboard.press('End')
+        await expect(tab('Arquivar')).toHaveAttribute('aria-selected', 'true')
+        await expect(settings.getByRole('button', { name: 'Arquivar Scout', exact: true })).toBeVisible()
+        await page.keyboard.press('ArrowRight')
+        await expect(tab('Identidade')).toBeFocused()
+        await page.keyboard.press('ArrowLeft')
+        await expect(tab('Arquivar')).toBeFocused()
+        await page.keyboard.press('Home')
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        await saveBar.getByRole('button', { name: 'Descartar', exact: true }).click()
+        await expect(saveBar).toHaveCount(0)
+        await expect(tab('Identidade')).toHaveAccessibleName('Identidade')
+        // Closed on another tab, the settings open again on the first one.
+        await tab('Memória').click()
+        await settings.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
+        await expect(settings).toBeHidden()
+        await openBotSettings(page, 'Scout')
+        await expect(tab('Identidade')).toHaveAttribute('aria-selected', 'true')
+        await settings.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
+        await expect(settings).toBeHidden()
+        expect(requests.filter((request) => request.key === 'botPatch')).toHaveLength(0)
+      })
+      await test.step('the conversation moves to a window of its own while the computer stays and streams', async () => {
+        await draft.fill('Draft that travels with the window')
+        const streamsBefore = screenConnections
+        const opened = app!.waitForEvent('window')
+        await conversation.getByRole('button', { name: 'Abrir chat em nova janela', exact: true }).click()
+        const child = await opened
+        const placeholder = conversation.getByText('Esta conversa está aberta em outra janela.', { exact: true })
+        await expect(placeholder).toBeVisible()
+        // The draft and the composer are in the new window; the computer and its stream stay in the main one.
+        await expect(child.locator('[data-placeholder="Mensagem para Scout…"]')).toHaveText(
+          'Draft that travels with the window'
+        )
+        await expect(computer).toBeVisible()
+        await expect(computer.locator('canvas')).toBeVisible()
+        expect(screenConnections).toBe(streamsBefore)
+        // The header button and the placeholder both bring the window forward.
+        await expect(conversation.getByRole('button', { name: 'Focar janela do chat', exact: true })).toHaveCount(2)
+        const closed = child.waitForEvent('close')
+        await child
+          .getByRole('button', { name: 'Voltar ao app', exact: true })
+          .click()
+          .catch((error: unknown) => {
+            // Electron may destroy the window before acknowledging the mouse-up to Playwright.
+            if (
+              !child.isClosed() ||
+              !(error instanceof Error) ||
+              !error.message.includes('Target page, context or browser has been closed')
+            )
+              throw error
+          })
+        await closed
+        await expect(placeholder).toBeHidden()
+        await expect(draft).toHaveText('Draft that travels with the window')
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await draft.fill('')
+      })
+      await test.step('a controlled computer stays open behind settings and returns control before closing', async () => {
+        await page.getByRole('button', { name: 'Assumir controle', exact: true }).click()
+        await page
+          .getByRole('dialog', { name: 'Assumir a tela do Scout?' })
+          .getByRole('button', { name: 'Assumir', exact: true })
+          .click()
+        await expect(computer.getByRole('status').filter({ hasText: 'Você no controle' })).toBeVisible()
+        const settings = await openBotSettings(page, 'Scout')
+        await settings.getByLabel('Nome', { exact: true }).fill('Another unsaved name')
+        await page.keyboard.press('Escape')
+        await page
+          .getByRole('dialog', { name: 'Sair sem salvar?' })
+          .getByRole('button', { name: 'Descartar', exact: true })
+          .click()
+        await expect(settings).toBeHidden()
+        await expect(computer).toBeVisible()
+        await expect(computer.getByRole('status').filter({ hasText: 'Você no controle' })).toBeVisible()
+        await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
+        const giveBack = page
+          .getByRole('dialog')
+          .filter({ has: page.getByRole('button', { name: 'Devolver', exact: true }) })
+        await expect(giveBack).toBeVisible()
+        await expect(computer).toBeVisible()
+        await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await expect.poll(() => screenSockets.size).toBe(0)
+        await openComputer(page)
+      })
+      await test.step('ratios survive reload and remain isolated between bots', async () => {
+        await expect.poll(ratio).toBe(savedRatio)
+        await page.getByRole('tab', { name: /^Bots/ }).click()
+        await page.getByRole('button', { name: /Diary/ }).first().click()
+        await openComputer(page)
+        await separator.focus()
+        await separator.press('Home')
+        const diaryRatio = await ratio()
+        expect(diaryRatio).not.toBe(savedRatio)
+        await openScout()
+        await expect.poll(ratio).toBe(savedRatio)
+        await page.reload()
+        await openScout()
+        await expect.poll(ratio).toBe(savedRatio)
+        await page.getByRole('tab', { name: /^Bots/ }).click()
+        await page.getByRole('button', { name: /Diary/ }).first().click()
+        await openComputer(page)
+        await expect.poll(ratio).toBe(diaryRatio)
+      })
+      return
+    }
     await page.getByRole('button', { name: 'Memória sobre você', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Memória sobre você' })).toBeVisible()
     await expect(page.getByRole('combobox', { name: 'Quem vê' })).toHaveCount(0)
@@ -1257,7 +1795,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(gone).toBeVisible()
     expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
     await expect(page.getByText('Lembrou: Portal login')).toBeVisible()
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const scoutSettings = await openBotSettings(page, 'Scout', 'Rotinas')
     await page.getByRole('button', { name: 'Mais ações para Scout check', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Histórico', exact: true }).click()
     await expect(page.getByText('Concluída', { exact: true })).toBeVisible()
@@ -1278,6 +1816,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     emit({ type: 'bot.updated', at: now(), bot: runningScout })
     await expect(page.getByText('Cancelada', { exact: true })).toBeVisible()
     await expect(page.getByText('Em andamento', { exact: true })).toHaveCount(0)
+    await settingsTab(scoutSettings, 'Memória').click()
     const botMemory = page.getByRole('region', { name: 'Memória do bot', exact: true })
     await expect(botMemory.getByText('Portal login', { exact: true })).toBeVisible()
     await expect(botMemory.getByText('Automática', { exact: true })).toBeVisible()
@@ -1308,7 +1847,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     })
     await page.evaluate(() => window.api.fleetRefresh())
     expect(requests.filter((item) => item.key === 'activity')).toEqual([])
-    await page.getByRole('tab', { name: 'Conversa' }).click()
+    await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     const setupScout = fleetBotSchema.parse({
       ...bots[0],
       compaction: null,
@@ -1324,9 +1863,9 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     bots[0] = setupScout
     emit({ type: 'bot.updated', at: now(), bot: setupScout })
     await expect(page.getByRole('button', { name: 'Escolher modelo de compactação' })).toBeVisible()
-    await page.getByRole('tab', { name: 'Tela' }).click()
+    await openComputer(page)
     await expect(page.getByRole('heading', { name: 'Conectar uma conta' })).toHaveCount(0)
-    await page.getByRole('tab', { name: 'Conversa' }).click()
+    await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
     await page.getByRole('button', { name: 'Escolher modelo de compactação' }).click()
     await expect(page.getByRole('heading', { name: 'Compactação' })).toBeInViewport()
     await page.getByRole('button', { name: 'Modelo de compactação', exact: true }).click()
@@ -1359,7 +1898,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     })
     bots[0] = configuredScout
     emit({ type: 'bot.updated', at: now(), bot: configuredScout })
-    await page.getByRole('tab', { name: 'Conversa' }).click()
+    await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('/compact')
     await page.getByRole('button', { name: /^\/compact / }).click()
     await expect
@@ -1527,7 +2066,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(createDialog.getByRole('list').filter({ hasText: 'Mac fixture key' })).toContainText('Adicionado')
     await createDialog.getByRole('button', { name: 'Abrir Orders', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible()
-    await page.getByRole('tab', { name: 'Tela' }).click()
+    await openComputer(page)
     await expect(page.getByRole('region', { name: 'Tela do Orders' })).toBeVisible()
     await expect(page.getByRole('radiogroup', { name: 'Área da tela' })).toHaveCount(0)
     await expect(page.getByRole('status').filter({ hasText: 'Tela indisponível' })).toBeVisible()
@@ -1543,22 +2082,15 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .getByRole('button', { name: 'Assumir' })
       .click()
     await expect.poll(() => requests.filter((item) => item.key === 'botTakeover').length).toBe(2)
-    // The holder switch highlights exactly the "Você" half, whatever the bot name's width.
-    const holder = page.getByRole('status', { name: 'Quem controla a tela: Você' })
+    // Under control the bar names the owner, and the composer and the bar both offer the way back.
+    const holder = page.getByRole('status').filter({ hasText: 'Você no controle' })
     await expect(holder).toBeVisible()
-    await expect
-      .poll(async () => {
-        const [indicator, you] = await Promise.all([
-          holder.locator('[aria-hidden="true"]').boundingBox(),
-          holder.getByText('Você', { exact: true }).boundingBox(),
-        ])
-        if (!indicator || !you) return null
-        return Math.max(Math.abs(indicator.x - you.x), Math.abs(indicator.width - you.width)) <= 1
-      })
-      .toBe(true)
+    await expect(page.locator('[data-screen-frame]')).toHaveAttribute('data-control', 'human')
+    await expect(page.getByRole('button', { name: 'Devolver', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Devolver ao Orders' }).click()
-    await page.getByPlaceholder('Opcional').fill('Signed in')
-    await page.getByRole('button', { name: 'Devolver', exact: true }).click()
+    const giveBack = page.getByRole('dialog', { name: 'Devolver ao Orders' })
+    await giveBack.getByPlaceholder('Opcional').fill('Signed in')
+    await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botTakeoverRelease').length).toBe(1)
     expect(requests.find((item) => item.key === 'botTakeoverRelease')?.body).toMatchObject({
       note: 'Signed in',
@@ -1577,8 +2109,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     })
     bots[bots.indexOf(orders)] = foreign
     emit({ type: 'bot.updated', at: now(), bot: foreign })
-    await expect(page.getByRole('status', { name: 'Quem controla a tela: Office Mac' })).toBeVisible()
-    await expect(page.getByText('Office Mac está controlando a tela.')).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Office Mac no controle' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Assumir controle' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Devolver ao Orders' })).toHaveCount(0)
     // Parsed as the gateway reads it: a Mac without environments gets the browser area.
@@ -1586,7 +2117,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1)?.body)
       .toEqual({ mode: 'view', surface: 'browser' })
     expect(requests.filter((item) => item.key === 'botTakeoverRelease')).toHaveLength(1)
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const ordersSettings = await openBotSettings(page, 'Orders', 'Modelo')
     const accountsSection = page.getByRole('region', { name: 'Contas do bot', exact: true })
     const resourcesSection = page.getByRole('region', { name: 'Skills e MCP', exact: true })
     await expect(accountsSection.getByText(/Mac fixture key.*…sion/)).toBeVisible()
@@ -1752,6 +2283,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .getByRole('button', { name: 'Remover' })
       .click()
     await expect.poll(() => requests.filter((item) => item.key === 'botAccountRemove').length).toBe(2)
+    await settingsTab(ordersSettings, 'Rotinas').click()
     await page.getByRole('button', { name: 'Adicionar rotina' }).click()
     await expect(page.getByText('A cada 1 h 30 min')).toBeVisible()
     await expect(page.getByText('Criada pelo bot')).toBeVisible()
@@ -1818,6 +2350,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByText('A cada 30 min').first()).toBeVisible()
 
     // Archive, restore, and delete forever.
+    await settingsTab(ordersSettings, 'Arquivar').click()
     await page.getByRole('button', { name: 'Arquivar Orders' }).click()
     await page.getByRole('dialog', { name: 'Arquivar bot?' }).getByRole('button', { name: 'Arquivar' }).click()
     // The dialog closes once the archive reply is back, after the removal event it must not undo.
@@ -1847,13 +2380,15 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(deleteDialog).toHaveCount(0)
     await expect(archivedSection.getByText('Nenhum bot arquivado.')).toBeVisible()
   } finally {
+    finishRelease?.()
     if (occupiedPort) await new Promise<void>((resolve) => occupiedPort!.close(() => resolve()))
     await app?.close()
     for (const stream of streams) stream.end()
+    for (const socket of screenSockets) socket.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await rm(root, { recursive: true, force: true })
   }
-})
+}
 
 test('fleet UI organizes bots in environments that share accounts, screens and lifecycle', async () => {
   test.setTimeout(240_000)
@@ -1925,8 +2460,9 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       updatedAt: now(),
       ...patch,
     })
+  // Acme runs the unified desktop (its bots open their apps screen); Home's image has separate Browser and Apps areas.
   const environments: FleetEnvironment[] = [
-    makeEnvironment('acme', 'Acme', ['scout']),
+    makeEnvironment('acme', 'Acme', ['scout'], { capabilities: [...capabilities, FLEET_UNIFIED_DESKTOP_FEATURE] }),
     makeEnvironment('home', 'Home', ['diary']),
   ]
   const bots: FleetBot[] = [
@@ -2303,6 +2839,18 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         if (!bot) return notFound()
         value = ticket()
         break
+      case 'botTakeover':
+      case 'botTakeoverRelease': {
+        if (!bot) return notFound()
+        const taking = key === 'botTakeover'
+        value = taking
+          ? { state: 'human', deviceId: 'device-env-e2e', deviceName: 'Mac', since: now() }
+          : { state: 'none', deviceId: null, deviceName: null, since: null }
+        const updated = fleetBotSchema.parse({ ...bot, takeover: value, status: taking ? 'human' : 'idle' })
+        bots[bots.indexOf(bot)] = updated
+        emit({ type: 'bot.updated', at: now(), bot: updated })
+        break
+      }
       case 'environmentScreenTicket':
         if (!environment) return notFound()
         if ((body as { mode: string }).mode === 'control' && screenConflicts-- > 0) {
@@ -2524,7 +3072,13 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .poll(() => requests.find((item) => item.key === 'environmentUiOpen'))
       .toMatchObject({ path: '/v1/environments/acme/ui/open', body: { target: 'skills' } })
     await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Tela', exact: true })).toHaveAttribute('aria-selected', 'true')
+    // The environment's screen opens beside its overview.
+    await expect(page.getByRole('region', { name: 'Tela de Acme', exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Visão geral de Acme', exact: true })).toBeVisible()
+    await test.info().attach('environment-screen.png', {
+      body: await page.screenshot({ path: test.info().outputPath('environment-screen.png') }),
+      contentType: 'image/png',
+    })
     await expect
       .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
       .toEqual({ mode: 'view' })
@@ -2545,15 +3099,61 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
       .toEqual({ mode: 'control' })
     expect(requests.filter((item) => ['botTakeover', 'botUiOpen'].includes(item.key))).toHaveLength(0)
+    // Closing the screen ends its control and leaves the overview; the header opens it again, to watch.
+    const environmentScreen = page.getByRole('region', { name: 'Tela de Acme', exact: true })
+    await environmentScreen.getByRole('button', { name: 'Fechar tela', exact: true }).click()
+    await expect(environmentScreen).toBeHidden()
+    const shown = requests.filter((item) => item.key === 'environmentUiOpen').length
+    await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
+    await expect(environmentScreen).toBeVisible()
+    // Opening the screen asks the environment to show its settings window, hidden until asked, on no section.
+    await expect
+      .poll(() =>
+        requests
+          .filter((item) => item.key === 'environmentUiOpen')
+          .slice(shown)
+          .map((item) => item.body)
+      )
+      .toContainEqual({ target: 'main' })
+    await expect(environmentScreen.getByRole('button', { name: 'Assumir controle', exact: true })).toBeVisible()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'view' })
 
-    // A bot's screen switches between its browser area and its apps screen.
+    // On the unified desktop a bot has one screen, its apps: nothing to choose, and the bar says who is in control.
     await group('Acme').getByRole('button', { name: /Scout/ }).click()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await openComputer(page)
+    const computer = page.getByRole('region', { name: 'Computador do Scout', exact: true })
+    await expect(page.getByRole('radiogroup', { name: 'Área da tela' })).toHaveCount(0)
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1))
+      .toMatchObject({ path: '/v1/bots/scout/screen-tickets', body: { mode: 'view', surface: 'apps' } })
+    await expect(computer.getByRole('status').filter({ hasText: 'Scout no controle' })).toBeVisible()
+    await computer.getByRole('button', { name: 'Assumir controle', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: 'Assumir a tela do Scout?' })
+      .getByRole('button', { name: 'Assumir', exact: true })
+      .click()
+    await expect(computer.getByRole('status').filter({ hasText: 'Você no controle' })).toBeVisible()
+    await expect(computer.getByRole('button', { name: 'Devolver ao Scout', exact: true })).toBeVisible()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'control', surface: 'apps' })
+    await computer.getByRole('button', { name: 'Devolver ao Scout', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: 'Devolver ao Scout' })
+      .getByRole('button', { name: 'Devolver', exact: true })
+      .click()
+    await expect(computer.getByRole('status').filter({ hasText: 'Scout no controle' })).toBeVisible()
+
+    // An image without the unified desktop keeps a Browser and an Apps area, compactly chosen in the computer's header.
+    await group('Home').getByRole('button', { name: /Diary/ }).click()
+    await openComputer(page)
     const surfaces = page.getByRole('radiogroup', { name: 'Área da tela' })
     await expect(surfaces.getByRole('radio', { name: 'Navegador' })).toHaveAttribute('aria-checked', 'true')
     await expect
       .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1))
-      .toMatchObject({ path: '/v1/bots/scout/screen-tickets', body: { mode: 'view', surface: 'browser' } })
+      .toMatchObject({ path: '/v1/bots/diary/screen-tickets', body: { mode: 'view', surface: 'browser' } })
     await surfaces.getByRole('radio', { name: 'Apps' }).click()
     await expect(surfaces.getByRole('radio', { name: 'Apps' })).toHaveAttribute('aria-checked', 'true')
     await expect
@@ -2564,12 +3164,15 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await group('Acme')
       .getByRole('button', { name: /Partner/ })
       .click()
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const partnerSettings = await openBotSettings(page, 'Partner', 'Ambiente')
     await expect(
       page.getByRole('region', { name: 'Ambiente', exact: true }).getByRole('button', { name: 'Abrir ambiente' })
     ).toBeVisible()
+    // An environment's bots get their accounts, skills and MCP servers from it.
+    await settingsTab(partnerSettings, 'Modelo').click()
     await expect(page.getByRole('region', { name: 'Contas do bot', exact: true })).toHaveCount(0)
     await expect(page.getByRole('region', { name: 'Skills e MCP', exact: true })).toHaveCount(0)
+    await settingsTab(partnerSettings, 'Arquivar').click()
     await page.getByRole('button', { name: 'Arquivar Partner' }).click()
     const archiveBot = page.getByRole('dialog', { name: 'Arquivar bot?' })
     await expect(archiveBot).toContainText('Este bot sai do ambiente')
@@ -2587,8 +3190,12 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(page.getByRole('row').filter({ hasText: 'Scout' })).toContainText('—')
 
     // Archiving an environment archives its bots with it; restoring brings them back.
+    // Archiving is the last tab of the environment's settings.
     await header('Home').click()
-    await page.getByRole('button', { name: 'Arquivar Home' }).click()
+    await page.getByRole('button', { name: 'Configurações do ambiente', exact: true }).click()
+    const homeSettings = page.getByRole('dialog', { name: 'Configurações de Home', exact: true })
+    await homeSettings.getByRole('tab', { name: 'Arquivar', exact: true }).click()
+    await homeSettings.getByRole('button', { name: 'Arquivar Home' }).click()
     const archiveEnvironment = page.getByRole('dialog', { name: 'Arquivar ambiente?' })
     await expect(archiveEnvironment).toContainText('Diary')
     await archiveEnvironment.getByRole('button', { name: 'Arquivar' }).click()
@@ -2655,7 +3262,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
 
     // The environment waits for its bots; the owner can cancel, schedule again, or update now.
     await header('Acme').click()
-    const lifecycle = page.getByRole('region', { name: 'Iniciar e parar', exact: true })
+    const lifecycle = page.getByRole('region', { name: 'Atualização', exact: true })
     await expect(lifecycle.getByText('Atualização agendada', { exact: true })).toBeVisible()
     await lifecycle.getByRole('button', { name: 'Cancelar atualização' }).click()
     await expect
@@ -2747,7 +3354,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(claudeRow).toContainText('Verificando…')
     await expect(check).toBeDisabled()
     await header('Home').click()
-    await expect(page.getByRole('region', { name: 'Iniciar e parar', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Runtimes dos modelos', exact: true })).toHaveCount(0)
   } finally {
     await app?.close()
@@ -3093,7 +3700,7 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await group('Legado')
       .getByRole('button', { name: /Veterano/ })
       .click()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await openComputer(page)
     const surfaces = page.getByRole('radiogroup', { name: 'Área da tela' })
     await expect(surfaces.getByRole('radio', { name: 'Navegador' })).toHaveAttribute('aria-checked', 'true')
     await expect(surfaces.getByRole('radio', { name: 'Apps' })).toBeDisabled()
@@ -3124,10 +3731,10 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await expect(
       page.getByText('Reinicie este ambiente para atualizá-lo antes de fazer login na tela dele.')
     ).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Abrir tela do ambiente' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Novo bot neste ambiente' })).toBeDisabled()
     await expect(page.getByText('Reinicie este ambiente para atualizá-lo antes de adicionar bots.')).toBeVisible()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    // Its screen still opens, to say why it shows nothing yet.
+    await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
     await expect(page.getByText('Reinicie este ambiente para atualizá-lo antes de abrir esta tela.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Assumir controle' })).toBeDisabled()
     expect(environmentTickets('legacy')).toEqual([])
@@ -3160,27 +3767,31 @@ test('fleet UI keeps older environment images, stopped environments and refused 
 
     // A bot whose environment stopped before its status said so shows an offline screen, never a raw marker.
     await group('Acme').getByRole('button', { name: /Ghost/ }).click()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await openComputer(page)
     await expect.poll(() => botTickets('ghost').length).toBeGreaterThan(0)
     await expect(page.getByText('Bot parado', { exact: true }).first()).toBeVisible()
     expect(await bodyText()).not.toContain('FLEET_')
 
     // A refused ticket is retried once per screen: the apps area gets its own retry after the browser area's.
     await group('Acme').getByRole('button', { name: /Scout/ }).click()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await openComputer(page)
     await expect.poll(() => botTickets('scout', 'browser').length).toBe(2)
-    await expect(page.getByText('Tela indisponível. Tente reabrir esta aba.')).toBeVisible()
+    await expect(page.getByText('Tela indisponível', { exact: true })).toBeVisible()
     await page.getByRole('radiogroup', { name: 'Área da tela' }).getByRole('radio', { name: 'Apps' }).click()
     await expect.poll(() => botTickets('scout', 'apps').length).toBe(2)
-    await expect(page.getByText('Tela indisponível. Tente reabrir esta aba.')).toBeVisible()
+    await expect(page.getByText('Tela indisponível', { exact: true })).toBeVisible()
     await page.waitForTimeout(1000)
     expect(botTickets('scout', 'apps')).toHaveLength(2)
     expect(botTickets('scout', 'browser')).toHaveLength(2)
+    // Closing the stream gives an explicit re-open a fresh retry allowance, even though the pane stays mounted.
+    await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
+    await openComputer(page)
+    await expect.poll(() => botTickets('scout', 'apps').length).toBe(4)
 
     // Another Mac takes the shared display between this Mac's control ticket and its use: this Mac watches instead
     // of retrying control, and says why.
     await header('Acme').click()
-    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await page.getByRole('button', { name: 'Abrir tela do ambiente' }).click()
     await expect.poll(() => environmentTickets('acme')).toEqual([{ mode: 'view' }])
     await page.getByRole('button', { name: 'Assumir controle' }).click()
     await expect(
@@ -3616,7 +4227,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await createDialog.getByRole('button', { name: 'Criar bot' }).click()
     await expect(page.getByRole('heading', { name: 'Helper', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Escolher modelo de compactação' })).toHaveCount(0)
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await openBotSettings(page, 'Helper', 'Modelo')
     const botCompaction = page.getByRole('region', { name: 'Compactação', exact: true })
     const saveBar = () => page.getByRole('region', { name: 'Alterações não salvas', exact: true })
     const saveChanges = () =>
@@ -3634,7 +4245,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await group('Acme')
       .getByRole('button', { name: /Partner/ })
       .click()
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await openBotSettings(page, 'Partner', 'Modelo')
     await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Padrão do ambiente · Shared · Model B', exact: true }).click()
@@ -3659,12 +4270,13 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a', 90_000) })
 
     // Without a default, the environment explains that a bot's first model becomes it, and so does the bot.
+    await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     await header('Home').click()
     await expect(
       section().getByText('Ainda não definido. O primeiro modelo escolhido para um dos bots dele vira o padrão.')
     ).toBeVisible()
     await group('Home').getByRole('button', { name: /Diary/ }).click()
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await openBotSettings(page, 'Diary', 'Modelo')
     await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · ainda não definido')
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Shared · Model A', exact: true }).click()
@@ -3675,13 +4287,14 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a') })
     await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · Shared · Model A')
     await expect(botCompaction.getByText(/Também vira o padrão/)).toHaveCount(0)
+    await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     await header('Home').click()
     await expect(modelPicker(section())).toContainText('Shared · Model A')
     await expect(section().getByText('Usado por: Diary', { exact: true })).toBeVisible()
 
     // A bot with its own model is never offered an environment default that does not exist.
     await group('Old').getByRole('button', { name: /Relic/ }).click()
-    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await openBotSettings(page, 'Relic', 'Modelo')
     await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
     await modelPicker(botCompaction).click()
     await expect(page.getByRole('option', { name: 'Shared · Model B', exact: true })).toBeVisible()
@@ -3690,6 +4303,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect(saveBar()).toHaveCount(0)
 
     // A stopped environment shows its default without changing it; an older image asks for a restart.
+    await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     await header('Lab').click()
     await expect(section().getByText('Atual: model-a', { exact: true })).toBeVisible()
     await expect(section().getByText('Inicie o ambiente para trocar.', { exact: true })).toBeVisible()

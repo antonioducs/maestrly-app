@@ -28,15 +28,18 @@ import * as chatService from '../../src/main/chat/service'
 import {
   EnvironmentRuntime,
   productionDisplayDeps,
+  type BotDesktopTarget,
   type EnvironmentRuntimeDeps,
 } from '../../src/main/fleet/instance/environment'
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
+import { emitChatHost } from '../../src/main/chat/host-events'
 import { writeBotPaused } from '../../src/main/fleet/instance/registry'
 import { InstanceInputQueue } from '../../src/main/fleet/instance/queue'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
 import { gateInstanceAppTool } from '../../src/main/fleet/instance/gate'
 import { createInstanceControlServer, InstanceHttpError } from '../../src/main/fleet/instance/server'
+import * as wallpaperPainter from '../../src/main/fleet/instance/desktop/paint-wallpaper'
 import type { DisplaySurface, VncMode } from '../../src/main/fleet/instance/displays'
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 import { conversationScreen } from '../../src/main/conversation-screen'
@@ -83,12 +86,15 @@ function fakeDisplays(home: string) {
       env: {
         DISPLAY: `:${slot}`,
         DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/${botId}/bus`,
-        BROWSER: '/usr/local/bin/maestrly-bot-browser',
+        BROWSER: '/usr/local/bin/maestrly-open-url',
         MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/${botId}/chromium`,
+        GTK_THEME: 'Adwaita:dark',
+        MAESTRLY_DESKTOP_SOCKET: `${home}/.cache/maestrly-bots/${botId}/desktop.sock`,
       },
       browserArea: fleetEnvironmentTile(slot),
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
+    redecorate: vi.fn(async (_botId: string) => {}),
     acquireVnc: vi.fn(async (_surface: DisplaySurface, _mode: VncMode) => ({ port: 5903, release: vi.fn() })),
     dispose: vi.fn(async () => {}),
   }
@@ -373,6 +379,7 @@ describe('bot environment registry', () => {
         { botId: 'beta', slot: 2, status: { profile: { botId: 'beta', name: 'Beta' }, conversationId: convB } },
       ],
     })
+    // Without displays, bots have no desktop: clients keep their separate screens.
     expect(aggregate.capabilities).toEqual([
       'files',
       'environment-settings-v1',
@@ -822,6 +829,118 @@ describe('bot environment registry', () => {
     }
   )
 
+  it("starts each bot's desktop services with its display and stops them with its screens", async () => {
+    const handles: Array<{
+      botId: string
+      display: string
+      dispose: ReturnType<typeof vi.fn>
+      present: ReturnType<typeof vi.fn>
+    }> = []
+    const order: string[] = []
+    const displays = fakeDisplays(home)
+    displays.dispose.mockImplementation(async () => {
+      order.push('displays')
+    })
+    const desktop = vi.fn(async (target: BotDesktopTarget) => {
+      const dispose = vi.fn(async () => {
+        order.push('desktop ' + target.botId)
+      })
+      const handle = { present: vi.fn(), dispose }
+      handles.push({ botId: target.botId, display: target.display.display, ...handle })
+      return handle
+    })
+    const setup = environment(displays)
+    const runtime = new EnvironmentRuntime({ ...setup.deps, desktop })
+    environments.push(runtime)
+    await runtime.start()
+    await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: tokenA })
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    expect(handles.map(({ botId, display }) => [botId, display])).toEqual([
+      ['alpha', ':1'],
+      ['beta', ':2'],
+    ])
+    // With a desktop for each bot, the environment tells clients to show one screen per bot.
+    expect(runtime.health().capabilities).toContain('unified-desktop')
+    expect((await runtime.environmentStatus()).capabilities).toContain('unified-desktop')
+    expect((await runtime.bot('alpha').status()).capabilities).toContain('unified-desktop')
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(botIdentityPrompt(getConversation(runtime.bot('alpha').primaryConversationId!)!.cwd)).toContain(
+      'one Linux desktop of your own'
+    )
+    const target = desktop.mock.calls[0][0]
+    expect(target.conversationId()).toBe(runtime.bot('alpha').primaryConversationId)
+    expect(target.hold()).toMatchObject({ state: 'none' })
+    // The app a bot's tool uses comes forward on that bot's desktop only.
+    const alphaConversation = runtime.bot('alpha').primaryConversationId!
+    const betaConversation = runtime.bot('beta').primaryConversationId!
+    for (const handle of handles) handle.present.mockClear()
+    const tool = (conversationId: string, payload: Record<string, unknown>) =>
+      emitChatHost(conversationId, `chat:delta:${conversationId}`, { messageId: 'm', ...payload })
+    tool(betaConversation, { kind: 'tool-call', toolCallId: 'b1', toolName: 'browser_click', input: { ref: 1 } })
+    tool(alphaConversation, {
+      kind: 'tool-call',
+      toolCallId: 'a1',
+      toolName: 'terminal_run',
+      input: { id: 'term:x:2' },
+    })
+    // A new terminal exists only once its tool finished.
+    tool(alphaConversation, {
+      kind: 'tool-call',
+      toolCallId: 'a2',
+      toolName: 'mcp__maestrly__terminal_create',
+      input: {},
+    })
+    // Reading the page shows nothing.
+    tool(betaConversation, { kind: 'tool-call', toolCallId: 'b2', toolName: 'browser_snapshot', input: {} })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    expect(handles[1].present.mock.calls).toEqual([[{ app: 'browser' }]])
+    expect(handles[0].present.mock.calls).toEqual([[{ app: 'terminal', terminalId: 'term:x:2' }]])
+    tool(alphaConversation, {
+      kind: 'tool-state',
+      toolCallId: 'a2',
+      state: { status: 'completed', output: { text: 'created' } },
+    })
+    expect(handles[0].present.mock.calls.at(-1)).toEqual([{ app: 'terminal', terminalId: null }])
+    expect(setup.deps.floatBrowser).toHaveBeenCalledWith(betaConversation)
+
+    // A new slot is a new display: the old services stop first.
+    await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 3, gatewayToken: tokenA })
+    expect(handles[0].dispose).toHaveBeenCalledTimes(1)
+    expect(handles.at(-1)).toMatchObject({ botId: 'alpha', display: ':3' })
+
+    await runtime.uninstallBot('beta', { purge: false })
+    expect(handles[1].dispose).toHaveBeenCalledTimes(1)
+
+    await runtime.dispose()
+    expect(handles.at(-1)!.dispose).toHaveBeenCalledTimes(1)
+    // The services stop before the displays they run on.
+    expect(order.at(-1)).toBe('displays')
+    expect(order.indexOf('desktop alpha')).toBeLessThan(order.indexOf('displays'))
+  })
+
+  it('installs a bot whose desktop services fail to start, and starts none without a display', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const displays = fakeDisplays(home)
+    const start = displays.startBot.getMockImplementation()!
+    displays.startBot.mockImplementation(async (botId: string, slot: number) => {
+      if (slot === 2) throw new Error('Display :2 is already in use.')
+      return start(botId, slot)
+    })
+    const desktop = vi.fn(async (target: BotDesktopTarget) => {
+      if (target.botId === 'alpha') throw new Error('socket busy')
+      return { present: vi.fn(), dispose: vi.fn(async () => {}) }
+    })
+    const runtime = new EnvironmentRuntime({ ...environment(displays).deps, desktop })
+    environments.push(runtime)
+    await runtime.start()
+    await expect(
+      runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: tokenA })
+    ).resolves.toBeDefined()
+    expect(errors.mock.calls.some(([line]) => String(line).includes('socket busy'))).toBe(true)
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    expect(desktop.mock.calls.map(([target]) => target.botId)).toEqual(['alpha'])
+  })
+
   it('gives a bot whose apps display cannot start its own display variables, never the environment ones', async () => {
     const displays = fakeDisplays(home)
     displays.startBot.mockRejectedValueOnce(new Error('Display :1 is already in use.'))
@@ -840,10 +959,110 @@ describe('bot environment registry', () => {
       DISPLAY: ':1',
       // Built by the bot's own Maestrly, which joins paths as the platform does.
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(home, '.cache', 'maestrly-bots', 'alpha', 'bus')}`,
-      BROWSER: '/usr/local/bin/maestrly-bot-browser',
+      BROWSER: '/usr/local/bin/maestrly-open-url',
       MAESTRLY_BOT_BROWSER_PROFILE: path.join(home, '.config', 'maestrly-bots', 'alpha', 'chromium'),
+      GTK_THEME: 'Adwaita:dark',
+      MAESTRLY_DESKTOP_SOCKET: path.join(home, '.cache', 'maestrly-bots', 'alpha', 'desktop.sock'),
     })
     expect(conversationShellEnv(runtime.bot('beta').primaryConversationId!)).toMatchObject({ DISPLAY: ':2' })
+  })
+
+  it('paints the wallpaper of a bot once it is installed, and again only when its name or color changes', async () => {
+    const { runtime, displays } = environment()
+    await runtime.start()
+    const install = (extra: Partial<FleetInstanceProfile>, name = 'Alpha') =>
+      runtime.installBot({ profile: profile('alpha', name, extra), slot: 1, gatewayToken: tokenA })
+    await install({ tint: '#8b6cf0' })
+    // The first install started the display before the profile was known: it is painted once the profile is in.
+    expect(displays.redecorate.mock.calls).toEqual([['alpha']])
+    expect(runtime.bot('alpha')).toMatchObject({ name: 'Alpha', tint: '#8b6cf0' })
+
+    await install({ tint: '#8b6cf0' })
+    await install({ tint: '#8b6cf0', instructions: 'Other instructions.', ceiling: 'full' })
+    expect(displays.redecorate).toHaveBeenCalledTimes(1)
+
+    await install({ tint: '#3f9fd8' })
+    expect(displays.redecorate).toHaveBeenCalledTimes(2)
+    await install({ tint: '#3f9fd8' }, 'Ada')
+    expect(displays.redecorate).toHaveBeenCalledTimes(3)
+    // A gateway that stops sending a color takes the bot back to the neutral one.
+    await install({}, 'Ada')
+    expect(runtime.bot('alpha').tint).toBeNull()
+    expect(displays.redecorate).toHaveBeenCalledTimes(4)
+    expect(displays.redecorate.mock.calls.every(([botId]) => botId === 'alpha')).toBe(true)
+  })
+
+  it('installs a bot even when its wallpaper cannot be painted', async () => {
+    const displays = fakeDisplays(home)
+    displays.redecorate.mockRejectedValue(new Error('painting failed'))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { runtime } = environment(displays)
+    await runtime.start()
+    await expect(
+      runtime.installBot({ profile: profile('alpha', 'Alpha', { tint: '#8b6cf0' }), slot: 1, gatewayToken: tokenA })
+    ).resolves.toBeDefined()
+    await expect(
+      runtime.installBot({ profile: profile('alpha', 'Ada', { tint: '#8b6cf0' }), slot: 1, gatewayToken: tokenA })
+    ).resolves.toBeDefined()
+    await settle(20)
+    expect(runtime.bot('alpha').name).toBe('Ada')
+    expect(errors.mock.calls.filter(([line]) => String(line).includes('painting failed'))).toHaveLength(2)
+    // Without displays (outside a container) there is nothing to paint and nothing to fail.
+    await runtime.dispose()
+    const bare = new EnvironmentRuntime({ ...environment().deps, displays: null })
+    environments.push(bare)
+    await bare.start()
+    await expect(
+      bare.installBot({ profile: profile('beta', 'Beta', { tint: '#8b6cf0' }), slot: 2, gatewayToken: tokenB })
+    ).resolves.toBeDefined()
+  })
+
+  it('gives the wallpaper the stored look of a bot, nothing for an unknown bot, and the language of the app', async () => {
+    const painted = vi.spyOn(wallpaperPainter, 'paintWallpaper').mockResolvedValue()
+    const { runtime } = environment()
+    await runtime.start()
+    await runtime.installBot({
+      profile: profile('alpha', 'Alpha', { tint: '#8b6cf0' }),
+      slot: 1,
+      gatewayToken: tokenA,
+    })
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    const display = (botId: string, slot: number) =>
+      ({ botId, slot, display: `:${slot}` }) as Parameters<
+        NonNullable<ReturnType<typeof productionDisplayDeps>['decorate']>
+      >[0]
+    const folder = (botId: string) => path.join(home, '.cache', 'maestrly-bots', botId)
+
+    const deps = productionDisplayDeps(home)
+    await deps.decorate?.(display('alpha', 1))
+    await deps.decorate?.(display('beta', 2))
+    await deps.decorate?.(display('gamma', 3))
+    expect(painted.mock.calls).toEqual([
+      [{ folder: folder('alpha'), display: ':1', name: 'Alpha', tint: '#8b6cf0' }],
+      [{ folder: folder('beta'), display: ':2', name: 'Beta', tint: null }],
+    ])
+    // The look and the language can come from elsewhere, and a painting that fails is the caller's to log.
+    let locale = 'pt-BR'
+    const custom = productionDisplayDeps(
+      home,
+      (botId) => (botId === 'alpha' ? { name: 'Custom', tint: '#112233' } : null),
+      () => locale
+    )
+    await custom.decorate?.(display('alpha', 1))
+    expect(painted.mock.calls.at(-1)).toEqual([
+      { folder: folder('alpha'), display: ':1', name: 'Custom', tint: '#112233' },
+    ])
+    expect(custom.language?.()).toBe('pt_BR')
+    locale = 'en'
+    expect(custom.language?.()).toBe('en')
+    locale = 'fr'
+    expect(custom.language?.()).toBe('en')
+    painted.mockRejectedValueOnce(new Error('hsetroot is not installed'))
+    await expect(custom.decorate?.(display('alpha', 1))).rejects.toThrow('hsetroot is not installed')
+    // Without a look given, the language is the app's own.
+    expect(deps.language?.()).toBe('en')
+    setAppSetting('locale', 'pt-BR')
+    expect(deps.language?.()).toBe('pt_BR')
   })
 
   it('lends VNC servers for the screens of installed bots and the environment screen only', async () => {

@@ -14,6 +14,7 @@ import {
 } from '@/lib/fleet/environment-settings'
 import { SettingsSwitch } from '../SettingsSwitch'
 import {
+  OwnSaveButtonsScope,
   SaveDiscard,
   SettingsPanel,
   settingsInput,
@@ -203,97 +204,105 @@ function McpEditor({
   }
   const fields =
     editor.draft.transport === 'http' ? (['url', 'headers'] as const) : (['command', 'args', 'env'] as const)
+  // A dialog of its own keeps its save buttons, also inside the panel whose bar saves the sections.
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !editor.busy) requestMainNavigation(close)
-      }}
-    >
-      <DialogContent className="max-h-[85vh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl">
-        <DialogHeader>
-          <DialogTitle>{t('environmentSettings.editServer')}</DialogTitle>
-          <DialogDescription>{t('environmentSettings.preserveSecret')}</DialogDescription>
-        </DialogHeader>
-        <SettingsPanel error={editor.error} reload={close}>
-          <label className="block space-y-1">
-            {t('environmentSettings.name')}
-            <input
-              className={settingsInput}
-              disabled={editor.busy || !online}
-              value={editor.draft.name}
-              onChange={(e) => editor.setDraft((d) => ({ ...d, name: e.target.value }))}
-            />
-          </label>
-          <Select
-            value={editor.draft.transport}
-            disabled={editor.busy || !online}
-            onValueChange={(value) => editor.setDraft((d) => ({ ...d, transport: value as 'http' | 'stdio' }))}
-          >
-            <SelectTrigger aria-label={t('environmentSettings.transport')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="http">HTTP</SelectItem>
-              <SelectItem value="stdio">stdio</SelectItem>
-            </SelectContent>
-          </Select>
-          {fields.map((field) => (
-            <label key={field} className="block space-y-1">
-              {t(`environmentSettings.mcpField.${field}`)}
-              {field === 'env' || field === 'headers' || field === 'args' ? (
-                <textarea
-                  className={settingsInput}
-                  disabled={editor.busy || !online}
-                  value={editor.draft[field]}
-                  onChange={(e) => editor.setDraft((d) => ({ ...d, [field]: e.target.value }))}
-                  rows={3}
-                  spellCheck={false}
-                />
-              ) : (
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  className={settingsInput}
-                  disabled={editor.busy || !online}
-                  value={editor.draft[field]}
-                  onChange={(e) => editor.setDraft((d) => ({ ...d, [field]: e.target.value }))}
-                />
-              )}
+    <OwnSaveButtonsScope>
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open && !editor.busy) requestMainNavigation(close, 'section')
+        }}
+      >
+        <DialogContent className="max-h-[85vh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl">
+          <DialogHeader>
+            <DialogTitle>{t('environmentSettings.editServer')}</DialogTitle>
+            <DialogDescription>{t('environmentSettings.preserveSecret')}</DialogDescription>
+          </DialogHeader>
+          <SettingsPanel error={editor.error} reload={close}>
+            <label className="block space-y-1">
+              {t('environmentSettings.name')}
+              <input
+                className={settingsInput}
+                disabled={editor.busy || !online}
+                value={editor.draft.name}
+                onChange={(e) => editor.setDraft((d) => ({ ...d, name: e.target.value }))}
+              />
             </label>
-          ))}
-          {server &&
-            (editor.draft.transport === 'http' ? (['headers'] as const) : (['env'] as const)).map((kind) => (
-              <div key={kind}>
-                {(kind === 'env' ? server.envKeys : server.headerKeys).map((key) => {
-                  const field = kind === 'env' ? 'removeEnv' : 'removeHeaders'
-                  return (
-                    <label key={key} className="flex items-center gap-2 text-xs">
-                      <input
-                        type="checkbox"
-                        disabled={editor.busy || !online}
-                        checked={editor.draft[field].includes(key)}
-                        onChange={(e) =>
-                          editor.setDraft((d) => ({
-                            ...d,
-                            [field]: e.target.checked ? [...d[field], key] : d[field].filter((item) => item !== key),
-                          }))
-                        }
-                      />
-                      {t('environmentSettings.removeSecret', { key })}
-                    </label>
-                  )
-                })}
-              </div>
+            <Select
+              value={editor.draft.transport}
+              disabled={editor.busy || !online}
+              onValueChange={(value) => editor.setDraft((d) => ({ ...d, transport: value as 'http' | 'stdio' }))}
+            >
+              <SelectTrigger aria-label={t('environmentSettings.transport')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="http">HTTP</SelectItem>
+                <SelectItem value="stdio">stdio</SelectItem>
+              </SelectContent>
+            </Select>
+            {fields.map((field) => (
+              <label key={field} className="block space-y-1">
+                {t(`environmentSettings.mcpField.${field}`)}
+                {field === 'env' || field === 'headers' || field === 'args' ? (
+                  <textarea
+                    className={settingsInput}
+                    disabled={editor.busy || !online}
+                    value={editor.draft[field]}
+                    onChange={(e) => editor.setDraft((d) => ({ ...d, [field]: e.target.value }))}
+                    rows={3}
+                    spellCheck={false}
+                  />
+                ) : (
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    className={settingsInput}
+                    disabled={editor.busy || !online}
+                    value={editor.draft[field]}
+                    onChange={(e) => editor.setDraft((d) => ({ ...d, [field]: e.target.value }))}
+                  />
+                )}
+              </label>
             ))}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-            <SaveDiscard {...editor} busy={editor.busy || !online} save={save} discard={close} />
-            <Button size="sm" variant="ghost" disabled={editor.busy} onClick={() => requestMainNavigation(close)}>
-              {t('environmentSettings.close')}
-            </Button>
-          </div>
-        </SettingsPanel>
-      </DialogContent>
-    </Dialog>
+            {server &&
+              (editor.draft.transport === 'http' ? (['headers'] as const) : (['env'] as const)).map((kind) => (
+                <div key={kind}>
+                  {(kind === 'env' ? server.envKeys : server.headerKeys).map((key) => {
+                    const field = kind === 'env' ? 'removeEnv' : 'removeHeaders'
+                    return (
+                      <label key={key} className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          disabled={editor.busy || !online}
+                          checked={editor.draft[field].includes(key)}
+                          onChange={(e) =>
+                            editor.setDraft((d) => ({
+                              ...d,
+                              [field]: e.target.checked ? [...d[field], key] : d[field].filter((item) => item !== key),
+                            }))
+                          }
+                        />
+                        {t('environmentSettings.removeSecret', { key })}
+                      </label>
+                    )
+                  })}
+                </div>
+              ))}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+              <SaveDiscard {...editor} busy={editor.busy || !online} save={save} discard={close} />
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={editor.busy}
+                onClick={() => requestMainNavigation(close, 'section')}
+              >
+                {t('environmentSettings.close')}
+              </Button>
+            </div>
+          </SettingsPanel>
+        </DialogContent>
+      </Dialog>
+    </OwnSaveButtonsScope>
   )
 }

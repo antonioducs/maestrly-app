@@ -77,10 +77,18 @@ mkdir -p "$HOME/.config/tint2" "$HOME/.config/gtk-3.0" "$HOME/.local/share/keyri
 cp /opt/maestrly/tint2rc "$HOME/.config/tint2/tint2rc"
 cat > "$HOME/.config/mimeapps.list" <<'MIME'
 [Default Applications]
-x-scheme-handler/http=chromium.desktop
-x-scheme-handler/https=chromium.desktop
-text/html=chromium.desktop
+x-scheme-handler/http=maestrly-url.desktop
+x-scheme-handler/https=maestrly-url.desktop
+text/html=maestrly-url.desktop
+text/plain=org.xfce.mousepad.desktop
 MIME
+# GTK 3 programs of the bots take their dark theme from GTK_THEME, which only the bots' programs get. The file manager is
+# GTK 2 and reads this file; nothing else in the container does.
+cat > "$HOME/.gtkrc-2.0" <<'GTK2'
+gtk-theme-name = "Adwaita-dark"
+gtk-icon-theme-name = "Adwaita"
+gtk-font-name = "DejaVu Sans 10"
+GTK2
 
 if [[ -z "${MAESTRLY_BOT_KEYRING_PASSWORD:-}" ]]; then
   echo '[bot] MAESTRLY_BOT_KEYRING_PASSWORD is required for encrypted safeStorage' >&2

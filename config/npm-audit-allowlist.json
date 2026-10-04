@@ -1,4 +1,12 @@
 {
   "schema": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "package": "http-cache-semantics",
+      "path": "node_modules/http-cache-semantics",
+      "advisories": ["GHSA-ch52-4w7c-c8xp"],
+      "reason": "Build-time only: electron-builder -> app-builder-lib -> @electron/get 3 -> got 11 -> cacheable-request 7. It is not shipped in the app, and got only reaches it when a request sets a cache store, which nothing in that chain does, so there is no shared cache to disclose. No patched release exists, and electron-builder moves to @electron/get 5 (which drops got) only in 27, still alpha.",
+      "expiresOn": "2026-11-03"
+    }
+  ]
 }

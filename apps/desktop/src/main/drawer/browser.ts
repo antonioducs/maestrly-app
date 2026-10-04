@@ -15,9 +15,9 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
-import { conversationScreen } from '../conversation-screen'
+import { conversationScreen, presentedBrowserSize } from '../conversation-screen'
 import { isBotMode } from '../fleet/instance/config'
-import { centerInArea, clampToArea, insideWindowFrame } from '../fleet/instance/window-bounds'
+import { centerInArea, clampToArea, insideWindowFrame, popupArea } from '../fleet/instance/window-bounds'
 import { refocusScreen, setScreenFocusOwner, showWindow } from '../screen-focus'
 import {
   OFFSCREEN,
@@ -473,6 +473,12 @@ export function hardenBrowserSession(): void {
   session.fromPartition(BROWSER_PARTITION).setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
 }
 
+/** Where a conversation's popups stay: inside its presented browser, or its whole screen area; none without one. */
+function popupWindowArea(convId: string) {
+  const area = conversationScreen(convId)?.windowArea
+  return area ? popupArea(area, presentedBrowserSize(convId)) : undefined
+}
+
 function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebContentsView {
   const resourceId = tab.id
   const v = new WebContentsView({
@@ -565,7 +571,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     try {
       // A conversation with its own screen area keeps its popups there, window manager frame included: they keep the
       // frame for its close button. Others center on their display.
-      const area = conversationScreen(convId)?.windowArea
+      const area = popupWindowArea(convId)
       if (area) child.setBounds(centerInArea(child.getBounds(), insideWindowFrame(area)))
       else child.center()
       showWindow(child)
@@ -574,7 +580,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     }
     // A page may move or resize its popup (window.moveTo, window.resizeTo); inside a screen area it stays there.
     child.webContents.on('content-bounds-updated', (event, bounds) => {
-      const area = conversationScreen(convId)?.windowArea
+      const area = popupWindowArea(convId)
       if (!area) return
       event.preventDefault()
       if (!child.isDestroyed()) child.setBounds(clampToArea(bounds, insideWindowFrame(area)))
@@ -629,6 +635,31 @@ export function focusBrowserPopup(convId: string): boolean {
   if (!popup) return false
   popup.focus()
   return true
+}
+
+/**
+ * The views of a conversation's browser that its bot's desktop presents: its tab strip and address bar, its active
+ * page, and its visible popups, newest first.
+ */
+export function presentedBrowserViews(convId: string): {
+  chrome: WebContentsView | null
+  page: WebContentsView | null
+  popups: BrowserWindow[]
+} {
+  const d = drawers.get(convId)
+  if (!d) return { chrome: null, page: null, popups: [] }
+  const page = d.browserTabs.find((tab) => tab.id === d.activeBrowserId)?.view ?? null
+  const popups = [...d.oauthWindows].reverse().filter((child) => !child.isDestroyed() && child.isVisible())
+  return { chrome: d.browserChromeView, page, popups }
+}
+
+const browserStateListeners = new Set<(convId: string) => void>()
+/** Observes changes of a browser's tabs, titles and addresses; returns the function that stops observing. */
+export function onBrowserStateChange(listener: (convId: string) => void): () => void {
+  browserStateListeners.add(listener)
+  return () => {
+    browserStateListeners.delete(listener)
+  }
 }
 
 // Debounce per-conversation tab URL/order/active-state persistence rather than writing on every navigation.
@@ -1098,6 +1129,13 @@ export function focusBrowserDrawer(convId: string): void {
 
 export function emitBrowserState(convId: string): void {
   if (!drawers.has(convId)) return
+  for (const listener of [...browserStateListeners]) {
+    try {
+      listener(convId)
+    } catch (error) {
+      console.error('A browser state listener failed:', error instanceof Error ? error.message : String(error))
+    }
+  }
   // Broadcast chrome updates filtered by convId, including floating browsers in background conversations
   // controlled through MCP.
   const state = getBrowserState(convId)

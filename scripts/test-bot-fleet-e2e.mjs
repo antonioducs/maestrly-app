@@ -1619,6 +1619,8 @@ async function main() {
       console.log('artifact HTTP refused: ' + error.code)
     })
   `,
+    // A random id may start with "-", which node would read as one of its own options.
+    '--',
     artifact.id,
   ])
   assert.ok(denied.stdout.includes('artifact HTTP refused: ECONNRESET'))

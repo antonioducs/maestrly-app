@@ -371,6 +371,13 @@ describe('environment UI wiring', () => {
     'BotMemorySection',
     'SettingsSection',
     'SettingsSwitch',
+    'EnvironmentRack',
+    'EnvironmentSharedSummary',
+    'EnvironmentResources',
+    'EnvironmentUpdateNotice',
+    'EnvironmentConfirm',
+    'EnvironmentSettings',
+    'SplitWorkspace',
   ]
 
   it('uses the app controls and theme: no native select and no raw colors', () => {
@@ -379,6 +386,40 @@ describe('environment UI wiring', () => {
       expect(text, name).not.toMatch(/<select\b/)
       expect(text, name).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
     }
+  })
+
+  it('lays an environment out as a bot: its overview beside its screen, and its settings in a panel over both', () => {
+    const view = source('components/fleet/EnvironmentView.tsx')
+    for (const component of ['SplitWorkspace', 'EnvironmentScreen', 'EnvironmentSettingsSheet', 'EnvironmentRack'])
+      expect(view, component).toContain(`<${component}`)
+    expect(view).toContain('useEnvironmentWorkspaceLayout(')
+    // The old view tabs are gone: `screen` opens the screen pane and `settings` the panel.
+    expect(view).not.toContain('role="tablist"')
+    expect(view).toContain("view.tab === 'screen'")
+    expect(view).toContain("view.tab === 'settings'")
+    // Without app-managed settings, the shared setup stays in the overview, as before.
+    expect(view).toContain('<LegacySharedSetup')
+    expect(source('components/fleet/BotWorkspace.tsx')).toContain('<SplitWorkspace')
+    const sheet = source('components/fleet/EnvironmentSettings.tsx')
+    // A section's panel stays mounted once opened, so its draft survives moving between tabs.
+    expect(sheet).toContain('hidden={tab !== active}')
+    expect(sheet).toContain('visited.has(tab)')
+    expect(sheet).toContain('<SharedSaveBarScope>')
+    expect(sheet).toContain('MAIN_NAVIGATION_EVENT')
+    expect(sheet).toContain("scope === 'section'")
+    expect(sheet).toContain("t('botSettings.saveBar.region')")
+    // An editor in a dialog of its own keeps its buttons; closing it asks about its section only.
+    for (const name of ['EnvironmentAccounts', 'EnvironmentMcp']) {
+      const panel = source(`components/fleet/environment-settings/${name}.tsx`)
+      expect(panel, name).toContain('<OwnSaveButtonsScope>')
+      expect(panel, name).toContain("'section')")
+    }
+    expect(source('components/fleet/environment-settings/shared.tsx')).toContain(
+      'if (!useOwnSaveButtons()) return null'
+    )
+    const summary = source('components/fleet/EnvironmentSharedSummary.tsx')
+    for (const operation of ['accounts', 'models', 'skills', 'mcpServers'])
+      expect(summary, operation).toContain(`useEnvironmentSettingsResource(props.environment.id, '${operation}')`)
   })
 
   it('routes the environment view through the main panels and the sidebar', () => {
@@ -418,7 +459,9 @@ describe('environment UI wiring', () => {
   })
 
   it('shares accounts, skills and MCP servers through the environment and refreshes them on real changes', () => {
-    const view = source('components/fleet/EnvironmentView.tsx')
+    const view = ['EnvironmentView', 'EnvironmentResources', 'EnvironmentSharedSummary', 'EnvironmentRack']
+      .map((name) => source(`components/fleet/${name}.tsx`))
+      .join('\n')
     expect(view).toContain('useFleetProvisioning(')
     expect(view).toContain('environmentProvisioningKey(')
     expect(view).toContain('createKeyWatcher(')
@@ -478,9 +521,11 @@ describe('environment UI wiring', () => {
 
   it('switches bot screen areas, keeps takeover control, and reports the shared display conflict', () => {
     const screen = source('components/fleet/BotScreen.tsx')
-    expect(screen).toContain("const mode = human ? 'control' : 'view'")
-    expect(screen).toContain("t('screen.browser')")
-    expect(screen).toContain("t('screen.apps')")
+    expect(screen).toContain("const controlMode = human ? 'control' : 'view'")
+    expect(screen).toContain('<ScreenSurfaceToggle')
+    const header = source('components/fleet/BotComputerHeader.tsx')
+    expect(header).toContain("t('screen.browser')")
+    expect(header).toContain("t('screen.apps')")
     expect(screen).toContain('useFleetScreen(')
     const frame = source('components/fleet/ScreenFrame.tsx')
     expect(frame).toContain('isScreenConflict(')
@@ -488,6 +533,8 @@ describe('environment UI wiring', () => {
     const environmentScreen = source('components/fleet/EnvironmentScreen.tsx')
     expect(environmentScreen).toContain('useFleetScreen(')
     expect(environmentScreen).toContain("t('screen.conflict')")
+    // Its settings window starts hidden: opening the screen asks for it, or the tile shows black.
+    expect(environmentScreen).toContain("fleetEnvironmentUiOpen(environment.id, 'main')")
     // The environment screen shows Maestrly's settings: no bot is held.
     expect(environmentScreen).not.toContain('fleetTakeover')
   })
@@ -530,6 +577,12 @@ describe('environment translations', () => {
   it('has every literal key the fleet views use, in both languages', () => {
     const files = [
       'components/fleet/EnvironmentView.tsx',
+      'components/fleet/EnvironmentRack.tsx',
+      'components/fleet/EnvironmentSharedSummary.tsx',
+      'components/fleet/EnvironmentResources.tsx',
+      'components/fleet/EnvironmentUpdateNotice.tsx',
+      'components/fleet/EnvironmentConfirm.tsx',
+      'components/fleet/EnvironmentSettings.tsx',
       'components/fleet/CompactionFields.tsx',
       'components/fleet/EnvironmentScreen.tsx',
       'components/fleet/ScreenFrame.tsx',

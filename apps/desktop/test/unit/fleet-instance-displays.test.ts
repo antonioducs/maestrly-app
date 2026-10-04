@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  type BotDisplay,
   DisplayManager,
   type DisplayManagerDeps,
   type DisplaySurface,
@@ -29,8 +30,10 @@ function botEnv(botId: string, slot: number): Record<string, string> {
   return {
     DISPLAY: ':' + slot,
     DBUS_SESSION_BUS_ADDRESS: `unix:path=${HOME}/.cache/maestrly-bots/${botId}/bus`,
-    BROWSER: '/usr/local/bin/maestrly-bot-browser',
+    BROWSER: '/usr/local/bin/maestrly-open-url',
     MAESTRLY_BOT_BROWSER_PROFILE: `${HOME}/.config/maestrly-bots/${botId}/chromium`,
+    GTK_THEME: 'Adwaita:dark',
+    MAESTRLY_DESKTOP_SOCKET: `${HOME}/.cache/maestrly-bots/${botId}/desktop.sock`,
   }
 }
 
@@ -139,24 +142,35 @@ class FakeSpawner {
   }
 }
 
-function setup() {
+/** Every decoration the manager asked for, with the programs that had started by then. */
+interface Decoration {
+  display: BotDisplay
+  started: string[]
+}
+
+function setup(options: Partial<Pick<DisplayManagerDeps, 'decorate' | 'language'>> = {}) {
   const clock = new FakeClock()
   const spawner = new FakeSpawner()
   const logs: string[] = []
   const mkdirs: string[] = []
+  const decorations: Decoration[] = []
   const deps: DisplayManagerDeps = {
     spawn: spawner.spawn,
     home: HOME,
     mkdir: async (directory) => {
       mkdirs.push(directory)
     },
+    decorate: async (display) => {
+      decorations.push({ display, started: spawner.processes.map((child) => child.command) })
+    },
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     log: (message) => {
       logs.push(message)
     },
+    ...options,
   }
-  return { clock, spawner, logs, mkdirs, deps, manager: new DisplayManager(deps) }
+  return { clock, spawner, logs, mkdirs, decorations, deps, manager: new DisplayManager(deps) }
 }
 
 const environment: DisplaySurface = { kind: 'environment' }
@@ -189,6 +203,11 @@ describe('DisplayManager apps displays', () => {
       { command: 'xdpyinfo', args: ['-display', ':2'], env: {} },
       { command: 'openbox', args: ['--config-file', '/opt/maestrly/openbox-rc.xml'], env: botEnv('alpha', 2) },
       { command: 'tint2', args: ['-c', `${HOME}/.config/tint2/tint2rc`], env: botEnv('alpha', 2) },
+      {
+        command: 'maestrly-browser-presenter',
+        args: ['--source', ':0', '--socket', `${HOME}/.cache/maestrly-bots/alpha/desktop.sock`],
+        env: botEnv('alpha', 2),
+      },
     ])
   })
 
@@ -331,6 +350,9 @@ describe('DisplayManager apps displays', () => {
     expect(() => new DisplayManager({ ...deps, home: '/home/with space' })).toThrow(/home/)
     const deepHome = new DisplayManager({ ...deps, home: '/' + 'h'.repeat(80) })
     await expect(deepHome.startBot('x'.repeat(32), 1)).rejects.toThrow(/too long/)
+    // The desktop socket sits beside the bus socket, with a longer name: it is the one that must fit.
+    const almost = new DisplayManager({ ...deps, home: '/' + 'h'.repeat(49) })
+    await expect(almost.startBot('x'.repeat(28), 1)).rejects.toThrow(/desktop socket path .* too long/)
     expect(spawner.named('Xvfb')).toHaveLength(1)
   })
 
@@ -346,6 +368,7 @@ describe('DisplayManager apps displays', () => {
       ['Xvfb', true, false],
       ['openbox', true, false],
       ['tint2', true, false],
+      ['maestrly-browser-presenter', true, false],
     ])
     expect(beta.every((child) => child.running && !child.killed)).toBe(true)
     expect(manager.bot('alpha')).toBeNull()
@@ -439,6 +462,276 @@ describe('DisplayManager apps displays', () => {
     expect(['dbus-daemon', 'Xvfb', 'openbox', 'tint2'].map((command) => spawner.running(command).length)).toEqual([
       1, 1, 1, 1,
     ])
+  })
+
+  it("supervises the bot's browser presenter apart from its display, and gives up on it alone", async () => {
+    const { manager, spawner, clock, logs } = setup()
+    await manager.startBot('alpha', 2)
+    const presenter = 'maestrly-browser-presenter'
+    expect(spawner.running(presenter)).toHaveLength(1)
+    // It exits when the desktop service closes its connection: it comes back a second later.
+    spawner.running(presenter)[0].exit(0)
+    await clock.advance(1_000)
+    expect(spawner.running(presenter)).toHaveLength(1)
+    // A presenter that keeps crashing is given up after five restarts in a minute; the display goes on.
+    for (let crash = 1; crash <= 5; crash++) {
+      spawner.running(presenter)[0].exit(1)
+      await clock.advance(1_000)
+    }
+    expect(spawner.named(presenter)).toHaveLength(7)
+    spawner.running(presenter)[0].exit(1)
+    await clock.advance(10_000)
+    expect(spawner.named(presenter)).toHaveLength(7)
+    expect(spawner.running(presenter)).toHaveLength(0)
+    expect(logs.some((line) => line.includes('presenter') && /giving up/i.test(line))).toBe(true)
+    expect(['dbus-daemon', 'Xvfb', 'openbox', 'tint2'].map((command) => spawner.running(command).length)).toEqual([
+      1, 1, 1, 1,
+    ])
+    // The display server restarting brings it back with the window manager and taskbar.
+    spawner.running('Xvfb')[0].exit(1)
+    await clock.advance(1_000)
+    expect(spawner.running(presenter)).toHaveLength(1)
+  })
+
+  it('never retries a presenter that is not installed or cannot run on these displays', async () => {
+    for (const code of [127, 2]) {
+      const { manager, spawner, clock, logs } = setup()
+      spawner.respond = (command) => (command === 'maestrly-browser-presenter' ? code : PROBES.has(command) ? 0 : 'run')
+      await manager.startBot('alpha', 2)
+      await clock.advance(60_000)
+      expect(spawner.named('maestrly-browser-presenter')).toHaveLength(1)
+      expect(logs.filter((line) => line.includes('maestrly-browser-presenter'))).toHaveLength(1)
+      expect(spawner.running('tint2')).toHaveLength(1)
+    }
+  })
+})
+
+describe('DisplayManager decoration', () => {
+  it('decorates the display once, after the display answers and before the window manager and taskbar', async () => {
+    const { manager, spawner, decorations } = setup()
+    const display = await manager.startBot('alpha', 2)
+    expect(decorations).toHaveLength(1)
+    expect(decorations[0].display).toBe(display)
+    expect(decorations[0].started).toEqual(['dbus-daemon', 'prepare-xvfb-display', 'Xvfb', 'xdpyinfo'])
+    expect(spawner.named('openbox')).toHaveLength(1)
+    expect(spawner.named('tint2')).toHaveLength(1)
+    // Starting the same bot again reuses its display and does not paint it again.
+    await manager.startBot('alpha', 2)
+    expect(decorations).toHaveLength(1)
+  })
+
+  it('holds the window manager back while the decoration runs', async () => {
+    let finish: () => void = () => undefined
+    const { manager, spawner, clock } = setup({
+      decorate: () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        }),
+    })
+    const start = manager.startBot('alpha', 2)
+    await clock.advance(1_000)
+    expect(spawner.named('Xvfb')).toHaveLength(1)
+    expect(spawner.named('openbox')).toHaveLength(0)
+    finish()
+    await start
+    expect(spawner.running('openbox')).toHaveLength(1)
+    expect(spawner.running('tint2')).toHaveLength(1)
+  })
+
+  it('logs a decoration that fails and still brings the display to running', async () => {
+    for (const failure of ['rejects', 'throws'] as const) {
+      const { manager, spawner, logs, clock } = setup({
+        decorate: (() => {
+          if (failure === 'throws') throw new Error('rsvg-convert is missing')
+          return Promise.reject(new Error('rsvg-convert is missing'))
+        }) as DisplayManagerDeps['decorate'],
+      })
+      const display = await manager.startBot('alpha', 2)
+      expect(manager.bot('alpha')).toBe(display)
+      expect(spawner.running('openbox')).toHaveLength(1)
+      expect(spawner.running('tint2')).toHaveLength(1)
+      expect(
+        logs.filter((line) => /alpha/.test(line) && /decorat/i.test(line) && /rsvg-convert is missing/.test(line))
+      ).toHaveLength(1)
+      // A failed decoration is not a crash: nothing restarts and the display accepts a screen.
+      const spawned = spawner.processes.length
+      await clock.advance(120_000)
+      expect(spawner.processes).toHaveLength(spawned)
+      expect((await manager.acquireVnc({ kind: 'apps', botId: 'alpha' }, 'view')).port).toBe(5955)
+      await manager.dispose()
+    }
+  })
+
+  it('stops waiting for a decoration that never ends', async () => {
+    const { manager, spawner, logs, clock } = setup({ decorate: () => new Promise<void>(() => undefined) })
+    const start = manager.startBot('alpha', 2)
+    await clock.advance(14_000)
+    expect(spawner.named('openbox')).toHaveLength(0)
+    await clock.advance(2_000)
+    await start
+    expect(spawner.running('openbox')).toHaveLength(1)
+    expect(spawner.running('tint2')).toHaveLength(1)
+    expect(logs.some((line) => /alpha/.test(line) && /decorat/i.test(line) && /did not finish/.test(line))).toBe(true)
+    await manager.stopBot('alpha')
+    expect(clock.pending.size).toBe(0)
+  })
+
+  it('aborts a start that is stopped while it decorates', async () => {
+    const { manager, spawner, clock } = setup({ decorate: () => new Promise<void>(() => undefined) })
+    const start = manager.startBot('alpha', 2)
+    const result = start.catch((error: unknown) => error)
+    await clock.advance(500)
+    await manager.stopBot('alpha')
+    expect(await result).toBeInstanceOf(Error)
+    await expect(start).rejects.toThrow(/stopped/)
+    await clock.advance(60_000)
+    expect(spawner.named('openbox')).toHaveLength(0)
+    expect(spawner.servers().filter((child) => child.running)).toEqual([])
+    expect(manager.bot('alpha')).toBeNull()
+    expect(clock.pending.size).toBe(0)
+  })
+
+  it('decorates again when the display server restarts, before its window manager comes back', async () => {
+    const { manager, spawner, clock, decorations } = setup()
+    await manager.startBot('alpha', 2)
+    const before = spawner.processes.length
+    spawner.running('openbox')[0].exit(1)
+    spawner.running('Xvfb')[0].exit(1)
+    spawner.running('tint2')[0].exit(1)
+    await clock.advance(1_000)
+    expect(decorations).toHaveLength(2)
+    expect(decorations[1].started.slice(before)).toEqual(['prepare-xvfb-display', 'Xvfb', 'xdpyinfo'])
+    expect(spawner.processes.slice(before).map((child) => child.command)).toEqual([
+      'prepare-xvfb-display',
+      'Xvfb',
+      'xdpyinfo',
+      'openbox',
+      'tint2',
+    ])
+    // A crash of the window manager alone leaves the painted screen as it is.
+    spawner.running('openbox')[0].exit(1)
+    await clock.advance(1_000)
+    expect(decorations).toHaveLength(2)
+  })
+
+  it('repaints a running display on request, one painting after another', async () => {
+    const calls: string[] = []
+    let release: () => void = () => undefined
+    let blocked = true
+    const { manager, clock } = setup({
+      decorate: async (display) => {
+        calls.push('begin ' + display.botId)
+        if (blocked) await new Promise<void>((resolve) => (release = resolve))
+        calls.push('end ' + display.botId)
+      },
+    })
+    blocked = false
+    await manager.startBot('alpha', 2)
+    await manager.startBot('beta', 3)
+    expect(calls).toEqual(['begin alpha', 'end alpha', 'begin beta', 'end beta'])
+    calls.length = 0
+    blocked = true
+    const first = manager.redecorate('alpha')
+    const second = manager.redecorate('alpha')
+    await clock.advance(10)
+    expect(calls).toEqual(['begin alpha'])
+    blocked = false
+    release()
+    await Promise.all([first, second])
+    expect(calls).toEqual(['begin alpha', 'end alpha', 'begin alpha', 'end alpha'])
+  })
+
+  it('repaints nothing for a bot that is unknown, still starting, between display servers or stopped', async () => {
+    const { manager, spawner, decorations, clock } = setup()
+    await expect(manager.redecorate('ghost')).resolves.toBeUndefined()
+
+    let answers = false
+    spawner.respond = (command) => (command === 'xdpyinfo' ? (answers ? 0 : 1) : PROBES.has(command) ? 0 : 'run')
+    const start = manager.startBot('alpha', 2)
+    await clock.advance(250)
+    await expect(manager.redecorate('alpha')).resolves.toBeUndefined()
+    answers = true
+    await clock.advance(100)
+    await start
+    expect(decorations).toHaveLength(1)
+
+    // The display server crashed and has not come back yet: its own restart paints the screen again.
+    answers = false
+    spawner.running('Xvfb')[0].exit(1)
+    await clock.advance(500)
+    await expect(manager.redecorate('alpha')).resolves.toBeUndefined()
+    expect(decorations).toHaveLength(1)
+    answers = true
+    await clock.advance(1_000)
+    expect(decorations).toHaveLength(2)
+
+    await manager.stopBot('alpha')
+    await expect(manager.redecorate('alpha')).resolves.toBeUndefined()
+    expect(decorations).toHaveLength(2)
+  })
+
+  it('logs a failed repainting instead of raising it, and paints again after a later success', async () => {
+    let fail = false
+    const painted: string[] = []
+    const { manager, logs } = setup({
+      decorate: async (display) => {
+        if (fail) throw new Error('hsetroot exited with code 1')
+        painted.push(display.botId)
+      },
+    })
+    await manager.startBot('alpha', 2)
+    fail = true
+    await expect(manager.redecorate('alpha')).resolves.toBeUndefined()
+    expect(logs.some((line) => /alpha/.test(line) && /hsetroot exited with code 1/.test(line))).toBe(true)
+    fail = false
+    await manager.redecorate('alpha')
+    expect(painted).toEqual(['alpha', 'alpha'])
+    expect(manager.bot('alpha')).toMatchObject({ botId: 'alpha' })
+  })
+
+  it('does nothing once the manager is disposed, and without a decoration dependency', async () => {
+    const { manager, decorations, deps } = setup()
+    await manager.startBot('alpha', 2)
+    await manager.dispose()
+    await expect(manager.redecorate('alpha')).resolves.toBeUndefined()
+    expect(decorations).toHaveLength(1)
+
+    const bare: DisplayManagerDeps = { ...deps }
+    delete bare.decorate
+    const plain = new DisplayManager(bare)
+    await plain.startBot('beta', 3)
+    await expect(plain.redecorate('beta')).resolves.toBeUndefined()
+    expect(plain.bot('beta')).toMatchObject({ botId: 'beta' })
+    await plain.dispose()
+  })
+
+  it('gives the bot programs a dark GTK theme, and the display server and VNC servers nothing', async () => {
+    const { manager, spawner } = setup()
+    const display = await manager.startBot('alpha', 2)
+    expect(display.env.GTK_THEME).toBe('Adwaita:dark')
+    for (const command of ['dbus-daemon', 'openbox', 'tint2'])
+      expect(spawner.named(command)[0].env.GTK_THEME, command).toBe('Adwaita:dark')
+    expect(spawner.named('Xvfb')[0].env).toEqual({})
+    await manager.acquireVnc({ kind: 'apps', botId: 'alpha' }, 'view')
+    expect(spawner.named('x11vnc')[0].env).toEqual({})
+  })
+
+  it('gives the taskbar, and only the taskbar, the language of the app', async () => {
+    let language = 'pt_BR'
+    const { manager, spawner, clock } = setup({ language: () => language })
+    await manager.startBot('alpha', 2)
+    expect(spawner.named('tint2')[0].env).toEqual({ ...botEnv('alpha', 2), LANGUAGE: 'pt_BR' })
+    expect(spawner.named('openbox')[0].env).toEqual(botEnv('alpha', 2))
+    expect(spawner.named('dbus-daemon')[0].env).toEqual(botEnv('alpha', 2))
+    // The language is read when the taskbar starts, so a restart follows a change of the app's language.
+    language = 'en'
+    spawner.running('tint2')[0].exit(1)
+    await clock.advance(1_000)
+    expect(spawner.running('tint2')[0].env.LANGUAGE).toBe('en')
+    language = ''
+    spawner.running('tint2')[0].exit(1)
+    await clock.advance(1_000)
+    expect(spawner.running('tint2')[0].env).toEqual(botEnv('alpha', 2))
   })
 })
 

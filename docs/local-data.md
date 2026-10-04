@@ -153,7 +153,7 @@ data under its bot id:
 | Queued attachments and tool images | `fleet-inputs/<botId>/` and `fleet-images/<botId>/` in the profile |
 | Durable memory | The `bot-self:<botId>` memory space in `local_memories` |
 | Chromium profile of its apps screen | `~/.config/maestrly-bots/<botId>/chromium` |
-| Session bus of its apps screen | `~/.cache/maestrly-bots/<botId>/` |
+| Session bus, desktop socket, wallpaper, and the size and place of its browser window | `~/.cache/maestrly-bots/<botId>/` (`bus`, `desktop.sock`, `wallpaper.*`, `presenter.json`) |
 
 Claude Code, Codex and Google Antigravity ACP releases a bot downloads live in the
 profile's `runtime-assets/` folder, with the accepted release metadata in the

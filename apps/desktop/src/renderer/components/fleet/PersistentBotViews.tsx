@@ -53,6 +53,7 @@ export function PersistentBotViews({
           fleet={fleet}
           onView={onView}
           onOpenBot={onOpenBot}
+          active={bot.id === activeView?.botId}
           onDetachedChange={(detached) => handleDetachedChange(bot.id, detached)}
         />
       </div>

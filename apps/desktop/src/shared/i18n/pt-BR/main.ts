@@ -19,6 +19,15 @@ export default {
     extTimeout:
       'timeout: a extensão não respondeu. Abra a aba “Código” desta conversa (o VS Code precisa estar carregado para controlar o debug).',
   },
+  botDesktop: {
+    presenterUnavailable: 'A janela do navegador não está disponível neste computador.',
+    noConversation: 'Este bot ainda não tem conversa.',
+    invalidUrl: 'Só links http e https abrem no navegador.',
+    terminalFailed: 'Não foi possível abrir a janela do terminal.',
+    terminalTitle: 'Terminal {{number}}',
+    exitOk: 'O shell terminou.',
+    exitFailed: 'O shell terminou com o código {{code}}. Pressione qualquer tecla para fechar esta janela.',
+  },
   floating: {
     browser: 'Navegador',
     vscode: 'Código',

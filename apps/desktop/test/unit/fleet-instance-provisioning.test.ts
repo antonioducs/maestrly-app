@@ -253,6 +253,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     pending: () => [],
     queue: { list: () => [] },
     holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+    host: {},
     events: { lastSeq: 0 },
     accountOptions: [],
     stored: null,

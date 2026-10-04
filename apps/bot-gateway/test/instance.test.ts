@@ -4,6 +4,7 @@ import type net from 'node:net'
 import { FLEET_PROTOCOL_HEADER, type FleetInstanceBotInstall } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from '../src/errors.js'
 import { InstanceClient, InstanceUnreachableError } from '../src/instance.js'
+import { harness } from './harness.js'
 
 const servers: http.Server[] = []
 afterEach(async () => {
@@ -144,6 +145,16 @@ describe('transcript reasoning', () => {
     const received = []
     for await (const value of new InstanceClient('work', 'control', origin).events(0)) received.push(value)
     expect(received).toEqual([event])
+  })
+})
+
+describe('bot profile sent to its environment', () => {
+  it('carries the bot tint when the bot is installed and when it changes', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const sent = () => h.instance.installs.findLast((item) => item.profile.botId === h.bot.id)
+    expect(sent()?.profile.tint).toBe(h.store.getBot(h.bot.id)?.tint)
+    await h.lifecycle.patch(h.bot.id, { tint: '#3fb58a' })
+    expect(sent()?.profile.tint).toBe('#3fb58a')
   })
 })
 

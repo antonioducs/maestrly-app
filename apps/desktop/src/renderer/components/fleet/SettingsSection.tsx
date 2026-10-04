@@ -16,8 +16,8 @@ export function SavesNowTag() {
 }
 
 /**
- * One section of the bot settings: a heading the side navigation moves the focus to, a line saying what it is for,
- * and its content. The section is a region named by its heading.
+ * One section of the bot settings: a heading the save bar can move the focus to, a line saying what it is for, and its
+ * content. The section is a region named by its heading.
  */
 export function SettingsSection({
   id,

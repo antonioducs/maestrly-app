@@ -16,6 +16,7 @@ import { ApiKeyAccountForm } from '../ApiKeyAccountForm'
 import { BotLoginDialog } from '../BotLoginDialog'
 import { MacImportDialog } from '../MacImportDialog'
 import {
+  OwnSaveButtonsScope,
   SaveDiscard,
   SettingsPanel,
   settingsInput,
@@ -201,7 +202,11 @@ function AccountsPanel({ environment, fleet, onDirtyChange }: EnvironmentSetting
       {!editing && (
         <>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => requestMainNavigation(() => setAdding(!adding))}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => requestMainNavigation(() => setAdding(!adding), 'section')}
+            >
               {t('botSettings.addApiKey')}
             </Button>
             <Button size="sm" variant="outline" disabled={adding} onClick={() => setImporting(true)}>
@@ -336,61 +341,69 @@ function AccountEditor({
     )
     onDone()
   }
+  // A dialog of its own keeps its save buttons, also inside the panel whose bar saves the sections.
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !editor.busy) requestMainNavigation(discard)
-      }}
-    >
-      <DialogContent className="max-h-[85vh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl">
-        <DialogHeader>
-          <DialogTitle>{t('environmentSettings.editAccount')}</DialogTitle>
-          <DialogDescription>{t('environmentSettings.preserveSecret')}</DialogDescription>
-        </DialogHeader>
-        <SettingsPanel error={editor.error} reload={discard}>
-          <label className="block space-y-1">
-            {t('environmentSettings.name')}
-            <input
-              className={settingsInput}
-              value={editor.draft.name}
-              disabled={editor.busy || !online}
-              onChange={(e) => editor.setDraft((d) => ({ ...d, name: e.target.value }))}
-            />
-          </label>
-          {account && (
-            <>
-              <label className="block space-y-1">
-                {t('environmentSettings.baseURL')}
-                <input
-                  className={settingsInput}
-                  placeholder={account.baseURL ?? undefined}
-                  value={editor.draft.baseURL}
-                  disabled={editor.busy || !online}
-                  onChange={(e) => editor.setDraft((d) => ({ ...d, baseURL: e.target.value }))}
-                />
-              </label>
-              <label className="block space-y-1">
-                {t('environmentSettings.replaceKey')}
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  className={settingsInput}
-                  value={editor.draft.apiKey}
-                  disabled={editor.busy || !online}
-                  onChange={(e) => editor.setDraft((d) => ({ ...d, apiKey: e.target.value }))}
-                />
-              </label>
-            </>
-          )}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-            <SaveDiscard {...editor} busy={editor.busy || !online} save={save} discard={discard} />
-            <Button size="sm" variant="ghost" disabled={editor.busy} onClick={() => requestMainNavigation(discard)}>
-              {t('environmentSettings.close')}
-            </Button>
-          </div>
-        </SettingsPanel>
-      </DialogContent>
-    </Dialog>
+    <OwnSaveButtonsScope>
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open && !editor.busy) requestMainNavigation(discard, 'section')
+        }}
+      >
+        <DialogContent className="max-h-[85vh] w-[calc(100%-2rem)] overflow-y-auto rounded-xl">
+          <DialogHeader>
+            <DialogTitle>{t('environmentSettings.editAccount')}</DialogTitle>
+            <DialogDescription>{t('environmentSettings.preserveSecret')}</DialogDescription>
+          </DialogHeader>
+          <SettingsPanel error={editor.error} reload={discard}>
+            <label className="block space-y-1">
+              {t('environmentSettings.name')}
+              <input
+                className={settingsInput}
+                value={editor.draft.name}
+                disabled={editor.busy || !online}
+                onChange={(e) => editor.setDraft((d) => ({ ...d, name: e.target.value }))}
+              />
+            </label>
+            {account && (
+              <>
+                <label className="block space-y-1">
+                  {t('environmentSettings.baseURL')}
+                  <input
+                    className={settingsInput}
+                    placeholder={account.baseURL ?? undefined}
+                    value={editor.draft.baseURL}
+                    disabled={editor.busy || !online}
+                    onChange={(e) => editor.setDraft((d) => ({ ...d, baseURL: e.target.value }))}
+                  />
+                </label>
+                <label className="block space-y-1">
+                  {t('environmentSettings.replaceKey')}
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    className={settingsInput}
+                    value={editor.draft.apiKey}
+                    disabled={editor.busy || !online}
+                    onChange={(e) => editor.setDraft((d) => ({ ...d, apiKey: e.target.value }))}
+                  />
+                </label>
+              </>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+              <SaveDiscard {...editor} busy={editor.busy || !online} save={save} discard={discard} />
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={editor.busy}
+                onClick={() => requestMainNavigation(discard, 'section')}
+              >
+                {t('environmentSettings.close')}
+              </Button>
+            </div>
+          </SettingsPanel>
+        </DialogContent>
+      </Dialog>
+    </OwnSaveButtonsScope>
   )
 }

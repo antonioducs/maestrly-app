@@ -33,7 +33,7 @@ test('screen clipboard uses native paste/copy commands and leaves other editors 
   )
   await writeFile(
     path.join(root, 'index.html'),
-    '<div id="screen"><canvas tabindex="0"></canvas></div><textarea></textarea>'
+    '<main style="display:flex;gap:16px"><textarea aria-label="Conversation draft"></textarea><div id="screen"><canvas tabindex="0" aria-label="Controlled computer"></canvas></div></main>'
   )
   await writeFile(
     path.join(root, 'main.cjs'),
@@ -76,7 +76,7 @@ test('screen clipboard uses native paste/copy commands and leaves other editors 
           },
         })
         const state = { pasted: [] as string[], keys: [] as unknown[][], errors: [] as string[], detach: () => {} }
-        ;(window as any).clipboardTest = state
+        ;(window as any).clipboardTest = Object.assign(state, { remote })
         state.detach = module.exports.attachScreenClipboard(
           container,
           remote,
@@ -135,6 +135,47 @@ test('screen clipboard uses native paste/copy commands and leaves other editors 
     await expect
       .poll(() => page.evaluate(() => (window as any).clipboardTest.pasted))
       .toEqual(['Olá\nfrom the host', 'terminal paste', 'terminal paste', 'copied from bot'])
+    // Both panes are mounted: native editing in the neighboring conversation must stay local.
+    const editor = page.getByRole('textbox', { name: 'Conversation draft' })
+    await editor.fill('Local conversation selection')
+    await editor.focus()
+    await page.keyboard.press(`${modifier}+a`)
+    const remoteKeys = await page.evaluate(() => (window as any).clipboardTest.keys)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.copy())
+    await expect.poll(() => app!.evaluate(({ clipboard }) => clipboard.readText())).toBe('Local conversation selection')
+    expect(await page.evaluate(() => (window as any).clipboardTest.keys)).toEqual(remoteKeys)
+    await app.evaluate(({ clipboard }) => clipboard.writeText('Adjacent editor paste'))
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.paste())
+    await expect(editor).toHaveValue('Adjacent editor paste')
+    expect(await page.evaluate(() => (window as any).clipboardTest.pasted)).toHaveLength(4)
+
+    // A narrow workspace hides the controlled pane while keeping its connection mounted.
+    await page.locator('canvas').focus()
+    await page.locator('#screen').evaluate((element) => {
+      element.setAttribute('hidden', '')
+    })
+    await editor.focus()
+    await page.keyboard.press(`${modifier}+a`)
+    await app.evaluate(({ clipboard }) => clipboard.writeText('Hidden pane must not receive this'))
+    await page.keyboard.press(`${modifier}+v`)
+    await expect(editor).toHaveValue('Hidden pane must not receive this')
+    await page.keyboard.press(`${modifier}+a`)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.copy())
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('Hidden pane must not receive this')
+    await page.evaluate(() =>
+      (window as any).clipboardTest.remote.dispatchEvent(
+        new CustomEvent('clipboard', { detail: { text: 'Unsolicited hidden computer clipboard' } })
+      )
+    )
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe('Hidden pane must not receive this')
+    expect(await page.evaluate(() => (window as any).clipboardTest.pasted)).toHaveLength(4)
+    expect(await page.evaluate(() => (window as any).clipboardTest.keys)).toEqual(remoteKeys)
+    await page.locator('#screen').evaluate((element) => {
+      element.removeAttribute('hidden')
+    })
+    await page.locator('canvas').focus()
     expect(await page.evaluate(() => (window as any).clipboardTest.errors)).toEqual([])
     await page.evaluate(() => (window as any).clipboardTest.detach())
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.paste())

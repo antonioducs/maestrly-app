@@ -11,7 +11,14 @@ import {
   useBotProvisioning,
 } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
-import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { AlertTriangle, Box, CircleCheck } from 'lucide-react'
 import {
@@ -53,19 +60,26 @@ import { SettingsCard, SettingsSection } from './SettingsSection'
 /** Asked before the settings are left: runs `proceed` at once, or once the owner saved or discarded their changes. */
 export type SettingsLeaveGuard = (proceed: () => void) => void
 
-type SectionId =
-  | 'identity'
-  | 'autonomy'
-  | 'model'
-  | 'accounts'
-  | 'skills'
-  | 'peers'
-  | 'routines'
-  | 'memory'
-  | 'environment'
-  | 'where'
-  | 'archive'
-const domId = (section: SectionId) => `fleet-settings-${section}`
+/** The tabs of the settings, one section each; a bot without an environment keeps its accounts and skills in Model. */
+type TabId = 'identity' | 'autonomy' | 'model' | 'peers' | 'routines' | 'memory' | 'environment' | 'where' | 'archive'
+const domId = (section: TabId) => `fleet-settings-${section}`
+const tabDomId = (tab: TabId) => `fleet-settings-tab-${tab}`
+const panelDomId = (tab: TabId) => `fleet-settings-panel-${tab}`
+/** One tab's content. Every panel stays mounted, so its lists load once and its state outlives a switch of tabs. */
+function SettingsTabPanel({ tab, current, children }: { tab: TabId; current: TabId; children: ReactNode }) {
+  return (
+    <div
+      role="tabpanel"
+      id={panelDomId(tab)}
+      aria-labelledby={tabDomId(tab)}
+      hidden={tab !== current}
+      className="flex flex-col gap-10"
+    >
+      {children}
+    </div>
+  )
+}
+
 /** Where each field is edited, for the save bar to take the owner there. */
 const fieldTargets: Record<BotSettingsField, string> = {
   name: 'fleet-settings-name',
@@ -193,7 +207,7 @@ export function BotSettings({
   const [error, setError] = useState('')
   const [screenBusy, setScreenBusy] = useState(false)
   const [screenError, setScreenError] = useState('')
-  const scrollRef = useRef<HTMLElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const compactionRef = useRef<HTMLElement>(null)
   const needsCompaction = bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
 
@@ -206,11 +220,61 @@ export function BotSettings({
     setSaveError('')
   }
 
-  // The section sits below the main form; a bot blocked on it opens scrolled straight to the fix, once per bot so a
-  // status update never yanks the owner's scroll.
+  // ---- Tabs: the one in view, a field the save bar takes the owner to, and each tab's pending changes or problem. ----
+  const tabs: TabId[] = [
+    'identity',
+    'autonomy',
+    'model',
+    'peers',
+    'routines',
+    'memory',
+    shared ? 'environment' : 'where',
+    'archive',
+  ]
+  // A bot blocked on its compaction model opens on the fix; a status update later never moves the owner.
+  const [active, setActive] = useState<TabId>(needsCompaction ? 'model' : 'identity')
+  const current = tabs.includes(active) ? active : tabs[0]
+  const [reveal, setReveal] = useState<{ target: string } | null>(null)
+  // A tab opens at its top, unless it opens on a field.
+  useEffect(() => {
+    if (!reveal) scrollRef.current?.scrollTo({ top: 0 })
+  }, [current])
+  useEffect(() => {
+    if (!reveal) return
+    setReveal(null)
+    const target = document.getElementById(reveal.target)
+    if (!target) return
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    target.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' })
+    target.focus({ preventScroll: true })
+  }, [reveal])
   useEffect(() => {
     if (needsCompaction) compactionRef.current?.scrollIntoView({ block: 'start' })
   }, [bot.id])
+  /** Shows a tab and moves the focus to a field or heading in it. */
+  function goTo(tab: TabId, targetId: string) {
+    setActive(tab)
+    setReveal({ target: targetId })
+  }
+  function onTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>) {
+    const index = tabs.indexOf(current)
+    const next =
+      event.key === 'ArrowRight'
+        ? tabs[(index + 1) % tabs.length]
+        : event.key === 'ArrowLeft'
+          ? tabs[(index + tabs.length - 1) % tabs.length]
+          : event.key === 'Home'
+            ? tabs[0]
+            : event.key === 'End'
+              ? tabs[tabs.length - 1]
+              : null
+    if (!next) return
+    event.preventDefault()
+    setActive(next)
+    const button = document.getElementById(tabDomId(next))
+    button?.focus()
+    button?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }
   useEffect(() => {
     let alive = true
     void window.api
@@ -302,8 +366,8 @@ export function BotSettings({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 's') return
-      // A dialog on top (a routine, a confirmation) owns the keyboard.
-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+      // A dialog on top (a routine, a confirmation) owns the keyboard; the panel these settings sit in does not.
+      if (document.querySelector('[role="dialog"]:not([data-bot-settings-sheet]), [role="alertdialog"]')) return
       event.preventDefault()
       void saveRef.current()
     }
@@ -346,61 +410,10 @@ export function BotSettings({
     }
   }
 
-  // ---- Side navigation: the section in view, and each section's pending changes or problem. ----
-  const sections: SectionId[] = [
-    'identity',
-    'autonomy',
-    'model',
-    ...(shared ? [] : (['accounts', 'skills'] as const)),
-    'peers',
-    'routines',
-    'memory',
-    shared ? 'environment' : 'where',
-    'archive',
-  ]
-  const [active, setActive] = useState<SectionId>('identity')
-  const spyLock = useRef(0)
-  useEffect(() => {
-    const root = scrollRef.current
-    if (!root) return
-    let frame = 0
-    const update = () => {
-      if (Date.now() < spyLock.current) return
-      const line = root.getBoundingClientRect().top + 110
-      let current = sections[0]
-      for (const section of sections) {
-        const element = document.getElementById(domId(section))
-        if (element && element.getBoundingClientRect().top <= line) current = section
-      }
-      if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) current = sections[sections.length - 1]
-      setActive(current)
-    }
-    const onScroll = () => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(update)
-    }
-    root.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      root.removeEventListener('scroll', onScroll)
-      cancelAnimationFrame(frame)
-    }
-  }, [sections.join()])
-  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  /** Scrolls to a section (or a field's target inside it) and moves the focus there. */
-  function goTo(section: SectionId, targetId?: string) {
-    const element = document.getElementById(domId(section))
-    if (!element) return
-    spyLock.current = Date.now() + 800
-    setActive(section)
-    const target = (targetId && document.getElementById(targetId)) || element
-    target.scrollIntoView({ block: targetId ? 'center' : 'start', behavior: reducedMotion() ? 'auto' : 'smooth' })
-    const focusable = targetId ? target : (element.querySelector<HTMLElement>('[tabindex="-1"]') ?? element)
-    focusable.focus({ preventScroll: true })
-  }
   const dirtySections = new Set<string>(
     changed.map((field) => botSettingsFields.find((item) => item.id === field)?.section ?? '')
   )
-  const attention = (section: SectionId) => section === 'model' && !!bot.compactionState?.problem
+  const attention = (tab: TabId) => tab === 'model' && !!bot.compactionState?.problem
 
   // ---- Field problems: the name once it was left or a save was tried, the rest at once. ----
   const problemText = (problem: BotSettingsProblem) =>
@@ -429,59 +442,59 @@ export function BotSettings({
           })
         : ''
 
-  const navLabel = (section: SectionId) => t(`botSettings.section.${section}`)
+  const navLabel = (tab: TabId) => t(`botSettings.section.${tab}`)
   const peerCount = fleet.state.snapshot.bots.filter((item) => item.id !== bot.id).length
   return (
-    <section ref={scrollRef} className="@container min-h-0 flex-1 overflow-y-auto">
-      {/* Narrow, a block: the navigation stays on top as the page scrolls, which a grid row of its own would stop. */}
-      <div className="mx-auto block max-w-[1000px] px-4 @5xl:grid @5xl:grid-cols-[176px_minmax(0,720px)] @5xl:justify-center @5xl:gap-12 @5xl:px-8 @5xl:pt-7">
-        <nav
-          aria-label={t('botSettings.nav')}
-          className="sticky top-0 z-20 -mx-4 overflow-x-auto border-b border-border bg-surface px-4 py-2 backdrop-blur-xl [scrollbar-width:none] @5xl:top-7 @5xl:mx-0 @5xl:self-start @5xl:overflow-visible @5xl:border-0 @5xl:bg-transparent @5xl:p-0 @5xl:backdrop-blur-none"
-        >
-          <ul className="flex gap-px @5xl:flex-col">
-            {sections.map((section) => {
-              const current = section === active
-              const flagged = attention(section)
-              const dirty = dirtySections.has(section)
-              return (
-                <li key={section}>
-                  <a
-                    href={`#${domId(section)}`}
-                    aria-current={current ? 'location' : undefined}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      goTo(section)
-                    }}
-                    className={cn(
-                      'flex items-center justify-between gap-2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      current
-                        ? 'bg-foreground/[0.07] text-foreground'
-                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                    )}
-                  >
-                    <span>{navLabel(section)}</span>
-                    {flagged ? (
-                      <>
-                        <AlertTriangle className="size-3 text-amber-300" aria-hidden="true" />
-                        <span className="sr-only">, {t('botSettings.sectionAttention')}</span>
-                      </>
-                    ) : (
-                      dirty && (
-                        <>
-                          <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-                          <span className="sr-only">, {t('botSettings.sectionDirty')}</span>
-                        </>
-                      )
-                    )}
-                  </a>
-                </li>
-              )
-            })}
-          </ul>
-        </nav>
+    <div className="@container flex min-h-0 flex-1 flex-col">
+      <div
+        role="tablist"
+        aria-label={t('botSettings.nav')}
+        className="flex shrink-0 gap-4 overflow-x-auto border-b border-border px-[18px] [scrollbar-width:none]"
+      >
+        {tabs.map((tab) => {
+          const selected = tab === current
+          const flagged = attention(tab)
+          const dirty = dirtySections.has(tab)
+          return (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              id={tabDomId(tab)}
+              aria-selected={selected}
+              aria-controls={panelDomId(tab)}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActive(tab)}
+              onKeyDown={onTabKeyDown}
+              className={cn(
+                'relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap py-2.5 text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-t after:bg-primary after:content-[" "]',
+                selected
+                  ? 'text-foreground after:opacity-100'
+                  : 'text-muted-foreground after:opacity-0 hover:text-foreground'
+              )}
+            >
+              <span>{navLabel(tab)}</span>
+              {flagged ? (
+                <>
+                  <AlertTriangle className="size-3 text-amber-300" aria-hidden="true" />
+                  <span className="sr-only">, {t('botSettings.sectionAttention')}</span>
+                </>
+              ) : (
+                dirty && (
+                  <>
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
+                    <span className="sr-only">, {t('botSettings.sectionDirty')}</span>
+                  </>
+                )
+              )}
+            </button>
+          )
+        })}
+      </div>
 
-        <div className="flex min-w-0 flex-col gap-10 pb-10 pt-4 @5xl:pt-0 [&_section]:scroll-mt-16 @5xl:[&_section]:scroll-mt-5">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex min-h-full flex-col gap-6 px-[18px] pb-4 pt-5">
           {compactionProblem && (
             <div
               role="status"
@@ -498,199 +511,207 @@ export function BotSettings({
             </div>
           )}
 
-          <SettingsSection id={domId('identity')} title={navLabel('identity')} note={t('botSettings.identityNote')}>
-            <SettingsCard className="flex flex-col gap-4 p-[18px]">
-              <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2">
-                <Field
-                  id="fleet-settings-name"
-                  label={t('botFields.name')}
-                  counter={<Counter length={draft.name.length} max={FLEET_NAME_MAX} />}
-                  error={nameError}
-                >
-                  <input
+          <SettingsTabPanel tab="identity" current={current}>
+            <SettingsSection id={domId('identity')} title={navLabel('identity')} note={t('botSettings.identityNote')}>
+              <SettingsCard className="flex flex-col gap-4 p-[18px]">
+                <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2">
+                  <Field
                     id="fleet-settings-name"
-                    className={fieldInput}
-                    value={draft.name}
-                    maxLength={FLEET_NAME_MAX}
-                    autoComplete="off"
-                    aria-invalid={!!nameError}
-                    aria-describedby={nameError ? 'fleet-settings-name-error' : undefined}
-                    onChange={(event) => edit({ name: event.target.value })}
-                    onBlur={() => setNameTouched(true)}
-                  />
-                </Field>
-                <Field
-                  id="fleet-settings-role"
-                  label={t('botFields.role')}
-                  optional
-                  counter={<Counter length={draft.role.length} max={FLEET_ROLE_MAX} />}
-                  error={roleError}
-                >
-                  <input
+                    label={t('botFields.name')}
+                    counter={<Counter length={draft.name.length} max={FLEET_NAME_MAX} />}
+                    error={nameError}
+                  >
+                    <input
+                      id="fleet-settings-name"
+                      className={fieldInput}
+                      value={draft.name}
+                      maxLength={FLEET_NAME_MAX}
+                      autoComplete="off"
+                      aria-invalid={!!nameError}
+                      aria-describedby={nameError ? 'fleet-settings-name-error' : undefined}
+                      onChange={(event) => edit({ name: event.target.value })}
+                      onBlur={() => setNameTouched(true)}
+                    />
+                  </Field>
+                  <Field
                     id="fleet-settings-role"
-                    className={fieldInput}
-                    value={draft.role}
-                    maxLength={FLEET_ROLE_MAX}
-                    autoComplete="off"
-                    placeholder={t('botSettings.rolePlaceholder')}
-                    aria-invalid={!!roleError}
-                    onChange={(event) => edit({ role: event.target.value })}
+                    label={t('botFields.role')}
+                    optional
+                    counter={<Counter length={draft.role.length} max={FLEET_ROLE_MAX} />}
+                    error={roleError}
+                  >
+                    <input
+                      id="fleet-settings-role"
+                      className={fieldInput}
+                      value={draft.role}
+                      maxLength={FLEET_ROLE_MAX}
+                      autoComplete="off"
+                      placeholder={t('botSettings.rolePlaceholder')}
+                      aria-invalid={!!roleError}
+                      onChange={(event) => edit({ role: event.target.value })}
+                    />
+                  </Field>
+                </div>
+                <Field
+                  id="fleet-settings-instructions"
+                  label={t('botFields.instructions')}
+                  counter={<Counter length={draft.instructions.length} max={FLEET_INSTRUCTIONS_MAX} />}
+                  hint={t('botSettings.instructionsHint')}
+                >
+                  <textarea
+                    id="fleet-settings-instructions"
+                    className={cn(fieldInput, 'min-h-[124px] resize-y leading-relaxed')}
+                    value={draft.instructions}
+                    maxLength={FLEET_INSTRUCTIONS_MAX}
+                    rows={5}
+                    placeholder={t('botSettings.instructionsPlaceholder')}
+                    aria-describedby="fleet-settings-instructions-hint"
+                    onChange={(event) => edit({ instructions: event.target.value })}
                   />
                 </Field>
-              </div>
-              <Field
-                id="fleet-settings-instructions"
-                label={t('botFields.instructions')}
-                counter={<Counter length={draft.instructions.length} max={FLEET_INSTRUCTIONS_MAX} />}
-                hint={t('botSettings.instructionsHint')}
-              >
-                <textarea
-                  id="fleet-settings-instructions"
-                  className={cn(fieldInput, 'min-h-[124px] resize-y leading-relaxed')}
-                  value={draft.instructions}
-                  maxLength={FLEET_INSTRUCTIONS_MAX}
-                  rows={5}
-                  placeholder={t('botSettings.instructionsPlaceholder')}
-                  aria-describedby="fleet-settings-instructions-hint"
-                  onChange={(event) => edit({ instructions: event.target.value })}
-                />
-              </Field>
-            </SettingsCard>
-          </SettingsSection>
+              </SettingsCard>
+            </SettingsSection>
+          </SettingsTabPanel>
 
-          <SettingsSection id={domId('autonomy')} title={navLabel('autonomy')} note={t('botSettings.autonomyNote')}>
-            {fleet.state.connection.features.includes('artifacts') && (
-              <div
-                id="fleet-settings-publish-artifacts"
-                tabIndex={-1}
-                className="mb-4 flex items-start justify-between gap-3"
-              >
-                <div>
-                  <p className="text-sm font-medium">{t('ui:artifacts.publishingBot.label')}</p>
-                  <p className="text-xs text-muted-foreground">{t('ui:artifacts.publishingBot.hint')}</p>
+          <SettingsTabPanel tab="autonomy" current={current}>
+            <SettingsSection id={domId('autonomy')} title={navLabel('autonomy')} note={t('botSettings.autonomyNote')}>
+              {fleet.state.connection.features.includes('artifacts') && (
+                <div
+                  id="fleet-settings-publish-artifacts"
+                  tabIndex={-1}
+                  className="mb-4 flex items-start justify-between gap-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{t('ui:artifacts.publishingBot.label')}</p>
+                    <p className="text-xs text-muted-foreground">{t('ui:artifacts.publishingBot.hint')}</p>
+                  </div>
+                  <SettingsSwitch
+                    checked={draft.publishArtifacts}
+                    disabled={busy}
+                    label={t('ui:artifacts.publishingBot.label')}
+                    onChange={() => edit({ publishArtifacts: !draft.publishArtifacts })}
+                  />
                 </div>
-                <SettingsSwitch
-                  checked={draft.publishArtifacts}
-                  disabled={busy}
-                  label={t('ui:artifacts.publishingBot.label')}
-                  onChange={() => edit({ publishArtifacts: !draft.publishArtifacts })}
-                />
-              </div>
-            )}
-            <BotAutonomyTable
-              value={draft.ceiling}
-              onChange={(ceiling) => edit({ ceiling })}
-              labelledBy="fleet-settings-autonomy-heading"
-            />
-          </SettingsSection>
+              )}
+              <BotAutonomyTable
+                value={draft.ceiling}
+                onChange={(ceiling) => edit({ ceiling })}
+                labelledBy="fleet-settings-autonomy-heading"
+              />
+            </SettingsSection>
+          </SettingsTabPanel>
 
-          <SettingsSection
-            id={domId('model')}
-            title={navLabel('model')}
-            note={
-              shared ? (
-                <Trans
-                  i18nKey="botSettings.modelFromEnvironment"
-                  t={t}
-                  values={{ name: environment?.name ?? bot.environmentId }}
-                  components={{
-                    link: (
-                      <button
-                        type="button"
-                        className="text-foreground underline decoration-foreground/30 underline-offset-[3px] hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => onOpenEnvironment?.()}
-                      />
-                    ),
-                  }}
-                />
-              ) : (
-                t('botSettings.modelFromBot')
-              )
-            }
-          >
-            <SettingsCard>
-              <div className="flex flex-col gap-1.5 p-[18px]">
-                <span id="fleet-settings-main-model" className="text-[13px] font-medium">
-                  {t('botSettings.mainModel')}
-                </span>
-                <SearchSelect
-                  value={draft.selectionId || undefined}
-                  options={options.map((option) => ({
-                    id: option.id,
-                    label: `${option.providerLabel} · ${option.modelLabel}`,
-                  }))}
-                  onChange={(id) => edit({ selectionId: id ?? '' })}
-                  disabled={!options.length}
-                  placeholder={t('botSettings.chooseModel')}
-                  ariaLabel={t('botSettings.mainModel')}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {options.length ? t('botSettings.mainModelHint') : t('botSettings.noAccount')}
-                </p>
-              </div>
-              <div className="h-px bg-border" />
-              <section
-                ref={compactionRef}
-                aria-labelledby="fleet-compaction-heading"
-                className="flex flex-col gap-4 p-[18px]"
-              >
-                <div>
-                  <h3 id="fleet-compaction-heading" tabIndex={-1} className="text-sm font-semibold focus:outline-none">
-                    {t('botSettings.compaction.heading')}
-                  </h3>
-                  <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                    {t('botSettings.compaction.description')}
-                  </p>
-                </div>
-                {compactionProblem && (
-                  <p className="flex items-center gap-1.5 text-xs text-amber-300">
-                    <AlertTriangle className="size-3" aria-hidden="true" />
-                    {compactionProblem}
-                  </p>
-                )}
-                <CompactionFields
-                  form={draft.compaction}
-                  onChange={(form) => edit({ compaction: form })}
-                  options={options}
-                  idPrefix="fleet-compaction"
-                  leading={compactionLeading}
-                  dense
-                  contextLimit={contextLimit === 'unsupported' ? undefined : contextLimit}
-                />
-                {compaction.inherits && (
+          <SettingsTabPanel tab="model" current={current}>
+            <SettingsSection
+              id={domId('model')}
+              title={navLabel('model')}
+              note={
+                shared ? (
+                  <Trans
+                    i18nKey="botSettings.modelFromEnvironment"
+                    t={t}
+                    values={{ name: environment?.name ?? bot.environmentId }}
+                    components={{
+                      link: (
+                        <button
+                          type="button"
+                          className="text-foreground underline decoration-foreground/30 underline-offset-[3px] hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => onOpenEnvironment?.()}
+                        />
+                      ),
+                    }}
+                  />
+                ) : (
+                  t('botSettings.modelFromBot')
+                )
+              }
+            >
+              <SettingsCard>
+                <div className="flex flex-col gap-1.5 p-[18px]">
+                  <span id="fleet-settings-main-model" className="text-[13px] font-medium">
+                    {t('botSettings.mainModel')}
+                  </span>
+                  <SearchSelect
+                    value={draft.selectionId || undefined}
+                    options={options.map((option) => ({
+                      id: option.id,
+                      label: `${option.providerLabel} · ${option.modelLabel}`,
+                    }))}
+                    onChange={(id) => edit({ selectionId: id ?? '' })}
+                    disabled={!options.length}
+                    placeholder={t('botSettings.chooseModel')}
+                    ariaLabel={t('botSettings.mainModel')}
+                  />
                   <p className="text-xs text-muted-foreground">
-                    {t('botSettings.compaction.inheritNote')}{' '}
-                    {onOpenEnvironment && (
-                      <button
-                        type="button"
-                        className="text-foreground underline decoration-foreground/30 underline-offset-[3px] hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={onOpenEnvironment}
-                      >
-                        {t('botSettings.compaction.editEnvironmentDefault')}
-                      </button>
-                    )}
+                    {options.length ? t('botSettings.mainModelHint') : t('botSettings.noAccount')}
                   </p>
-                )}
-                {inheritable &&
-                  !compaction.inherits &&
-                  compaction.dirty &&
-                  draft.compaction.modelId &&
-                  !environmentCompaction && (
-                    <p className="text-xs text-muted-foreground">
-                      {t('botSettings.compaction.becomesDefault', {
-                        environment: environment?.name ?? bot.environmentId,
-                      })}
+                </div>
+                <div className="h-px bg-border" />
+                <section
+                  ref={compactionRef}
+                  aria-labelledby="fleet-compaction-heading"
+                  className="flex flex-col gap-4 p-[18px]"
+                >
+                  <div>
+                    <h3
+                      id="fleet-compaction-heading"
+                      tabIndex={-1}
+                      className="text-sm font-semibold focus:outline-none"
+                    >
+                      {t('botSettings.compaction.heading')}
+                    </h3>
+                    <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+                      {t('botSettings.compaction.description')}
+                    </p>
+                  </div>
+                  {compactionProblem && (
+                    <p className="flex items-center gap-1.5 text-xs text-amber-300">
+                      <AlertTriangle className="size-3" aria-hidden="true" />
+                      {compactionProblem}
                     </p>
                   )}
-              </section>
-            </SettingsCard>
-          </SettingsSection>
+                  <CompactionFields
+                    form={draft.compaction}
+                    onChange={(form) => edit({ compaction: form })}
+                    options={options}
+                    idPrefix="fleet-compaction"
+                    leading={compactionLeading}
+                    dense
+                    contextLimit={contextLimit === 'unsupported' ? undefined : contextLimit}
+                  />
+                  {compaction.inherits && (
+                    <p className="text-xs text-muted-foreground">
+                      {t('botSettings.compaction.inheritNote')}{' '}
+                      {onOpenEnvironment && (
+                        <button
+                          type="button"
+                          className="text-foreground underline decoration-foreground/30 underline-offset-[3px] hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={onOpenEnvironment}
+                        >
+                          {t('botSettings.compaction.editEnvironmentDefault')}
+                        </button>
+                      )}
+                    </p>
+                  )}
+                  {inheritable &&
+                    !compaction.inherits &&
+                    compaction.dirty &&
+                    draft.compaction.modelId &&
+                    !environmentCompaction && (
+                      <p className="text-xs text-muted-foreground">
+                        {t('botSettings.compaction.becomesDefault', {
+                          environment: environment?.name ?? bot.environmentId,
+                        })}
+                      </p>
+                    )}
+                </section>
+              </SettingsCard>
+            </SettingsSection>
 
-          {!shared && (
-            <>
-              <div id={domId('accounts')} tabIndex={-1} className="scroll-mt-16 focus:outline-none @5xl:scroll-mt-5">
+            {!shared && (
+              <>
                 <BotAccountsSection
-                  key={bot.id}
+                  key={`accounts-${bot.id}`}
                   subject={{ target: bot.id, name: bot.name, running: bot.lifecycle === 'running' }}
                   lists={provisioning}
                   availability={availability}
@@ -711,135 +732,150 @@ export function BotSettings({
                     </p>
                   )}
                 </BotAccountsSection>
-              </div>
-              <div id={domId('skills')} tabIndex={-1} className="scroll-mt-16 focus:outline-none @5xl:scroll-mt-5">
                 <BotSkillsMcpSection
-                  key={bot.id}
+                  key={`skills-${bot.id}`}
                   subject={{ target: bot.id, name: bot.name, running: bot.lifecycle === 'running' }}
                   lists={provisioning}
                   availability={availability}
                 />
-              </div>
-            </>
-          )}
+              </>
+            )}
+          </SettingsTabPanel>
 
-          <SettingsSection
-            id={domId('peers')}
-            title={t('botSettings.peersHeading')}
-            note={t('botFields.talksNote')}
-            aside={
-              peerCount > 0 && (
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {t('botSettings.peersCount', { count: draft.talksTo.length, total: peerCount })}
-                </span>
-              )
-            }
-          >
-            <BotPeerPicker
-              bots={fleet.state.snapshot.bots}
-              selfId={bot.id}
-              environments={environments}
-              value={draft.talksTo}
-              onChange={(talksTo) => edit({ talksTo })}
-              labelledBy="fleet-settings-peers-heading"
-            />
-          </SettingsSection>
-
-          <BotRoutinesSection key={`routines-${bot.id}`} id={domId('routines')} bot={bot} fleet={fleet} />
-          <BotMemorySection key={`memory-${bot.id}`} id={domId('memory')} bot={bot} />
-
-          {shared ? (
-            <SettingsSection id={domId('environment')} title={t('environment.label')} note={t('environment.linkNote')}>
-              <SettingsCard className="flex flex-col gap-3 p-[18px]">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span
-                    aria-hidden="true"
-                    className="flex size-9 items-center justify-center rounded-[10px] bg-foreground/5 text-foreground/75"
-                  >
-                    <Box className="size-4" />
+          <SettingsTabPanel tab="peers" current={current}>
+            <SettingsSection
+              id={domId('peers')}
+              title={t('botSettings.peersHeading')}
+              note={t('botFields.talksNote')}
+              aside={
+                peerCount > 0 && (
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {t('botSettings.peersCount', { count: draft.talksTo.length, total: peerCount })}
                   </span>
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                      {environment?.name ?? bot.environmentId}
+                )
+              }
+            >
+              <BotPeerPicker
+                bots={fleet.state.snapshot.bots}
+                selfId={bot.id}
+                environments={environments}
+                value={draft.talksTo}
+                onChange={(talksTo) => edit({ talksTo })}
+                labelledBy="fleet-settings-peers-heading"
+              />
+            </SettingsSection>
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab="routines" current={current}>
+            <BotRoutinesSection key={`routines-${bot.id}`} id={domId('routines')} bot={bot} fleet={fleet} />
+          </SettingsTabPanel>
+          <SettingsTabPanel tab="memory" current={current}>
+            <BotMemorySection key={`memory-${bot.id}`} id={domId('memory')} bot={bot} />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={shared ? 'environment' : 'where'} current={current}>
+            {shared ? (
+              <SettingsSection
+                id={domId('environment')}
+                title={t('environment.label')}
+                note={t('environment.linkNote')}
+              >
+                <SettingsCard className="flex flex-col gap-3 p-[18px]">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="flex size-9 items-center justify-center rounded-[10px] bg-foreground/5 text-foreground/75"
+                    >
+                      <Box className="size-4" />
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                        {environment?.name ?? bot.environmentId}
+                        {environment && (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'size-1.5 rounded-full',
+                                environment.lifecycle === 'running' ? 'bg-status-ready' : 'bg-muted-foreground/70'
+                              )}
+                            />
+                            {t(`environment.lifecycle.${environment.lifecycle}`)}
+                          </span>
+                        )}
+                      </div>
                       {environment && (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
-                          <span
-                            aria-hidden="true"
-                            className={cn(
-                              'size-1.5 rounded-full',
-                              environment.lifecycle === 'running' ? 'bg-status-ready' : 'bg-muted-foreground/70'
-                            )}
-                          />
-                          {t(`environment.lifecycle.${environment.lifecycle}`)}
+                        <span className="text-xs text-muted-foreground">
+                          {t('botSettings.environmentBots', {
+                            count: environment.botIds.length,
+                            names: list.format(
+                              environment.botIds.map(
+                                (id) => fleet.state.snapshot.bots.find((item) => item.id === id)?.name ?? id
+                              )
+                            ),
+                          })}
                         </span>
                       )}
                     </div>
-                    {environment && (
-                      <span className="text-xs text-muted-foreground">
-                        {t('botSettings.environmentBots', {
-                          count: environment.botIds.length,
-                          names: list.format(
-                            environment.botIds.map(
-                              (id) => fleet.state.snapshot.bots.find((item) => item.id === id)?.name ?? id
-                            )
-                          ),
-                        })}
-                      </span>
+                    {onOpenEnvironment && (
+                      <Button size="sm" variant="outline" onClick={onOpenEnvironment}>
+                        {t('botSettings.openEnvironment')}
+                      </Button>
                     )}
                   </div>
-                  {onOpenEnvironment && (
-                    <Button size="sm" variant="outline" onClick={onOpenEnvironment}>
-                      {t('botSettings.openEnvironment')}
-                    </Button>
+                  {inheritable && (
+                    <p className="text-[12.5px] text-muted-foreground">
+                      {environmentCompaction
+                        ? t('botSettings.environmentCompaction', {
+                            model: compactionModelLabel(environmentCompaction, options),
+                          })
+                        : t('botSettings.environmentCompactionUnset')}
+                    </p>
                   )}
-                </div>
-                {inheritable && (
-                  <p className="text-[12.5px] text-muted-foreground">
-                    {environmentCompaction
-                      ? t('botSettings.environmentCompaction', {
-                          model: compactionModelLabel(environmentCompaction, options),
-                        })
-                      : t('botSettings.environmentCompactionUnset')}
-                  </p>
-                )}
-              </SettingsCard>
-            </SettingsSection>
-          ) : (
-            <SettingsSection id={domId('where')} title={t('botSettings.where')}>
-              <SettingsCard className="p-[18px] text-sm">
-                {t('botSettings.container')} <code>maestrly-bot-{bot.id}</code> · {t('server.memory')}{' '}
-                {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`} · {t('server.cpu')}{' '}
-                {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`} ·{' '}
-                {t('botSettings.started')}{' '}
-                {bot.resources.startedAt ? new Date(bot.resources.startedAt).toLocaleString(i18n.language) : '—'}
-              </SettingsCard>
-            </SettingsSection>
-          )}
+                </SettingsCard>
+              </SettingsSection>
+            ) : (
+              <SettingsSection id={domId('where')} title={t('botSettings.where')}>
+                <SettingsCard className="p-[18px] text-sm">
+                  {t('botSettings.container')} <code>maestrly-bot-{bot.id}</code> · {t('server.memory')}{' '}
+                  {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`} · {t('server.cpu')}{' '}
+                  {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`} ·{' '}
+                  {t('botSettings.started')}{' '}
+                  {bot.resources.startedAt ? new Date(bot.resources.startedAt).toLocaleString(i18n.language) : '—'}
+                </SettingsCard>
+              </SettingsSection>
+            )}
+          </SettingsTabPanel>
 
-          <SettingsSection id={domId('archive')} title={navLabel('archive')}>
-            <SettingsCard className="flex flex-wrap items-center justify-between gap-3 border-destructive/30 p-[18px]">
-              <p className="min-w-64 flex-1 text-[12.5px] text-muted-foreground">
-                {shared
-                  ? lastInEnvironment
-                    ? t('botSettings.archiveLastNote')
-                    : t('botSettings.archiveOnlyNote')
-                  : t('botSettings.archiveNote')}
-              </p>
-              <Button
-                variant="outline"
-                className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => setArchiving(true)}
-              >
-                {t('botSettings.archive', { name: bot.name })}
-              </Button>
-            </SettingsCard>
-          </SettingsSection>
+          <SettingsTabPanel tab="archive" current={current}>
+            <SettingsSection id={domId('archive')} title={navLabel('archive')}>
+              <SettingsCard className="flex flex-wrap items-center justify-between gap-3 border-destructive/30 p-[18px]">
+                <p className="min-w-64 flex-1 text-[12.5px] text-muted-foreground">
+                  {shared
+                    ? lastInEnvironment
+                      ? t('botSettings.archiveLastNote')
+                      : t('botSettings.archiveOnlyNote')
+                    : t('botSettings.archiveNote')}
+                </p>
+                <Button
+                  variant="outline"
+                  className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setArchiving(true)}
+                >
+                  {t('botSettings.archive', { name: bot.name })}
+                </Button>
+              </SettingsCard>
+            </SettingsSection>
+          </SettingsTabPanel>
 
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}
             </p>
           )}
+
+          {/* Pushes the save bar to the bottom of a short tab; on a long one it floats over the end of the page. */}
+          <div aria-hidden="true" className="-mt-6 flex-1" />
 
           {changed.length > 0 || saveError ? (
             <BotSaveBar
@@ -908,6 +944,6 @@ export function BotSettings({
           onConfirm={() => void archive()}
         />
       )}
-    </section>
+    </div>
   )
 }

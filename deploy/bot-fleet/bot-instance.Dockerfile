@@ -49,6 +49,15 @@ RUN set -eu; \
     echo "${mise_sha}  /usr/local/bin/mise" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/mise
 
+# Shows each bot's Maestrly browser, drawn on the environment display, as a window of the bot's own desktop.
+FROM debian:bookworm-slim AS presenter
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libc6-dev libx11-dev libxext-dev libxdamage-dev libxfixes-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY deploy/bot-fleet/desktop/presenter/maestrly-browser-presenter.c /src/maestrly-browser-presenter.c
+RUN mkdir /out && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /out/maestrly-browser-presenter \
+    /src/maestrly-browser-presenter.c -lX11 -lXext -lXdamage -lXfixes
+
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC HOME=/home/bot DISPLAY=:0 XDG_CURRENT_DESKTOP=Openbox
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -63,6 +72,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git openssh-client build-essential python3-venv python3-pip python-is-python3 \
     ripgrep jq fd-find zip unzip sqlite3 less procps file xz-utils iptables iproute2 util-linux \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
+# The look of each bot's Linux desktop: hsetroot and librsvg2-bin paint the wallpaper, xterm, pcmanfm and mousepad are
+# the apps behind the dock, gnome-themes-extra gives the GTK 2 file manager a dark theme, and the three libraries are
+# what the desktop programs of the next layers link to.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    hsetroot librsvg2-bin xterm pcmanfm mousepad gnome-themes-extra libxdamage1 libxfixes3 libxext6 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /usr/local/include/node /usr/local/include/node
@@ -90,6 +105,14 @@ COPY --from=build /app/config /opt/maestrly/config
 COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
 COPY deploy/bot-fleet/openbox-environment-rc.xml /opt/maestrly/openbox-environment-rc.xml
 COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
+# The desktop of the bots' apps displays: icons, launchers, programs and the Openbox theme.
+COPY deploy/bot-fleet/desktop/icons /opt/maestrly/desktop/icons
+COPY deploy/bot-fleet/desktop/xterm /opt/maestrly/desktop/xterm
+COPY deploy/bot-fleet/desktop/theme/Maestrly /usr/share/themes/Maestrly
+COPY deploy/bot-fleet/desktop/applications/ /usr/share/applications/
+# The dock launchers, the link opener and the terminal windows reach the environment's Maestrly through these.
+COPY deploy/bot-fleet/desktop/bin/maestrly-desktop deploy/bot-fleet/desktop/bin/maestrly-pty-attach deploy/bot-fleet/desktop/bin/maestrly-open-url /usr/local/bin/
+COPY --from=presenter /out/maestrly-browser-presenter /usr/local/bin/maestrly-browser-presenter
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
 COPY deploy/bot-fleet/egress-guard.sh /usr/local/bin/maestrly-egress-guard
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display
@@ -98,6 +121,10 @@ RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoi
     chmod 0755 /usr/local/bin/maestrly-egress-guard && \
     chmod 755 /usr/local/bin/prepare-xvfb-display && \
     chmod 0755 /usr/local/bin/maestrly-bot-browser && \
+    chmod 0755 /usr/local/bin/maestrly-desktop /usr/local/bin/maestrly-pty-attach /usr/local/bin/maestrly-open-url && \
+    chmod -R a+rX /opt/maestrly/desktop /usr/share/themes/Maestrly && \
+    chmod 0644 /usr/share/applications/maestrly-*.desktop && \
+    cat /opt/maestrly/desktop/xterm/XTerm >> /etc/X11/app-defaults/XTerm && \
     mkdir -p /home/bot/.config/tint2 && chown -R bot:bot /home/bot && \
     chmod 4755 /opt/maestrly/node_modules/electron/dist/chrome-sandbox
 USER bot

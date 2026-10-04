@@ -5,6 +5,7 @@ import { app } from 'electron'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROTOCOL_VERSION,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_SCREEN,
   fleetEnvironmentTile,
   fleetInstanceBotInstallSchema,
@@ -18,6 +19,7 @@ import {
   type FleetImportResults,
   type FleetInstanceBotInstall,
   type FleetInstanceEnvironmentStatus,
+  type FleetInstanceHold,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
   type FleetLoginAttempt,
@@ -53,10 +55,20 @@ import { invalidateProvider } from '../../chat/provider'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { botMemorySpaceId } from '../../memory/spaces'
 import type { ScreenFocusOwner } from '../../screen-focus'
-import { deleteLocalMemorySpace, getAppSetting, setAppSetting, transaction } from '../../store'
+import { deleteLocalMemorySpace, getAppSetting, getLocale, setAppSetting, transaction } from '../../store'
 import { adoptLegacyBot } from './adoption'
 import type { EnvironmentInstanceConfig } from './config'
-import type { BotDisplay, BotDisplayEnv, DisplayManagerDeps, DisplaySurface, VncLease, VncMode } from './displays'
+import { paintWallpaper } from './desktop/paint-wallpaper'
+import {
+  BOT_GTK_THEME,
+  BOT_URL_OPENER,
+  type BotDisplay,
+  type BotDisplayEnv,
+  type DisplayManagerDeps,
+  type DisplaySurface,
+  type VncLease,
+  type VncMode,
+} from './displays'
 import {
   SUBSCRIPTION_PROVIDER_KIND,
   cleanupBotSubscriptionSlot,
@@ -82,6 +94,7 @@ import {
   writeInstalledBots,
 } from './registry'
 import { BotRuntime, loadFleetAccountOptions, visibleFleetModels, type BotRuntimeHost, type BotScreen } from './runtime'
+import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
 import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
 
@@ -89,7 +102,26 @@ import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './serv
 export interface EnvironmentDisplays {
   startBot(botId: string, slot: number): Promise<BotDisplay>
   stopBot(botId: string): Promise<void>
+  /** Paints the bot's wallpaper again after its name or color changed; it never rejects for a failed painting. */
+  redecorate(botId: string): Promise<void>
   acquireVnc(surface: DisplaySurface, mode: VncMode): Promise<VncLease>
+  dispose(): Promise<void>
+}
+
+/** A bot whose desktop services start: its apps display, and its conversation and hold as they are when asked. */
+export interface BotDesktopTarget {
+  botId: string
+  display: BotDisplay
+  conversationId(): string | null
+  hold(): FleetInstanceHold
+}
+/** The desktop services of one bot: its desktop socket, terminal windows and browser window. */
+export interface BotDesktopHandle {
+  /**
+   * Brings the app a tool of the bot uses forward on its desktop, without the keyboard; never while a person has taken
+   * the bot over, and not again within moments for the same app.
+   */
+  present(request: PresentationRequest): void
   dispose(): Promise<void>
 }
 
@@ -114,14 +146,17 @@ export interface EnvironmentRuntimeDeps {
    * the keyboard, until the returned function is called.
    */
   holdScreenFocus(owner: ScreenFocusOwner | null): () => void
+  /**
+   * Starts the desktop services of a bot whose apps display started: the socket its dock, links and terminal windows
+   * use. A failure is logged and the bot runs without them. Absent outside a container.
+   */
+  desktop?(target: BotDesktopTarget): Promise<BotDesktopHandle>
 }
 
 function log(level: 'info' | 'error', message: string): void {
   console.error(JSON.stringify({ component: 'bot-instance', level, message }))
 }
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-/** The browser wrapper every bot's `BROWSER` names; it opens Chromium with the bot's own profile. */
-const BOT_BROWSER = '/usr/local/bin/maestrly-bot-browser'
 
 function gatewayUrl(value: string | undefined): string | null {
   if (!value) return null
@@ -148,6 +183,8 @@ export class EnvironmentRuntime {
   readonly events = new InstanceEvents()
   readonly settings: FleetEnvironmentSettingsService
   private readonly registry = new Map<string, BotRuntime>()
+  /** The desktop services of the bots whose apps display runs. */
+  private readonly desktops = new Map<string, BotDesktopHandle>()
   private readonly host: BotRuntimeHost
   private readonly displays: EnvironmentDisplays | null
   private options: FleetSelectionOption[] = []
@@ -206,7 +243,9 @@ export class EnvironmentRuntime {
         this.bots()
           .filter((bot) => bot.botId !== botId && bot.name)
           .map((bot) => ({ botId: bot.botId, name: bot.name! })),
+      capabilities: () => this.capabilities(),
       floatBrowser: (conversationId) => this.deps.floatBrowser(conversationId),
+      present: (conversationId, request) => this.desktopOf(conversationId)?.present(request),
     }
   }
 
@@ -231,6 +270,7 @@ export class EnvironmentRuntime {
     this.unwireBrokers?.()
     this.unwireBrokers = null
     await this.logins.dispose()
+    for (const botId of [...this.desktops.keys()]) await this.stopDesktop(botId)
     for (const bot of [...this.registry.values()]) await bot.dispose()
     this.registry.clear()
     await this.displays?.dispose().catch((error: unknown) => log('error', errorMessage(error)))
@@ -242,8 +282,16 @@ export class EnvironmentRuntime {
       appVersion: app.getVersion(),
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
-      capabilities: [...INSTANCE_CAPABILITIES],
+      capabilities: this.capabilities(),
     }
+  }
+
+  /**
+   * What this environment offers. With an apps display and desktop services for each bot (the bot image), each bot has
+   * one desktop where its browser is presented, so clients show one screen per bot.
+   */
+  private capabilities(): string[] {
+    return [...INSTANCE_CAPABILITIES, ...(this.displays && this.deps.desktop ? [FLEET_UNIFIED_DESKTOP_FEATURE] : [])]
   }
 
   /** The installed bot, or NOT_FOUND. */
@@ -282,7 +330,7 @@ export class EnvironmentRuntime {
     )
     return {
       environmentId: this.deps.config.environmentId ?? null,
-      capabilities: [...INSTANCE_CAPABILITIES],
+      capabilities: this.capabilities(),
       appVersion: app.getVersion(),
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
@@ -327,7 +375,7 @@ export class EnvironmentRuntime {
         if (conversationId)
           await this.deps.closeConversation(conversationId).catch((error: unknown) => log('error', errorMessage(error)))
         await bot.dispose({ uninstall: true })
-        await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
+        await this.stopScreens(botId)
       }
       clearGatewayToken(botId)
       if (!options.purge) return
@@ -408,15 +456,18 @@ export class EnvironmentRuntime {
     if (existing) {
       if (token !== null) existing.setGatewayToken(token)
       if (existing.slot !== slot) {
-        await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
+        await this.stopScreens(botId)
         existing.slot = slot
-        existing.attachScreen(await this.startDisplay(botId, slot))
+        existing.attachScreen(await this.startDisplay(existing))
         writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
       }
       if (hold.paused) await existing.hold('paused')
       if (hold.takeover) await existing.hold('takeover')
+      const look = { name: existing.name, tint: existing.tint }
       await existing.profile(profile)
       existing.activate()
+      // The wallpaper shows the bot's name and color: an update that changes either paints it again.
+      if (look.name !== profile.name || look.tint !== (profile.tint ?? null)) this.repaint(botId)
       return existing
     }
     if (members.filter((member) => member.botId !== botId).length >= FLEET_ENVIRONMENT_LIMITS.botsMax)
@@ -425,7 +476,7 @@ export class EnvironmentRuntime {
     if (token !== null) writeGatewayToken(botId, token)
     const bot = new BotRuntime(botId, slot, this.host)
     try {
-      bot.attachScreen(await this.startDisplay(botId, slot))
+      bot.attachScreen(await this.startDisplay(bot))
       await bot.start()
       if (hold.paused) await bot.hold('paused')
       if (hold.takeover) await bot.hold('takeover')
@@ -433,22 +484,28 @@ export class EnvironmentRuntime {
       writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
     } catch (error) {
       await bot.dispose()
-      await this.displays?.stopBot(botId).catch(() => undefined)
+      await this.stopScreens(botId)
       if (!wasMember && token !== null) clearGatewayToken(botId)
       throw error
     }
     this.registry.set(botId, bot)
     bot.activate()
+    // Its display started before its profile was known: the first wallpaper is painted now.
+    this.repaint(botId)
     return bot
+  }
+  /** Paints a bot's wallpaper again without waiting for it; a failure is logged and never reaches the install. */
+  private repaint(botId: string): void {
+    void this.displays?.redecorate(botId).catch((error: unknown) => log('error', errorMessage(error)))
   }
   private async recreate(member: InstalledBot): Promise<void> {
     const bot = new BotRuntime(member.botId, member.slot, this.host)
     try {
-      bot.attachScreen(await this.startDisplay(member.botId, member.slot))
+      bot.attachScreen(await this.startDisplay(bot))
       await bot.start()
     } catch (error) {
       await bot.dispose()
-      await this.displays?.stopBot(member.botId).catch(() => undefined)
+      await this.stopScreens(member.botId)
       throw error
     }
     this.registry.set(member.botId, bot)
@@ -458,10 +515,12 @@ export class EnvironmentRuntime {
    * and browser profile, so its computer tools and programs never fall back to the environment display, the
    * environment's session bus or its default browser profile, which every bot shares.
    */
-  private async startDisplay(botId: string, slot: number): Promise<BotScreen | null> {
+  private async startDisplay(bot: BotRuntime): Promise<BotScreen | null> {
     if (!this.displays) return null
+    const { botId, slot } = bot
     try {
       const display = await this.displays.startBot(botId, slot)
+      await this.startDesktop(bot, display)
       return {
         display: display.display,
         width: display.width,
@@ -480,14 +539,48 @@ export class EnvironmentRuntime {
       }
     }
   }
+  /** The desktop services of the bot whose conversation this is. */
+  private desktopOf(conversationId: string): BotDesktopHandle | null {
+    const bot = this.botForConversation(conversationId)
+    return bot ? (this.desktops.get(bot.botId) ?? null) : null
+  }
+  /** Starts the desktop services of a bot on its display; without them the bot still runs, so a failure is logged. */
+  private async startDesktop(bot: BotRuntime, display: BotDisplay): Promise<void> {
+    if (!this.deps.desktop) return
+    await this.stopDesktop(bot.botId)
+    try {
+      const handle = await this.deps.desktop({
+        botId: bot.botId,
+        display,
+        conversationId: () => bot.primaryConversationId,
+        hold: () => bot.holdManager.state,
+      })
+      this.desktops.set(bot.botId, handle)
+    } catch (error) {
+      log('error', `The desktop services of bot ${bot.botId} did not start: ${errorMessage(error)}`)
+    }
+  }
+  private async stopDesktop(botId: string): Promise<void> {
+    const handle = this.desktops.get(botId)
+    if (!handle) return
+    this.desktops.delete(botId)
+    await handle.dispose().catch((error: unknown) => log('error', errorMessage(error)))
+  }
+  /** Stops a bot's desktop services, then the display they run on. */
+  private async stopScreens(botId: string): Promise<void> {
+    await this.stopDesktop(botId)
+    await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
+  }
   /** The variables the display manager gives a bot's programs: its display, its session bus and its browser. */
   private fallbackEnv(botId: string, slot: number): BotDisplayEnv {
     const paths = botPaths(this.deps.userData, this.deps.home, botId)
     return {
       DISPLAY: `:${slot}`,
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(paths.cache, 'bus')}`,
-      BROWSER: BOT_BROWSER,
+      BROWSER: BOT_URL_OPENER,
       MAESTRLY_BOT_BROWSER_PROFILE: path.join(paths.browserConfig, 'chromium'),
+      GTK_THEME: BOT_GTK_THEME,
+      MAESTRLY_DESKTOP_SOCKET: path.join(paths.cache, 'desktop.sock'),
     }
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */
@@ -655,11 +748,33 @@ export class EnvironmentRuntime {
   }
 }
 
+/** What a bot's wallpaper shows: its name and its color (`#rrggbb`, or null for the neutral one). */
+export interface BotLook {
+  name: string
+  tint: string | null
+}
+
+/** The look in the profile an install stored, which is all there is when the environment starts again. */
+function storedBotLook(botId: string): BotLook | null {
+  const stored = readStoredProfile(botId)
+  return stored ? { name: stored.profile.name, tint: stored.profile.tint ?? null } : null
+}
+
+/** The language the taskbar uses for its launcher names: the app's own, as a POSIX locale name. */
+const taskbarLanguage = (locale: string): string => (locale === 'pt-BR' ? 'pt_BR' : 'en')
+
 /**
  * Runs the display manager's programs. `options.env` holds only the variables set over this process's environment,
  * so each child gets both. A program that cannot start exits with 127, like a shell's "command not found".
+ *
+ * `look` tells a bot's wallpaper what to show; a bot it knows nothing about is left unpainted until an install paints
+ * it (see `EnvironmentRuntime`). `locale` is the app's language, read whenever a taskbar starts.
  */
-export function productionDisplayDeps(home: string): DisplayManagerDeps {
+export function productionDisplayDeps(
+  home: string,
+  look: (botId: string) => BotLook | null = storedBotLook,
+  locale: () => string = getLocale
+): DisplayManagerDeps {
   return {
     spawn(command, args, options) {
       let child: ChildProcess
@@ -687,6 +802,16 @@ export function productionDisplayDeps(home: string): DisplayManagerDeps {
     mkdir: async (folder) => {
       await fs.mkdir(folder, { recursive: true, mode: 0o700 })
     },
+    decorate: async (display) => {
+      const botLook = look(display.botId)
+      if (!botLook) return
+      await paintWallpaper({
+        folder: path.join(home, '.cache', 'maestrly-bots', display.botId),
+        display: display.display,
+        ...botLook,
+      })
+    },
+    language: () => taskbarLanguage(locale()),
     setTimeout,
     clearTimeout,
     log: (message) => log('info', message),
