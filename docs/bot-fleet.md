@@ -595,7 +595,7 @@ choose each bot's **Main model**, and the environment's **Default compaction mod
 
 ## Toolchain
 
-The bot image includes Node.js 22.22.0 with npm, npx, corepack, pnpm and yarn;
+The bot image includes Node.js 24.21.0 with npm, npx, corepack, pnpm and yarn;
 Python 3.11 with `python`, pip and venv; uv/uvx 0.12.15; mise 2026.9.10; git;
 OpenSSH client; build-essential; ripgrep; fd; jq; sqlite3; zip/unzip; less;
 procps; file; and xz. There is no Docker or sudo inside an environment.

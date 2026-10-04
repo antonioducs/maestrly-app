@@ -399,7 +399,7 @@ async function main() {
       'E2E_DEV_ID=' + state.bots[0],
       '-v',
       fakeFile + ':/app/fake-model.mjs:ro',
-      'node:22.22.0-bookworm-slim',
+      'node:24.21.0-bookworm-slim',
       'node',
       '/app/fake-model.mjs',
     ])

@@ -280,6 +280,8 @@ test('account edits omit unchanged secrets, cancel removal, and preserve state o
   await expect(panel().getByLabel('Nova chave de API')).toHaveValue('')
   for (const name of ['First keyboard save', 'Second keyboard save']) {
     await panel().getByLabel('Nome', { exact: true }).fill(name)
+    // The gateway records a save before its response reaches the editor; the shortcut is ignored until it does.
+    await expect(panel().getByRole('button', { name: 'Salvar alterações' })).toBeEnabled()
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s')
     await expect.poll(() => gateway.states.get('studio')!.accounts.apiKeys[0].name).toBe(name)
     await expect(panel().getByRole('button', { name: 'Salvar alterações' })).toBeDisabled()
@@ -375,6 +377,8 @@ test('MCP editors never reveal secrets and fixture connection results stay bound
   await expect(panel().getByLabel('Cabeçalhos para definir', { exact: false })).toHaveValue('')
   for (const name of ['Docs keyboard save', 'Docs keyboard save again']) {
     await panel().getByLabel('Nome', { exact: true }).fill(name)
+    // The gateway records a save before its response reaches the editor; the shortcut is ignored until it does.
+    await expect(panel().getByRole('button', { name: 'Salvar alterações' })).toBeEnabled()
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s')
     await expect.poll(() => gateway.states.get('studio')!.mcp.servers[0].name).toBe(name)
     await expect(panel().getByRole('button', { name: 'Salvar alterações' })).toBeDisabled()

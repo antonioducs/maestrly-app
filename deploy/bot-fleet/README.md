@@ -31,7 +31,7 @@ After building the images, run `npm run test:e2e:bot-fleet` for an opt-in real-c
 
 ## Toolchain
 
-The bot image includes Node.js 22.22.0 (npm, npx, corepack, pnpm and yarn), Python 3.11
+The bot image includes Node.js 24.21.0 (npm, npx, corepack, pnpm and yarn), Python 3.11
 (`python`, pip and venv), uv/uvx 0.12.15, mise v2026.9.10, git, ssh, build-essential,
 ripgrep, fd, jq, sqlite3, zip/unzip, less, procps, file and xz. Node and its headers,
 npm and corepack come from the app's build stage; uv and mise are pinned release

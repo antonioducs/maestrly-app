@@ -743,7 +743,7 @@ async function main() {
     'E2E_DEV_ID=' + devId,
     '-v',
     fakeFile + ':/app/fake-model.mjs:ro',
-    'node:22.22.0-bookworm-slim',
+    'node:24.21.0-bookworm-slim',
     'node',
     '/app/fake-model.mjs',
   ])
@@ -912,7 +912,7 @@ async function main() {
   assert.equal(plainShell.length, binaries.length + 3)
   for (const line of plainShell.slice(0, binaries.length)) assert.ok(line.startsWith('/'))
   const nodeVersion = plainShell[binaries.length]
-  assert.match(nodeVersion, /^v22\./)
+  assert.match(nodeVersion, /^v24\./)
   assert.equal(plainShell[binaries.length + 1], '/home/bot/.local')
   assert.equal(plainShell[binaries.length + 2], '42')
   const loginShell = (
