@@ -53,6 +53,8 @@ export class LegacyArtifacts {
   private abort: AbortController | null = null
   private lastProgress = 0
   private starting: Promise<LegacyMoveState> | null = null
+  private clearing: Promise<void> | null = null
+  private drained: (() => void) | null = null
 
   constructor(private readonly deps: LegacyArtifactsDeps) {}
 
@@ -88,11 +90,15 @@ export class LegacyArtifacts {
     } finally {
       this.users--
       if (this.users === 0) {
-        this.idleTimer = setTimeout(() => {
-          this.idleTimer = null
-          if (this.users === 0) void this.deps.host.stop()
-        }, this.deps.idleStopMs ?? IDLE_STOP_MS)
-        this.idleTimer.unref?.()
+        this.drained?.()
+        this.drained = null
+        if (!this.clearing) {
+          this.idleTimer = setTimeout(() => {
+            this.idleTimer = null
+            if (this.users === 0) void this.deps.host.stop()
+          }, this.deps.idleStopMs ?? IDLE_STOP_MS)
+          this.idleTimer.unref?.()
+        }
       }
     }
   }
@@ -112,6 +118,7 @@ export class LegacyArtifacts {
   }
 
   async list(): Promise<LegacyArtifactView[]> {
+    await this.clearing
     if (!this.exists()) return []
     const items = await this.use((admin) => this.view(admin))
     if (!items.length && this.current.phase !== 'running') await this.clear()
@@ -120,6 +127,7 @@ export class LegacyArtifacts {
 
   /** Whether an artifact is among those on this computer; false when it cannot tell. */
   async has(id: string): Promise<boolean> {
+    await this.clearing
     if (!this.exists()) return false
     try {
       return await this.use(async (admin) => (await admin.get(id)) !== null)
@@ -130,6 +138,7 @@ export class LegacyArtifacts {
 
   /** Deletes the given artifacts, or all of them, with every version and comment. */
   async remove(ids?: readonly string[]): Promise<void> {
+    await this.clearing
     if (this.current.phase === 'running') throw busy()
     if (!this.exists()) return
     const empty = await this.use(async (admin) => {
@@ -271,23 +280,39 @@ export class LegacyArtifacts {
 
   /** A consistent copy of the local database, for a data export; false when there is nothing here. */
   async snapshot(targetFile: string): Promise<boolean> {
+    await this.clearing
     if (!this.exists()) return false
     await this.use((admin) => admin.snapshot(targetFile))
     return true
   }
 
   /** Stops the host and removes the local artifact folder: nothing is left in it. */
-  private async clear(): Promise<void> {
+  private clear(): Promise<void> {
+    if (this.clearing) return this.clearing
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = null
-    await this.deps.host.stop()
-    await (this.deps.removeDir ?? ((dir) => rm(dir, { recursive: true, force: true })))(this.deps.dataDir())
+    // Close and remove storage once, after existing readers finish. New readers wait and recheck its presence.
+    const clearing = Promise.resolve()
+      .then(async () => {
+        if (this.users > 0)
+          await new Promise<void>((resolve) => {
+            this.drained = resolve
+          })
+        await this.deps.host.stop()
+        await (this.deps.removeDir ?? ((dir) => rm(dir, { recursive: true, force: true })))(this.deps.dataDir())
+      })
+      .finally(() => {
+        if (this.clearing === clearing) this.clearing = null
+      })
+    this.clearing = clearing
+    return clearing
   }
 
   async dispose(): Promise<void> {
     this.abort?.abort()
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = null
+    await this.clearing?.catch(() => {})
     await this.deps.host.stop()
   }
 }
