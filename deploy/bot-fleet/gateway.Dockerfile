@@ -1,4 +1,4 @@
-FROM node:22.22.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/bot-gateway/package.json apps/bot-gateway/package.json
@@ -10,7 +10,7 @@ COPY packages/artifact-host packages/artifact-host
 COPY apps/bot-gateway apps/bot-gateway
 RUN npm run build:fleet-protocol && npm run build:bot-gateway
 
-FROM node:22.22.0-bookworm-slim AS dependencies
+FROM node:24.21.0-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/bot-gateway/package.json apps/bot-gateway/package.json
@@ -18,7 +18,7 @@ COPY packages/artifact-host/package.json packages/artifact-host/package.json
 COPY packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json
 RUN npm ci --omit=dev --ignore-scripts --include-workspace-root=false --workspace @maestrly/artifact-host --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/bot-gateway
 
-FROM node:22.22.0-bookworm-slim
+FROM node:24.21.0-bookworm-slim
 ARG MAESTRLY_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends gosu curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

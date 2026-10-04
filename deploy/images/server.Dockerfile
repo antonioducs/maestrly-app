@@ -1,4 +1,4 @@
-FROM node:22.22.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/package.json
@@ -13,7 +13,7 @@ COPY packages/protocol packages/protocol
 COPY apps/server apps/server
 RUN npm run build:protocol && npm run build:server
 
-FROM node:22.22.0-bookworm-slim AS runtime
+FROM node:24.21.0-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules

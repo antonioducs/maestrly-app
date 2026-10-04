@@ -2,7 +2,7 @@
 
 ## Setup
 
-Use Git, Node.js 22.15–22.x, npm 10 or newer, and the committed lockfile.
+Use Git, Node.js 24.11–24.x, npm 10 or newer, and the committed lockfile.
 Native modules also need the host toolchain when a prebuilt binary is unavailable:
 
 - macOS 13 or later (required by Electron): Xcode Command Line Tools.

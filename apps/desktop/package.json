@@ -50,9 +50,9 @@
     "smoke:packaged-desktop": "node ../../scripts/smoke-packaged-desktop.mjs"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.70",
+    "@ai-sdk/anthropic": "^4.0.71",
     "@ai-sdk/openai": "^4.0.83",
-    "@ai-sdk/openai-compatible": "^3.0.61",
+    "@ai-sdk/openai-compatible": "^3.0.62",
     "@ai-sdk/provider": "^4.0.21",
     "@anthropic-ai/claude-agent-sdk": "0.3.285",
     "@cursor/sdk": "1.0.34",
@@ -76,7 +76,7 @@
     "@radix-ui/react-select": "^2.3.7",
     "@tailwindcss/vite": "^4.3.3",
     "@xterm/headless": "^6.0.0",
-    "ai": "^7.0.124",
+    "ai": "^7.0.126",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "diff": "^9.0.0",
@@ -102,20 +102,20 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.5.15",
     "@electron/asar": "4.3.1",
     "@electron/rebuild": "4.2.0",
     "@openai/codex": "0.155.1",
     "@playwright/test": "^1.63.0",
     "@types/diff": "^7.0.2",
-    "@types/node": "^22.20.4",
+    "@types/node": "^24.19.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ssh2": "1.15.6",
-    "@types/tar-stream": "^3.1.4",
+    "@types/tar-stream": "^3.1.5",
     "@types/yauzl": "^3.4.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "5.0.3",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",
     "@xterm/addon-serialize": "0.14.0",
@@ -131,14 +131,14 @@
     "react-dom": "^19.3.0",
     "typescript": "7.0.2",
     "vite": "^7.0.0",
-    "vitest": "4.1.11"
+    "vitest": "5.0.3"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/antonioducs/maestrly-app.git"
   },
   "engines": {
-    "node": ">=22.15.0 <23",
+    "node": ">=24.11.0 <25",
     "npm": ">=10"
   }
 }

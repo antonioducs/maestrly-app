@@ -77,7 +77,7 @@ Linux and Windows packages are not code-signed. Updates are installed manually.
 
 ## Run from source
 
-Requires Node.js 22.15–22.x, npm 10 or newer, Git, and the host's native compiler
+Requires Node.js 24.11–24.x, npm 10 or newer, Git, and the host's native compiler
 tools. See [Development](docs/development.md) for platform setup.
 
 ```sh

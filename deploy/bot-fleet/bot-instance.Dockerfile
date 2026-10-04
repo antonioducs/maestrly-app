@@ -1,4 +1,4 @@
-FROM node:22.22.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
