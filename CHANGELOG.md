@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-04
+
+### Fixed
+
+- Wait for active artifact queries before cleaning up storage from earlier
+  versions, and let new queries wait until that cleanup finishes. This prevents
+  the local host from reopening during removal and reporting that it stopped
+  after artifacts were moved to the bot server.
+
 ## [0.14.0] - 2026-10-04
 
 ### Changed

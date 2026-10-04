@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { type ArtifactAdmin, type ArtifactHost, ArtifactHostError, openArtifactHost } from '@maestrly/artifact-host'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { LegacyArtifacts } from '../../src/main/artifacts/legacy'
 import type { LegacyMoveState } from '../../src/shared/artifacts'
 
@@ -15,7 +15,7 @@ let server: ArtifactHost
 let states: LegacyMoveState[]
 let forgotten: string[]
 let changes: number
-let host: { ensureStarted: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }
+let host: { ensureStarted: Mock<() => Promise<ArtifactAdmin>>; stop: Mock<() => Promise<void>> }
 let legacy: LegacyArtifacts
 
 async function openLocal(): Promise<ArtifactHost> {
@@ -141,6 +141,81 @@ describe('LegacyArtifacts', () => {
     expect(done.moved).toHaveLength(1)
     expect(await legacy.list()).toHaveLength(1)
     expect(existsSync(dataDir)).toBe(true)
+  })
+
+  it('waits for empty storage removal before another list can reopen the host', async () => {
+    const { shared, plain } = await earlier()
+    const admin = (await openLocal()).admin
+    await admin.delete(shared)
+    await admin.delete(plain)
+
+    const stop = host.stop.getMockImplementation()!
+    let releaseStop!: () => void
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve
+    })
+    let stopped!: () => void
+    const hostStopped = new Promise<void>((resolve) => {
+      stopped = resolve
+    })
+    host.stop.mockImplementationOnce(async () => {
+      await stop()
+      stopped()
+      await stopGate
+    })
+
+    const clearing = legacy.list()
+    await hostStopped
+    const reading = legacy.list()
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(host.ensureStarted).toHaveBeenCalledTimes(1)
+    } finally {
+      releaseStop()
+      await Promise.allSettled([clearing, reading])
+    }
+    expect(await reading).toEqual([])
+    expect(existsSync(dataDir)).toBe(false)
+  })
+
+  it('finishes active reads before stopping and removing empty storage', async () => {
+    const { shared, plain } = await earlier()
+    const admin = (await openLocal()).admin
+    await admin.delete(shared)
+    await admin.delete(plain)
+
+    let releaseRead!: () => void
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let reading!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(async () => {
+        reading()
+        await readGate
+        return admin.list()
+      })
+    host.ensureStarted.mockResolvedValue({ ...admin, list })
+
+    const first = legacy.list()
+    const second = legacy.list()
+    await readStarted
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(host.stop).not.toHaveBeenCalled()
+    } finally {
+      releaseRead()
+      await Promise.allSettled([first, second])
+    }
+    expect(await first).toEqual([])
+    expect(await second).toEqual([])
+    expect(host.stop).toHaveBeenCalledTimes(1)
+    expect(existsSync(dataDir)).toBe(false)
   })
 
   it('reports the space it needs instead of starting when the server is too full', async () => {
