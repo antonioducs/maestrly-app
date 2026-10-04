@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
-import { access, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, realpath } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +14,7 @@ import {
   fleetTranscriptItemSchema,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
+import { removeTempDirEventually } from './helpers/temp-cleanup'
 
 const desktop = fileURLToPath(new URL('../..', import.meta.url))
 const primaryModel = 'detached-fixture'
@@ -144,7 +145,7 @@ const test = base.extend<{ session: Session }>({
       await app?.close().catch(() => undefined)
       model.closeAllConnections()
       await new Promise<void>((resolve) => model.close(() => resolve()))
-      await rm(root, { recursive: true, force: true })
+      await removeTempDirEventually(root)
     }
   },
 })
