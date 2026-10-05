@@ -980,6 +980,13 @@ export default {
       auto: 'Automático',
       full: 'Acesso total',
     },
+    projectsDirectory: {
+      heading: 'Pasta de projetos',
+      desc: 'Onde os chats criam e clonam os projetos que você pedir. Também é a pasta padrão ao adicionar um projeto.',
+      empty: 'Não definida',
+      choose: 'Escolher…',
+      clear: 'Limpar',
+    },
     terminal: {
       heading: 'Terminal',
       desc: 'Shell usado nos terminais livres da gaveta no Windows. Vale para os próximos terminais abertos.',

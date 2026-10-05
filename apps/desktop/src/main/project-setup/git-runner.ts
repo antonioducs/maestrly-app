@@ -316,6 +316,12 @@ export async function getRepositoryTopLevel(cwd: string, signal?: AbortSignal): 
   return result.code === 0 && result.stdout.trim() ? result.stdout.trim() : null
 }
 
+/** URL of the `origin` remote of a working tree, or null when it has none (or is not a repository). */
+export async function getOriginUrl(cwd: string, signal?: AbortSignal): Promise<string | null> {
+  const result = await execGit(cwd, ['config', '--get', 'remote.origin.url'], 'not-git-repository', signal)
+  return result.code === 0 && result.stdout.trim() ? result.stdout.trim() : null
+}
+
 export async function validBranch(cwd: string, branch: string, signal?: AbortSignal): Promise<boolean> {
   if (!branch) return false
   const result = await execGit(cwd, ['check-ref-format', '--branch', branch], 'registration-failed', signal)

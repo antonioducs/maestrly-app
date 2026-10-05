@@ -2,6 +2,7 @@ import type { CreateStandaloneConversationArgs } from '../shared/standalone-conv
 import type { StandaloneConversation } from '../shared/conversation'
 import { ipcRenderer } from 'electron'
 import type { ConversationBranchInfo } from '../shared/conversation-branch'
+import type { WorkspaceCreationProgress } from '../shared/workspace-creation'
 import type { ConversationExperience } from '../shared/conversation-experience'
 import type {
   LocalConversationConfirmInput,
@@ -126,6 +127,18 @@ export const workspaceApi = {
     const listener = (_event: unknown, payload: { conversationId: string }) => callback(payload)
     ipcRenderer.on('conversation-dispatch:changed', listener)
     return () => ipcRenderer.removeListener('conversation-dispatch:changed', listener)
+  },
+  /** A workspace was registered outside the renderer (for example, created from a chat). */
+  onWorkspacesChanged: (callback: () => void): (() => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('workspace:changed', listener)
+    return () => ipcRenderer.removeListener('workspace:changed', listener)
+  },
+  /** Live clone/create progress of create_workspace calls, for the chat card. */
+  onWorkspaceCreationProgress: (callback: (progress: WorkspaceCreationProgress) => void): (() => void) => {
+    const listener = (_event: unknown, progress: WorkspaceCreationProgress) => callback(progress)
+    ipcRenderer.on('workspace-creation:progress', listener)
+    return () => ipcRenderer.removeListener('workspace-creation:progress', listener)
   },
 
   getConversationBranchInfo: (id: string): Promise<ConversationBranchInfo | null> =>

@@ -8,6 +8,11 @@ export default {
     invalidTarget: 'alvo inválido',
   },
   workspace: {
+    publicRepoHeader: 'Repositório público',
+    publicRepoQuestion: 'Criar {{repo}} no GitHub como repositório PÚBLICO? Qualquer pessoa poderá vê-lo.',
+    publicRepoConfirm: 'Criar público',
+    publicRepoPrivate: 'Deixar privado',
+    publicRepoCancel: 'Cancelar',
     notGitRepo: 'A pasta selecionada não é um repositório git.',
     bareNotSupported: 'Repositórios bare não são suportados.',
     cannotResolveRoot: 'Não foi possível resolver a raiz do repositório.',

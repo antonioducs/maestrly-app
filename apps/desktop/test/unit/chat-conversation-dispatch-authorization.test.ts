@@ -5,6 +5,7 @@ import {
   currentHumanTurnOrigin,
   detectConversationDispatchIntent,
   evaluateConversationDispatchGrant,
+  evaluateHumanTurnGrant,
   isHumanTurnAdmission,
   recordHumanTurnOrigin,
   type HumanTurnOrigin,
@@ -148,6 +149,26 @@ describe('evaluateConversationDispatchGrant', () => {
     recordHumanTurnOrigin(next)
     expect(() => assertConversationDispatchGrantCurrent(result.grant)).toThrow(/no longer active/)
     expect(evaluateConversationDispatchGrant(current)).toMatchObject({ ok: false, code: 'turn-ended' })
+  })
+
+  it('grants project work to any live human turn without reading the message', () => {
+    // "lá" refers to what was said before: the agent judges it from the conversation, not a phrase list.
+    const vague = origin('pega algum repo público qualquer ae e cria lá pra mim')
+    recordHumanTurnOrigin(vague)
+    expect(evaluateConversationDispatchGrant(vague)).toMatchObject({ ok: false, code: 'not-requested' })
+    expect(evaluateHumanTurnGrant(vague)).toEqual({
+      ok: true,
+      grant: {
+        conversationId: 'source',
+        messageId: vague.messageId,
+        originKey: `message:${vague.messageId}`,
+        token: vague.token,
+        signal: vague.signal,
+      },
+    })
+    expect(evaluateHumanTurnGrant(currentHumanTurnOrigin('child'))).toMatchObject({ ok: false, code: 'no-human-turn' })
+    recordHumanTurnOrigin(origin('Obrigado!'))
+    expect(evaluateHumanTurnGrant(vague)).toMatchObject({ ok: false, code: 'turn-ended' })
   })
 
   it('denies without a human turn, including seeded child turns that never register an origin', () => {

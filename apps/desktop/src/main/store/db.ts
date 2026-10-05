@@ -1059,6 +1059,29 @@ function initializeSchema(): void {
       WHERE conversation_id=OLD.id AND phase <> 'discarded';
     END;
   `)
+  // Projects created or cloned from a chat turn. Keyed like conversation dispatches so a repeated call replays the
+  // registered workspace instead of cloning again; a failed attempt can be retried with the same key.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_creations (
+      creation_id TEXT PRIMARY KEY,
+      source_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      origin_key TEXT NOT NULL,
+      request_key TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      source_json TEXT NOT NULL,
+      name TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      remote_url TEXT,
+      phase TEXT NOT NULL CHECK(phase IN ('creating','registered','failed')),
+      workspace_id TEXT,
+      reused INTEGER NOT NULL DEFAULT 0,
+      remote_json TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(source_conversation_id, origin_key, request_key)
+    );
+  `)
   // Workspace project memory defaults enabled.
   const wsCols = db.prepare('PRAGMA table_info(workspaces)').all() as Array<{ name: string }>
   if (!wsCols.some((c) => c.name === 'memory_enabled')) {

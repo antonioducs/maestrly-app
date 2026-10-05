@@ -20,7 +20,13 @@ import { generateImageTool } from './generate-image'
 import { gitDiffTool } from './git-diff'
 import { readExecutionContextTool, searchExecutionContextTool } from './execution-context'
 import { submitReviewTool } from './submit-review'
-import { listConversationModelsTool, listConversationWorkspacesTool, startConversationsTool } from './conversation-dispatch'
+import {
+  createWorkspaceTool,
+  findGithubRepositoriesTool,
+  listConversationModelsTool,
+  listConversationWorkspacesTool,
+  startConversationsTool,
+} from './conversation-dispatch'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -47,6 +53,8 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   listConversationModelsTool,
   listConversationWorkspacesTool,
   startConversationsTool,
+  findGithubRepositoriesTool,
+  createWorkspaceTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 

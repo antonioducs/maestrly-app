@@ -256,6 +256,35 @@ describe('conversation dispatch service', () => {
     expect(deps.resolveHead).not.toHaveBeenCalled()
   })
 
+  it('without a request for conversations, starts one conversation only in each project created in the turn', async () => {
+    const created = makeWorkspace()
+    const other = makeWorkspace()
+    const { deps, service } = harness()
+    const scoped = { ...grant(1), onlyWorkspaceIds: [created.id] }
+    const dispatch = (batch: Parameters<typeof service.dispatchBatch>[0]['batch']) =>
+      service.dispatchBatch({ grant: scoped, batch, assertCurrent: () => undefined })
+
+    for (const batch of [{ tasks: [task('A')] }, { target: { workspaceId: other.id }, tasks: [task('A')] }]) {
+      expect(await dispatch(batch)).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('project create_workspace returned in this turn'),
+      })
+    }
+    expect(deps.createIsolated).not.toHaveBeenCalled()
+
+    const started = await dispatch({ target: { workspaceId: created.id }, tasks: [task('A')] })
+    expect(started.items[0]).toMatchObject({ status: 'started', workspaceId: created.id })
+    // The same request replays; a second conversation in the same project needs the person to ask for it.
+    expect((await dispatch({ target: { workspaceId: created.id }, tasks: [task('A')] })).items[0]).toMatchObject({
+      replayed: true,
+    })
+    expect(await dispatch({ target: { workspaceId: created.id }, tasks: [task('B')] })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Only one conversation can start in each project'),
+    })
+    expect(deps.createIsolated).toHaveBeenCalledTimes(1)
+  })
+
   it('uses the project workspace for branch-only targets', async () => {
     const { deps, service } = harness()
     const result = await service.dispatchBatch({

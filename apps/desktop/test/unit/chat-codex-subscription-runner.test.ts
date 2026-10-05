@@ -986,7 +986,7 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          '31b3dde16993675ac1d7fab5ef72ca687a47497017faec1cfc1efdabc3448886'
+          '760c532074302469142eb296ddad0d42e29ef60ef2e44d4d9329b7a21c7a23fc'
         )
         expect(request.baseInstructions).toBeUndefined()
         expect(request.developerInstructions).toContain('general assistant')

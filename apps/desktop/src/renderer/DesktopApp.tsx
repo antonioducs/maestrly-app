@@ -211,6 +211,20 @@ export function DesktopApp() {
   }, [allConversations, splitReviewLoop])
   const projectSetup = useProjectSetup(reconcileWorkspace)
   const [focusedWorkspaceId, setFocusedWorkspaceId] = useState<string | null>(null)
+  // Projects a chat created or cloned appear in the sidebar without a manual refresh; the chat card can focus them.
+  useEffect(() => window.api.onWorkspacesChanged(() => void refreshWorkspaces()), [refreshWorkspaces])
+  useEffect(() => {
+    const focus = (event: Event) => {
+      const workspaceId = (event as CustomEvent<{ workspaceId?: string }>).detail?.workspaceId
+      if (!workspaceId) return
+      void refreshWorkspaces().then(() => {
+        setFocusedWorkspaceId(null)
+        requestAnimationFrame(() => setFocusedWorkspaceId(workspaceId))
+      })
+    }
+    window.addEventListener('maestrly:focus-workspace', focus)
+    return () => window.removeEventListener('maestrly:focus-workspace', focus)
+  }, [refreshWorkspaces])
   const requestProject = useCallback(
     async (options?: ProjectSetupOptions): Promise<Workspace | null> => {
       setFocusedWorkspaceId(null)
