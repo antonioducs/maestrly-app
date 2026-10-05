@@ -587,13 +587,15 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.85);
 }
 
-.chat-msgs .chat-search-match {
+.chat-msgs .chat-search-match,
+.bot-transcript .chat-search-match {
   background: rgba(250, 204, 21, 0.32);
   border-radius: 2px;
   color: inherit;
   padding: 0 0.08em;
 }
-.chat-msgs .chat-search-match--current {
+.chat-msgs .chat-search-match--current,
+.bot-transcript .chat-search-match--current {
   background: rgba(249, 115, 22, 0.62);
   box-shadow: 0 0 0 1px rgba(253, 186, 116, 0.9);
   color: #fff7ed;
