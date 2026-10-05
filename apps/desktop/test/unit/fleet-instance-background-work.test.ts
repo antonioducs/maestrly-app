@@ -474,4 +474,47 @@ describe('context limit of a bot conversation', () => {
     expect(getConversationContextLimit(convA)).toBeUndefined()
     expect(getConversationContextLimit(convB)).toBeUndefined()
   })
+
+  it("shows the new model's window as soon as the owner switches models", async () => {
+    const modelB = { ...model, modelId: 'model-b' }
+    vi.mocked(chatService.listChatRunnerCapabilities).mockResolvedValue([model, modelB])
+    vi.mocked(chatService.effectiveModelMeta).mockImplementation(async (modelId: string) => ({
+      meta: modelId === 'model-b' ? ({ contextWindow: 200_000 } as never) : null,
+    }))
+    const selected = (modelId: string): FleetInstanceProfile => ({
+      ...profile('alpha', 'Alpha'),
+      selection: { providerId: 'synthetic', modelId, reasoning: 'low', fastMode: false },
+    })
+    const setup = environment()
+    await setup.runtime.start()
+    await setup.runtime.installBot({ profile: selected('model-a'), slot: 1, gatewayToken: tokenA })
+    const convA = setup.runtime.bot('alpha').primaryConversationId!
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId: convA,
+      role: 'assistant',
+      createdAt: 2,
+      parts: [{ type: 'text', id: randomUUID(), text: 'Understood.' }],
+      contextSnapshot: {
+        usedTokens: 50_000,
+        modelContextWindow: 1_000_000,
+        model: { providerId: 'synthetic', modelId: 'model-a' },
+        quality: 'measured',
+        observedAt: 2,
+        sequence: 1,
+      },
+    })
+    await setup.runtime.installBot({ profile: selected('model-a'), slot: 1, gatewayToken: tokenA })
+    expect((await setup.runtime.bot('alpha').status()).usage).toMatchObject({
+      contextUsedTokens: 50_000,
+      contextWindowTokens: 1_000_000,
+    })
+
+    // No turn runs on the new model: its window comes from its metadata, not from the old model's sample.
+    await setup.runtime.installBot({ profile: selected('model-b'), slot: 1, gatewayToken: tokenA })
+    expect((await setup.runtime.bot('alpha').status()).usage).toMatchObject({
+      contextUsedTokens: 50_000,
+      contextWindowTokens: 200_000,
+    })
+  })
 })
