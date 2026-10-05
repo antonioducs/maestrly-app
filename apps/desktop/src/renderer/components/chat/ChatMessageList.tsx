@@ -1,6 +1,7 @@
 import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { subscriptionExhaustionMessageKey } from './subscription-failover-route'
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -17,10 +18,10 @@ import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownVie
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
-import { chatActivitySegments } from '@/lib/agent-activity'
+import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
-import { ToolCallCard } from './ToolCallCard'
+import { SharedToolImages, ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard } from './ConversationDispatchCard'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { SubagentCard } from './SubagentCard'
@@ -792,6 +793,16 @@ const Bubble = memo(function Bubble({
       />
     )
 
+  const renderSharedImages = (part: Extract<MessagePart, { type: 'tool' }>) => (
+    <SharedToolImages
+      key={`shared-images-${part.toolCallId}`}
+      part={part}
+      conversationId={message.conversationId}
+      messageId={message.id}
+      onOpenImage={onOpenImage}
+    />
+  )
+
   const body = (
     <>
       <MemorySourcesChip message={message} variant="used" onOpenMention={onOpenMention} />
@@ -806,16 +817,27 @@ const Bubble = memo(function Bubble({
                 writing={segment.writing}
                 waitingAnswer={segment.waitingAnswer}
                 subagents={segment.subagents}
-                onOpenImage={onOpenImage}
                 onOpenMention={onOpenMention}
                 searchQuery={searchQuery}
                 currentSearchMatch={currentSearchMatch}
               />
+            ) : segment.kind === 'images' ? (
+              renderSharedImages(segment.part)
             ) : (
               renderPart(segment.part, segment.index)
             )
           )
-        : message.parts.map(renderPart)}
+        : message.parts.map((p, i) =>
+            // The expanded view shows a shared screenshot under its tool card, which stays collapsed.
+            isSharedScreenshot(p) ? (
+              <Fragment key={p.toolCallId}>
+                {renderPart(p, i)}
+                {renderSharedImages(p)}
+              </Fragment>
+            ) : (
+              renderPart(p, i)
+            )
+          )}
       {message.error && (
         <div
           role={

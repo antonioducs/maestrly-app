@@ -358,6 +358,15 @@ describe('domain contracts', () => {
       expect(fleetTranscriptItemSchema.safeParse({ ...tool, todos: entries }).success).toBe(false)
   })
 
+  it('says whether the images of a tool item are shared, and keeps items without the flag valid', () => {
+    const tool = { kind: 'tool', id: 't:0', at, name: 'browser_screenshot', target: null, state: 'done', output: null }
+    expect(fleetTranscriptItemSchema.parse({ ...tool, shared: true })).toMatchObject({ shared: true })
+    expect(fleetTranscriptItemSchema.parse({ ...tool, shared: false })).toMatchObject({ shared: false })
+    // Instances that predate the flag send none: the owner always saw their tool images.
+    expect(fleetTranscriptItemSchema.parse(tool)).not.toHaveProperty('shared')
+    expect(fleetTranscriptItemSchema.safeParse({ ...tool, shared: 'yes' }).success).toBe(false)
+  })
+
   it('validates routines and schedule shape without imposing an IANA check in the schema', () => {
     const routine = {
       id: 'r1',

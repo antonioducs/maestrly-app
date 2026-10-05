@@ -167,8 +167,6 @@ export interface AgentActivityProps<S> {
   worked?: boolean
   /** How long the turn took, when known: the summary leads with it. */
   durationMs?: number | null
-  /** Images the steps produced, shown under the line whether it is open or not. */
-  thumbnails?: ReactNode
   renderToolDetail: (step: ActivityToolStep<S>) => ReactNode
   /** An action on a tool step's row, shown while the row is hovered or focused (e.g. to see the step elsewhere). */
   toolAction?: (step: ActivityToolStep<S>) => ReactNode
@@ -192,7 +190,6 @@ export function AgentActivity<S>({
   runningSubagents = 0,
   worked = false,
   durationMs,
-  thumbnails,
   renderToolDetail,
   toolAction,
   reasoningNote,
@@ -324,7 +321,6 @@ export function AgentActivity<S>({
           )}
         />
       </button>
-      {thumbnails}
       {shown && (
         <div id={panelId} className="animate-in fade-in-0 slide-in-from-top-1 duration-200 motion-reduce:animate-none">
           <ActivityTimeline

@@ -545,6 +545,9 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     output: z.string().max(FLEET_TOOL_OUTPUT_MAX).nullable(),
     // Screenshots and generated images the tool returned, viewable by the owner.
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.imagesPerItemMax).default([]),
+    // Whether the images are for the owner to see in the conversation (the bot asked to share them) or only in the
+    // tool's details. Absent from instances that predate it, whose images the owner always saw in the conversation.
+    shared: z.boolean().optional(),
     files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
     // todo_write only: the list it recorded. Absent from other tools and from instances that predate it.
     todos: z.array(fleetTodoSchema).max(FLEET_TODO_LIMITS.itemsMax).optional(),

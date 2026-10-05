@@ -1,5 +1,5 @@
-import type { FleetImageRef, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
-import type { MessagePart, ToolState } from '../../shared/chat'
+import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { toolOutputImages, type MessagePart, type ToolState } from '../../shared/chat'
 
 /**
  * The agent activity of a turn: the reasoning, tool calls and in-between text the agent produced on its way to the
@@ -256,12 +256,31 @@ export type ChatActivitySegment =
       subagents: { total: number; running: number }
     }
   | { kind: 'part'; part: MessagePart; index: number }
+  /** A screenshot the agent shared with the person: it stays a step of the activity and shows outside as well. */
+  | { kind: 'images'; part: ToolPart; index: number }
 
 /**
- * How an assistant message renders in the compact view, in order: what opens the message before the agent acts (a
- * compaction, imported context), the activity, the cards it passed (plan, questions, subagents, orchestration,
- * images), then the answer. The activity keeps that place from the first card or step on, so the line does not move
- * as steps arrive. A message with no step renders as it is, with a live line while it has no answer yet.
+ * A screenshot the agent chose to show the person (`share: true`) and that has an image to show. The others stay
+ * in the details of their step: the person opens the activity to see them.
+ */
+export function isSharedScreenshot(part: MessagePart): part is ToolPart {
+  return (
+    part.type === 'tool' &&
+    toolCategory(part.toolName) === 'screenshot' &&
+    !!part.input &&
+    typeof part.input === 'object' &&
+    (part.input as { share?: unknown }).share === true &&
+    part.state.status === 'completed' &&
+    toolOutputImages(part.state.output).length > 0
+  )
+}
+
+/**
+ * How an assistant message renders in the compact view: what stays outside the activity in the order it came (what
+ * opens the message, the cards the agent passed, its newest text, the screenshots it shared), then the activity,
+ * always last, so the live line sits under everything the turn shows. The newest text stays in view until a newer
+ * one comes: what the agent last said while it works, then its answer; older text folds into the activity. A message
+ * with no step renders as it is, with a live line while it has no text yet.
  */
 export function chatActivitySegments(parts: readonly MessagePart[], live: boolean): ChatActivitySegment[] {
   const classes = parts.map(classifyPart)
@@ -290,14 +309,10 @@ export function chatActivitySegments(parts: readonly MessagePart[], live: boolea
     (value, index) => value === 'step' || value === 'text' || (value === 'pinned' && parts[index].type === 'tool')
   )
   const first = acted < 0 ? parts.length : acted
+  const newestText = classes.lastIndexOf('text')
   if (last < 0) {
-    const hasText = classes.includes('text')
-    if (!live || hasText) return asParts(0, parts.length)
-    return [
-      ...asParts(0, first),
-      { kind: 'activity', steps: [], writing: false, waitingAnswer, subagents },
-      ...asParts(first, parts.length),
-    ]
+    if (!live || newestText >= 0) return asParts(0, parts.length)
+    return [...asParts(0, parts.length), { kind: 'activity', steps: [], writing: false, waitingAnswer, subagents }]
   }
   const steps: ActivityStep<MessagePart>[] = []
   for (let index = first; index <= last; index++) {
@@ -305,16 +320,15 @@ export function chatActivitySegments(parts: readonly MessagePart[], live: boolea
     if (classes[index] === 'step') {
       if (part.type === 'reasoning') steps.push({ kind: 'reasoning', id: part.id, text: part.text, source: part })
       else if (part.type === 'tool') steps.push(chatToolStep(part, live))
-    } else if (classes[index] === 'text' && part.type === 'text')
+    } else if (classes[index] === 'text' && index !== newestText && part.type === 'text')
       steps.push({ kind: 'narration', id: part.id, text: part.text, source: part })
   }
-  const writing = live && classes.slice(last + 1).includes('text')
-  return [
-    ...asParts(0, first, (index) => classes[index] === 'pinned'),
-    { kind: 'activity', steps, writing, waitingAnswer, subagents },
-    ...asParts(first, last + 1, (index) => classes[index] === 'pinned'),
-    ...asParts(last + 1, parts.length),
-  ]
+  const writing = live && newestText > last
+  const outside = parts.flatMap((part, index): ChatActivitySegment[] => {
+    if (isSharedScreenshot(part)) return [{ kind: 'images', part, index }]
+    return index > last || index === newestText || classes[index] === 'pinned' ? [{ kind: 'part', part, index }] : []
+  })
+  return [...outside, { kind: 'activity', steps, writing, waitingAnswer, subagents }]
 }
 
 export type ActivityRow<S> =
@@ -457,21 +471,32 @@ const pinnedFleetItem = (item: FleetStepItem): boolean =>
     !!item.files?.length ||
     ['artifact_create', 'artifact_update'].includes(baseToolName(item.name)))
 
+type FleetToolItem = Extract<FleetTranscriptItem, { kind: 'tool' }>
+
+/**
+ * The images of a tool the bot shared with the owner. An instance that predates `shared` sent every tool image to
+ * the conversation, so an absent flag counts as shared.
+ */
+const sharedFleetImages = (item: FleetStepItem): item is FleetToolItem =>
+  item.kind === 'tool' && item.images.length > 0 && item.shared !== false
+
 export type FleetActivitySegment =
   | { kind: 'item'; item: FleetTranscriptItem }
+  /** The images a bot shared with the owner: the tool stays a step of the activity and its images show outside. */
+  | { kind: 'images'; item: FleetToolItem }
   | {
       kind: 'activity'
       key: string
       steps: ActivityStep<FleetTranscriptItem>[]
       live: boolean
       writing: boolean
-      images: FleetImageRef[]
     }
 
 /**
  * A bot transcript for the compact view. The items one chat message produced (assistant text, tools, reasoning) fold
- * like a chat message: steps and the text between them into an activity, the text after the last step stays. The
- * newest message's activity is live while the bot works on it.
+ * like a chat message: steps and the text between them into an activity, which comes last, under the cards, the
+ * images the bot shared and the newest text (what the bot last said, then its answer) that stay in view. The newest
+ * message's activity is live while the bot works on it.
  */
 export function fleetActivitySegments(
   items: readonly FleetTranscriptItem[],
@@ -509,13 +534,15 @@ export function fleetActivitySegments(
       for (const item of group) segments.push({ kind: 'item', item })
       return
     }
+    const newestText = group.map((item) => item.kind === 'assistant' && item.text.trim().length > 0).lastIndexOf(true)
     const passed = group.slice(0, last + 1)
-    const pinned = passed.filter(pinnedFleetItem)
     const steps: ActivityStep<FleetTranscriptItem>[] = passed
       .filter((item) => !pinnedFleetItem(item))
       .flatMap((item): ActivityStep<FleetTranscriptItem>[] => {
         if (item.kind === 'assistant')
-          return item.text.trim() ? [{ kind: 'narration', id: item.id, text: item.text, source: item }] : []
+          return item.text.trim() && item !== group[newestText]
+            ? [{ kind: 'narration', id: item.id, text: item.text, source: item }]
+            : []
         if (item.kind === 'reasoning')
           return item.text.trim() ? [{ kind: 'reasoning', id: item.id, text: item.text, source: item }] : []
         return [
@@ -531,20 +558,20 @@ export function fleetActivitySegments(
           },
         ]
       })
-    const rest = group.slice(last + 1)
-    if (!steps.length && !live) {
-      for (const item of [...pinned, ...rest]) segments.push({ kind: 'item', item })
-      return
-    }
+    // What stays outside, in the order it came: the cards passed, the images shared, the newest text, and whatever
+    // follows the last step.
+    group.forEach((item, i) => {
+      if (sharedFleetImages(item)) segments.push({ kind: 'images', item })
+      if (i > last || i === newestText || pinnedFleetItem(item)) segments.push({ kind: 'item', item })
+    })
+    if (!steps.length && !live) return
     segments.push({
       kind: 'activity',
       key: `activity:${run.message}`,
       steps,
       live,
-      writing: live && rest.some((item) => item.kind === 'assistant' && item.text.trim().length > 0),
-      images: group.flatMap((item) => (item.kind === 'tool' ? item.images : [])),
+      writing: live && newestText > last,
     })
-    for (const item of [...pinned, ...rest]) segments.push({ kind: 'item', item })
   })
   return segments
 }

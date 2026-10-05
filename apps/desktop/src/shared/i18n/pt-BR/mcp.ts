@@ -174,7 +174,11 @@ export default {
     browser_screenshot: {
       title: 'Screenshot',
       description:
-        'Captura um screenshot PNG da página atual. Modelos com suporte a imagens o recebem visualmente; modelos sem esse suporte recebem uma descrição textual automática quando há um intérprete configurado, ou uma nota de omissão. Viewports muito grandes são reduzidos automaticamente (proporção preservada, nunca cortados) para caber no limite de imagem do modelo.',
+        'Captura um screenshot PNG da página atual. Modelos com suporte a imagens o recebem visualmente; modelos sem esse suporte recebem uma descrição textual automática quando há um intérprete configurado, ou uma nota de omissão. Viewports muito grandes são reduzidos automaticamente (proporção preservada, nunca cortados) para caber no limite de imagem do modelo. O screenshot fica só nos detalhes da tool, a menos que você use share=true.',
+      params: {
+        share:
+          'true só quando o usuário deve ver este screenshot (ele pediu, ou é o resultado que você entrega); ele então aparece na conversa. Omita para screenshots que você tira para inspecionar a página.',
+      },
     },
     browser_evaluate: {
       title: 'Executar JS',
