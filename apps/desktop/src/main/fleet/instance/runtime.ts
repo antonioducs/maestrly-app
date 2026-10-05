@@ -44,7 +44,7 @@ import {
 } from '../../memory/local-memory-service'
 import { OwnerMemoryClient } from './owner-memory'
 import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
-import { selectContextObservation } from '../../../shared/context-observation'
+import { sameContextModel, selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
 import { getHiddenChatModelsFor } from '../../store/settings'
@@ -653,6 +653,8 @@ export class BotRuntime {
     this.resumePending = true
     await this.ensureConversation()
     await this.refreshAccounts(true)
+    // The meter follows a model switch at once instead of waiting for the next turn.
+    await this.refreshUsage()
     this.changed()
     void this.tick()
     return this.status()
@@ -827,13 +829,18 @@ export class BotRuntime {
           : fallback?.contextInput != null
             ? Math.round(fallback.contextInput + (fallback.contextOutput ?? 0))
             : null
+        const current = this.currentSelection()
+        const currentMeta = current
+          ? (await effectiveModelMeta(current.modelId, current.providerId).catch(() => ({ meta: null }))).meta
+          : null
+        // A sample from another model must not lend its window once the owner switches models, as in the local chat.
+        const measuredWindow =
+          !current || sameContextModel(snapshot?.model ?? history.lastModel, current)
+            ? (snapshot?.modelContextWindow ?? fallback?.modelContextWindow)
+            : undefined
         // Runtimes report their model's own window; the bot's conversation compacts at its cap, so the meter shows that.
         const contextWindowTokens =
-          limitConversationContextWindow(
-            id,
-            snapshot?.modelContextWindow ?? fallback?.modelContextWindow ?? undefined
-          ) ?? null
-        const current = this.currentSelection()
+          limitConversationContextWindow(id, measuredWindow ?? currentMeta?.contextWindow ?? undefined) ?? null
         const models = await Promise.all(
           history.perModel.map(async (item) => ({
             key: `${item.providerId ?? ''}\0${item.modelId ?? ''}`,
@@ -844,9 +851,6 @@ export class BotRuntime {
           }))
         )
         const metaByModel = Object.fromEntries(models.map((item) => [item.key, item.meta]))
-        const currentMeta = current
-          ? (await effectiveModelMeta(current.modelId, current.providerId).catch(() => ({ meta: null }))).meta
-          : null
         let cost = 0
         let known = history.perModel.length > 0
         for (const item of history.perModel) {
