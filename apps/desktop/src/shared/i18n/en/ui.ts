@@ -969,6 +969,13 @@ export default {
       auto: 'Automatic',
       full: 'Full access',
     },
+    projectsDirectory: {
+      heading: 'Projects folder',
+      desc: 'Where chats create and clone projects you ask for. Also the default parent folder when you add a project.',
+      empty: 'Not set',
+      choose: 'Choose…',
+      clear: 'Clear',
+    },
     terminal: {
       heading: 'Terminal',
       desc: 'Shell used in the drawer free terminals on Windows. Applies to the next terminals opened.',

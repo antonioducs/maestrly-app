@@ -301,7 +301,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(522)
+    expect(keys).toHaveLength(528)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -398,6 +398,29 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
       ['project-setup:cancel', request.operationId],
       ['project-setup:resolve-empty-remote', { operationId: request.operationId, decision: 'initialize-local' }],
     ])
+  })
+
+  it('projects folder and chat-created workspaces use their own channels', () => {
+    api.getProjectsDirectory()
+    api.pickProjectsDirectory()
+    api.clearProjectsDirectory()
+    expect(invokeSpy.mock.calls).toEqual([
+      ['project-setup:projects-directory-get'],
+      ['project-setup:projects-directory-pick'],
+      ['project-setup:projects-directory-clear'],
+    ])
+    for (const [method, channel] of [
+      ['onProjectsDirectoryChanged', 'project-setup:projects-directory-changed'],
+      ['onWorkspacesChanged', 'workspace:changed'],
+      ['onWorkspaceCreationProgress', 'workspace-creation:progress'],
+    ] as const) {
+      const off = api[method](vi.fn()) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1]
+      expect(onSpy).toHaveBeenLastCalledWith(channel, listener)
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, listener)
+      expect(mainText).toContain(`'${channel}'`)
+    }
   })
 
   it('setWorkspaceDefaultBranch(ws,branch) -> workspace:set-default-branch (invoke)', () => {

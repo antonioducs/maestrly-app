@@ -20,6 +20,7 @@ import {
   getConversationDispatch,
   getConversationDispatchByDestination,
   listConversationDispatchRequestKeys,
+  listConversationDispatchTargets,
   listConversationDispatchesInPhases,
   renewDiscardedConversationDispatch,
   reserveConversationDispatch,
@@ -664,6 +665,34 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       for (const task of tasks) assertSource(sourceId, task.placement, task.target)
     } catch (error) {
       return { ok: false, error: errorText(error), items: [] }
+    }
+
+    // Without a request for conversations, only work in the projects created for the person in this turn may start.
+    if (grant.onlyWorkspaceIds) {
+      const allowed = new Set(grant.onlyWorkspaceIds)
+      const owners = new Map(
+        listConversationDispatchTargets(sourceId, grant.originKey).map((target) => [target.workspaceId, target.requestKey])
+      )
+      for (const task of tasks) {
+        const workspaceId = task.target.workspaceId
+        if (!workspaceId || !allowed.has(workspaceId))
+          return {
+            ok: false,
+            error:
+              'The person did not ask for new conversations. Without that, a conversation can only start in a ' +
+              'project create_workspace returned in this turn: set target.workspaceId to its workspaceId.',
+            items: [],
+          }
+        const owner = owners.get(workspaceId)
+        if (owner && owner !== task.requestKey)
+          return {
+            ok: false,
+            error:
+              'Only one conversation can start in each project created in this turn unless the person asks for more.',
+            items: [],
+          }
+        owners.set(workspaceId, task.requestKey)
+      }
     }
 
     // The person's stated scope bounds how many distinct conversations this turn may create.

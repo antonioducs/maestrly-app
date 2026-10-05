@@ -61,6 +61,7 @@ const LOCAL_TABLES = [
   'platform_delegation_attempts',
   'platform_delegation_workspaces',
   'schema_migrations',
+  'workspace_creations',
   'workspace_groups',
   'workspaces',
 ].sort()

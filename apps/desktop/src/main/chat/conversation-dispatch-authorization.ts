@@ -86,14 +86,23 @@ export interface ConversationDispatchIntent {
   reason?: Exclude<ConversationDispatchDenial, 'no-human-turn' | 'turn-ended' | 'count-exceeded'>
 }
 
-export interface ConversationDispatchGrant {
+/** A live turn started by text the person typed. Enough to create or clone a project they asked for. */
+export interface HumanTurnGrant {
   conversationId: string
   messageId: string
   /** Durable origin key shared by every record created under this grant. */
   originKey: string
-  maxConversations: number | null
   token: object
   signal: AbortSignal
+}
+
+export interface ConversationDispatchGrant extends HumanTurnGrant {
+  maxConversations: number | null
+  /**
+   * Set when the message did not ask for conversations: only work in these projects, created by create_workspace in
+   * this turn, may start, one conversation each.
+   */
+  onlyWorkspaceIds?: string[]
 }
 
 export class ConversationDispatchDeniedError extends Error {
@@ -374,21 +383,33 @@ export function detectConversationDispatchIntent(text: string): ConversationDisp
 export function evaluateConversationDispatchGrant(
   origin: HumanTurnOrigin | null
 ): { ok: true; grant: ConversationDispatchGrant } | { ok: false; code: ConversationDispatchDenial; message: string } {
-  if (!origin) return { ok: false, code: 'no-human-turn', message: conversationDispatchDenialMessage('no-human-turn') }
-  if (origin.signal.aborted || origins.get(origin.conversationId)?.token !== origin.token)
-    return { ok: false, code: 'turn-ended', message: conversationDispatchDenialMessage('turn-ended') }
-  const intent = detectConversationDispatchIntent(origin.text)
+  const turn = evaluateHumanTurnGrant(origin)
+  if (!turn.ok) return turn
+  const intent = detectConversationDispatchIntent(origin!.text)
   if (!intent.explicit) {
     const code = intent.reason ?? 'not-requested'
     return { ok: false, code, message: conversationDispatchDenialMessage(code) }
   }
+  return { ok: true, grant: { ...turn.grant, maxConversations: intent.maxConversations } }
+}
+
+/**
+ * Provenance and liveness only, with no reading of the message: creating or cloning a project is judged by the agent
+ * from the whole conversation ("cria lá pra mim" refers to what was said before), like any other tool it runs for the
+ * person. Child, bot, unattended and host-generated turns never register an origin, so they never get here.
+ */
+export function evaluateHumanTurnGrant(
+  origin: HumanTurnOrigin | null
+): { ok: true; grant: HumanTurnGrant } | { ok: false; code: 'no-human-turn' | 'turn-ended'; message: string } {
+  if (!origin) return { ok: false, code: 'no-human-turn', message: conversationDispatchDenialMessage('no-human-turn') }
+  if (origin.signal.aborted || origins.get(origin.conversationId)?.token !== origin.token)
+    return { ok: false, code: 'turn-ended', message: conversationDispatchDenialMessage('turn-ended') }
   return {
     ok: true,
     grant: {
       conversationId: origin.conversationId,
       messageId: origin.messageId,
       originKey: `message:${origin.messageId}`,
-      maxConversations: intent.maxConversations,
       token: origin.token,
       signal: origin.signal,
     },
@@ -396,7 +417,7 @@ export function evaluateConversationDispatchGrant(
 }
 
 /** Recheck immediately before a mutation: the admitted turn must still be the conversation's live turn. */
-export function assertConversationDispatchGrantCurrent(grant: ConversationDispatchGrant): void {
+export function assertConversationDispatchGrantCurrent(grant: HumanTurnGrant): void {
   if (grant.signal.aborted || origins.get(grant.conversationId)?.token !== grant.token) {
     throw new ConversationDispatchDeniedError('turn-ended', conversationDispatchDenialMessage('turn-ended'))
   }

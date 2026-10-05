@@ -6,6 +6,11 @@ export default {
   },
 
   workspace: {
+    publicRepoHeader: 'Public repository',
+    publicRepoQuestion: 'Create {{repo}} on GitHub as a PUBLIC repository? Anyone will be able to see it.',
+    publicRepoConfirm: 'Create public',
+    publicRepoPrivate: 'Make it private',
+    publicRepoCancel: 'Cancel',
     notGitRepo: 'The selected folder is not a git repository.',
     bareNotSupported: 'Bare repositories are not supported.',
     cannotResolveRoot: 'Could not resolve the repository root.',

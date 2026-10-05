@@ -7,12 +7,21 @@ const h = vi.hoisted(() => ({
   listConversationDispatchModels: vi.fn(),
   listConversationDispatchWorkspaces: vi.fn(),
   conversationExecutionSettings: vi.fn(),
+  createWorkspace: vi.fn(),
+  getWorkspaceCreationService: vi.fn(),
+  findGithubRepositoriesForChat: vi.fn(),
+  createdWorkspaceIdsForTurn: vi.fn((_source: string, _origin: string): string[] => []),
 }))
 
 vi.mock('../../src/main/conversation-dispatch-service', () => ({
   getConversationDispatchService: h.getConversationDispatchService,
   listConversationDispatchModels: h.listConversationDispatchModels,
   listConversationDispatchWorkspaces: h.listConversationDispatchWorkspaces,
+}))
+vi.mock('../../src/main/workspace-creation-service', () => ({
+  getWorkspaceCreationService: h.getWorkspaceCreationService,
+  findGithubRepositoriesForChat: h.findGithubRepositoriesForChat,
+  createdWorkspaceIdsForTurn: h.createdWorkspaceIdsForTurn,
 }))
 vi.mock('../../src/main/chat/service', () => ({
   conversationExecutionSettings: h.conversationExecutionSettings,
@@ -28,11 +37,14 @@ import {
 } from '../../src/main/chat/tools'
 import {
   conversationDispatchRuntimeFor,
+  createWorkspaceTool,
   enableConversationDispatchTools,
+  findGithubRepositoriesTool,
   listConversationModelsTool,
   listConversationWorkspacesTool,
   startConversationsTool,
 } from '../../src/main/chat/tools/conversation-dispatch'
+import { parseWorkspaceCreationResult, sameGitRemote } from '../../src/shared/workspace-creation'
 import type { ToolContext } from '../../src/main/chat/tools/util'
 import {
   clearHumanTurnOrigin,
@@ -90,8 +102,9 @@ describe('conversation dispatch tool surface', () => {
     }
   })
 
-  it('is offered for human-started Agent/Design turns and explicitly requested Ask handoffs', () => {
+  it('is offered for human-started Agent, Design and Ask turns only', () => {
     expect(conversationDispatchRuntimeFor('source', 'agent')).toBeUndefined()
+    expect(conversationDispatchRuntimeFor('source', 'ask')).toBeUndefined()
     humanTurn('Abra uma conversa para cada card.')
     expect(conversationDispatchRuntimeFor('source', 'agent')).toBeDefined()
     expect(conversationDispatchRuntimeFor('source', 'design')).toBeDefined()
@@ -107,10 +120,9 @@ describe('conversation dispatch tool surface', () => {
     expect(CONVERSATION_DISPATCH_TOOL_NAMES.some((name) => restricted.has(name))).toBe(false)
   })
 
-  it('keeps ordinary Ask turns read-only and adds only handoff tools when explicitly requested', () => {
-    humanTurn('Explain how workspaces work.')
-    expect(conversationDispatchRuntimeFor('source', 'ask')).toBeUndefined()
-    humanTurn('Envie o plano para desenvolvimento no workspace Example.')
+  it('adds only the handoff and project tools to Ask, never edits or commands', () => {
+    // Any human Ask turn may get a project created; whether conversations start is checked when the tool runs.
+    humanTurn('pega algum repo público qualquer ae e cria lá pra mim')
     const enabled = builtinToolNamesForMode('ask')
     expect(enableConversationDispatchTools(enabled, 'source', 'ask')).toBeDefined()
     for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) expect(enabled.has(name)).toBe(true)
@@ -234,6 +246,133 @@ describe('conversation dispatch tool surface', () => {
     }))
   })
 
+  it('creates a project in any human turn, however the person phrased it, bound to that turn', async () => {
+    const tools = buildTools({ enabled: new Set(CONVERSATION_DISPATCH_TOOL_NAMES), makeCtx: () => context() })
+    const execute = tools.create_workspace.execute as (input: unknown, options: unknown) => Promise<string>
+    const input = { requestKey: 'octocat/Hello-World', source: { kind: 'github' as const, repo: 'octocat/Hello-World' } }
+    const child = JSON.parse(await execute(input, { toolCallId: 'call-1', messages: [] }))
+    expect(child).toMatchObject({ ok: false, code: 'unavailable', error: expect.stringContaining('main agent turn') })
+    expect(h.getWorkspaceCreationService).not.toHaveBeenCalled()
+
+    const created = { ok: true, requestKey: input.requestKey, workspaceId: 'ws-new', name: 'Hello-World', path: '/p/hw' }
+    h.createWorkspace.mockResolvedValue(created)
+    h.getWorkspaceCreationService.mockResolvedValue({ create: h.createWorkspace })
+    const origin = humanTurn('pega algum repo público qualquer ae e cria lá pra mim')
+    const runtime = conversationDispatchRuntimeFor('source', 'ask')!
+    expect(await createWorkspaceTool.execute(input, context({ conversationDispatch: runtime }))).toEqual(created)
+    const call = h.createWorkspace.mock.calls.at(-1)![0]
+    expect(call.grant).toEqual({
+      conversationId: 'source',
+      messageId: 'msg-1',
+      originKey: 'message:msg-1',
+      token: origin.token,
+      signal: origin.signal,
+    })
+    expect(call.input).toEqual(input)
+    expect(createWorkspaceTool.toModelText(input, created)).toBe(JSON.stringify(created, null, 2))
+
+    // The grant ends with its turn.
+    expect(() => call.assertCurrent()).not.toThrow()
+    humanTurn('valeu')
+    expect(() => call.assertCurrent()).toThrow(/no longer active/)
+  })
+
+  it('asks the person in the chat before a repository becomes public', async () => {
+    humanTurn('cria um projeto Atlas público no GitHub')
+    const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+    h.createWorkspace.mockImplementation(async ({ confirmPublic }) => ({ ok: true, choice: await confirmPublic('octo/Atlas') }))
+    h.getWorkspaceCreationService.mockResolvedValue({ create: h.createWorkspace })
+    const input = { requestKey: 'atlas', name: 'Atlas', source: { kind: 'new' as const, github: { create: true, visibility: 'public' as const } } }
+    const ask = (answer: string[][]) => vi.fn(async (_questions: unknown) => answer)
+
+    const confirm = ask([['Create public']])
+    expect(await createWorkspaceTool.execute(input, context({ conversationDispatch: runtime, askQuestion: confirm }))).toEqual(
+      { ok: true, choice: 'public' }
+    )
+    expect(confirm.mock.calls[0][0]).toEqual([
+      {
+        header: 'Public repository',
+        question: 'Create octo/Atlas on GitHub as a PUBLIC repository? Anyone will be able to see it.',
+        options: [{ label: 'Create public' }, { label: 'Make it private' }, { label: 'Cancel' }],
+      },
+    ])
+    const answers: Array<[string[][], string]> = [
+      [[['Make it private']], 'private'],
+      [[['Cancel']], 'cancel'],
+      [[], 'cancel'],
+      [[['something else']], 'cancel'],
+    ]
+    for (const [answer, choice] of answers) {
+      const result = await createWorkspaceTool.execute(input, context({ conversationDispatch: runtime, askQuestion: ask(answer) }))
+      expect(result).toEqual({ ok: true, choice })
+    }
+  })
+
+  it('starts one conversation in a project created in the turn without a separate request', async () => {
+    h.dispatchBatch.mockResolvedValue({ ok: true, items: [] })
+    h.getConversationDispatchService.mockResolvedValue({ dispatchBatch: h.dispatchBatch })
+    const batch = { ...BATCH, target: { workspaceId: 'ws-new' } }
+
+    humanTurn('clona o acme/api e já começa o export')
+    const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+    // Nothing created yet: the conversation gate still applies.
+    expect(await startConversationsTool.execute(batch, context({ conversationDispatch: runtime }))).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/does not explicitly ask/),
+    })
+    expect(h.getConversationDispatchService).not.toHaveBeenCalled()
+
+    h.createdWorkspaceIdsForTurn.mockReturnValueOnce(['ws-new'])
+    await startConversationsTool.execute(batch, context({ conversationDispatch: runtime }))
+    expect(h.createdWorkspaceIdsForTurn).toHaveBeenLastCalledWith('source', 'message:msg-1')
+    expect(h.dispatchBatch.mock.calls[0][0].grant).toMatchObject({ maxConversations: 1, onlyWorkspaceIds: ['ws-new'] })
+
+    // An explicit "no conversations" wins even after the project exists.
+    humanTurn('clona o acme/api, mas não abra nenhuma conversa nova')
+    const negated = conversationDispatchRuntimeFor('source', 'agent')!
+    h.createdWorkspaceIdsForTurn.mockReturnValueOnce(['ws-new'])
+    expect(await startConversationsTool.execute(batch, context({ conversationDispatch: negated }))).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/NOT to open/),
+    })
+    expect(h.dispatchBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('looks up GitHub repositories through the main-turn runtime only', async () => {
+    expect(await findGithubRepositoriesTool.execute({ query: 'api' }, context())).toEqual({
+      error: expect.stringContaining('not available here'),
+    })
+    humanTurn('Clone acme/api and start working on issue 12.')
+    const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+    const repositories = [
+      { nameWithOwner: 'acme/api', url: 'https://github.com/acme/api', defaultBranch: 'main', visibility: 'private', description: null },
+    ]
+    h.findGithubRepositoriesForChat.mockResolvedValue({ repositories })
+    expect(
+      await findGithubRepositoriesTool.execute({ query: 'api', owner: 'acme' }, context({ conversationDispatch: runtime }))
+    ).toEqual({ repositories })
+    expect(h.findGithubRepositoriesForChat).toHaveBeenCalledWith({ query: 'api', owner: 'acme' }, expect.any(AbortSignal))
+  })
+
+  it('validates project sources at the schema boundary', () => {
+    const schema = createWorkspaceTool.parameters
+    expect(schema.safeParse({ requestKey: 'k', source: { kind: 'github', repo: 'acme/api' } }).success).toBe(true)
+    expect(schema.safeParse({ requestKey: 'k', source: { kind: 'git', url: 'git@github.com:acme/api.git' } }).success).toBe(
+      true
+    )
+    expect(
+      schema.safeParse({ requestKey: 'k', name: 'Atlas', source: { kind: 'new', github: { create: true } } }).success
+    ).toBe(true)
+    expect(schema.safeParse({ requestKey: 'k', source: { kind: 'github' } }).success, 'repo required').toBe(false)
+    expect(schema.safeParse({ requestKey: 'k', source: { kind: 'github', repo: 'acme' } }).success).toBe(false)
+    expect(schema.safeParse({ requestKey: 'k', source: { kind: 'new' } }).success, 'name required').toBe(false)
+    expect(
+      schema.safeParse({ requestKey: 'k', source: { kind: 'github', repo: 'a/b', github: { create: true } } }).success,
+      'github.create only for new projects'
+    ).toBe(false)
+    expect(schema.safeParse({ requestKey: 'k', name: 'x', source: { kind: 'new' }, explicit: true }).success).toBe(false)
+  })
+
   it('rejects malformed batches at the schema boundary', () => {
     const schema = startConversationsTool.parameters
     expect(schema.safeParse(BATCH).success).toBe(true)
@@ -268,6 +407,50 @@ describe('conversation dispatch presentation helpers', () => {
     })
     expect(parseConversationDispatchBatchResult('Plain text error')).toBeNull()
     expect(parseConversationDispatchBatchResult('{"ok":true}')).toBeNull()
+  })
+
+  it('parses a create_workspace result for the card', () => {
+    expect(
+      parseWorkspaceCreationResult(
+        JSON.stringify({
+          ok: true,
+          requestKey: 'acme/api',
+          source: { kind: 'github', label: 'acme/api' },
+          workspaceId: 'ws',
+          name: 'api',
+          path: '/p/api',
+          defaultBranch: 'main',
+          reused: true,
+          remote: { status: 'failed', error: 'exists', extra: 1 },
+          unknown: 'dropped',
+        })
+      )
+    ).toEqual({
+      ok: true,
+      requestKey: 'acme/api',
+      source: { kind: 'github', label: 'acme/api' },
+      workspaceId: 'ws',
+      name: 'api',
+      path: '/p/api',
+      defaultBranch: 'main',
+      reused: true,
+      remote: { status: 'failed', error: 'exists' },
+    })
+    expect(parseWorkspaceCreationResult('{"ok":false,"code":"projects-directory-not-set","error":"Set it"}')).toEqual({
+      ok: false,
+      code: 'projects-directory-not-set',
+      error: 'Set it',
+    })
+    expect(parseWorkspaceCreationResult('{"ok":true,"source":{"kind":"svn","label":"x"}}')).toEqual({ ok: true })
+    expect(parseWorkspaceCreationResult('Plain text')).toBeNull()
+  })
+
+  it('compares git remotes across URL forms', () => {
+    expect(sameGitRemote('git@github.com:Acme/API.git', 'https://github.com/acme/api')).toBe(true)
+    expect(sameGitRemote('ssh://git@github.com/acme/api.git', 'https://github.com/acme/api/')).toBe(true)
+    expect(sameGitRemote('file:///tmp/remote.git', '/tmp/remote')).toBe(true)
+    expect(sameGitRemote('https://gitlab.com/Acme/api', 'https://gitlab.com/acme/api')).toBe(false)
+    expect(sameGitRemote('https://github.com/acme/api', 'https://github.com/acme/web')).toBe(false)
   })
 
   it('makes branch-safe slugs from card titles', () => {

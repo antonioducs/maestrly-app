@@ -91,4 +91,23 @@ describe('plan decision failure in the renderer', () => {
     expect(banner).toContain('window.api.retryConversationDispatch(conversationId)')
     expect(banner).toContain('window.api.onConversationDispatchChanged(')
   })
+
+  it('shows chat-created projects with progress, a sidebar link and the projects folder action', () => {
+    const list = source('src/renderer/components/chat/ChatMessageList.tsx')
+    const card = source('src/renderer/components/chat/WorkspaceCreationCard.tsx')
+    const app = source('src/renderer/DesktopApp.tsx')
+    const settings = source('src/renderer/components/SettingsView.tsx')
+    const dialog = source('src/renderer/project-setup/ProjectSetupDialog.tsx')
+
+    expect(list).toContain("toolPart.toolName === 'create_workspace'")
+    expect(card).toContain('parseWorkspaceCreationResult')
+    expect(card).toContain('window.api.onWorkspaceCreationProgress(')
+    expect(card).toContain('window.api.pickProjectsDirectory()')
+    expect(card).toContain("new CustomEvent('maestrly:focus-workspace'")
+    expect(card).not.toMatch(/<select\b/)
+    expect(app).toContain("window.addEventListener('maestrly:focus-workspace', focus)")
+    expect(app).toContain('window.api.onWorkspacesChanged(')
+    expect(settings).toContain('<ProjectsDirectorySection t={t} />')
+    expect(dialog).toContain('window.api\n      .getProjectsDirectory()')
+  })
 })

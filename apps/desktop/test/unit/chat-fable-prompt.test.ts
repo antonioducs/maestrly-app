@@ -14,16 +14,16 @@ const fable = harnessFor('claude-subscription', 'claude-fable-5-1')
 const prompt = (appToolsEnabled: boolean, mode: ChatBehavior, hasNotesTab: boolean, harness = generic): string =>
   buildMaestrlyBasePrompt({ harness, cwd: '/repo', appToolsEnabled, mode, hasNotesTab })
 
-/** Prompt baseline, including the explicit Ask-to-Agent handoff exception. */
+/** Prompt baseline, including the Ask exception for handoffs and projects the person wants. */
 const LEGACY_PROMPT_HASHES = {
   'agent:false:false': 'af6de4656bb5f33db2a755cb273a73a5154ec4541b70ab3b55191b75d4323234',
   'agent:false:true': '7bed6172f8583abcb60a62f84a6fa6b3c97409093889405e3fadc19950e1c2a9',
   'agent:true:false': '36c35895aae810345d3ac53c891f8f17058e903b27206376dbdc5ece2313ca5b',
   'agent:true:true': '313586c419f21fe2266079218c63b18efb7d5c363ebc13af3c32d468b9ddbe4c',
-  'ask:false:false': '058968494ee55e8f4866870925d4efa5009c563c2daae658af0e98365255d59e',
-  'ask:false:true': '07d5d13841477179074453a08d2dc12bfd5a7cfc175c40cba11af4fc659d4ab5',
-  'ask:true:false': 'e1e351510b918c5f82aac0d70a2cea4a1ef1a4e8b4dc1b0947f708b8bda1137d',
-  'ask:true:true': '42ec2d5c44b0cb8d723efda081875e0d771d67c92d7913d70557ec74b766327e',
+  'ask:false:false': '33c76f4036be8e2c36cd808b79917e5fc26ed295a1e43818c73b906f09e79e8c',
+  'ask:false:true': '982866e54e0293d89009ce4bec05b47adad2be98dc3e229f73e61113aef455b9',
+  'ask:true:false': '9d6c83ca1aabe52a470a2ccaa9c555d87f50247b77805ac00cd8b83cea41d8af',
+  'ask:true:true': 'c209de0cded1b0ad7031e948e8dd202043d2ad8acb1ac96cad96e471629c08ff',
   'plan:false:false': 'deff6716608c378c1fb0a4f94eb29f38dbc33c9e8199bde181a3fbe6ea98fae5',
   'plan:false:true': 'cd3b6cffc799ce5de26bea4e5daf8e00e083aa6dd904cbacbff4937880618d89',
   'plan:true:false': '7ae52c142f90d1c66c34d19180fa3aab78ca034ac3667414c67e264fb6593738',

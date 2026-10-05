@@ -147,6 +147,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
         'bot_question_bindings',
         'bot_conversation_allocations',
         'conversation_dispatches',
+        'workspace_creations',
         'chat_usage_ledger',
         'workspace_groups',
         'permission_saved',

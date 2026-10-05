@@ -23,6 +23,7 @@ import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
 import { SharedToolImages, ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard } from './ConversationDispatchCard'
+import { WorkspaceCreationCard } from './WorkspaceCreationCard'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { SubagentCard } from './SubagentCard'
 import { OrchestrationRun } from './OrchestrationRun'
@@ -453,6 +454,8 @@ function Part({
       return toolPart.toolCallId === latestTodoId ? <TodoCard part={toolPart} /> : null
     if (toolPart.toolName === 'start_conversations')
       return <ConversationDispatchCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    if (toolPart.toolName === 'create_workspace')
+      return <WorkspaceCreationCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolPart.toolName === 'artifact_create' || toolPart.toolName === 'artifact_update')
       return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolPart.toolName === 'task' || toolPart.toolName === 'delegate')

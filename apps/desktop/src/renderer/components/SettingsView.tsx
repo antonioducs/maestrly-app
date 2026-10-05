@@ -36,7 +36,7 @@ import { AgentActivitySection, LanguageSection, SoundSection } from '@/component
 import { TabOrderSection } from '@/components/settings/TabOrderSection'
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
 import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/TerminalShellSection'
-import { DefaultPermissionSection } from '@/components/settings/ExecutionSections'
+import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components/settings/ExecutionSections'
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
@@ -407,6 +407,7 @@ export function SettingsView({
             {section === 'execution' && (
               <DefaultPermissionSection t={t} mode={defaultPermissionMode} onChange={updateDefaultPermissionMode} />
             )}
+            {section === 'execution' && !window.api.platformInfo.botMode && <ProjectsDirectorySection t={t} />}
 
             {section === 'appearance' && (
               <SoundSection

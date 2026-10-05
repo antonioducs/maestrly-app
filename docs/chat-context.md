@@ -136,10 +136,10 @@ for example:
 - "Abra uma conversa para cada card e comece o desenvolvimento."
 - "Send this plan to a new conversation."
 
-Ask exposes these handoff tools only when your message explicitly asks to start
-conversations or send work to a project. Your current chat stays in Ask mode;
-the development conversation starts in Agent mode. File editing and shell
-commands remain unavailable in the source Ask chat.
+Ask offers these handoff tools, and the project tools below, in turns you start;
+whether conversations start is still checked against your message. Your current
+chat stays in Ask mode; the development conversation starts in Agent mode. File
+editing and shell commands remain unavailable in the source Ask chat.
 
 The agent starts conversations only when your latest message explicitly asks for
 them, including an explicit handoff such as “Send this plan for development in
@@ -188,6 +188,46 @@ A conversation you delete is not recreated. New conversations cannot start
 further conversations on their own. They can do so later only if you ask for
 it in that conversation.
 
+### Creating or cloning the project first
+
+The project you are discussing does not need to be registered yet. Ask for it
+in your own words; the agent understands the request from the whole
+conversation, so a short follow-up such as "cria lá pra mim" works too:
+
+- "Clone acme/api from GitHub and start implementing the export endpoint."
+- "Clona https://gitlab.example.com/team/tool.git e começa a corrigir o build."
+- "Create a new project called Atlas with a repository on GitHub and start the MVP."
+- "Pega algum repo público qualquer e cria lá pra mim."
+
+The agent first looks for a registered workspace. When none matches, it can find
+the repository with your signed-in GitHub CLI (`gh`), clone it, or create an
+empty project with a README and an initial commit. The project goes into the
+**Projects folder** set in **Settings › Execution**, is registered as a
+workspace and appears in the sidebar; the agent then starts the conversation in
+it as described above. The chat shows a card with the source, the folder, the
+clone progress and a link to the workspace.
+
+- Without a projects folder nothing is created, and the card offers **Set
+  projects folder**. The folder is also the default parent in **Add project**.
+- Any git URL you give is cloned with your own git credentials; URLs with
+  embedded credentials are rejected. GitHub `owner/name` uses the protocol you
+  configured in `gh`.
+- A GitHub repository for a new project is created only when you ask for one.
+  It is private unless you want it public; a public repository is created only
+  after you confirm it in the chat, where you can also keep it private. An
+  existing repository with the same name is never reused or overwritten. If it
+  cannot be created, the local project stays registered and the card reports why.
+- A folder that already exists is reused only when it is a clone of the same
+  remote; anything else is left untouched and reported.
+- Projects are created only in turns you start, never by subagents, bots,
+  automations or because a file, card or web page says so. One message can create
+  up to 10 projects. Repeating the request reports the registered project again
+  instead of cloning twice.
+- Starting work in a project created in the same turn needs no separate request
+  for a conversation: one conversation can start in each new project. Other
+  conversations follow the rules above, and "don't open conversations" is
+  respected.
+
 ### Limits
 
 Up to 20 conversations can be started per request; ask again for more.
@@ -205,8 +245,9 @@ already read, such as a connected MCP server or text you paste; no Jira
 integration is added. Nothing is pushed, opened as a pull request or merged
 automatically.
 
-The request history is stored in the local database and is removed by a local
-data reset. Worktrees follow the usual conversation rules: deleting a
+The request history, including projects created from a chat, is stored in the
+local database and is removed by a local data reset; the project folders
+themselves stay on disk. Worktrees follow the usual conversation rules: deleting a
 conversation removes the worktree and branch it created.
 
 ## Context meter
