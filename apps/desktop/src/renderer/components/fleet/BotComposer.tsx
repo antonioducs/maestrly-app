@@ -24,8 +24,10 @@ import {
   fleetUsageLimit,
   formatFleetTokens,
   formatFleetUsage,
+  readBotDraft,
   selectionPatch,
   validateAttachments,
+  writeBotDraft,
 } from '@/lib/fleet/composer'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
@@ -51,7 +53,21 @@ export function BotComposer({
   onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
 }) {
   const { t } = useTranslation('fleet')
-  const [draft, setDraft] = useState('')
+  const [draftState, setDraftState] = useState(() => ({ botId: bot.id, text: readBotDraft(bot.id) }))
+  const draft = draftState.botId === bot.id ? draftState.text : readBotDraft(bot.id)
+  // Bound to the bot it was created for: a send that finishes after switching bots clears that bot's draft only.
+  const setDraft = useCallback(
+    (next: string | ((previous: string) => string)) => {
+      const botId = bot.id
+      setDraftState((previous) => {
+        const base = previous.botId === botId ? previous.text : readBotDraft(botId)
+        const text = typeof next === 'function' ? next(base) : next
+        writeBotDraft(botId, text)
+        return { botId, text }
+      })
+    },
+    [bot.id]
+  )
   const [images, setImages] = useState<PendingImage[]>([])
   const imagesRef = useRef(images)
   imagesRef.current = images
@@ -162,7 +178,6 @@ export function BotComposer({
     }
   }, [bot.id, locked])
   useEffect(() => {
-    setDraft('')
     setImages((previous) => {
       previous.forEach(({ attachment }) => URL.revokeObjectURL(attachment.previewUrl ?? ''))
       return []

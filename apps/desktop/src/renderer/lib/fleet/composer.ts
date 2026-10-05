@@ -8,6 +8,18 @@ import {
   type FleetUsage,
 } from '@maestrly/bot-fleet-protocol'
 
+/** Unsent text per bot; module scope so it survives leaving the bot's chat and coming back. */
+const botDrafts = new Map<string, string>()
+
+export function readBotDraft(botId: string): string {
+  return botDrafts.get(botId) ?? ''
+}
+
+export function writeBotDraft(botId: string, text: string): void {
+  if (text) botDrafts.set(botId, text)
+  else botDrafts.delete(botId)
+}
+
 export type ComposerFile = Pick<File, 'name' | 'size' | 'type'>
 export type AttachmentError = 'type' | 'size' | 'count' | 'total' | 'pdfCount'
 const textExtensions =
