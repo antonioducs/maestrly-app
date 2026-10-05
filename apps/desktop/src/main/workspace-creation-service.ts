@@ -248,8 +248,6 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
     const sourceId = grant.conversationId
     const source = deps.getConversation(sourceId)
     if (!source) return failure('source-unsupported', 'The source conversation no longer exists.', request.requestKey)
-    if (source.botOrigin)
-      return failure('source-unsupported', 'Bot conversations cannot create projects.', request.requestKey)
     if (deps.isWebManaged(sourceId))
       return failure('source-unsupported', 'This conversation is managed in the Kanban web chat.', request.requestKey)
     const github = requestedGithubRepository(request.source)

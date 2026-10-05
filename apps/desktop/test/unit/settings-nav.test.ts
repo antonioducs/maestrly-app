@@ -16,7 +16,6 @@ describe('settings navigation', () => {
     const ids = [...navSource.matchAll(/\{ id: '([^']+)'/g)].map((match) => match[1])
     expect(ids).toEqual([
       'chat',
-      'bots',
       'fleet',
       'platform',
       'usage',
@@ -36,8 +35,6 @@ describe('settings navigation', () => {
     expect(resources['pt-BR'].ui.settings.nav.chat).toBe('Maestrly Chat')
     expect(resources.en.ui.settings.nav.platform).toBe('Platform')
     expect(resources['pt-BR'].ui.settings.nav.platform).toBe('Plataforma')
-    expect(resources.en.ui.settings.nav.bots).toBe('Bots')
-    expect(resources['pt-BR'].ui.settings.nav.bots).toBe('Bots')
     expect(resources.en.ui.settings.nav.fleet).toBe('Bot server')
     expect(resources['pt-BR'].ui.settings.nav.fleet).toBe('Servidor de bots')
   })

@@ -40,7 +40,7 @@ export function clearConversationMemorySpace(conversationId: string): void {
 export function isPersonalMemoryConversation(conversationId: string): boolean {
   if (registered.has(conversationId) || isBotMode()) return false
   const conversation = getConversation(conversationId)
-  if (conversation?.scope !== 'standalone' || conversation.botOrigin) return false
+  if (conversation?.scope !== 'standalone') return false
   // Archived fleet conversations lose their runtime registration but retain their host-owned profile.
   // This also preserves isolation when a fleet profile is opened outside the bot process.
   return !getDb()

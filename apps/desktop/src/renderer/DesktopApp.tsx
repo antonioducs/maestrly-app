@@ -17,7 +17,6 @@ import { useDetachedChatKeys } from '@/lib/chat-windows'
 import { ReviewLoopPickerDialog } from '@/components/chat/ReviewLoopPickerDialog'
 import { ReviewLoopSplitView } from '@/components/chat/ReviewLoopSplitView'
 import { ConversationBranchChip } from '@/components/ConversationBranchChip'
-import { BotConversationBadge, BotManagementControls } from '@/components/bot/BotConversationBadge'
 import { NewConversationDialog } from '@/components/NewConversationDialog'
 import { WorkspaceDefaultBranchDialog } from '@/components/WorkspaceDefaultBranchDialog'
 import { Drawer } from '@/components/Drawer'
@@ -469,8 +468,8 @@ export function DesktopApp() {
     lastVisibleAtRef.current[active.id] = Date.now()
   }, [active?.id])
 
-  // Conversation state the main process moved — a bot paused, a chat released — reaches the open chat
-  // itself, not only the sidebar: the composer and its notices read this object.
+  // Conversation state the main process moved reaches the open chat itself, not only the sidebar: the
+  // composer and its notices read this object.
   useEffect(
     () =>
       window.api.onConversationOpen(({ conversation }) => {
@@ -779,7 +778,6 @@ export function DesktopApp() {
                   fleet={fleet}
                   initialSection={settingsSection}
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                  onAddProject={requestProject}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}
@@ -853,18 +851,15 @@ export function DesktopApp() {
                       </Button>
                     )}
                     <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
-                    {active?.botOrigin && <BotConversationBadge conversation={active} />}
                     {active?.scope === 'project' && (
                       <ConversationBranchChip conversationId={active.id} status={statuses[active.id]} />
                     )}
                   </div>
                   <div className="no-drag flex min-w-0 items-center gap-2">
                     {active && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
-                    {active?.botOrigin && <BotManagementControls conversation={active} />}
                     {active?.scope === 'project' &&
                       active.archived === 0 &&
                       !active.isMulti &&
-                      !active.botOrigin &&
                       !runningReviewLoopForActive && (
                         <Button
                           variant="ghost"
@@ -963,9 +958,6 @@ export function DesktopApp() {
                               workspaceId={c.workspaceId}
                               cwd={c.cwd}
                               experience={c.experience}
-                              botManaged={!!c.botOrigin && c.botManagementState === 'active'}
-                              botConversation={c.botOrigin ? c : undefined}
-                              botName={c.botOrigin?.botName}
                               onExperienceChange={handleConversationExperienceChange}
                               visible={detached || ((splitRole !== null || active?.id === c.id) && !mainOverride)}
                               status={statuses[c.id] ?? c.status}

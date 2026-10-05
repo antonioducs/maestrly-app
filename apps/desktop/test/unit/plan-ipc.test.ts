@@ -675,18 +675,12 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
     expect(deps.discardStandardPlanHandoff).not.toHaveBeenCalled()
   })
 
-  it('requires a project and keeps bot conversations exclusive', async () => {
+  it('requires a project', async () => {
     h.getConversation.mockReturnValue({ ...source, scope: 'standalone' })
     const standalone = register()
     await expect(
       standalone.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
     ).resolves.toEqual({ ok: false, error: 'project-required' })
-    h.getConversation.mockReturnValue({ ...source, botOrigin: { kind: 'bot' } })
-    const bot = register()
-    await expect(
-      bot.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
-    ).resolves.toEqual({ ok: false, error: 'Bot conversations must keep their exclusive worktree.' })
     expect(standalone.deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
-    expect(bot.deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
   })
 })

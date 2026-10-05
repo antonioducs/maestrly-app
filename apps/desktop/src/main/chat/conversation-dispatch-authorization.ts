@@ -31,7 +31,6 @@ const origins = new Map<string, HumanTurnOrigin>()
 export interface TurnAdmissionShape {
   internal?: boolean
   internalLoop?: unknown
-  botAdmission?: unknown
   remoteAdmission?: boolean
   runnerAdmission?: unknown
   runnerSignal?: unknown
@@ -48,7 +47,6 @@ export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): bool
   return (
     !opts?.internal &&
     !opts?.internalLoop &&
-    !opts?.botAdmission &&
     !opts?.remoteAdmission &&
     !opts?.runnerAdmission &&
     !opts?.runnerSignal &&

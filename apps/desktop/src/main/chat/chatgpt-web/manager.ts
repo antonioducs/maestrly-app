@@ -624,7 +624,6 @@ export function capabilitiesForConversation(conversationId: string): ChatGptWebC
   const conversation = getConversation(conversationId)
   const personalAllowed =
     conversation?.scope === 'standalone' &&
-    !conversation.botOrigin &&
     memorySpaceForConversation(conversationId)?.kind === 'personal'
   const stored = prefs.chatGptWebCapabilities
   const info = chatGptWebCapabilitiesInfo(

@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** remove the connection for external agents such as Grok Bot and
+  other MCP clients; use [Maestrly bots](docs/bot-fleet.md) instead. Desktop no
+  longer offers **Settings → Bots** or its `/mcp/bots` endpoint, and the server
+  no longer serves `/mcp`, connectors, delegated tasks, or their web pages.
+  Conversations a bot created remain ordinary conversations. Upgrading deletes
+  the connection data and revokes OAuth clients registered for these agents.
+
 ## [0.14.1] - 2026-10-04
 
 ### Fixed

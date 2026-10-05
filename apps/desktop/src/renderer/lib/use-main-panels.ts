@@ -69,9 +69,7 @@ export function useMainPanels({
       )
       const personal =
         detail.personal ||
-        standaloneConversations.some(
-          (conversation) => conversation.id === detail.conversationId && !conversation.botOrigin
-        )
+        standaloneConversations.some((conversation) => conversation.id === detail.conversationId)
       if (!workspace && !personal) return
       setProjectNotesWs(null)
       setFleetView(null)

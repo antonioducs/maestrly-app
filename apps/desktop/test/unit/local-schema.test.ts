@@ -5,27 +5,11 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as store from '../../src/main/store'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
+import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 // Keep the full local table inventory explicit so hosted cleanup cannot silently remove local data.
 const LOCAL_TABLES = [
   'app_settings',
-  'bot_command_outbox',
-  'bot_command_receipts',
-  'bot_conversation_allocations',
-  'bot_local_commands',
-  'bot_local_connections',
-  'bot_local_conversations',
-  'bot_local_events',
-  'bot_local_grants',
-  'bot_local_idempotency',
-  'bot_local_inventory',
-  'bot_local_messages',
-  'bot_local_questions',
-  'bot_oauth_config',
-  'bot_oauth_clients',
-  'bot_oauth_requests',
-  'bot_oauth_tokens',
-  'bot_question_bindings',
   'chat_antigravity_sessions',
   'chat_background_compaction',
   'chat_claude_message_map',
@@ -58,8 +42,6 @@ const LOCAL_TABLES = [
   'platform_chat_outbox',
   'platform_chat_sessions',
   'platform_chat_turns',
-  'platform_delegation_attempts',
-  'platform_delegation_workspaces',
   'schema_migrations',
   'workspace_creations',
   'workspace_groups',
@@ -118,6 +100,59 @@ describe('local-only SQLite schema', () => {
     expect(store.getDb().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
     restartDb()
     expect(store.getAppSetting('before-extraction')).toBe('preserved')
+  })
+
+  it('retires the external agent connection and keeps the conversations a bot created', () => {
+    const conversation = makeConversation(makeWorkspace().id, { name: 'Started by a bot' })
+    // What an earlier release left behind: bot bookkeeping, delegation journals and the bot columns,
+    // with the triggers that name them.
+    store.getDb().exec(`
+      ALTER TABLE conversations ADD COLUMN bot_origin TEXT;
+      ALTER TABLE conversations ADD COLUMN bot_management_state TEXT
+        CHECK(bot_management_state IN ('active','paused','revoked'));
+      ALTER TABLE conversations ADD COLUMN bot_manual_chat_enabled INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE bot_local_connections (id TEXT PRIMARY KEY);
+      CREATE TABLE bot_local_grants (
+        connection_id TEXT NOT NULL REFERENCES bot_local_connections(id) ON DELETE CASCADE,
+        workspace_id TEXT NOT NULL
+      );
+      CREATE TABLE bot_oauth_tokens (token_hash TEXT PRIMARY KEY);
+      CREATE TABLE bot_conversation_allocations (
+        allocation_id TEXT PRIMARY KEY,
+        conversation_id TEXT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
+        phase TEXT NOT NULL
+      );
+      CREATE TABLE platform_delegation_workspaces (instance_id TEXT, task_id TEXT, conversation_id TEXT);
+      CREATE TABLE platform_delegation_attempts (attempt_id TEXT PRIMARY KEY, turn_id TEXT NOT NULL);
+      CREATE TRIGGER bot_conversation_tombstone BEFORE DELETE ON conversations
+      BEGIN
+        UPDATE bot_conversation_allocations SET phase='deleted' WHERE conversation_id=OLD.id;
+      END;
+      CREATE TRIGGER bot_conversation_origin_immutable BEFORE UPDATE OF bot_origin ON conversations
+      WHEN OLD.bot_origin IS NOT NULL AND NEW.bot_origin IS NOT OLD.bot_origin
+      BEGIN SELECT RAISE(ABORT, 'Bot conversation origin is immutable'); END;
+      INSERT INTO bot_local_connections VALUES ('connection');
+      INSERT INTO bot_local_grants VALUES ('connection', 'workspace');
+      INSERT INTO bot_oauth_tokens VALUES ('token');
+      INSERT INTO platform_delegation_attempts VALUES ('attempt', 'turn');
+    `)
+    store
+      .getDb()
+      .prepare("UPDATE conversations SET bot_origin=?, bot_management_state='active' WHERE id=?")
+      .run(JSON.stringify({ kind: 'bot', connectionId: 'connection', botName: 'Bot' }), conversation.id)
+    store
+      .getDb()
+      .prepare("INSERT INTO bot_conversation_allocations VALUES ('allocation', ?, 'ready')")
+      .run(conversation.id)
+
+    restartDb()
+
+    const schema = readSchema()
+    expect(schema.filter((entry) => entry.type === 'table').map((entry) => entry.name)).toEqual(LOCAL_TABLES)
+    expect(schema.filter((entry) => /bot_|delegation/.test(`${entry.name} ${entry.sql}`))).toEqual([])
+    expect(store.getConversation(conversation.id)).toMatchObject({ id: conversation.id, name: 'Started by a bot' })
+    expect(store.getDb().prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(store.getDb().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
   })
 
   it('isolates nested transaction rollback while preserving the outer transaction', () => {
