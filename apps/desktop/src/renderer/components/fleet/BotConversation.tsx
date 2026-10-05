@@ -263,11 +263,6 @@ function BotAgentActivity({
       live={segment.live}
       writing={segment.writing}
       waitingYou={segment.live && bot.status === 'waiting'}
-      thumbnails={
-        segment.images.length > 0 && (
-          <BotTranscriptImages botId={bot.id} images={segment.images.slice(-THUMBNAILS_MAX)} cache={imageCache} />
-        )
-      }
       toolAction={(step) => (isComputerTool(step.toolName) ? <ShowOnComputer onClick={onShowOnComputer} /> : null)}
       renderToolDetail={(step) => {
         const item = step.source
@@ -293,9 +288,6 @@ function BotAgentActivity({
     />
   )
 }
-
-/** Tool images stay in view under the activity line: the newest few. */
-const THUMBNAILS_MAX = 8
 
 export function BotConversation({
   bot,
@@ -401,6 +393,15 @@ export function BotConversation({
                 segment={segment}
                 imageCache={imageCache}
                 onShowOnComputer={onOpenScreen}
+              />
+            ) : segment.kind === 'images' ? (
+              // The images the bot shared: the tool stays in the activity, with its images in its details.
+              <BotTranscriptImages
+                key={`images:${segment.item.id}`}
+                botId={bot.id}
+                images={segment.item.images}
+                cache={imageCache}
+                size="large"
               />
             ) : (
               <TranscriptRow

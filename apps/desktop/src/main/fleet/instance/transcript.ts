@@ -107,6 +107,8 @@ function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
   if (typeof value.text === 'string') return peerOutput(value.text)
   return {}
 }
+const sharesImages = (input: unknown): boolean =>
+  input !== null && typeof input === 'object' && (input as { share?: unknown }).share === true
 function toolItem(
   message: ChatMessage,
   part: Extract<MessagePart, { type: 'tool' }>,
@@ -155,6 +157,8 @@ function toolItem(
           : 'running',
     output: output ? short(output, FLEET_TOOL_OUTPUT_MAX) : null,
     images,
+    // The owner sees a tool's images in the conversation only when the bot asked to share them (`share: true`).
+    ...(images.length ? { shared: sharesImages(part.input) } : {}),
     ...(files ? { files } : {}),
     ...(part.toolName === 'todo_write' ? { todos: fleetTodos(part.input) } : {}),
   }
@@ -349,13 +353,16 @@ export function projectMessages(
         const previous = [...items]
           .reverse()
           .find((entry) => entry.kind === 'tool' && entry.id.startsWith(message.id + ':'))
-        if (previous?.kind === 'tool' && previous.images.length < 8)
+        if (previous?.kind === 'tool' && previous.images.length < 8) {
           previous.images.push({
             id: imageId('g', message.id, part.id),
             mediaType: part.mediaType as FleetImageRef['mediaType'],
             byteSize: part.byteSize ?? null,
             name: part.name,
           })
+          // A generated image is meant for the owner, whatever the tool before it did.
+          previous.shared = true
+        }
       }
     }
     if (message.role === 'user' && !message.parts.some((part) => part.type === 'text')) {

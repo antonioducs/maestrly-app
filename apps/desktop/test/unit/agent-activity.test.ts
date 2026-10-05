@@ -9,6 +9,7 @@ import {
   chatActivitySegments,
   chatToolStep,
   fleetActivitySegments,
+  isSharedScreenshot,
   reasoningTitle,
   toolCategory,
   toolDisplayName,
@@ -28,9 +29,11 @@ const kinds = (segments: ReturnType<typeof chatActivitySegments>) =>
   segments.map((segment) =>
     segment.kind === 'activity'
       ? `activity[${segment.steps.map((step) => (step.kind === 'tool' ? step.toolName : step.kind)).join(',')}]`
-      : segment.part.type === 'tool'
-        ? segment.part.toolName
-        : segment.part.type
+      : segment.kind === 'images'
+        ? `images[${segment.part.toolName}]`
+        : segment.part.type === 'tool'
+          ? segment.part.toolName
+          : segment.part.type
   )
 
 describe('tool categories and targets', () => {
@@ -80,7 +83,7 @@ describe('tool categories and targets', () => {
 })
 
 describe('chat message segments', () => {
-  it('folds steps and the text between them, keeping pinned cards and the answer outside', () => {
+  it('folds steps and the text between them, keeping pinned cards and the answer outside, above the activity', () => {
     const parts: MessagePart[] = [
       { type: 'compaction', id: 'c', text: 'summary' } as MessagePart,
       reasoning('r1', 'Looking'),
@@ -91,11 +94,35 @@ describe('chat message segments', () => {
       text('t2', 'Fixed.'),
     ]
     const segments = chatActivitySegments(parts, false)
-    expect(kinds(segments)).toEqual(['compaction', 'activity[reasoning,narration,bash,read]', 'todo_write', 'text'])
-    const activity = segments[1]
+    expect(kinds(segments)).toEqual(['compaction', 'todo_write', 'text', 'activity[reasoning,narration,bash,read]'])
+    const activity = segments[3]
     expect(activity).toMatchObject({ kind: 'activity', writing: false, waitingAnswer: false })
     // Segments keep each part's index, which the list uses for keys.
-    expect(segments.map((segment) => (segment.kind === 'part' ? segment.index : 'a'))).toEqual([0, 'a', 4, 6])
+    expect(segments.map((segment) => (segment.kind === 'part' ? segment.index : 'a'))).toEqual([0, 4, 6, 'a'])
+  })
+
+  it('keeps the newest text in view until a newer one comes, folding the older into the activity', () => {
+    const said = [reasoning('r', 'Looking'), text('t1', 'I will run the tests.'), tool('b', 'bash', {})]
+    const textIndex = (segments: ReturnType<typeof chatActivitySegments>) =>
+      segments.flatMap((segment) => (segment.kind === 'part' && segment.part.type === 'text' ? [segment.index] : []))
+    // A step after the text does not hide it.
+    const running = chatActivitySegments([...said.slice(0, 2), tool('b', 'bash', {}, { status: 'running' })], true)
+    expect(kinds(running)).toEqual(['text', 'activity[reasoning,bash]'])
+    expect(running.at(-1)).toMatchObject({ writing: false })
+    // A newer text takes its place; the older one folds.
+    const answering = chatActivitySegments([...said, text('t2', 'They pass')], true)
+    expect(kinds(answering)).toEqual(['text', 'activity[reasoning,narration,bash]'])
+    expect(textIndex(answering)).toEqual([3])
+    expect(answering.at(-1)).toMatchObject({ writing: true })
+    // The newer text stays while the agent goes on working.
+    const more = chatActivitySegments([...said, text('t2', 'They pass.'), tool('rd', 'read', {})], true)
+    expect(kinds(more)).toEqual(['text', 'activity[reasoning,narration,bash,read]'])
+    expect(textIndex(more)).toEqual([3])
+    // A turn cut before its answer keeps what the agent last said.
+    expect(kinds(chatActivitySegments(said, false))).toEqual(['text', 'activity[reasoning,bash]'])
+    // The text keeps its place among the cards.
+    const asked = [text('t', 'Two questions first.'), tool('q', 'ask_question', {}), reasoning('r', 'Planning')]
+    expect(kinds(chatActivitySegments(asked, true))).toEqual(['text', 'ask_question', 'activity[reasoning]'])
   })
 
   it('keeps a published artifact as its own card instead of folding it into the activity', () => {
@@ -105,7 +132,7 @@ describe('chat message segments', () => {
         tool('art-1', toolName, { title: 'Probe' }),
         text('t', 'Published.'),
       ]
-      expect(kinds(chatActivitySegments(parts, false)), toolName).toEqual(['activity[read]', toolName, 'text'])
+      expect(kinds(chatActivitySegments(parts, false)), toolName).toEqual([toolName, 'text', 'activity[read]'])
     }
   })
 
@@ -118,32 +145,32 @@ describe('chat message segments', () => {
     expect(kinds(chatActivitySegments([reasoning('r', '  ')], false))).toEqual(['reasoning'])
   })
 
-  it('keeps the line in place as steps arrive: under what opens the message, above every card', () => {
+  it('keeps the line last as steps arrive and the turn ends: under every card and the answer', () => {
     const compaction = { type: 'compaction', id: 'c', text: 'summary' } as MessagePart
     const todo = tool('todo', 'todo_write', { todos: [] })
-    // Nothing but a plan yet, then a step, then the end of the turn: the line never moves.
-    expect(kinds(chatActivitySegments([compaction, todo], true))).toEqual(['compaction', 'activity[]', 'todo_write'])
+    // Nothing but a plan yet, then a step, then the end of the turn: the line stays at the bottom.
+    expect(kinds(chatActivitySegments([compaction, todo], true))).toEqual(['compaction', 'todo_write', 'activity[]'])
     const stepped = [compaction, todo, tool('b', 'bash', { command: 'ls' })]
-    expect(kinds(chatActivitySegments(stepped, true))).toEqual(['compaction', 'activity[bash]', 'todo_write'])
+    expect(kinds(chatActivitySegments(stepped, true))).toEqual(['compaction', 'todo_write', 'activity[bash]'])
     expect(kinds(chatActivitySegments([...stepped, text('t', 'Done.')], false))).toEqual([
       'compaction',
-      'activity[bash]',
       'todo_write',
       'text',
+      'activity[bash]',
     ])
   })
 
   it('knows when the answer is streaming or a question waits for the person', () => {
     const running = [tool('b', 'bash', { command: 'ls' }), text('t', 'The answer')]
-    expect(chatActivitySegments(running, true)[0]).toMatchObject({ kind: 'activity', writing: true })
-    expect(chatActivitySegments(running, false)[0]).toMatchObject({ kind: 'activity', writing: false })
+    expect(chatActivitySegments(running, true).at(-1)).toMatchObject({ kind: 'activity', writing: true })
+    expect(chatActivitySegments(running, false).at(-1)).toMatchObject({ kind: 'activity', writing: false })
     const asking = [
       tool('b', 'bash', { command: 'ls' }),
       tool('q', 'ask_question', { questions: [] }, { status: 'running' }),
     ]
     const segments = chatActivitySegments(asking, true)
-    expect(kinds(segments)).toEqual(['activity[bash]', 'ask_question'])
-    expect(segments[0]).toMatchObject({ waitingAnswer: true })
+    expect(kinds(segments)).toEqual(['ask_question', 'activity[bash]'])
+    expect(segments.at(-1)).toMatchObject({ waitingAnswer: true })
   })
 
   it('reads tool states for the line: running only while the turn runs', () => {
@@ -172,16 +199,16 @@ describe('chat message segments', () => {
       text('t', 'Done.'),
     ]
     const live = chatActivitySegments(parts, true)
-    expect(kinds(live)).toEqual(['activity[reasoning,read]', 'task', 'task', 'text'])
-    expect(live[0]).toMatchObject({ subagents: { total: 2, running: 1 } })
+    expect(kinds(live)).toEqual(['task', 'task', 'text', 'activity[reasoning,read]'])
+    expect(live.at(-1)).toMatchObject({ subagents: { total: 2, running: 1 } })
     // A turn that ended runs nothing, whatever state a card was left in.
-    expect(chatActivitySegments(parts, false)[0]).toMatchObject({ subagents: { total: 2, running: 0 } })
-    // Subagents alone are no step: the cards and the answer show as they are, under a live line until text comes.
+    expect(chatActivitySegments(parts, false).at(-1)).toMatchObject({ subagents: { total: 2, running: 0 } })
+    // Subagents alone are no step: the cards and the answer show as they are, over a live line until text comes.
     expect(kinds(chatActivitySegments([task('s', 'completed'), text('t', 'Done.')], false))).toEqual(['task', 'text'])
     const waiting = chatActivitySegments([task('s', 'running')], true)
-    expect(kinds(waiting)).toEqual(['activity[]', 'task'])
-    expect(waiting[0]).toMatchObject({ subagents: { total: 1, running: 1 } })
-    expect(chatActivitySegments([tool('b', 'bash', {})], true)[0]).toMatchObject({
+    expect(kinds(waiting)).toEqual(['task', 'activity[]'])
+    expect(waiting.at(-1)).toMatchObject({ subagents: { total: 1, running: 1 } })
+    expect(chatActivitySegments([tool('b', 'bash', {})], true).at(-1)).toMatchObject({
       subagents: { total: 0, running: 0 },
     })
   })
@@ -193,7 +220,78 @@ describe('chat message segments', () => {
       tool('d', 'delegate', {}),
       tool('b', 'bash', { command: 'ls' }),
     ]
-    expect(kinds(chatActivitySegments(parts, false))).toEqual(['activity[read,bash]', 'text', 'delegate'])
+    expect(kinds(chatActivitySegments(parts, false))).toEqual(['text', 'delegate', 'activity[read,bash]'])
+  })
+
+  describe('screenshots', () => {
+    const image = { id: 'tool-image:1', mediaType: 'image/png' }
+    const screenshot = (id: string, input: unknown, state?: ToolState) =>
+      tool(
+        id,
+        'mcp__maestrly__browser_screenshot',
+        input,
+        state ?? { status: 'completed', output: { text: 'ok', images: [image] } }
+      )
+
+    it('shares only the screenshots the agent asked to show, and only once they have an image', () => {
+      expect(isSharedScreenshot(screenshot('a', { share: true }))).toBe(true)
+      expect(isSharedScreenshot(screenshot('a', {}))).toBe(false)
+      expect(isSharedScreenshot(screenshot('a', { share: 'true' }))).toBe(false)
+      expect(isSharedScreenshot(screenshot('a', null))).toBe(false)
+      expect(isSharedScreenshot(screenshot('a', { share: true }, { status: 'running' }))).toBe(false)
+      expect(isSharedScreenshot(screenshot('a', { share: true }, { status: 'completed', output: 'no image' }))).toBe(
+        false
+      )
+      // Only screenshots can be shared: another tool's image stays in its details.
+      expect(
+        isSharedScreenshot(
+          tool('b', 'read', { share: true }, { status: 'completed', output: { text: '', images: [image] } })
+        )
+      ).toBe(false)
+      expect(isSharedScreenshot(text('t', 'hi'))).toBe(false)
+    })
+
+    it('keeps the screenshots the agent took for itself in the activity, out of sight', () => {
+      const parts = [screenshot('a', {}), tool('b', 'bash', { command: 'ls' }), text('t', 'Done.')]
+      expect(kinds(chatActivitySegments(parts, false))).toEqual([
+        'text',
+        'activity[mcp__maestrly__browser_screenshot,bash]',
+      ])
+    })
+
+    it('shows a shared screenshot outside, where it was shared, while its step stays in the activity', () => {
+      const parts = [
+        text('t1', 'Let me look.'),
+        screenshot('inspect', {}),
+        text('t2', 'Here is the page:'),
+        screenshot('shared', { share: true }),
+        tool('b', 'bash', { command: 'ls' }),
+        text('t3', 'Done.'),
+      ]
+      const segments = chatActivitySegments(parts, false)
+      expect(kinds(segments)).toEqual([
+        'images[mcp__maestrly__browser_screenshot]',
+        'text',
+        'activity[narration,mcp__maestrly__browser_screenshot,narration,mcp__maestrly__browser_screenshot,bash]',
+      ])
+      const activity = segments.at(-1)
+      if (activity?.kind !== 'activity') throw new Error('expected an activity')
+      // Both screenshots are steps, the shared one too: the person can still find it in the timeline.
+      expect(activity.steps.filter((entry) => entry.kind === 'tool' && entry.category === 'screenshot')).toHaveLength(2)
+      expect(segments.map((segment) => (segment.kind === 'activity' ? 'a' : segment.index))).toEqual([3, 5, 'a'])
+    })
+
+    it('shows the text and the shared screenshot in the order they came, the line staying last', () => {
+      const parts = [tool('a', 'bash', {}), screenshot('shared', { share: true }), text('t', 'Here it is.')]
+      expect(kinds(chatActivitySegments(parts, true))).toEqual([
+        'images[mcp__maestrly__browser_screenshot]',
+        'text',
+        'activity[bash,mcp__maestrly__browser_screenshot]',
+      ])
+      // The screenshot waits for its image, then shows.
+      const taking = [screenshot('shared', { share: true }, { status: 'running' })]
+      expect(kinds(chatActivitySegments(taking, true))).toEqual(['activity[mcp__maestrly__browser_screenshot]'])
+    })
   })
 })
 
@@ -344,27 +442,52 @@ describe('bot transcript segments', () => {
   })
   const shot = { id: 'shot', mediaType: 'image/png' as const, byteSize: 10, name: 'Screen' }
 
+  const ids = (segments: ReturnType<typeof fleetActivitySegments>) =>
+    segments.map((segment) =>
+      segment.kind === 'item' ? segment.item.id : segment.kind === 'images' ? `images:${segment.item.id}` : segment.key
+    )
+
   it('folds the items of one message like a chat message', () => {
     const items = [
       user('input:1'),
       assistant('m1:0', 'I will check the deploy.'),
       botTool('m1:1', 'bash', { target: 'gh run list' }),
       botReasoning('m1:2', 'It passed.'),
-      botTool('m1:3', 'browser_screenshot', { images: [shot] }),
+      botTool('m1:3', 'browser_screenshot', { images: [shot], shared: false }),
       assistant('m1:4', 'Staging is up.'),
     ]
     const segments = fleetActivitySegments(items, { working: false })
-    expect(segments.map((segment) => (segment.kind === 'item' ? segment.item.id : segment.key))).toEqual([
-      'input:1',
-      'activity:m1',
-      'm1:4',
-    ])
-    const activity = segments[1]
-    if (activity.kind !== 'activity') throw new Error('expected an activity')
+    expect(ids(segments)).toEqual(['input:1', 'm1:4', 'activity:m1'])
+    const activity = segments.at(-1)
+    if (activity?.kind !== 'activity') throw new Error('expected an activity')
     expect(activity.steps.map((entry) => entry.kind)).toEqual(['narration', 'tool', 'reasoning', 'tool'])
     expect(activity.steps[1]).toMatchObject({ category: 'command', target: 'gh run list', status: 'completed' })
-    expect(activity.images).toEqual([shot])
     expect(activity.live).toBe(false)
+  })
+
+  it('shows the images a bot shared outside the activity, and keeps the others in their step', () => {
+    const items = [
+      botTool('m1:0', 'browser_screenshot', { images: [shot], shared: false }),
+      botTool('m1:1', 'browser_screenshot', { images: [shot], shared: true }),
+      botTool('m1:2', 'bash', { target: 'ls' }),
+      assistant('m1:3', 'Here it is.'),
+    ]
+    const segments = fleetActivitySegments(items, { working: false })
+    // The shared screenshot sits where it was shared; the line stays last.
+    expect(ids(segments)).toEqual(['images:m1:1', 'm1:3', 'activity:m1'])
+    // Both screenshots are still steps of the activity, where the owner can open them.
+    const activity = segments.at(-1)
+    if (activity?.kind !== 'activity') throw new Error('expected an activity')
+    expect(activity.steps.map((entry) => entry.id)).toEqual(['m1:0', 'm1:1', 'm1:2'])
+    // A shared tool without images has nothing to show.
+    expect(
+      ids(fleetActivitySegments([botTool('m2:0', 'browser_screenshot', { shared: true })], { working: false }))
+    ).toEqual(['activity:m2'])
+  })
+
+  it('shows the images of a bot that predates the share flag, as it always did', () => {
+    const items = [botTool('m1:0', 'browser_screenshot', { images: [shot] }), assistant('m1:1', 'Done.')]
+    expect(ids(fleetActivitySegments(items, { working: false }))).toEqual(['images:m1:0', 'm1:1', 'activity:m1'])
   })
 
   it('is live for the newest message while the bot works, until the owner writes again', () => {
@@ -374,8 +497,8 @@ describe('bot transcript segments', () => {
       assistant('m2:1', 'Writing…'),
     ]
     const live = fleetActivitySegments(items, { working: true })
-    expect(live.at(-2)).toMatchObject({ kind: 'activity', live: true, writing: true })
-    expect(fleetActivitySegments(items, { working: false }).at(-2)).toMatchObject({ live: false, writing: false })
+    expect(live.at(-1)).toMatchObject({ kind: 'activity', live: true, writing: true })
+    expect(fleetActivitySegments(items, { working: false }).at(-1)).toMatchObject({ live: false, writing: false })
     const answered = fleetActivitySegments([...items, user('input:2')], { working: true })
     expect(answered.find((segment) => segment.kind === 'activity')).toMatchObject({ live: false })
   })
@@ -390,15 +513,36 @@ describe('bot transcript segments', () => {
       botTool('m2:0', 'mcp__maestrly__todo_write'),
     ]
     const segments = fleetActivitySegments(items, { working: false })
-    expect(segments.map((segment) => (segment.kind === 'item' ? segment.item.id : segment.key))).toEqual([
-      'activity:m1',
-      'm1:0',
-      'm1:2',
-      'activity:m2',
-    ])
-    const first = segments[0]
+    expect(ids(segments)).toEqual(['m1:0', 'm1:2', 'activity:m1', 'activity:m2'])
+    const first = segments[2]
     if (first.kind !== 'activity') throw new Error('expected an activity')
     expect(first.steps.map((step) => step.id)).toEqual(['m1:1'])
+  })
+
+  it('keeps what the bot said last in view above the activity, folding the older text', () => {
+    const said = [assistant('m1:0', 'I will check the deploy.'), botTool('m1:1', 'bash', { state: 'running' })]
+    // A step after the text does not hide it; the line stays under it.
+    const running = fleetActivitySegments(said, { working: true })
+    expect(ids(running)).toEqual(['m1:0', 'activity:m1'])
+    expect(running.at(-1)).toMatchObject({ live: true, writing: false })
+    // A newer text takes its place; the older one folds into the activity.
+    const answering = fleetActivitySegments([...said, assistant('m1:2', 'It passed.')], { working: true })
+    expect(ids(answering)).toEqual(['m1:2', 'activity:m1'])
+    const activity = answering.at(-1)
+    if (activity?.kind !== 'activity') throw new Error('expected an activity')
+    expect(activity).toMatchObject({ writing: true })
+    expect(activity.steps.map((entry) => entry.kind)).toEqual(['narration', 'tool'])
+    // The newer text stays while the bot goes on working.
+    const more = fleetActivitySegments(
+      [...said, assistant('m1:2', 'It passed.'), botTool('m1:3', 'read', { state: 'running' })],
+      { working: true }
+    )
+    expect(ids(more)).toEqual(['m1:2', 'activity:m1'])
+    expect(more.at(-1)).toMatchObject({ writing: false })
+    // A message with only its text and a finished step keeps the text and the summary under it.
+    expect(
+      ids(fleetActivitySegments([assistant('m1:0', 'Done.'), botTool('m1:1', 'bash')], { working: false }))
+    ).toEqual(['m1:0', 'activity:m1'])
   })
 
   it('leaves messages without steps as items', () => {

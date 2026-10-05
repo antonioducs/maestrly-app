@@ -312,6 +312,9 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 24')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
+    // Screenshots reach the owner's conversation only when the bot shares them.
+    expect(botIdentityPrompt('/bot/chat')).toContain('with share set to true')
+    expect(botIdentityPrompt('/bot/chat')).not.toContain('automatically appear')
   })
 
   it('describes one desktop with the browser and terminals as windows, or else two screens', () => {
@@ -656,8 +659,35 @@ describe('transcript projection', () => {
       ],
     }
     expect(projectChatMessages([message])).toMatchObject([
-      { kind: 'tool', images: [{ id: imageId('g', 'assistant', 'generated') }] },
+      { kind: 'tool', images: [{ id: imageId('g', 'assistant', 'generated') }], shared: true },
     ])
+  })
+  it('marks the images of a tool as shared only when the bot asked to share them', () => {
+    const screenshot = (id: string, input: unknown): MessagePart => ({
+      type: 'tool',
+      id,
+      toolCallId: id,
+      toolName: 'browser_screenshot',
+      input,
+      state: {
+        status: 'completed',
+        output: { text: 'Captured', images: [{ id: 'tool-image:' + id, mediaType: 'image/png' }] },
+      },
+    })
+    const message: ChatMessage = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      parts: [screenshot('inspect', {}), screenshot('shared', { share: true }), screenshot('loose', { share: 'yes' })],
+    }
+    const refs = (part: MessagePart) => [
+      { id: 'img-' + (part.type === 'tool' ? part.id : ''), mediaType: 'image/png' as const, byteSize: 1, name: null },
+    ]
+    const items = projectChatMessages([message], [], (part) => refs(part))
+    expect(items.map((item) => (item.kind === 'tool' ? item.shared : undefined))).toEqual([false, true, false])
+    // Nothing to show, nothing to flag.
+    expect(projectChatMessages([message])[0]).not.toHaveProperty('shared')
   })
   it('keeps continuation source before and after native message id mapping', () => {
     const createdAt = Date.UTC(2026, 0, 1)

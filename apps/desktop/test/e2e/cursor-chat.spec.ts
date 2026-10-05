@@ -271,8 +271,9 @@ test('Cursor: discover a model, stream tools, cancel and restore the conversatio
     for (const event of events)
       BrowserWindow.getAllWindows()[0]?.webContents.send(`chat:delta:${conversationId}`, event)
   }, conversation.id)
-  // A tool after the reply turns the reply into a step: both fold into the activity line, which opens to show them.
-  await expect(page.getByText(reply, { exact: true })).toHaveCount(0)
+  // A tool after the reply does not hide it: the newest text stays in view above the activity line, which opens to
+  // show the tool.
+  await expect(page.getByText(reply, { exact: true })).toBeVisible()
   await page.getByTitle('Show what the agent did').click()
   await expect(page.getByText(reply, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: /cursor_fixture_inspect/ }).click()

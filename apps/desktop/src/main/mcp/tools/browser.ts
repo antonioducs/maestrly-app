@@ -356,7 +356,10 @@ export function registerBrowserTools(ctx: McpToolContext): void {
     {
       title: t('tools.browser_screenshot.title'),
       description: t('tools.browser_screenshot.description') + DRAWER_NOTE,
-      inputSchema: {},
+      // Read by the UI only: the capture does not change.
+      inputSchema: {
+        share: z.boolean().optional().describe(t('tools.browser_screenshot.params.share')),
+      },
     },
     async (_args, extra) => {
       return withBrowserLease(async (acquired) => {

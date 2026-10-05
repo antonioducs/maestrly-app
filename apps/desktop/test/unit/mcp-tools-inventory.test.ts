@@ -188,7 +188,7 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('browser_type', ['clear', 'ref', 'text'], ['ref', 'text']),
   shape('browser_press_key', ['key', 'modifiers'], ['key']),
   shape('browser_read_text'),
-  shape('browser_screenshot'),
+  shape('browser_screenshot', ['share']),
   shape('browser_evaluate', ['expression'], ['expression']),
   shape('browser_mouse_move', ['x', 'y'], ['x', 'y']),
   shape('browser_scroll', ['container', 'dx', 'dy', 'selector', 'to', 'x', 'y']),
@@ -434,6 +434,8 @@ describe('MCP app tools inventory', () => {
     // Large viewports are automatically scaled down, never cropped, to fit the image limit.
     expect(screenshot?.description).toContain('fit the model image limit')
     expect(screenshot?.description).toContain('never cropped')
+    // The screenshot is shown to the user only when the model asks for it.
+    expect(screenshot?.description).toContain('share=true')
   })
 
   it('advertises deliberate narrow memory lookup and tracks an explicit read', async () => {

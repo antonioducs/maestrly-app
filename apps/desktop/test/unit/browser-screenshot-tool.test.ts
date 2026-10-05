@@ -103,6 +103,27 @@ describe('browser_screenshot (MCP tool) — image and mouse/scroll metadata', ()
     )
   })
 
+  it('takes the same screenshot whether or not it is shared with the user', async () => {
+    const fakeWc = { fake: true }
+    vi.mocked(drawerManager.acquireBrowserForControl).mockReturnValue({
+      webContents: fakeWc,
+      captureFrame: vi.fn(),
+      release: vi.fn(),
+    } as never)
+    vi.mocked(bc.screenshot).mockResolvedValue('c2hhcmVk')
+    vi.mocked(bc.mousePosition).mockReturnValue({ x: 1, y: 2 })
+    vi.mocked(bc.scrollPosition).mockResolvedValue({ x: 0, y: 0, maxX: 0, maxY: 0 })
+
+    const plain = await client.callTool({ name: 'browser_screenshot', arguments: {} })
+    const shared = await client.callTool({ name: 'browser_screenshot', arguments: { share: true } })
+
+    // `share` is read by the UI only: the model gets the same result.
+    expect(shared).toEqual(plain)
+    const listed = (await client.listTools()).tools.find((tool) => tool.name === 'browser_screenshot')
+    expect(Object.keys(listed?.inputSchema.properties ?? {})).toEqual(['share'])
+    expect(listed?.inputSchema.required ?? []).toEqual([])
+  })
+
   it('preserves PNG when only scroll metadata fails', async () => {
     const fakeWc = { fake: true }
     vi.mocked(drawerManager.acquireBrowserForControl).mockReturnValue({

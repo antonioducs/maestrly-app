@@ -9,6 +9,8 @@ const keyPattern = /^[A-Za-z0-9_+ -]{1,64}$/
 const coordinate = z.number().int().nonnegative()
 const description =
   'Use for desktop apps outside the Maestrly browser. Prefer browser_* for websites. Coordinates are screen pixels from the last computer_screenshot.'
+const shareDescription =
+  'true only when the user should see this screenshot (they asked for it, or it is the result you deliver); it then appears in the conversation. Omit it for screenshots you take to inspect the screen.'
 const screenshotTimeoutMs = 10_000
 const screenshotMaxBytes = 32 * 1024 * 1024
 const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -294,8 +296,9 @@ export function registerComputerTools(ctx: McpToolContext): void {
   server.registerTool(
     'computer_screenshot',
     {
-      description: `Capture the whole desktop screen as PNG. ${description}`,
-      inputSchema: {},
+      description: `Capture the whole desktop screen as PNG. The screenshot stays in the tool details unless you set share=true. ${description}`,
+      // Read by the UI only: the capture does not change.
+      inputSchema: { share: z.boolean().optional().describe(shareDescription) },
       annotations: { readOnlyHint: true },
     },
     async (_args, extra) => {

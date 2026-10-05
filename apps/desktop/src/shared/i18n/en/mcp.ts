@@ -172,7 +172,11 @@ export default {
     browser_screenshot: {
       title: 'Screenshot',
       description:
-        'Captures a PNG screenshot of the current page. Image-capable models receive it visually; models without image support get an automatic text description when an image interpreter is configured, otherwise an omission note. Very large viewports are automatically scaled down (aspect ratio preserved, never cropped) to fit the model image limit.',
+        'Captures a PNG screenshot of the current page. Image-capable models receive it visually; models without image support get an automatic text description when an image interpreter is configured, otherwise an omission note. Very large viewports are automatically scaled down (aspect ratio preserved, never cropped) to fit the model image limit. The screenshot stays in the tool details unless you set share=true.',
+      params: {
+        share:
+          'true only when the user should see this screenshot (they asked for it, or it is the result you deliver); it then appears in the conversation. Omit it for screenshots you take to inspect the page.',
+      },
     },
     browser_evaluate: {
       title: 'Run JS',

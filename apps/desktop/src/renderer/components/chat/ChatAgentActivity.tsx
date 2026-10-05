@@ -1,15 +1,15 @@
 import type { OpenFileReference } from '@/components/MarkdownViewer'
 import type { ActivityStep, ActivityToolStep } from '@/lib/agent-activity'
-import { toolOutputImages, type ChatMessage, type MessagePart } from '../../../shared/chat'
+import type { ChatMessage, MessagePart } from '../../../shared/chat'
 import { AgentActivity } from './AgentActivity'
-import { ToolCallDetails, ToolImagePreview } from './ToolCallCard'
+import { ToolCallDetails } from './ToolCallCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
-/** Tool screenshots and images stay in view under the activity line: the newest few. */
-const THUMBNAILS_MAX = 6
-
-/** The activity of a chat message: its steps' details are the tool cards' own. */
+/**
+ * The activity of a chat message: its steps' details are the tool cards' own, including the screenshots the agent
+ * took for itself. The ones it shared with the person show outside the activity.
+ */
 export function ChatAgentActivity({
   message,
   steps,
@@ -17,7 +17,6 @@ export function ChatAgentActivity({
   writing,
   waitingAnswer,
   subagents,
-  onOpenImage,
   onOpenMention,
   searchQuery,
   currentSearchMatch,
@@ -28,19 +27,11 @@ export function ChatAgentActivity({
   writing: boolean
   waitingAnswer: boolean
   subagents: { total: number; running: number }
-  onOpenImage?: (src: string, name: string) => void
   onOpenMention?: OpenFileReference
   searchQuery?: string
   currentSearchMatch?: boolean
 }) {
   const conversationId = message.conversationId
-  const images = steps
-    .flatMap((step) =>
-      step.kind === 'tool' && step.source.type === 'tool' && step.source.state.status === 'completed'
-        ? toolOutputImages(step.source.state.output).map((image) => ({ image, part: step.source as ToolPart }))
-        : []
-    )
-    .slice(-THUMBNAILS_MAX)
   const renderToolDetail = (step: ActivityToolStep<MessagePart>) => {
     const part = step.source as ToolPart
     return (
@@ -58,23 +49,6 @@ export function ChatAgentActivity({
       runningSubagents={subagents.running}
       worked={subagents.total > 0}
       durationMs={live ? null : (message.responseDurationMs ?? null)}
-      thumbnails={
-        images.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pb-1 pt-1">
-            {images.map(({ image, part }) => (
-              <ToolImagePreview
-                key={`${part.id}:${image.id}`}
-                variant="thumb"
-                image={image}
-                conversationId={conversationId}
-                messageId={message.id}
-                toolPartId={part.id}
-                onOpenImage={onOpenImage}
-              />
-            ))}
-          </div>
-        )
-      }
       renderToolDetail={renderToolDetail}
       onOpenMention={onOpenMention}
       searchQuery={searchQuery}

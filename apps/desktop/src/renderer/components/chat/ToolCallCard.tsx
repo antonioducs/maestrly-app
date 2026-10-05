@@ -51,15 +51,13 @@ export const ToolImagePreview = memo(function ToolImagePreview({
   conversationId,
   messageId,
   toolPartId,
-  variant = 'full',
   onOpenImage,
 }: {
   image: ChatToolImage
   conversationId: string
   messageId: string
   toolPartId: string
-  /** `thumb`: a small tile that opens the image, for the strip under an activity line. */
-  variant?: 'full' | 'thumb'
+  /** The image opens in a lightbox on click. */
   onOpenImage?: (src: string, name: string) => void
 }) {
   const { t } = useTranslation('chat')
@@ -123,34 +121,6 @@ export const ToolImagePreview = memo(function ToolImagePreview({
   }, [conversationId, image.id, messageId, nearViewport, toolPartId])
 
   const name = image.name ?? t('tool.imageOutput')
-  if (variant === 'thumb')
-    return (
-      <div
-        ref={containerRef}
-        className="grid h-[76px] w-[120px] shrink-0 place-items-center overflow-hidden rounded-md border border-white/[0.12] bg-black/30"
-      >
-        {state.status === 'loading' && (
-          <Loader2
-            className="h-3.5 w-3.5 animate-spin text-muted-foreground motion-reduce:animate-none"
-            aria-label={t('tool.imageLoading')}
-          />
-        )}
-        {state.status === 'error' && (
-          <TriangleAlert className="h-3.5 w-3.5 text-amber-200/90" aria-label={t('tool.imageUnavailable')} />
-        )}
-        {state.status === 'ready' && (
-          <button
-            type="button"
-            title={name}
-            onClick={() => onOpenImage?.(state.src, name)}
-            className="h-full w-full transition-opacity hover:opacity-85"
-          >
-            <img src={state.src} alt={name} className="h-full w-full object-cover" />
-          </button>
-        )}
-      </div>
-    )
-
   return (
     <div ref={containerRef} className="flex min-w-0 flex-col gap-1.5 rounded bg-black/30 p-2">
       {state.status === 'loading' && (
@@ -165,16 +135,52 @@ export const ToolImagePreview = memo(function ToolImagePreview({
           {t('tool.imageUnavailable')}
         </div>
       )}
-      {state.status === 'ready' && (
-        <img
-          src={state.src}
-          alt={image.name ?? t('tool.imageOutput')}
-          className="max-h-[420px] w-full rounded object-contain"
-        />
-      )}
+      {state.status === 'ready' &&
+        (onOpenImage ? (
+          <button
+            type="button"
+            title={name}
+            onClick={() => onOpenImage(state.src, name)}
+            className="rounded transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <img src={state.src} alt={name} className="max-h-[420px] w-full rounded object-contain" />
+          </button>
+        ) : (
+          <img src={state.src} alt={name} className="max-h-[420px] w-full rounded object-contain" />
+        ))}
     </div>
   )
 })
+
+/** The screenshots the agent chose to show the person: outside the activity, one click from the lightbox. */
+export function SharedToolImages({
+  part,
+  conversationId,
+  messageId,
+  onOpenImage,
+}: {
+  part: ToolPart
+  conversationId: string
+  messageId: string
+  onOpenImage?: (src: string, name: string) => void
+}) {
+  const images = toolOutputImages(part.state.status === 'completed' ? part.state.output : undefined)
+  if (!images.length) return null
+  return (
+    <div className="flex min-w-0 max-w-full flex-col gap-2">
+      {images.map((image) => (
+        <ToolImagePreview
+          key={image.id}
+          image={image}
+          conversationId={conversationId}
+          messageId={messageId}
+          toolPartId={part.id}
+          onOpenImage={onOpenImage}
+        />
+      ))}
+    </div>
+  )
+}
 
 /** A tool call's arguments, result and images: the body of its card, and of its step in an activity timeline. */
 export function ToolCallDetails({
