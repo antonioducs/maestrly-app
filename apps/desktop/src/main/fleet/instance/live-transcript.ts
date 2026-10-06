@@ -17,7 +17,7 @@ import {
   type StoredChatMessage,
 } from '../../chat/chat-store'
 import { imageId, type FleetImageStore } from './images'
-import type { InstanceInputQueue } from './queue'
+import type { InstanceInputQueue, QueuedInput } from './queue'
 import {
   projectMessages,
   transcriptPage,
@@ -65,6 +65,8 @@ export class LiveTranscript {
       extras: InstanceTranscriptExtras
       images: FleetImageStore
       publish: (item: FleetTranscriptItem) => void
+      /** The input the running turn answers, from the moment the turn takes it until it ends. */
+      turnInputId?: () => string | null
     }
   ) {}
 
@@ -163,9 +165,9 @@ export class LiveTranscript {
     }
     return projected
   }
-  private queuedItems(): FleetTranscriptItem[] {
+  private inputItem(entry: QueuedInput, queued: boolean): FleetTranscriptItem {
     const queue = this.options.queue
-    return queue.list().map((entry) => ({
+    return {
       kind: 'user',
       id: entry.itemId,
       at: entry.at,
@@ -173,12 +175,33 @@ export class LiveTranscript {
       source: entry.input.source,
       routine: entry.input.routine,
       peer: entry.input.peer,
-      queued: true,
+      queued,
       ...(entry.attachmentError ? { attachmentError: entry.attachmentError } : {}),
       memories: [],
       images: queue.refs(entry),
       ...(queue.fileRefs(entry).length ? { files: queue.fileRefs(entry) } : {}),
-    }))
+    }
+  }
+  private queuedItems(): FleetTranscriptItem[] {
+    return this.options.queue.list().map((entry) => this.inputItem(entry, true))
+  }
+  /** The item of an input still waiting in the queue, or null once a turn took it or it left. */
+  queuedItem(inputId: string): FleetTranscriptItem | null {
+    const entry = this.options.queue.list().find((candidate) => candidate.id === inputId)
+    return entry ? this.inputItem(entry, true) : null
+  }
+  /**
+   * The input the running turn took, until the conversation holds its native message: no longer queued, and saved only
+   * after the turn's preparation (memory, context, account), it would otherwise be in no page meanwhile.
+   */
+  startingItem(inputs: TranscriptInputs = this.options.queue.transcriptInputs()): FleetTranscriptItem | null {
+    const inputId = this.options.turnInputId?.()
+    const entry = inputId ? inputs.unmapped.find((candidate) => candidate.id === inputId) : undefined
+    if (!entry) return null
+    // Its native message, once saved, comes after the turn started and projects with the same item id.
+    const users = this.turnMessages().filter((message) => message.role === 'user')
+    if (projectMessages(users, inputs).some(({ item }) => item.id === entry.itemId)) return null
+    return this.inputItem(entry, false)
   }
 
   /**
@@ -190,10 +213,11 @@ export class LiveTranscript {
   async page(before: string | null, requested: number, reasoning = false): Promise<FleetTranscriptPage> {
     const limit = Math.max(1, Math.min(500, requested))
     const superseded = this.options.extras.questionToolCallIds()
-    const outside = [...this.queuedItems(), ...this.options.extras.list()]
+    const inputs = this.options.queue.transcriptInputs()
+    const starting = this.startingItem(inputs)
+    const outside = [...this.queuedItems(), ...(starting ? [starting] : []), ...this.options.extras.list()]
     const id = this.options.conversationId()
     if (!id) return transcriptPage(outside, before, limit)
-    const inputs = this.options.queue.transcriptInputs()
     // An unknown cursor (an item gone since, or one this reader never gets) gives the newest page.
     const found = before ? this.cursorItem(id, before, outside, inputs, superseded) : null
     const cursor = found && fleetTranscriptItemReadable(found, reasoning) ? found : null

@@ -336,6 +336,7 @@ export class BotRuntime {
       extras: this.extras,
       images: this.images,
       publish: (item) => this.publish({ type: 'transcript.upsert', item }),
+      turnInputId: () => this.turnInputId,
     })
     this.holdManager = new InstanceHoldManager(
       () => {
@@ -1162,6 +1163,9 @@ export class BotRuntime {
       await this.queue.markStarted(item.id)
       this.turnAbort.signal.throwIfAborted()
       this.live.turnStarted()
+      // Pages show it so until its native message is saved: readers holding it as queued learn it was taken.
+      const starting = this.live.startingItem()
+      if (starting) this.publish({ type: 'transcript.upsert', item: starting })
       const handle = await startExecutorChatTurn({
         conversationId: id,
         prompt: promptForInput(item.input),
@@ -1223,6 +1227,9 @@ export class BotRuntime {
       await this.queue
         .reconcile(this.nativeUsersForQueue())
         .then(async () => {
+          // Back in the queue when its native message was never saved: shown queued again, as pages show it.
+          const requeued = this.live.queuedItem(item.id)
+          if (requeued) this.publish({ type: 'transcript.upsert', item: requeued })
           if (
             !this.turnAbort?.signal.aborted &&
             error instanceof Error &&

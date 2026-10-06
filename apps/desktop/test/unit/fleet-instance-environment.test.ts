@@ -48,6 +48,7 @@ import { conversationShellEnv } from '../../src/main/chat/conversation-env'
 import { memorySpaceForConversation } from '../../src/main/memory/spaces'
 import { createLocalMemory, listLocalMemories } from '../../src/main/memory/local-memory-service'
 import { deleteConversation, getAppSetting, getConversation, setAppSetting } from '../../src/main/store'
+import { upsertChatMessage } from '../../src/main/chat/chat-store'
 
 const model = {
   providerId: 'synthetic',
@@ -250,6 +251,105 @@ describe('bot environment registry', () => {
     })
     expect(restored.queue.list().find((item) => item.id === receipt.inputId)?.attachmentError).toBe('pdf-unreadable')
   })
+  describe('an owner message a turn took before saving it', () => {
+    const configured = () =>
+      profile('alpha', 'Alpha', {
+        compaction: {
+          providerId: model.providerId,
+          modelId: model.modelId,
+          reasoning: null,
+          fastMode: false,
+          intervalTokens: 100_000,
+        },
+      })
+    async function alphaBot() {
+      const setup = environment()
+      await setup.runtime.start()
+      await setup.runtime.installBot({ profile: configured(), slot: 1, gatewayToken: tokenA })
+      const events = () => setup.runtime.events.replay(0) ?? []
+      return {
+        alpha: setup.runtime.bot('alpha'),
+        events,
+        /** How the events showed the item, by its `queued` flag. */
+        shown: (itemId: string) =>
+          events().flatMap((event) =>
+            event.type === 'transcript.upsert' && event.item.id === itemId && event.item.kind === 'user'
+              ? [event.item.queued]
+              : []
+          ),
+        finished: () => events().filter((event) => event.type === 'turn.finished').length,
+      }
+    }
+    const owner = (text: string) => ({ idempotencyKey: randomUUID(), source: 'owner' as const, text, attachments: [] })
+
+    it('stays in the transcript while the turn prepares, then is the saved message', async () => {
+      let entered!: () => void
+      const preparing = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      let finishPreparing!: () => void
+      const prepared = new Promise<void>((resolve) => {
+        finishPreparing = resolve
+      })
+      vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(async (input) => {
+        // Memory, context and account come first; the user message is saved only after them.
+        entered()
+        await prepared
+        upsertChatMessage({
+          id: 'native-user',
+          conversationId: input.conversationId,
+          role: 'user',
+          createdAt: Date.now(),
+          parts: [{ type: 'text', id: 't', text: input.prompt }],
+        })
+        input.slot?.release()
+        return {
+          executionId: input.conversationId,
+          conversationId: input.conversationId,
+          assistantMessageId: () => null,
+          cancel: () => {},
+          done: Promise.resolve({ status: 'success', assistantMessageId: null }),
+        } as never
+      })
+      const { alpha, shown, finished } = await alphaBot()
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+        'base64'
+      )
+      const receipt = await alpha.input({
+        ...owner('Check the portal'),
+        attachments: [{ kind: 'image', name: 'shot.png', mediaType: 'image/png', dataBase64: png.toString('base64') }],
+      })
+      await preparing
+      // The page a client reads right after sending: the input left the queue, its message is not saved yet.
+      const during = (await alpha.transcript(null, 50)).items.filter((item) => item.id === receipt.itemId)
+      expect(during).toMatchObject([{ kind: 'user', text: 'Check the portal', queued: false }])
+      expect(shown(receipt.itemId)).toEqual([true, false])
+      // Its image is still the queued one, and still readable.
+      const image = during[0].kind === 'user' ? during[0].images[0] : undefined
+      expect(image?.id).toBe(`q-${receipt.inputId}-0`)
+      expect((await alpha.image(image!.id)).bytes).toEqual(png)
+      finishPreparing()
+      await vi.waitFor(() => expect(finished()).toBe(1))
+      expect((await alpha.transcript(null, 50)).items.filter((item) => item.id === receipt.itemId)).toMatchObject([
+        { kind: 'user', text: 'Check the portal', queued: false },
+      ])
+      expect(alpha.queue.byItemId(receipt.itemId)?.nativeMessageId).toBe('native-user')
+    })
+
+    it('is shown queued again when the turn fails before saving it', async () => {
+      // Preparation fails before the message is saved: the input goes back to the queue for a retry.
+      vi.spyOn(chatService, 'startExecutorChatTurn').mockRejectedValue(new Error('Execution unavailable'))
+      const { alpha, shown, finished } = await alphaBot()
+      const receipt = await alpha.input(owner('Check the portal'))
+      await vi.waitFor(() => expect(finished()).toBe(1))
+      expect(shown(receipt.itemId)).toEqual([true, false, true])
+      expect((await alpha.transcript(null, 50)).items.filter((item) => item.id === receipt.itemId)).toMatchObject([
+        { queued: true },
+      ])
+    })
+  })
+
   it('waits for gateway membership before dispatching a restored queue and applies an offline pause first', async () => {
     const first = environment()
     await first.runtime.start()

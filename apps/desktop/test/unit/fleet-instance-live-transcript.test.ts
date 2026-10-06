@@ -274,7 +274,10 @@ function writeConversation(conversationId: string, seed: number, turns: number) 
   return { records, extras, questions, superseded }
 }
 
-async function fixture(conversationId: string, data: { records?: QueuedInput[]; extras?: FleetTranscriptItem[] } = {}) {
+async function fixture(
+  conversationId: string,
+  data: { records?: QueuedInput[]; extras?: FleetTranscriptItem[]; turnInputId?: () => string | null } = {}
+) {
   const folder = await mkdtemp(path.join(dir, 'bot-'))
   const inputs = path.join(folder, 'inputs.json')
   const transcript = path.join(folder, 'transcript.json')
@@ -293,6 +296,7 @@ async function fixture(conversationId: string, data: { records?: QueuedInput[]; 
     extras,
     images,
     publish: (item) => published.push(item),
+    ...(data.turnInputId ? { turnInputId: data.turnInputId } : {}),
   })
   /**
    * The page the runtime cut from the whole transcript before: every message projected and sorted, `reasoning` items
@@ -933,6 +937,76 @@ describe('bot transcript pages at their edges', () => {
       })
     const { live, reference } = await fixture(conversationId, { records: [record] })
     expect(await live.page(null, 10)).toEqual(reference(null, 10))
+  })
+})
+
+describe('the input a turn took', () => {
+  it('stays in every page until its native message is saved, then is that message, once', async () => {
+    const conversationId = newConversation()
+    const earlier = Date.now() - 60_000
+    upsertChatMessage({
+      id: 'earlier',
+      conversationId,
+      role: 'assistant',
+      createdAt: earlier,
+      parts: [{ type: 'text', id: 't', text: 'Earlier' }],
+      finishReason: 'stop',
+    })
+    let running: string | null = null
+    const { live, queue } = await fixture(conversationId, { turnInputId: () => running })
+    live.anchor()
+    const receipt = await queue.enqueue({
+      idempotencyKey: randomUUID(),
+      source: 'owner',
+      text: 'Check the portal',
+      attachments: [],
+    })
+    expect((await live.page(null, 50)).items.at(-1)).toMatchObject({ id: receipt.itemId, queued: true })
+    running = receipt.inputId
+    expect(live.startingItem()).toBeNull()
+    await queue.markStarted(receipt.inputId)
+    live.turnStarted()
+    // Taken by the turn, its message not saved yet: the window the owner saw it vanish in.
+    const starting = live.startingItem()
+    expect(starting).toMatchObject({ id: receipt.itemId, kind: 'user', text: 'Check the portal', queued: false })
+    expect((await live.page(null, 50)).items).toEqual([expect.objectContaining({ id: 'earlier:0' }), starting])
+    expect((await live.page(receipt.itemId, 50)).items.map((item) => item.id)).toEqual(['earlier:0'])
+    expect(live.queuedItem(receipt.inputId)).toBeNull()
+
+    const savedAt = Date.parse(starting!.at) + 5
+    upsertChatMessage({
+      id: 'native',
+      conversationId,
+      role: 'user',
+      createdAt: savedAt,
+      parts: [{ type: 'text', id: 't', text: 'Check the portal' }],
+    })
+    expect(live.startingItem()).toBeNull()
+    const saved = (await live.page(null, 50)).items
+    expect(saved.map((item) => item.id)).toEqual(['earlier:0', receipt.itemId])
+    expect(saved[1]).toMatchObject({ at: iso(savedAt), queued: false })
+  })
+
+  it('is shown only for the running turn, not for another started input never linked to its message', async () => {
+    const conversationId = newConversation()
+    let running: string | null = null
+    const { live, queue } = await fixture(conversationId, { turnInputId: () => running })
+    live.anchor()
+    const receipt = await queue.enqueue({ idempotencyKey: randomUUID(), source: 'owner', text: 'Old', attachments: [] })
+    await queue.markStarted(receipt.inputId)
+    live.turnStarted()
+    // Saved with other words: never linked, and shown as that message alone.
+    upsertChatMessage({
+      id: 'native-other',
+      conversationId,
+      role: 'user',
+      createdAt: Date.now(),
+      parts: [{ type: 'text', id: 't', text: 'Different words' }],
+    })
+    expect((await live.page(null, 50)).items.map((item) => item.id)).toEqual(['native-other:0'])
+    running = randomUUID()
+    expect(live.startingItem()).toBeNull()
+    expect((await live.page(null, 50)).items.map((item) => item.id)).toEqual(['native-other:0'])
   })
 })
 
