@@ -185,6 +185,19 @@ test('a fleet bot starts conversations in the projects this computer gave it, an
     })
     await page.screenshot({ path: test.info().outputPath('fleet-desktop-conversation.png') })
 
+    // ---- With the conversation open, the bot's next instruction shows at once, without reopening it ---------------
+    const botConversationId = (created as { value: { conversation: { id: string } } }).value.conversation.id
+    expect(
+      await gateway.call('sendMessage', {
+        conversationId: botConversationId,
+        text: 'Second instruction proof-live.',
+        idempotencyKey: randomUUID(),
+      })
+    ).toMatchObject({ ok: true })
+    await expect(page.getByText('Second instruction proof-live.', { exact: false }).first()).toBeVisible({
+      timeout: 30_000,
+    })
+
     // ---- A call addressed to another computer is never answered from here ------------------------------------------
     expect(await gateway.call('listChats', {}, { desktopId: OTHER_DESKTOP_ID, timeoutMs: 3_000 })).toBe('timeout')
 

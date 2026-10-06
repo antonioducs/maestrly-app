@@ -783,10 +783,15 @@ export function ChatView({
   // Covers every artifact-backed attachment (images and PDFs), not only images: see hasArtifactAttachment.
   const imagesSentRef = useRef(false)
 
+  // This composer showed the user message it sent. Any other turn (a bot, another window, a queued handoff) reaches
+  // this view only as stream events, so its user message must be read back once it is saved.
+  const optimisticSentRef = useRef(false)
+
   useEffect(() => {
     slashSentRef.current = false
     agentMentionsSentRef.current = false
     imagesSentRef.current = false
+    optimisticSentRef.current = false
   }, [conversationId])
 
   const doSend = useCallback(
@@ -853,6 +858,7 @@ export function ChatView({
           )
         )
       }
+      optimisticSentRef.current = updateVisual
       streamingRef.current = true
       turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
@@ -879,6 +885,7 @@ export function ChatView({
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
+        optimisticSentRef.current = false
         streamingRef.current = false
         if (visibleRef.current) setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
@@ -1057,14 +1064,17 @@ export function ChatView({
       const localSlash = slashSentRef.current
       const localAgentMentions = agentMentionsSentRef.current
       const localImages = imagesSentRef.current
+      const optimistic = optimisticSentRef.current
       slashSentRef.current = false
       agentMentionsSentRef.current = false
       imagesSentRef.current = false
+      optimisticSentRef.current = false
       const saved = ev as { compacted?: boolean; imagesDescribed?: number; memoryRecalled?: boolean }
       if (
         shouldReloadOnUserSaved({
           memoryRecalled: saved.memoryRecalled,
-          streaming: streamingRef.current,
+          // Not the streaming flag: this very event already set it, so a message sent elsewhere never loaded.
+          optimistic,
           compacted: saved.compacted,
           imagesDescribed: saved.imagesDescribed,
           localSlash,
@@ -1836,12 +1846,14 @@ export function ChatView({
       agentMentionsSentRef.current = agentMentions.length > 0
 
       imagesSentRef.current = resendHasImage
+      optimisticSentRef.current = true
       setStreaming(true)
       const res = await window.api.chatResend(conversationId, id, text, agentMentions)
       if (!res.ok) {
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
+        optimisticSentRef.current = false
         setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
       }
