@@ -224,9 +224,9 @@ function seedSchema5(db: DatabaseSync) {
 }
 
 describe('schema 6 migration', () => {
-  it('creates schema 9 with environments in an empty data directory', () => {
+  it('creates schema 10 with environments and desktop links in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -272,6 +272,18 @@ describe('schema 6 migration', () => {
     expect(references('bots')).toEqual([['environment_id', 'environments', 'NO ACTION']])
     expect(references('environment_secrets')).toEqual([['environment_id', 'environments', 'CASCADE']])
     expect(references('owner_memories')).toEqual([['environment_id', 'environments', 'CASCADE']])
+    expect(columns('desktop_links')).toEqual([
+      ['bot_id', 1],
+      ['device_id', 1],
+      ['desktop_id', 1],
+      ['name', 1],
+      ['linked_at', 1],
+      ['updated_at', 1],
+    ])
+    expect(references('desktop_links')).toEqual([
+      ['device_id', 'devices', 'CASCADE'],
+      ['bot_id', 'bots', 'CASCADE'],
+    ])
     expect(store.db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 })
     expect(store.listEnvironments()).toEqual([])
     expect(store.archivedEnvironments()).toEqual([])
@@ -306,7 +318,7 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     expect(snapshot(store.db)).toEqual(before)
     expect(meta(store.db)).toEqual(metaBefore)
 
@@ -412,7 +424,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('9')
+    expect(version(reopened.db)).toBe('10')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -488,7 +500,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -496,14 +508,14 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('10')
+    expect(version(after)).toBe('11')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
@@ -622,7 +634,7 @@ describe('schema 7 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     checked(store.db)
     expect(untouched(store.db)).toEqual(before)
     expect(
@@ -656,7 +668,7 @@ describe('schema 7 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('9')
+    expect(version(reopened.db)).toBe('10')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -683,7 +695,7 @@ describe('schema 7 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
   })
 
@@ -749,7 +761,7 @@ describe('schema 8 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     checked(store.db)
     expect(store.db.prepare('SELECT * FROM environments ORDER BY id').all()).toEqual(
       before.map((row) => ({ ...row, update_requested_at: null }))
@@ -770,17 +782,17 @@ describe('schema 8 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('9')
+    expect(version(reopened.db)).toBe('10')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
   })
 
-  it('migrates a schema 6 database through schema 7 to schema 9', () => {
+  it('migrates a schema 6 database through schema 7 to schema 10', () => {
     const dir = temp()
     createSchema6Database(dir).close()
     const store = open(dir)
-    expect(version(store.db)).toBe('9')
+    expect(version(store.db)).toBe('10')
     checked(store.db)
     store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
@@ -1183,7 +1195,7 @@ describe('schema 9 migration', () => {
     const old = new Store(dir)
     const bot = botRecord('legacy')
     old.insertBot(bot, { ...environmentSecrets('legacy'), ...gatewaySecrets('legacy') })
-    old.db.exec('ALTER TABLE bots DROP COLUMN publish_artifacts')
+    old.db.exec('DROP TABLE desktop_links; ALTER TABLE bots DROP COLUMN publish_artifacts')
     old.db.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
@@ -1191,5 +1203,63 @@ describe('schema 9 migration', () => {
     store.saveBot({ ...store.getBot('legacy')!, publishArtifacts: true })
     store.close()
     expect(open(dir).getBot('legacy')?.publishArtifacts).toBe(true)
+  })
+})
+
+describe('schema 10 migration', () => {
+  const device = (id: string) => ({ id, name: 'Mac ' + id, createdAt: at(1), lastSeenAt: null, revokedAt: null })
+  function pair(store: Store, id: string) {
+    store.addPairing(hash('code-' + id), new Date(Date.now() + 600_000).toISOString())
+    store.consumePairing(hash('code-' + id), device(id), hash('token-' + id))
+  }
+
+  it('adds desktop links to a schema 9 database without touching its bots', () => {
+    const dir = temp()
+    const old = new Store(dir)
+    old.insertBot(botRecord('legacy'), { ...environmentSecrets('legacy'), ...gatewaySecrets('legacy') })
+    old.db.exec('DROP TABLE desktop_links')
+    old.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
+    old.close()
+    const store = open(dir)
+    expect(version(store.db)).toBe('10')
+    expect(store.getBot('legacy')?.name).toBe('Bot legacy')
+    expect(store.desktopLinks('legacy')).toEqual([])
+  })
+
+  it('keeps one link per bot and Mac, with a desktop id that survives a rename, and forgets it with either', () => {
+    const store = open()
+    store.insertBot(botRecord('one'), { ...environmentSecrets('one'), ...gatewaySecrets('one') })
+    store.insertBot(botRecord('two'), { ...environmentSecrets('two'), ...gatewaySecrets('two') })
+    pair(store, 'mac-a')
+    pair(store, 'mac-b')
+    const first = store.saveDesktopLink('one', 'mac-a', 'MacBook', 'dsk_aaaaaaaaaaaaaaaaaaaa', at(2))
+    expect(first).toEqual({
+      botId: 'one',
+      deviceId: 'mac-a',
+      desktopId: 'dsk_aaaaaaaaaaaaaaaaaaaa',
+      name: 'MacBook',
+      linkedAt: at(2),
+      updatedAt: at(2),
+    })
+    // Linking again renames: the id the bot holds stays valid.
+    expect(store.saveDesktopLink('one', 'mac-a', 'Work MacBook', 'dsk_bbbbbbbbbbbbbbbbbbbb', at(3))).toEqual({
+      ...first,
+      name: 'Work MacBook',
+      updatedAt: at(3),
+    })
+    store.saveDesktopLink('one', 'mac-b', 'iMac', 'dsk_cccccccccccccccccccc', at(4))
+    store.saveDesktopLink('two', 'mac-b', 'iMac', 'dsk_dddddddddddddddddddd', at(5))
+    expect(store.desktopLinks('one').map((link) => link.desktopId)).toEqual([
+      'dsk_aaaaaaaaaaaaaaaaaaaa',
+      'dsk_cccccccccccccccccccc',
+    ])
+    expect(store.desktopLinkById('dsk_dddddddddddddddddddd')?.botId).toBe('two')
+    expect(store.deleteDesktopLinksOfDevice('mac-b').map((link) => link.botId)).toEqual(['one', 'two'])
+    expect(store.desktopLinks('two')).toEqual([])
+    expect(store.desktopLinks('one').map((link) => link.deviceId)).toEqual(['mac-a'])
+    expect(store.deleteDesktopLink('one', 'mac-b')).toBeNull()
+    store.purgeBot('one')
+    expect(store.desktopLinkById('dsk_aaaaaaaaaaaaaaaaaaaa')).toBeNull()
+    expect(store.device('mac-a')?.name).toBe('Mac mac-a')
   })
 })

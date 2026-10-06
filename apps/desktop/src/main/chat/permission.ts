@@ -139,6 +139,19 @@ export const BOT_MEMORY_WRITE_RULES: Ruleset = allowMcp([
   'owner_memory_forget',
   'routine_report',
 ])
+/**
+ * In a bot container, reading what the owner's Macs granted never prompts: each Mac already decided what the bot may
+ * read there. Starting or steering a conversation on a Mac still goes through the bot's own ceiling.
+ */
+export const BOT_DESKTOP_READ_RULES: Ruleset = allowMcp([
+  'desktop_list_desktops',
+  'desktop_list_workspaces',
+  'desktop_list_selections',
+  'desktop_list_chats',
+  'desktop_read_chat',
+  'desktop_read_chat_history',
+  'desktop_wait_events',
+])
 export function ruleEffect(action: string, resource: string, ...rulesets: Ruleset[]): Rule['effect'] {
   return evaluate(action, resource, ...rulesets).effect
 }

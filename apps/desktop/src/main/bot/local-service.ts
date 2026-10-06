@@ -40,8 +40,8 @@ import { BOT_TRANSCRIPT_MAX_LIMIT, BotTranscriptError, readBotChatHistory, type 
  *
  * Nothing here reaches a server: the person, this computer and the bot connection are the only scopes,
  * and every connection, grant, chat, command, durable event and idempotency receipt is a local row. A
- * bot arrives through the embedded HTTP server and calls `callTool`; the conversation worker reaches
- * the same service in-process. Both keep the relay contract: the commands of one chat run strictly in
+ * bot of a bot server arrives through the desktop bridge and calls `callTool`; the conversation worker
+ * reaches the same service in-process. Both keep the relay contract: the commands of one chat run strictly in
  * order, a claim is fenced by a lease, mutations are idempotent and events are durable before they can
  * be read back.
  */
@@ -705,8 +705,8 @@ export class LocalBotService {
   }
 
   /**
-   * The relay tools, unchanged from the protocol a bot already speaks. The HTTP layer owns their
-   * descriptors and the authorization of the caller; the rules of each call live here.
+   * The conversation tools, unchanged from the protocol a bot already speaks. The desktop bridge owns the
+   * authorization of the caller; the rules of each call, and the validation of its input, live here.
    */
   async callTool(
     connectionId: string,

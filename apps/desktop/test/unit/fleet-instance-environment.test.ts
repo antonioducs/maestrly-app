@@ -65,7 +65,7 @@ const profile = (botId: string, name: string, extra: Partial<FleetInstanceProfil
   ceiling: 'ask',
   selection: null,
   compaction: null,
-  gateway: { peersEnabled: true, artifactsEnabled: false },
+  gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
   ...extra,
 })
 const exists = (file: string) =>
@@ -389,6 +389,7 @@ describe('bot environment registry', () => {
       'context-limit',
       'transcript-reasoning',
       'runtime-updates',
+      'desktop-bridge',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -402,6 +403,7 @@ describe('bot environment registry', () => {
         'context-limit',
         'transcript-reasoning',
         'runtime-updates',
+        'desktop-bridge',
       ],
     })
   })
@@ -1163,6 +1165,7 @@ describe('bot environment registry', () => {
           'context-limit',
           'transcript-reasoning',
           'runtime-updates',
+          'desktop-bridge',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1176,6 +1179,7 @@ describe('bot environment registry', () => {
           'context-limit',
           'transcript-reasoning',
           'runtime-updates',
+          'desktop-bridge',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1193,6 +1197,7 @@ describe('bot environment registry', () => {
           'context-limit',
           'transcript-reasoning',
           'runtime-updates',
+          'desktop-bridge',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

@@ -171,6 +171,7 @@ import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
+import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
 import { ServerArtifacts } from './artifacts/server-artifacts'
@@ -797,6 +798,8 @@ function registerIpc(): void {
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
   registerFleetInstallerIpc(reg)
+  // Set before the client starts, so that its first stream already answers bots' desktop calls.
+  registerFleetDesktopBridgeIpc(reg, fleetClientService)
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
   registerArtifactsIpc(reg, { service: getArtifactsService })

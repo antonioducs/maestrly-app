@@ -11,6 +11,8 @@ import {
   FLEET_MESSAGE_BODY_MAX,
   FLEET_ARTIFACT_BODY_MAX,
   FLEET_SKILL_BODY_MAX,
+  FLEET_DESKTOP_BRIDGE_LIMITS,
+  type FleetInternalDesktopCallRequest,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
   type FleetRoute,
@@ -25,6 +27,7 @@ import { publicRoute } from './routes/public.js'
 import { Peers } from './peers.js'
 import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
+import { DesktopBridge } from './desktop-bridge.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -85,6 +88,9 @@ export function createGatewayServers(ctx: GatewayContext) {
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
   const network = ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network)
+  const desktops = ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events)
+  ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
+  ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -94,6 +100,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       screen.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
+      desktops.revokeDevice(deviceId)
       await Promise.allSettled(
         [...ctx.lifecycle.takeovers]
           .filter(([, state]) => state.deviceId === deviceId && state.state === 'human')
@@ -111,7 +118,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         .map((device) => revokeDevice(device.id))
     )
   }
-  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, revokeDevice }
+  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, desktops, revokeDevice }
   ctx.lifecycle.onTurnFinished = (id, event) => {
     if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
   }
@@ -154,7 +161,9 @@ export function createGatewayServers(ctx: GatewayContext) {
                   ? FLEET_SKILL_BODY_MAX
                   : !internal && match.key === 'botMessageSend'
                     ? FLEET_MESSAGE_BODY_MAX
-                    : 1024 * 1024
+                    : !internal && match.key === 'desktopCallResult'
+                      ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
+                      : 1024 * 1024
             )
           )
         : undefined
@@ -206,6 +215,13 @@ export function createGatewayServers(ctx: GatewayContext) {
             () => ({ response: ownerMemory.save({ kind: 'bot', botId: caller! }, request), status: 201 })
           )
           return send(res, status, match.route.response!.parse(response))
+        } else if (match.key === 'desktops' || match.key === 'desktopCall') {
+          // The calling bot is the one its token names; the Mac is the one its link names, never the bot's choice.
+          const bot = ctx.store.getBot(caller!)
+          if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          if (match.key === 'desktops') return send(res, 200, { desktops: desktops.links(caller!) })
+          const result = await desktops.call(caller!, body as FleetInternalDesktopCallRequest)
+          return send(res, 200, match.route.response!.parse(result))
         } else {
           const result =
             match.key === 'peers'
@@ -279,6 +295,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     async close() {
       if (refreshTimer) clearInterval(refreshTimer)
       if (revokeTimer) clearInterval(revokeTimer)
+      desktops.close()
       await ctx.artifacts?.close()
       routines.stop()
       screen.close()

@@ -10,6 +10,7 @@ import { Transform, type Duplex, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_DESKTOP_BRIDGE_FEATURE,
   FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -82,8 +83,9 @@ export class InstanceHttpError extends Error {
  * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
  * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
- * in transcripts to readers that ask for it, and reports the versions of its Claude Code and Codex with checks for
- * newer ones. Its health and every status advertise them.
+ * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
+ * newer ones, and gives its bots the desktop_* tools that reach the Macs that linked them. Its health and every status
+ * advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -94,6 +96,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
+  FLEET_DESKTOP_BRIDGE_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'

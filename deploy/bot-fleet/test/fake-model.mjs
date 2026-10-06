@@ -30,6 +30,24 @@ function turn(messages, marker) {
   return { tools, last: tools.length ? contentText(tools.at(-1).content) : '' }
 }
 
+// One `desktopId=name:online:workspaces` entry per computer a desktop tool listed, or `unreadable`.
+function desktopSummary(output) {
+  try {
+    const value = JSON.parse(output)
+    return (value.desktops ?? [])
+      .map((desktop) =>
+        [
+          desktop.desktopId + '=' + desktop.name,
+          desktop.online ? 'on' : 'off',
+          (desktop.workspaces ?? []).map((workspace) => workspace.workspaceId).join('+') || desktop.error || '-',
+        ].join(':')
+      )
+      .join(' ')
+  } catch {
+    return 'unreadable'
+  }
+}
+
 // Resolves true once `parties` different roles arrived under `name`, or false after `timeoutMs`.
 function arrive(name, role, parties, timeoutMs) {
   let barrier = barriers.get(name)
@@ -174,6 +192,45 @@ async function reply(req) {
     if (tools.length === 0) return validatedTool(req, 'browser_navigate', { url })
     if (tools.length === 1) return validatedTool(req, 'browser_read_text', {})
     return { text: 'E2E-COOKIE-SEEN value=' + (/E2E-COOKIE-VALUE:([A-Za-z0-9-]+)/.exec(last)?.[1] ?? 'unreadable') }
+  }
+  // A bot reaches the owner's computers: all of them at once, then one computer per call.
+  if (text.includes('E2E-DESKTOPS-LIST')) {
+    const { tools, last } = turn(messages, 'E2E-DESKTOPS-LIST')
+    if (tools.length === 0) return validatedTool(req, 'desktop_list_workspaces', {})
+    return { text: 'E2E-DESKTOPS-SEEN ' + desktopSummary(last) }
+  }
+  if (text.includes('E2E-DESKTOPS-CREATE')) {
+    const targets = [['a', field(text, 'a')], ['b', field(text, 'b')]]
+    const { tools } = turn(messages, 'E2E-DESKTOPS-CREATE')
+    if (tools.length < targets.length) {
+      const [name, desktopId] = targets[tools.length]
+      return validatedTool(req, 'desktop_create_chat', {
+        desktopId,
+        workspaceId: 'w-' + name,
+        name: 'E2E chat ' + name,
+        baseBranch: 'main',
+        selection: { selectionId: 'sel-' + name },
+        message: 'E2E work on ' + name,
+      })
+    }
+    const created = tools.map((entry) => /"conversation":\{"id":"([^"]+)"/.exec(contentText(entry.content))?.[1] ?? 'none')
+    return { text: 'E2E-DESKTOPS-CREATED a=' + created[0] + ' b=' + created[1] }
+  }
+  if (text.includes('E2E-DESKTOPS-OFFLINE')) {
+    const { tools } = turn(messages, 'E2E-DESKTOPS-OFFLINE')
+    if (tools.length === 0) return validatedTool(req, 'desktop_list_chats', { desktopId: field(text, 'b') })
+    if (tools.length === 1) return validatedTool(req, 'desktop_list_chats', { desktopId: field(text, 'a') })
+    const [offline, online] = tools.map((entry) => contentText(entry.content))
+    return {
+      text:
+        'E2E-DESKTOPS-OFFLINE-SEEN b=' + (offline.includes('desktop_offline') ? 'offline' : 'reached') +
+        ' a=' + (online.includes('"conversations"') ? 'ok' : 'failed'),
+    }
+  }
+  if (text.includes('E2E-DESKTOPS-LINKS')) {
+    const { tools, last } = turn(messages, 'E2E-DESKTOPS-LINKS')
+    if (tools.length === 0) return validatedTool(req, 'desktop_list_desktops', {})
+    return { text: 'E2E-DESKTOPS-LINKED ' + desktopSummary(last) }
   }
   if (text.includes('E2E-ALIVE')) return { text: 'E2E-ALIVE-OK tag=' + field(text, 'tag') }
   // A turn that stays busy for a while, so something else can happen during it.

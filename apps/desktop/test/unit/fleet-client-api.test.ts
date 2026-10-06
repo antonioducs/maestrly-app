@@ -72,7 +72,7 @@ beforeEach(async () => {
       res
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ deviceId: 'device', token: 'valid' }))
-    } else if (req.url === '/v1/events?reasoning=1') {
+    } else if (req.url === '/v1/events?reasoning=1' || req.url === '/v1/events?reasoning=1&desktopBridge=1') {
       // Only the stream that asks for `reasoning` transcript items is served: the app must always ask.
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
       res.write(': ping\n\nevent: fleet\ndata: {"type":"hello","at":"2026-01-01T00:00:00Z","lastActivitySeq":2}\n\n')
@@ -246,6 +246,23 @@ describe('fleet API and events', () => {
     // Each stream here opens, then ends: every reconnection waits about a second, never 2, 4 or 8.
     await vi.waitFor(() => expect(delays).toHaveLength(4))
     for (const delay of delays) expect(delay).toBeLessThanOrEqual(1250)
+  })
+
+  it('asks for desktop calls only when this Mac answers them', async () => {
+    const seen: string[] = []
+    const events = new FleetEvents(
+      new FleetApiClient(origin, 'valid'),
+      (event) => seen.push(event.type),
+      () => undefined,
+      async () => undefined,
+      async () => undefined,
+      45_000,
+      { desktopBridge: true }
+    )
+    events.start()
+    await vi.waitFor(() => expect(seen).toContain('hello'))
+    events.stop()
+    expect(requests.some((request) => request.url === '/v1/events?reasoning=1&desktopBridge=1')).toBe(true)
   })
 
   it('parses SSE comments and frames and stops on 401 or 426', async () => {

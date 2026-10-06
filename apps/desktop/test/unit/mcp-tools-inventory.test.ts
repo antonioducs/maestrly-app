@@ -47,6 +47,18 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'owner_memory_save',
   'owner_memory_forget',
   'routine_report',
+  'desktop_list_desktops',
+  'desktop_list_workspaces',
+  'desktop_list_selections',
+  'desktop_list_chats',
+  'desktop_read_chat',
+  'desktop_read_chat_history',
+  'desktop_wait_events',
+  'desktop_create_chat',
+  'desktop_send_message',
+  'desktop_configure_chat',
+  'desktop_cancel_turn',
+  'desktop_answer_question',
 ]
 
 const EXPECTED_TOOL_NAMES = [

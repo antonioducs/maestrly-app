@@ -20,6 +20,7 @@ import { canUseComputer, registerComputerTools } from './computer'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
 import { registerBotFileTools } from './bot-files'
+import { registerBotDesktopTools } from './bot-desktops'
 
 const reasonSchema = z.string().trim().min(1).max(500)
 const routineTitle = z.string().trim().min(1).max(FLEET_ROUTINE_TITLE_MAX).describe('Short name the owner sees.')
@@ -87,9 +88,14 @@ function weekly(
 }
 /**
  * Registers the bot tools of a conversation. Each call resolves the conversation's own bot: its gateway token, current
- * input, owner-memory client and peer names. `gateway`, when given, replaces the bot's gateway access.
+ * input, owner-memory client and peer names. `gateway`, when given, replaces the bot's gateway access, and `desktops`
+ * then says whether that gateway routes desktop calls (the bot's profile says so otherwise).
  */
-export function registerBotInstanceTools(ctx: McpToolContext, gateway?: GatewayConfig | null): void {
+export function registerBotInstanceTools(
+  ctx: McpToolContext,
+  gateway?: GatewayConfig | null,
+  options: { desktops?: boolean } = {}
+): void {
   const bot = () => botRuntimeForConversation(ctx.convId)
   if (bot()) registerBotFileTools(ctx)
   const localPeerNames = new Map<string, string>()
@@ -120,6 +126,9 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway?: GatewayC
   )
 
   if (gateway === undefined ? !bot()?.gatewayConfigured : !gateway) return
+  // The computers that linked this bot: offered once its gateway routes desktop calls, even before any links it,
+  // so the bot can tell its owner how to give it access.
+  if (gateway === undefined ? bot()?.desktopBridgeEnabled : options.desktops) registerBotDesktopTools(ctx, gatewayFor)
   ctx.server.registerTool(
     'bot_peers_list',
     {

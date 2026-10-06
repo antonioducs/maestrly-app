@@ -51,6 +51,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { BotAutonomyTable } from './BotAutonomyTable'
 import { BotMemorySection } from './BotMemorySection'
+import { BotDesktopAccessSection } from './BotDesktopAccessSection'
 import { BotPeerPicker } from './BotPeerPicker'
 import { BotRoutinesSection } from './BotRoutinesSection'
 import { BotSaveBar, LeaveSettingsDialog } from './BotSaveBar'
@@ -61,7 +62,17 @@ import { SettingsCard, SettingsSection } from './SettingsSection'
 export type SettingsLeaveGuard = (proceed: () => void) => void
 
 /** The tabs of the settings, one section each; a bot without an environment keeps its accounts and skills in Model. */
-type TabId = 'identity' | 'autonomy' | 'model' | 'peers' | 'routines' | 'memory' | 'environment' | 'where' | 'archive'
+type TabId =
+  | 'identity'
+  | 'autonomy'
+  | 'model'
+  | 'peers'
+  | 'routines'
+  | 'memory'
+  | 'desktops'
+  | 'environment'
+  | 'where'
+  | 'archive'
 const domId = (section: TabId) => `fleet-settings-${section}`
 const tabDomId = (tab: TabId) => `fleet-settings-tab-${tab}`
 const panelDomId = (tab: TabId) => `fleet-settings-panel-${tab}`
@@ -228,6 +239,7 @@ export function BotSettings({
     'peers',
     'routines',
     'memory',
+    'desktops',
     shared ? 'environment' : 'where',
     'archive',
   ]
@@ -771,6 +783,9 @@ export function BotSettings({
           </SettingsTabPanel>
           <SettingsTabPanel tab="memory" current={current}>
             <BotMemorySection key={`memory-${bot.id}`} id={domId('memory')} bot={bot} />
+          </SettingsTabPanel>
+          <SettingsTabPanel tab="desktops" current={current}>
+            <BotDesktopAccessSection key={`desktops-${bot.id}`} id={domId('desktops')} bot={bot} />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={shared ? 'environment' : 'where'} current={current}>

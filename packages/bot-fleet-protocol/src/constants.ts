@@ -231,3 +231,24 @@ export const FLEET_ENVIRONMENT_DISPLAY = { columns: 3, rows: 3, width: 3840, hei
 
 /** Typed, revision-aware environment configuration, independent of any bot. */
 export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'
+
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: a bot reaches the workspaces of the Macs that gave it access,
+ * one Mac at a time, through each Mac's own event stream. Every Mac decides on its own: the gateway only keeps which
+ * Macs linked which bot and routes a call to the one it names; grants, conversations and worktrees stay on the Mac.
+ */
+export const FLEET_DESKTOP_BRIDGE_FEATURE = 'desktop-bridge'
+/** The query parameter a device's event stream sets to `1` to receive desktop calls: it is then online for its bots. */
+export const FLEET_DESKTOP_BRIDGE_QUERY = 'desktopBridge'
+/**
+ * How long the gateway waits for a Mac to answer one call (a wait for conversation events takes up to 20 s on the
+ * Mac), how many calls of one bot may wait at once, how many Macs may link one bot, and the size of what crosses.
+ */
+export const FLEET_DESKTOP_BRIDGE_LIMITS = {
+  callTimeoutMs: 25_000,
+  pendingPerBotMax: 16,
+  linksPerBotMax: 20,
+  nameMax: 60,
+  inputBytesMax: 320 * 1024,
+  resultBytesMax: 2 * 1024 * 1024,
+} as const

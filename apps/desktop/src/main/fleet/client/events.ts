@@ -1,4 +1,5 @@
 import {
+  FLEET_DESKTOP_BRIDGE_QUERY,
   FLEET_GATEWAY_ROUTES,
   FLEET_REASONING_QUERY,
   buildPath,
@@ -24,7 +25,9 @@ export class FleetEvents {
     private readonly onState: (state: FleetConnectionState, error: string | null) => void,
     private readonly onConnected: () => Promise<void>,
     private readonly pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    private readonly heartbeatMs = 45_000
+    private readonly heartbeatMs = 45_000,
+    /** `desktopBridge`: this Mac answers bots' desktop calls on this stream, and is online for them while it is open. */
+    private readonly options: { desktopBridge?: boolean } = {}
   ) {}
 
   start(): void {
@@ -77,8 +80,13 @@ export class FleetEvents {
       heartbeat = setTimeout(() => controller.abort(), this.heartbeatMs)
     }
     try {
-      // This app reads `reasoning` items; an older gateway ignores the parameter and sends none.
-      const path = buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, { [FLEET_REASONING_QUERY]: 1 })
+      // This app reads `reasoning` items; an older gateway ignores the parameter and sends none. The same holds for
+      // desktop calls.
+      const path = buildPath(
+        FLEET_GATEWAY_ROUTES.events.path,
+        {},
+        { [FLEET_REASONING_QUERY]: 1, ...(this.options.desktopBridge ? { [FLEET_DESKTOP_BRIDGE_QUERY]: 1 } : {}) }
+      )
       const response = await fetch(this.api.origin + path, {
         headers: { ...this.api.headers(), Accept: 'text/event-stream' },
         signal: controller.signal,

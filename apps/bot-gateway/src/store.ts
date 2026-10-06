@@ -59,6 +59,15 @@ export type BotSecrets = EnvironmentSecrets & BotGatewaySecrets
 /** Where a bot runs: its environment and its display slot there. */
 export type BotPlacement = { environmentId: string; slot: number; archivedWithEnvironment: boolean }
 export type ArchivedBotRecord = { bot: FleetBot; archivedAt: string; archivedWithEnvironment: boolean }
+/** A Mac that gave a bot access to its workspaces: the device that paired, and the id and name the bot sees. */
+export type StoredDesktopLink = {
+  botId: string
+  deviceId: string
+  desktopId: string
+  name: string
+  linkedAt: string
+  updatedAt: string
+}
 
 const now = () => new Date().toISOString()
 const SLOTS = FLEET_ENVIRONMENT_LIMITS.botsMax
@@ -161,7 +170,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 9) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 10) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -222,6 +231,15 @@ export class Store {
     if (version <= 8) {
       this.db.exec('ALTER TABLE bots ADD COLUMN publish_artifacts INTEGER NOT NULL DEFAULT 0')
       this.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
+    }
+    if (version <= 9) {
+      // Which Macs gave which bot access to their workspaces: the gateway routes a bot's calls by these and keeps
+      // nothing else of a Mac (no grant, catalog or conversation).
+      this.db.exec(`
+        CREATE TABLE desktop_links (bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, desktop_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, linked_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (bot_id, device_id));
+        CREATE INDEX idx_desktop_links_device ON desktop_links(device_id);
+      `)
+      this.db.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -519,6 +537,80 @@ export class Store {
         .prepare('UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL')
         .run(new Date().toISOString(), id).changes > 0
     )
+  }
+  device(id: string): Device | null {
+    const row = this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) as Row | undefined
+    return row
+      ? {
+          id: String(row.id),
+          name: String(row.name),
+          createdAt: String(row.created_at),
+          lastSeenAt: row.last_seen_at as string | null,
+          revokedAt: row.revoked_at as string | null,
+        }
+      : null
+  }
+
+  private desktopLink(row: Row): StoredDesktopLink {
+    return {
+      botId: String(row.bot_id),
+      deviceId: String(row.device_id),
+      desktopId: String(row.desktop_id),
+      name: String(row.name),
+      linkedAt: String(row.linked_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+  /** The Macs linked to a bot, oldest link first. */
+  desktopLinks(botId: string): StoredDesktopLink[] {
+    return (
+      this.db.prepare('SELECT * FROM desktop_links WHERE bot_id=? ORDER BY linked_at, desktop_id').all(botId) as Row[]
+    ).map((row) => this.desktopLink(row))
+  }
+  desktopLinksOfDevice(deviceId: string): StoredDesktopLink[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM desktop_links WHERE device_id=? ORDER BY linked_at, desktop_id')
+        .all(deviceId) as Row[]
+    ).map((row) => this.desktopLink(row))
+  }
+  desktopLinkById(desktopId: string): StoredDesktopLink | null {
+    const row = this.db.prepare('SELECT * FROM desktop_links WHERE desktop_id=?').get(desktopId) as Row | undefined
+    return row ? this.desktopLink(row) : null
+  }
+  /**
+   * Links a Mac to a bot under a name, or renames its link: a link keeps its `desktopId` for as long as it exists, so
+   * the ids the Mac handed the bot stay valid. Linking again after an unlink mints a new one.
+   */
+  saveDesktopLink(botId: string, deviceId: string, name: string, desktopId: string, at = now()): StoredDesktopLink {
+    this.db
+      .prepare(
+        `INSERT INTO desktop_links(bot_id,device_id,desktop_id,name,linked_at,updated_at) VALUES(?,?,?,?,?,?)
+         ON CONFLICT(bot_id,device_id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at`
+      )
+      .run(botId, deviceId, desktopId, name, at, at)
+    const row = this.db
+      .prepare('SELECT * FROM desktop_links WHERE bot_id=? AND device_id=?')
+      .get(botId, deviceId) as Row
+    return this.desktopLink(row)
+  }
+  deleteDesktopLink(botId: string, deviceId: string): StoredDesktopLink | null {
+    return this.transaction(() => {
+      const row = this.db.prepare('SELECT * FROM desktop_links WHERE bot_id=? AND device_id=?').get(botId, deviceId) as
+        | Row
+        | undefined
+      if (!row) return null
+      this.db.prepare('DELETE FROM desktop_links WHERE bot_id=? AND device_id=?').run(botId, deviceId)
+      return this.desktopLink(row)
+    })
+  }
+  /** Removes every link of a Mac; returns them. */
+  deleteDesktopLinksOfDevice(deviceId: string): StoredDesktopLink[] {
+    return this.transaction(() => {
+      const links = this.desktopLinksOfDevice(deviceId)
+      this.db.prepare('DELETE FROM desktop_links WHERE device_id=?').run(deviceId)
+      return links
+    })
   }
 
   private environment(row: Row): StoredEnvironment {
@@ -976,6 +1068,7 @@ export class Store {
       this.db.prepare('DELETE FROM routine_runs WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM routines WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM desktop_links WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db

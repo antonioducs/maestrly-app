@@ -29,6 +29,10 @@ import {
   type FleetSendMessageRequest,
   type FleetAddApiKeyAccountRequest,
   type FleetConversationCallRequest,
+  type FleetDesktopCallResult,
+  type FleetDesktopLinkRequest,
+  FLEET_DESKTOP_BRIDGE_FEATURE,
+  FLEET_DESKTOP_BRIDGE_QUERY,
 } from '@maestrly/bot-fleet-protocol'
 import type { ServerResponse } from 'node:http'
 import type { GatewayContext } from '../context.js'
@@ -57,6 +61,12 @@ const PROVISIONING = new Set([
 function requireBot(ctx: GatewayContext, id: string) {
   const bot = ctx.lifecycle.get(id)
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+  return bot
+}
+/** A bot that exists, archived or not: only deleting it removes its records. */
+function requireBotRecord(ctx: GatewayContext, id: string) {
+  const bot = ctx.store.getBot(id)
+  if (!bot) throw new GatewayError('NOT_FOUND', 'Bot not found')
   return bot
 }
 /** Older Macs address an archived environment of one through its bot; shared environments need their own routes. */
@@ -285,6 +295,7 @@ export async function publicRoute(
             FLEET_CONTEXT_LIMIT_FEATURE,
             FLEET_TRANSCRIPT_REASONING_FEATURE,
             FLEET_RUNTIME_UPDATES_FEATURE,
+            FLEET_DESKTOP_BRIDGE_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -643,6 +654,33 @@ export async function publicRoute(
     case 'botRoutineRun':
       requireBot(ctx, id)
       return { body: await ctx.routines!.run(id, params.rid) }
+    // A Mac links only itself; it may list a bot's Macs, and remove another Mac's link, but never act as another Mac.
+    case 'botDesktopLinkPut': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: ctx.desktops!.linkDevice(id, device, (body as FleetDesktopLinkRequest).name) }
+    }
+    case 'botDesktopLinkDelete': {
+      requireBotRecord(ctx, id)
+      ctx.desktops!.unlinkDevice(id, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    }
+    case 'botDesktopLinks': {
+      // An archived bot keeps its links (restoring it restores its access); a deleted one has none.
+      requireBotRecord(ctx, id)
+      return { body: { links: ctx.desktops!.views(id, ctx.auth.device(res.req?.headers.authorization).id) } }
+    }
+    case 'botDesktopLinkRemove':
+      requireBotRecord(ctx, id)
+      ctx.desktops!.remove(id, params.desktopId)
+      return { status: 204 }
+    case 'desktopCallResult':
+      ctx.desktops!.result(
+        params.callId,
+        ctx.auth.device(res.req?.headers.authorization).id,
+        body as FleetDesktopCallResult
+      )
+      return { status: 204 }
     case 'inbox':
       return {
         body: {
@@ -666,6 +704,8 @@ export async function publicRoute(
     case 'events':
       ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id, {
         reasoning: fleetReaderWantsReasoning(url.searchParams),
+        // A Mac that answers desktop calls says so; until it does, it is offline for the bots it linked.
+        desktopBridge: url.searchParams.get(FLEET_DESKTOP_BRIDGE_QUERY) === '1',
       })
       return { stream: true }
     default:

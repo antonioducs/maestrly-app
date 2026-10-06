@@ -32,7 +32,7 @@ const legacyProfile = (conversationId: string) => ({
     ceiling: 'ask',
     selection: null,
     compaction: null,
-    gateway: { peersEnabled: true, artifactsEnabled: false },
+    gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
   },
   primaryConversationId: conversationId,
 })
