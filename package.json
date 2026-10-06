@@ -90,6 +90,12 @@
   "overrides": {
     "@connectrpc/connect-node": {
       "undici": "6.28.1"
+    },
+    "mermaid": {
+      "katex": "^0.18.10"
+    },
+    "micromark-extension-math": {
+      "katex": "^0.18.10"
     }
   }
 }
