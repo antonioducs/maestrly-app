@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import type { Conversation } from '../../../preload'
+import { BotConversationBadge } from '../bot/BotConversationBadge'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
@@ -120,6 +121,7 @@ export function useConvRows({
             <StatusIcon status={status} />
           )}
         </span>
+        {conv.botOrigin && <BotConversationBadge conversation={conv} compact />}
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <input

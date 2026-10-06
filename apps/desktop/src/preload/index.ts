@@ -21,6 +21,7 @@ import { soundApi } from './api-sound'
 import { updateApi } from './api-update'
 import { workspaceApi } from './api-workspace'
 import { platformApi } from './api-platform'
+import { botApi } from './api-bot'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { artifactsApi } from './api-artifacts'
@@ -158,6 +159,7 @@ const api = {
   ...chatApi,
   ...chatWindowApi,
   ...platformApi,
+  ...botApi,
   ...fleetApi,
   fleetEnvironmentSettings,
   ...fleetInstallerApi,

@@ -116,6 +116,7 @@ function assertEligible(conversationId: string): ProjectConversation {
   const stored = getConversation(conversationId)
   if (!stored) throw new Error('Conversation not found.')
   const conversation = requireProjectConversation(stored)
+  if (conversation.botOrigin) throw new Error('Bot conversations must keep their exclusive worktree.')
   if (conversation.mode !== 'local' || conversation.isMulti !== 0 || conversation.archived !== 0) {
     throw new Error('Migration requires an active local single-repository conversation.')
   }
@@ -128,7 +129,10 @@ function assertEligible(conversationId: string): ProjectConversation {
 function requireProjectMigration(record: ConversationMigrationRecord): void {
   for (const id of [record.conversationId, record.legacySuccessorConversationId]) {
     const conversation = id ? getConversation(id) : undefined
-    if (conversation) requireProjectConversation(conversation)
+    if (conversation) {
+      requireProjectConversation(conversation)
+      if (conversation.botOrigin) throw new Error('Bot conversations must keep their exclusive worktree.')
+    }
   }
 }
 

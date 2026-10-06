@@ -30,7 +30,7 @@ export interface OpenTargets {
 export type OpenExternalTarget = 'terminal' | 'finder' | 'vscode'
 
 export const activeSiblingSource = (members: Conversation[]): Conversation | null =>
-  members.find((conv) => conv.archived !== 1) ?? null
+  members.find((conv) => conv.archived !== 1 && !conv.botOrigin) ?? null
 
 export function useSidebarMenus({
   openTargets,
@@ -126,7 +126,7 @@ export function useSidebarMenus({
   )
 
   const canCreateSibling = (conv: Conversation, isArchived: boolean): boolean =>
-    conv.mode === 'worktree' && !conv.isMulti && !isArchived
+    conv.mode === 'worktree' && !conv.isMulti && !isArchived && !conv.botOrigin
 
   const pinItem = (conv: Conversation, isArchived: boolean, m: MenuKit) => {
     if (isArchived) return null

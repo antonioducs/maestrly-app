@@ -40,7 +40,10 @@ afterEach(() => {
 
 describe('detectConversationDispatchIntent', () => {
   it.each([
-    ['Abra uma conversa para cada um desses cards e comece o desenvolvimento com gpt-5.6, effort high e fast desligado.', null],
+    [
+      'Abra uma conversa para cada um desses cards e comece o desenvolvimento com gpt-5.6, effort high e fast desligado.',
+      null,
+    ],
     ['Por favor, crie 3 conversas novas, uma para cada task.', 3],
     ['Quero que você abra duas conversas: uma para o card A e outra para o B.', 2],
     ['Dispare uma conversa por card para desenvolver cada task.', null],
@@ -54,7 +57,10 @@ describe('detectConversationDispatchIntent', () => {
     ['Could you start separate conversations for these two tickets?', null],
     ['I want you to create conversations for each of these issues using Opus with high effort.', null],
     ['Send this plan to a new chat.', 1],
-    ['Elabora o plano e envia para desenvolvimento no workspace do projeto X, criando a branch Y a partir da main, usando modelo Z.', 1],
+    [
+      'Elabora o plano e envia para desenvolvimento no workspace do projeto X, criando a branch Y a partir da main, usando modelo Z.',
+      1,
+    ],
     ['Envie esse plano para implementação no projeto X.', 1],
     ['Send this plan for development in workspace X', 1],
     ['Send this plan for development in workspace "Example App".', 1],
@@ -93,7 +99,10 @@ describe('detectConversationDispatchIntent', () => {
     ['If I ask, send this plan for development in workspace X.', 'hypothetical'],
     ['Por exemplo, envie esse plano para desenvolvimento no workspace X.', 'hypothetical'],
     ['Implement the feature: send this plan for development in workspace X.', 'hypothetical'],
-    ['Quero poder enviar o plano para desenvolvimento no workspace do projeto X, escolhendo branch, modelo, effort e Fast.', 'hypothetical'],
+    [
+      'Quero poder enviar o plano para desenvolvimento no workspace do projeto X, escolhendo branch, modelo, effort e Fast.',
+      'hypothetical',
+    ],
     ['Implement development in workspace X.', 'not-requested'],
     ['Send this plan to workspace X.', 'not-requested'],
     ['Send this plan for development.', 'not-requested'],
@@ -121,6 +130,7 @@ describe('isHumanTurnAdmission', () => {
   it.each([
     ['approved plan / revision / guard continuation', { internal: true }],
     ['review loop', { internalLoop: {} }],
+    ['bot command', { botAdmission: {} }],
     ['Kanban web chat', { remoteAdmission: true }],
     ['unattended executor', { runnerAdmission: () => undefined, runnerSignal: new AbortController().signal }],
     ['seeded child conversation', { dispatchSeed: { dispatchId: 'd', sourceConversationId: 's' } }],

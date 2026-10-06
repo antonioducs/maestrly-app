@@ -60,6 +60,7 @@ vi.mock('../../src/main/memory/index', () => ({
 }))
 
 import { addSubscriptionAccount, listSubscriptionAccounts } from '../../src/main/chat/catalog'
+import { localBotService } from '../../src/main/bot/local-service'
 import { createStandaloneConversation } from '../../src/main/standalone-conversation-service'
 import { workspaceDataDir } from '../../src/main/app-paths'
 import { resetLocalAppData } from '../../src/main/local-data/local-data-reset'
@@ -96,6 +97,79 @@ describe('resetLocalAppData', () => {
     await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
     expect(h.wipeCursorLocalData).toHaveBeenCalledWith([null, account.id])
     expect(listSubscriptionAccounts()).toEqual([])
+  })
+
+  it('removes what the bots of a bot server keep on this computer: connections, chats, commands and durable events', async () => {
+    const db = getDb()
+    const workspace = makeWorkspace()
+    const connection = localBotService.createConnection({
+      name: 'Fixture bot',
+      workspaceIds: [workspace.id],
+      providerIds: ['grok'],
+    })
+    localBotService.saveInventory(connection.id, {
+      capability: 'bot:conversations:v1',
+      enabled: true,
+      workspaces: [{ workspaceId: workspace.id, label: 'Project', branches: ['main'], defaultBranch: 'main' }],
+      selections: [
+        {
+          selectionId: 'model',
+          label: 'Model',
+          providerLabel: 'Grok',
+          reasoningEfforts: [],
+          fastMode: false,
+          modes: ['agent'],
+          permissionModes: ['ask'],
+        },
+      ],
+    })
+    await localBotService.callTool(
+      connection.id,
+      'bot_create_chat',
+      {
+        workspaceId: workspace.id,
+        name: 'Bot work',
+        baseBranch: 'main',
+        selection: { selectionId: 'model' },
+        message: 'Hello',
+        idempotencyKey: 'create-1',
+      },
+      new AbortController().signal
+    )
+    const chat = db.prepare('SELECT id FROM bot_local_conversations').get() as unknown as { id: string }
+    const command = db.prepare('SELECT id FROM bot_local_commands').get() as unknown as { id: string }
+    // What a turn leaves behind once it runs: the transcript of the chat and a question still open.
+    db.prepare('INSERT INTO bot_local_messages VALUES(?,?,?,?,?,?)').run(
+      'message',
+      chat.id,
+      command.id,
+      'assistant',
+      '[]',
+      Date.now()
+    )
+    db.prepare('INSERT INTO bot_local_questions VALUES(?,?,?,?,?,?,?)').run(
+      'question',
+      chat.id,
+      command.id,
+      '[]',
+      'pending',
+      null,
+      Date.now()
+    )
+
+    const tables = (
+      db
+        .prepare(`SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'bot_local_%' ORDER BY name`)
+        .all() as unknown as Array<{ name: string }>
+    ).map((row) => row.name)
+    const rows = (table: string): number =>
+      (db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get() as unknown as { total: number }).total
+    // The fixture must fill every local bot table, so a new one cannot quietly escape the reset.
+    expect(tables.filter((table) => rows(table) === 0)).toEqual([])
+
+    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
+
+    expect(tables.filter((table) => rows(table) > 0)).toEqual([])
   })
 
   it('preserves Cursor account discovery when its state cannot be wiped', async () => {

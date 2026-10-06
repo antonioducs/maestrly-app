@@ -31,6 +31,7 @@ const origins = new Map<string, HumanTurnOrigin>()
 export interface TurnAdmissionShape {
   internal?: boolean
   internalLoop?: unknown
+  botAdmission?: unknown
   remoteAdmission?: boolean
   runnerAdmission?: unknown
   runnerSignal?: unknown
@@ -47,6 +48,7 @@ export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): bool
   return (
     !opts?.internal &&
     !opts?.internalLoop &&
+    !opts?.botAdmission &&
     !opts?.remoteAdmission &&
     !opts?.runnerAdmission &&
     !opts?.runnerSignal &&
@@ -180,7 +182,8 @@ const SEND_VERBS = String.raw`(?:envie|enviem|envia|enviar|mande|mandem|manda|ma
 
 // A handoff must name both the purpose and a workspace/project target in the same directive.
 // The name itself may have been stripped as quoted content; target selection is validated by the service.
-const DEVELOPMENT_TARGET = /^\s+(?:(?:this|the|that|este|esse|o|um)\s+(?:plan|plano|task|tarefa|work|trabalho)\s+)?(?:for|to|para|pra)\s+(?:(?:o|a)\s+)?(?:development|implementation|desenvolvimento|implementacao)\s+(?:in|to|at|no|na|em|para|pro|pra)\s+(?:(?:the|o|a)\s+)?(?:workspace|project|projeto)\b/
+const DEVELOPMENT_TARGET =
+  /^\s+(?:(?:this|the|that|este|esse|o|um)\s+(?:plan|plano|task|tarefa|work|trabalho)\s+)?(?:for|to|para|pra)\s+(?:(?:o|a)\s+)?(?:development|implementation|desenvolvimento|implementacao)\s+(?:in|to|at|no|na|em|para|pro|pra)\s+(?:(?:the|o|a)\s+)?(?:workspace|project|projeto)\b/
 
 const QUALIFIER =
   /\b(?:nova|novas|novo|novos|outra|outras|outro|outros|separad[ao]s?|propri[ao]s?|dedicad[ao]s?|diferentes?|new|another|other|separate|own|dedicated|different|fresh|\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|one|two|three|four|five|six|seven|eight|nine|ten|varias|varios|several|multiple)\b/
@@ -200,7 +203,8 @@ const PREFIX_TOKEN = [
 /** Only these may precede the imperative verb in its segment. */
 const PREFIX_OK = new RegExp(String.raw`^(?:${PREFIX_TOKEN})(?:\s+(?:${PREFIX_TOKEN}))*$`)
 
-const POLITE_QUESTION = /(?:^|\s)(?:(?:voce|vc|tu)\s+)?(?:pode|poderia|podes|podia)(?:\s|$)|(?:^|\s)(?:could|can|would|will)\s+you(?:\s|$)/
+const POLITE_QUESTION =
+  /(?:^|\s)(?:(?:voce|vc|tu)\s+)?(?:pode|poderia|podes|podia)(?:\s|$)|(?:^|\s)(?:could|can|would|will)\s+you(?:\s|$)/
 
 const NEGATION =
   /\b(?:nao|nunca|jamais|nem|evite|evitar|pare\s+de|don't|dont|do\s+not|never|no\s+need|avoid|stop|instead\s+of|em\s+vez\s+de|rather\s+than)\b/
@@ -216,7 +220,8 @@ const CAPABILITY =
 const HYPOTHETICAL =
   /\b(?:(?:quando|se|caso|when|whenever|if)\s+(?:eu|a\s+gente|nos|i|we|alguem|someone|o\s+usuario|um\s+usuario|the\s+user|a\s+user)|imagine|imagina|suponha|supondo|suppose|exemplo|example|e\.g|for\s+instance|poder|seria\s+(?:bom|legal|otimo)|would\s+be\s+(?:nice|great|good)|feature|features|funcionalidade|funcionalidades|recurso|capacidade|capability|ability|able\s+to|suporte\s+(?:a|para)|support\s+for|ideia|idea|proposta|proposal)\b/
 
-const PER_ITEM = /\b(?:cada|each|per|por\s+(?:card|cards|task|tasks|tarefa|tarefas|ticket|tickets|item|itens|issue|issues|subtask|subtasks|subtarefa|subtarefas))\b/
+const PER_ITEM =
+  /\b(?:cada|each|per|por\s+(?:card|cards|task|tasks|tarefa|tarefas|ticket|tickets|item|itens|issue|issues|subtask|subtasks|subtarefa|subtarefas))\b/
 const MORE = /\b(?:outra|outro|outras|outros|another|mais\s+uma|mais\s+um|one\s+more|also\s+one)\b/
 
 const NUMBER_WORDS: Record<string, number> = {

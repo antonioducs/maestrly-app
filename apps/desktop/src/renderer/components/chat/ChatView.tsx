@@ -58,7 +58,9 @@ import type {
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { BackgroundCompactionStatus as BackgroundCompactionState } from '../../../shared/background-compaction'
+import type { Conversation } from '../../../shared/conversation'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
+import { BotManualChatControl } from '../bot/BotManualChatControl'
 import { cycleChatMode } from '../../../shared/chat-mode'
 import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
 import {
@@ -114,6 +116,11 @@ import { SubagentActivityPill } from './SubagentActivityPill'
 import { routeHarnessComposerSubmit, routeHarnessReasoningChange } from './harness-turn-controls'
 
 interface Props {
+  /** A bot holds this conversation: it created it and the person has not paused or revoked it. */
+  botManaged?: boolean
+  /** The person released this bot chat, so they write in it without taking it from the bot. */
+  botConversation?: Conversation
+  botName?: string
   workspaceId: string | null
   conversationId: string
   cwd: string
@@ -151,6 +158,9 @@ function revokeAttachmentPreviews(attachments: readonly UIAttachment[]): void {
 }
 
 export function ChatView({
+  botManaged = false,
+  botConversation,
+  botName,
   workspaceId,
   conversationId,
   cwd: _cwd,
@@ -163,6 +173,8 @@ export function ChatView({
   const { t } = useTranslation('chat')
   const ownerWindow = useChatOwnerWindow()
   const showSourceConversation = useChatSourceConversation()
+  // A released chat still belongs to its bot; what changes is that the person may write in it too.
+  const botBlocked = botManaged && !botConversation?.botManualChatEnabled
   const [currentExperience, setCurrentExperience] = useState(experience)
   useEffect(() => setCurrentExperience(experience), [conversationId, experience])
   const isMaestro = currentExperience === 'maestro'
@@ -2197,6 +2209,11 @@ export function ChatView({
               </div>
             )}
 
+            {botManaged && botConversation && (
+              <div className="mx-auto mb-1.5 w-full max-w-3xl px-3" data-testid="bot-manual-chat">
+                <BotManualChatControl conversation={botConversation} />
+              </div>
+            )}
             {pendingQuestion ? (
               <QuestionComposer
                 key={pendingQuestion.toolCallId}
@@ -2214,7 +2231,8 @@ export function ChatView({
                 streaming={streaming}
                 sendWhileStreaming={maestroLiveActive || midTurnSteering}
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
-                disabled={keyMissing || reviewLoopActive}
+                disabled={keyMissing || reviewLoopActive || botBlocked}
+                disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
                 onSend={submitDraft}
                 onStop={stop}
                 attachments={attachments}
@@ -2231,7 +2249,7 @@ export function ChatView({
                   <ChatMicButton
                     onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
                     onAutoSend={(t) => {
-                      if (keyMissing || reviewLoopActive) return false
+                      if (keyMissing || reviewLoopActive || botBlocked) return false
                       submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
                       return true
                     }}

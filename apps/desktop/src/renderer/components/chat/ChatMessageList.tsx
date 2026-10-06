@@ -690,6 +690,14 @@ const Bubble = memo(function Bubble({
             {t('dispatch.startedFrom')}
           </span>
         )}
+        {message.botName && (
+          <span
+            data-testid="bot-message-author"
+            className="w-fit rounded border border-sky-400/25 bg-sky-400/[0.08] px-2 py-0.5 text-[10px] text-sky-300"
+          >
+            {t('bots.sentBy', { ns: 'ui', name: message.botName })}
+          </span>
+        )}
         <FileParts
           files={files}
           onOpenImage={onOpenImage}
