@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Wrench, X } from 'lucide-react'
+import { ArrowDown, Loader2, Wrench, X } from 'lucide-react'
 import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -359,9 +359,13 @@ export function BotConversation({
   const imageCache = fleetImageCache
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
+  const [atBottom, setAtBottom] = useState(true)
   const oldHeightRef = useRef<number | null>(null)
   const scrollTopRef = useRef(0)
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   useEffect(() => {
     fleet.ensureTranscript(bot.id)
   }, [bot.id, fleet.ensureTranscript])
@@ -375,6 +379,28 @@ export function BotConversation({
     else node.scrollTop = scrollTopRef.current
     scrollTopRef.current = node.scrollTop
   }, [transcript?.items, visible])
+  useEffect(() => {
+    const node = scrollRef.current
+    const content = contentRef.current
+    if (!node || !content) return
+    // The transcript renders through a portal that is attached after its first layout, and markdown or images grow
+    // it later: keep following the end while the reader is there.
+    const observer = new ResizeObserver(() => {
+      if (!visibleRef.current || node.clientHeight === 0) return
+      if (atBottomRef.current) node.scrollTop = node.scrollHeight
+      scrollTopRef.current = node.scrollTop
+    })
+    observer.observe(node)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [])
+  const scrollToBottom = () => {
+    const node = scrollRef.current
+    if (!node) return
+    atBottomRef.current = true
+    setAtBottom(true)
+    node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+  }
   const locked = ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
   const lastItem = transcript?.items.at(-1)
   const runningToolLast = lastItem?.kind === 'tool' && lastItem.state === 'running'
@@ -498,88 +524,102 @@ export function BotConversation({
           onClose={closeSearch}
         />
       )}
-      <div
-        ref={scrollRef}
-        data-bot-transcript-scroll
-        onScroll={(event) => {
-          const node = event.currentTarget
-          // Hiding a pane can emit a zero-position scroll. It must not replace the reading position.
-          if (!visible || node.clientHeight === 0) return
-          scrollTopRef.current = node.scrollTop
-          atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
-        }}
-        className="min-h-0 flex-1 overflow-y-auto"
-      >
-        <div className="bot-transcript mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
-          {transcript?.error && (
-            <div role="alert" className="text-center text-xs text-destructive">
-              {transcript.error}{' '}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          data-bot-transcript-scroll
+          onScroll={(event) => {
+            const node = event.currentTarget
+            // Hiding a pane can emit a zero-position scroll. It must not replace the reading position.
+            if (!visible || node.clientHeight === 0) return
+            scrollTopRef.current = node.scrollTop
+            atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
+            setAtBottom(atBottomRef.current)
+          }}
+          className="min-h-0 flex-1 overflow-y-auto"
+        >
+          <div ref={contentRef} className="bot-transcript mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
+            {transcript?.error && (
+              <div role="alert" className="text-center text-xs text-destructive">
+                {transcript.error}{' '}
+                <button
+                  type="button"
+                  className="ml-2 text-primary underline"
+                  onClick={() => void fleet.loadTranscript(bot.id).catch(() => {})}
+                >
+                  {t('transcript.retry')}
+                </button>
+              </div>
+            )}
+            {transcript?.before && (
               <button
                 type="button"
-                className="ml-2 text-primary underline"
-                onClick={() => void fleet.loadTranscript(bot.id).catch(() => {})}
+                disabled={transcript.loading}
+                className="self-center rounded-md border border-border px-3 py-1.5 text-xs"
+                onClick={() => {
+                  oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
+                  void fleet
+                    .loadTranscript(bot.id, transcript.before)
+                    .catch((cause) => setError(fleetErrorMessage(cause)))
+                }}
               >
-                {t('transcript.retry')}
+                {t('transcript.loadOlder')}
               </button>
-            </div>
-          )}
-          {transcript?.before && (
-            <button
-              type="button"
-              disabled={transcript.loading}
-              className="self-center rounded-md border border-border px-3 py-1.5 text-xs"
-              onClick={() => {
-                oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
-                void fleet
-                  .loadTranscript(bot.id, transcript.before)
-                  .catch((cause) => setError(fleetErrorMessage(cause)))
-              }}
-            >
-              {t('transcript.loadOlder')}
-            </button>
-          )}
-          {segments.map((segment) => {
-            const key = transcriptSegmentKey(segment)
-            const query = searchHighlight && searchHitKeys.has(key) ? searchHighlight : undefined
-            const current = key === currentHitKey
-            return (
-              // `contents` keeps the transcript's layout: a row that renders nothing adds no gap.
-              <div key={key} data-search-key={key} className="contents">
-                {segment.kind === 'activity' ? (
-                  <BotAgentActivity
-                    bot={bot}
-                    segment={segment}
-                    imageCache={imageCache}
-                    onShowOnComputer={onOpenScreen}
-                    searchQuery={query}
-                    currentSearchMatch={current}
-                  />
-                ) : segment.kind === 'images' ? (
-                  // The images the bot shared: the tool stays in the activity, with its images in its details.
-                  <BotTranscriptImages botId={bot.id} images={segment.item.images} cache={imageCache} size="large" />
-                ) : (
-                  <TranscriptRow
-                    bot={bot}
-                    item={segment.item}
-                    fleet={fleet}
-                    onOpenBot={onOpenBot}
-                    onOpenScreen={onOpenScreen}
-                    imageCache={imageCache}
-                    latestTodoId={latestTodoId}
-                    searchQuery={query}
-                    currentSearchMatch={current}
-                  />
-                )}
+            )}
+            {segments.map((segment) => {
+              const key = transcriptSegmentKey(segment)
+              const query = searchHighlight && searchHitKeys.has(key) ? searchHighlight : undefined
+              const current = key === currentHitKey
+              return (
+                // `contents` keeps the transcript's layout: a row that renders nothing adds no gap.
+                <div key={key} data-search-key={key} className="contents">
+                  {segment.kind === 'activity' ? (
+                    <BotAgentActivity
+                      bot={bot}
+                      segment={segment}
+                      imageCache={imageCache}
+                      onShowOnComputer={onOpenScreen}
+                      searchQuery={query}
+                      currentSearchMatch={current}
+                    />
+                  ) : segment.kind === 'images' ? (
+                    // The images the bot shared: the tool stays in the activity, with its images in its details.
+                    <BotTranscriptImages botId={bot.id} images={segment.item.images} cache={imageCache} size="large" />
+                  ) : (
+                    <TranscriptRow
+                      bot={bot}
+                      item={segment.item}
+                      fleet={fleet}
+                      onOpenBot={onOpenBot}
+                      onOpenScreen={onOpenScreen}
+                      imageCache={imageCache}
+                      latestTodoId={latestTodoId}
+                      searchQuery={query}
+                      currentSearchMatch={current}
+                    />
+                  )}
+                </div>
+              )
+            })}
+            {bot.status === 'working' && !runningToolLast && !liveLine && (
+              <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
+                {t('transcript.working')}
               </div>
-            )
-          })}
-          {bot.status === 'working' && !runningToolLast && !liveLine && (
-            <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
-              {t('transcript.working')}
-            </div>
-          )}
+            )}
+          </div>
         </div>
+        {!atBottom && segments.length > 0 && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            title={t('chat:messages.goToBottom')}
+            aria-label={t('chat:messages.goToBottom')}
+            className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f]/95 text-foreground shadow-lg backdrop-blur transition hover:bg-[#26262d]"
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        )}
       </div>
       <div className="border-t border-border px-4 py-3">
         <div className="mx-auto max-w-3xl">
