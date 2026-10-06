@@ -128,24 +128,6 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
       clearAllClaudeSessionCleanup()
       clearAllCursorAgentCleanup()
       for (const table of [
-        // Embedded bot relay: children before their owners, so a foreign key never keeps a row alive.
-        'bot_local_idempotency',
-        'bot_local_events',
-        'bot_local_questions',
-        'bot_local_messages',
-        'bot_local_commands',
-        'bot_local_conversations',
-        'bot_local_inventory',
-        'bot_local_grants',
-        'bot_local_connections',
-        'bot_oauth_tokens',
-        'bot_oauth_requests',
-        'bot_oauth_clients',
-        'bot_oauth_config',
-        'bot_command_outbox',
-        'bot_command_receipts',
-        'bot_question_bindings',
-        'bot_conversation_allocations',
         'conversation_dispatches',
         'workspace_creations',
         'chat_usage_ledger',

@@ -99,11 +99,6 @@ function quitHarness() {
         order.push('runner')
       },
     },
-    botHost: {
-      stop: async () => {
-        order.push('bot')
-      },
-    },
     artifactHost: {
       stop: async () => {
         order.push('artifacts')
@@ -355,7 +350,6 @@ describe('update-service', () => {
         expect(harness.order).toEqual([
           'projects',
           'runner',
-          'bot',
           'artifacts',
           'chat',
           'cleanup',

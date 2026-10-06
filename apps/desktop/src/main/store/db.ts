@@ -3,8 +3,6 @@ import { DatabaseSync } from 'node:sqlite'
 import { conversationScopeConstraint, migrateStandaloneConversations } from './standalone-conversation-migration'
 import { app } from 'electron'
 import { prepareProductionDatabasePath } from './database-path-migration'
-import { initializeBotCommandSchema } from '../bot/schema'
-import { initializeBotOAuthSchema } from '../bot/oauth'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -28,6 +26,34 @@ const LEGACY_MANAGEMENT_TABLES = [
   'board_columns',
   'boards',
 ] as const
+
+/**
+ * The retired external agent connection: the embedded `/mcp/bots` endpoint for personal bots and the executor
+ * side of delegated development tasks. Children come before their owners, so a foreign key never blocks a drop.
+ */
+const RETIRED_EXTERNAL_AGENT_TABLES = [
+  'bot_local_idempotency',
+  'bot_local_events',
+  'bot_local_questions',
+  'bot_local_messages',
+  'bot_local_commands',
+  'bot_local_conversations',
+  'bot_local_inventory',
+  'bot_local_grants',
+  'bot_local_connections',
+  'bot_oauth_tokens',
+  'bot_oauth_requests',
+  'bot_oauth_clients',
+  'bot_oauth_config',
+  'bot_command_outbox',
+  'bot_command_receipts',
+  'bot_question_bindings',
+  'bot_conversation_allocations',
+  'platform_delegation_attempts',
+  'platform_delegation_workspaces',
+] as const
+
+const RETIRED_BOT_CONVERSATION_COLUMNS = ['bot_origin', 'bot_management_state', 'bot_manual_chat_enabled'] as const
 
 function tableExists(name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)
@@ -153,6 +179,23 @@ function purgeLegacyProjectManagementSchema(): void {
 }
 
 /**
+ * Remove the retired external agent connection. Conversations a bot created stay as ordinary conversations
+ * with their transcripts and worktrees; only the bot bookkeeping goes. The triggers go first because they name
+ * the allocation table and the origin column, and SQLite refuses to drop a column a trigger still references.
+ */
+function purgeRetiredExternalAgentSchema(): void {
+  db.exec(`
+    DROP TRIGGER IF EXISTS bot_conversation_tombstone;
+    DROP TRIGGER IF EXISTS bot_conversation_origin_immutable;
+  `)
+  for (const table of RETIRED_EXTERNAL_AGENT_TABLES) db.exec(`DROP TABLE IF EXISTS ${table};`)
+  if (!tableExists('conversations')) return
+  for (const column of RETIRED_BOT_CONVERSATION_COLUMNS) {
+    if (tableHasColumn('conversations', column)) db.exec(`ALTER TABLE conversations DROP COLUMN ${column};`)
+  }
+}
+
+/**
  * Open/create SQLite and ensure schema, migrations, and backfills. Tests may inject paths for real
  * WAL/FK behavior. Production resolves its userData database after a consistent legacy snapshot
  * migration; explicit test paths never enter that migration.
@@ -182,8 +225,6 @@ export function initStore(file?: string): void {
 }
 
 function initializeSchema(): void {
-  initializeBotCommandSchema(db)
-  initializeBotOAuthSchema(db)
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_chat_sessions (
       instance_id TEXT NOT NULL, session_id TEXT NOT NULL, conversation_id TEXT NOT NULL UNIQUE,
@@ -197,15 +238,6 @@ function initializeSchema(): void {
       seq INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, event_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS platform_chat_outbox_turn ON platform_chat_outbox(turn_id,seq);
-    CREATE TABLE IF NOT EXISTS platform_delegation_workspaces (
-      instance_id TEXT NOT NULL, task_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
-      PRIMARY KEY(instance_id, task_id)
-    );
-    CREATE TABLE IF NOT EXISTS platform_delegation_attempts (
-      attempt_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, task_id TEXT NOT NULL, stage_id TEXT NOT NULL,
-      turn_id TEXT NOT NULL, lease_id TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT
-    );
-    CREATE INDEX IF NOT EXISTS platform_delegation_attempts_turn ON platform_delegation_attempts(turn_id);
   `)
   // Drop known ledger triggers before schema creation because IF NOT EXISTS would preserve an outdated
   // privacy implementation.
@@ -214,6 +246,7 @@ function initializeSchema(): void {
     DROP TRIGGER IF EXISTS trg_chat_usage_ledger_after_usage_update;
   `)
   purgeLegacyProjectManagementSchema()
+  purgeRetiredExternalAgentSchema()
   const usageLedgerCols = db.prepare('PRAGMA table_info(chat_usage_ledger)').all() as Array<{ name: string }>
   if (usageLedgerCols.length > 0 && !usageLedgerCols.some((column) => column.name === 'conversation_id')) {
     // The ledger deliberately has no FK: this optional owner key keeps per-conversation billing history after
@@ -996,33 +1029,6 @@ function initializeSchema(): void {
   if (!hasCol('experience')) {
     db.exec("ALTER TABLE conversations ADD COLUMN experience TEXT NOT NULL DEFAULT 'standard';")
   }
-  if (!hasCol('bot_origin')) db.exec('ALTER TABLE conversations ADD COLUMN bot_origin TEXT;')
-  if (!hasCol('bot_management_state'))
-    db.exec(
-      "ALTER TABLE conversations ADD COLUMN bot_management_state TEXT CHECK(bot_management_state IN ('active','paused','revoked'));"
-    )
-  // Only the person releases a bot chat for their own messages; a chat that predates the choice keeps none.
-  if (!hasCol('bot_manual_chat_enabled'))
-    db.exec('ALTER TABLE conversations ADD COLUMN bot_manual_chat_enabled INTEGER NOT NULL DEFAULT 0;')
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS bot_conversation_allocations (
-      instance_id TEXT NOT NULL, owner_user_id TEXT NOT NULL, desktop_id TEXT NOT NULL,
-      connection_id TEXT NOT NULL, request_id TEXT NOT NULL, allocation_id TEXT NOT NULL UNIQUE,
-      conversation_id TEXT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
-      workspace_id TEXT NOT NULL, branch TEXT NOT NULL, cwd TEXT NOT NULL,
-      base_branch TEXT NOT NULL, name TEXT NOT NULL, fingerprint TEXT NOT NULL,
-      phase TEXT NOT NULL CHECK(phase IN ('reserved','allocating','prepared','ready','deleted','recovery')),
-      error TEXT,
-      PRIMARY KEY(instance_id,connection_id,request_id)
-    );
-    CREATE TRIGGER IF NOT EXISTS bot_conversation_tombstone BEFORE DELETE ON conversations
-    BEGIN
-      UPDATE bot_conversation_allocations SET phase='deleted' WHERE conversation_id=OLD.id;
-    END;
-    CREATE TRIGGER IF NOT EXISTS bot_conversation_origin_immutable BEFORE UPDATE OF bot_origin ON conversations
-    WHEN OLD.bot_origin IS NOT NULL AND NEW.bot_origin IS NOT OLD.bot_origin
-    BEGIN SELECT RAISE(ABORT, 'Bot conversation origin is immutable'); END;
-  `)
   // Conversations started from another conversation (plan handoff or explicit task dispatch). The destination id
   // is reserved before allocation so a crash can be reconciled; the tombstone keeps a deleted destination from
   // being silently recreated by a retry of the same request.

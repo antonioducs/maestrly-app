@@ -236,7 +236,7 @@ export interface CreateWorktreeArgs {
    * retain the historical <top>/.claude/worktrees/<slug> fallback.
    */
   dest?: string
-  /** Bot allocation must never attach to a branch or checkout that already exists. */
+  /** Exclusive allocation must never attach to a branch or checkout that already exists. */
   exclusive?: boolean
   /** Dispatch reserves its journal-specific directory atomically before Git can adopt it. */
   reserveDestination?: boolean
@@ -394,8 +394,6 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<string> 
   const existing = (await listWorktrees(top)).find((w) => w.branch === branch)
   if (existing) {
     if (args.exclusive) throw new Error('The exclusive worktree branch is already checked out.')
-    if (await gitOrNull(existing.path, ['config', '--worktree', '--get', 'maestrly.botAllocation']))
-      throw new Error('This worktree is owned exclusively by a bot conversation. Resume that conversation instead.')
     if (dest && isInsidePath(top, existing.path)) {
       throw new Error(
         `Branch "${branch}" is already open in a worktree inside the repository. ` +

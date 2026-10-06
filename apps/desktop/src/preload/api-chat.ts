@@ -513,7 +513,7 @@ export const chatApi = {
 
   /**
    * The account, model, effort, fast mode or permission mode of this conversation moved in the main
-   * process — a bot configured it, a delegated stage froze it, or a failover switched accounts. It
+   * process — a fleet bot configured it, a project chat froze it, or a failover switched accounts. It
    * carries no payload: read the settings again through the handlers that already resolve defaults.
    */
   onChatSettingsChanged: (conversationId: string, cb: () => void): (() => void) => {

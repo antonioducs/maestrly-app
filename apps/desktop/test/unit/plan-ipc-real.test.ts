@@ -10,9 +10,6 @@ const h = vi.hoisted(() => ({
   runApprovedPlan: vi.fn(),
   runPlanRevision: vi.fn(),
   setChatMode: vi.fn(),
-  stopChatAndWait: vi.fn(async () => true),
-  pauseBotForHuman: vi.fn(),
-  botSharesConversation: vi.fn(() => false),
 }))
 
 vi.mock('../../src/main/window-ipc', () => ({
@@ -36,11 +33,6 @@ vi.mock('../../src/main/chat/service', () => ({
   runApprovedPlan: h.runApprovedPlan,
   runPlanRevision: h.runPlanRevision,
   setChatMode: h.setChatMode,
-  stopChatAndWait: h.stopChatAndWait,
-}))
-vi.mock('../../src/main/bot/control', () => ({
-  pauseBotForHuman: h.pauseBotForHuman,
-  botSharesConversation: h.botSharesConversation,
 }))
 
 import { registerPlanIpc } from '../../src/main/plan-ipc'
@@ -49,8 +41,6 @@ describe('plan IPC with a real broker', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     h.getConversation.mockReturnValue({ cli: 'chat' })
-    h.stopChatAndWait.mockResolvedValue(true)
-    h.botSharesConversation.mockReturnValue(false)
     h.resolvePlanReview.mockReturnValue({ ok: false, error: 'plan-review-unavailable' })
   })
 
@@ -159,24 +149,5 @@ describe('plan IPC with a real broker', () => {
     expect(startStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
     expect(h.setChatMode).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['a chat the person never released', false, 1],
-    ['a chat they released for their own messages', true, 0],
-  ])('decides a plan in %s without changing who holds it', async (_case, shared, pauses) => {
-    h.getConversation.mockReturnValue({ cwd: '/tmp/project', botOrigin: { kind: 'bot', botName: 'Grok Bot' } })
-    h.botSharesConversation.mockReturnValue(shared)
-    stagePlan({ agentId: 'conv-bot-real', cwd: '/tmp/project', plan: '# Bot plan' })
-    const { reg, mhandles } = createTestRegistrar()
-    registerPlanIpc(reg, { sendToWindow: vi.fn() })
-
-    await mhandles.get('plan:decide')?.({} as never, 'conv-bot-real', { action: 'approve' })
-
-    // Either way the turn under way is stopped before the approved plan runs.
-    expect(h.stopChatAndWait).toHaveBeenCalledWith('conv-bot-real')
-    expect(h.pauseBotForHuman).toHaveBeenCalledTimes(pauses)
-    expect(h.runApprovedPlan).toHaveBeenCalled()
-    clearPlan('conv-bot-real')
   })
 })

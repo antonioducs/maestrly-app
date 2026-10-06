@@ -40,7 +40,6 @@ import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
-import { BotSection } from '@/components/bot/BotSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
 import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -54,8 +53,6 @@ interface Props {
   chat?: ChatSettingsOptions
 
   onShowSidebar?: () => void
-  /** Opens the project setup dialog, so a section that needs a project can offer it without guesswork. */
-  onAddProject?: () => Promise<unknown> | void
   onClose: () => void
 }
 
@@ -65,7 +62,6 @@ export function SettingsView({
   sections,
   chat,
   onShowSidebar,
-  onAddProject,
   onClose,
 }: Props) {
   const { t } = useTranslation('ui')
@@ -399,9 +395,6 @@ export function SettingsView({
                 fleet={fleet}
                 {...(fleetSetup ? { initialSetup: fleetSetup, defaultHosts: 'artifacts-only' } : {})}
               />
-            )}
-            {section === 'bots' && (
-              <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />
             )}
 
             {section === 'execution' && (

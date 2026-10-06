@@ -14,13 +14,6 @@ import {
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
-import {
-  assertBotTurnAdmission,
-  botBlocksManualSend,
-  botSharesConversation,
-  pauseBotForHuman,
-  type BotTurnAdmission,
-} from '../bot/control'
 /**
  * BYOK chat service in main: registers `chat:*` IPC channels, orchestrates the runner per conversation,
  * forwards permission broker events to the renderer, and maintains conversation status (working/ready).
@@ -685,8 +678,6 @@ function sendChatEvent(wc: WebContents, channel: string, payload: unknown): void
 interface ActiveRun {
   controller: AbortController
   send: SafeSend
-  /** Admitted for a bot command; a shared chat may otherwise be running what the person sent. */
-  botTurn?: boolean
   /** Assistant message ID for the current turn (captured at message-start). */
   messageId: string
   /** LOGICAL conversation selection (compat / patchConv / messages). */
@@ -1076,16 +1067,15 @@ export interface ChatConversationSlot {
   release(): void
 }
 
-/** How long a bot command waits for the person's own turn before it gives up and says so. */
+/** How long a bot command waits for a turn already running before it gives up and says so. */
 const BOT_SLOT_WAIT_MS = 300_000
 const BOT_SLOT_POLL_MS = 150
 
 /**
  * Hold this conversation's execution slot for a bot command, waiting for a turn already running.
  *
- * A released chat has two writers, so the bot reserves the slot BEFORE it configures the account, model
- * and permission mode of its turn: nothing it chooses may land on a message the person sent. The wait
- * ends when the caller's signal aborts — a pause, a revocation, an expired lease or Stop — and the slot
+ * The bot reserves the slot BEFORE it configures the account, model and permission mode of its turn, so
+ * nothing it chooses may land on another turn. The wait ends when the caller's signal aborts, and the slot
  * is handed to `startExecutorChatTurn`, which releases it through its own admission path.
  */
 export async function acquireChatConversationSlot(
@@ -1110,21 +1100,6 @@ export async function acquireChatConversationSlot(
       signal.addEventListener('abort', finish, { once: true })
     })
   }
-}
-
-/** Whether the turn running now was admitted for a bot command rather than for the person. */
-export function activeTurnIsBotOwned(conversationId: string): boolean {
-  return active.get(conversationId)?.botTurn === true
-}
-
-/**
- * Stop a turn on the bot's own request. A message the person sent in a released chat is theirs to
- * stop, so the bot's cancellation is refused instead of silently taking it down.
- */
-export async function stopBotChatTurn(conversationId: string): Promise<void> {
-  const run = active.get(conversationId)
-  if (run && !run.botTurn) throw new Error('This chat is running a message the person sent; the bot did not stop it.')
-  await stopChat(conversationId)
 }
 
 function cancelPendingCodexOperations(exclude: ReadonlySet<PendingConversationOperation> = new Set()): void {
@@ -2763,8 +2738,8 @@ function patchConvChat(conversationId: string, partial: Record<string, unknown>)
   const next = { ...cur, ...partial }
   patchConvUiPrefs(conversationId, { chat: next })
   /**
-   * The person at the composer is not the only one who writes these: a bot configures its conversation,
-   * a delegated stage freezes a selection, and a failover moves the account mid-turn. Announcing the
+   * The person at the composer is not the only one who writes these: a fleet bot configures its
+   * conversation, a project chat freezes a selection, and a failover moves the account mid-turn. Announcing the
    * change keeps the pickers showing what the next turn will actually use. A write that moved nothing
    * announces nothing, so a read that rewrites the same fallback cannot loop.
    */
@@ -2774,7 +2749,7 @@ function patchConvChat(conversationId: string, partial: Record<string, unknown>)
 
 /**
  * Tell the window to read this conversation's composer settings again. Callers that replace `ui_prefs.chat`
- * wholesale — a bot host, a delegated stage, a project chat worker — announce it themselves; a read that
+ * wholesale — a fleet bot, a project chat worker — announce it themselves; a read that
  * rewrites the same values announces nothing, so this can never feed itself.
  */
 export function publishConvChatSettings(conversationId: string): void {
@@ -3702,7 +3677,6 @@ interface StartSendOpts {
   /** Recall against the actual input when the host wraps it in a prompt. */
   memoryQuery?: string
   remoteAdmission?: boolean
-  botAdmission?: BotTurnAdmission
   runnerAdmission?: (run: ActiveRun) => void
   runnerSignal?: AbortSignal
 
@@ -3779,16 +3753,6 @@ async function startSend(
   if (opts?.runnerSignal?.aborted) return { ok: false, error: 'cancelled' }
   if (isWebManagedConversation(conversationId) && !opts?.remoteAdmission)
     return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
-  if (opts?.botAdmission) {
-    try {
-      assertBotTurnAdmission(conversationId, opts.botAdmission)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  } else if (botBlocksManualSend(conversationId)) {
-    // Released chats accept what the person writes; the bot keeps the chat either way.
-    return { ok: false, error: 'Release this chat for your own messages before sending here.' }
-  }
   if (autonomousPolicy(conversationId) && !opts?.runnerAdmission && !opts?.internal)
     return { ok: false, error: 'executor-active' }
   const internalLoop = opts?.internalLoop
@@ -3813,9 +3777,7 @@ async function startSend(
   // Internal review-loop turn: FROZEN selection, without auto-selection or persistence (no fallback).
   let selection = internalLoop
     ? { providerId: internalLoop.selectionOverride.providerId, modelId: internalLoop.selectionOverride.modelId }
-    : opts?.botAdmission
-      ? { providerId: opts.botAdmission.providerId, modelId: opts.botAdmission.modelId }
-      : selectionFor(conversationId)
+    : selectionFor(conversationId)
   if (!selection?.providerId) return { ok: false, error: 'no-provider' }
   if (internalLoop && !selection.modelId) return { ok: false, error: 'no-model' }
   const operation = reserveConversationOperation(conversationId, selection.providerId, opts?.operation)
@@ -3825,10 +3787,9 @@ async function startSend(
   operation.providerId = selection.providerId
   if (!opts?.internal && !internalLoop) {
     operation.pendingMessage = {
-      id: opts?.botAdmission ? `bot-${opts.botAdmission.commandId}` : randomUUID(),
+      id: randomUUID(),
       conversationId,
       role: 'user',
-      ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       parts: text.trim() ? [{ type: 'text', id: randomUUID(), text }] : [],
       createdAt: Date.now(),
     }
@@ -4653,7 +4614,6 @@ async function startSend(
     const run: ActiveRun = {
       controller,
       send,
-      ...(opts?.botAdmission ? { botTurn: true } : {}),
       messageId: assistantMessageId,
       providerId: selection.providerId,
       ...(admittedCodexTarget ? { effectiveProviderId: admittedCodexTarget.providerId } : {}),
@@ -4699,14 +4659,6 @@ async function startSend(
       send(`chat:maestro-live:${conversationId}`, { kind: 'run-updated', run: maestroLive.state().run })
     }
     // Create the internal turn handle HERE (same tick as admission) — never via `active.get` after start.
-    if (opts?.botAdmission) {
-      assertBotTurnAdmission(conversationId, opts.botAdmission)
-      if (selection.providerId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
-        throw new Error('The requested bot account or model is no longer available.')
-    } else if (!opts?.internal && !internalLoop && botBlocksManualSend(conversationId)) {
-      // The release was withdrawn while this message was still in preflight; it never starts.
-      throw new Error('This chat is no longer released for your own messages.')
-    }
     internalLoop?.onAdmitted(run)
     opts?.runnerAdmission?.(run)
     // The BYOK runner received a preallocated response ID from main; signal early so compaction
@@ -4731,7 +4683,6 @@ async function startSend(
       conversationId,
       role: 'user',
       parts,
-      ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
       ...(reviewLoopMessageMeta ?? {}),
@@ -9551,12 +9502,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     'chat:steer',
     async (_e, rawConversationId: unknown, rawText: unknown, rawClientUserMessageId: unknown) => {
       const conversationId = typeof rawConversationId === 'string' ? rawConversationId : ''
-      if (botBlocksManualSend(conversationId))
-        return { ok: false, error: 'Release this chat for your own messages before sending here.' }
-      // Steering edits the turn under way. In a released chat the person may steer their own message,
-      // never the bot's: a manual send is a new turn, not an instruction slipped into the bot's.
-      if (activeTurnIsBotOwned(conversationId))
-        return { ok: false, error: 'The bot is running this turn; wait for it to finish.' }
       if (isWebManagedConversation(conversationId))
         return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       const text = typeof rawText === 'string' ? rawText : ''
@@ -10064,9 +10009,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   deps.mon('chat:stop', (_e, conversationId: string) => {
     if (typeof conversationId !== 'string') return
-    // Stopping a chat the person never released takes it back from the bot, as it always has. In a
-    // released chat they already write freely, so Stop is only Stop and the bot keeps the chat.
-    if (!botSharesConversation(conversationId)) pauseBotForHuman(conversationId)
     pairedReviewLoopCoordinator?.stop(conversationId)
     const reservation = lookupReviewLoopByConversation(conversationId)
     if (reservation?.participants.some((participant) => participant.driver === 'chatgpt-web')) {
@@ -10180,7 +10122,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   chatGptWeb.setChatGptWebHooks({
     authorizePersonalMemoryWrite: async (conversationId, toolName, signal) => {
       const conversation = getConversation(conversationId)
-      if (conversation?.scope !== 'standalone' || conversation.botOrigin || isBotMode()) {
+      if (conversation?.scope !== 'standalone' || isBotMode()) {
         throw new Error('personal-memory-unavailable')
       }
       const mode = modeFor(conversationId)
@@ -10816,9 +10758,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
     ) => {
       const { conversationId, fromMessageId, text } = payload ?? {}
-      // A released chat may be edited while it is idle; the reservation below keeps a running turn safe.
-      if (botBlocksManualSend(conversationId))
-        return { ok: false, error: 'Release this chat for your own messages before editing here.' }
       if (isWebManagedConversation(conversationId))
         return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       if (typeof conversationId !== 'string' || typeof fromMessageId !== 'string')
@@ -11152,7 +11091,6 @@ export async function startExecutorChatTurn(input: {
   attachments?: ChatAttachmentInput[]
   signal: AbortSignal
   remoteAdmission?: boolean
-  botAdmission?: BotTurnAdmission
   /** Slot already held by the caller (a bot command reserves it before configuring the turn). */
   slot?: ChatConversationSlot
 }): Promise<InternalTurnHandle> {
@@ -11174,7 +11112,6 @@ export async function startExecutorChatTurn(input: {
       skipMemory: input.skipMemory,
       memoryQuery: input.memoryQuery,
       remoteAdmission: input.remoteAdmission,
-      botAdmission: input.botAdmission,
       ...(input.slot ? { operation: input.slot.operation } : {}),
       runnerSignal: input.signal,
       runnerAdmission: (run) => {
