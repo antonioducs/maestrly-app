@@ -3,6 +3,7 @@ import { executorSettings, recoverDesktopExecutions } from './platform/executor-
 import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
+import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
 import { environmentScreenBounds } from './fleet/instance/window-bounds'
@@ -405,6 +406,9 @@ async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
   if (conversation?.scope === 'standalone') {
     const managed = await validateStandaloneConversationDirectory(conversation)
     if (folder !== managed) throw new Error('Unsafe standalone chat directory.')
+  } else {
+    // The bridge extension writes .maestrly sidecars into main checkouts too, not only app worktrees.
+    void ensureAppOwnedExcludes(folder)
   }
   void watchConversation(convId, folder)
 

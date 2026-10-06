@@ -20,6 +20,7 @@ import {
   moveWorktree,
   slugifyBranch,
   excludeFromGitInfo,
+  ensureAppOwnedExcludes,
   APP_OWNED_EXCLUDES,
   hasUnmergedFiles,
   isMergeInProgress,
@@ -36,6 +37,14 @@ import {
   removeDispatchWorktree,
 } from '../../src/main/git-service'
 import { worktreeRelPath, workspaceDataRelPath } from '../../src/main/app-paths'
+import {
+  MEMORY_SNAPSHOT_FILE,
+  MEMORY_SNAPSHOT_REQUEST_FILE,
+  NAVIGATION_FILE,
+  OPEN_FILE_FILE,
+  SELECTION_FILE,
+  SELECTION_REL_DIR,
+} from '../../src/main/vscode/vscode-ext-source'
 
 /**
  * External worktree regression coverage (#143): conversation cwd lives outside the user repository.
@@ -227,6 +236,25 @@ describe('createWorktree with an external destination', () => {
     mkdirSync(path.join(repo, '.legacy-tool', 'rules'), { recursive: true })
     writeFileSync(path.join(repo, '.legacy-tool', 'rules', 'my-rule.mdc'), 'user rule')
     expect(git(repo, ['status', '--porcelain', '-uall'])).toContain('.legacy-tool/rules/my-rule.mdc')
+  })
+
+  it('keeps embedded VS Code sidecars out of a main checkout without any worktree', async () => {
+    await ensureAppOwnedExcludes(repo)
+    const sidecars = [
+      SELECTION_FILE,
+      OPEN_FILE_FILE,
+      NAVIGATION_FILE,
+      MEMORY_SNAPSHOT_FILE,
+      MEMORY_SNAPSHOT_REQUEST_FILE,
+      'debug-cmd.json',
+      'debug-result.json',
+    ]
+    mkdirSync(path.join(repo, SELECTION_REL_DIR), { recursive: true })
+    for (const file of sidecars) writeFileSync(path.join(repo, SELECTION_REL_DIR, file), '{}')
+
+    expect(git(repo, ['status', '--porcelain', '-uall'])).toBe('')
+    writeFileSync(path.join(repo, SELECTION_REL_DIR, 'user-file.json'), '{}')
+    expect(git(repo, ['status', '--porcelain', '-uall'])).toBe(`?? ${SELECTION_REL_DIR}/user-file.json`)
   })
 
   it('populates the shared info/exclude with the app-owned catalog', async () => {

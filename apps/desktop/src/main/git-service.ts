@@ -388,7 +388,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<string> 
   }
 
   // Keep .claude/worktrees out of the main repository's Git status.
-  await ensureExclude(top)
+  await ensureAppOwnedExcludes(top)
 
   // Check whether this branch already has a worktree.
   const existing = (await listWorktrees(top)).find((w) => w.branch === branch)
@@ -560,6 +560,8 @@ export const APP_OWNED_EXCLUDES = [
   '.maestrly/agent-navigation.json',
   '.maestrly/debug-cmd.json',
   '.maestrly/debug-result.json',
+  '.maestrly/memory-snapshot.json',
+  '.maestrly/memory-snapshot-request.json',
   '.agents/notes/',
   '.agents/notes.md',
 ]
@@ -576,7 +578,10 @@ export async function checkKnowledgeGitVisibility(cwd: string): Promise<Knowledg
   return rule ? { ignored: true, rule: rule.slice(0, 2_000) } : { ignored: false }
 }
 
-/** Ensure app-owned info/exclude entries before worktree creation. */
-async function ensureExclude(top: string): Promise<void> {
-  await excludeFromGitInfo(top, APP_OWNED_EXCLUDES)
+/**
+ * Ensure the app-owned info/exclude catalog for any checkout: before worktree creation and whenever the
+ * embedded VS Code opens a folder, because its bridge extension writes sidecars into main checkouts too.
+ */
+export async function ensureAppOwnedExcludes(cwd: string): Promise<void> {
+  await excludeFromGitInfo(cwd, APP_OWNED_EXCLUDES)
 }
