@@ -136,7 +136,7 @@ describe('fleet model selection', () => {
         ceiling: 'ask' as const,
         selection: null,
         compaction: null,
-        gateway: { peersEnabled: true, artifactsEnabled: false },
+        gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
       }
       const selection = { providerId: 'provider', modelId: 'hidden', reasoning: null, fastMode: false }
       await expect(runtime.profile({ ...profile, selection })).rejects.toThrow('Hidden models cannot be selected')
@@ -178,7 +178,7 @@ describe('fleet model selection', () => {
             intervalTokens: 100000,
           },
           compactionInherited: true,
-          gateway: { peersEnabled: true, artifactsEnabled: false },
+          gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
         })
       ).resolves.toEqual({})
       expect(runtime.settingsUsage().compaction?.modelId).toBe('hidden')
@@ -300,7 +300,7 @@ describe('bot identity', () => {
       ceiling: 'ask',
       selection: null,
       compaction: null,
-      gateway: { peersEnabled: false, artifactsEnabled: false },
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
     })
     expect(botIdentityPrompt('/bot/chat')).toBe('')
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
@@ -317,6 +317,31 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/bot/chat')).not.toContain('automatically appear')
   })
 
+  it("keeps the owner's computer out of reach unless the gateway routes desktop calls, and then sets the rules", () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask' as const,
+      selection: null,
+      compaction: null,
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
+    }
+    setBotIdentity('/bot/macs', profile)
+    const closed = botIdentityPrompt('/bot/macs')
+    expect(closed).toContain("Never try to reach the owner's computer.")
+    expect(closed).not.toContain('desktop_')
+    setBotIdentity('/bot/macs', { ...profile, gateway: { ...profile.gateway, desktopBridgeEnabled: true } })
+    const open = botIdentityPrompt('/bot/macs')
+    expect(open).not.toContain("Never try to reach the owner's computer.")
+    expect(open).toContain('only through the desktop_* tools, and only the computers that gave you access')
+    expect(open).toContain('use the computer it was created on')
+    expect(open).toContain('ask which one before you start')
+    expect(open).toContain('do not move the work to another computer on your own')
+    expect(open).toContain('Permission prompts and plan approvals in those conversations stay with the owner')
+  })
+
   it('describes one desktop with the browser and terminals as windows, or else two screens', () => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
     const profile = {
@@ -326,7 +351,7 @@ describe('bot identity', () => {
       ceiling: 'ask' as const,
       selection: null,
       compaction: null,
-      gateway: { peersEnabled: false, artifactsEnabled: false },
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
     }
     let unified = true
     setBotIdentity('/bot/desk', profile, () => [], { unifiedDesktop: () => unified })

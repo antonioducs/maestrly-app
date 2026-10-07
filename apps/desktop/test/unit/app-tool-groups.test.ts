@@ -7,7 +7,7 @@ import { APP_TOOL_GROUPS, appToolGroupOf, sanitizeAppToolGroupPatch } from '../.
 
 /** Tools that only exist in bot instances, where every app tool is always on. */
 const BOT_ONLY =
-  /^(computer_|bot_peers_|bot_routines_|bot_share_file$|owner_memory_|routine_report$|request_owner_help$)/
+  /^(computer_|bot_peers_|bot_routines_|bot_share_file$|owner_memory_|routine_report$|request_owner_help$|desktop_)/
 
 describe('app-tool groups', () => {
   it('assigns every desktop app tool to exactly one group', () => {

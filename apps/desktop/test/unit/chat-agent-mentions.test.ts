@@ -408,7 +408,7 @@ describe('defensive mention sanitization before sorting', () => {
 })
 
 describe('optimistic image message reconciliation', () => {
-  const base = { streaming: true, compacted: false, localSlash: false, localAgentMentions: false, localImages: false }
+  const base = { optimistic: true, compacted: false, localSlash: false, localAgentMentions: false, localImages: false }
 
   it('preserves optimistic streaming messages without local divergence', () => {
     expect(shouldReloadOnUserSaved({ ...base })).toBe(false)
@@ -419,12 +419,15 @@ describe('optimistic image message reconciliation', () => {
     // Vision models may lack description flags; optimistic image messages
     // The optimistic bubble would remain blank forever without reload.
     expect(shouldReloadOnUserSaved({ ...base, localImages: true })).toBe(true)
-    expect(shouldReloadOnUserSaved({ ...base, streaming: true, localImages: true, imagesDescribed: 0 })).toBe(true)
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: true, localImages: true, imagesDescribed: 0 })).toBe(true)
   })
 
   it('reloads image resends with unpersisted optimistic artifact IDs', () => {
-    expect(shouldReloadOnUserSaved({ ...base, streaming: false, localImages: true })).toBe(true)
-    expect(shouldReloadOnUserSaved({ ...base, streaming: false })).toBe(true) // Outside streaming it already reloads.
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: false, localImages: true })).toBe(true)
+  })
+
+  it('reads back a message this composer did not show, such as one a bot sent', () => {
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: false })).toBe(true)
   })
 
   it('without an image, existing triggers still apply', () => {

@@ -445,6 +445,17 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   are never returned. The gateway keeps each environment's control token and
   keyring password and each bot's gateway token in plaintext in its database;
   host root and anyone who controls the Docker socket can read them.
+- **Your computers' projects.** A bot reaches a computer's projects only after
+  that computer links it, from the bot's settings on that computer, and only
+  within the grants, models and approval ceiling chosen there. Nothing connects
+  to the computer: the gateway sends a call only on the event stream that
+  computer opened, takes the answer only from it, and fails the call at once
+  when that computer is offline. The computer runs each call as the bot's
+  conversation tool under its own grants, never approves a permission or a
+  plan for it, and never returns a local path or its own id. Whoever controls
+  the gateway or a bot of that environment can make calls as that bot, so give
+  a bot only the projects you would let it work in. See
+  [Work in the projects of your computers](bot-fleet.md#work-in-the-projects-of-your-computers).
 
 ## MCP, skills, and memory
 

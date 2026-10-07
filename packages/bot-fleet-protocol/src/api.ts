@@ -60,6 +60,12 @@ import {
   fleetUsageSchema,
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
+  fleetDesktopIdSchema,
+  fleetDesktopInputSchema,
+  fleetDesktopLinkSchema,
+  fleetDesktopLinkViewSchema,
+  fleetDesktopNameSchema,
+  fleetDesktopOpSchema,
 } from './domain.js'
 
 export const fleetOwnerMemoryCreateRequestSchema = z.object({
@@ -637,6 +643,45 @@ export type FleetInternalRoutineCreateRequest = FleetCreateRoutineRequest
 export const fleetInternalRoutinePatchRequestSchema = fleetPatchRoutineRequestSchema
 export type FleetInternalRoutinePatchRequest = FleetPatchRoutineRequest
 
+/**
+ * Why a desktop call did not run. `desktop_not_linked`: no Mac with that id gave this bot access (or it took it back);
+ * `desktop_offline`: that Mac's Maestrly is not connected to this server now; `desktop_timeout`: it did not answer in
+ * time; `desktop_busy`: too many calls of this bot are waiting; `desktop_refused`: the Mac refused it (a grant, a paused
+ * conversation, an unknown id or an invalid input); `desktop_unavailable`: the Mac could not run it.
+ */
+export const fleetDesktopErrorCodeSchema = z.enum([
+  'desktop_not_linked',
+  'desktop_offline',
+  'desktop_timeout',
+  'desktop_busy',
+  'desktop_refused',
+  'desktop_unavailable',
+])
+export type FleetDesktopErrorCode = z.infer<typeof fleetDesktopErrorCodeSchema>
+/** What a Mac answers to one call, and what the bot receives back, failures included. */
+export const fleetDesktopCallResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), value: z.unknown() }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z.object({ code: fleetDesktopErrorCodeSchema, message: z.string().max(1_000) }).strict(),
+    })
+    .strict(),
+])
+export type FleetDesktopCallResult = z.infer<typeof fleetDesktopCallResultSchema>
+/** A bot's call for one Mac; the gateway takes the bot from its token and the Mac from `desktopId`. */
+export const fleetInternalDesktopCallRequestSchema = z
+  .object({ desktopId: fleetDesktopIdSchema, op: fleetDesktopOpSchema, input: fleetDesktopInputSchema.default({}) })
+  .strict()
+export type FleetInternalDesktopCallRequest = z.infer<typeof fleetInternalDesktopCallRequestSchema>
+export const fleetInternalDesktopsResponseSchema = z.object({ desktops: z.array(fleetDesktopLinkSchema) })
+export type FleetInternalDesktopsResponse = z.infer<typeof fleetInternalDesktopsResponseSchema>
+/** A Mac links a bot under the name it shows to that bot, or renames its link. */
+export const fleetDesktopLinkRequestSchema = z.object({ name: fleetDesktopNameSchema }).strict()
+export type FleetDesktopLinkRequest = z.infer<typeof fleetDesktopLinkRequestSchema>
+export const fleetDesktopLinksResponseSchema = z.object({ links: z.array(fleetDesktopLinkViewSchema) })
+export type FleetDesktopLinksResponse = z.infer<typeof fleetDesktopLinksResponseSchema>
+
 export const fleetInputSourceSchema = z.enum(['owner', 'routine', 'peer', 'continuation'])
 export type FleetInputSource = z.infer<typeof fleetInputSourceSchema>
 export const fleetInstanceProfileSchema = z.object({
@@ -648,7 +693,12 @@ export const fleetInstanceProfileSchema = z.object({
   compaction: fleetCompactionConfigSchema.nullable().default(null),
   /** An inherited default may already be hidden from new selections; inheritance keeps that existing choice. */
   compactionInherited: z.boolean().optional(),
-  gateway: z.object({ peersEnabled: z.boolean(), artifactsEnabled: z.boolean().default(false) }),
+  gateway: z.object({
+    peersEnabled: z.boolean(),
+    artifactsEnabled: z.boolean().default(false),
+    /** The gateway routes calls to the Macs that link the bot (`desktop-bridge`); older gateways send none. */
+    desktopBridgeEnabled: z.boolean().default(false),
+  }),
   /** The bot's color, for its desktop. Gateways from before the unified desktop send none. */
   tint: z
     .string()
@@ -1354,6 +1404,33 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   botRoutineDelete: { method: 'DELETE', path: '/v1/bots/:id/routines/:rid', body: null, response: null },
   botRoutineRun: { method: 'POST', path: '/v1/bots/:id/routines/:rid/run', body: null, response: fleetRoutineSchema },
+  // Gateways with `desktop-bridge`: the Mac asking links or unlinks itself, lists every Mac linked to the bot, or
+  // removes another Mac's link; and answers a call it received on its event stream.
+  botDesktopLinkPut: {
+    method: 'PUT',
+    path: '/v1/bots/:id/desktop-link',
+    body: fleetDesktopLinkRequestSchema,
+    response: fleetDesktopLinkViewSchema,
+  },
+  botDesktopLinkDelete: { method: 'DELETE', path: '/v1/bots/:id/desktop-link', body: null, response: null },
+  botDesktopLinks: {
+    method: 'GET',
+    path: '/v1/bots/:id/desktop-links',
+    body: null,
+    response: fleetDesktopLinksResponseSchema,
+  },
+  botDesktopLinkRemove: {
+    method: 'DELETE',
+    path: '/v1/bots/:id/desktop-links/:desktopId',
+    body: null,
+    response: null,
+  },
+  desktopCallResult: {
+    method: 'POST',
+    path: '/v1/desktop-calls/:callId/result',
+    body: fleetDesktopCallResultSchema,
+    response: null,
+  },
   inbox: { method: 'GET', path: '/v1/inbox', body: null, response: fleetInboxResponseSchema },
   peerMessages: { method: 'GET', path: '/v1/peer-messages', body: null, response: fleetPeerMessagesResponseSchema },
   activity: { method: 'GET', path: '/v1/activity', body: null, response: fleetActivityResponseSchema },
@@ -1414,6 +1491,15 @@ export const FLEET_INTERNAL_ROUTES = {
     response: fleetRoutineSchema,
   },
   routineDelete: { method: 'DELETE', path: '/internal/v1/routines/:rid', body: null, response: null },
+  /** The Macs that linked the calling bot, and whether each is online. */
+  desktops: { method: 'GET', path: '/internal/v1/desktops', body: null, response: fleetInternalDesktopsResponseSchema },
+  /** One call for one of those Macs; answers once the Mac does, or with why it could not. */
+  desktopCall: {
+    method: 'POST',
+    path: '/internal/v1/desktop/calls',
+    body: fleetInternalDesktopCallRequestSchema,
+    response: fleetDesktopCallResultSchema,
+  },
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INSTANCE_ROUTES = {

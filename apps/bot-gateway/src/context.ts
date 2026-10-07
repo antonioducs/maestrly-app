@@ -1,4 +1,5 @@
 import type { ArtifactHosting } from './artifact-hosting.js'
+import type { DesktopBridge } from './desktop-bridge.js'
 import type { FleetNetwork } from './network.js'
 import type { OwnerMemory } from './owner-memory.js'
 import type { Auth } from './auth.js'
@@ -23,5 +24,6 @@ export type GatewayContext = {
   peers?: Peers
   routines?: Routines
   screen?: ScreenProxy
+  desktops?: DesktopBridge
   revokeDevice?: (deviceId: string) => Promise<void>
 }

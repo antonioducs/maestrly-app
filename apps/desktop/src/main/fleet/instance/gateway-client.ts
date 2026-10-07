@@ -28,7 +28,17 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
   const routineRequest = routeKey.startsWith('routine')
   const ownerRequest = routeKey.startsWith('ownerMemory')
   const artifactRequest = routeKey.startsWith('artifact')
-  const family = routineRequest ? 'routine' : ownerRequest ? 'owner memory' : artifactRequest ? 'artifact' : 'peer'
+  const desktopRequest = routeKey.startsWith('desktop')
+  const family = routineRequest
+    ? 'routine'
+    : ownerRequest
+      ? 'owner memory'
+      : artifactRequest
+        ? 'artifact'
+        : desktopRequest
+          ? 'desktop'
+          : 'peer'
+  const peerRequest = family === 'peer'
   let response: Response
   try {
     response = await fetch(new URL(buildPath(route.path, params), config.url), {
@@ -53,9 +63,11 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
       throw new Error(envelope.success ? envelope.data.message : 'Owner memory request failed.')
     if (routineRequest && ['FORBIDDEN', 'CONFLICT', 'NOT_FOUND', 'INVALID_REQUEST'].includes(code ?? ''))
       throw new Error((envelope.success ? envelope.data.message : 'Routine request failed.') + routineHint)
-    if (!routineRequest && !ownerRequest && !artifactRequest && response.status === 403)
+    if (peerRequest && response.status === 403)
       throw new Error('Peer contact is not allowed by the bot ACL. Ask your owner to update permissions.')
-    if (!routineRequest && !ownerRequest && !artifactRequest && response.status === 429)
+    if (desktopRequest && code === 'INVALID_REQUEST')
+      throw new Error('The gateway refused this desktop call as invalid. Check desktopId and the arguments.')
+    if (peerRequest && response.status === 429)
       throw new Error(
         'Peer messaging is rate-limited. Stop messaging peers and summarize the situation for your owner.'
       )

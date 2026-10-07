@@ -157,7 +157,7 @@ describe('conversation settings the person did not choose', () => {
     const handlers = register()
     pushed.length = 0
 
-    // What a fleet bot configuring its conversation does, and what a project chat or a failover does too.
+    // What a bot configuring its conversation does, and what a delegated stage or a failover does too.
     const moved = { providerId: provider.id, modelId: 'deepseek-v4-pro', reasoning: 'high' }
     primeChatTurnSelection(conversation.id, moved)
     expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])

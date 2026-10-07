@@ -176,6 +176,7 @@ describe('domain contracts', () => {
     expect(fleetInstanceProfileSchema.parse(profile).gateway).toEqual({
       peersEnabled: true,
       artifactsEnabled: false,
+      desktopBridgeEnabled: false,
     })
     expect(
       fleetInstanceProfileSchema.parse({
@@ -192,9 +193,7 @@ describe('domain contracts', () => {
       )
       expect(fleetPatchBotRequestSchema.parse({ publishArtifacts })).toEqual({ publishArtifacts })
     }
-    expect(fleetCreateBotRequestSchema.safeParse({ ...request, publishArtifacts: 'true' }).success).toBe(
-      false
-    )
+    expect(fleetCreateBotRequestSchema.safeParse({ ...request, publishArtifacts: 'true' }).success).toBe(false)
     expect(fleetPatchBotRequestSchema.safeParse({ publishArtifacts: 'false' }).success).toBe(false)
     expect(fleetBotSchema.safeParse({ ...bot, publishArtifacts: 'true' }).success).toBe(false)
     expect(
@@ -1277,7 +1276,11 @@ describe('environment contracts', () => {
     const install = { profile, slot: 1, gatewayToken: 'g'.repeat(16) }
     expect(fleetInstanceBotInstallSchema.parse(install)).toEqual({
       ...install,
-      profile: { ...profile, compaction: null, gateway: { ...profile.gateway, artifactsEnabled: false } },
+      profile: {
+        ...profile,
+        compaction: null,
+        gateway: { ...profile.gateway, artifactsEnabled: false, desktopBridgeEnabled: false },
+      },
     })
     expect(fleetInstanceBotInstallSchema.parse({ ...install, slot: 8, gatewayToken: 'g'.repeat(200) }).slot).toBe(8)
     expect(fleetInstanceBotInstallSchema.parse(install).paused).toBeUndefined()
@@ -1590,6 +1593,158 @@ describe('environment contracts', () => {
           ).toEqual([name])
         }
     }
+  })
+})
+
+describe('desktop bridge contracts', () => {
+  const expectRoute = (
+    route: FleetRoute,
+    method: FleetRoute['method'],
+    path: string,
+    body: FleetRoute['body'],
+    response: FleetRoute['response']
+  ) => {
+    expect({ method: route.method, path: route.path }).toEqual({ method, path })
+    expect(route.body).toBe(body)
+    expect(route.response).toBe(response)
+  }
+  const at = '2026-10-05T10:00:00.000Z'
+  const link = { desktopId: 'dsk_0123456789abcdefABCD', name: 'MacBook', online: true, lastSeenAt: null, linkedAt: at }
+
+  it('names the feature, the stream parameter and the limits', () => {
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_FEATURE).toBe('desktop-bridge')
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_QUERY).toBe('desktopBridge')
+    // A wait for conversation events takes up to 20 seconds on the Mac; the gateway waits a little longer.
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.callTimeoutMs).toBeGreaterThan(20_000)
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.inputBytesMax).toBeLessThan(
+      provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
+    )
+  })
+
+  it('keeps the desktop id opaque and the name short', () => {
+    expect(provisioning.fleetDesktopLinkSchema.parse(link)).toEqual(link)
+    for (const desktopId of ['dsk_short', '7c9e6679-7425-40de-944b-e07fc1f90ae7', 'dsk_has spaces in it here', ''])
+      expect(provisioning.fleetDesktopLinkSchema.safeParse({ ...link, desktopId }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkRequestSchema.parse({ name: '  iMac  ' })).toEqual({ name: 'iMac' })
+    expect(provisioning.fleetDesktopLinkRequestSchema.safeParse({ name: ' ' }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkRequestSchema.safeParse({ name: 'x'.repeat(61) }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkRequestSchema.safeParse({ name: 'iMac', deviceId: 'x' }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkViewSchema.parse({ ...link, self: true }).self).toBe(true)
+  })
+
+  it('carries a call to one Mac with a known op and a bounded input, and its answer or failure back', () => {
+    const request = { desktopId: link.desktopId, op: 'createChat', input: { workspaceId: 'w-1' } }
+    expect(provisioning.fleetInternalDesktopCallRequestSchema.parse(request)).toEqual(request)
+    expect(
+      provisioning.fleetInternalDesktopCallRequestSchema.parse({ desktopId: link.desktopId, op: 'listWorkspaces' })
+        .input
+    ).toEqual({})
+    expect(
+      provisioning.fleetInternalDesktopCallRequestSchema.safeParse({ ...request, op: 'approvePlan' }).success
+    ).toBe(false)
+    expect(
+      provisioning.fleetInternalDesktopCallRequestSchema.safeParse({
+        ...request,
+        input: { text: 'x'.repeat(provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.inputBytesMax) },
+      }).success
+    ).toBe(false)
+    // Nothing a bot may ask approves a permission or a plan.
+    expect(provisioning.FLEET_DESKTOP_OPS.some((op) => /permission|plan|approve/i.test(op))).toBe(false)
+    expect(provisioning.FLEET_DESKTOP_WRITE_OPS).toEqual([
+      'createChat',
+      'sendMessage',
+      'configureChat',
+      'cancelTurn',
+      'answerQuestion',
+    ])
+    expect(provisioning.fleetDesktopCallResultSchema.parse({ ok: true, value: { chats: [] } })).toEqual({
+      ok: true,
+      value: { chats: [] },
+    })
+    const failure = { ok: false, error: { code: 'desktop_offline', message: 'MacBook is offline' } }
+    expect(provisioning.fleetDesktopCallResultSchema.parse(failure)).toEqual(failure)
+    expect(
+      provisioning.fleetDesktopCallResultSchema.safeParse({ ok: false, error: { code: 'nope', message: '' } }).success
+    ).toBe(false)
+  })
+
+  it('announces calls and link changes as gateway events', () => {
+    const call = {
+      type: 'desktop.call',
+      at,
+      callId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      botId: 'scout',
+      desktopId: link.desktopId,
+      op: 'readChat',
+      input: { conversationId: 'c' },
+      expiresAt: at,
+    }
+    expect(fleetGatewayEventSchema.parse(call)).toEqual(call)
+    expect(fleetGatewayEventSchema.safeParse({ ...call, op: 'resolvePermission' }).success).toBe(false)
+    const updated = { type: 'desktop_link.updated', at, botId: 'scout', links: [{ ...link, self: false }] }
+    expect(fleetGatewayEventSchema.parse(updated)).toEqual(updated)
+    expect(fleetGatewayEventSchema.parse({ ...updated, links: [] }).type).toBe('desktop_link.updated')
+  })
+
+  it('tells a bot whether its gateway routes desktop calls, never by default', () => {
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: false, desktopBridgeEnabled: true },
+    }
+    expect(fleetInstanceProfileSchema.parse(profile).gateway.desktopBridgeEnabled).toBe(true)
+    expect(
+      fleetInstanceProfileSchema.parse({ ...profile, gateway: { peersEnabled: false } }).gateway.desktopBridgeEnabled
+    ).toBe(false)
+  })
+
+  it('declares the bridge routes of the gateway and of its internal API', () => {
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.botDesktopLinkPut,
+      'PUT',
+      '/v1/bots/:id/desktop-link',
+      provisioning.fleetDesktopLinkRequestSchema,
+      provisioning.fleetDesktopLinkViewSchema
+    )
+    expectRoute(FLEET_GATEWAY_ROUTES.botDesktopLinkDelete, 'DELETE', '/v1/bots/:id/desktop-link', null, null)
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.botDesktopLinks,
+      'GET',
+      '/v1/bots/:id/desktop-links',
+      null,
+      provisioning.fleetDesktopLinksResponseSchema
+    )
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.botDesktopLinkRemove,
+      'DELETE',
+      '/v1/bots/:id/desktop-links/:desktopId',
+      null,
+      null
+    )
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.desktopCallResult,
+      'POST',
+      '/v1/desktop-calls/:callId/result',
+      provisioning.fleetDesktopCallResultSchema,
+      null
+    )
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.desktops,
+      'GET',
+      '/internal/v1/desktops',
+      null,
+      provisioning.fleetInternalDesktopsResponseSchema
+    )
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.desktopCall,
+      'POST',
+      '/internal/v1/desktop/calls',
+      provisioning.fleetInternalDesktopCallRequestSchema,
+      provisioning.fleetDesktopCallResultSchema
+    )
   })
 })
 

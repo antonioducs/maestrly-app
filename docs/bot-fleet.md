@@ -1,6 +1,6 @@
 # Remote bots (bot fleet)
 
-A bot is a Maestrly agent that runs in Docker on this computer or on a Linux server. Bots on a server keep working when your computer is off; bots on this computer stop when it sleeps or shuts down. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, MCP servers, and site logins. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, and screens. You install and update one desktop app to control them all.
+A bot is a Maestrly agent that runs in Docker on this computer or on a Linux server. Bots on a server keep working when your computer is off; bots on this computer stop when it sleeps or shuts down. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, MCP servers, and site logins. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, and screens. You install and update one desktop app to control them all. A bot can also [work in the projects of your computers](#work-in-the-projects-of-your-computers) that give it access, without any of them being reachable from outside.
 
 **Experimental:** The **Bots** tab shows a flask icon titled **Experimental**. Back up your bot data before changing or removing a server.
 
@@ -262,6 +262,8 @@ Environment default compaction models need the gateway's `environment-compaction
 
 The unified desktop needs the environment's image to advertise the `unified-desktop` capability. An environment on an
 older image keeps its separate **Browser** and **Apps** areas until it restarts onto the current image.
+
+A bot reaches the projects of your computers when the gateway has the `desktop-bridge` feature, the environment's image has the matching capability, and the computer runs a desktop app that answers desktop calls; until all three are updated, the bot's **This computer** settings say what is missing and the bot has no `desktop_*` tools. A computer on an older desktop app never asks for desktop calls, so it is offline for every bot. This adds schema 10 (`desktop_links`) to the gateway database: back up the gateway volume before upgrading, since an older gateway refuses a newer schema.
 
 A bot's reasoning appears in its conversation when the gateway has the `transcript-reasoning` feature and the environment's image has the matching capability. Transcripts carry it as `reasoning` items, which the bot and the gateway send only to a reader that asks for them with `reasoning=1` on the transcript and event routes; an older gateway or desktop app never receives them and keeps working as before. Until the gateway and the environment are updated, a conversation shows the bot's tool steps and text without its reasoning.
 
@@ -690,6 +692,84 @@ unknown means a delivered input is no longer queued or running without a recorde
 completion. A failed run can still become completed when the bot retries the same
 input; completed and cancelled are final.
 
+## Work in the projects of your computers
+
+A bot can start and follow development conversations in the projects of the computers you paired with its bot
+server. Each computer decides on its own:
+
+1. On that computer, open the bot, then **Settings → This computer**.
+2. Turn on **Give this bot access to this computer**. Choose the projects, the account/model pairs, the actions,
+   the approval ceiling, and the name this computer shows the bot (its pairing name by default), then **Give
+   access**.
+3. Repeat on every computer the bot should reach. **Other computers with access** lists the others and whether
+   each is online now. From there you can remove another computer's access; what a computer grants changes only
+   on that computer.
+
+The actions are reading its conversations, creating them and sending messages, cancelling its running turns, and
+answering its ordinary questions. The approval ceiling bounds how far its conversations on that computer run before
+they ask you: **Ask for approval** waits for every file change, command, web fetch and tool; **Approve for me** runs
+reading and editing inside the project and still asks for commands and folders outside it; **Full access** asks for
+nothing, so choose it only for a bot you control yourself. A conversation can never be set past the ceiling.
+
+The bot gets these tools once its server and its environment's image support them, even before any computer gives
+it access, so it can tell you how to give it access:
+
+| Tool | Scope |
+| --- | --- |
+| `desktop_list_desktops` | The computers that gave the bot access: `desktopId`, name, online now, last seen. |
+| `desktop_list_workspaces`, `desktop_list_chats` | One computer, or every computer that is online at once, grouped by computer; offline ones are marked. |
+| `desktop_list_selections` | The account/model pairs one computer offers. |
+| `desktop_create_chat` | Start a conversation in one authorized project of one computer, on a base branch. |
+| `desktop_read_chat`, `desktop_read_chat_history`, `desktop_wait_events` | Follow a conversation the bot created; a wait lasts at most 20 seconds. |
+| `desktop_send_message`, `desktop_configure_chat`, `desktop_cancel_turn`, `desktop_answer_question` | Steer a conversation the bot created. |
+
+```mermaid
+sequenceDiagram
+  participant B as Bot (environment)
+  participant G as Bot server
+  participant C as Your computer
+  C->>G: event stream, open while Maestrly runs and is paired
+  B->>G: desktop call for one desktopId
+  G-->>C: the call, on that computer's stream only
+  C->>C: runs it as that bot's conversation tool, under this computer's grants
+  C->>G: the answer, from that computer only
+  G-->>B: the answer, or why there is none
+```
+
+- **Nothing connects to your computer.** Each computer already keeps an event stream open to its bot server; a
+  call travels on that stream, and the answer comes back on a request the computer makes. It works the same with
+  bots on this computer and on a VPS, and no port of your computer is published.
+- **One computer per call.** A call names a computer by the `desktopId` the server minted for that bot and that
+  computer, never by its device. The server sends the call on that computer's stream alone and takes its answer
+  from that computer alone. Every workspace, selection, conversation and question id a computer hands out is valid
+  only together with its `desktopId`.
+- **Offline means now.** If that computer's Maestrly is closed, asleep or disconnected, the call fails at once with
+  `desktop_offline`. Nothing is queued for later, and no other computer stands in, because a conversation and its
+  worktree exist only on the computer that created them. The bot is told to say so instead of moving the work.
+- **A timeout is not a failure.** A computer that does not answer within 25 seconds fails the call with
+  `desktop_timeout`, but a change may still have happened there. The bot retries with the same idempotency key,
+  and the computer runs the change only once. If the bot server restarts, calls in flight fail the same way.
+
+On your computer, a conversation the bot starts is a native conversation in a worktree of its own, with the bot's
+name on its badge: you can pause it, release it to write in it yourself, or continue it. The grants, the ceiling and
+the idempotency are that computer's own, and every conversation gets a worktree no one else uses. Plan approvals, and whatever that
+computer's ceiling leaves to you, wait for you there; the bot never sees a permission request. The bot's own ceiling
+applies first: under **Ask for approval** it asks you in **Awaiting you** before it starts or steers a conversation
+on any computer. Reading what a computer granted never asks.
+
+Access ends when either side ends it:
+
+- **Turn off** the access on that computer: it ends there at once. The bot's conversations and worktrees stay on
+  that computer, revoked.
+- **Remove access** of another computer from any of your computers: the server forgets that link, and the other
+  computer revokes its side as soon as it hears of it, at once if it is connected, otherwise when it reconnects.
+- Unpairing a computer, revoking its device on the server, or deleting the bot removes its links too. Archiving a
+  bot keeps them; restoring the bot restores its access.
+
+What reaches the bot is opaque ids, project and model labels, branches, its own instructions and public replies,
+ordinary questions and execution status. No local path, no credential, and not the computer's own id. The bot server sees calls and answers as they pass and
+stores only which computers linked which bot, and under what name.
+
 ## What a bot can do
 
 Bot conversations have no Plan review tab and do not expose `review_plan`. When
@@ -711,8 +791,9 @@ owner help for logins instead.
 | `memory_forget` | Permanently delete its own memory, subject to the normal approval gate. |
 | `request_owner_help` | Ask you to help with its screen or a blocking issue. |
 | `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Conversations with other bots**, within gateway budgets. |
+| `desktop_*` | Start and follow development conversations in the projects your computers gave it, one computer per call; see [Work in the projects of your computers](#work-in-the-projects-of-your-computers). Reads run without approval prompts; changes follow its ceiling. |
 
-A bot cannot directly use your computer's screen, browser, terminal, accounts, or local files. It can use the credentials and files you explicitly bring to its environment, which the other bots of that environment can use too. Its approval ceiling bounds how far it may run without you:
+A bot cannot directly use your computer's screen, browser, terminal, accounts, or local files. It reaches the projects of your computers only through `desktop_*`, as conversations that run on each computer under the access that computer gave. It can use the credentials and files you explicitly bring to its environment, which the other bots of that environment can use too. Its approval ceiling bounds how far it may run without you:
 
 | Ceiling | Automatic work | Waits for you |
 | --- | --- | --- |
@@ -739,6 +820,14 @@ The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) h
 **Environments are separated from each other** as bots were before environments: each has its own container, home volume, keyring, and control token. This separates ordinary activity, but it is not a hostile-code security boundary against the Docker host. All environment containers share the fleet Docker bridge network, and Maestrly does not filter traffic between them: a program that a bot starts and that listens on a network port can be reached from other environments. The gateway protects its own services on that network: its public API refuses fleet-network clients, the internal API accepts only fleet-network and loopback clients and identifies each bot by its gateway token, every control-server request needs the environment's control token, and VNC listens only on each container's loopback.
 
 The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the environment runs with `sandbox: false`: a compromised page in that renderer can control the environment's container and every bot in it, though its normal container boundary does not directly grant access to the Docker host. No control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the control server authenticates screen tunnels. Control of a bot's **Browser** or **Apps** screen requires your takeover of that bot. Control of the environment screen needs no takeover, because it shows only Maestrly's settings, but it shares a display with the bots' browser areas: the gateway allows one control session on that display per environment at a time. Takeover holds exactly one bot. Device revocation closes active screen and event streams and gives back any screen held by that device. Configuration from a computer is recorded in activity on the environment, with the device name and counts only. See the broader [security model](security-model.md#bot-environments).
+
+**A bot reaches only the computers that linked it.** The gateway database also records which computers gave which
+bot access to their projects: the device, the opaque `desktopId` the bot knows that computer by, and the name the
+computer chose. It never stores what a computer granted, its projects, or a conversation. A paired device can list
+and remove any computer's link to a bot, but only that computer can link itself, and only that computer receives and
+answers the calls meant for it: an answer from any other device is refused. Revoking a device removes its links and
+fails the calls waiting for it. Each computer also re-checks its links with the server whenever it reconnects, and a
+link without access on its side, or access without a link on the server, is removed.
 
 Environments and their default compaction models move the gateway database to
 schema v7. Older gateways that do not support v7 refuse to open it; back up the gateway volume before upgrading and

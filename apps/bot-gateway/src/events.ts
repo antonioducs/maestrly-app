@@ -6,12 +6,24 @@ export class EventHub {
   readonly devices = new Map<ServerResponse, string>()
   /** Subscribers that asked for `reasoning` transcript items; an older app would drop every one of them. */
   private readonly reasoningReaders = new WeakSet<ServerResponse>()
+  /**
+   * Streams that asked for desktop calls, by device, newest last: a Mac is online for its bots while one is open, and
+   * a call goes to its newest stream only.
+   */
+  private readonly bridges = new Map<ServerResponse, string>()
+  /** A device opened or closed a stream that takes desktop calls. */
+  onBridgeChange: (deviceId: string) => void = () => {}
   private heartbeat: NodeJS.Timeout | null = null
   private statsTimer: NodeJS.Timeout | null = null
   private readonly lastBotSent = new Map<string, number>()
   private readonly pendingBots = new Map<string, { event: FleetGatewayEvent; timer: NodeJS.Timeout }>()
   constructor(readonly refresh: () => Promise<void>) {}
-  add(response: ServerResponse, lastActivitySeq: number, deviceId?: string, options: { reasoning?: boolean } = {}) {
+  add(
+    response: ServerResponse,
+    lastActivitySeq: number,
+    deviceId?: string,
+    options: { reasoning?: boolean; desktopBridge?: boolean } = {}
+  ) {
     if (options.reasoning) this.reasoningReaders.add(response)
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -25,9 +37,43 @@ export class EventHub {
     response.on('close', () => {
       this.subscribers.delete(response)
       this.devices.delete(response)
+      const bridge = this.bridges.get(response)
+      this.bridges.delete(response)
       this.updateTimers()
+      if (bridge) this.onBridgeChange(bridge)
     })
     this.updateTimers()
+    if (deviceId && options.desktopBridge && !response.destroyed) {
+      this.bridges.set(response, deviceId)
+      this.onBridgeChange(deviceId)
+    }
+  }
+  /** Whether a device has a stream open that takes desktop calls. */
+  bridgeOnline(deviceId: string): boolean {
+    for (const [response, id] of this.bridges) if (id === deviceId && !response.destroyed) return true
+    return false
+  }
+  /**
+   * Sends one event to a device's newest stream that takes desktop calls; false when it has none. A call may be far
+   * larger than other events, so a slow reader is given room to drain it instead of being dropped at once.
+   */
+  sendToDevice(deviceId: string, event: FleetGatewayEvent): boolean {
+    let target: ServerResponse | null = null
+    for (const [response, id] of this.bridges) if (id === deviceId && !response.destroyed) target = response
+    if (!target) return false
+    this.send(target, event)
+    return !target.destroyed
+  }
+  /** A stream too far behind is dropped; one that takes desktop calls may hold one large call while it drains. */
+  private behind(response: ServerResponse): boolean {
+    return response.writableLength > (this.bridges.has(response) ? 4 * 1024 * 1024 : 256 * 1024)
+  }
+  /** Sends every stream that takes desktop calls the event built for its device; null skips that stream. */
+  emitToBridges(build: (deviceId: string) => FleetGatewayEvent | null) {
+    for (const [response, deviceId] of [...this.bridges]) {
+      const event = build(deviceId)
+      if (event) this.send(response, event)
+    }
   }
   emit(event: FleetGatewayEvent) {
     if (!this.subscribers.size) return
@@ -77,12 +123,12 @@ export class EventHub {
       !fleetTranscriptItemReadable(event.item, this.reasoningReaders.has(response))
     )
       return
-    if (response.destroyed || response.writableLength > 256 * 1024) {
+    if (response.destroyed || this.behind(response)) {
       response.destroy()
       this.subscribers.delete(response)
       return
     }
-    if (!response.write('event: fleet\ndata: ' + JSON.stringify(event) + '\n\n')) {
+    if (!response.write('event: fleet\ndata: ' + JSON.stringify(event) + '\n\n') && !this.bridges.has(response)) {
       response.destroy()
       this.subscribers.delete(response)
     }
@@ -90,7 +136,9 @@ export class EventHub {
   private updateTimers() {
     if (this.subscribers.size) {
       this.heartbeat ??= setInterval(() => {
-        for (const response of this.subscribers) if (!response.write(': ping\n\n')) response.destroy()
+        for (const response of this.subscribers)
+          if (this.behind(response) || (!response.write(': ping\n\n') && !this.bridges.has(response)))
+            response.destroy()
       }, 15000)
       this.statsTimer ??= setInterval(() => {
         void this.refresh()
@@ -110,6 +158,7 @@ export class EventHub {
     this.pendingBots.clear()
     for (const response of this.subscribers) response.end()
     this.subscribers.clear()
+    this.bridges.clear()
     this.updateTimers()
   }
 }

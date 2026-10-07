@@ -69,6 +69,16 @@ export class FleetClientService {
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
+  /**
+   * Answers bots' desktop calls and keeps this computer's links to them; set by the main process before the client
+   * starts. Without it this computer never says it takes desktop calls, so it is offline for every bot.
+   */
+  desktopBridge: {
+    handle(event: FleetGatewayEvent): boolean
+    connected(): Promise<void>
+    unpaired(deviceId: string): Promise<void>
+    stop(): void
+  } | null = null
 
   start(): void {
     if (process.env.MAESTRLY_BOT_MODE === '1') return
@@ -95,6 +105,7 @@ export class FleetClientService {
     this.events?.stop()
     this.events = null
     this.screens.closeAll()
+    this.desktopBridge?.stop()
   }
 
   private setConnection(patch: Partial<FleetConnectionView>): void {
@@ -176,7 +187,12 @@ export class FleetClientService {
         if (generation !== this.generation) return
         this.setConnection({ features: meta.features ?? [] })
         await this.refresh()
-      }
+        // Links may have changed while this computer was away; checking them needs the stream open, not this answer.
+        if (generation === this.generation) void this.desktopBridge?.connected().catch(() => undefined)
+      },
+      undefined,
+      undefined,
+      { desktopBridge: this.desktopBridge !== null }
     )
     this.events.start()
   }
@@ -216,7 +232,10 @@ export class FleetClientService {
   async disconnect(): Promise<void> {
     await disposeBotLogins()
     const api = this.api
+    const deviceId = this.connection.deviceId
     this.stop()
+    // Unpairing ends every access this computer gave its bots; the server forgets the links with the device.
+    if (deviceId) await this.desktopBridge?.unpaired(deviceId).catch(() => undefined)
     this.api = null
     try {
       await api?.call('devicesSelfDelete')
@@ -262,6 +281,12 @@ export class FleetClientService {
   }
 
   private applyEvent(event: FleetGatewayEvent): void {
+    // A desktop call is between the server and this computer's bridge: no window shows it.
+    if (event.type === 'desktop.call') {
+      this.desktopBridge?.handle(event)
+      return
+    }
+    if (event.type === 'desktop_link.updated') this.desktopBridge?.handle(event)
     switch (event.type) {
       case 'hello':
         this.onArtifactEvent?.({ type: 'changed' })

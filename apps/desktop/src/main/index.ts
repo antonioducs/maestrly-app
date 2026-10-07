@@ -169,7 +169,9 @@ import { cleanupToolOutputs } from './chat/tool-output-store'
 import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
+import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
+import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
 import { ServerArtifacts } from './artifacts/server-artifacts'
@@ -190,6 +192,7 @@ import { LegacyArtifacts } from './artifacts/legacy'
 import { createConversationFileScope } from './conversation-file-scope'
 import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
+import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -309,6 +312,7 @@ function initArtifacts(): void {
 }
 
 async function stopAllLiveWork(): Promise<void> {
+  await botHost.stop()
   await legacyArtifacts?.dispose()
   await cancelProjectSetupsAndWait?.()
   await Promise.all([
@@ -790,9 +794,12 @@ function registerIpc(): void {
   registerSoundIpc(reg)
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
   registerPlatformIpc(reg)
+  registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
   registerFleetInstallerIpc(reg)
+  // Set before the client starts, so that its first stream already answers bots' desktop calls.
+  registerFleetDesktopBridgeIpc(reg, fleetClientService)
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
   registerArtifactsIpc(reg, { service: getArtifactsService })
@@ -984,6 +991,7 @@ app.whenReady().then(async () => {
   recoverDesktopExecutions()
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
+  void botHost.restore()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show()
@@ -1103,7 +1111,7 @@ app.on('before-quit', (e) => {
     e.preventDefault()
     if (!platformRunnerStopping) {
       platformRunnerStopping = true
-      void Promise.allSettled([embeddedRunnerHost.stop(), artifactHost?.stop()]).finally(() => {
+      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop(), artifactHost?.stop()]).finally(() => {
         platformRunnerStopped = true
         platformRunnerStopping = false
         app.quit()

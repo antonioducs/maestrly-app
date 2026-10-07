@@ -24,6 +24,7 @@ import {
   FLEET_REASONING_TEXT_MAX,
   FLEET_RUNTIME_IDS,
   FLEET_RUNTIME_STATES,
+  FLEET_DESKTOP_BRIDGE_LIMITS,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -782,6 +783,74 @@ export type FleetActivityEntry = z.infer<typeof fleetActivityEntrySchema>
 
 const fleetArtifactIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
 
+/**
+ * A Mac as one bot sees it: an opaque id minted by the gateway for that bot and that Mac, never the device id the Mac
+ * paired with. Workspace, conversation and selection ids a Mac hands out are only valid together with its `desktopId`.
+ */
+export const fleetDesktopIdSchema = z.string().regex(/^dsk_[A-Za-z0-9_-]{16,64}$/)
+export type FleetDesktopId = z.infer<typeof fleetDesktopIdSchema>
+/** The name a Mac shows to the bots it links, chosen on that Mac (its pairing name by default). */
+export const fleetDesktopNameSchema = z.string().trim().min(1).max(FLEET_DESKTOP_BRIDGE_LIMITS.nameMax)
+/** A Mac that gave a bot access to its workspaces. `online`: its Maestrly is connected to this server right now. */
+export const fleetDesktopLinkSchema = z.object({
+  desktopId: fleetDesktopIdSchema,
+  name: fleetDesktopNameSchema,
+  online: z.boolean(),
+  lastSeenAt: fleetTimestampSchema.nullable(),
+  linkedAt: fleetTimestampSchema,
+})
+export type FleetDesktopLink = z.infer<typeof fleetDesktopLinkSchema>
+/** The same link as the owner's Macs see it: `self` marks the link of the Mac asking. */
+export const fleetDesktopLinkViewSchema = fleetDesktopLinkSchema.extend({ self: z.boolean() })
+export type FleetDesktopLinkView = z.infer<typeof fleetDesktopLinkViewSchema>
+/**
+ * What a bot may ask a Mac, by its own name: each one is a conversation tool of that Mac's Maestrly, run under the
+ * grants, approval ceiling and idempotency that Mac keeps for the bot. Nothing here approves a permission or a plan.
+ */
+export const FLEET_DESKTOP_OPS = [
+  'listWorkspaces',
+  'listSelections',
+  'listChats',
+  'readChat',
+  'readChatHistory',
+  'waitEvents',
+  'createChat',
+  'sendMessage',
+  'configureChat',
+  'cancelTurn',
+  'answerQuestion',
+] as const
+export const fleetDesktopOpSchema = z.enum(FLEET_DESKTOP_OPS)
+export type FleetDesktopOp = z.infer<typeof fleetDesktopOpSchema>
+/** The ops that change something on the Mac; the others only read. */
+export const FLEET_DESKTOP_WRITE_OPS: readonly FleetDesktopOp[] = [
+  'createChat',
+  'sendMessage',
+  'configureChat',
+  'cancelTurn',
+  'answerQuestion',
+]
+/** UTF-8 size of a value as JSON, the way it crosses the gateway. */
+export function fleetJsonBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value) ?? '').byteLength
+}
+export const fleetDesktopInputSchema = z
+  .record(z.string(), z.unknown())
+  .refine((value) => fleetJsonBytes(value) <= FLEET_DESKTOP_BRIDGE_LIMITS.inputBytesMax, 'The call input is too large')
+/** One call of a bot for one Mac, sent only on that Mac's event stream. */
+export const fleetDesktopCallEventSchema = z.object({
+  type: z.literal('desktop.call'),
+  at: fleetTimestampSchema,
+  callId: z.uuid(),
+  botId: fleetBotIdSchema,
+  desktopId: fleetDesktopIdSchema,
+  op: fleetDesktopOpSchema,
+  input: fleetDesktopInputSchema,
+  /** After this the gateway no longer waits for the result: a Mac that sees it late does not run it. */
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetDesktopCallEvent = z.infer<typeof fleetDesktopCallEventSchema>
+
 export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('artifact.changed'), at: fleetTimestampSchema, artifactId: fleetArtifactIdSchema }),
   z.object({
@@ -811,5 +880,14 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('transcript.reset'), at: fleetTimestampSchema, botId: fleetBotIdSchema }),
   z.object({ type: z.literal('activity'), at: fleetTimestampSchema, entry: fleetActivityEntrySchema }),
   z.object({ type: z.literal('peer.message'), at: fleetTimestampSchema, message: fleetPeerMessageSchema }),
+  // Sent only to the streams of Macs that asked for desktop calls (`desktopBridge=1`): older Macs never see them.
+  fleetDesktopCallEventSchema,
+  /** The Macs linked to a bot changed; empty once the bot was deleted. Each Mac reads its own link as `self`. */
+  z.object({
+    type: z.literal('desktop_link.updated'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    links: z.array(fleetDesktopLinkViewSchema).max(FLEET_DESKTOP_BRIDGE_LIMITS.linksPerBotMax),
+  }),
 ])
 export type FleetGatewayEvent = z.infer<typeof fleetGatewayEventSchema>

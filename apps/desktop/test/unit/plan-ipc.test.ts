@@ -588,7 +588,9 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
     const { deps, decide } = register()
     await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
     await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
-    const keys = deps.prepareStandardPlanHandoff.mock.calls.map((call) => (call as unknown as [{ planKey: string }])[0].planKey)
+    const keys = deps.prepareStandardPlanHandoff.mock.calls.map(
+      (call) => (call as unknown as [{ planKey: string }])[0].planKey
+    )
     expect(keys[0]).toBe(keys[1])
     h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '## Different plan', version: 2 })
     await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
@@ -621,7 +623,10 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
 
   it('leaves the plan pending when the destination cannot be prepared', async () => {
     const { deps, decide } = register({
-      prepareStandardPlanHandoff: vi.fn(async () => ({ ok: false as const, error: 'Fast mode is not available for opus.' })),
+      prepareStandardPlanHandoff: vi.fn(async () => ({
+        ok: false as const,
+        error: 'Fast mode is not available for opus.',
+      })),
     })
     const result = await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
     expect(result).toEqual({ ok: false, error: 'Fast mode is not available for opus.' })
@@ -647,7 +652,9 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
       version: 1,
       route: { kind: 'chatgpt-web', reviewId: 'review-1' },
     })
-    const web = register({ resolveChatGptWebPlanReview: vi.fn(() => ({ ok: false, error: 'plan-review-unavailable' })) })
+    const web = register({
+      resolveChatGptWebPlanReview: vi.fn(() => ({ ok: false, error: 'plan-review-unavailable' })),
+    })
     await expect(
       web.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
     ).resolves.toEqual({ ok: false, error: 'plan-review-unavailable' })
@@ -675,12 +682,18 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
     expect(deps.discardStandardPlanHandoff).not.toHaveBeenCalled()
   })
 
-  it('requires a project', async () => {
+  it('requires a project and keeps bot conversations exclusive', async () => {
     h.getConversation.mockReturnValue({ ...source, scope: 'standalone' })
     const standalone = register()
     await expect(
       standalone.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
     ).resolves.toEqual({ ok: false, error: 'project-required' })
+    h.getConversation.mockReturnValue({ ...source, botOrigin: { kind: 'bot' } })
+    const bot = register()
+    await expect(
+      bot.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    ).resolves.toEqual({ ok: false, error: 'Bot conversations must keep their exclusive worktree.' })
     expect(standalone.deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
+    expect(bot.deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
   })
 })

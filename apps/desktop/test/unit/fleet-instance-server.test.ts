@@ -100,7 +100,7 @@ const profileOf = (botId: string) => ({
   ceiling: 'ask' as const,
   selection: null,
   compaction: null,
-  gateway: { peersEnabled: true, artifactsEnabled: false },
+  gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
 })
 
 function fakeBot(botId: string, slot: number) {
@@ -434,6 +434,7 @@ describe('instance control HTTP', () => {
       'context-limit',
       'transcript-reasoning',
       'runtime-updates',
+      'desktop-bridge',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

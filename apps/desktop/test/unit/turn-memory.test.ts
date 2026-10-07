@@ -337,7 +337,7 @@ it('does not account for recall hits dropped at the hit limit', async () => {
   expect(getLocalMemory(workspace.id, hits[3].id)?.useCount).toBe(0)
 })
 
-import { insertConversation } from '../../src/main/store'
+import { insertConversation, getDb } from '../../src/main/store'
 import { restartDb } from '../helpers/db'
 import { PERSONAL_MEMORY_SPACE_ID } from '../../src/shared/memory'
 import { memorySpaceForConversation, isPersonalMemoryConversation } from '../../src/main/memory/spaces'
@@ -408,6 +408,10 @@ it('shares personal memory between chats while isolating project and bot spaces'
   registeredConversations.push(b)
   expect(isPersonalMemoryConversation(b)).toBe(false)
   expect(memorySpaceForConversation(b)?.kind).toBe('bot')
+  getDb()
+    .prepare('UPDATE conversations SET bot_origin = ? WHERE id = ?')
+    .run(JSON.stringify({ kind: 'bot', connectionId: 'synthetic', botName: 'Bot' }), a)
+  expect(isPersonalMemoryConversation(a)).toBe(false)
 })
 it('persists catalog deletion updates only after admission and survives restart', async () => {
   const id = personalChat()

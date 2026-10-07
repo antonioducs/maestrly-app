@@ -87,6 +87,7 @@ export type ConversationDispatchErrorCode =
   | 'target-invalid'
   | 'source-not-found'
   | 'project-required'
+  | 'bot-conversation'
   | 'web-managed'
   | 'source-archived'
   | 'conversation-migrating'
@@ -191,6 +192,11 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       )
     if (placement === 'shared' && target && Object.values(target).some((field) => field !== undefined))
       throw new ConversationDispatchError('target-invalid', 'Targets require worktree placement.')
+    if (source.botOrigin)
+      throw new ConversationDispatchError(
+        'bot-conversation',
+        'Bot conversations own their worktree exclusively and cannot start other conversations.'
+      )
     if (deps.isWebManaged(sourceConversationId))
       throw new ConversationDispatchError('web-managed', 'This conversation is managed in the Kanban web chat.')
     if (source.archived === 1)
@@ -665,7 +671,10 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     if (grant.onlyWorkspaceIds) {
       const allowed = new Set(grant.onlyWorkspaceIds)
       const owners = new Map(
-        listConversationDispatchTargets(sourceId, grant.originKey).map((target) => [target.workspaceId, target.requestKey])
+        listConversationDispatchTargets(sourceId, grant.originKey).map((target) => [
+          target.workspaceId,
+          target.requestKey,
+        ])
       )
       for (const task of tasks) {
         const workspaceId = task.target.workspaceId

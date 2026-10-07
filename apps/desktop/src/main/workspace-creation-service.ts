@@ -100,7 +100,10 @@ const SETUP_MESSAGES: Partial<Record<ProjectSetupErrorCode, [WorkspaceCreationEr
     'Git could not authenticate to the repository. For GitHub, the person can run "gh auth login" and "gh auth setup-git".',
   ],
   'clone-network-failed': ['setup-failed', 'The repository host could not be reached.'],
-  'remote-not-found': ['setup-failed', 'The repository was not found or is not accessible with the current credentials.'],
+  'remote-not-found': [
+    'setup-failed',
+    'The repository was not found or is not accessible with the current credentials.',
+  ],
   'operation-conflict': ['setup-failed', 'Another operation is creating a project in the same folder.'],
 }
 
@@ -211,15 +214,22 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
   }
 
   function setupFailure(result: Exclude<ProjectSetupResult<Workspace>, { status: 'success' }>, destination: string) {
-    if (result.status === 'canceled') return new CreationFailure('cancelled', 'The request was cancelled; nothing was kept.')
+    if (result.status === 'canceled')
+      return new CreationFailure('cancelled', 'The request was cancelled; nothing was kept.')
     if (result.status === 'needs-initialization')
-      return new CreationFailure('destination-exists', `"${destination}" exists and is not a git repository; it was left untouched.`)
+      return new CreationFailure(
+        'destination-exists',
+        `"${destination}" exists and is not a git repository; it was left untouched.`
+      )
     if (result.error.cleanupIncomplete)
       return new CreationFailure(
         'setup-failed',
         `Project setup failed and the partial folder "${destination}" could not be removed safely; ask the person to inspect it.`
       )
-    const [code, message] = SETUP_MESSAGES[result.error.code] ?? ['setup-failed', `Project setup failed (${result.error.code}).`]
+    const [code, message] = SETUP_MESSAGES[result.error.code] ?? [
+      'setup-failed',
+      `Project setup failed (${result.error.code}).`,
+    ]
     return new CreationFailure(code, message)
   }
 
@@ -234,7 +244,8 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
     if (!remoteUrl) throw new CreationFailure('destination-exists', untouched)
     const real = await fs.realpath(destination).catch(() => null)
     const origin = real ? await deps.readRepositoryOrigin(real, ctx.signal).catch(() => null) : null
-    if (!real || !origin || !sameGitRemote(origin, remoteUrl)) throw new CreationFailure('destination-exists', untouched)
+    if (!real || !origin || !sameGitRemote(origin, remoteUrl))
+      throw new CreationFailure('destination-exists', untouched)
     const registered = deps.getWorkspaceByPath(real)
     if (registered) return registered
     const result = await deps.executeSetup({ operationId: randomUUID(), kind: 'open', path: real }, ctx)
@@ -248,6 +259,8 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
     const sourceId = grant.conversationId
     const source = deps.getConversation(sourceId)
     if (!source) return failure('source-unsupported', 'The source conversation no longer exists.', request.requestKey)
+    if (source.botOrigin)
+      return failure('source-unsupported', 'Bot conversations cannot create projects.', request.requestKey)
     if (deps.isWebManaged(sourceId))
       return failure('source-unsupported', 'This conversation is managed in the Kanban web chat.', request.requestKey)
     const github = requestedGithubRepository(request.source)
@@ -287,7 +300,9 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
         }
         // Publishing cannot be taken back, so the person confirms it even when the agent understood it right.
         if (visibility === 'public') {
-          const choice = input.confirmPublic ? await input.confirmPublic(github.owner ? `${github.owner}/${name}` : name) : 'cancel'
+          const choice = input.confirmPublic
+            ? await input.confirmPublic(github.owner ? `${github.owner}/${name}` : name)
+            : 'cancel'
           if (choice === 'cancel')
             throw new CreationFailure(
               'not-confirmed',
@@ -406,7 +421,9 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
       return resultFromRecord(findWorkspaceCreation(sourceId, grant.originKey, request.requestKey)!, false)
     } catch (error) {
       const known =
-        error instanceof CreationFailure ? error : new CreationFailure('setup-failed', `Project setup failed: ${errorText(error)}`)
+        error instanceof CreationFailure
+          ? error
+          : new CreationFailure('setup-failed', `Project setup failed: ${errorText(error)}`)
       if (record) failWorkspaceCreation(record.creationId, known.message)
       return failure(known.code, known.message, request.requestKey)
     }

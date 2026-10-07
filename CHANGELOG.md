@@ -5,6 +5,17 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Let a bot of your bot server start and follow development conversations in the
+  projects of your computers. Each computer gives the bot access on its own, in
+  the bot's **Settings → This computer**, choosing the projects, models, actions
+  and approval ceiling, and lists the other computers with access so you can
+  remove them. Calls reach a computer only through the event stream it keeps open
+  to the server, and fail at once when it is offline. Update the desktop app, the
+  bot server and the bot environment to use it. See
+  [work in the projects of your computers](docs/bot-fleet.md#work-in-the-projects-of-your-computers).
+
 ### Fixed
 
 - Update the image library bundled with the local AI runtime to sharp 0.35.5,
@@ -19,8 +30,9 @@ User-visible changes by version. Downloads are on
   other MCP clients; use [Maestrly bots](docs/bot-fleet.md) instead. Desktop no
   longer offers **Settings → Bots** or its `/mcp/bots` endpoint, and the server
   no longer serves `/mcp`, connectors, delegated tasks, or their web pages.
-  Conversations a bot created remain ordinary conversations. Upgrading deletes
-  the connection data and revokes OAuth clients registered for these agents.
+  Conversations such an agent created remain, with their bot badge marked
+  revoked, and become yours to write in. Upgrading revokes the connections the
+  agents had on this computer and deletes the OAuth clients registered for them.
 
 ## [0.14.1] - 2026-10-04
 

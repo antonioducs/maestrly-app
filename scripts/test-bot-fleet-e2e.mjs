@@ -155,6 +155,98 @@ async function subscribe() {
   await poll('SSE hello', () => events.some((event) => event.type === 'hello'), 10000)
 }
 const bot = (id) => request('GET', '/v1/bots/' + id)
+/** A device paired with its own pairing code, as each of the owner's computers is. */
+async function pairDevice(deviceName) {
+  const output = (
+    await compose(['exec', '-T', 'maestrly-bot-gateway', 'node', 'apps/bot-gateway/dist/main.js', 'pair'])
+  ).stdout
+  const code = /[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/.exec(output)?.[0]
+  assert.ok(code, 'Pairing code absent from gateway CLI output')
+  return (await request('POST', '/v1/pair', { code: code.replace('-', ''), deviceName }, { headers: {} })).token
+}
+/**
+ * One of the owner's computers, played by this script: it pairs, opens its own event stream asking for desktop calls,
+ * and answers each call the way a Maestrly desktop does, with synthetic workspaces and conversations of its own.
+ */
+async function syntheticComputer(name) {
+  const deviceToken = await pairDevice('E2E ' + name)
+  const headers = { Authorization: 'Bearer ' + deviceToken, 'X-Maestrly-Fleet-Protocol': '1' }
+  const state = { calls: [], links: [], created: [], abort: null }
+  const answer = async (callId, body) => {
+    const response = await fetch(base + '/v1/desktop-calls/' + callId + '/result', {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    })
+    assert.equal(response.status, 204)
+  }
+  const reply = (event) => {
+    if (event.op === 'listWorkspaces')
+      return {
+        desktop: { id: event.desktopId, name },
+        workspaces: [{ workspaceId: 'w-' + name, label: 'project-' + name, branches: ['main'], defaultBranch: 'main' }],
+        selections: [
+          {
+            selectionId: 'sel-' + name,
+            label: 'e2e-model',
+            providerLabel: 'E2E',
+            reasoningEfforts: [],
+            fastMode: false,
+            modes: ['agent'],
+            permissionModes: ['ask', 'auto'],
+          },
+        ],
+      }
+    if (event.op === 'createChat') {
+      const conversation = { id: randomUUID(), workspaceId: event.input.workspaceId, name: event.input.name }
+      state.created.push(conversation)
+      return { conversation }
+    }
+    if (event.op === 'listChats') return { conversations: state.created }
+    return {}
+  }
+  const connect = async () => {
+    state.abort = new AbortController()
+    const response = await fetch(base + '/v1/events?reasoning=1&desktopBridge=1', {
+      headers,
+      signal: state.abort.signal,
+    })
+    assert.equal(response.status, 200)
+    void (async () => {
+      const decoder = new TextDecoder()
+      let buffer = ''
+      try {
+        for await (const chunk of response.body) {
+          buffer += decoder.decode(chunk, { stream: true })
+          let boundary
+          while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, boundary)
+            buffer = buffer.slice(boundary + 2)
+            const data = frame.split('\n').find((line) => line.startsWith('data: '))
+            if (!data) continue
+            const event = JSON.parse(data.slice(6))
+            if (event.type === 'desktop_link.updated') state.links.push(event)
+            if (event.type !== 'desktop.call') continue
+            state.calls.push(event)
+            await answer(event.callId, { ok: true, value: reply(event) })
+          }
+        }
+      } catch {
+        // The script closed this computer's stream.
+      }
+    })()
+  }
+  await connect()
+  return {
+    name,
+    state,
+    request: (method, route, body, options = {}) =>
+      request(method, route, body, { ...options, headers: { Authorization: 'Bearer ' + deviceToken } }),
+    disconnect: () => state.abort?.abort(),
+    connect,
+  }
+}
 const transcript = async (id) => (await request('GET', '/v1/bots/' + id + '/transcript?limit=500')).items
 const historyIds = async (id) => (await transcript(id)).map((item) => item.id)
 async function fleetImage(botId, imageId) {
@@ -2582,6 +2674,66 @@ async function main() {
     "Dev's environment got its own account; Scout's environment memory reached Dev only once made global; no shared cookie"
   )
 
+  // Two of the owner's computers give Dev access to their workspaces, each on its own; the bot reaches each one
+  // through that computer's own event stream and nothing else.
+  const computerA = await syntheticComputer('a')
+  const computerB = await syntheticComputer('b')
+  const linkA = await computerA.request('PUT', '/v1/bots/' + devId + '/desktop-link', { name: 'Computer A' })
+  const linkB = await computerB.request('PUT', '/v1/bots/' + devId + '/desktop-link', { name: 'Computer B' })
+  assert.match(linkA.desktopId, /^dsk_/)
+  assert.notEqual(linkA.desktopId, linkB.desktopId)
+  assert.deepEqual(
+    (await computerA.request('GET', '/v1/bots/' + devId + '/desktop-links')).links.map((link) => [
+      link.name,
+      link.self,
+    ]),
+    [
+      ['Computer A', true],
+      ['Computer B', false],
+    ]
+  )
+  const listed = await answer(await send(devId, 'E2E-DESKTOPS-LIST'), 'E2E-DESKTOPS-SEEN', { noPermission: true })
+  assert.ok(listed.text.includes(`${linkA.desktopId}=Computer A:on:w-a`), listed.text)
+  assert.ok(listed.text.includes(`${linkB.desktopId}=Computer B:on:w-b`), listed.text)
+  const created = await answer(
+    await send(devId, `E2E-DESKTOPS-CREATE a=${linkA.desktopId} b=${linkB.desktopId}`),
+    'E2E-DESKTOPS-CREATED',
+    { noPermission: true }
+  )
+  assert.equal(computerA.state.created.length, 1)
+  assert.equal(computerB.state.created.length, 1)
+  assert.ok(created.text.includes('a=' + computerA.state.created[0].id), created.text)
+  assert.ok(created.text.includes('b=' + computerB.state.created[0].id), created.text)
+  // Every call reached only the computer it named.
+  assert.ok(computerA.state.calls.every((call) => call.desktopId === linkA.desktopId && call.botId === devId))
+  assert.ok(computerB.state.calls.every((call) => call.desktopId === linkB.desktopId && call.botId === devId))
+  assert.deepEqual(
+    computerA.state.calls.map((call) => call.op),
+    ['listWorkspaces', 'createChat']
+  )
+  // One computer goes away: the bot hears it is offline at once, and the other keeps working.
+  computerB.disconnect()
+  await poll('Computer B offline', async () => {
+    const links = (await computerA.request('GET', '/v1/bots/' + devId + '/desktop-links')).links
+    return links.find((link) => link.desktopId === linkB.desktopId)?.online === false
+  })
+  await answer(
+    await send(devId, `E2E-DESKTOPS-OFFLINE a=${linkA.desktopId} b=${linkB.desktopId}`),
+    'E2E-DESKTOPS-OFFLINE-SEEN b=offline a=ok',
+    { noPermission: true }
+  )
+  // Removing one computer's link, from another computer, cuts that computer only.
+  await computerA.request('DELETE', '/v1/bots/' + devId + '/desktop-links/' + linkB.desktopId, undefined, {
+    status: 204,
+  })
+  const linked = await answer(await send(devId, 'E2E-DESKTOPS-LINKS'), 'E2E-DESKTOPS-LINKED', { noPermission: true })
+  assert.ok(linked.text.includes(`${linkA.desktopId}=Computer A:on`), linked.text)
+  assert.ok(!linked.text.includes(linkB.desktopId), linked.text)
+  pass(
+    'bot reaches the workspaces of two computers',
+    'listed both, created one conversation on each, offline computer failed at once, removed link cut only that one'
+  )
+
   await request('POST', '/v1/bots/' + devId + '/archive')
   await poll('Dev uninstalled again', async () => (await instanceStatus(containers[0])).bots.length === 0)
   assert.equal((await containerState(containers[0]))?.running, true)
@@ -2594,6 +2746,12 @@ async function main() {
   assert.deepEqual((await request('GET', devRoute)).botIds, [])
   assert.deepEqual((await request('GET', '/v1/archived-bots')).bots, [])
   await request('GET', '/v1/bots/' + devId, undefined, { status: 404 })
+  // Deleting the bot took its links: the computer that still linked it hears it has none left.
+  await poll('Computer A told the links of Dev are gone', async () =>
+    computerA.state.links.some((event) => event.botId === devId && event.links.length === 0)
+  )
+  await computerA.request('GET', '/v1/bots/' + devId + '/desktop-links', undefined, { status: 404 })
+  computerA.disconnect()
   const activity = await activityEntries()
   assert.ok(activity.every((item) => item.botId !== devId))
   const deletedEntry = activity.find((item) => item.kind === 'bot_deleted')

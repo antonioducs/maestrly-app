@@ -71,9 +71,9 @@ export function insertConversation(c: Conversation): void {
   getDb()
     .prepare(
       `INSERT INTO conversations
-       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, position)
+       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, bot_origin, bot_management_state, bot_manual_chat_enabled, position)
      VALUES
-       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs,
+       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs, @botOrigin, @botManagementState, @botManualChatEnabled,
         (SELECT COALESCE(MAX(position), -1) + 1 FROM conversations WHERE scope = @scope AND workspace_id IS @workspaceId))`
     )
     .run({
@@ -92,6 +92,10 @@ export function insertConversation(c: Conversation): void {
       lastActivityAt: c.lastActivityAt,
       isMulti: c.isMulti ?? 0,
       uiPrefs: uiPrefs ? JSON.stringify(uiPrefs) : '{}',
+      botOrigin: c.botOrigin ? JSON.stringify(c.botOrigin) : null,
+      botManagementState: c.botOrigin ? (c.botManagementState ?? 'active') : null,
+      // Releasing a bot chat for the person's own messages is their later choice, never a creation default.
+      botManualChatEnabled: c.botOrigin && c.botManualChatEnabled ? 1 : 0,
     })
 }
 
@@ -338,6 +342,13 @@ function rowToConversation(r: any): Conversation | undefined {
     lastActivityAt: r.last_activity_at ?? r.created_at,
     isMulti: r.is_multi ?? 0,
     uiPrefs: parseUiPrefs(r.ui_prefs),
+    ...(r.bot_origin
+      ? {
+          botOrigin: JSON.parse(r.bot_origin),
+          botManagementState: r.bot_management_state,
+          botManualChatEnabled: r.bot_manual_chat_enabled === 1,
+        }
+      : {}),
   } as Conversation
 }
 

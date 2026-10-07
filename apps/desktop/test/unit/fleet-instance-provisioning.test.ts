@@ -272,6 +272,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'context-limit',
     'transcript-reasoning',
     'runtime-updates',
+    'desktop-bridge',
   ])
 })
 

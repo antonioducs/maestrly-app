@@ -50,7 +50,7 @@ const profile = (botId: string, name: string): FleetInstanceProfile => ({
   ceiling: 'ask',
   selection: null,
   compaction,
-  gateway: { peersEnabled: true, artifactsEnabled: false },
+  gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
 })
 const extracted = JSON.stringify({
   memories: [{ action: 'create', type: 'decision', title: 'Blue-green deploy', content: 'Switch blue to green.' }],

@@ -370,6 +370,10 @@ export class BotRuntime {
   get artifactsEnabled(): boolean {
     return this.stored?.profile.gateway.artifactsEnabled ?? false
   }
+  /** Whether the gateway routes this bot's calls to the Macs that link it; an older gateway never does. */
+  get desktopBridgeEnabled(): boolean {
+    return this.stored?.profile.gateway.desktopBridgeEnabled ?? false
+  }
   /** Whether the environment has a gateway: its tools are offered even before the bot's token arrives. */
   get gatewayConfigured(): boolean {
     return !!this.host.gatewayUrl

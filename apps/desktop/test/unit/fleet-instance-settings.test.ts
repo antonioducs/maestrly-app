@@ -345,7 +345,7 @@ describe('environment settings through the authenticated instance control server
         ceiling: 'ask',
         selection,
         compaction,
-        gateway: { peersEnabled: false, artifactsEnabled: false },
+        gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
       }
       await runtime.installBot({ profile, slot: index + 1, gatewayToken: `synthetic-token-${botId}` })
     }

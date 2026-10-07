@@ -124,6 +124,8 @@ export class Lifecycle {
   controlCount: (id: string) => number = () => 0
   artifactsEnabled: () => boolean = () => false
   onReady: (id: string) => void = () => {}
+  /** A bot and every record of it are gone for good: whatever still points at it (desktop links, calls) goes too. */
+  onBotPurged: (id: string) => void = () => {}
   onTurnFinished?: (
     botId: string,
     event: { outcome: 'completed' | 'cancelled' | 'failed'; inputId: string | null; text: string | null }
@@ -562,6 +564,8 @@ export class Lifecycle {
       gateway: {
         peersEnabled: bot.talksTo.length > 0,
         artifactsEnabled: bot.publishArtifacts && this.artifactsEnabled(),
+        // This gateway routes desktop calls; whether any Mac linked the bot is answered per call, never cached here.
+        desktopBridgeEnabled: true,
       },
       tint: bot.tint,
     }
@@ -1462,7 +1466,10 @@ export class Lifecycle {
     } finally {
       this.deletingEnvironments.delete(id)
     }
-    for (const botId of removed.botIds) this.pendingSeen.delete(botId)
+    for (const botId of removed.botIds) {
+      this.pendingSeen.delete(botId)
+      this.onBotPurged(botId)
+    }
     this.forgetEnvironment(id)
     if (removed.ownerMemoriesDeleted)
       this.onEvent({ type: 'owner_memory.updated', at: now(), revision: this.store.ownerMemoryRevision() })
@@ -1677,6 +1684,7 @@ export class Lifecycle {
       this.deleting.delete(id)
     }
     this.pendingSeen.delete(id)
+    this.onBotPurged(id)
     if (whole) {
       this.forgetEnvironment(environmentId)
       this.recordActivity(null, 'bot_deleted', bot.name)

@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   events: [] as {
     onConnected: () => Promise<void>
     onEvent: (event: unknown) => void
+    options: { desktopBridge?: boolean } | undefined
   }[],
   broadcasts: [] as { channel: string; payload: unknown }[],
   download: vi.fn(),
@@ -47,8 +48,16 @@ vi.mock('../../src/main/window-ipc', () => ({
 }))
 vi.mock('../../src/main/fleet/client/events', () => ({
   FleetEvents: class {
-    constructor(_api: unknown, onEvent: (event: unknown) => void, _onState: unknown, onConnected: () => Promise<void>) {
-      state.events.push({ onConnected, onEvent })
+    constructor(
+      _api: unknown,
+      onEvent: (event: unknown) => void,
+      _onState: unknown,
+      onConnected: () => Promise<void>,
+      _pause?: unknown,
+      _heartbeat?: unknown,
+      options?: { desktopBridge?: boolean }
+    ) {
+      state.events.push({ onConnected, onEvent, options })
     }
     start() {}
     stop() {}
@@ -188,6 +197,49 @@ describe('fleet client service', () => {
     finish({ capabilities: ['files'] })
     await expect(saving).rejects.toThrow()
     expect(state.download).not.toHaveBeenCalled()
+  })
+  it('hands desktop calls to the bridge only, announces it on the stream, and ends its access when unpairing', async () => {
+    const bridge = {
+      handle: vi.fn(() => true),
+      connected: vi.fn(async () => {}),
+      unpaired: vi.fn(async () => {}),
+      stop: vi.fn(),
+    }
+    const service = new FleetClientService()
+    service.desktopBridge = bridge
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    expect(state.events[0].options).toEqual({ desktopBridge: true })
+    await state.events[0].onConnected()
+    expect(bridge.connected).toHaveBeenCalled()
+    const call = {
+      type: 'desktop.call',
+      at: '2026-10-05T10:00:00.000Z',
+      callId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      botId: 'scout',
+      desktopId: 'dsk_0123456789abcdefABCD',
+      op: 'listWorkspaces',
+      input: {},
+      expiresAt: '2026-10-05T10:00:25.000Z',
+    }
+    state.broadcasts.length = 0
+    state.events[0].onEvent(call)
+    expect(bridge.handle).toHaveBeenLastCalledWith(call)
+    // No window ever sees a call.
+    expect(state.broadcasts.filter((event) => event.channel === 'fleet:event')).toEqual([])
+    const links = { type: 'desktop_link.updated', at: call.at, botId: 'scout', links: [] }
+    state.events[0].onEvent(links)
+    expect(bridge.handle).toHaveBeenLastCalledWith(links)
+    expect(state.broadcasts.filter((event) => event.channel === 'fleet:event').map((event) => event.payload)).toEqual([
+      links,
+    ])
+    await service.disconnect()
+    expect(bridge.unpaired).toHaveBeenCalledWith('device-1')
+    expect(bridge.stop).toHaveBeenCalled()
+
+    // Without a bridge this Mac never says it takes desktop calls.
+    const plain = new FleetClientService()
+    await plain.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    expect(state.events.at(-1)?.options).toEqual({ desktopBridge: false })
   })
   it('refreshes advertised features on connect and every reconnect, defaulting absent metadata to empty', async () => {
     state.features = ['provisioning']

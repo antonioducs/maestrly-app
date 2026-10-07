@@ -58,7 +58,9 @@ import type {
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { BackgroundCompactionStatus as BackgroundCompactionState } from '../../../shared/background-compaction'
+import type { Conversation } from '../../../shared/conversation'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
+import { BotManualChatControl } from '../bot/BotManualChatControl'
 import { cycleChatMode } from '../../../shared/chat-mode'
 import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
 import {
@@ -114,6 +116,11 @@ import { SubagentActivityPill } from './SubagentActivityPill'
 import { routeHarnessComposerSubmit, routeHarnessReasoningChange } from './harness-turn-controls'
 
 interface Props {
+  /** A bot holds this conversation: it created it and the person has not paused or revoked it. */
+  botManaged?: boolean
+  /** The person released this bot chat, so they write in it without taking it from the bot. */
+  botConversation?: Conversation
+  botName?: string
   workspaceId: string | null
   conversationId: string
   cwd: string
@@ -151,6 +158,9 @@ function revokeAttachmentPreviews(attachments: readonly UIAttachment[]): void {
 }
 
 export function ChatView({
+  botManaged = false,
+  botConversation,
+  botName,
   workspaceId,
   conversationId,
   cwd: _cwd,
@@ -163,6 +173,8 @@ export function ChatView({
   const { t } = useTranslation('chat')
   const ownerWindow = useChatOwnerWindow()
   const showSourceConversation = useChatSourceConversation()
+  // A released chat still belongs to its bot; what changes is that the person may write in it too.
+  const botBlocked = botManaged && !botConversation?.botManualChatEnabled
   const [currentExperience, setCurrentExperience] = useState(experience)
   useEffect(() => setCurrentExperience(experience), [conversationId, experience])
   const isMaestro = currentExperience === 'maestro'
@@ -771,10 +783,15 @@ export function ChatView({
   // Covers every artifact-backed attachment (images and PDFs), not only images: see hasArtifactAttachment.
   const imagesSentRef = useRef(false)
 
+  // This composer showed the user message it sent. Any other turn (a bot, another window, a queued handoff) reaches
+  // this view only as stream events, so its user message must be read back once it is saved.
+  const optimisticSentRef = useRef(false)
+
   useEffect(() => {
     slashSentRef.current = false
     agentMentionsSentRef.current = false
     imagesSentRef.current = false
+    optimisticSentRef.current = false
   }, [conversationId])
 
   const doSend = useCallback(
@@ -841,6 +858,7 @@ export function ChatView({
           )
         )
       }
+      optimisticSentRef.current = updateVisual
       streamingRef.current = true
       turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
@@ -867,6 +885,7 @@ export function ChatView({
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
+        optimisticSentRef.current = false
         streamingRef.current = false
         if (visibleRef.current) setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
@@ -1045,14 +1064,17 @@ export function ChatView({
       const localSlash = slashSentRef.current
       const localAgentMentions = agentMentionsSentRef.current
       const localImages = imagesSentRef.current
+      const optimistic = optimisticSentRef.current
       slashSentRef.current = false
       agentMentionsSentRef.current = false
       imagesSentRef.current = false
+      optimisticSentRef.current = false
       const saved = ev as { compacted?: boolean; imagesDescribed?: number; memoryRecalled?: boolean }
       if (
         shouldReloadOnUserSaved({
           memoryRecalled: saved.memoryRecalled,
-          streaming: streamingRef.current,
+          // Not the streaming flag: this very event already set it, so a message sent elsewhere never loaded.
+          optimistic,
           compacted: saved.compacted,
           imagesDescribed: saved.imagesDescribed,
           localSlash,
@@ -1824,12 +1846,14 @@ export function ChatView({
       agentMentionsSentRef.current = agentMentions.length > 0
 
       imagesSentRef.current = resendHasImage
+      optimisticSentRef.current = true
       setStreaming(true)
       const res = await window.api.chatResend(conversationId, id, text, agentMentions)
       if (!res.ok) {
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
+        optimisticSentRef.current = false
         setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
       }
@@ -2197,6 +2221,11 @@ export function ChatView({
               </div>
             )}
 
+            {botManaged && botConversation && (
+              <div className="mx-auto mb-1.5 w-full max-w-3xl px-3" data-testid="bot-manual-chat">
+                <BotManualChatControl conversation={botConversation} />
+              </div>
+            )}
             {pendingQuestion ? (
               <QuestionComposer
                 key={pendingQuestion.toolCallId}
@@ -2214,7 +2243,8 @@ export function ChatView({
                 streaming={streaming}
                 sendWhileStreaming={maestroLiveActive || midTurnSteering}
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
-                disabled={keyMissing || reviewLoopActive}
+                disabled={keyMissing || reviewLoopActive || botBlocked}
+                disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
                 onSend={submitDraft}
                 onStop={stop}
                 attachments={attachments}
@@ -2231,7 +2261,7 @@ export function ChatView({
                   <ChatMicButton
                     onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
                     onAutoSend={(t) => {
-                      if (keyMissing || reviewLoopActive) return false
+                      if (keyMissing || reviewLoopActive || botBlocked) return false
                       submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
                       return true
                     }}

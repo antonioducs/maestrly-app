@@ -8,6 +8,7 @@ import type {
   FleetSubscriptionKind,
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetInstallerStatus } from '../shared/fleet-installer'
+import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
 import { ipcRenderer } from 'electron'
 import type {
   FleetOwnerMemory,
@@ -133,6 +134,7 @@ export type {
   FleetScreenTarget,
   FleetScreenTargetInput,
 } from '../shared/fleet-targets'
+export type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
 export type {
   FleetApiKeyProviderKind,
   FleetActivityEntry,
@@ -353,6 +355,20 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:screenClipboardRead', channelId),
   fleetScreenClipboardWrite: (channelId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('fleet:screenClipboardWrite', channelId, text),
+  /** What this Mac gives a bot, and every Mac linked to it. */
+  fleetDesktopAccess: (botId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:get', botId),
+  /** Gives a bot access to projects on this Mac, or changes it. */
+  fleetDesktopAccessSave: (botId: string, input: FleetDesktopAccessInput): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:save', botId, input),
+  /** Takes this Mac's access back; the bot's conversations stay here. */
+  fleetDesktopAccessDisable: (botId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:disable', botId),
+  /** Removes another Mac's link; that Mac revokes its side when it hears of it. */
+  fleetDesktopAccessRemoveOther: (botId: string, desktopId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:removeOther', botId, desktopId),
+  onFleetDesktopAccess: (cb: (payload: { botId: string }) => void): (() => void) =>
+    subscribe('fleet:desktop-access', cb),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
