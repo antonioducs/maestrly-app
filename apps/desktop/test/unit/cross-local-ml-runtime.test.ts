@@ -27,7 +27,7 @@ function pe(machine = 0x8664, optionalHeaderMagic = 0x20b) {
 async function fixture(files: Record<string, Buffer | string>) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cross-local-ml-test-'))
   temporaryRoots.push(directory)
-  const archive = path.join(directory, 'local-ml-runtime-2.17.2-2-win-x64.tar.gz')
+  const archive = path.join(directory, 'local-ml-runtime-2.17.2-3-win-x64.tar.gz')
   const sidecar = archive.replace(/\.tar\.gz$/, '.json')
   const pack = tar.pack()
   const destination = createWriteStream(archive)
@@ -47,7 +47,7 @@ async function fixture(files: Record<string, Buffer | string>) {
     sidecar,
     `${JSON.stringify({
       schema: 1,
-      version: '2.17.2-2',
+      version: '2.17.2-3',
       target: 'win-x64',
       sha256: createHash('sha256').update(contents).digest('hex'),
       archiveBytes: (await stat(archive)).size,
@@ -65,8 +65,8 @@ function requiredFiles() {
     'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node': pe(),
     'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime.dll': pe(),
     'node_modules/sharp/package.json': '{}',
-    'node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node': pe(),
-    'node_modules/@img/sharp-win32-x64/lib/libvips-cpp-8.18.6.dll': pe(),
+    'node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.5.node': pe(),
+    'node_modules/@img/sharp-win32-x64/lib/libvips-cpp-8.18.7.dll': pe(),
     'node_modules/@fugood/node-whisper-win32-x64/index.node': pe(),
     'models/ggml-silero-v6.2.0.bin': 'vad',
   }
@@ -105,7 +105,7 @@ describe('cross local-ML runtime verifier', () => {
 
   it('rejects a Windows ARM64 native binary', async () => {
     const files = requiredFiles()
-    files['node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node'] = pe(0xaa64)
+    files['node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.5.node'] = pe(0xaa64)
     const artifact = await fixture(files)
 
     await expect(verifyCrossLocalMlRuntime({ ...artifact, target: 'win-x64' })).rejects.toThrow(
@@ -115,7 +115,7 @@ describe('cross local-ML runtime verifier', () => {
 
   it('rejects a PE32 binary even when its machine field says x86-64', async () => {
     const files = requiredFiles()
-    files['node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node'] = pe(0x8664, 0x10b)
+    files['node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.5.node'] = pe(0x8664, 0x10b)
     const artifact = await fixture(files)
 
     await expect(verifyCrossLocalMlRuntime({ ...artifact, target: 'win-x64' })).rejects.toThrow(

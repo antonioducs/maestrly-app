@@ -13,7 +13,7 @@ import tar from 'tar-stream'
 // Compression must match the pinned manifest; fail before installing dependencies or touching tracked files.
 assertBundledZlib()
 
-export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-2'
+export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-3'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop')
 const hostOs = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : process.platform
 const hostTarget = `${hostOs}-${process.arch}`

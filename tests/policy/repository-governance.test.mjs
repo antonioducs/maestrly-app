@@ -226,7 +226,7 @@ test('dependency policy covers the packaged local ML closure', () => {
   assert.match(manifest.scripts['audit:dependencies'], /--prefix apps\/desktop\/runtime-assets\/local-ml/)
 
   const runtimeManifest = JSON.parse(read('apps/desktop/runtime-assets/local-ml/package.json'))
-  assert.equal(runtimeManifest.overrides.sharp, '0.35.4')
+  assert.equal(runtimeManifest.overrides.sharp, '0.35.5')
 })
 
 test('Gitleaks uses only constrained current-tree exceptions', () => {
