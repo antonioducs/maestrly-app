@@ -54,19 +54,19 @@ describe('runtime asset registry', () => {
       'win-x64',
     ])
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets['mac-arm64']).toMatchObject({
-      hash: { algorithm: 'sha256', digest: '81420b6005f370a693179fcaf8310a1a1c1217365cbef3f00550c6232d72315b' },
-      downloadBytes: 43_252_201,
-      unpackedBytes: 146_566_344,
+      hash: { algorithm: 'sha256', digest: '340426b0cd541446c70ff29792727fd2a0faeb5d7f6bb969a7de291959460089' },
+      downloadBytes: 43_294_395,
+      unpackedBytes: 146_635_449,
     })
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets['linux-x64']).toMatchObject({
-      hash: { algorithm: 'sha256', digest: 'ff229da7280bda61b0b4aeca30c351999a0ef00943dddb73fa2fcb25c753efbe' },
-      downloadBytes: 51_758_967,
-      unpackedBytes: 160_125_124,
+      hash: { algorithm: 'sha256', digest: 'f8b4bf02d3053710745580b0ba306fa4b7da1386b3975a11768fae33e57b866f' },
+      downloadBytes: 51_830_491,
+      unpackedBytes: 160_270_372,
     })
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets['win-x64']).toMatchObject({
-      hash: { algorithm: 'sha256', digest: 'a405d52f41d2ce0bdc76c491c5447342296145843931a97def07d11d57ee98fe' },
-      downloadBytes: 40_860_763,
-      unpackedBytes: 134_071_112,
+      hash: { algorithm: 'sha256', digest: 'dddcac49613fa2e32a210b03afc3d27f74547c661f7d6d7eabb9027207a2f234' },
+      downloadBytes: 40_936_697,
+      unpackedBytes: 134_478_057,
     })
     for (const target of Object.values(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets)) {
       expect(target?.criticalPaths).toContain('models/ggml-silero-v6.2.0.bin')
@@ -83,7 +83,7 @@ describe('runtime asset registry', () => {
     )
     expect(RUNTIME_ASSET_REGISTRY['github-copilot-runtime']).toMatchObject({ version: '1.0.71' })
     expect(RUNTIME_ASSET_REGISTRY['tunnel-client']).toMatchObject({ version: '0.0.10' })
-    expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime']).toMatchObject({ version: '2.17.2-2' })
+    expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime']).toMatchObject({ version: '2.17.2-3' })
     expect(RUNTIME_ASSET_REGISTRY['tunnel-client'].targets['win-x64']?.hash.digest).toBe(
       '5e64a056f1d96786da0a6f8db1da5f5f4a03fd19a90d951a25cf2ca8d9093d00'
     )

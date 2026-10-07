@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- Update the image library bundled with the local AI runtime to sharp 0.35.5,
+  which fixes a vulnerability in its SVG renderer (GHSA-wq5f-xc86-pv6w), and the
+  MCP SDK copy used by the Claude runtime to 1.31.0 (GHSA-6qxp-vccf-f47h). The app
+  installs the updated local AI runtime from its own package, without network
+  access.
+
 ### Removed
 
 - **Breaking:** remove the connection for external agents such as Grok Bot and

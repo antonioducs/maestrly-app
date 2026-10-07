@@ -84,7 +84,7 @@ async function main() {
   if (process.argv.length > 3) throw new Error(`Unexpected extra arguments: ${process.argv.slice(3).join(' ')}`)
   const archive =
     process.argv[2] ??
-    path.join('runtime-assets', 'local-ml', 'archives', `local-ml-runtime-2.17.2-2-${hostOs}-${process.arch}.tar.gz`)
+    path.join('runtime-assets', 'local-ml', 'archives', `local-ml-runtime-2.17.2-3-${hostOs}-${process.arch}.tar.gz`)
   const resolvedArchive = path.resolve(archive)
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'local-ml-smoke-'))
   try {
