@@ -38,9 +38,12 @@ beforeEach(() => {
   runtime.acquire.mockClear()
   runtime.embed.mockClear()
   freshDb()
+  // What recall does is tested here, not how fast a loaded runner is; the budget tests restore the real one.
+  setTurnMemoryBudgetForTests(30_000)
 })
 
 afterEach(() => {
+  setTurnMemoryBudgetForTests(null)
   disposeMemoryIndexService()
   closeDb()
   vi.restoreAllMocks()
@@ -58,7 +61,12 @@ import {
   clearConversationMemorySpace,
   registerConversationMemorySpace,
 } from '../../src/main/memory/spaces'
-import { MEMORY_RECALL_PART, MEMORY_UPDATES_PART, prepareTurnMemory } from '../../src/main/memory/turn-memory'
+import {
+  MEMORY_RECALL_PART,
+  MEMORY_UPDATES_PART,
+  prepareTurnMemory,
+  setTurnMemoryBudgetForTests,
+} from '../../src/main/memory/turn-memory'
 import { setAppSetting } from '../../src/main/store/app-settings'
 import { getConversationMemoryState } from '../../src/main/store/conversation-memory-state'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -249,6 +257,7 @@ it('admits a turn when a host extras provider ignores cancellation', async () =>
 }, 200)
 
 it('keeps building the memory core when a host extras provider misses the budget', async () => {
+  setTurnMemoryBudgetForTests(null)
   const workspace = makeWorkspace()
   const conversation = makeConversation(workspace.id)
   createLocalMemory({
@@ -549,6 +558,7 @@ it('retains recall tracking from both concurrent admitted turns', async () => {
   expect(getConversationMemoryState(id)?.recalledIds).toEqual(expect.arrayContaining([first.id, second.id]))
 })
 it('admits the personal core without tracking a recall that exceeds the time budget', async () => {
+  setTurnMemoryBudgetForTests(null)
   const id = personalChat()
   personalEntry()
   vi.spyOn(memorySearch, 'searchMemorySpace').mockImplementation(() => new Promise(() => {}))

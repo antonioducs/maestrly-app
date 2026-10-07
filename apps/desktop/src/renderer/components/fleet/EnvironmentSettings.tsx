@@ -112,8 +112,6 @@ export function EnvironmentSettingsSheet({
       >,
     []
   )
-  const latestDirty = useRef(dirty)
-  latestDirty.current = dirty
   const dirtyOf = (tabs: EnvironmentSettingsSection[]) => tabs.filter((tab) => drafts.current.get(tab)?.dirty)
 
   const serverCapable = fleet.state.connection.features.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
@@ -216,7 +214,8 @@ export function EnvironmentSettingsSheet({
   useEffect(() => {
     const key = (event: globalThis.KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 's') return
-      if (!latestDirty.current.length) return
+      // Read the drafts, not the rendered list: a key pressed right after an edit arrives before that list updates.
+      if (![...drafts.current.values()].some((draft) => draft.dirty)) return
       event.preventDefault()
       if (latest.current.ready && !latest.current.pending)
         void latest.current.saveTabs([...ENVIRONMENT_SETTINGS_SECTIONS])
