@@ -32,6 +32,15 @@ export const TURN_MEMORY_LIMITS = {
   recalledIdsKept: 200,
 } as const
 
+let budgetOverrideMs: number | null = null
+/**
+ * The budget is wall-clock time: a test of what recall does must not fail because a loaded runner was slow, while a
+ * test of the budget itself keeps the real one by passing null.
+ */
+export function setTurnMemoryBudgetForTests(ms: number | null): void {
+  budgetOverrideMs = ms
+}
+
 export function isMemoryContextPart(part: MessagePart): boolean {
   return part.type === 'file' && part.hidden === true && part.name.startsWith(MEMORY_PART_PREFIX)
 }
@@ -121,7 +130,7 @@ export async function prepareTurnMemory(input: {
   now?: number
 }): Promise<TurnMemory> {
   const signal = AbortSignal.any([
-    AbortSignal.timeout(TURN_MEMORY_LIMITS.budgetMs),
+    AbortSignal.timeout(budgetOverrideMs ?? TURN_MEMORY_LIMITS.budgetMs),
     ...(input.signal ? [input.signal] : []),
   ])
   try {
