@@ -23,6 +23,9 @@ User-visible changes by version. Downloads are on
   MCP SDK copy used by the Claude runtime to 1.31.0 (GHSA-6qxp-vccf-f47h). The app
   installs the updated local AI runtime from its own package, without network
   access.
+- Save an environment's settings when Cmd/Ctrl+S is pressed right after an
+  edit. The shortcut could arrive before the settings panel registered the
+  change and was then ignored, leaving the edit unsaved.
 
 ### Removed
 

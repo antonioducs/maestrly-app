@@ -290,6 +290,16 @@ test('account edits omit unchanged secrets, cancel removal, and preserve state o
   expect(saves.at(-1)!.body.expectedRevision).not.toBe(saves.at(-2)!.body.expectedRevision)
   expect(saves.at(-1)!.body).not.toHaveProperty('baseURL')
   expect(gateway.states.get('studio')!.accounts.apiKeys[0].baseURL).toBe('https://api.example.test/[redacted]')
+  // The shortcut pressed in the very task of the edit, before the panel renders the change, still saves it.
+  await panel()
+    .getByLabel('Nome', { exact: true })
+    .evaluate((input: HTMLInputElement) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Same-moment save')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+  await expect.poll(() => gateway.states.get('studio')!.accounts.apiKeys[0].name).toBe('Same-moment save')
+  await expect(panel().getByRole('button', { name: 'Salvar alterações' })).toBeDisabled()
   await panel().getByLabel('Nome', { exact: true }).fill('Saved on close')
   await panel().getByRole('button', { name: 'Fechar', exact: true }).last().click()
   const guard = page.getByRole('dialog', { name: 'Salvar antes de sair?' })
