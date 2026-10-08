@@ -211,8 +211,9 @@ export class InstanceInputQueue {
       })
     )
   }
+  /** A queued attachment's bytes: of an input still queued, or taken by a turn whose native message is not saved yet. */
   async readImage(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array } | null> {
-    for (const item of this.list()) {
+    for (const item of this.items) {
       const index = item.attachments.findIndex((entry) => entry.kind === 'image' && entry.id === imageId)
       if (index < 0) continue
       try {
@@ -231,7 +232,7 @@ export class InstanceInputQueue {
       .map(({ id, name, mediaType, byteSize }) => ({ id, name, mediaType, byteSize }))
   }
   async readFile(fileId: string): Promise<{ ref: FleetFileRef; bytes: Uint8Array } | null> {
-    for (const item of this.list()) {
+    for (const item of this.items) {
       const index = item.attachments.findIndex((entry) => entry.kind !== 'image' && entry.id === fileId)
       if (index < 0) continue
       try {
