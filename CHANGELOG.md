@@ -5,8 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-08
+
 ### Added
 
+- Create or clone a project directly from a chat and start development in it.
+  Choose a Projects folder in Settings → Execution; GitHub search and repository
+  creation use your signed-in GitHub CLI. New GitHub repositories are private
+  by default, and public publication requires confirmation. See
+  [creating or cloning a project](docs/chat-context.md#creating-or-cloning-the-project-first).
+- Search a bot conversation with Cmd/Ctrl+F, step through matches with Enter
+  or Shift+Enter, and close search with Esc. Search includes older transcript
+  pages and opens folded activity containing a match.
 - Let a bot of your bot server start and follow development conversations in the
   projects of your computers. Each computer gives the bot access on its own, in
   the bot's **Settings → This computer**, choosing the projects, models, actions
@@ -16,8 +26,23 @@ User-visible changes by version. Downloads are on
   bot server and the bot environment to use it. See
   [work in the projects of your computers](docs/bot-fleet.md#work-in-the-projects-of-your-computers).
 
+### Changed
+
+- Place the activity line after the agent's text and cards, and keep its latest
+  text visible while it works. Tool screenshots stay in their details unless
+  the agent explicitly shares them; shared screenshots and generated images
+  remain visible in the conversation.
+- Open bot conversations at the end and offer a go-to-bottom button after
+  scrolling up. Following new messages resumes when you return to the end.
+
 ### Fixed
 
+- Preserve an unsent bot message when switching conversations, and keep a sent
+  message visible while the bot prepares its turn.
+- Refresh a bot's context window after changing its model, so its context meter
+  and compaction use the selected model's limits.
+- Keep the embedded VS Code memory snapshot files out of project Git status,
+  including main checkouts, and write snapshots only when the app requests one.
 - Update the image library bundled with the local AI runtime to sharp 0.35.5,
   which fixes a vulnerability in its SVG renderer (GHSA-wq5f-xc86-pv6w), and the
   MCP SDK copy used by the Claude runtime to 1.31.0 (GHSA-6qxp-vccf-f47h). The app
