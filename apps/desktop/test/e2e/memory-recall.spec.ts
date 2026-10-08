@@ -163,8 +163,23 @@ test('recalls relevant memories, opens their source, and honors automatic recall
         .toBe(false)
       return requests.at(-1)!
     }
+    const sendUntilRecalled = async (text: string) => {
+      let recalled: ModelRequest | undefined
+      // Recall may skip a turn when its wall-clock budget expires on a busy runner.
+      // Test enabled recall across admitted turns; unit tests verify that budget separately.
+      await expect
+        .poll(
+          async () => {
+            recalled = await send(text)
+            return lastUser(recalled)
+          },
+          { timeout: 30_000, message: 'Enabled recall eventually reaches the model' }
+        )
+        .toContain('<maestrly-memory kind="recall">')
+      return recalled!
+    }
 
-    const first = await send('What is the launch code for the e2e check?')
+    const first = await sendUntilRecalled('What is the launch code for the e2e check?')
     const system = first.messages
       .filter((message) => message.role === 'system')
       .map((message) => contentText(message.content))
@@ -233,7 +248,7 @@ test('recalls relevant memories, opens their source, and honors automatic recall
     await expect(chips).toHaveCount(1)
 
     await setRecall(true)
-    const restored = await send('when is the deploy window for the e2e check?')
+    const restored = await sendUntilRecalled('when is the deploy window for the e2e check?')
     expect(lastUser(restored)).toContain('<maestrly-memory kind="recall">')
     expect(lastUser(restored)).toContain('Tuesday at 14:00 UTC')
     await expect(chips).toHaveCount(2)

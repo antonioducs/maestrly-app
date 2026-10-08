@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test, _electron as electron, chromium, type ElectronApplication, type Page } from '@playwright/test'
 import { createSettingsGateway } from './helpers/environment-settings-gateway'
+import { removeTempDirEventually } from './helpers/temp-cleanup'
 
 const desktop = fileURLToPath(new URL('../..', import.meta.url))
 // Keep comparison artifacts outside Playwright's per-run output cleanup.
@@ -118,7 +119,7 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await app?.close()
   await gateway?.close()
-  await rm(root, { recursive: true, force: true })
+  await removeTempDirEventually(root)
   expect(gateway.errors, 'Gateway fixture schema validation').toEqual([])
 })
 
