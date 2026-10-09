@@ -627,8 +627,9 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 .chat-msgs .dark-glass-prose > :last-child {
   margin-bottom: 0;
 }
-.chat-msgs .dark-glass-prose p,
-.chat-msgs .dark-glass-prose li {
+/* Mermaid measures HTML labels outside the chat; keep their own line height after insertion. */
+.chat-msgs .dark-glass-prose p:not(:where(.mermaid-preview *)),
+.chat-msgs .dark-glass-prose li:not(:where(.mermaid-preview *)) {
   line-height: 1.65;
 }
 
