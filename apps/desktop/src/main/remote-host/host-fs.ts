@@ -32,7 +32,10 @@ const within = (target: string, roots: readonly string[]): boolean =>
   roots.some((root) => target === root || target.startsWith(root.endsWith(path.sep) ? root : root + path.sep))
 
 /** The real path of an existing path, when it is an allowed folder or inside one. */
-async function resolveInside(target: string, roots: readonly string[]): Promise<{ real: string; roots: string[] }> {
+export async function resolveInside(
+  target: string,
+  roots: readonly string[]
+): Promise<{ real: string; roots: string[] }> {
   const outside = () => fail('outside-roots')
   if (typeof target !== 'string' || !path.isAbsolute(target)) throw outside()
   const allowed = await realRoots(roots)

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { link, mkdir, open, unlink } from 'node:fs/promises'
+import { mkdir, open, unlink } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { FLEET_FILE_LIMITS } from '@maestrly/bot-fleet-protocol'
+import { publishExclusive } from '../../transfer-io'
 import type { FleetApiClient } from './api'
 
 /** Main-process dependencies only; never accept a destination from the renderer. */
@@ -69,24 +70,7 @@ export async function saveFleetFile(
     await handle.sync()
     await handle.close()
     handle = undefined
-    const name = sanitizeFleetFilename(ref.name)
-    const extension = extname(name)
-    const stem = name.slice(0, name.length - extension.length)
-    for (let suffix = 0; suffix < 10_000; suffix++) {
-      options.signal?.throwIfAborted()
-      const destination = join(directory, suffix ? `${stem} (${suffix})${extension}` : name)
-      try {
-        await link(partial, destination)
-        if (options.signal?.aborted) {
-          await unlink(destination)
-          options.signal.throwIfAborted()
-        }
-        return destination
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      }
-    }
-    throw new Error('Too many download filename collisions')
+    return await publishExclusive(partial, directory, sanitizeFleetFilename(ref.name), options.signal)
   } finally {
     options.signal?.removeEventListener('abort', abort)
     await reader.cancel().catch(() => undefined)
