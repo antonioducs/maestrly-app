@@ -13,7 +13,7 @@ import {
 } from './state'
 import { PANEL_TABS } from './state'
 
-type PlacementReason = 'floating' | 'popup'
+type PlacementReason = 'floating' | 'popup' | 'stream'
 
 /**
  * A tab may consist of more than one renderer (the browser has one renderer per page and a
@@ -103,6 +103,7 @@ export function syncDrawerResourcePerformance(): void {
       if (placement === 'slot') {
         setPlacementReason(convId, drawer, tab, 'floating', false)
         setPlacementReason(convId, drawer, tab, 'popup', false)
+        setPlacementReason(convId, drawer, tab, 'stream', false)
       }
     }
     // Browser chrome never belongs to the drawer slot. It is woken by the floating manager only.

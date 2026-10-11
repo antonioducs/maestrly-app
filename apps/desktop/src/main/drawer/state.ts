@@ -82,16 +82,19 @@ export let activeConvId: string | null = null
 export let visibleKind: FloatTab | null = null
 export let slot: Bounds | null = null
 /**
- * Tab placement is slot, floating BrowserWindow, or centered mainWindow popup. applyLayout controls
- * slot views; floating/popup managers position the others.
+ * Tab placement is slot, floating BrowserWindow, centered mainWindow popup, or (browser only, on a workspaces host)
+ * the stream window another computer watches. applyLayout controls slot views; the other placements' owners position
+ * theirs.
  */
-export type Placement = 'slot' | 'floating' | 'popup'
+export type Placement = 'slot' | 'floating' | 'popup' | 'stream'
 // Per-conversation tab placement defaults to slot. Public placement APIs replace private floating-state
 // reuse so popup-manager has explicit ownership.
 export const placementByConv = new Map<string, Map<FloatTab, Exclude<Placement, 'slot'>>>()
 // Current floating window per conversation/tab lets drawer code reposition views without importing
 // floating-manager.
 export const floatWinByKey = new Map<string, BrowserWindow>()
+// The window showing a conversation's browser to a remote viewer (drawer/stream-window), by conversation.
+export const streamWinByConv = new Map<string, BrowserWindow>()
 export const fkey = (convId: string, tab: FloatTab): string => `${convId}:${tab}`
 // Move non-owner native views offscreen while HTML modals are visible because WebContentsViews paint above
 // every DOM z-index.
@@ -229,7 +232,12 @@ export function isTabFloating(convId: string, tab: FloatTab): boolean {
   return getPlacement(convId, tab) === 'floating'
 }
 
-/** Whether the tab is outside the drawer slot (floating or popup), so applyLayout leaves it alone. */
+/** Whether the conversation's browser is presented in its stream window for a remote viewer. */
+export function isBrowserStreamed(convId: string): boolean {
+  return getPlacement(convId, 'browser') === 'stream'
+}
+
+/** Whether the tab is outside the drawer slot (floating, popup or stream), so applyLayout leaves it alone. */
 export function isTabOutOfSlot(convId: string, tab: FloatTab): boolean {
   return getPlacement(convId, tab) !== 'slot'
 }

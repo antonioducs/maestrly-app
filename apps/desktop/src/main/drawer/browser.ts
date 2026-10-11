@@ -28,9 +28,11 @@ import {
   floatWinByKey,
   getDrawer,
   getPlacement,
+  isBrowserStreamed,
   isTabFloating,
   isTabOutOfSlot,
   placedSlot,
+  streamWinByConv,
   suppressed,
   visibleKind,
   win,
@@ -40,6 +42,7 @@ import {
 } from './state'
 import { applyLayout } from './layout'
 import { layoutFloatingTab } from './float'
+import { layoutStreamBrowser } from './stream-window'
 import { focusViewInMain } from './popup'
 import { setDrawerPlacementPerformance } from './performance'
 import { refreshUnthrottledBrowserRendering } from './browser-rendering'
@@ -301,6 +304,10 @@ export function setPopupBrowserRelayout(fn: (convId: string) => void): void {
  */
 function afterBrowserMutation(convId: string): void {
   applyLayout()
+  if (isBrowserStreamed(convId)) {
+    layoutStreamBrowser(convId)
+    return
+  }
   if (isTabFloating(convId, 'browser')) {
     const fw = floatWinByKey.get(fkey(convId, 'browser'))
     setDrawerPlacementPerformance(convId, 'browser', 'floating', !!fw && !fw.isDestroyed() && fw.isVisible())
@@ -336,6 +343,10 @@ function browserReclaimKey(convId: string, tabId: string): string {
 }
 
 function browserViewOwner(convId: string): BrowserWindow | null {
+  if (isBrowserStreamed(convId)) {
+    const streamWin = streamWinByConv.get(convId)
+    if (streamWin && !streamWin.isDestroyed()) return streamWin
+  }
   const floatingWin = isTabFloating(convId, 'browser') ? floatWinByKey.get(fkey(convId, 'browser')) : undefined
   return floatingWin && !floatingWin.isDestroyed() ? floatingWin : win
 }
@@ -384,6 +395,7 @@ function browserSurfaceIsShown(convId: string): boolean {
   return (
     isBrowserVisibleInSlot(convId) ||
     isTabFloating(convId, 'browser') ||
+    isBrowserStreamed(convId) ||
     getPlacement(convId, 'browser') === 'popup' ||
     convHasPopup(convId)
   )
@@ -494,10 +506,9 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   })
   v.setBackgroundColor('#0A0A0B')
   v.setBounds(OFFSCREEN)
-  // A browser subtab created after detachment must be parented into the floating window. Bounds alone
+  // A browser subtab created after detachment (or while streamed) must be parented into that window. Bounds alone
   // cannot move it between windows and would paint it over mainWindow at incorrect coordinates.
-  const floatingWin = isTabFloating(convId, 'browser') ? floatWinByKey.get(fkey(convId, 'browser')) : undefined
-  const owner = floatingWin && !floatingWin.isDestroyed() ? floatingWin : win
+  const owner = browserViewOwner(convId)
   owner!.contentView.addChildView(v)
 
   const wc = v.webContents
@@ -587,6 +598,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     } catch {
       /* The window may already be closed. */
     }
+    emitBrowserPopupsChange(convId)
     // A page may move or resize its popup (window.moveTo, window.resizeTo); inside a screen area it stays there.
     child.webContents.on('content-bounds-updated', (event, bounds) => {
       const area = popupWindowArea(convId)
@@ -601,6 +613,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     child.on('closed', () => {
       d.oauthWindows.delete(child)
       oauthOwnerScopeByWindow.delete(child)
+      emitBrowserPopupsChange(convId)
       if (isBrowserVisibleInSlot(convId)) focusViewInMain(convId, 'browser')
       // While someone controls this conversation's screen, its next popup or its browser gets the keyboard back.
       else refocusScreen({ kind: 'conversation', conversationId: convId })
@@ -668,6 +681,25 @@ export function onBrowserStateChange(listener: (convId: string) => void): () => 
   browserStateListeners.add(listener)
   return () => {
     browserStateListeners.delete(listener)
+  }
+}
+
+const browserPopupListeners = new Set<(convId: string) => void>()
+/** Observes sign-in windows of a conversation's browser opening and closing; returns the function that stops. */
+export function onBrowserPopupsChange(listener: (convId: string) => void): () => void {
+  browserPopupListeners.add(listener)
+  return () => {
+    browserPopupListeners.delete(listener)
+  }
+}
+
+function emitBrowserPopupsChange(convId: string): void {
+  for (const listener of [...browserPopupListeners]) {
+    try {
+      listener(convId)
+    } catch (error) {
+      console.error('A browser popup listener failed:', error instanceof Error ? error.message : String(error))
+    }
   }
 }
 
@@ -1037,6 +1069,8 @@ export function acquireBrowserTabForControl(convId: string, tabId: string): Acqu
       if (placement === 'slot' && !isBrowserVisibleInSlot(convId)) return false
       switchBrowserTab(convId, tabId)
       if (!isCurrent()) return false
+      // A streamed browser is shown on the viewer's computer: making the tab active is all it takes.
+      if (placement === 'stream') return true
       if (placement === 'floating') {
         const floatingWindow = floatWinByKey.get(fkey(convId, 'browser'))
         if (!floatingWindow || floatingWindow.isDestroyed()) return false
