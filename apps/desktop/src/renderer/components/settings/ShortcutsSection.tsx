@@ -30,6 +30,7 @@ const TOOL_LABEL_KEY: Record<FloatTab, string> = {
   browser: 'drawer.tabBrowser',
   vscode: 'drawer.tabCode',
   terminal: 'drawer.tabTerminal',
+  files: 'drawer.tabFiles',
   plan: 'drawer.tabPlan',
   review: 'drawer.tabReview',
   notes: 'drawer.tabNotes',

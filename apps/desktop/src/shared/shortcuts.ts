@@ -36,6 +36,8 @@ const DEFAULT_KEYS: Record<FloatTab, string> = {
   browser: 'b',
   vscode: 'e',
   terminal: 'j',
+  // F with these modifiers is the macOS full-screen shortcut.
+  files: 'u',
   plan: 'p',
   review: 'r',
   notes: 'n',

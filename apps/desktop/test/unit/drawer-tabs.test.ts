@@ -75,8 +75,15 @@ describe('conditional drawer tabs', () => {
 describe("tools of a remote host's conversation", () => {
   const remote = { id: 'server-1/workspaces#conv-1', scope: 'project' }
 
-  it('offers its panels, and neither the browser nor the editor nor the companion', () => {
-    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true)).toEqual(['terminal', 'plan', 'review', 'notes'])
+  it('offers its panels and its files, and neither the browser nor the editor nor the companion', () => {
+    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true)).toEqual([
+      'terminal',
+      'files',
+      'plan',
+      'review',
+      'notes',
+    ])
+    expect(tabAvailableInContext('files', { id: 'conv-1', scope: 'project' })).toBe(false)
     expect(tabAvailableInContext('browser', remote)).toBe(false)
     expect(tabAvailableInContext('vscode', { id: remote.id })).toBe(false)
     expect(tabAvailableInContext('terminal', { id: remote.id })).toBe(true)

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import {
   ClipboardList,
   Code2,
+  Files,
   GitPullRequest,
   Globe,
   GripVertical,
@@ -20,6 +21,7 @@ const TAB_ICON: Record<DrawerTab, ReactNode> = {
   browser: <Globe className="size-4" />,
   vscode: <Code2 className="size-4" />,
   terminal: <SquareTerminal className="size-4" />,
+  files: <Files className="size-4" />,
   plan: <ClipboardList className="size-4" />,
   review: <GitPullRequest className="size-4" />,
   notes: <StickyNote className="size-4" />,
@@ -43,6 +45,7 @@ export function TabOrderSection({
     browser: t('drawer.tabBrowser'),
     vscode: t('drawer.tabCode'),
     terminal: t('drawer.tabTerminal'),
+    files: t('drawer.tabFiles'),
     plan: t('drawer.tabPlan'),
     review: t('drawer.tabReview'),
     notes: t('drawer.tabNotes'),

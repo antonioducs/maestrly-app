@@ -3,14 +3,23 @@ import type { DrawerTab } from '../../shared/tool-tabs'
 
 export type { DrawerTab }
 
-export const DEFAULT_MAIN_ORDER: DrawerTab[] = ['browser', 'vscode', 'terminal', 'plan', 'review', 'notes', 'chatgpt']
+export const DEFAULT_MAIN_ORDER: DrawerTab[] = [
+  'browser',
+  'vscode',
+  'terminal',
+  'files',
+  'plan',
+  'review',
+  'notes',
+  'chatgpt',
+]
 
 export function mainTabsForFeatures(order: DrawerTab[], chatGptWebEnabled: boolean): DrawerTab[] {
   return chatGptWebEnabled ? order : order.filter((tab) => tab !== 'chatgpt')
 }
 
 /** The tools a conversation of a remote host shows on this computer; its browser and editor stay on the host. */
-const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'plan', 'review', 'notes'])
+const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'files', 'plan', 'review', 'notes'])
 
 /** Whether the window's id of a conversation names one of a remote host. */
 const onRemoteHost = (conv: unknown): boolean => {
@@ -20,6 +29,8 @@ const onRemoteHost = (conv: unknown): boolean => {
 
 export function tabAvailableInContext(tab: DrawerTab, conv: unknown, chatGptWebEnabled = true): boolean {
   if (!REMOTE_HOST_TABS.has(tab) && onRemoteHost(conv)) return false
+  // Files moves files to and from a host: a conversation of this computer has its files at hand.
+  if (tab === 'files' && !onRemoteHost(conv)) return false
   if (tab === 'review' && (conv as { scope?: string } | null)?.scope === 'standalone') return false
   if (tab === 'chatgpt' && !chatGptWebEnabled) return false
   return tab !== 'notes' || Boolean(conv)

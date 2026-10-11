@@ -13,7 +13,10 @@ describe('standalone renderer scope', () => {
       'notes',
       'chatgpt',
     ])
-    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, { scope: 'project' })).toEqual(DEFAULT_MAIN_ORDER)
+    // The Files tab is for conversations of a remote host only.
+    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, { scope: 'project' })).toEqual(
+      DEFAULT_MAIN_ORDER.filter((tab) => tab !== 'files')
+    )
   })
   it('restores on-demand tabs without reopening project-only tools', () => {
     expect(sanitizeOpenTabs(['terminal', 'review', 'notes'], { scope: 'standalone' })).toEqual(['terminal', 'notes'])

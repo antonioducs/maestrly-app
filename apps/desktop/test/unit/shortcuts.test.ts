@@ -41,7 +41,7 @@ describe('defaultShortcuts', () => {
     expect(defaultShortcuts('mac').chatgpt).toEqual({ key: 'g', mods: ['meta', 'control'] })
   })
 
-  it('covers all seven tools with distinct letters and at least two OS-safe modifiers', () => {
+  it('covers every tool with distinct letters and at least two OS-safe modifiers', () => {
     const mac = defaultShortcuts('mac')
     expect(Object.keys(mac).sort()).toEqual([...FLOAT_TABS].sort())
     const keys = FLOAT_TABS.map((t) => mac[t]!.key)

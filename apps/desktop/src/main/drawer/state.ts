@@ -12,8 +12,8 @@ import type { FloatTab } from '../store'
 
 export type ViewKind = 'browser' | 'vscode'
 /** Tabs rendered by panel.html as docked or floating WebContentsViews. */
-export type PanelTab = 'terminal' | 'plan' | 'review' | 'notes'
-export const PANEL_TABS: PanelTab[] = ['terminal', 'plan', 'review', 'notes']
+export type PanelTab = 'terminal' | 'files' | 'plan' | 'review' | 'notes'
+export const PANEL_TABS: PanelTab[] = ['terminal', 'files', 'plan', 'review', 'notes']
 export interface Bounds {
   x: number
   y: number

@@ -32,7 +32,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /** Cold eviction is deliberately conservative: safe panel renderers get ten minutes of warm state. */
 export { PANEL_COLD_TTL_MS }
 export const PANEL_COLD_RETRY_MS = MEMORY_RECLAIM_RETRY_MS
-const RECLAIMABLE_PANEL_TABS: readonly PanelTab[] = ['terminal', 'review', 'notes', 'plan']
+const RECLAIMABLE_PANEL_TABS: readonly PanelTab[] = ['terminal', 'files', 'review', 'notes', 'plan']
 
 function panelReclaimKey(convId: string, tab: PanelTab): string {
   return `panel:${convId}:${tab}`

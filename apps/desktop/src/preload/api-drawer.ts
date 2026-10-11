@@ -71,7 +71,7 @@ export const drawerApi = {
     ipcRenderer.invoke('drawer:load-vscode', convId, folder),
   drawerRestartVSCode: (): Promise<void> => ipcRenderer.invoke('drawer:restart-vscode'),
   drawerDisposeConversation: (convId: string) => ipcRenderer.send('drawer:dispose-conversation', convId),
-  drawerEnsurePanel: (convId: string, tab: 'terminal' | 'plan' | 'review' | 'notes') =>
+  drawerEnsurePanel: (convId: string, tab: 'terminal' | 'files' | 'plan' | 'review' | 'notes') =>
     ipcRenderer.send('drawer:ensure-panel', convId, tab),
   drawerDetach: (convId: string, tab: FloatTab) => ipcRenderer.send('drawer:detach', convId, tab),
   drawerReattach: (convId: string, tab: FloatTab) => ipcRenderer.send('drawer:reattach', convId, tab),

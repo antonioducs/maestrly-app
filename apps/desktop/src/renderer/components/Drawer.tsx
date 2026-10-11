@@ -12,6 +12,7 @@ import {
   ClipboardList,
   GitPullRequest,
   StickyNote,
+  Files,
   MessageCircle,
   PictureInPicture2,
   PictureInPicture,
@@ -81,13 +82,14 @@ export interface TermTab {
 
 const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'chatgpt'])
 
-const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'chatgpt'])
-const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal']) // panel.html hosts the second renderer.
+const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'files', 'chatgpt'])
+const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal', 'files']) // panel.html hosts the second renderer.
 
 const mainTabDefs = (t: TFunction): Record<Tab, { label: string; icon: React.ReactNode }> => ({
   browser: { label: t('drawer.tabBrowser'), icon: <Globe className="size-4" /> },
   vscode: { label: t('drawer.tabCode'), icon: <Code2 className="size-4" /> },
   terminal: { label: t('drawer.tabTerminal'), icon: <SquareTerminal className="size-4" /> },
+  files: { label: t('drawer.tabFiles'), icon: <Files className="size-4" /> },
   plan: { label: t('drawer.tabPlan'), icon: <ClipboardList className="size-4" /> },
   review: { label: t('drawer.tabReview'), icon: <GitPullRequest className="size-4" /> },
   notes: { label: t('drawer.tabNotes'), icon: <StickyNote className="size-4" /> },
@@ -409,7 +411,7 @@ export function Drawer({
 
   useEffect(() => {
     if (visible && convId && tab && !isFloating(tab) && PANEL_TABS_UI.has(tab)) {
-      window.api.drawerEnsurePanel(convId, tab as 'terminal' | 'plan' | 'review' | 'notes')
+      window.api.drawerEnsurePanel(convId, tab as 'terminal' | 'files' | 'plan' | 'review' | 'notes')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, tab, convId, floating])

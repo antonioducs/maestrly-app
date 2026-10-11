@@ -8,10 +8,12 @@ import { conversationTabAllowed, isRemoteConversation, panelSearch } from '../..
 const REMOTE = 'server-1/workspaces#conv-1'
 
 describe('drawer scope', () => {
-  it('admits every tool of a conversation of this computer but review in a chat', () => {
+  it('admits every tool of a conversation of this computer but review in a chat, and files', () => {
     getConversation.mockReturnValue({ scope: 'project' })
     for (const tab of ['browser', 'vscode', 'terminal', 'plan', 'review', 'notes', 'chatgpt'] as const)
       expect(conversationTabAllowed('conv-1', tab), tab).toBe(true)
+    // Its files are at hand on this computer: the Files tab moves files to and from a host.
+    expect(conversationTabAllowed('conv-1', 'files')).toBe(false)
     getConversation.mockReturnValue({ scope: 'standalone' })
     expect(conversationTabAllowed('conv-1', 'review')).toBe(false)
     expect(conversationTabAllowed('conv-1', 'terminal')).toBe(true)
@@ -22,7 +24,7 @@ describe('drawer scope', () => {
     getConversation.mockClear()
     expect(isRemoteConversation(REMOTE)).toBe(true)
     expect(isRemoteConversation('conv-1')).toBe(false)
-    for (const tab of ['terminal', 'plan', 'review', 'notes'] as const)
+    for (const tab of ['terminal', 'files', 'plan', 'review', 'notes'] as const)
       expect(conversationTabAllowed(REMOTE, tab), tab).toBe(true)
     // Its browser, editor and companion live on the host: this computer has no native view for them.
     for (const tab of ['browser', 'vscode', 'chatgpt'] as const)
