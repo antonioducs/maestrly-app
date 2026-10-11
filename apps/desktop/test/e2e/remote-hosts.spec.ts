@@ -4,6 +4,7 @@ import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { WebSocketServer } from 'ws'
 import { desktop, fixtureModel, instanceEnv, launchHost, listen, portOf } from './helpers/remote-host'
 
 const HOST_ID = 'direct/host'
@@ -13,10 +14,10 @@ const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('he
  * Starts a host in server mode with its workspaces folder under `root`, and a person's desktop connected straight to
  * it (the development-only direct host), past its first-run screen.
  */
-async function connect(root: string) {
+async function connect(root: string, hostEnv: Record<string, string> = {}) {
   const workspacesRoot = path.join(root, 'srv')
   await mkdir(workspacesRoot)
-  const launched = await launchHost(path.join(root, 'host-profile'), workspacesRoot)
+  const launched = await launchHost(path.join(root, 'host-profile'), workspacesRoot, hostEnv)
   let client: ElectronApplication
   try {
     client = await electron.launch({
@@ -83,7 +84,7 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
         [HOST_ID, 'online'],
       ])
     const [, hostView] = await local('hostsList')
-    expect(hostView).toMatchObject({ remote: true, desktopEffects: false, editor: false, browser: true, epoch: 1 })
+    expect(hostView).toMatchObject({ remote: true, desktopEffects: false, editor: true, browser: true, epoch: 1 })
 
     // Mixed sidebar: one section per host under its heading, in the Chats and in the Workspaces tab.
     await page.getByRole('tab', { name: 'Chats' }).click()
@@ -130,7 +131,7 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     expect(JSON.stringify(model.requests[0].messages)).toContain('hello from this computer')
     expect(JSON.stringify(await remote('chatHistoryPage', chat.id))).toContain('Answered on the host, turn 1.')
 
-    // Its drawer offers the tools this computer can show of a host: its streamed browser, and no editor yet.
+    // Its drawer offers the tools this computer can show of a host: its streamed browser and its editor among them.
     await page.getByTitle(/^Toggle drawer/).click()
     await page.getByTitle('Open a tool').click()
     const palette = page.getByRole('dialog', { name: 'Open a tool' })
@@ -138,7 +139,7 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     await expect(palette.getByText('Notes', { exact: true })).toBeVisible()
     await expect(palette.getByText('Files', { exact: true })).toBeVisible()
     await expect(palette.getByText('Browser', { exact: true })).toBeVisible()
-    await expect(palette.getByText('Code', { exact: true })).toHaveCount(0)
+    await expect(palette.getByText('Code', { exact: true })).toBeVisible()
     await palette.getByText('Terminal', { exact: true }).click()
 
     // The terminal is a shell of the host, shown by a panel of this window that reaches the host on its own.
@@ -426,6 +427,136 @@ test('remote host browser: streamed live, typed into and copied from', async () 
     await client?.close().catch(() => undefined)
     await host?.close().catch(() => undefined)
     await new Promise((resolve) => site.close(resolve))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// The editor of a host's conversation: VS Code's serve-web on the host (here a stand-in the test runs, so no editor is
+// downloaded), opened in a native view of this window's drawer through this computer's proxy and the host's.
+test("remote host editor: opened through both proxies, which keep each side's credentials to themselves", async () => {
+  test.setTimeout(240_000)
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
+  await access(path.join(desktop, 'out/main/index.js'))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-editor-')))
+  const editorToken = randomBytes(16).toString('hex')
+  const requests: Array<{ url: string; headers: Record<string, string | string[] | undefined> }> = []
+  const upgrades: Array<{ url: string; headers: Record<string, string | string[] | undefined> }> = []
+  // serve-web in miniature: a workbench page that opens the editor's WebSocket and shows what it answered.
+  const serveWeb = createServer((req, res) => {
+    requests.push({ url: req.url ?? '', headers: req.headers })
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      // Without the token cookie serve-web sets on its page: the host gives the page its token itself.
+      'set-cookie': ['vscode-cli-secret-half=half; Path=/'],
+    })
+    res.end(
+      '<!doctype html><html><head><title>editor-loading</title></head><body><script>' +
+        "const ws = new WebSocket('ws://' + location.host + '/stable-fake?reconnectionToken=r1');" +
+        "ws.onopen = () => ws.send('hello'); ws.onmessage = (e) => { document.title = 'editor:' + e.data };" +
+        '</script></body></html>'
+    )
+  })
+  const wss = new WebSocketServer({ server: serveWeb })
+  wss.on('connection', (socket, req) => {
+    upgrades.push({ url: req.url ?? '', headers: req.headers })
+    socket.on('message', (data) => socket.send('echo:' + String(data)))
+  })
+  let host: ElectronApplication | undefined
+  let client: ElectronApplication | undefined
+  try {
+    await listen(serveWeb)
+    const connected = await connect(root, { MAESTRLY_E2E_VSCODE_SERVER: `${portOf(serveWeb)}:${editorToken}` })
+    ;({ host, client } = connected)
+    const { page, remote, controlPort } = connected
+    await page.getByRole('tab', { name: 'Chats' }).click()
+    await page
+      .locator(`#sidebar-panel-chats [data-host-section="${HOST_ID}"]`)
+      .getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}` })
+      .click()
+    await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
+    const [chat] = await remote('listStandaloneConversations', true)
+    await writeFile(path.join(chat.cwd, 'hello.js'), 'console.log("hello from the host")\n')
+
+    // The Code tab opens the host's editor in the chat's folder, at this computer's origin for the host.
+    await page.getByTitle(/^Toggle drawer/).click()
+    await page.getByTitle('Open a tool').click()
+    await page.getByRole('dialog', { name: 'Open a tool' }).getByText('Code', { exact: true }).click()
+    // The view's own address: Playwright may still report the loading page it showed first.
+    const findEditor = async () => {
+      for (const window of client!.windows()) {
+        // A page between documents may not answer: it is asked again on the next attempt.
+        const href = await Promise.race([
+          window.evaluate(() => location.href).catch(() => ''),
+          new Promise<string>((resolve) => setTimeout(() => resolve(''), 2_000)),
+        ])
+        if (href.includes('folder=')) return { window, href }
+      }
+      return null
+    }
+    await expect.poll(findEditor, { timeout: 60_000 }).not.toBeNull()
+    const { window: editor, href } = (await findEditor())!
+    const editorUrl = new URL(href)
+    expect(editorUrl.hostname).toBe('127.0.0.1')
+    expect(editorUrl.searchParams.get('folder')).toBe(chat.cwd)
+    // Its WebSocket reaches the editor through both proxies.
+    // Read from the page itself: Playwright may keep the title of the loading page it saw first.
+    await expect
+      .poll(() => editor.evaluate(() => document.title).catch(() => ''), { timeout: 30_000 })
+      .toBe('editor:echo:hello')
+
+    // The editor got the token from the host, and nothing of this computer's proxy or of the control server.
+    // (The host also asks serve-web directly whether it is ready, with the token in the address.)
+    const first = requests.find((request) => request.url.startsWith('/?folder='))!
+    expect(first.url).toBe(`/?folder=${encodeURIComponent(chat.cwd)}`)
+    expect(first.headers.cookie).toContain(`vscode-tkn=${editorToken}`)
+    expect(first.headers.cookie).not.toContain('maestrly-editor-access')
+    expect(first.headers.authorization).toBeUndefined()
+    expect(first.headers['x-forwarded-host']).toBe(editorUrl.host)
+    expect(upgrades[0].url).toBe('/stable-fake?reconnectionToken=r1')
+    expect(upgrades[0].headers.cookie).toContain(`vscode-tkn=${editorToken}`)
+    expect(upgrades[0].headers.authorization).toBeUndefined()
+    // The page holds the token, which VS Code's page sends to authenticate its connection, and the editor's cookies;
+    // the proxy's access cookie is out of its reach.
+    const cookies = await editor.evaluate(() => document.cookie)
+    expect(cookies).toContain(`vscode-tkn=${editorToken}`)
+    expect(cookies).toContain('vscode-cli-secret-half=half')
+    expect(cookies).not.toContain('maestrly-editor-access')
+    // Another program of this computer cannot use the proxy: it lacks the view's access cookie.
+    expect((await fetch(editorUrl.origin + '/')).status).toBe(403)
+
+    // A Plan file chip of the host's conversation opens its file in the editor: the Code tab comes back.
+    await page.getByTitle('Open a tool').click()
+    await page.getByRole('dialog', { name: 'Open a tool' }).getByText('Notes', { exact: true }).click()
+    await expect(page.getByRole('tab', { name: 'Code Close Code', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    await remote('openPlanFile', chat.id, 'hello.js', 1)
+    await expect(page.getByRole('tab', { name: 'Code Close Code', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    const sidecar = JSON.parse(await readFile(path.join(chat.cwd, '.maestrly', 'agent-open-file.json'), 'utf8'))
+    expect(sidecar).toMatchObject({ rel: 'hello.js', line: 1 })
+
+    // What the person sends from the editor becomes a reference in this window's composer.
+    await writeFile(
+      path.join(chat.cwd, '.maestrly', 'agent-selection.json'),
+      JSON.stringify({
+        kind: 'selection',
+        path: path.join(chat.cwd, 'hello.js'),
+        startLine: 1,
+        endLine: 2,
+        ts: Date.now(),
+      })
+    )
+    // The composer shows the reference as a chip of the file and its lines.
+    await expect(page.locator('.chat-input:visible')).toContainText('hello.js:L1-2')
+  } finally {
+    await client?.close().catch(() => undefined)
+    await host?.close().catch(() => undefined)
+    for (const socket of wss.clients) socket.terminate()
+    await new Promise((resolve) => serveWeb.close(resolve))
     await rm(root, { recursive: true, force: true })
   }
 })

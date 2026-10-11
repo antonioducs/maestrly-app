@@ -75,7 +75,11 @@ export interface LaunchedHost {
  * Starts the built app in server mode, as the container of a workspaces environment runs it: no window to look at, the
  * control server a gateway talks to, and the bridge computers drive it through.
  */
-export async function launchHost(profile: string, workspacesRoot: string): Promise<LaunchedHost> {
+export async function launchHost(
+  profile: string,
+  workspacesRoot: string,
+  extraEnv: Record<string, string> = {}
+): Promise<LaunchedHost> {
   const token = randomBytes(32).toString('base64url')
   const port = await freePort()
   const app = await electron.launch({
@@ -88,6 +92,7 @@ export async function launchHost(profile: string, workspacesRoot: string): Promi
       MAESTRLY_BOT_CONTROL_PORT: String(port),
       MAESTRLY_BOT_CONTROL_TOKEN: token,
       MAESTRLY_WORKSPACES_ROOT: workspacesRoot,
+      ...extraEnv,
     },
   })
   // The host answers its health check once its control server listens.

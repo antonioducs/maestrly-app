@@ -18,6 +18,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
+import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -437,7 +438,7 @@ async function main() {
       homeDir: '/home/bot',
       roots: ['/home/bot', workspacesRoot],
       desktopEffects: false,
-      editor: false,
+      editor: true,
       browser: true,
     }
   )
@@ -770,6 +771,89 @@ async function main() {
   assert.equal(readFileSync(path.join(projectPath, 'from-terminal.txt'), 'utf8').trim(), 'host-42-1000')
   pass('host terminal', 'a shell of the host wrote under the mounted folder as uid 1000')
 
+  // The host's editor: VS Code's serve-web, downloaded and started on the host when a computer opens it, reached through
+  // the gateway with this device's token. The host adds the editor's token; its workbench page receives it, as the page
+  // authenticates its connection to the editor's server with it.
+  const opened = await bridge.invoke('editor:open', chat.id)
+  assert.equal(opened.folder, chat.cwd)
+  assert.ok(['downloading', 'starting', 'ready'].includes(opened.phase), JSON.stringify(opened))
+  const phases = new Set([opened.phase])
+  await poll(
+    'the host editor',
+    async () => {
+      const phase = await bridge.invoke('editor:status')
+      phases.add(phase)
+      if (phase === 'error') throw new Error('The host editor failed to start')
+      return phase === 'ready'
+    },
+    300000
+  )
+  const editorRoute = '/v1/environments/' + environmentId + '/editor'
+  const forwarded = '127.0.0.1:45678'
+  const workbench = await raw('GET', editorRoute + '/?folder=' + encodeURIComponent(chat.cwd), {
+    headers: { 'x-forwarded-host': forwarded },
+  })
+  assert.equal(workbench.status, 200)
+  const html = await workbench.text()
+  const settings = /id="vscode-workbench-web-configuration"[^>]*data-settings="([^"]*)"/.exec(html)?.[1]
+  assert.ok(settings, 'The workbench page has no web configuration: ' + html.slice(0, 300))
+  const configuration = JSON.parse(settings.replaceAll('&quot;', '"').replaceAll('&amp;', '&'))
+  assert.equal(configuration.remoteAuthority, forwarded)
+  const cookies = workbench.headers.getSetCookie()
+  assert.ok(
+    cookies.some((cookie) => cookie.startsWith('vscode-tkn=')),
+    'The workbench page did not get the token: ' + cookies
+  )
+  const stable = /\/(stable-[0-9a-f]{40})\//.exec(html)?.[1]
+  assert.ok(stable, 'The workbench page names no build')
+  // The workbench's own code (the page also lists built-in extensions, some of which the web server does not ship).
+  const asset = new RegExp('/' + stable + '/static/out/[^"\'\\s]+\\.(?:js|css)').exec(html)?.[0]
+  assert.ok(asset, 'The workbench page has no static asset')
+  const assetResponse = await raw('GET', editorRoute + asset)
+  assert.equal(assetResponse.status, 200, asset)
+  assert.ok((await assetResponse.arrayBuffer()).byteLength > 0, 'The static asset is empty: ' + asset)
+  const anonymous = await fetch(base + editorRoute + '/', { headers: { 'X-Maestrly-Fleet-Protocol': '1' } })
+  assert.equal(anonymous.status, 401)
+  // The editor's connection to its server: a WebSocket the gateway and the host pass through.
+  const editorSocket = await new Promise((resolve, reject) => {
+    const upgrade = http.request(
+      base +
+        editorRoute +
+        '/' +
+        stable +
+        '?reconnectionToken=' +
+        randomUUID() +
+        '&reconnection=false&skipWebSocketFrames=false',
+      {
+        headers: {
+          'X-Maestrly-Fleet-Protocol': '1',
+          Authorization: 'Bearer ' + token,
+          Connection: 'Upgrade',
+          Upgrade: 'websocket',
+          'Sec-WebSocket-Version': '13',
+          'Sec-WebSocket-Key': randomBytes(16).toString('base64'),
+          'x-forwarded-host': forwarded,
+          Cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '),
+        },
+      }
+    )
+    upgrade.on('upgrade', (response, socket) => {
+      assert.equal(response.statusCode, 101)
+      socket.on('error', () => undefined)
+      resolve(socket)
+    })
+    upgrade.on('response', (response) =>
+      reject(new Error('The editor WebSocket was refused: HTTP ' + response.statusCode))
+    )
+    upgrade.on('error', reject)
+    upgrade.end()
+  })
+  pass(
+    'host editor',
+    `serve-web ${stable} (${[...phases].join(' → ')}) through the gateway: workbench for ${forwarded}, ` +
+      'token cookie for the page, static asset, WebSocket 101; 401 without a device token'
+  )
+
   // Files move between this computer and the host through the gateway, checked by SHA-256 on the way.
   const files = '/v1/environments/' + environmentId + '/host-files'
   const upload = randomBytes(20 * MiB)
@@ -837,13 +921,15 @@ async function main() {
   const reader = reading.body.getReader()
   await reader.read()
   const closed = new Promise((resolve) => bridge.socket.addEventListener('close', resolve))
+  const editorClosed = new Promise((resolve) => editorSocket.once('close', resolve))
   await request('DELETE', '/v1/devices/self')
   await within(closed, 15000, 'The bridge outlived its device')
+  await within(editorClosed, 15000, 'The editor connection outlived its device')
   const ended = (async () => {
     for (;;) if ((await reader.read()).done) return 'complete'
   })().catch(() => 'cut')
   assert.equal(await within(ended, 10000, 'The transfer outlived its device'), 'cut')
-  pass('revocation', 'the bridge closed with its device, and its file transfer was cut')
+  pass('revocation', 'the bridge and the editor connection closed with its device, and its file transfer was cut')
 
   console.log(JSON.stringify({ result: 'PASS', project, durationMs: Date.now() - started, steps: results }, null, 2))
   // The last line is a summary for a caller that runs this test as one of its steps.
