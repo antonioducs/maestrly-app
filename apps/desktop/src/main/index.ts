@@ -39,7 +39,7 @@ import {
   setTerminalPopupFocuser,
 } from './terminal-manager'
 import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
-import { sendToRemoteMains } from './remote-ui-targets'
+import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
 import { registerHostsIpc } from './remote-host/client/ipc'
@@ -113,6 +113,9 @@ import {
   stopVSCodeServer,
   isVSCodeServerRunning,
 } from './vscode/vscode-server'
+import { registerHostEditorIpc } from './remote-host/server/host-editor-ipc'
+import { requestVSCodeNavigation } from './vscode/vscode-navigation'
+import { hasVSCodeBridgeInFlight, requestVSCodeMemorySnapshot } from './vscode/vscode-memory'
 import { isVSCodeCliReady, hasStagedCliUpdate } from './vscode/vscode-cli-download'
 import {
   initStore,
@@ -834,6 +837,23 @@ function registerIpc(): void {
   registerArtifactsIpc(reg, { service: getArtifactsService })
 
   registerHostFsIpc(reg, { roots: hostFsRoots, conversationFolder: (id) => getConversation(id)?.cwd ?? null })
+  // Another computer opens this host's editor (VS Code's serve-web) in its drawer: see remote-host/server/host-editor.
+  registerHostEditorIpc(reg, {
+    isRemoteViewer: (sender) => isServerMode() && isRemoteUiTarget(sender),
+    conversation: (id) => getConversation(id) ?? null,
+    standaloneFolder: validateStandaloneConversationDirectory,
+    ignoreSidecars: ensureAppOwnedExcludes,
+    watch: watchConversation,
+    start: startVSCodeServer,
+    running: isVSCodeServerRunning,
+    cliReady: isVSCodeCliReady,
+    probe: probeVSCode,
+    restart: restartVSCodeServer,
+    waitReady: () => waitForEditorReady(),
+    navigate: requestVSCodeNavigation,
+    snapshot: (folder) => requestVSCodeMemorySnapshot(folder),
+    bridgeInFlight: hasVSCodeBridgeInFlight,
+  })
   registerHostsIpc(reg)
   registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })
 

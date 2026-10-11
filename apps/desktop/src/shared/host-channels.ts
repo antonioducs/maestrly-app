@@ -65,7 +65,6 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
   'data:reset',
   'workspace:pick',
   'project-setup:pick-directory',
-  'plan:open-file',
   // The host's main process writes to the clipboard of its own desktop.
   'chat:chatgpt-web:companion-copy-prompt',
   'chat:chatgpt-web:companion-copy-session-key',
@@ -73,10 +72,16 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Channels a host serves only to another computer's renderer: the conversation's browser, streamed to that computer's
- * window. A window of the host itself shows its browser natively, so their handlers refuse every local sender.
+ * Channels a host serves only to another computer: the conversation's browser, streamed to that computer's window, and
+ * its editor, which that computer's main process opens and drives. A window of the host itself shows both natively, so
+ * their handlers refuse every local sender.
  */
 export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
+  'editor:open',
+  'editor:status',
+  'editor:restart',
+  'editor:navigate',
+  'editor:snapshot',
   'drawer:browser-stream-start',
   'drawer:browser-stream-resize',
   'drawer:browser-stream-ack',

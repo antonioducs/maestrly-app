@@ -13,6 +13,7 @@ import { runApprovedPlan, runPlanRevision, setChatMode, stopChatAndWait } from '
 import { botSharesConversation, pauseBotForHuman } from './bot/control'
 import { OPEN_FILE_FILE } from './vscode/vscode-ext-source'
 import type { IpcRegistrar } from './ipc-registrar'
+import { sendToRemoteMains } from './remote-ui-targets'
 
 export interface PlanIpcDeps {
   sendToWindow: (ch: string, payload?: unknown) => void
@@ -333,7 +334,9 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       } catch {
         return // without a valid sidecar there is no editor target to focus.
       }
-      // Raise floating VS Code or ask App to open the docked Code tab so the requested file is visible.
+      // Raise floating VS Code or ask App to open the docked Code tab so the requested file is visible; a computer that
+      // shows a workspaces host's conversation opens its own Code tab.
+      sendToRemoteMains('drawer:vscode-focus', { convId })
       if (!floatingManager.focusFloatIfAny(convId, 'vscode')) deps.sendToWindow('debug:ensure-vscode', convId)
     }
   )

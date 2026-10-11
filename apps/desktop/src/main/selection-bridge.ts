@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { safeWindowSend } from './window-ipc'
+import { sendToRemoteMains } from './remote-ui-targets'
 import { promises as fsp, watch, type FSWatcher } from 'node:fs'
 import type { BrowserWindow } from 'electron'
 import { SELECTION_REL_DIR, SELECTION_FILE } from './vscode/vscode-ext-source'
@@ -111,6 +112,8 @@ async function handleSelection(cwd: string): Promise<void> {
     safeWindowSend(win, `chat:reference:${convId}`, { path: rel, startLine, endLine })
     win.webContents.focus()
   }
+  // On a workspaces host the editor is shown by another computer, whose composer takes the reference.
+  sendToRemoteMains(`chat:reference:${convId}`, { path: rel, startLine, endLine })
 
   // Delete the consumed selection file. unlink triggers another watch event, but the next read returns
   // ENOENT without further effects.

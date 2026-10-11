@@ -1,5 +1,6 @@
 import type { BrowserWindow, WebContentsView } from 'electron'
 import { safeWindowSend } from '../window-ipc'
+import { sendToRemoteMains } from '../remote-ui-targets'
 import type { FloatTab } from '../store'
 import {
   BROWSER_CHROME_H,
@@ -35,6 +36,8 @@ export function setFloatFocuser(fn: (convId: string, tab: FloatTab) => boolean):
  * debug commands. If floating, raise its window instead of redocking.
  */
 export function requestVSCodeForDebug(convId: string): void {
+  // On a workspaces host the editor runs in the drawer of the computer that shows the conversation.
+  sendToRemoteMains('drawer:vscode-focus', { convId })
   if (isTabFloating(convId, 'vscode') && floatFocuser?.(convId, 'vscode')) return
   safeWindowSend(win, 'debug:ensure-vscode', convId)
 }

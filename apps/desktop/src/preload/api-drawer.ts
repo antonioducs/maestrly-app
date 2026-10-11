@@ -172,6 +172,12 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       ipcRenderer.on('drawer:terminal-focus', listener)
       return () => ipcRenderer.removeListener('drawer:terminal-focus', listener)
     },
+    /** The agent needs the conversation's editor (a debug tool, a file to show): its Code tab opens. */
+    onDrawerVSCodeFocus: (cb: (payload: { convId: string }) => void): (() => void) => {
+      const listener = (_e: unknown, payload: { convId: string }) => cb(payload)
+      ipcRenderer.on('drawer:vscode-focus', listener)
+      return () => ipcRenderer.removeListener('drawer:vscode-focus', listener)
+    },
     onDrawerBrowserFocus: (cb: (payload: { convId: string }) => void): (() => void) => {
       const listener = (_e: unknown, payload: { convId: string }) => cb(payload)
       ipcRenderer.on('drawer:browser-focus', listener)

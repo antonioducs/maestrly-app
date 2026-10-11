@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestRegistrar } from './ipc-registrar-test-utils'
+import { registerRemoteUiTarget } from '../../src/main/remote-ui-targets'
 
 const h = vi.hoisted(() => ({
   decidePlan: vi.fn(),
@@ -450,6 +451,23 @@ describe('registerPlanIpc', () => {
     else expect(h.excludeFromGitInfo).not.toHaveBeenCalled()
     expect(h.focusFloatIfAny).toHaveBeenCalledWith('conv-1', 'vscode')
     expect(sendToWindow).toHaveBeenCalledWith('debug:ensure-vscode', 'conv-1')
+  })
+
+  it("asks a computer that shows a workspaces host's conversation to open its Code tab", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'plan-open-file-'))
+    tempRoots.push(root)
+    await fs.writeFile(path.join(root, 'notes.md'), '')
+    h.getConversation.mockReturnValue({ cwd: root, scope: 'project' })
+    const remote = { id: -1000, send: vi.fn(), isDestroyed: () => false }
+    const unregister = registerRemoteUiTarget(remote, { role: 'main' })
+    try {
+      const { reg, mhandles } = createTestRegistrar()
+      registerPlanIpc(reg, { sendToWindow: vi.fn() })
+      await mhandles.get('plan:open-file')?.({} as never, 'conv-1', 'notes.md')
+      expect(remote.send).toHaveBeenCalledWith('drawer:vscode-focus', { convId: 'conv-1' })
+    } finally {
+      unregister()
+    }
   })
 
   it('rejects references outside the workspace without creating a sidecar or focusing the editor', async () => {

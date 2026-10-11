@@ -142,7 +142,15 @@ const PRELOAD_API_CHANNEL_RE = /ipcRenderer\.(?:invoke|send)\(\s*'([^']+)'/g
 const PRELOAD_LISTENER_CHANNEL_RE = /ipcRenderer\.on\(\s*'([^']+)'/g
 
 // Main registrations without preload consumers require an explicit explanation.
-const KNOWN_MAIN_ONLY: string[] = []
+const KNOWN_MAIN_ONLY: string[] = [
+  // A workspaces host's editor channels: this computer's main process invokes them over the host bridge
+  // (remote-host/client/editor), never a renderer through the preload.
+  'editor:open',
+  'editor:status',
+  'editor:restart',
+  'editor:navigate',
+  'editor:snapshot',
+]
 
 // Read sources without importing them to inventory channels and event emissions.
 const mainFiles = readMainFiles()
@@ -312,7 +320,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(565)
+    expect(keys).toHaveLength(566)
     expect(keys.sort()).toMatchSnapshot()
   })
 

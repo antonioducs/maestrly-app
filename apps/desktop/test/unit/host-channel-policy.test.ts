@@ -26,6 +26,7 @@ import {
   REMOTE_VIEWER_CHANNELS,
   remoteChannelRefusal,
 } from '../../src/shared/host-channels'
+import { HOST_EDITOR_CHANNELS } from '../../src/shared/host-editor'
 
 // Stands for any argument: a callable object whose every property is itself, and which prints as a string.
 const dummy: any = new Proxy(() => {}, {
@@ -105,7 +106,7 @@ describe('host channel policy', () => {
     expect(allowed).toEqual([])
   })
 
-  it('lets remote origins reach the browser stream, and only through the host API', () => {
+  it("lets remote origins reach the browser stream and the host's editor", () => {
     const seen: string[] = []
     const byMember = channelsOf(
       makeHostApi({
@@ -119,8 +120,11 @@ describe('host channel policy', () => {
     const streamChannels = [...byMember]
       .filter(([member]) => member.startsWith('browserStream'))
       .flatMap(([, used]) => used)
-    expect(new Set(streamChannels)).toEqual(REMOTE_VIEWER_CHANNELS)
+    // The editor channels are invoked by this computer's main process over the bridge, not through the preload.
+    expect(new Set([...streamChannels, ...Object.values(HOST_EDITOR_CHANNELS)])).toEqual(REMOTE_VIEWER_CHANNELS)
     for (const channel of REMOTE_VIEWER_CHANNELS) expect(remoteChannelRefusal(channel)).toBeNull()
+    // A Plan file chip opens the file in the host's editor, which a computer now shows.
+    expect(remoteChannelRefusal('plan:open-file')).toBeNull()
   })
 
   it('treats an unknown channel as a host channel, left for the handler table to refuse', () => {
