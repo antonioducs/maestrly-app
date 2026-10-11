@@ -74,8 +74,8 @@
   "devDependencies": {
     "@electron/asar": "4.3.1",
     "@biomejs/biome": "2.5.15",
-    "electron": "44.5.1",
-    "tar-stream": "3.2.1",
+    "electron": "44.7.0",
+    "tar-stream": "3.2.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   },
