@@ -16,6 +16,7 @@ import { fleetInstallerApi } from './api-fleet-installer'
 import { hostsApi } from './api-hosts'
 import { localHostApi } from './host-api'
 import { artifactsApi } from './api-artifacts'
+import { transfersApi } from './api-transfers'
 
 export type * from '../shared/chat-window'
 
@@ -130,6 +131,7 @@ export type * from './api-fleet-installer'
 export type * from './api-hosts'
 export type * from './api-host-fs'
 export type * from './api-artifacts'
+export type * from './api-transfers'
 
 /** This computer's app, window and devices: never routed to another host. */
 const localApi = {
@@ -148,6 +150,7 @@ const localApi = {
   ...fleetInstallerApi,
   ...hostsApi,
   ...artifactsApi,
+  ...transfersApi,
 }
 const api = { ...localHostApi, ...localApi }
 

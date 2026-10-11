@@ -43,6 +43,7 @@ import { sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
 import { registerHostsIpc } from './remote-host/client/ipc'
+import { registerHostTransfersIpc } from './host-transfers/ipc'
 import { isRemoteConversation } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
@@ -833,6 +834,7 @@ function registerIpc(): void {
 
   registerHostFsIpc(reg, { roots: hostFsRoots, conversationFolder: (id) => getConversation(id)?.cwd ?? null })
   registerHostsIpc(reg)
+  registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),

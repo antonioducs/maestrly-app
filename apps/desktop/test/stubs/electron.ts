@@ -131,6 +131,10 @@ export const net = {
   fetch: (): Promise<unknown> => Promise.reject(new Error('net.fetch is unavailable in the test stub')),
 }
 
+// `webUtils` reads a dropped file's path; the stub reads a `path` property tests give their fake files.
+export const webUtils = { getPathForFile: (file: { path?: string }): string => file?.path ?? '' }
+export const powerMonitor = { on: (): void => undefined }
+
 export default {
   app,
   ipcMain,
@@ -146,4 +150,6 @@ export default {
   session,
   utilityProcess,
   net,
+  webUtils,
+  powerMonitor,
 }

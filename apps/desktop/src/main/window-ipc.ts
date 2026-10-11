@@ -40,7 +40,12 @@ const panelTargets = new Map<WebContents, PanelTargetMetadata>()
 // Low-frequency application-wide settings/catalog events still need to reach the independent panel
 // renderers (their i18n/model pickers subscribe directly). High-frequency conversation streams
 // stay explicitly directed and never use this exception.
-const PANEL_GLOBAL_CHANNELS = new Set(['settings:locale-changed', 'models:catalog-changed', 'hosts:changed'])
+const PANEL_GLOBAL_CHANNELS = new Set([
+  'settings:locale-changed',
+  'models:catalog-changed',
+  'hosts:changed',
+  'transfers:changed',
+])
 
 /** Set mainWindow as the broadcast target during window creation. */
 export function setBroadcastMainWindow(win: BrowserWindow | null): void {

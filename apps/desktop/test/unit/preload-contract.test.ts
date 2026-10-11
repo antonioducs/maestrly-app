@@ -32,6 +32,7 @@ import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
 import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
+import { transfersApi } from '../../src/preload/api-transfers'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -79,6 +80,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['hostsApi', hostsApi],
   ['hostFsApi', hostFsApi],
   ['artifactsApi', artifactsApi],
+  ['transfersApi', transfersApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -310,7 +312,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(537)
+    expect(keys).toHaveLength(549)
     expect(keys.sort()).toMatchSnapshot()
   })
 
