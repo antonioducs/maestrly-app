@@ -186,6 +186,30 @@ describe('workspaces environment routes', () => {
     expect((await json(await h.request('GET', '/v1/meta'))).features).toContain('host-files')
   })
 
+  it("passes a workspaces environment's editor only to a paired device", async () => {
+    const h = await setup()
+    const editor = '/v1/environments/' + h.bot.environmentId + '/editor/'
+    expect((await fetch(h.origin + editor, { headers: { 'X-Maestrly-Fleet-Protocol': '1' } })).status).toBe(401)
+    expect((await fetch(h.origin + editor, { headers: { Authorization: h.publicHeaders.Authorization } })).status).toBe(
+      426
+    )
+    expect(
+      (await fetch(h.origin + editor, { headers: { ...h.publicHeaders, Origin: 'http://127.0.0.1:41234' } })).status
+    ).toBe(403)
+    const bots = await fetch(h.origin + editor, { headers: h.publicHeaders })
+    expect(bots.status).toBe(409)
+    expect((await json(bots)).message).toBe('The workspaces environment is not running.')
+    const upgrade = (headers: Record<string, string>) =>
+      new Promise<number>((resolve) => {
+        const socket = new WebSocket(h.origin.replace('http', 'ws') + editor + 'stable-x', { headers })
+        socket.on('unexpected-response', (_request, response) => resolve(response.statusCode ?? 0))
+        socket.on('error', () => undefined)
+      })
+    expect(await upgrade({ 'X-Maestrly-Fleet-Protocol': '1' })).toBe(401)
+    expect(await upgrade(h.publicHeaders)).toBe(409)
+    expect((await json(await h.request('GET', '/v1/meta'))).features).toContain('host-editor')
+  })
+
   it('advertises the feature and creates and lists a workspaces environment', async () => {
     const h = await setup()
     expect((await json(await h.request('GET', '/v1/meta'))).features).toContain('workspaces-host')
