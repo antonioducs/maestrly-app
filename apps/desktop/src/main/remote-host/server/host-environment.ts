@@ -6,6 +6,7 @@ import {
   type FleetMcpImportRequest,
   type FleetSkillInstallRequest,
   type FleetSubscriptionKind,
+  FLEET_HOST_FILES_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
 } from '@maestrly/bot-fleet-protocol'
 import type { EnvironmentRuntime } from '../../fleet/instance/environment'
@@ -35,11 +36,19 @@ export class HostEnvironment implements InstanceEnvironment {
 
   health() {
     const health = this.runtime.health()
-    return { ...health, capabilities: [...health.capabilities, FLEET_WORKSPACES_HOST_FEATURE], busy: this.busy() }
+    return {
+      ...health,
+      capabilities: [...health.capabilities, FLEET_WORKSPACES_HOST_FEATURE, FLEET_HOST_FILES_FEATURE],
+      busy: this.busy(),
+    }
   }
   async environmentStatus() {
     const status = await this.runtime.environmentStatus()
-    return { ...status, capabilities: [...status.capabilities, FLEET_WORKSPACES_HOST_FEATURE], bots: [] }
+    return {
+      ...status,
+      capabilities: [...status.capabilities, FLEET_WORKSPACES_HOST_FEATURE, FLEET_HOST_FILES_FEATURE],
+      bots: [],
+    }
   }
   selections() {
     return this.runtime.selections()

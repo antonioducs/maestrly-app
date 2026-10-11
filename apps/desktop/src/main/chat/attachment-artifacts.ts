@@ -235,7 +235,8 @@ export async function deleteConversationAttachmentImages(conversationId: string)
 // saved annotation would change its bytes and invalidate the part. Copies live in the private profile (a shared
 // temp directory would expose them to other local users) and are removed with their message, their conversation
 // and on the next start.
-function previewRoot(): string {
+/** Where read-only copies of PDF attachments are made to be opened. */
+export function attachmentPreviewRoot(): string {
   return path.join(app.getPath('userData'), 'chat-attachment-previews')
 }
 
@@ -244,8 +245,8 @@ function previewDir(conversationId: string, artifactId?: string): string {
     throw new AttachmentArtifactError('Invalid attachment preview id.')
   }
   return artifactId === undefined
-    ? path.join(previewRoot(), conversationId)
-    : path.join(previewRoot(), conversationId, artifactId)
+    ? path.join(attachmentPreviewRoot(), conversationId)
+    : path.join(attachmentPreviewRoot(), conversationId, artifactId)
 }
 
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/i
@@ -298,7 +299,7 @@ export async function materializePdfPreview(
 }
 
 export async function clearAttachmentPreviews(): Promise<void> {
-  await fsp.rm(previewRoot(), { recursive: true, force: true }).catch(() => {})
+  await fsp.rm(attachmentPreviewRoot(), { recursive: true, force: true }).catch(() => {})
 }
 
 export function resolveFileImageBytesSync(

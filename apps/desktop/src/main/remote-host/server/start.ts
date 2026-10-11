@@ -1,9 +1,13 @@
+import path from 'node:path'
 import { app, type BrowserWindow } from 'electron'
+import { attachmentPreviewRoot } from '../../chat/attachment-artifacts'
 import { EnvironmentRuntime } from '../../fleet/instance/environment'
 import { type BridgeUpgrade, createInstanceControlServer } from '../../fleet/instance/server'
 import { setProjectsDirectoryFallback } from '../../projects-directory'
+import { hostFsRoots } from '../host-fs'
 import { parseServerModeConfig } from './config'
 import { HostEnvironment } from './host-environment'
+import { HostFiles } from './host-files'
 
 /** What server mode needs from the main process. */
 export interface ServerHostDeps {
@@ -40,7 +44,17 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
   })
   try {
     await runtime.start()
-    const server = createInstanceControlServer(config, new HostEnvironment(runtime, deps.busy), { bridge: deps.hub })
+    // Computers move files of the host's folders, and read the copies it makes of PDF attachments for them.
+    const hostFiles = new HostFiles({
+      roots: () => hostFsRoots().map((root) => root.path),
+      readRoots: () => [attachmentPreviewRoot()],
+      uploadsDir: path.join(app.getPath('userData'), 'host-file-uploads'),
+    })
+    void hostFiles.sweep().catch(() => undefined)
+    const server = createInstanceControlServer(config, new HostEnvironment(runtime, deps.busy), {
+      bridge: deps.hub,
+      hostFiles,
+    })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(config.controlPort, config.controlHost, () => {
