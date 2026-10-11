@@ -46,8 +46,8 @@ feature: use **Update bots** first.
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
 - **Work in a conversation.** The chat view is the same as for a conversation of this computer. The drawer offers
-  **Terminal**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the server, in the conversation's
-  folder.
+  **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the server, in the
+  conversation's folder. **Files** moves files between this computer and the server: see [Files](#files).
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
@@ -72,6 +72,34 @@ A server you manage mounts the folder named by `MAESTRLY_GATEWAY_WORKSPACES_ROOT
 1000, the user the environment runs as. The environment is created with that mount: after you set or change the
 variable, restart the gateway and then restart the workspaces environment. A VPS that Maestrly set up before this
 feature gets `/srv/maestrly` the next time you use **Update bots**.
+
+## Files
+
+The **Files** tab of the drawer, in a conversation on the server, shows the server's files and moves them to and from
+this computer. It opens on the conversation's folder when that folder is one Maestrly can use, and on the
+**Workspaces** folder otherwise.
+
+- **Browse.** The tab shows the folders offered when you add a workspace (**Home**, and **Workspaces** when the server
+  mounts one), with each file's size and date, and the free space of the server's disk. **Show hidden files** lists the
+  entries whose names start with a dot.
+- **Preview, rename, and delete.** The **…** menu of a file shows its first 64 KB, renames it, or deletes it. Deleting
+  a folder deletes everything in it, and asks first. A link is deleted without what it points to.
+- **Upload.** Use **Upload…** to choose files on this computer, or drag them from the Finder or the file manager onto
+  the tab. They go to the folder on screen. A name that is already taken stops the upload; choose **Replace** to
+  overwrite the file on the server. Folders are not uploaded: compress them first.
+- **Download.** The download button of a file saves it to this computer's **Downloads** folder, next to any file of the
+  same name rather than over it. **Open on this computer** in the **…** menu downloads the file into a temporary folder
+  and opens it with this computer's default app.
+- **PDF attachments** of a chat on the server open on this computer the same way, through a download.
+
+The **Transfers** list under the files shows each transfer's progress, speed, and time left, and can pause, resume,
+cancel, try again, or show a download in its folder. A file moves in parts, up to four at a time, and each part is
+checked with a SHA-256 checksum as it arrives. Text and other files that compress well are compressed with zstd on the
+way. Once all parts arrive, the whole file is checked against the original on the other end before it is published.
+
+Transfers survive interruptions. When this computer sleeps, the connection drops, the server restarts, or the app quits,
+a transfer keeps the parts it has and goes on with the rest once the server can be reached. If the file changes on
+either end while it moves, the transfer stops: **Try again** starts it over with the new version.
 
 ## Connection states
 
@@ -98,9 +126,9 @@ renamed, or removed appears here when this window gets the focus again.
 - **The agent's browser and the editor are not shown** for a conversation on a server. The agent can still use its
   browser there: it runs on the server and keeps its site logins. The **Browser** and **Code** tabs are hidden for
   those conversations.
-- **Files do not move between this computer and the server.** Attach images and PDFs to a message as usual, since those
-  travel with the message. To move other files, use Git or SSH. Opening a file, a folder, or a PDF attachment in a
-  desktop app is unavailable for a server, because it would open on the server's own desktop, which nobody sees.
+- **Whole folders do not move.** **Files** uploads and downloads files one by one; compress a folder in a terminal of
+  the server, or use Git. Revealing a file or folder of the server in a file manager is unavailable, because it would
+  open on the server's own desktop, which nobody sees.
 - **Alert sounds** do not play for conversations on a server.
 - **Drawer tools stay docked** for those conversations: no floating windows and no pop-up shortcuts.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between
@@ -132,8 +160,13 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 - `MAESTRLY_DEV_DIRECT_HOST=http://<control token>@<address>:<port>` connects a development or test build straight to
   the control server of an app started with `MAESTRLY_SERVER_MODE=1`, without a bot server. Packaged builds ignore it.
 - `apps/desktop/test/e2e/remote-hosts.spec.ts` runs two instances of the built app, one in server mode, and checks the
-  mixed sidebar, a chat turn, a terminal, and adding a workspace. `remote-hosts-server.spec.ts` does the same through
-  a gateway, from the **Server** page to a stopped and started environment.
+  mixed sidebar, a chat turn, a terminal, adding a workspace, and the **Files** tab: browsing, preview, rename, delete,
+  upload, download, and opening a file. `remote-hosts-server.spec.ts` does the same through a gateway, from the
+  **Server** page to a stopped and started environment.
 - `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, the
-  mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, and a host
-  terminal. It needs Docker and both images; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+  mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, a host terminal,
+  an upload and a compressed range download through the gateway, and that revoking the device cuts its transfers. It
+  needs Docker and both images; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+- File transfers use the `host-files` routes of the gateway (`/v1/environments/:eid/host-files/…`), passed through to
+  the host's control server, never the bridge. A gateway or host without the `host-files` feature makes the **Files**
+  tab ask for an update.

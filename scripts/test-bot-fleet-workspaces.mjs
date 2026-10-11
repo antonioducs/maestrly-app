@@ -7,13 +7,22 @@
 // Images: MAESTRLY_GATEWAY_IMAGE and MAESTRLY_GATEWAY_BOT_IMAGE as Compose reads them, or the `:local` ones.
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { inflateSync } from 'node:zlib'
+import { inflateSync, zstdDecompressSync } from 'node:zlib'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const composeFile = path.join(root, 'deploy/bot-fleet/compose.yml')
@@ -104,6 +113,19 @@ async function request(method, route, body, options = {}) {
     throw new Error(method + ' ' + route + ' HTTP ' + response.status + ': ' + JSON.stringify(value))
   return value
 }
+
+/** A request whose body or answer is raw bytes: the answer itself, whatever its status. */
+function raw(method, route, { headers = {}, body, timeout = 120000 } = {}) {
+  return fetch(base + route, {
+    method,
+    headers: { 'X-Maestrly-Fleet-Protocol': '1', Authorization: 'Bearer ' + token, ...headers },
+    ...(body === undefined ? {} : { body }),
+    ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
+  })
+}
+const json = (value) => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) })
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const MiB = 1024 * 1024
 
 function pass(name, evidence) {
   const now = Date.now()
@@ -525,11 +547,80 @@ async function main() {
   assert.equal(readFileSync(path.join(projectPath, 'from-terminal.txt'), 'utf8').trim(), 'host-42-1000')
   pass('host terminal', 'a shell of the host wrote under the mounted folder as uid 1000')
 
-  // Revoking the device closes its bridge.
+  // Files move between this computer and the host through the gateway, checked by SHA-256 on the way.
+  const files = '/v1/environments/' + environmentId + '/host-files'
+  const upload = randomBytes(20 * MiB)
+  const begun = await raw(
+    'POST',
+    files + '/uploads',
+    json({ directory: workspacesRoot, name: 'e2e-upload.bin', size: upload.length, overwrite: false })
+  )
+  const session = await begun.json()
+  assert.equal(begun.status, 200, JSON.stringify(session))
+  for (const [offset, length] of [
+    [0, 16 * MiB],
+    [16 * MiB, 4 * MiB],
+  ]) {
+    const chunk = upload.subarray(offset, offset + length)
+    const put = await raw('PUT', files + '/uploads/' + session.uploadId + '?offset=' + offset, {
+      headers: { 'x-maestrly-sha256': sha256(chunk), 'x-maestrly-length': String(length) },
+      body: chunk,
+    })
+    assert.equal(put.status, 204, await put.text())
+  }
+  const committed = await (
+    await raw('POST', files + '/uploads/' + session.uploadId + '/commit', json({ sha256: sha256(upload) }))
+  ).json()
+  assert.equal(committed.sha256, sha256(upload), JSON.stringify(committed))
+  const uploaded = path.join(workspacesRoot, 'e2e-upload.bin')
+  // The folder is mounted at the same path in the environment: the file is on the Docker host, where its owner is
+  // reported as the host maps it (Docker Desktop maps it to the person; the terminal above shows who wrote it).
+  assert.equal(sha256(readFileSync(uploaded)), sha256(upload))
+
+  const report = path.join(workspacesRoot, 'e2e-report.csv')
+  const csv = Buffer.from('id,name,amount\n1,alpha,10\n'.repeat(Math.ceil((70 * MiB) / 25))).subarray(0, 70 * MiB)
+  writeFileSync(report, csv)
+  const stat = await (await raw('POST', files + '/stat', json({ path: report }))).json()
+  assert.equal(stat.size, csv.length, JSON.stringify(stat))
+  const content = (headers, timeout) =>
+    raw('GET', files + '/content?path=' + encodeURIComponent(report), { headers, timeout })
+  const first = await content({
+    range: 'bytes=0-' + (64 * MiB - 1),
+    'x-maestrly-file-identity': stat.identity,
+    'x-maestrly-accept-encoding': 'zstd',
+  })
+  assert.equal(first.status, 206)
+  assert.equal(first.headers.get('x-maestrly-encoding'), 'zstd')
+  const range = zstdDecompressSync(Buffer.from(await first.arrayBuffer()))
+  assert.equal(sha256(range), first.headers.get('x-maestrly-sha256'))
+  assert.equal(sha256(range), sha256(csv.subarray(0, 64 * MiB)))
+  const changed = await content({ range: 'bytes=0-9', 'x-maestrly-file-identity': '1:1:1' })
+  assert.equal(changed.status, 409)
+  const beyond = await content({
+    range: 'bytes=' + 70 * MiB + '-' + (70 * MiB + 9),
+    'x-maestrly-file-identity': stat.identity,
+  })
+  assert.equal(beyond.status, 416)
+  const outside = await raw('POST', files + '/stat', json({ path: '/etc/passwd' }))
+  assert.equal(outside.status, 403)
+  pass(
+    'host files',
+    `20 MiB upload committed on the Docker host (owner uid ${statSync(uploaded).uid}); 64 MiB zstd range verified; ` +
+      'refusals 409/416/403'
+  )
+
+  // Revoking the device closes its bridge and cuts its transfers.
+  const reading = await content({ range: 'bytes=0-' + (64 * MiB - 1), 'x-maestrly-file-identity': stat.identity }, 0)
+  const reader = reading.body.getReader()
+  await reader.read()
   const closed = new Promise((resolve) => bridge.socket.addEventListener('close', resolve))
   await request('DELETE', '/v1/devices/self')
   await within(closed, 15000, 'The bridge outlived its device')
-  pass('revocation', 'the bridge closed with its device')
+  const ended = (async () => {
+    for (;;) if ((await reader.read()).done) return 'complete'
+  })().catch(() => 'cut')
+  assert.equal(await within(ended, 10000, 'The transfer outlived its device'), 'cut')
+  pass('revocation', 'the bridge closed with its device, and its file transfer was cut')
 
   console.log(JSON.stringify({ result: 'PASS', project, durationMs: Date.now() - started, steps: results }, null, 2))
   // The last line is a summary for a caller that runs this test as one of its steps.

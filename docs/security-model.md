@@ -498,6 +498,20 @@ bots. A paired computer drives it through a **bridge**: see
   uid 1000 under the same egress guard and seccomp profile as a bot
   environment. An agent there can still read and change everything in those
   folders, as on any computer it runs on.
+- **File transfers take their own route, with the same authority.** Moving
+  files between a computer and the host uses the gateway's `host-files` routes
+  instead of the bridge. They require the device token, and the gateway passes
+  their bodies and answers to the environment's control server, with the
+  control token in place of the device's, without reading or keeping them; it
+  only bounds how much one request may send. The host reads and writes files
+  only inside the folders above, resolving links first, and reads the copies of
+  PDF attachments it makes for the computer to open. Revoking the device or
+  stopping the environment cuts its transfers as it closes its bridges. On the
+  computer, a download is always written to its Downloads folder, or to a
+  temporary folder to open it, as the app decides; an upload reads only files the
+  person picked in a file dialog or dropped on the window. Each part and each
+  whole file is checked with SHA-256 on both ends, which detects corruption, not
+  tampering by the server itself.
 - **Both ends must run the same version.** The computer's renderer calls the
   host's functions directly, so the host refuses a computer of another app
   version or bridge protocol and says which version it runs. It never
