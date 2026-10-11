@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
@@ -82,7 +83,7 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
         [HOST_ID, 'online'],
       ])
     const [, hostView] = await local('hostsList')
-    expect(hostView).toMatchObject({ remote: true, desktopEffects: false, editor: false, browser: false, epoch: 1 })
+    expect(hostView).toMatchObject({ remote: true, desktopEffects: false, editor: false, browser: true, epoch: 1 })
 
     // Mixed sidebar: one section per host under its heading, in the Chats and in the Workspaces tab.
     await page.getByRole('tab', { name: 'Chats' }).click()
@@ -129,14 +130,14 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     expect(JSON.stringify(model.requests[0].messages)).toContain('hello from this computer')
     expect(JSON.stringify(await remote('chatHistoryPage', chat.id))).toContain('Answered on the host, turn 1.')
 
-    // Its drawer offers the tools this computer can show of a host: no browser and no editor yet.
+    // Its drawer offers the tools this computer can show of a host: its streamed browser, and no editor yet.
     await page.getByTitle(/^Toggle drawer/).click()
     await page.getByTitle('Open a tool').click()
     const palette = page.getByRole('dialog', { name: 'Open a tool' })
     await expect(palette.getByText('Terminal', { exact: true })).toBeVisible()
     await expect(palette.getByText('Notes', { exact: true })).toBeVisible()
     await expect(palette.getByText('Files', { exact: true })).toBeVisible()
-    await expect(palette.getByText('Browser', { exact: true })).toHaveCount(0)
+    await expect(palette.getByText('Browser', { exact: true })).toBeVisible()
     await expect(palette.getByText('Code', { exact: true })).toHaveCount(0)
     await palette.getByText('Terminal', { exact: true }).click()
 
@@ -339,6 +340,92 @@ test('remote host files: browse, preview, rename, delete, upload and download', 
   } finally {
     await client?.close().catch(() => undefined)
     await host?.close().catch(() => undefined)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// The browser of a host's conversation, streamed into this window's drawer: its frames are drawn here, and what the
+// person types and copies goes to the page on the host.
+test('remote host browser: streamed live, typed into and copied from', async () => {
+  test.setTimeout(240_000)
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
+  await access(path.join(desktop, 'out/main/index.js'))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-browser-')))
+  // A page whose one field fills the viewport: a click anywhere on the frame lands in it, and its title follows it.
+  const site = createServer((_req, res) => {
+    res.setHeader('content-type', 'text/html; charset=utf-8')
+    res.end(
+      '<!doctype html><html><head><title>remote-start</title></head><body style="margin:0">' +
+        '<input id="field" autocomplete="off" style="position:fixed;inset:0;width:100%;height:100%;font-size:32px"' +
+        ' oninput="document.title = this.value"></body></html>'
+    )
+  })
+  let host: ElectronApplication | undefined
+  let client: ElectronApplication | undefined
+  try {
+    await listen(site)
+    const pageUrl = `http://127.0.0.1:${portOf(site)}/field`
+    const connected = await connect(root)
+    ;({ host, client } = connected)
+    const { page, remote, controlPort } = connected
+    await page.getByRole('tab', { name: 'Chats' }).click()
+    await page
+      .locator(`#sidebar-panel-chats [data-host-section="${HOST_ID}"]`)
+      .getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}` })
+      .click()
+    await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
+    const [chat] = await remote('listStandaloneConversations', true)
+
+    // The Browser tab streams the host's page into a canvas of this window.
+    await page.getByTitle(/^Toggle drawer/).click()
+    await page.getByTitle('Open a tool').click()
+    await page.getByRole('dialog', { name: 'Open a tool' }).getByText('Browser', { exact: true }).click()
+    const canvas = page.getByTestId('remote-browser-canvas')
+    await expect(canvas).toHaveAttribute('data-live', 'true', { timeout: 60_000 })
+    await expect(page.getByRole('button', { name: /developer tools/i })).toHaveCount(0)
+    // On the host the page is shown in its stream window, at the size of this window's surface.
+    const box = await canvas.boundingBox()
+    const presented = await host.evaluate(
+      (_electron, id) => (globalThis as any).__maestrlyE2EInspectBrowserView(id),
+      chat.id as string
+    )
+    expect(presented).toMatchObject({ ownerCount: 1, ownerVisible: true })
+    expect(presented.bounds.x).toBe(0)
+    expect(
+      Math.abs(presented.bounds.width - Math.min(1280, Math.max(480, Math.round(box!.width))))
+    ).toBeLessThanOrEqual(1)
+
+    // The address bar drives the host's browser.
+    const address = page.getByPlaceholder('Search or type a URL')
+    await address.fill(pageUrl)
+    await address.press('Enter')
+    await expect
+      .poll(async () => (await remote('getBrowserState', chat.id)).tabs[0]?.url, { timeout: 30_000 })
+      .toBe(pageUrl)
+    await expect
+      .poll(async () => (await remote('getBrowserState', chat.id)).tabs[0]?.title, { timeout: 30_000 })
+      .toBe('remote-start')
+
+    // Typing reaches the page: accents arrive as text, the way the hidden field composed them.
+    await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 } })
+    await expect(page.getByTestId('remote-browser-keyboard')).toBeFocused()
+    await page.keyboard.type('ação ok')
+    await expect
+      .poll(async () => (await remote('getBrowserState', chat.id)).tabs[0]?.title, { timeout: 30_000 })
+      .toBe('ação ok')
+
+    // Copying selects and copies on the host, and the text lands on this computer's clipboard.
+    const accel = process.platform === 'darwin' ? 'Meta' : 'Control'
+    await client.evaluate(({ clipboard }) => clipboard.writeText('before'))
+    await page.keyboard.press(`${accel}+A`)
+    await page.keyboard.press(`${accel}+C`)
+    await expect
+      .poll(() => client!.evaluate(({ clipboard }) => clipboard.readText()), { timeout: 15_000 })
+      .toBe('ação ok')
+  } finally {
+    await client?.close().catch(() => undefined)
+    await host?.close().catch(() => undefined)
+    await new Promise((resolve) => site.close(resolve))
     await rm(root, { recursive: true, force: true })
   }
 })

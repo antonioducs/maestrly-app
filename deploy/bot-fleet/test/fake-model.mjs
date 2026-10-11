@@ -285,10 +285,28 @@ function cookiePage(req, res, url) {
   res.end(`<!doctype html><html><head><title>E2E cookie</title></head><body><p>${body}</p></body></html>`)
 }
 
+// A page the workspaces test drives through the streamed browser: a field whose value becomes the title, a list whose
+// choice does too, and a file field. Each sits at a fixed place, where the test clicks.
+const STREAM_PAGE = `<!doctype html><html><head><title>E2E stream</title></head>
+<body style="margin:0;font:16px sans-serif;background:#fff">
+<input id="field" autocomplete="off" style="position:absolute;left:0;top:0;width:400px;height:40px"
+  oninput="document.title = 'typed:' + this.value">
+<select id="choice" style="position:absolute;left:0;top:60px;width:200px;height:30px"
+  onchange="document.title = 'chose:' + this.value">
+  <option value="a">Alpha</option>
+  <optgroup label="More"><option value="b">Beta</option><option value="c" disabled>Gamma</option></optgroup>
+</select>
+<input id="file" type="file" style="position:absolute;left:0;top:120px;width:300px;height:30px">
+</body></html>`
+
 http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://e2e-model')
   if (req.method === 'GET' && (url.pathname === '/e2e/cookie/set' || url.pathname === '/e2e/cookie/show'))
     return cookiePage(req, res, url)
+  if (req.method === 'GET' && url.pathname === '/e2e/stream') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(STREAM_PAGE)
+  }
   if (req.headers.authorization !== 'Bearer ' + key) return json(res, 401, { error: { message: 'Invalid API key' } })
   if (req.method === 'GET' && url.pathname === '/e2e/cookie/log') return json(res, 200, { requests: cookieLog })
   if (req.method === 'GET' && req.url === '/v1/models') {

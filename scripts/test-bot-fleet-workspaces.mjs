@@ -183,19 +183,24 @@ async function openBridge(version = appVersion) {
     })
   })
   const first = await opened
+  const invokeAs = (origin, channel, ...args) =>
+    new Promise((resolve, reject) => {
+      const id = nextId++
+      waiting.set(id, { resolve, reject })
+      socket.send(JSON.stringify({ t: 'invoke', id, origin, channel, args }))
+      setTimeout(() => waiting.delete(id) && reject(new Error('No answer to ' + channel)), 60000).unref()
+    })
+  const sendAs = (origin, channel, ...args) => socket.send(JSON.stringify({ t: 'send', origin, channel, args }))
   return {
     first,
     ticket,
     socket,
     open: (origin, role) => socket.send(JSON.stringify({ t: 'open', origin, ...role })),
-    invoke: (channel, ...args) =>
-      new Promise((resolve, reject) => {
-        const id = nextId++
-        waiting.set(id, { resolve, reject })
-        socket.send(JSON.stringify({ t: 'invoke', id, origin: 1, channel, args }))
-        setTimeout(() => waiting.delete(id) && reject(new Error('No answer to ' + channel)), 60000).unref()
-      }),
-    send: (channel, ...args) => socket.send(JSON.stringify({ t: 'send', origin: 1, channel, args })),
+    // Origin 1 is the window's main renderer; another origin stands for a second window of the same computer.
+    invoke: (channel, ...args) => invokeAs(1, channel, ...args),
+    invokeAs,
+    send: (channel, ...args) => sendAs(1, channel, ...args),
+    sendAs,
     onEvent: (listener) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -254,6 +259,20 @@ function pngColors(png) {
     previous = line
   }
   return { width, height, colors: colors.size }
+}
+
+/** The pixel size of a baseline or progressive JPEG, from its start-of-frame segment. */
+function jpegSize(jpeg) {
+  for (let offset = 2; offset + 9 < jpeg.length; ) {
+    if (jpeg[offset] !== 0xff) throw new Error('Not a JPEG segment at ' + offset)
+    const marker = jpeg[offset + 1]
+    const length = jpeg.readUInt16BE(offset + 2)
+    if (marker >= 0xc0 && marker <= 0xc2) {
+      return { width: jpeg.readUInt16BE(offset + 7), height: jpeg.readUInt16BE(offset + 5) }
+    }
+    offset += 2 + length
+  }
+  throw new Error('The JPEG has no frame header')
 }
 
 async function cleanup() {
@@ -419,7 +438,7 @@ async function main() {
       roots: ['/home/bot', workspacesRoot],
       desktopEffects: false,
       editor: false,
-      browser: false,
+      browser: true,
     }
   )
   bridge.open(1, { role: 'main' })
@@ -521,6 +540,210 @@ async function main() {
   pass(
     'chat turn with the host browser',
     `navigate, read and screenshot ran on the host; ${seen.width}x${seen.height} picture of the page; ${kinds.length} events`
+  )
+
+  // The conversation's browser, streamed to this computer the way its window shows it: JPEG frames acknowledged one by
+  // one, input, a resize, a list, a file field, the agent's own screenshot meanwhile, another window taking it over,
+  // and its end.
+  const STREAM_CHANNELS = new Set([
+    'drawer:browser-frame',
+    'drawer:browser-stream-source',
+    'drawer:browser-stream-ended',
+    'drawer:browser-cursor',
+    'drawer:browser-select',
+    'drawer:browser-stream-notice',
+  ])
+  const streamed = []
+  bridge.onEvent((frame) => {
+    if (!STREAM_CHANNELS.has(frame.channel)) return
+    const payload = frame.args[0]
+    streamed.push({ origin: frame.origin, channel: frame.channel, payload, at: Date.now() })
+    // The window acknowledges every frame once it drew it; the host sends the next ones only then.
+    if (frame.channel === 'drawer:browser-frame')
+      bridge.sendAs(frame.origin, 'drawer:browser-stream-ack', payload.convId, payload.streamId, payload.seq)
+  })
+  const soon = async (label, fn, timeout = 30000) => {
+    const until = Date.now() + timeout
+    for (;;) {
+      const value = await fn()
+      if (value) return value
+      if (Date.now() > until) throw new Error('Timed out waiting for ' + label)
+      await sleep(100)
+    }
+  }
+  const streamedFind = (predicate) => streamed.find(predicate)
+  const framesOf = (streamId) =>
+    streamed.filter((item) => item.channel === 'drawer:browser-frame' && item.payload.streamId === streamId)
+  const activeTitle = async () => {
+    const state = await bridge.invoke('drawer:browser-state-get', chat.id)
+    return state.tabs.find((tab) => tab.id === state.activeId)?.title
+  }
+  const input = (origin, streamId, value) => bridge.sendAs(origin, 'drawer:browser-input', chat.id, streamId, value)
+  const click = (origin, streamId, x, y) => {
+    for (const action of ['down', 'up'])
+      input(origin, streamId, {
+        type: 'mouse',
+        action,
+        x,
+        y,
+        button: 'left',
+        buttons: action === 'down' ? 1 : 0,
+        clickCount: 1,
+        modifiers: 0,
+      })
+  }
+
+  const { streamId } = await bridge.invoke('drawer:browser-stream-start', chat.id, 900, 640)
+  assert.match(streamId, /^[A-Za-z0-9_-]{16,64}$/)
+  const source = await soon('the stream source', () =>
+    streamedFind((item) => item.channel === 'drawer:browser-stream-source' && item.payload.streamId === streamId)
+  )
+  assert.deepEqual(source.payload, { convId: chat.id, streamId, source: 1, kind: 'tab', popup: null })
+  const firstFrame = await soon('a frame at the size of the surface', () =>
+    framesOf(streamId).find((item) => item.payload.width === 900 && item.payload.height === 640)
+  )
+  const firstJpeg = Buffer.from(firstFrame.payload.data, 'base64')
+  assert.equal(firstJpeg.readUInt16BE(0), 0xffd8, 'The frame is not a JPEG')
+  assert.deepEqual(jpegSize(firstJpeg), { width: 900, height: 640 })
+
+  bridge.send('drawer:navigate', chat.id, `http://${fakeName}:8787/e2e/stream`)
+  await soon('the stream page', async () => (await activeTitle()) === 'E2E stream')
+  input(1, streamId, { type: 'focus', focused: true })
+  click(1, streamId, 100, 20)
+  input(1, streamId, { type: 'text', text: 'ação' })
+  await soon('the typed title', async () => (await activeTitle()) === 'typed:ação')
+
+  bridge.send('drawer:browser-stream-resize', chat.id, streamId, 700, 500)
+  const resized = await soon('a resized frame', () =>
+    framesOf(streamId).find((item) => item.payload.width === 700 && item.payload.height === 500)
+  )
+  assert.deepEqual(jpegSize(Buffer.from(resized.payload.data, 'base64')), { width: 700, height: 500 })
+
+  click(1, streamId, 100, 75)
+  const list = await soon('the list request', () => streamedFind((item) => item.channel === 'drawer:browser-select'))
+  assert.deepEqual(list.payload.options, [
+    { label: 'Alpha', disabled: false, group: null },
+    { label: 'Beta', disabled: false, group: 'More' },
+    { label: 'Gamma', disabled: true, group: 'More' },
+  ])
+  assert.equal(list.payload.selectedIndex, 0)
+  assert.deepEqual(
+    Object.values(list.payload.rect).map((value) => Math.round(value)),
+    [0, 60, 200, 30]
+  )
+  bridge.send('drawer:browser-select-choose', chat.id, streamId, list.payload.requestId, 1)
+  await soon('the chosen option', async () => (await activeTitle()) === 'chose:b')
+
+  click(1, streamId, 100, 135)
+  await soon('the file chooser notice', () =>
+    streamedFind((item) => item.channel === 'drawer:browser-stream-notice' && item.payload.notice === 'file-chooser')
+  )
+
+  // The agent drives and photographs the same browser while it is streamed; the stream goes on meanwhile.
+  const framesBeforeTurn = framesOf(streamId).length
+  const turned = new Promise((resolve) => {
+    const off = bridge.onEvent((frame) => {
+      if (frame.channel !== 'chat:delta:' + chat.id) return
+      const kind = frame.args[0]?.kind
+      if (kind === 'done' || kind === 'finish' || kind === 'error') {
+        off()
+        resolve(kind)
+      }
+    })
+  })
+  const resent = await bridge.invoke('chat:send', {
+    conversationId: chat.id,
+    text: `E2E-HOST-BROWSER url=http://${fakeName}:8787/e2e/cookie/show`,
+  })
+  assert.equal(resent.ok, true, JSON.stringify(resent))
+  await within(turned, 180000, 'The second browser turn did not finish')
+  const streamedAnswer = (await bridge.invoke('chat:history:page', chat.id)).messages.at(-1)
+  assert.ok(JSON.stringify(streamedAnswer).includes('E2E-HOST-BROWSER-OK'), JSON.stringify(streamedAnswer).slice(-800))
+  const streamedShot = streamedAnswer.parts.find(
+    (part) => part.type === 'tool' && part.toolName === 'browser_screenshot'
+  )
+  const streamedPicture = await bridge.invoke('chat:tool-image', {
+    conversationId: chat.id,
+    messageId: streamedAnswer.id,
+    toolPartId: streamedShot.id,
+    imageId: streamedShot.state.output.images[0].id,
+  })
+  assert.ok(pngColors(Buffer.from(streamedPicture.bytes.b64, 'base64')).colors >= 2, 'The screenshot is one flat color')
+  assert.ok(framesOf(streamId).length > framesBeforeTurn, 'No frame showed the agent navigating')
+
+  // Another window of the computer takes the browser over: the first is told and gets nothing more.
+  bridge.open(2, { role: 'main' })
+  const second = await bridge.invokeAs(2, 'drawer:browser-stream-start', chat.id, 640, 480)
+  await soon('the takeover notice', () =>
+    streamedFind(
+      (item) =>
+        item.origin === 1 &&
+        item.channel === 'drawer:browser-stream-ended' &&
+        item.payload.streamId === streamId &&
+        item.payload.reason === 'taken-over'
+    )
+  )
+  await soon('a frame for the second window', () =>
+    framesOf(second.streamId).find((item) => item.origin === 2 && item.payload.width === 640)
+  )
+
+  // Two conversations watched at once: each browser paints in a stream window of its own on the host's display, and
+  // input reaches only its own page.
+  const other = await bridge.invoke('conversation:create-standalone', {})
+  const otherTitle = async () => {
+    const state = await bridge.invoke('drawer:browser-state-get', other.id)
+    return state.tabs.find((tab) => tab.id === state.activeId)?.title
+  }
+  const otherStream = await bridge.invoke('drawer:browser-stream-start', other.id, 520, 400)
+  await soon('a frame of the other conversation', () =>
+    framesOf(otherStream.streamId).find((item) => item.payload.width === 520 && item.payload.height === 400)
+  )
+  bridge.send('drawer:navigate', other.id, `http://${fakeName}:8787/e2e/stream`)
+  await soon('the other conversation page', async () => (await otherTitle()) === 'E2E stream')
+  const otherInput = (value) => bridge.send('drawer:browser-input', other.id, otherStream.streamId, value)
+  otherInput({ type: 'focus', focused: true })
+  for (const action of ['down', 'up'])
+    otherInput({
+      type: 'mouse',
+      action,
+      x: 100,
+      y: 20,
+      button: 'left',
+      buttons: action === 'down' ? 1 : 0,
+      clickCount: 1,
+      modifiers: 0,
+    })
+  otherInput({ type: 'text', text: 'outra' })
+  await soon('the title typed in the other conversation', async () => (await otherTitle()) === 'typed:outra')
+  const framesBeforeOther = framesOf(second.streamId).length
+  bridge.send('drawer:navigate', chat.id, `http://${fakeName}:8787/e2e/cookie/show`)
+  await soon('a frame of the first conversation meanwhile', () => framesOf(second.streamId).length > framesBeforeOther)
+  assert.equal(await activeTitle(), 'E2E cookie')
+  bridge.send('drawer:browser-stream-stop', other.id, otherStream.streamId)
+  const firstWindowFrames = framesOf(streamId).length
+
+  // Stopped, the stream sends nothing even as the page changes; after its grace period the page leaves its stream
+  // window, and a new stream presents it again.
+  bridge.sendAs(2, 'drawer:browser-stream-stop', chat.id, second.streamId)
+  await sleep(500)
+  const stoppedFrames = framesOf(second.streamId).length
+  bridge.send('drawer:navigate', chat.id, `http://${fakeName}:8787/e2e/stream`)
+  await soon('the page after the stop', async () => (await activeTitle()) === 'E2E stream')
+  await sleep(1500)
+  assert.equal(framesOf(second.streamId).length, stoppedFrames, 'A stopped stream kept sending frames')
+  assert.equal(framesOf(streamId).length, firstWindowFrames, 'A window that was taken over kept getting frames')
+  await sleep(16000)
+  const restarted = await bridge.invoke('drawer:browser-stream-start', chat.id, 800, 600)
+  const restartedFrame = await soon('a frame after the release', () =>
+    framesOf(restarted.streamId).find((item) => item.payload.width === 800 && item.payload.height === 600)
+  )
+  assert.deepEqual(jpegSize(Buffer.from(restartedFrame.payload.data, 'base64')), { width: 800, height: 600 })
+  bridge.send('drawer:browser-stream-stop', chat.id, restarted.streamId)
+  pass(
+    'host browser stream',
+    `${framesOf(streamId).length + framesOf(second.streamId).length + framesOf(restarted.streamId).length} JPEG frames ` +
+      'paced by acknowledgements; typed text, resize, list choice, file chooser refused, agent screenshot while ' +
+      'streaming, takeover, two conversations at once, stop and release'
   )
 
   // A terminal of the host, in the conversation's folder.
