@@ -1438,6 +1438,7 @@ export default {
   files: {
     upload: 'Enviar…',
     refresh: 'Atualizar',
+    showHidden: 'Mostrar arquivos ocultos',
     dropHere: 'Solte arquivos para enviá-los para {{folder}}',
     usage: '{{free}} livres de {{total}}',
     download: 'Baixar para este computador',

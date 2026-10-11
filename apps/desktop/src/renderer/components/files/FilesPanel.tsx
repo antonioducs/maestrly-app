@@ -178,7 +178,7 @@ export function FilesPanel({ conv }: { conv: string }) {
           )}
           onClick={directory.toggleHidden}
         >
-          {t('hostFolder.showHidden')}
+          {t('files.showHidden')}
         </button>
       </div>
       {usage && (

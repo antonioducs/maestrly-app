@@ -1425,6 +1425,7 @@ export default {
   files: {
     upload: 'Upload…',
     refresh: 'Refresh',
+    showHidden: 'Show hidden files',
     dropHere: 'Drop files to upload them to {{folder}}',
     usage: '{{free}} free of {{total}}',
     download: 'Download to this computer',
