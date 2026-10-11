@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronUp, Folder, FolderPlus, FolderX, HardDrive, Home, LoaderCircle } from 'lucide-react'
-import { type HostFsListing, type HostFsRoot, hostFsErrorCode } from '../../shared/host-fs'
 import {
   Dialog,
   DialogContent,
@@ -14,6 +13,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostDirectory } from '@/lib/hosts/use-host-directory'
+import { defaultRoot } from '@/components/files/files-model'
 
 interface Props {
   open: boolean
@@ -30,71 +31,29 @@ interface Props {
 export function HostFolderDialog({ open, purpose, onPick, onClose }: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
-  const [roots, setRoots] = useState<HostFsRoot[]>([])
-  const [listing, setListing] = useState<HostFsListing | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [showHidden, setShowHidden] = useState(false)
+  // The workspaces folder is where a server's projects are meant to live; its home otherwise.
+  const directory = useHostDirectory({ enabled: open, includeFiles: false, start: defaultRoot })
+  const { roots, listing, loading, showHidden, go } = directory
+  const error = directory.error && t(`hostFolder.errors.${directory.error}`)
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState('')
-  const request = useRef(0)
-
-  const explain = useCallback(
-    (cause: unknown) => setError(t(`hostFolder.errors.${hostFsErrorCode(cause) ?? 'unknown'}`)),
-    [t]
-  )
-  const go = useCallback(
-    async (path: string, includeHidden: boolean) => {
-      const current = ++request.current
-      setLoading(true)
-      setError(null)
-      try {
-        const next = await api.hostFsList(path, { includeHidden })
-        if (current === request.current) setListing(next)
-      } catch (cause) {
-        if (current === request.current) explain(cause)
-      } finally {
-        if (current === request.current) setLoading(false)
-      }
-    },
-    [api, explain]
-  )
 
   useEffect(() => {
     if (!open) return
-    setListing(null)
-    setRoots([])
     setNaming(false)
     setName('')
-    setShowHidden(false)
-    setError(null)
-    let alive = true
-    void api
-      .hostFsRoots()
-      .then((found) => {
-        if (!alive) return
-        setRoots(found)
-        // The workspaces folder is where a server's projects are meant to live; its home otherwise.
-        const first = found.find((root) => root.label === 'workspaces') ?? found[0]
-        if (first) void go(first.path, false)
-      })
-      .catch((cause) => alive && explain(cause))
-    return () => {
-      alive = false
-      request.current++
-    }
-  }, [open, api, go, explain])
+  }, [open])
 
   const createFolder = async () => {
     if (!listing || !name.trim()) return
-    setError(null)
+    directory.setError(null)
     try {
       const created = await api.hostFsMkdir(listing.path, name.trim())
       setNaming(false)
       setName('')
-      await go(created, showHidden)
+      await go(created)
     } catch (cause) {
-      explain(cause)
+      directory.explain(cause)
     }
   }
 
@@ -117,7 +76,7 @@ export function HostFolderDialog({ open, purpose, onPick, onClose }: Props) {
                 variant={current ? 'secondary' : 'ghost'}
                 size="sm"
                 className="h-7 gap-1.5 px-2 text-xs"
-                onClick={() => void go(root.path, showHidden)}
+                onClick={() => void go(root.path)}
                 title={root.path}
               >
                 <Icon className="size-3.5" />
@@ -134,7 +93,7 @@ export function HostFolderDialog({ open, purpose, onPick, onClose }: Props) {
             size="icon"
             className="size-7 shrink-0"
             disabled={!listing?.parent || loading}
-            onClick={() => listing?.parent && void go(listing.parent, showHidden)}
+            onClick={() => listing?.parent && void go(listing.parent)}
             title={t('hostFolder.up')}
             aria-label={t('hostFolder.up')}
           >
@@ -161,7 +120,7 @@ export function HostFolderDialog({ open, purpose, onPick, onClose }: Props) {
                 <button
                   type="button"
                   className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs hover:bg-accent"
-                  onClick={() => void go(entry.path, showHidden)}
+                  onClick={() => void go(entry.path)}
                 >
                   <Folder className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="truncate">{entry.name}</span>
@@ -246,10 +205,7 @@ export function HostFolderDialog({ open, purpose, onPick, onClose }: Props) {
                   'rounded px-2 py-1 text-xs',
                   showHidden ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
                 )}
-                onClick={() => {
-                  setShowHidden(!showHidden)
-                  if (listing) void go(listing.path, !showHidden)
-                }}
+                onClick={directory.toggleHidden}
               >
                 {t('hostFolder.showHidden')}
               </button>

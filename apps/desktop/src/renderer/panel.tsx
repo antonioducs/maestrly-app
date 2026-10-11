@@ -9,6 +9,7 @@ import { ReviewPanel } from '@/components/ReviewPanel'
 import { PlanPanel } from '@/components/PlanPanel'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { TerminalTabs } from '@/components/TerminalTabs'
+import { FilesPanel } from '@/components/files/FilesPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { i18n, initRendererI18n } from './lib/i18n'
 import { HostProvider, useHostApi } from '@/lib/hosts/host-context'
@@ -111,6 +112,8 @@ function PanelRoot() {
       return <BrowserChrome convId={conv} />
     case 'terminal':
       return <TerminalPanelHost conv={conv} />
+    case 'files':
+      return <FilesPanel conv={conv} />
     default:
       return null
   }

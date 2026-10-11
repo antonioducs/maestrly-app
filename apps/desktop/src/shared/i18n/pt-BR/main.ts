@@ -40,6 +40,7 @@ export default {
     plan: 'Plano',
     review: 'Review',
     notes: 'Notas',
+    files: 'Arquivos',
     chatgpt: 'ChatGPT',
     // pin da tira da janela flutuante (fixada permanece visível ao trocar de conversa)
     pin: 'Manter aberta ao trocar de conversa',

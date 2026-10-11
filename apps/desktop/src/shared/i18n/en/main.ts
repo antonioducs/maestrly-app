@@ -39,6 +39,7 @@ export default {
     plan: 'Plan',
     review: 'Review',
     notes: 'Notes',
+    files: 'Files',
     chatgpt: 'ChatGPT',
 
     pin: 'Keep open when switching conversations',
