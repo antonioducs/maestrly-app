@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
-import ts from 'typescript'
+import { transformSync } from 'esbuild'
 
 // The fake updater is hoisted with the mock factory: `vi.mock` runs before the module imports, so it
 // cannot close over an ordinary top-level constant.
@@ -61,9 +61,7 @@ function quitHarness() {
   const source = readFileSync(new URL('../../src/main/index.ts', import.meta.url), 'utf8')
   const start = source.indexOf('let projectSetupsFlushed = false')
   expect(start).toBeGreaterThan(0)
-  const shutdown = ts.transpileModule(source.slice(start), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText
+  const shutdown = transformSync(source.slice(start), { loader: 'ts', target: 'es2022', format: 'cjs' }).code
   const order: string[] = []
   const events: { prevented: boolean; preventDefault: () => void }[] = []
   let handler: (event: (typeof events)[number]) => void
@@ -106,12 +104,18 @@ function quitHarness() {
         order.push('bot')
       },
     },
+    artifactHost: {
+      stop: async () => {
+        order.push('artifacts')
+      },
+    },
     disposeChat: async () => {
       order.push('chat')
     },
     disposeConversationMigrationIpc: null,
     releaseInstanceLock: cleanup,
     floatingManager: { flushPendingFloatPersists: vi.fn(), disposeAll: vi.fn() },
+    chatWindowManager: { dispose: vi.fn() },
     popupManager: { disposeAll: vi.fn() },
     releasePowerBlocker: vi.fn(),
     killAllPtys: vi.fn(),
@@ -348,7 +352,16 @@ describe('update-service', () => {
         // Drain the bounded project, runner, chat and memory promise chain.
         for (let i = 0; i < 30; i++) await Promise.resolve()
         expect(fake.quitAndInstall).toHaveBeenCalledOnce()
-        expect(harness.order).toEqual(['projects', 'runner', 'bot', 'chat', 'cleanup', 'memory', 'install'])
+        expect(harness.order).toEqual([
+          'projects',
+          'runner',
+          'bot',
+          'artifacts',
+          'chat',
+          'cleanup',
+          'memory',
+          'install',
+        ])
         expect(harness.cleanup).toHaveBeenCalledOnce()
         if (!immediate) {
           expect(harness.events.every((event) => event.prevented)).toBe(true)

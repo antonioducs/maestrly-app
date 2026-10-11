@@ -1,5 +1,6 @@
 import {
   compareFleetTranscriptItems,
+  fleetTranscriptItemReadable,
   type FleetTranscriptItem,
   type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
@@ -16,7 +17,7 @@ import {
   type StoredChatMessage,
 } from '../../chat/chat-store'
 import { imageId, type FleetImageStore } from './images'
-import type { InstanceInputQueue } from './queue'
+import type { InstanceInputQueue, QueuedInput } from './queue'
 import {
   projectMessages,
   transcriptPage,
@@ -64,6 +65,8 @@ export class LiveTranscript {
       extras: InstanceTranscriptExtras
       images: FleetImageStore
       publish: (item: FleetTranscriptItem) => void
+      /** The input the running turn answers, from the moment the turn takes it until it ends. */
+      turnInputId?: () => string | null
     }
   ) {}
 
@@ -149,7 +152,7 @@ export class LiveTranscript {
       ({ item }) => item.kind !== 'question' || !superseded.has(item.toolCallId)
     )
     for (const { messageId, item } of projected) {
-      const images = item.kind === 'user' || item.kind === 'tool' ? item.images : []
+      const images = item.kind === 'user' || item.kind === 'tool' ? [...item.images, ...(item.files ?? [])] : []
       for (const image of images) {
         if (!image.id.startsWith('a-') && !image.id.startsWith('g-')) continue
         this.imageOwners.delete(image.id)
@@ -162,9 +165,9 @@ export class LiveTranscript {
     }
     return projected
   }
-  private queuedItems(): FleetTranscriptItem[] {
+  private inputItem(entry: QueuedInput, queued: boolean): FleetTranscriptItem {
     const queue = this.options.queue
-    return queue.list().map((entry) => ({
+    return {
       kind: 'user',
       id: entry.itemId,
       at: entry.at,
@@ -172,28 +175,54 @@ export class LiveTranscript {
       source: entry.input.source,
       routine: entry.input.routine,
       peer: entry.input.peer,
-      queued: true,
+      queued,
+      ...(entry.attachmentError ? { attachmentError: entry.attachmentError } : {}),
       memories: [],
       images: queue.refs(entry),
-    }))
+      ...(queue.fileRefs(entry).length ? { files: queue.fileRefs(entry) } : {}),
+    }
+  }
+  private queuedItems(): FleetTranscriptItem[] {
+    return this.options.queue.list().map((entry) => this.inputItem(entry, true))
+  }
+  /** The item of an input still waiting in the queue, or null once a turn took it or it left. */
+  queuedItem(inputId: string): FleetTranscriptItem | null {
+    const entry = this.options.queue.list().find((candidate) => candidate.id === inputId)
+    return entry ? this.inputItem(entry, true) : null
+  }
+  /**
+   * The input the running turn took, until the conversation holds its native message: no longer queued, and saved only
+   * after the turn's preparation (memory, context, account), it would otherwise be in no page meanwhile.
+   */
+  startingItem(inputs: TranscriptInputs = this.options.queue.transcriptInputs()): FleetTranscriptItem | null {
+    const inputId = this.options.turnInputId?.()
+    const entry = inputId ? inputs.unmapped.find((candidate) => candidate.id === inputId) : undefined
+    if (!entry) return null
+    // Its native message, once saved, comes after the turn started and projects with the same item id.
+    const users = this.turnMessages().filter((message) => message.role === 'user')
+    if (projectMessages(users, inputs).some(({ item }) => item.id === entry.itemId)) return null
+    return this.inputItem(entry, false)
   }
 
   /**
    * The `limit` items (1 to 500) just before the item `before`, or the newest ones, and the cursor to the items before
    * them: the page `transcriptPage` would cut from the whole transcript. Every item of a message carries its creation
    * time, so messages are read newest first by that time until the page cannot change: once it starts after the last
-   * message read, whatever order the stamps took against seq.
+   * message read, whatever order the stamps took against seq. `reasoning` items are left out unless asked for.
    */
-  async page(before: string | null, requested: number): Promise<FleetTranscriptPage> {
+  async page(before: string | null, requested: number, reasoning = false): Promise<FleetTranscriptPage> {
     const limit = Math.max(1, Math.min(500, requested))
     const superseded = this.options.extras.questionToolCallIds()
-    const outside = [...this.queuedItems(), ...this.options.extras.list()]
+    const inputs = this.options.queue.transcriptInputs()
+    const starting = this.startingItem(inputs)
+    const outside = [...this.queuedItems(), ...(starting ? [starting] : []), ...this.options.extras.list()]
     const id = this.options.conversationId()
     if (!id) return transcriptPage(outside, before, limit)
-    const inputs = this.options.queue.transcriptInputs()
-    // An unknown cursor (an item gone since) gives the newest page.
-    const cursor = before ? this.cursorItem(id, before, outside, inputs, superseded) : null
-    const accept = (item: FleetTranscriptItem) => !cursor || compareFleetTranscriptItems(item, cursor) < 0
+    // An unknown cursor (an item gone since, or one this reader never gets) gives the newest page.
+    const found = before ? this.cursorItem(id, before, outside, inputs, superseded) : null
+    const cursor = found && fleetTranscriptItemReadable(found, reasoning) ? found : null
+    const accept = (item: FleetTranscriptItem) =>
+      fleetTranscriptItemReadable(item, reasoning) && (!cursor || compareFleetTranscriptItems(item, cursor) < 0)
     const collected = outside.filter(accept)
     // Messages created after the cursor hold only items after it.
     const atOrBefore = cursor ? Date.parse(cursor.at) : Number.MAX_SAFE_INTEGER
@@ -322,6 +351,29 @@ export class LiveTranscript {
           (part.type === 'generated-image' && imageId('g', message.id, part.id) === imageIdValue)
       )
     const found = findLatestChatMessage(id, holds, { partsContaining: '"artifactId"' })
+    return found ? [found.message] : []
+  }
+
+  fileMessages(fileId: string): ChatMessage[] {
+    const id = this.options.conversationId()
+    if (!id || !fileId.startsWith('a-')) return []
+    const owner = this.imageOwners.get(fileId)
+    if (owner) {
+      const messages = getChatMessagesWithSeq(id, [owner]).map((row) => row.message)
+      if (messages.length) return messages
+    }
+    const found = findLatestChatMessage(
+      id,
+      (message) =>
+        message.role === 'user' &&
+        message.parts.some(
+          (part) =>
+            part.type === 'file' &&
+            (part.kind === 'pdf' || part.kind === 'text') &&
+            imageId('a', message.id, part.id) === fileId
+        ),
+      { partsContaining: '"type":"file"' }
+    )
     return found ? [found.message] : []
   }
 }

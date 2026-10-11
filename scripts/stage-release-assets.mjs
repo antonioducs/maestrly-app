@@ -10,6 +10,16 @@ const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$/
 
 /**
+ * Electron 44 needs macOS 13 or later, so `mac.minimumSystemVersion` in electron-builder.yml stops
+ * the app bundle from launching on older systems. electron-builder does not copy that minimum into
+ * `latest-mac.yml`, so installed apps on macOS 12 would still be offered the update. electron-updater
+ * skips an update only when the feed's `minimumSystemVersion` is newer than `os.release()`, which
+ * on macOS is the Darwin kernel version (macOS 13 is Darwin 22), so the feed carries the Darwin floor.
+ */
+export const MACOS_MINIMUM_SYSTEM_VERSION = '13.0.0'
+export const MACOS_UPDATER_MINIMUM_SYSTEM_VERSION = '22.0.0'
+
+/**
  * Definition order is the staging order: binaries are staged first so their public names are known
  * when the updater metadata (`latest*.yml`) is rewritten. `binary` files are the published
  * installers, `blockmap` files are the differential-download indexes electron-updater derives from
@@ -42,7 +52,12 @@ export const RELEASE_ASSET_DEFINITIONS = Object.freeze({
       suffix: '.zip.blockmap',
       output: (version) => `Maestrly-App-${version}-macos-arm64.zip.blockmap`,
     }),
-    Object.freeze({ kind: 'metadata', suffix: 'latest-mac.yml', output: () => 'latest-mac.yml' }),
+    Object.freeze({
+      kind: 'metadata',
+      suffix: 'latest-mac.yml',
+      output: () => 'latest-mac.yml',
+      minimumSystemVersion: MACOS_UPDATER_MINIMUM_SYSTEM_VERSION,
+    }),
   ]),
 })
 
@@ -72,6 +87,49 @@ function rewriteUpdaterMetadata(content, renames) {
     rewritten = rewritten.split(original).join(staged)
   }
   return rewritten
+}
+
+const TOP_LEVEL_MINIMUM_SYSTEM_VERSION =
+  /^(?:minimumSystemVersion|'minimumSystemVersion'|"minimumSystemVersion")[ \t]*:(.*)$/gm
+const UPDATER_OS_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+
+function compareOSVersions(left, right) {
+  const [leftParts, rightParts] = [left, right].map((version) => version.split('.').map(Number))
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index]
+  }
+  return 0
+}
+
+/**
+ * Raise the updater's OS floor without reformatting the manifest: only the top-level
+ * `minimumSystemVersion` line is replaced or appended, so artifact names, checksums and release notes
+ * keep their bytes. A stricter existing floor wins. An unreadable one fails the release, because
+ * electron-updater ignores a floor it cannot compare and would offer the update anyway.
+ */
+function applyMinimumSystemVersion(manifest, floor, file) {
+  const matches = [...manifest.matchAll(TOP_LEVEL_MINIMUM_SYSTEM_VERSION)]
+  if (matches.length > 1) throw new Error(`Updater metadata ${file} declares minimumSystemVersion more than once`)
+  const line = `minimumSystemVersion: '${floor}'`
+  if (matches.length === 0) {
+    const separator = manifest === '' || manifest.endsWith('\n') ? '' : '\n'
+    return `${manifest}${separator}${line}\n`
+  }
+
+  const [match] = matches
+  const carriageReturn = match[1].endsWith('\r') ? '\r' : ''
+  const raw = match[1].trim()
+  const quoted = /^'([^']*)'$|^"([^"]*)"$/.exec(raw)
+  const value = quoted ? (quoted[1] ?? quoted[2]) : raw
+  if (
+    !UPDATER_OS_VERSION.test(value) ||
+    !value.split('.').every((part) => Number.isSafeInteger(Number(part)))
+  ) {
+    throw new Error(`Updater metadata ${file} has an invalid minimumSystemVersion: ${raw || '(empty)'}`)
+  }
+  if (compareOSVersions(value, floor) >= 0) return manifest
+  const end = match.index + match[0].length
+  return `${manifest.slice(0, match.index)}${line}${carriageReturn}${manifest.slice(end)}`
 }
 
 /** A manifest pointing at a file the release will not contain would break every client update. */
@@ -143,7 +201,10 @@ export async function stageReleaseAssets({ platform, sourceDir, outputDir, versi
     const outputName = definition.output(version)
     const destination = path.join(output, outputName)
     if (definition.kind === 'metadata') {
-      const manifest = rewriteUpdaterMetadata(await readFile(sourceFile, 'utf8'), renames)
+      let manifest = rewriteUpdaterMetadata(await readFile(sourceFile, 'utf8'), renames)
+      if (definition.minimumSystemVersion) {
+        manifest = applyMinimumSystemVersion(manifest, definition.minimumSystemVersion, outputName)
+      }
       assertMetadataReferences(manifest, outputName, stagedNames)
       await writeFile(destination, manifest, { flag: 'wx' })
     } else {

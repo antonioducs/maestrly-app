@@ -44,6 +44,7 @@ interface PoolEntry {
   tools: ListedMcpTool[] | null
   initializing: Promise<void> | null
   activeCalls: number
+  retired: NonNullable<LazyMcpDiagnostic['reason']> | null
   idleTimer: TimerHandle | null
 }
 
@@ -76,6 +77,7 @@ function isTransportFailure(error: unknown): boolean {
 
 export class LazyMcpRuntime {
   private readonly entries = new Map<string, PoolEntry>()
+  private readonly retired = new Set<PoolEntry>()
   private readonly circuits = new Map<string, CircuitState>()
   private readonly now: () => number
   private readonly schedule: (callback: () => void, delayMs: number) => TimerHandle
@@ -97,8 +99,11 @@ export class LazyMcpRuntime {
 
   async listTools(server: McpServer, signal?: AbortSignal): Promise<ListedMcpTool[]> {
     const entry = await this.ensure(server, signal)
-    this.scheduleIdle(entry)
-    return [...(entry.tools ?? [])]
+    try {
+      return [...(entry.tools ?? [])]
+    } finally {
+      await this.release(entry)
+    }
   }
 
   async callTool(
@@ -111,7 +116,6 @@ export class LazyMcpRuntime {
     const connection = entry.connection
     if (!connection) throw new Error(`External MCP server "${server.id}" did not initialize.`)
     this.clearIdle(entry)
-    entry.activeCalls += 1
     const startedAt = this.now()
     try {
       const result = await connection.callTool(name, args, options)
@@ -132,13 +136,12 @@ export class LazyMcpRuntime {
         durationMs: Math.max(0, this.now() - startedAt),
       })
       if (isTransportFailure(error)) {
-        this.recordFailure(server, entry.fingerprint)
+        if (!entry.retired) this.recordFailure(server, entry.fingerprint)
         await this.evictEntry(server.id, entry, 'transport-error')
       }
       throw error
     } finally {
-      entry.activeCalls = Math.max(0, entry.activeCalls - 1)
-      if (this.entries.get(server.id) === entry) this.scheduleIdle(entry)
+      await this.release(entry)
     }
   }
 
@@ -149,7 +152,7 @@ export class LazyMcpRuntime {
   }
 
   async dispose(): Promise<void> {
-    const entries = [...this.entries.entries()]
+    const entries = [...this.entries.entries(), ...[...this.retired].map((entry) => [entry.server.id, entry] as const)]
     this.entries.clear()
     this.circuits.clear()
     await Promise.all(entries.map(([serverId, entry]) => this.closeEntry(serverId, entry, 'dispose')))
@@ -175,6 +178,7 @@ export class LazyMcpRuntime {
         tools: null,
         initializing: null,
         activeCalls: 0,
+        retired: null,
         idleTimer: null,
       }
       this.entries.set(server.id, entry)
@@ -183,11 +187,17 @@ export class LazyMcpRuntime {
       this.clearIdle(entry)
     }
 
-    if (!entry.connection || !entry.tools) {
-      if (!entry.initializing) entry.initializing = this.initialize(entry, signal)
-      await entry.initializing
+    entry.activeCalls += 1
+    try {
+      if (!entry.connection || !entry.tools) {
+        if (!entry.initializing) entry.initializing = this.initialize(entry, signal)
+        await entry.initializing
+      }
+      return entry
+    } catch (error) {
+      await this.release(entry)
+      throw error
     }
-    return entry
   }
 
   private async initialize(entry: PoolEntry, signal?: AbortSignal): Promise<void> {
@@ -216,7 +226,7 @@ export class LazyMcpRuntime {
         durationMs: Math.max(0, this.now() - listStartedAt),
         toolCount: tools.length,
       })
-      this.resetCircuit(server.id)
+      if (!entry.retired) this.resetCircuit(server.id)
     } catch (error) {
       this.diagnostic({
         kind: connection ? 'mcp-lazy-list' : 'mcp-lazy-connect',
@@ -225,8 +235,9 @@ export class LazyMcpRuntime {
         outcome: 'error',
         durationMs: Math.max(0, this.now() - connectStartedAt),
       })
-      this.recordFailure(server, entry.fingerprint)
+      if (!entry.retired) this.recordFailure(server, entry.fingerprint)
       if (this.entries.get(server.id) === entry) this.entries.delete(server.id)
+      entry.connection = null
       if (connection) await connection.close().catch(() => {})
       throw error
     } finally {
@@ -295,7 +306,19 @@ export class LazyMcpRuntime {
     reason: NonNullable<LazyMcpDiagnostic['reason']>
   ): Promise<void> {
     if (this.entries.get(serverId) === entry) this.entries.delete(serverId)
-    await this.closeEntry(serverId, entry, reason)
+    this.clearIdle(entry)
+    entry.retired ??= reason
+    this.retired.add(entry)
+    if (entry.activeCalls === 0) await this.closeEntry(serverId, entry, reason)
+  }
+
+  private async release(entry: PoolEntry): Promise<void> {
+    entry.activeCalls = Math.max(0, entry.activeCalls - 1)
+    if (entry.retired && entry.activeCalls === 0) {
+      await this.closeEntry(entry.server.id, entry, entry.retired)
+    } else if (this.entries.get(entry.server.id) === entry) {
+      this.scheduleIdle(entry)
+    }
   }
 
   private async closeEntry(
@@ -303,6 +326,7 @@ export class LazyMcpRuntime {
     entry: PoolEntry,
     reason: NonNullable<LazyMcpDiagnostic['reason']>
   ): Promise<void> {
+    this.retired.delete(entry)
     this.clearIdle(entry)
     const connection = entry.connection
     entry.connection = null

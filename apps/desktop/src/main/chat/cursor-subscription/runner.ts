@@ -1,3 +1,4 @@
+import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { withCursorAccountRun } from './account-runs'
 import type { PermissionScope } from '../../../shared/conversation-scope'
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
@@ -17,7 +18,8 @@ import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { MaestroLiveRunPort } from '../maestro-live'
 import { applyChatEvent } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
-import { getAppFlag, getConvUiPrefs } from '../../store'
+import { getConvUiPrefs } from '../../store'
+import { resolveAppToolAccess } from '../app-tool-access'
 import { stagePlan } from '../../plan-broker'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { deleteChatMessage, runnerContextHistory, upsertChatMessage } from '../chat-store'
@@ -499,7 +501,8 @@ async function runCursorSubscriptionChatInScope(
       })
     }
     const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
-    const appToolsEnabled = !args.reviewerRuntime && (prefs?.app ?? getAppFlag('chat.appTools', false))
+    const appAccess = resolveAppToolAccess(args.conversationId)
+    const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
     const disabledIds = new Set(prefs?.mcpDisabled ?? [])
     const mcp = args.reviewerRuntime
       ? { tools: {}, close: async () => {} }
@@ -518,22 +521,25 @@ async function runCursorSubscriptionChatInScope(
               signal: args.signal,
             }),
         })
-    const app = appToolsEnabled
-      ? await buildAppTools({
-          conversationId: args.conversationId,
-          mode: args.mode,
-          gate,
-          exclude: new Set(['review_plan']),
-          supportsImages: true,
-          describeImage: (image) =>
-            describeEphemeralToolImage({
-              image,
-              conversationId: args.conversationId,
-              cwd: args.cwd,
-              signal: args.signal,
-            }),
-        })
-      : { tools: {}, close: async () => {} }
+    const app =
+      !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+        ? await buildAppTools({
+            only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
+            disabledGroups: appAccess.disabledGroups,
+            conversationId: args.conversationId,
+            mode: args.mode,
+            gate,
+            exclude: new Set(['review_plan']),
+            supportsImages: true,
+            describeImage: (image) =>
+              describeEphemeralToolImage({
+                image,
+                conversationId: args.conversationId,
+                cwd: args.cwd,
+                signal: args.signal,
+              }),
+          })
+        : { tools: {}, close: async () => {} }
 
     try {
       const { skills, agents, envelope } = args.reviewerRuntime
@@ -563,6 +569,7 @@ async function runCursorSubscriptionChatInScope(
             maestrlyUltra: args.maestrlyUltra,
             harness: args.harness,
             appToolsEnabled,
+            disabledAppToolGroups: appAccess.disabledGroups,
           })
       const skillTools: ToolSet = skills.length
         ? {

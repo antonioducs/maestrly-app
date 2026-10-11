@@ -142,6 +142,8 @@ export function RemoteHostRuntime({
       }),
     [api, hostId, refresh, setActive, setMountedConvs, onFocus]
   )
+  // A chat on the host created or cloned a project there: it appears in the host's section without a manual refresh.
+  useEffect(() => api.onWorkspacesChanged(() => void refresh().catch(() => undefined)), [api, refresh])
   // Another computer may have created, renamed or removed a conversation of the host meanwhile: coming back to this
   // window lists the host again.
   useEffect(() => {

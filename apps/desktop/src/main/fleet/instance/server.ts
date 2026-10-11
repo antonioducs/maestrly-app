@@ -1,9 +1,17 @@
+import {
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_SETTINGS_OPERATIONS,
+  type FleetEnvironmentSettingsService,
+} from '@maestrly/bot-fleet-protocol'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
-import type { Duplex } from 'node:stream'
+import { Transform, type Duplex, type Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_DESKTOP_BRIDGE_FEATURE,
+  FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_BRIDGE_PATH,
@@ -12,11 +20,17 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
+  FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetAccountSlotIdSchema,
   fleetBotIdSchema,
+  fleetFileIdSchema,
+  fleetFileRefSchema,
   fleetInstanceEventSchema,
+  fleetReaderWantsReasoning,
+  fleetTranscriptItemReadable,
   fleetScreenSurfaceSchema,
   fleetSubscriptionKindSchema,
   type FleetAccountImportRequest,
@@ -28,6 +42,7 @@ import {
   type FleetBotMemoryPatchRequest,
   type FleetBotSkills,
   type FleetConversationCallRequest,
+  type FleetFileRef,
   type FleetImportResults,
   type FleetInputReceipt,
   type FleetInstanceBotInstall,
@@ -68,18 +83,27 @@ export class InstanceHttpError extends Error {
 /**
  * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
- * model, and caps each bot's conversation at the context limit of its compaction settings. Its health and every status
+ * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
+ * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
+ * newer ones, and gives its bots the desktop_* tools that reach the Macs that linked them. Its health and every status
  * advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
+  FLEET_FILES_FEATURE,
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_TRANSCRIPT_REASONING_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
+  FLEET_DESKTOP_BRIDGE_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
 const MEMORY_STATUSES: readonly string[] = ['active', 'archived', 'superseded', 'all']
+
+export type InstanceFile = { ref: FleetFileRef; stream: Readable }
 
 /** One bot of the environment, as the control API reaches it. */
 export interface InstanceBot {
@@ -93,8 +117,11 @@ export interface InstanceBot {
   memories(status: MemoryStatus): Promise<{ memories: FleetBotMemory[] }>
   patchMemory(id: string, patch: FleetBotMemoryPatchRequest): Promise<FleetBotMemory>
   deleteMemory(id: string): Promise<void>
-  transcript(before: string | null, limit: number): Promise<FleetTranscriptPage>
+  /** A page of the transcript; `reasoning` items only when the reader asked for them. */
+  transcript(before: string | null, limit: number, reasoning: boolean): Promise<FleetTranscriptPage>
   image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }>
+  fileMeta(fileId: string): Promise<FleetFileRef>
+  file(fileId: string): Promise<InstanceFile>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
   cancel(): Promise<void>
@@ -106,6 +133,7 @@ export interface InstanceBot {
 
 /** The environment behind the control API: its provisioning, its bots and its screens. */
 export interface InstanceEnvironment {
+  readonly settings?: FleetEnvironmentSettingsService
   /** The environment's event stream; each bot event names its bot. */
   readonly events: InstanceEvents
   health(): {
@@ -143,6 +171,8 @@ export interface InstanceEnvironment {
   addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse>
   removeAccount(providerId: string): Promise<void>
   open(target: FleetUiOpenRequest['target']): Promise<void>
+  /** Starts checks for Claude Code and Codex releases in the background; their results arrive in bot statuses. */
+  checkRuntimes(): void
 }
 
 // `botId` defaults to null when the event is parsed: events of the environment itself name no bot.
@@ -266,6 +296,11 @@ function routeFor(method: string, pathname: string): { key: RouteKey; params: Re
 const isBotId = (value: string | undefined): value is string =>
   value !== undefined && fleetBotIdSchema.safeParse(value).success
 const botNotFound = (): InstanceHttpError => new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+const fileIdOf = (value: string): string => {
+  const parsed = fleetFileIdSchema.safeParse(value)
+  if (!parsed.success) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid file id.')
+  return parsed.data
+}
 const underTakeover = (bot: InstanceBot): boolean => {
   const hold = bot.holdManager.state
   return hold.state === 'held' && hold.reason === 'takeover'
@@ -298,6 +333,10 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   if (!/^\d+$/.test(raw)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
   const since = Number(raw)
   if (!Number.isSafeInteger(since)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
+  // A gateway that does not read `reasoning` items never gets them: it would fail on the whole stream.
+  const reasoning = fleetReaderWantsReasoning(url.searchParams)
+  const readable = (event: FleetInstanceEvent) =>
+    event.type !== 'transcript.upsert' || fleetTranscriptItemReadable(event.item, reasoning)
   const replay = events.replay(since)
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -306,8 +345,10 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   })
   if (replay === null)
     response.write(sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset', botId: null }))
-  else for (const event of replay) response.write(sseFrame(event))
-  const unsubscribe = events.subscribe((event) => response.write(sseFrame(event)))
+  else for (const event of replay) if (readable(event)) response.write(sseFrame(event))
+  const unsubscribe = events.subscribe((event) => {
+    if (readable(event)) response.write(sseFrame(event))
+  })
   const heartbeat = setInterval(() => response.write(': ping\n\n'), 15_000)
   request.on('close', () => {
     unsubscribe()
@@ -355,6 +396,11 @@ export function createInstanceControlServer(
   environment: InstanceEnvironment,
   options: { bridge?: BridgeUpgrade } = {}
 ): http.Server {
+  function settings(): FleetEnvironmentSettingsService {
+    if (!environment.settings)
+      throw new InstanceHttpError(409, 'CONFLICT', 'Environment settings are unavailable. Restart to update.')
+    return environment.settings
+  }
   const tunnels = new Set<Tunnel>()
   const end = (tunnel: Tunnel): void => {
     if (tunnel.ended) return
@@ -384,8 +430,63 @@ export function createInstanceControlServer(
   }
 
   const handlers: Partial<Record<RouteKey, Handler>> = {
+    settingsAccounts: () => settings().accounts(FLEET_SETTINGS_OPERATIONS.accounts.input.parse({})),
+    settingsPatchAccount: ({ input }) =>
+      settings().patchAccount(FLEET_SETTINGS_OPERATIONS.patchAccount.input.parse(input)),
+    settingsRenameSubscription: ({ input }) =>
+      settings().renameSubscription(FLEET_SETTINGS_OPERATIONS.renameSubscription.input.parse(input)),
+    settingsRemoveAccount: ({ input }) =>
+      settings().removeAccount(FLEET_SETTINGS_OPERATIONS.removeAccount.input.parse(input)),
+    settingsRemoveSubscription: ({ input }) =>
+      settings().removeSubscription(FLEET_SETTINGS_OPERATIONS.removeSubscription.input.parse(input)),
+    settingsModels: () => settings().models(FLEET_SETTINGS_OPERATIONS.models.input.parse({})),
+    settingsSetModelFilter: ({ input }) =>
+      settings().setModelFilter(FLEET_SETTINGS_OPERATIONS.setModelFilter.input.parse(input)),
+    settingsSkills: () => settings().skills(FLEET_SETTINGS_OPERATIONS.skills.input.parse({})),
+    settingsSkill: ({ params }) => settings().skill(FLEET_SETTINGS_OPERATIONS.skill.input.parse({ name: params.name })),
+    settingsCreateSkill: ({ input }) =>
+      settings().createSkill(FLEET_SETTINGS_OPERATIONS.createSkill.input.parse(input)),
+    settingsWriteSkill: ({ input }) => settings().writeSkill(FLEET_SETTINGS_OPERATIONS.writeSkill.input.parse(input)),
+    settingsSetSkillEnabled: ({ input }) =>
+      settings().setSkillEnabled(FLEET_SETTINGS_OPERATIONS.setSkillEnabled.input.parse(input)),
+    settingsRemoveSkill: ({ input }) =>
+      settings().removeSkill(FLEET_SETTINGS_OPERATIONS.removeSkill.input.parse(input)),
+    settingsSearchSkills: ({ input }) =>
+      settings().searchSkills(FLEET_SETTINGS_OPERATIONS.searchSkills.input.parse(input)),
+    settingsInstallSkill: ({ input }) =>
+      settings().installSkill(FLEET_SETTINGS_OPERATIONS.installSkill.input.parse(input)),
+    settingsSkillGroups: () => settings().skillGroups(FLEET_SETTINGS_OPERATIONS.skillGroups.input.parse({})),
+    settingsCreateSkillGroup: ({ input }) =>
+      settings().createSkillGroup(FLEET_SETTINGS_OPERATIONS.createSkillGroup.input.parse(input)),
+    settingsUpdateSkillGroup: ({ input }) =>
+      settings().updateSkillGroup(FLEET_SETTINGS_OPERATIONS.updateSkillGroup.input.parse(input)),
+    settingsRemoveSkillGroup: ({ input }) =>
+      settings().removeSkillGroup(FLEET_SETTINGS_OPERATIONS.removeSkillGroup.input.parse(input)),
+    settingsMcpServers: () => settings().mcpServers(FLEET_SETTINGS_OPERATIONS.mcpServers.input.parse({})),
+    settingsMcpServer: ({ params }) =>
+      settings().mcpServer(FLEET_SETTINGS_OPERATIONS.mcpServer.input.parse({ id: params.id })),
+    settingsCreateMcpServer: ({ input }) =>
+      settings().createMcpServer(FLEET_SETTINGS_OPERATIONS.createMcpServer.input.parse(input)),
+    settingsPatchMcpServer: ({ input }) =>
+      settings().patchMcpServer(FLEET_SETTINGS_OPERATIONS.patchMcpServer.input.parse(input)),
+    settingsRemoveMcpServer: ({ input }) =>
+      settings().removeMcpServer(FLEET_SETTINGS_OPERATIONS.removeMcpServer.input.parse(input)),
+    settingsTestMcpServer: ({ input }) =>
+      settings().testMcpServer(FLEET_SETTINGS_OPERATIONS.testMcpServer.input.parse(input)),
+    settingsRuntimes: () => settings().runtimes(FLEET_SETTINGS_OPERATIONS.runtimes.input.parse({})),
+    settingsRuntimeAction: ({ input }) =>
+      settings().runtimeAction(FLEET_SETTINGS_OPERATIONS.runtimeAction.input.parse(input)),
+    settingsSetRuntimeAutomatic: ({ input }) =>
+      settings().setRuntimeAutomatic(FLEET_SETTINGS_OPERATIONS.setRuntimeAutomatic.input.parse(input)),
+    settingsPreferences: () => settings().preferences(FLEET_SETTINGS_OPERATIONS.preferences.input.parse({})),
+    settingsSetPreferences: ({ input }) =>
+      settings().setPreferences(FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(input)),
     health: () => environment.health(),
     environmentStatus: () => environment.environmentStatus(),
+    runtimesCheck: () => {
+      environment.checkRuntimes()
+      return { ok: true as const }
+    },
     environmentSelections: () => environment.selections(),
     loginStart: ({ input }) => environment.startLogin(input as FleetLoginStartRequest),
     loginGet: ({ params }) => environment.login(params.lid),
@@ -442,9 +543,11 @@ export function createInstanceControlServer(
       const limit = raw === null ? 200 : Number(raw)
       if (!Number.isInteger(limit) || limit < 1 || limit > 500)
         throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid transcript limit.')
-      return bot(params).transcript(url.searchParams.get('before'), limit)
+      return bot(params).transcript(url.searchParams.get('before'), limit, fleetReaderWantsReasoning(url.searchParams))
     },
     botImage: ({ params }) => bot(params).image(params.imageId),
+    botFileMeta: ({ params }) => bot(params).fileMeta(fileIdOf(params.fileId)),
+    botFile: ({ params }) => bot(params).file(fileIdOf(params.fileId)),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
     botTurnCancel: ({ params }) => bot(params).cancel(),
@@ -484,7 +587,43 @@ export function createInstanceControlServer(
       }
       const route = FLEET_INSTANCE_ROUTES[match.key]
       const input = await body(request, route.body, BODY_LIMITS[match.key] ?? DEFAULT_BODY_MAX)
+      if (match.key.startsWith('settings') && input && typeof input === 'object') {
+        for (const [key, value] of Object.entries(match.params)) {
+          const supplied = Reflect.get(input, key)
+          if ((supplied === null && key === 'slot' ? 'default' : supplied) !== value)
+            throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Path and settings identifiers differ.')
+        }
+      }
       const output = await handler({ params: match.params, url, input })
+      if (match.key === 'botFile') {
+        const file = output as InstanceFile
+        try {
+          const ref = fleetFileRefSchema.parse(file.ref)
+          response.writeHead(200, {
+            'Content-Type': ref.mediaType,
+            'Content-Length': ref.byteSize,
+            'Content-Disposition':
+              "attachment; filename*=UTF-8''" +
+              encodeURIComponent(ref.name).replace(/['()*]/g, (char) => '%' + char.charCodeAt(0).toString(16)),
+            'Cache-Control': 'private, no-store',
+            'X-Content-Type-Options': 'nosniff',
+          })
+          let size = 0
+          const bounded = new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              size += chunk.length
+              callback(size > ref.byteSize ? new Error('File exceeds its recorded size') : null, chunk)
+            },
+            flush(callback) {
+              callback(size === ref.byteSize ? null : new Error('Incomplete file'))
+            },
+          })
+          await pipeline(file.stream, bounded, response)
+        } finally {
+          file.stream.destroy()
+        }
+        return
+      }
       if (match.key === 'botImage') {
         const image = output as { mediaType: string; bytes: Uint8Array }
         response.writeHead(200, {
@@ -502,6 +641,10 @@ export function createInstanceControlServer(
         response.end()
       }
     } catch (error) {
+      if (response.headersSent || response.destroyed) {
+        response.destroy()
+        return
+      }
       const known =
         error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Instance request failed.')
       writeJson(response, known.status, { code: known.code || errorStatus(known.status), message: known.message })

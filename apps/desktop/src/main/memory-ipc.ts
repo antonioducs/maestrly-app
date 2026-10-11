@@ -1,3 +1,11 @@
+import { broadcastGlobal } from './window-ipc'
+import { personalMemoryService } from './memory/personal-memory-service'
+import {
+  readPersonalMemorySettings,
+  setPersonalMemorySettings,
+  onPersonalMemorySettingsChanged,
+  parsePersonalMemorySettings,
+} from './memory/personal-memory-settings'
 import type { LocalMemoryCreateInput, LocalMemoryFilters, LocalMemoryUpdateInput } from '../shared/memory'
 import type { IpcRegistrar } from './ipc-registrar'
 import { readMemory, watchMemory, writeMemory } from './memory-service'
@@ -16,6 +24,34 @@ import { getMemoryIndexStatus, rebuildMemoryIndex } from './memory/index'
 import { getMemoryEnabled } from './store'
 
 export function registerMemoryIpc(reg: IpcRegistrar): void {
+  reg.handle('personal-memory:search', (_event, query: unknown, filters: unknown) =>
+    personalMemoryService.search(query, filters)
+  )
+  reg.handle('personal-memory:index-status-get', () => personalMemoryService.indexStatus())
+  reg.mhandle('personal-memory:index-rebuild', () => personalMemoryService.rebuild())
+  reg.handle('personal-memory:list', (_event, filters: unknown) => personalMemoryService.list(filters))
+  reg.handle('personal-memory:get', (_event, id: unknown) => personalMemoryService.get(id))
+  reg.handle('personal-memory:export', () => personalMemoryService.export())
+  reg.handle('personal-memory:settings-get', () => readPersonalMemorySettings())
+  reg.mhandle('personal-memory:settings-set', (_event, input: unknown) => {
+    const settings = parsePersonalMemorySettings(input)
+    if (!settings) throw new Error('Invalid personal memory settings')
+    if (settings.extraction.enabled && !settings.extraction.selection) throw new Error('memory-model-required')
+    setPersonalMemorySettings(settings)
+  })
+  reg.mhandle('personal-memory:create', (_event, input: unknown) => personalMemoryService.create(input))
+  reg.mhandle('personal-memory:update', (_event, id: unknown, patch: unknown) =>
+    personalMemoryService.update(id, patch)
+  )
+  reg.mhandle('personal-memory:archive', (_event, id: unknown) => personalMemoryService.archive(id))
+  reg.mhandle('personal-memory:restore', (_event, id: unknown) => personalMemoryService.restore(id))
+  reg.mhandle('personal-memory:forget', (_event, id: unknown, confirmed: unknown) =>
+    personalMemoryService.forget(id, confirmed)
+  )
+
+  onPersonalMemorySettingsChanged((settings) => {
+    broadcastGlobal('personal-memory:settings-changed', settings)
+  })
   // Legacy aliases retained for one release; the new renderer does not use them.
   reg.handle('memory:read', (_event, workspaceId: string) => {
     watchMemory(workspaceId)

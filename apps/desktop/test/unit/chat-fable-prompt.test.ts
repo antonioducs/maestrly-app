@@ -14,16 +14,16 @@ const fable = harnessFor('claude-subscription', 'claude-fable-5-1')
 const prompt = (appToolsEnabled: boolean, mode: ChatBehavior, hasNotesTab: boolean, harness = generic): string =>
   buildMaestrlyBasePrompt({ harness, cwd: '/repo', appToolsEnabled, mode, hasNotesTab })
 
-/** Byte-level parity with the prompt shipped before the declarative harness catalog. */
+/** Prompt baseline, including the Ask exception for handoffs and projects the person wants. */
 const LEGACY_PROMPT_HASHES = {
   'agent:false:false': 'af6de4656bb5f33db2a755cb273a73a5154ec4541b70ab3b55191b75d4323234',
   'agent:false:true': '7bed6172f8583abcb60a62f84a6fa6b3c97409093889405e3fadc19950e1c2a9',
   'agent:true:false': '36c35895aae810345d3ac53c891f8f17058e903b27206376dbdc5ece2313ca5b',
   'agent:true:true': '313586c419f21fe2266079218c63b18efb7d5c363ebc13af3c32d468b9ddbe4c',
-  'ask:false:false': 'b635ddf7e3c9fd759310500fa34af4f85c5d2a5bb5e374d58c2cd1636938c8b6',
-  'ask:false:true': '61087d076471a5c9f0d079ab392802ab0e26995326a70a93799bbe8b0e6d428b',
-  'ask:true:false': 'e3b20cbaa8ef94eabc7d8b73c1c72ec66f06d75400948b0f30abfa210501cc44',
-  'ask:true:true': 'c7bef48120c00ca2fa701a31d5211f5a2dd2cd8936df711118b2f7175e97e4c4',
+  'ask:false:false': '33c76f4036be8e2c36cd808b79917e5fc26ed295a1e43818c73b906f09e79e8c',
+  'ask:false:true': '982866e54e0293d89009ce4bec05b47adad2be98dc3e229f73e61113aef455b9',
+  'ask:true:false': '9d6c83ca1aabe52a470a2ccaa9c555d87f50247b77805ac00cd8b83cea41d8af',
+  'ask:true:true': 'c209de0cded1b0ad7031e948e8dd202043d2ad8acb1ac96cad96e471629c08ff',
   'plan:false:false': 'deff6716608c378c1fb0a4f94eb29f38dbc33c9e8199bde181a3fbe6ea98fae5',
   'plan:false:true': 'cd3b6cffc799ce5de26bea4e5daf8e00e083aa6dd904cbacbff4937880618d89',
   'plan:true:false': '7ae52c142f90d1c66c34d19180fa3aab78ca034ac3667414c67e264fb6593738',
@@ -64,6 +64,7 @@ describe('Fable 5.1 prompt fragments', () => {
 
     expect(prompt(true, 'ask', false, fable)).toContain('ASK MODE (restricted tools)')
     expect(prompt(true, 'ask', false, fable)).toContain('Do NOT edit project files or run commands')
+    expect(prompt(true, 'ask', false, fable)).toContain('when start_conversations is exposed')
     expect(prompt(true, 'plan', false, fable)).toContain('Calling review_plan ENDS your turn')
     expect(prompt(true, 'maestro', false, fable)).toContain('parent is structurally read-only')
   })

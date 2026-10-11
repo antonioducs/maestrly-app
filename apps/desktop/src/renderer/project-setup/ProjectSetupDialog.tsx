@@ -53,12 +53,23 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
 
   useEffect(() => {
     if (!state.open) return
+    let alive = true
     setPath('')
     setParentPath('')
+    // The configured projects folder is the default parent; the person can still choose another one.
+    void api
+      .getProjectsDirectory()
+      .then((directory) => {
+        if (alive && directory) setParentPath((current) => current || directory)
+      })
+      .catch(() => {})
     setName(state.options.remoteUrl ? suggestProjectName(state.options.remoteUrl) : '')
     setRemoteUrl(state.options.remoteUrl ?? '')
     setNameEdited(false)
-  }, [state.open, state.options.remoteUrl])
+    return () => {
+      alive = false
+    }
+  }, [api, state.open, state.options.remoteUrl])
 
   const awaitingEmptyRemote = state.progress?.phase === 'awaiting-empty-remote-confirmation'
   const needsInitialization = result?.status === 'needs-initialization'

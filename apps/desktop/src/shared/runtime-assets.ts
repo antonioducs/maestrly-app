@@ -1,8 +1,13 @@
 export const RUNTIME_ASSET_IDS = [
   'codex-runtime',
+  // Managed only inside bots; the desktop app keeps using the system Claude Code.
+  'claude-code-runtime',
   'github-copilot-runtime',
   'tunnel-client',
   'local-ml-runtime',
+  'whisper-model',
+  // Google's official Antigravity ACP server, installed on demand for the Google AI subscription provider.
+  'antigravity-acp-runtime',
 ] as const
 
 export type RuntimeAssetId = (typeof RUNTIME_ASSET_IDS)[number]
@@ -43,7 +48,11 @@ export interface RuntimeAssetPublicStatus {
 }
 
 /** Runtime assets whose releases can be discovered and installed independently of Maestrly releases. */
-export const UPDATABLE_RUNTIME_ASSET_IDS = ['codex-runtime'] as const satisfies readonly RuntimeAssetId[]
+export const UPDATABLE_RUNTIME_ASSET_IDS = [
+  'antigravity-acp-runtime',
+  'codex-runtime',
+  'claude-code-runtime',
+] as const satisfies readonly RuntimeAssetId[]
 
 export type UpdatableRuntimeAssetId = (typeof UPDATABLE_RUNTIME_ASSET_IDS)[number]
 
@@ -103,6 +112,13 @@ export interface RuntimeAssetUpdateInfo {
   readonly restartRequired: boolean
 }
 
+/** A runtime shipped outside the component manager, such as the one in a bot image. */
+export interface RuntimeAssetProvided {
+  readonly version: string
+  /** The provided runtime is the one in use: no managed installation is newer. */
+  readonly active: boolean
+}
+
 export interface RuntimeAssetInfo {
   readonly id: RuntimeAssetId
   readonly displayName: string
@@ -113,6 +129,8 @@ export interface RuntimeAssetInfo {
   readonly status: RuntimeAssetPublicStatus
   /** Present only for assets in `UPDATABLE_RUNTIME_ASSET_IDS`. */
   readonly update?: RuntimeAssetUpdateInfo
+  /** Present only in bots, for updatable runtimes their image ships. */
+  readonly provided?: RuntimeAssetProvided
 }
 
 export interface RuntimeAssetLease {

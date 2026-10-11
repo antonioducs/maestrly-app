@@ -14,13 +14,14 @@ describe('paired review renderer contract', () => {
   it('mounts both participant ChatViews and marks both visible in the split', () => {
     expect(app).toContain("splitRole === 'executor'")
     expect(app).toContain("splitRole === 'reviewer'")
-    expect(app).toContain('visible={(splitRole !== null || active?.id === c.id) && !mainOverride}')
+    expect(app).toContain('visible={detached || ((splitRole !== null || active?.id === c.id) && !mainOverride)}')
     expect(app).toContain('data-review-loop-pane={splitRole ?? undefined}')
   })
 
   it('protects participants from the mount LRU and focuses the Drawer through active conversation', () => {
     expect(lru).toContain('protectedIds?: ReadonlySet<string>')
-    expect(app).toContain('protectedIds: protectedReviewIds')
+    expect(app).toContain('const ids = new Set(protectedReviewIds)')
+    expect(app).toContain('protectedIds: protectedChatIds')
     expect(app).toContain('onFocus={focusReviewPane}')
     expect(app).toContain('handleSelect(conversation)')
   })

@@ -10,8 +10,8 @@ import { workspaceDataDir } from '../../app-paths'
 import { getWorkspace } from '../../store'
 import { acquireRuntimeAssetLease, ensureRuntimeAsset, readyRuntimeAsset } from '../../runtime-assets/app-service'
 import { embedTexts, trackEmbeddingWrite } from '../../local-ml/embedding-service'
-import { isWorkspaceMemoryEnabled, onWorkspaceMemoryEnabledChanged } from '../access'
-import { listLocalMemories, onLocalMemoryChange } from '../local-memory-service'
+import { isMemorySpaceEnabled, onMemorySpaceEnabledChanged } from '../access'
+import { listAllLocalMemories, onLocalMemoryChange } from '../local-memory-service'
 import { chunkSharedKnowledge, discoverSharedKnowledge } from '../shared-knowledge'
 import { findTrustedVectorExtension, openMemoryIndexDatabase, type VectorBackend } from './vector-backend'
 
@@ -537,7 +537,7 @@ function attachWatcher(handle: IndexHandle, root: MemoryScopeRoot & { realRoot: 
   if (
     handles.get(handle.workspaceId) !== handle ||
     handle.watchers.has(root.realRoot) ||
-    !isWorkspaceMemoryEnabled(handle.workspaceId)
+    !isMemorySpaceEnabled(handle.workspaceId)
   )
     return
   const preferred = path.join(root.realRoot, '.agents', 'knowledge')
@@ -556,10 +556,10 @@ function attachWatcher(handle: IndexHandle, root: MemoryScopeRoot & { realRoot: 
         return
       }
     }
-    if (handles.get(handle.workspaceId) !== handle || !isWorkspaceMemoryEnabled(handle.workspaceId)) return
+    if (handles.get(handle.workspaceId) !== handle || !isMemorySpaceEnabled(handle.workspaceId)) return
     try {
       const watcher = watch(watched, { recursive: true }, () => {
-        if (handles.get(handle.workspaceId) !== handle || !isWorkspaceMemoryEnabled(handle.workspaceId)) return
+        if (handles.get(handle.workspaceId) !== handle || !isMemorySpaceEnabled(handle.workspaceId)) return
         const previous = handle.watcherTimers.get(root.realRoot)
         if (previous) clearTimeout(previous)
         handle.watcherTimers.set(
@@ -583,13 +583,13 @@ function attachWatcher(handle: IndexHandle, root: MemoryScopeRoot & { realRoot: 
 }
 
 async function runEmbeddingPass(handle: IndexHandle): Promise<void> {
-  if (!handle.vector.available || !isWorkspaceMemoryEnabled(handle.workspaceId)) return
+  if (!handle.vector.available || !isMemorySpaceEnabled(handle.workspaceId)) return
   handle.embeddingController?.abort(new Error('embedding pass superseded'))
   const controller = new AbortController()
   handle.embeddingController = controller
   const operation = (async () => {
     for (;;) {
-      if (controller.signal.aborted || !isWorkspaceMemoryEnabled(handle.workspaceId)) return
+      if (controller.signal.aborted || !isMemorySpaceEnabled(handle.workspaceId)) return
       const rows = handle.db
         .prepare(
           `SELECT rowid, content FROM memory_chunks
@@ -618,14 +618,14 @@ async function reconcileNow(handle: IndexHandle, roots?: MemoryScopeRoot[]): Pro
   const active = (): boolean =>
     handles.get(handle.workspaceId) === handle &&
     !handle.reconcileController?.signal.aborted &&
-    isWorkspaceMemoryEnabled(handle.workspaceId)
+    isMemorySpaceEnabled(handle.workspaceId)
   if (!active()) return
   handle.state = 'indexing'
   emitStatus(handle)
   const normalizedRoots = await normalizeRoots(handle.workspaceId, roots)
   if (!active()) return
   const localSeen = new Set<string>()
-  for (const memory of listLocalMemories(handle.workspaceId, { limit: 500 })) {
+  for (const memory of listAllLocalMemories(handle.workspaceId)) {
     const document = localDocument(memory)
     localSeen.add(document.id)
     upsertDocument(handle, document)
@@ -673,13 +673,13 @@ async function reconcileNow(handle: IndexHandle, roots?: MemoryScopeRoot[]): Pro
 }
 
 export async function reconcileMemoryIndex(workspaceId: string, roots?: MemoryScopeRoot[]): Promise<void> {
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return
+  if (!isMemorySpaceEnabled(workspaceId)) return
   const handle = await openHandle(workspaceId)
   const previous = handle.reconcileFlight ?? Promise.resolve()
   const next = previous
     .catch(() => undefined)
     .then(async () => {
-      if (handles.get(workspaceId) !== handle || !isWorkspaceMemoryEnabled(workspaceId)) return
+      if (handles.get(workspaceId) !== handle || !isMemorySpaceEnabled(workspaceId)) return
       const controller = new AbortController()
       handle.reconcileController = controller
       try {
@@ -756,9 +756,9 @@ export async function searchMemoryIndexLexical(
   roots?: MemoryScopeRoot[],
   limit = 40
 ): Promise<IndexedMemoryCandidate[]> {
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return []
+  if (!isMemorySpaceEnabled(workspaceId)) return []
   await reconcileMemoryIndex(workspaceId, roots)
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return []
+  if (!isMemorySpaceEnabled(workspaceId)) return []
   const handle = await openHandle(workspaceId)
   const normalizedRoots = await normalizeRoots(workspaceId, roots)
   const scope = scopeClause(normalizedRoots.map((root) => root.scopeKey))
@@ -796,14 +796,16 @@ export async function searchMemoryIndexVector(
   limit = 40,
   signal?: AbortSignal
 ): Promise<IndexedMemoryCandidate[]> {
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return []
+  if (!isMemorySpaceEnabled(workspaceId)) return []
   await reconcileMemoryIndex(workspaceId, roots)
   const handle = await openHandle(workspaceId)
-  if (!handle.vector.available || !isWorkspaceMemoryEnabled(workspaceId)) return []
+  if (!handle.vector.available || !isMemorySpaceEnabled(workspaceId)) return []
   const vectors = await embedTexts([query], { signal })
-  if (!vectors?.[0]) return []
+  if (!vectors?.[0] || signal?.aborted || !isMemorySpaceEnabled(workspaceId) || handles.get(workspaceId) !== handle)
+    return []
   const normalizedRoots = await normalizeRoots(workspaceId, roots)
   const scope = scopeClause(normalizedRoots.map((root) => root.scopeKey))
+  if (signal?.aborted || !isMemorySpaceEnabled(workspaceId) || handles.get(workspaceId) !== handle) return []
   const nearest = handle.vector.search(vectors[0], Math.max(limit * 3, limit))
   if (nearest.length === 0) return []
   const read = handle.db.prepare(
@@ -841,7 +843,7 @@ function statusForHandle(handle: IndexHandle): MemoryIndexStatus {
     | undefined
   return {
     workspaceId: handle.workspaceId,
-    state: isWorkspaceMemoryEnabled(handle.workspaceId) ? handle.state : 'disabled',
+    state: isMemorySpaceEnabled(handle.workspaceId) ? handle.state : 'disabled',
     documents: Number(counts.documents ?? 0),
     chunks: Number(counts.chunks ?? 0),
     localDocuments: Number(counts.local_documents ?? 0),
@@ -854,7 +856,7 @@ function statusForHandle(handle: IndexHandle): MemoryIndexStatus {
 }
 
 export async function getMemoryIndexStatus(workspaceId: string): Promise<MemoryIndexStatus> {
-  if (!isWorkspaceMemoryEnabled(workspaceId) && !handles.has(workspaceId)) {
+  if (!isMemorySpaceEnabled(workspaceId) && !handles.has(workspaceId)) {
     return {
       workspaceId,
       state: 'disabled',
@@ -874,7 +876,7 @@ export async function rebuildMemoryIndex(workspaceId: string, roots?: MemoryScop
   if (existing) closeHandle(existing)
   const file = path.join(workspaceDataDir(workspaceId), MEMORY_INDEX_FILE)
   for (const suffix of ['', '-wal', '-shm']) await fsp.rm(`${file}${suffix}`, { force: true }).catch(() => undefined)
-  if (isWorkspaceMemoryEnabled(workspaceId)) await reconcileMemoryIndex(workspaceId, roots)
+  if (isMemorySpaceEnabled(workspaceId)) await reconcileMemoryIndex(workspaceId, roots)
 }
 
 /**
@@ -883,7 +885,7 @@ export async function rebuildMemoryIndex(workspaceId: string, roots?: MemoryScop
  * reconciliation itself remains limited to durable local memories and `.agents/knowledge`.
  */
 export function warmWorkspaceMemoryIndex(workspaceId: string, roots?: MemoryScopeRoot[]): Promise<void> {
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return Promise.resolve()
+  if (!isMemorySpaceEnabled(workspaceId)) return Promise.resolve()
   const existing = warmupFlights.get(workspaceId)
   if (existing) return existing.promise
 
@@ -943,10 +945,10 @@ export function stopWorkspaceMemoryIndex(workspaceId: string): void {
 export function initMemoryIndexService(): void {
   if (disposeLocalEvents || disposeEnabledEvents) return
   disposeLocalEvents = onLocalMemoryChange((event) => {
-    if (!isWorkspaceMemoryEnabled(event.workspaceId)) return
+    if (!isMemorySpaceEnabled(event.workspaceId)) return
     setTimeout(() => void reconcileMemoryIndex(event.workspaceId).catch(() => undefined), 0)
   })
-  disposeEnabledEvents = onWorkspaceMemoryEnabledChanged(({ workspaceId, enabled }) => {
+  disposeEnabledEvents = onMemorySpaceEnabledChanged(({ workspaceId, enabled }) => {
     if (!enabled) {
       stopWorkspaceMemoryIndex(workspaceId)
       events.emit('status', {
@@ -990,9 +992,9 @@ export async function searchMemoryIndexStems(
   roots?: MemoryScopeRoot[],
   limit = 40
 ): Promise<IndexedMemoryCandidate[]> {
-  if (!isWorkspaceMemoryEnabled(workspaceId) || stems.length === 0) return []
+  if (!isMemorySpaceEnabled(workspaceId) || stems.length === 0) return []
   await reconcileMemoryIndex(workspaceId, roots)
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return []
+  if (!isMemorySpaceEnabled(workspaceId)) return []
   const handle = await openHandle(workspaceId)
   const scope = scopeClause((await normalizeRoots(workspaceId, roots)).map((root) => root.scopeKey))
   const rows = handle.db
@@ -1016,9 +1018,9 @@ export async function memoryIndexDocumentFrequencies(
   roots?: MemoryScopeRoot[]
 ): Promise<{ total: number; df: Map<string, number> }> {
   const df = new Map<string, number>()
-  if (!isWorkspaceMemoryEnabled(workspaceId) || stems.length === 0) return { total: 0, df }
+  if (!isMemorySpaceEnabled(workspaceId) || stems.length === 0) return { total: 0, df }
   await reconcileMemoryIndex(workspaceId, roots)
-  if (!isWorkspaceMemoryEnabled(workspaceId)) return { total: 0, df }
+  if (!isMemorySpaceEnabled(workspaceId)) return { total: 0, df }
   const handle = await openHandle(workspaceId)
   const scope = scopeClause((await normalizeRoots(workspaceId, roots)).map((root) => root.scopeKey))
   const total = Number(

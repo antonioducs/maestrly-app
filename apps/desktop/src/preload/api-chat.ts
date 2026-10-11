@@ -1,9 +1,12 @@
 import type { MemorySettings } from '../shared/memory'
-import { clipboard, ipcRenderer } from 'electron'
+import type { AppToolGroup } from '../shared/app-tool-groups'
+import { ipcRenderer } from 'electron'
+import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import type { IpcTransport } from './ipc-transport'
 import type {
   ChatConfig,
   ChatConvTools,
+  ChatConvToolsPatch,
   ChatGptWebStatus,
   ChatGptWebCapabilities,
   ChatGptWebCapabilitiesInfo,
@@ -118,6 +121,12 @@ const SUBSCRIPTION_CHANNELS: Record<
     logout: 'chat:grok-subscription:logout',
     changed: 'chat:grok-subscription:auth-changed',
   },
+  'antigravity-subscription': {
+    status: 'chat:antigravity-subscription:status',
+    login: 'chat:antigravity-subscription:login',
+    logout: 'chat:antigravity-subscription:logout',
+    changed: 'chat:antigravity-subscription:auth-changed',
+  },
 }
 
 export type ChatGptWebStatusPayload = ChatGptWebStatus & { enabled: boolean }
@@ -130,13 +139,22 @@ export interface ChatGptWebTurnCompletedPayload {
 export const chatLocalApi = {
   chatEnsureMicAccess: (): Promise<{ ok: boolean; status?: string }> => ipcRenderer.invoke('chat:ensure-mic-access'),
 
-  chatTranscribe: (audio: Float32Array): Promise<{ text?: string; error?: string }> =>
-    ipcRenderer.invoke('chat:transcribe', audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength)),
+  chatTranscribe: (
+    audio: Float32Array,
+    options?: { language?: AsrLanguage }
+  ): Promise<{ text?: string; error?: TranscribeError }> =>
+    ipcRenderer.invoke(
+      'chat:transcribe',
+      audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength),
+      options
+    ),
+  chatAsrWarm: (): Promise<boolean> => ipcRenderer.invoke('chat:asr-warm'),
+  chatAsrSupport: (): Promise<AsrSupport> => ipcRenderer.invoke('chat:asr-support'),
 }
 
 /**
  * The chat engine of a host. The transport parameter keeps Electron's name on purpose: see ipc-transport.ts. The
- * clipboard helpers read from the host and write to this computer's clipboard.
+ * companion's copy actions write to the clipboard of the host's own desktop, so a remote host refuses them.
  */
 export function makeChatApi(ipcRenderer: IpcTransport) {
   function subscriptionStatus(
@@ -277,33 +295,12 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatGptWebCompanionPrompt: (conversationId: string): Promise<{ ok: boolean; kickoff?: string | null }> =>
       ipcRenderer.invoke('chat:chatgpt-web:companion-prompt', { conversationId }),
 
-    chatGptWebCompanionCopyPrompt: async (conversationId: string): Promise<{ ok: boolean; error?: string }> => {
-      const result = (await ipcRenderer.invoke('chat:chatgpt-web:companion-prompt', { conversationId })) as {
-        ok: boolean
-        kickoff?: string | null
-      }
-      if (!result.ok || !result.kickoff) return { ok: false, error: 'session-not-found' }
-      try {
-        clipboard.writeText(result.kickoff)
-        return { ok: true }
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    },
+    // Electron 44 keeps the clipboard out of preload; main copies without returning the value to the renderer.
+    chatGptWebCompanionCopyPrompt: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('chat:chatgpt-web:companion-copy-prompt', { conversationId }),
 
-    chatGptWebCompanionCopySessionKey: async (conversationId: string): Promise<{ ok: boolean; error?: string }> => {
-      const result = (await ipcRenderer.invoke('chat:chatgpt-web:companion-session-key', { conversationId })) as {
-        ok: boolean
-        sessionKey?: string | null
-      }
-      if (!result.ok || !result.sessionKey) return { ok: false, error: 'session-not-found' }
-      try {
-        clipboard.writeText(result.sessionKey)
-        return { ok: true }
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    },
+    chatGptWebCompanionCopySessionKey: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('chat:chatgpt-web:companion-copy-session-key', { conversationId }),
 
     chatGptWebCompanionOpen: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:chatgpt-web:companion-open', { conversationId }),
@@ -501,6 +498,9 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
 
     chatSetAppTools: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-app-tools', enabled),
 
+    chatSetAppToolGroup: (group: AppToolGroup, enabled: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-app-tool-group', group, enabled),
+
     chatSetImageGen: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-image-gen', enabled),
 
     chatSetBashFilters: (enabled: boolean): Promise<{ ok: boolean }> =>
@@ -552,10 +552,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
 
     chatGetConvTools: (conversationId: string): Promise<ChatConvTools> =>
       ipcRenderer.invoke('chat:get-conv-tools', conversationId),
-    chatSetConvTools: (
-      conversationId: string,
-      patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
-    ): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-conv-tools', conversationId, patch),
+    chatSetConvTools: (conversationId: string, patch: ChatConvToolsPatch): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-conv-tools', conversationId, patch),
 
     chatResend: (
       conversationId: string,

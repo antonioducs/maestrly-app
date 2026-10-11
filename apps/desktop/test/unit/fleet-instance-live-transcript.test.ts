@@ -274,7 +274,10 @@ function writeConversation(conversationId: string, seed: number, turns: number) 
   return { records, extras, questions, superseded }
 }
 
-async function fixture(conversationId: string, data: { records?: QueuedInput[]; extras?: FleetTranscriptItem[] } = {}) {
+async function fixture(
+  conversationId: string,
+  data: { records?: QueuedInput[]; extras?: FleetTranscriptItem[]; turnInputId?: () => string | null } = {}
+) {
   const folder = await mkdtemp(path.join(dir, 'bot-'))
   const inputs = path.join(folder, 'inputs.json')
   const transcript = path.join(folder, 'transcript.json')
@@ -293,10 +296,16 @@ async function fixture(conversationId: string, data: { records?: QueuedInput[]; 
     extras,
     images,
     publish: (item) => published.push(item),
+    ...(data.turnInputId ? { turnInputId: data.turnInputId } : {}),
   })
-  /** The page the runtime cut from the whole transcript before: every message projected and sorted. */
-  const reference = (before: string | null, limit: number) => {
-    const native = projectChatMessages(listChatMessages(conversationId), queue.all(), (part) => images.toolRefs(part))
+  /**
+   * The page the runtime cut from the whole transcript before: every message projected and sorted, `reasoning` items
+   * only for a reader that asks for them.
+   */
+  const reference = (before: string | null, limit: number, reasoning = false) => {
+    const native = projectChatMessages(listChatMessages(conversationId), queue.all(), (part) =>
+      images.toolRefs(part)
+    ).filter((item) => reasoning || item.kind !== 'reasoning')
     const queued: FleetTranscriptItem[] = queue.list().map((entry) => ({
       kind: 'user',
       id: entry.itemId,
@@ -327,25 +336,36 @@ describe('bot transcript pages', () => {
       const conversationId = newConversation()
       const data = generate(conversationId, seed, 70)
       const { live, reference } = await fixture(conversationId, data)
-      for (const limit of [1, 2, 7, 50, 200, 500]) {
-        let before: string | null = null
-        let pages = 0
-        do {
-          const expected = reference(before, limit)
-          const actual = await live.page(before, limit)
-          expect(actual, `seed ${seed}, limit ${limit}, before ${before}`).toEqual(expected)
-          before = actual.before
-          pages++
-        } while (before && (limit > 2 || pages < 40))
-      }
+      // Every page size without reasoning, as before it existed; with it, a few: both share the paging.
+      for (const reasoning of [false, true])
+        for (const limit of reasoning ? [2, 50, 500] : [1, 2, 7, 50, 200, 500]) {
+          let before: string | null = null
+          let pages = 0
+          do {
+            const expected = reference(before, limit, reasoning)
+            const actual = await live.page(before, limit, reasoning)
+            expect(actual, `seed ${seed}, reasoning ${reasoning}, limit ${limit}, before ${before}`).toEqual(expected)
+            before = actual.before
+            pages++
+          } while (before && (limit > 2 || pages < 40))
+        }
     }
+  })
+
+  it('pages the reasoning of generated turns only for a reader that asks for it', async () => {
+    const conversationId = newConversation()
+    const { live } = await fixture(conversationId, generate(conversationId, 14, 70))
+    const kinds = async (reasoning: boolean) => (await live.page(null, 500, reasoning)).items.map((item) => item.kind)
+    // The generated conversation has reasoning; without asking, none of it comes.
+    expect(await kinds(true)).toContain('reasoning')
+    expect(await kinds(false)).not.toContain('reasoning')
   })
 
   it('takes any cursor the whole transcript takes, and gives the newest page for one that is gone', async () => {
     const conversationId = newConversation()
     const data = generate(conversationId, 21, 60)
     const { live, reference } = await fixture(conversationId, data)
-    const everything = reference(null, 500).items.map((item) => item.id)
+    const everything = reference(null, 500, true).items.map((item) => item.id)
     const cursors = [
       ...everything.filter((_, index) => index % 3 === 0),
       'missing:3',
@@ -363,7 +383,9 @@ describe('bot transcript pages', () => {
       cursors.push(`${native.id}:${index}`)
     }
     for (const cursor of cursors)
-      for (const limit of [1, 5, 40]) expect(await live.page(cursor, limit), cursor).toEqual(reference(cursor, limit))
+      for (const reasoning of [false, true])
+        for (const limit of reasoning ? [5] : [1, 5, 40])
+          expect(await live.page(cursor, limit, reasoning), cursor).toEqual(reference(cursor, limit, reasoning))
   })
 
   it('reads only the newest messages a page needs, however long the conversation', async () => {
@@ -915,6 +937,76 @@ describe('bot transcript pages at their edges', () => {
       })
     const { live, reference } = await fixture(conversationId, { records: [record] })
     expect(await live.page(null, 10)).toEqual(reference(null, 10))
+  })
+})
+
+describe('the input a turn took', () => {
+  it('stays in every page until its native message is saved, then is that message, once', async () => {
+    const conversationId = newConversation()
+    const earlier = Date.now() - 60_000
+    upsertChatMessage({
+      id: 'earlier',
+      conversationId,
+      role: 'assistant',
+      createdAt: earlier,
+      parts: [{ type: 'text', id: 't', text: 'Earlier' }],
+      finishReason: 'stop',
+    })
+    let running: string | null = null
+    const { live, queue } = await fixture(conversationId, { turnInputId: () => running })
+    live.anchor()
+    const receipt = await queue.enqueue({
+      idempotencyKey: randomUUID(),
+      source: 'owner',
+      text: 'Check the portal',
+      attachments: [],
+    })
+    expect((await live.page(null, 50)).items.at(-1)).toMatchObject({ id: receipt.itemId, queued: true })
+    running = receipt.inputId
+    expect(live.startingItem()).toBeNull()
+    await queue.markStarted(receipt.inputId)
+    live.turnStarted()
+    // Taken by the turn, its message not saved yet: the window the owner saw it vanish in.
+    const starting = live.startingItem()
+    expect(starting).toMatchObject({ id: receipt.itemId, kind: 'user', text: 'Check the portal', queued: false })
+    expect((await live.page(null, 50)).items).toEqual([expect.objectContaining({ id: 'earlier:0' }), starting])
+    expect((await live.page(receipt.itemId, 50)).items.map((item) => item.id)).toEqual(['earlier:0'])
+    expect(live.queuedItem(receipt.inputId)).toBeNull()
+
+    const savedAt = Date.parse(starting!.at) + 5
+    upsertChatMessage({
+      id: 'native',
+      conversationId,
+      role: 'user',
+      createdAt: savedAt,
+      parts: [{ type: 'text', id: 't', text: 'Check the portal' }],
+    })
+    expect(live.startingItem()).toBeNull()
+    const saved = (await live.page(null, 50)).items
+    expect(saved.map((item) => item.id)).toEqual(['earlier:0', receipt.itemId])
+    expect(saved[1]).toMatchObject({ at: iso(savedAt), queued: false })
+  })
+
+  it('is shown only for the running turn, not for another started input never linked to its message', async () => {
+    const conversationId = newConversation()
+    let running: string | null = null
+    const { live, queue } = await fixture(conversationId, { turnInputId: () => running })
+    live.anchor()
+    const receipt = await queue.enqueue({ idempotencyKey: randomUUID(), source: 'owner', text: 'Old', attachments: [] })
+    await queue.markStarted(receipt.inputId)
+    live.turnStarted()
+    // Saved with other words: never linked, and shown as that message alone.
+    upsertChatMessage({
+      id: 'native-other',
+      conversationId,
+      role: 'user',
+      createdAt: Date.now(),
+      parts: [{ type: 'text', id: 't', text: 'Different words' }],
+    })
+    expect((await live.page(null, 50)).items.map((item) => item.id)).toEqual(['native-other:0'])
+    running = randomUUID()
+    expect(live.startingItem()).toBeNull()
+    expect((await live.page(null, 50)).items.map((item) => item.id)).toEqual(['native-other:0'])
   })
 })
 

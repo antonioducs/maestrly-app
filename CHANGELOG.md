@@ -5,14 +5,212 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-08
+
 ### Added
 
+- Create or clone a project directly from a chat and start development in it.
+  Choose a Projects folder in Settings → Execution; GitHub search and repository
+  creation use your signed-in GitHub CLI. New GitHub repositories are private
+  by default, and public publication requires confirmation. See
+  [creating or cloning a project](docs/chat-context.md#creating-or-cloning-the-project-first).
+- Search a bot conversation with Cmd/Ctrl+F, step through matches with Enter
+  or Shift+Enter, and close search with Esc. Search includes older transcript
+  pages and opens folded activity containing a match.
+- Let a bot of your bot server start and follow development conversations in the
+  projects of your computers. Each computer gives the bot access on its own, in
+  the bot's **Settings → This computer**, choosing the projects, models, actions
+  and approval ceiling, and lists the other computers with access so you can
+  remove them. Calls reach a computer only through the event stream it keeps open
+  to the server, and fail at once when it is offline. Update the desktop app, the
+  bot server and the bot environment to use it. See
+  [work in the projects of your computers](docs/bot-fleet.md#work-in-the-projects-of-your-computers).
+
+### Changed
+
+- Place the activity line after the agent's text and cards, and keep its latest
+  text visible while it works. Tool screenshots stay in their details unless
+  the agent explicitly shares them; shared screenshots and generated images
+  remain visible in the conversation.
+- Open bot conversations at the end and offer a go-to-bottom button after
+  scrolling up. Following new messages resumes when you return to the end.
+
+### Fixed
+
+- Preserve an unsent bot message when switching conversations, and keep a sent
+  message visible while the bot prepares its turn.
+- Refresh a bot's context window after changing its model, so its context meter
+  and compaction use the selected model's limits.
+- Keep the embedded VS Code memory snapshot files out of project Git status,
+  including main checkouts, and write snapshots only when the app requests one.
+- Update the image library bundled with the local AI runtime to sharp 0.35.5,
+  which fixes a vulnerability in its SVG renderer (GHSA-wq5f-xc86-pv6w), and the
+  MCP SDK copy used by the Claude runtime to 1.31.0 (GHSA-6qxp-vccf-f47h). The app
+  installs the updated local AI runtime from its own package, without network
+  access.
+- Save an environment's settings when Cmd/Ctrl+S is pressed right after an
+  edit. The shortcut could arrive before the settings panel registered the
+  change and was then ignored, leaving the edit unsaved.
+
+### Removed
+
+- **Breaking:** remove the connection for external agents such as Grok Bot and
+  other MCP clients; use [Maestrly bots](docs/bot-fleet.md) instead. Desktop no
+  longer offers **Settings → Bots** or its `/mcp/bots` endpoint, and the server
+  no longer serves `/mcp`, connectors, delegated tasks, or their web pages.
+  Conversations such an agent created remain, with their bot badge marked
+  revoked, and become yours to write in. Upgrading revokes the connections the
+  agents had on this computer and deletes the OAuth clients registered for them.
+
+## [0.14.1] - 2026-10-04
+
+### Fixed
+
+- Wait for active artifact queries before cleaning up storage from earlier
+  versions, and let new queries wait until that cleanup finishes. This prevents
+  the local host from reopening during removal and reporting that it stopped
+  after artifacts were moved to the bot server.
+
+## [0.14.0] - 2026-10-04
+
+### Changed
+
+- **Breaking:** artifacts are hosted only on the bot server. Without a paired
+  server, agents ask you to connect one instead of publishing on this computer,
+  and **Settings → Artifacts** offers an artifact-only server setup. Artifacts
+  that earlier versions hosted on this computer no longer open until you move
+  them to the server, with their IDs, versions, comments, and previews, or
+  delete them; shared ones become private. See
+  [artifacts from earlier versions](docs/artifacts.md#artifacts-from-earlier-versions).
+- Give each bot one Linux desktop with its Maestrly browser, terminal, files,
+  and other programs together. A dock opens its browser, running shells, and
+  home folder; browser logins remain shared by the environment. Update the bot
+  environment to use the unified desktop; older images keep separate Browser
+  and Apps screens. See [bot screens](docs/bot-fleet.md#screens-of-a-bot).
+- Show the bot's conversation beside its computer, and the environment's
+  overview beside its screen, with resizable panels and a narrow-window switch.
+  Bot and environment settings use tabs and keep unsaved changes together in
+  one save bar.
+- Enable Maestrly tools by default, with separate controls for Terminal,
+  Browser, Notes, Memory, Conversation history, Debugger, Artifacts, and Kanban
+  in Settings and each conversation. Existing explicit opt-outs are preserved.
+- Move server, runner, gateway, and bot containers to Node.js 24 and update
+  dependencies. Contributors now need Node.js 24.11 or later within Node.js 24.
+
+### Added
+
+- Send a development plan from a standalone chat to a registered project
+  workspace on an explicit request, choosing a new branch and its base while
+  preserving model, effort, and Fast settings. Retries reuse the same destination
+  conversation. Ask chats keep their read-only permissions.
+- Open standalone chats, workspace agents, and bot conversations in independent
+  windows. Live responses, drafts, attachments, and queued messages stay with
+  the conversation when you move it out or return it to the app. See
+  [separate chat windows](docs/chat-context.md#separate-chat-windows).
+- Share a personal memory collection across standalone chats and providers,
+  with search, editing, archive, export, and recall controls. Optional automatic
+  saving starts off; project and bot memories remain separate. Memory stays in
+  this computer's application profile. See
+  [personal memory](docs/chat-context.md#personal-memory-in-chats).
+- Attach PDFs and UTF-8 text or code files to bot messages, and download files
+  generated by bots to Downloads without overwriting existing files. Downloaded
+  copies remain available across navigation and restarts, with Show in folder.
+- Manage an environment's accounts, models, skills, tools and MCP servers,
+  runtime components, and preferences from the desktop app. The settings are
+  shared by its bots; update the gateway and restart the environment on the new
+  image to use them. See
+  [environment settings](docs/bot-fleet.md#configure-an-environment-from-the-app).
+- The bot server's own port now also serves the artifact viewer, so one route
+  to the server, such as Tailscale Serve, reaches bots and artifacts. See
+  [reach the server from another device](docs/artifacts.md#reach-the-server-from-another-device).
+- Clicking outside the artifact details panel closes it.
+
+### Fixed
+
+- Retry Claude turns that have not yet produced output when another process
+  is refreshing the same account's OAuth token, instead of signing out the
+  account and interrupting its other conversations. Model and usage discovery
+  also retry this temporary contention.
+
+## [0.13.0] - 2026-10-01
+
+### Added
+
+- Connect Google AI Pro or Ultra accounts through Google's official Antigravity
+  ACP server and use its Gemini models in chat, Maestro, subagents, and bot
+  environments. The runtime downloads on first sign-in; accounts and bot
+  sign-ins remain separate. See [Google AI](docs/antigravity.md).
+- Check, update, or roll back the Antigravity runtime in Components. Bots update
+  installed runtimes automatically and switch existing processes when the
+  environment is idle. Failed updates keep the current version and account data.
+- Host artifacts on a paired bot server so shared pages stay available while
+  your computer sleeps. Choose where desktop conversations publish, control
+  publication per bot, and browse both hosts in the Artifacts center. Existing
+  servers and migrated bots start with artifact hosting/publication off.
+- Install an artifact-only server with just the gateway image; creating the
+  first bot downloads its runtime later. Installer updates add the artifact
+  viewer port, with a separate SSH tunnel for VPS setups. Public addresses and
+  Tailscale access remain manual. See [server artifacts](docs/artifacts.md#hosting).
+
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Dictate messages locally with whisper.cpp in chat and bot composers. Send
+  transcriptions automatically or review them first, choose the language, and
+  hold the microphone button to record. Recordings without speech are discarded.
+- Experimental: cap a bot's context window in its compaction settings, including
+  the shared environment default, to bound context use and cost.
+- Agents can publish web pages as artifacts, such as prototypes, reports, and
+  dashboards, with Maestrly tools on. Each change becomes a new version.
+  **Artifacts**, in the sidebar, shows every artifact with a preview of its page,
+  its versions, and the conversation it came from; pages open in an isolated
+  frame. See [Artifacts](docs/artifacts.md).
+- Share an artifact with other people: personal links that show every device
+  that joins, access requests you approve, or a link for anyone with an optional
+  access code and expiry. You can revoke a device, a person, or every session,
+  and the sidebar counts new activity. Sharing needs a public address that you
+  provide, such as Tailscale Serve. See
+  [Sharing](docs/artifacts.md#sharing).
+- People who can open a shared artifact can comment on a passage or a spot of the
+  page. Comments appear as pins on the page, with previews, conversations
+  beside them, and a list; the viewer's top bar also gains version steps, page
+  widths, and full screen. You read, answer, and resolve comments in
+  **Artifacts**, agents can read and answer them with Maestrly tools, and **Send
+  to conversation** puts the open comments in the conversation's message box.
+  See [Comments](docs/artifacts.md#comments).
+- Experimental: see a bot's reasoning in its conversation, like in chats, once
+  its bot server and environment are updated. Older bot servers and computers
+  keep working without it.
+- Choose how conversations show agent activity in **Settings → Appearance &
+  sound → Agent activity**: **Compact** (the default) or **Expanded**, which
+  shows every reasoning block and tool card as before.
 - Experimental: see when bots can be updated and update them in one click with
   **Update bots**. Maestrly updates the bot server it installed, then each
   environment restarts on the new image once none of its bots is working,
   waiting for you, or under your control, even while your computer is off. An
   environment's view shows what its update waits for and offers **Update now**
   and **Cancel update**.
+- Experimental: bots update Claude Code and Codex on their own, without
+  waiting for a Maestrly release. Each environment checks npm every six hours,
+  tests a new release before using it, never interrupts a turn in progress,
+  and never goes below the version its image ships. A bot's **Settings →
+  Components** shows the versions and offers manual checks; servers can turn
+  automatic checks off with `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`.
+- Experimental: an environment's view shows the Claude Code and Codex versions
+  its bots run, where each comes from, an installed version still waiting for
+  work in progress to end, and **Check for updates**.
+
+### Changed
+
+- Require macOS 13 or later. Apps on macOS 12 are not offered this update.
+- Fold the reasoning, commands, searches, and other tool steps behind each
+  answer into one activity line in chats, workspaces, subagent transcripts, and
+  bot conversations. While the agent works, the line shows its current step;
+  afterwards it summarizes what it did, including steps that failed or that you
+  denied. Open it to see every step and its details. The answer, questions,
+  plans, subagents, published artifacts, generated images, and tool screenshots
+  stay in view.
 
 - Experimental: run your chats and workspaces on your bot server. **Set up
   workspaces on this server** on the server page starts a Maestrly there for
@@ -24,6 +222,14 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- Share plain-text clipboard contents while controlling a bot or environment
+  screen, preserve Caps Lock, and show the bot's pointer on its screen.
+- Keep subagent cards visible outside the compact activity line, and show bots'
+  to-do lists without offering desktop-only tools inside bot environments.
+- Let bots use new Claude models such as Opus 5.5: the bot image now ships
+  Claude Code 2.1.285, so bots see these models as the desktop app does,
+  including the extra high effort, instead of a reduced context window and a
+  request to update Claude Code on every turn.
 - Close only the open list, not the whole dialog, when pressing Escape in a
   searchable dropdown such as the environment choice when creating a bot.
 - Never move a bot server back to an older version when another computer

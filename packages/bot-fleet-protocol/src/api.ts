@@ -1,3 +1,4 @@
+import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
 import { z } from 'zod'
 import {
   FLEET_ENVIRONMENT_LIMITS,
@@ -5,6 +6,7 @@ import {
   FLEET_OWNER_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_IMAGE_LIMITS,
+  FLEET_FILE_LIMITS,
   FLEET_MESSAGE_TEXT_MAX,
   FLEET_PROTOCOL_VERSION,
   FLEET_QUEUE_PREVIEW_MAX,
@@ -29,6 +31,7 @@ import {
   fleetEnvironmentIdSchema,
   fleetEnvironmentKindSchema,
   fleetEnvironmentSchema,
+  fleetRuntimesSchema,
   fleetHostInfoSchema,
   fleetIdSchema,
   fleetIdempotencyKeySchema,
@@ -53,9 +56,17 @@ import {
   fleetActivitySchema,
   fleetPendingInteractionSchema,
   fleetImageMediaTypeSchema,
+  fleetFileRefSchema,
+  fleetFileNameSchema,
   fleetUsageSchema,
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
+  fleetDesktopIdSchema,
+  fleetDesktopInputSchema,
+  fleetDesktopLinkSchema,
+  fleetDesktopLinkViewSchema,
+  fleetDesktopNameSchema,
+  fleetDesktopOpSchema,
 } from './domain.js'
 
 export const fleetOwnerMemoryCreateRequestSchema = z.object({
@@ -94,37 +105,108 @@ export const fleetBotMemoryPatchRequestSchema = z
   .refine((value) => value.pinned !== undefined || value.status !== undefined, 'nothing to change')
 export type FleetBotMemoryPatchRequest = z.infer<typeof fleetBotMemoryPatchRequestSchema>
 
+export const fleetArtifactCallSchema = z.object({
+  method: z.string().min(1).max(40),
+  args: z.array(z.unknown()).max(3),
+})
+export type FleetArtifactCall = z.infer<typeof fleetArtifactCallSchema>
+export const fleetArtifactResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), value: z.unknown() }),
+  z.object({
+    ok: z.literal(false),
+    error: z.object({
+      code: z.string().max(40),
+      message: z.string().max(500),
+      details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    }),
+  }),
+])
+export type FleetArtifactResult = z.infer<typeof fleetArtifactResultSchema>
+/** Exact normalized HTTP(S) origin, without credentials, path, query or fragment. */
+export const fleetHttpOriginSchema = z
+  .string()
+  .max(300)
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value
+    } catch {
+      return false
+    }
+  }, 'Expected a normalized HTTP(S) origin')
+export type FleetHttpOrigin = z.infer<typeof fleetHttpOriginSchema>
+export const fleetArtifactSettingsSchema = z.object({
+  enabled: z.boolean(),
+  publicAddress: z.union([z.literal(''), fleetHttpOriginSchema]),
+  ownerName: z.string().trim().max(60),
+  linkExpiryDays: z.number().int().min(1).max(365).nullable(),
+  quotaGb: z.number().int().min(1).max(100),
+})
+export type FleetArtifactSettings = z.infer<typeof fleetArtifactSettingsSchema>
+export const fleetArtifactSettingsPatchSchema = fleetArtifactSettingsSchema.partial()
+export type FleetArtifactSettingsPatch = z.infer<typeof fleetArtifactSettingsPatchSchema>
+export const fleetArtifactHostSchema = z.object({
+  settings: fleetArtifactSettingsSchema,
+  status: z.object({
+    state: z.enum(['off', 'running', 'error']),
+    problem: z.enum(['port_in_use', 'storage', 'internal']).nullable(),
+    artifactCount: fleetNonNegativeIntSchema,
+    storageBytes: fleetNonNegativeIntSchema,
+    quotaBytes: fleetNonNegativeIntSchema,
+  }),
+})
+export type FleetArtifactHost = z.infer<typeof fleetArtifactHostSchema>
+
 /** Decoded size of a base64 string, without allocating. */
 export function base64DecodedBytes(value: string): number {
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
   return Math.floor((value.length * 3) / 4) - padding
 }
 
-/** An image the owner attaches to a message, base64-encoded (the desktop composer's formats and limits). */
-export const fleetAttachmentInputSchema = z.object({
-  name: z.string().min(1).max(200),
-  mediaType: fleetImageMediaTypeSchema,
-  dataBase64: z
-    .string()
-    .min(4)
-    .max(Math.ceil(FLEET_IMAGE_LIMITS.attachmentMaxBytes / 3) * 4)
-    .regex(/^[A-Za-z0-9+/]+={0,2}$/),
-})
+/** Original attachment bytes. Older clients omit kind for images; text uses UTF-8 and text/plain. */
+export const fleetAttachmentInputSchema = z
+  .object({
+    name: fleetFileNameSchema,
+    kind: z.enum(['image', 'pdf', 'text']).default('image'),
+    mediaType: z.union([fleetImageMediaTypeSchema, z.literal('application/pdf'), z.literal('text/plain')]),
+    dataBase64: z
+      .string()
+      .max(Math.ceil(FLEET_FILE_LIMITS.pdfMaxBytes / 3) * 4)
+      // Repeated capture groups overflow the regexp stack on multi-megabyte documents.
+      .refine((value) => value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value), 'Invalid base64'),
+  })
+  .superRefine((value, ctx) => {
+    const bytes = base64DecodedBytes(value.dataBase64)
+    const max =
+      value.kind === 'pdf'
+        ? FLEET_FILE_LIMITS.pdfMaxBytes
+        : value.kind === 'text'
+          ? FLEET_FILE_LIMITS.textMaxBytes
+          : FLEET_IMAGE_LIMITS.attachmentMaxBytes
+    if (bytes > max || (bytes === 0 && value.kind !== 'text'))
+      ctx.addIssue({ code: 'custom', message: 'Invalid attachment size', path: ['dataBase64'] })
+    const validType =
+      value.kind === 'image'
+        ? fleetImageMediaTypeSchema.safeParse(value.mediaType).success
+        : value.mediaType === (value.kind === 'pdf' ? 'application/pdf' : 'text/plain')
+    if (!validType)
+      ctx.addIssue({ code: 'custom', message: 'Attachment kind does not match media type', path: ['mediaType'] })
+  })
 export type FleetAttachmentInput = z.infer<typeof fleetAttachmentInputSchema>
 
 const fleetAttachmentsSchema = z
   .array(fleetAttachmentInputSchema)
-  .max(FLEET_IMAGE_LIMITS.attachmentsMax)
+  .max(FLEET_FILE_LIMITS.attachmentsMax)
   .default([])
   .refine(
     (items) =>
       items.reduce((sum, item) => sum + base64DecodedBytes(item.dataBase64), 0) <=
-      FLEET_IMAGE_LIMITS.attachmentsTotalMaxBytes,
+      FLEET_FILE_LIMITS.attachmentsTotalMaxBytes,
     'attachments exceed the total size limit'
   )
   .refine(
-    (items) => items.every((item) => base64DecodedBytes(item.dataBase64) <= FLEET_IMAGE_LIMITS.attachmentMaxBytes),
-    'an attachment exceeds the per-image size limit'
+    (items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax,
+    'too many PDF attachments'
   )
 
 /** A message needs text or at least one image. */
@@ -182,6 +264,14 @@ export const fleetPatchEnvironmentRequestSchema = z
     memoryLimitBytes: fleetMemoryLimitSchema.nullable().optional(),
     /** The default compaction model of its bots; null removes it. */
     compaction: fleetCompactionConfigSchema.nullable().optional(),
+    /** Optional compare-and-set values for the shared settings editor; legacy callers omit them. */
+    expected: z
+      .object({
+        name: fleetNameSchema.optional(),
+        compaction: fleetCompactionConfigSchema.nullable().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .refine(
     (value) => value.name !== undefined || value.memoryLimitBytes !== undefined || value.compaction !== undefined,
@@ -204,6 +294,7 @@ export const fleetCreateBotRequestSchema = z
     instructions: fleetInstructionsSchema,
     ceiling: fleetCeilingSchema,
     talksTo: z.array(fleetBotIdSchema),
+    publishArtifacts: z.boolean().optional(),
     idempotencyKey: fleetIdempotencyKeySchema,
     environmentId: fleetEnvironmentIdSchema.optional(),
     environment: z
@@ -221,6 +312,7 @@ export const fleetPatchBotRequestSchema = z.object({
   role: fleetRoleSchema.optional(),
   ceiling: fleetCeilingSchema.optional(),
   talksTo: z.array(fleetBotIdSchema).optional(),
+  publishArtifacts: z.boolean().optional(),
   selection: fleetSelectionSchema.nullable().optional(),
   /**
    * The bot's own compaction model. Null makes it use its environment's default. In an environment without a default,
@@ -251,9 +343,16 @@ export const fleetAddApiKeyAccountRequestSchema = z
 export type FleetAddApiKeyAccountRequest = z.infer<typeof fleetAddApiKeyAccountRequestSchema>
 export const fleetAddApiKeyAccountResponseSchema = z.object({ providerId: fleetIdSchema })
 export type FleetAddApiKeyAccountResponse = z.infer<typeof fleetAddApiKeyAccountResponseSchema>
-export const fleetSubscriptionKindSchema = z.enum(['codex', 'claude', 'grok', 'github-copilot', 'cursor'])
+export const fleetSubscriptionKindSchema = z.enum([
+  'codex',
+  'claude',
+  'grok',
+  'antigravity',
+  'github-copilot',
+  'cursor',
+])
 export type FleetSubscriptionKind = z.infer<typeof fleetSubscriptionKindSchema>
-export const fleetLoginKindSchema = z.enum(['codex', 'claude', 'grok'])
+export const fleetLoginKindSchema = z.enum(['codex', 'claude', 'grok', 'antigravity'])
 export type FleetLoginKind = z.infer<typeof fleetLoginKindSchema>
 export const fleetAccountSlotIdSchema = z.string().regex(/^acc_[A-Za-z0-9-]{1,80}$/)
 
@@ -328,6 +427,10 @@ export const fleetLoginStartRequestSchema = z
   })
   .refine((value) => value.kind !== 'grok' || value.method === 'device', {
     message: 'Grok signs in with the device flow',
+    path: ['method'],
+  })
+  .refine((value) => value.kind !== 'antigravity' || value.method === 'browser', {
+    message: 'Google AI signs in with the browser flow',
     path: ['method'],
   })
 export type FleetLoginStartRequest = z.infer<typeof fleetLoginStartRequestSchema>
@@ -549,6 +652,45 @@ export type FleetInternalRoutineCreateRequest = FleetCreateRoutineRequest
 export const fleetInternalRoutinePatchRequestSchema = fleetPatchRoutineRequestSchema
 export type FleetInternalRoutinePatchRequest = FleetPatchRoutineRequest
 
+/**
+ * Why a desktop call did not run. `desktop_not_linked`: no Mac with that id gave this bot access (or it took it back);
+ * `desktop_offline`: that Mac's Maestrly is not connected to this server now; `desktop_timeout`: it did not answer in
+ * time; `desktop_busy`: too many calls of this bot are waiting; `desktop_refused`: the Mac refused it (a grant, a paused
+ * conversation, an unknown id or an invalid input); `desktop_unavailable`: the Mac could not run it.
+ */
+export const fleetDesktopErrorCodeSchema = z.enum([
+  'desktop_not_linked',
+  'desktop_offline',
+  'desktop_timeout',
+  'desktop_busy',
+  'desktop_refused',
+  'desktop_unavailable',
+])
+export type FleetDesktopErrorCode = z.infer<typeof fleetDesktopErrorCodeSchema>
+/** What a Mac answers to one call, and what the bot receives back, failures included. */
+export const fleetDesktopCallResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), value: z.unknown() }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z.object({ code: fleetDesktopErrorCodeSchema, message: z.string().max(1_000) }).strict(),
+    })
+    .strict(),
+])
+export type FleetDesktopCallResult = z.infer<typeof fleetDesktopCallResultSchema>
+/** A bot's call for one Mac; the gateway takes the bot from its token and the Mac from `desktopId`. */
+export const fleetInternalDesktopCallRequestSchema = z
+  .object({ desktopId: fleetDesktopIdSchema, op: fleetDesktopOpSchema, input: fleetDesktopInputSchema.default({}) })
+  .strict()
+export type FleetInternalDesktopCallRequest = z.infer<typeof fleetInternalDesktopCallRequestSchema>
+export const fleetInternalDesktopsResponseSchema = z.object({ desktops: z.array(fleetDesktopLinkSchema) })
+export type FleetInternalDesktopsResponse = z.infer<typeof fleetInternalDesktopsResponseSchema>
+/** A Mac links a bot under the name it shows to that bot, or renames its link. */
+export const fleetDesktopLinkRequestSchema = z.object({ name: fleetDesktopNameSchema }).strict()
+export type FleetDesktopLinkRequest = z.infer<typeof fleetDesktopLinkRequestSchema>
+export const fleetDesktopLinksResponseSchema = z.object({ links: z.array(fleetDesktopLinkViewSchema) })
+export type FleetDesktopLinksResponse = z.infer<typeof fleetDesktopLinksResponseSchema>
+
 export const fleetInputSourceSchema = z.enum(['owner', 'routine', 'peer', 'continuation'])
 export type FleetInputSource = z.infer<typeof fleetInputSourceSchema>
 export const fleetInstanceProfileSchema = z.object({
@@ -558,7 +700,19 @@ export const fleetInstanceProfileSchema = z.object({
   ceiling: fleetCeilingSchema,
   selection: fleetSelectionSchema.nullable(),
   compaction: fleetCompactionConfigSchema.nullable().default(null),
-  gateway: z.object({ peersEnabled: z.boolean() }),
+  /** An inherited default may already be hidden from new selections; inheritance keeps that existing choice. */
+  compactionInherited: z.boolean().optional(),
+  gateway: z.object({
+    peersEnabled: z.boolean(),
+    artifactsEnabled: z.boolean().default(false),
+    /** The gateway routes calls to the Macs that link the bot (`desktop-bridge`); older gateways send none. */
+    desktopBridgeEnabled: z.boolean().default(false),
+  }),
+  /** The bot's color, for its desktop. Gateways from before the unified desktop send none. */
+  tint: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
 })
 export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
 /** Installs or updates a bot in an environment instance: its profile, its display slot and its own gateway token. */
@@ -611,9 +765,15 @@ export const fleetInstanceStatusSchema = z.object({
   usage: fleetUsageSchema.nullable().default(null),
   /** Null from a bot that predates bot compaction: the gateway does not hold it in setup. */
   compaction: fleetCompactionStateSchema.nullable().default(null),
+  /** The environment's runtimes, the same in every bot's status; null from an image that predates runtime reports. */
+  runtimes: fleetRuntimesSchema.nullable().default(null),
+  /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
+  additionalRuntimes: fleetRuntimesSchema.optional(),
   lastEventSeq: fleetNonNegativeIntSchema,
 })
 export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>
+/** The instance starts the checks and answers at once; their results arrive in later statuses. */
+export const fleetRuntimesCheckResponseSchema = z.object({ ok: z.literal(true) })
 /** The aggregate status of an environment instance: one status per installed bot. */
 export const fleetInstanceEnvironmentStatusSchema = z.object({
   environmentId: fleetEnvironmentIdSchema.nullable(),
@@ -695,6 +855,205 @@ export type FleetRoute = {
 }
 
 export const FLEET_GATEWAY_ROUTES = {
+  settingsAccounts: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/accounts',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.accounts.response,
+  },
+  settingsPatchAccount: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid/settings/accounts/:providerId',
+    body: FLEET_SETTINGS_OPERATIONS.patchAccount.input,
+    response: FLEET_SETTINGS_OPERATIONS.patchAccount.response,
+  },
+  settingsRenameSubscription: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid/settings/subscriptions/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.renameSubscription.input,
+    response: FLEET_SETTINGS_OPERATIONS.renameSubscription.response,
+  },
+  settingsRemoveAccount: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/settings/accounts/:providerId',
+    body: FLEET_SETTINGS_OPERATIONS.removeAccount.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeAccount.response,
+  },
+  settingsRemoveSubscription: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/settings/subscriptions/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.removeSubscription.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeSubscription.response,
+  },
+  settingsModels: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/models',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.models.response,
+  },
+  settingsSetModelFilter: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/models/:providerId/filter',
+    body: FLEET_SETTINGS_OPERATIONS.setModelFilter.input,
+    response: FLEET_SETTINGS_OPERATIONS.setModelFilter.response,
+  },
+  settingsSkills: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/skills',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.skills.response,
+  },
+  settingsSkill: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/skills/:name',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.skill.response,
+  },
+  settingsCreateSkill: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/skills',
+    body: FLEET_SETTINGS_OPERATIONS.createSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.createSkill.response,
+  },
+  settingsWriteSkill: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.writeSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.writeSkill.response,
+  },
+  settingsSetSkillEnabled: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid/settings/skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.setSkillEnabled.input,
+    response: FLEET_SETTINGS_OPERATIONS.setSkillEnabled.response,
+  },
+  settingsRemoveSkill: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/settings/skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.removeSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeSkill.response,
+  },
+  settingsSearchSkills: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/skill-library/search',
+    body: FLEET_SETTINGS_OPERATIONS.searchSkills.input,
+    response: FLEET_SETTINGS_OPERATIONS.searchSkills.response,
+  },
+  settingsInstallSkill: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/skill-library/install',
+    body: FLEET_SETTINGS_OPERATIONS.installSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.installSkill.response,
+  },
+  settingsSkillGroups: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/skill-groups',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.skillGroups.response,
+  },
+  settingsCreateSkillGroup: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/skill-groups',
+    body: FLEET_SETTINGS_OPERATIONS.createSkillGroup.input,
+    response: FLEET_SETTINGS_OPERATIONS.createSkillGroup.response,
+  },
+  settingsUpdateSkillGroup: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/skill-groups/:id',
+    body: FLEET_SETTINGS_OPERATIONS.updateSkillGroup.input,
+    response: FLEET_SETTINGS_OPERATIONS.updateSkillGroup.response,
+  },
+  settingsRemoveSkillGroup: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/settings/skill-groups/:id',
+    body: FLEET_SETTINGS_OPERATIONS.removeSkillGroup.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeSkillGroup.response,
+  },
+  settingsMcpServers: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/mcp-servers',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.mcpServers.response,
+  },
+  settingsMcpServer: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/mcp-servers/:id',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.mcpServer.response,
+  },
+  settingsCreateMcpServer: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/mcp-servers',
+    body: FLEET_SETTINGS_OPERATIONS.createMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.createMcpServer.response,
+  },
+  settingsPatchMcpServer: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid/settings/mcp-servers/:id',
+    body: FLEET_SETTINGS_OPERATIONS.patchMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.patchMcpServer.response,
+  },
+  settingsRemoveMcpServer: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/settings/mcp-servers/:id',
+    body: FLEET_SETTINGS_OPERATIONS.removeMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeMcpServer.response,
+  },
+  settingsTestMcpServer: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/mcp-servers/:id/test',
+    body: FLEET_SETTINGS_OPERATIONS.testMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.testMcpServer.response,
+  },
+  settingsRuntimes: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/runtimes',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.runtimes.response,
+  },
+  settingsRuntimeAction: {
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/runtimes/:id/actions',
+    body: FLEET_SETTINGS_OPERATIONS.runtimeAction.input,
+    response: FLEET_SETTINGS_OPERATIONS.runtimeAction.response,
+  },
+  settingsSetRuntimeAutomatic: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/runtimes/:id/automatic',
+    body: FLEET_SETTINGS_OPERATIONS.setRuntimeAutomatic.input,
+    response: FLEET_SETTINGS_OPERATIONS.setRuntimeAutomatic.response,
+  },
+  settingsPreferences: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/preferences',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.preferences.response,
+  },
+  settingsSetPreferences: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/preferences',
+    body: FLEET_SETTINGS_OPERATIONS.setPreferences.input,
+    response: FLEET_SETTINGS_OPERATIONS.setPreferences.response,
+  },
+  artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
+  artifactHostPatch: {
+    method: 'PATCH',
+    path: '/v1/artifacts/host',
+    body: fleetArtifactSettingsPatchSchema,
+    response: fleetArtifactHostSchema,
+  },
+  artifactAdmin: {
+    method: 'POST',
+    path: '/v1/artifacts/admin',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
+  artifactUpload: {
+    method: 'POST',
+    path: '/v1/artifacts/upload',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
   ownerMemoryList: { method: 'GET', path: '/v1/owner-memory', body: null, response: fleetOwnerMemorySchema },
   ownerMemoryCreate: {
     method: 'POST',
@@ -875,6 +1234,13 @@ export const FLEET_GATEWAY_ROUTES = {
     body: null,
     response: fleetEnvironmentSchema,
   },
+  /** Asks the environment to check for Claude Code and Codex releases now; gateways with `runtime-updates` only. */
+  environmentRuntimesCheck: {
+    method: 'POST',
+    path: '/v1/environments/:eid/runtimes/check',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
   environmentArchive: {
     method: 'POST',
     path: '/v1/environments/:eid/archive',
@@ -998,6 +1364,8 @@ export const FLEET_GATEWAY_ROUTES = {
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
   // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript).
   botImage: { method: 'GET', path: '/v1/bots/:id/images/:imageId', body: null, response: null },
+  botFileMeta: { method: 'GET', path: '/v1/bots/:id/files/:fileId', body: null, response: fleetFileRefSchema },
+  botFile: { method: 'GET', path: '/v1/bots/:id/files/:fileId/content', body: null, response: null },
   botMessageSend: {
     method: 'POST',
     path: '/v1/bots/:id/messages',
@@ -1055,6 +1423,33 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   botRoutineDelete: { method: 'DELETE', path: '/v1/bots/:id/routines/:rid', body: null, response: null },
   botRoutineRun: { method: 'POST', path: '/v1/bots/:id/routines/:rid/run', body: null, response: fleetRoutineSchema },
+  // Gateways with `desktop-bridge`: the Mac asking links or unlinks itself, lists every Mac linked to the bot, or
+  // removes another Mac's link; and answers a call it received on its event stream.
+  botDesktopLinkPut: {
+    method: 'PUT',
+    path: '/v1/bots/:id/desktop-link',
+    body: fleetDesktopLinkRequestSchema,
+    response: fleetDesktopLinkViewSchema,
+  },
+  botDesktopLinkDelete: { method: 'DELETE', path: '/v1/bots/:id/desktop-link', body: null, response: null },
+  botDesktopLinks: {
+    method: 'GET',
+    path: '/v1/bots/:id/desktop-links',
+    body: null,
+    response: fleetDesktopLinksResponseSchema,
+  },
+  botDesktopLinkRemove: {
+    method: 'DELETE',
+    path: '/v1/bots/:id/desktop-links/:desktopId',
+    body: null,
+    response: null,
+  },
+  desktopCallResult: {
+    method: 'POST',
+    path: '/v1/desktop-calls/:callId/result',
+    body: fleetDesktopCallResultSchema,
+    response: null,
+  },
   inbox: { method: 'GET', path: '/v1/inbox', body: null, response: fleetInboxResponseSchema },
   peerMessages: { method: 'GET', path: '/v1/peer-messages', body: null, response: fleetPeerMessagesResponseSchema },
   activity: { method: 'GET', path: '/v1/activity', body: null, response: fleetActivityResponseSchema },
@@ -1062,6 +1457,18 @@ export const FLEET_GATEWAY_ROUTES = {
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INTERNAL_ROUTES = {
+  artifactBotAdmin: {
+    method: 'POST',
+    path: '/internal/v1/artifacts/admin',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
+  artifactBotUpload: {
+    method: 'POST',
+    path: '/internal/v1/artifacts/upload',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
   ownerMemoryGet: { method: 'GET', path: '/internal/v1/owner-memory', body: null, response: fleetOwnerMemorySchema },
   ownerMemorySave: {
     method: 'POST',
@@ -1103,9 +1510,198 @@ export const FLEET_INTERNAL_ROUTES = {
     response: fleetRoutineSchema,
   },
   routineDelete: { method: 'DELETE', path: '/internal/v1/routines/:rid', body: null, response: null },
+  /** The Macs that linked the calling bot, and whether each is online. */
+  desktops: { method: 'GET', path: '/internal/v1/desktops', body: null, response: fleetInternalDesktopsResponseSchema },
+  /** One call for one of those Macs; answers once the Mac does, or with why it could not. */
+  desktopCall: {
+    method: 'POST',
+    path: '/internal/v1/desktop/calls',
+    body: fleetInternalDesktopCallRequestSchema,
+    response: fleetDesktopCallResultSchema,
+  },
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INSTANCE_ROUTES = {
+  settingsAccounts: {
+    method: 'GET',
+    path: '/v1/settings/accounts',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.accounts.response,
+  },
+  settingsPatchAccount: {
+    method: 'PATCH',
+    path: '/v1/settings/accounts/:providerId',
+    body: FLEET_SETTINGS_OPERATIONS.patchAccount.input,
+    response: FLEET_SETTINGS_OPERATIONS.patchAccount.response,
+  },
+  settingsRenameSubscription: {
+    method: 'PATCH',
+    path: '/v1/settings/subscriptions/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.renameSubscription.input,
+    response: FLEET_SETTINGS_OPERATIONS.renameSubscription.response,
+  },
+  settingsRemoveAccount: {
+    method: 'DELETE',
+    path: '/v1/settings/accounts/:providerId',
+    body: FLEET_SETTINGS_OPERATIONS.removeAccount.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeAccount.response,
+  },
+  settingsRemoveSubscription: {
+    method: 'DELETE',
+    path: '/v1/settings/subscriptions/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.removeSubscription.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeSubscription.response,
+  },
+  settingsModels: {
+    method: 'GET',
+    path: '/v1/settings/models',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.models.response,
+  },
+  settingsSetModelFilter: {
+    method: 'PUT',
+    path: '/v1/settings/models/:providerId/filter',
+    body: FLEET_SETTINGS_OPERATIONS.setModelFilter.input,
+    response: FLEET_SETTINGS_OPERATIONS.setModelFilter.response,
+  },
+  settingsSkills: {
+    method: 'GET',
+    path: '/v1/settings/skills',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.skills.response,
+  },
+  settingsSkill: {
+    method: 'GET',
+    path: '/v1/settings/skills/:name',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.skill.response,
+  },
+  settingsCreateSkill: {
+    method: 'POST',
+    path: '/v1/settings/skills',
+    body: FLEET_SETTINGS_OPERATIONS.createSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.createSkill.response,
+  },
+  settingsWriteSkill: {
+    method: 'PUT',
+    path: '/v1/settings/skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.writeSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.writeSkill.response,
+  },
+  settingsSetSkillEnabled: {
+    method: 'PATCH',
+    path: '/v1/settings/skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.setSkillEnabled.input,
+    response: FLEET_SETTINGS_OPERATIONS.setSkillEnabled.response,
+  },
+  settingsRemoveSkill: {
+    method: 'DELETE',
+    path: '/v1/settings/skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.removeSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeSkill.response,
+  },
+  settingsSearchSkills: {
+    method: 'POST',
+    path: '/v1/settings/skill-library/search',
+    body: FLEET_SETTINGS_OPERATIONS.searchSkills.input,
+    response: FLEET_SETTINGS_OPERATIONS.searchSkills.response,
+  },
+  settingsInstallSkill: {
+    method: 'POST',
+    path: '/v1/settings/skill-library/install',
+    body: FLEET_SETTINGS_OPERATIONS.installSkill.input,
+    response: FLEET_SETTINGS_OPERATIONS.installSkill.response,
+  },
+  settingsSkillGroups: {
+    method: 'GET',
+    path: '/v1/settings/skill-groups',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.skillGroups.response,
+  },
+  settingsCreateSkillGroup: {
+    method: 'POST',
+    path: '/v1/settings/skill-groups',
+    body: FLEET_SETTINGS_OPERATIONS.createSkillGroup.input,
+    response: FLEET_SETTINGS_OPERATIONS.createSkillGroup.response,
+  },
+  settingsUpdateSkillGroup: {
+    method: 'PUT',
+    path: '/v1/settings/skill-groups/:id',
+    body: FLEET_SETTINGS_OPERATIONS.updateSkillGroup.input,
+    response: FLEET_SETTINGS_OPERATIONS.updateSkillGroup.response,
+  },
+  settingsRemoveSkillGroup: {
+    method: 'DELETE',
+    path: '/v1/settings/skill-groups/:id',
+    body: FLEET_SETTINGS_OPERATIONS.removeSkillGroup.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeSkillGroup.response,
+  },
+  settingsMcpServers: {
+    method: 'GET',
+    path: '/v1/settings/mcp-servers',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.mcpServers.response,
+  },
+  settingsMcpServer: {
+    method: 'GET',
+    path: '/v1/settings/mcp-servers/:id',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.mcpServer.response,
+  },
+  settingsCreateMcpServer: {
+    method: 'POST',
+    path: '/v1/settings/mcp-servers',
+    body: FLEET_SETTINGS_OPERATIONS.createMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.createMcpServer.response,
+  },
+  settingsPatchMcpServer: {
+    method: 'PATCH',
+    path: '/v1/settings/mcp-servers/:id',
+    body: FLEET_SETTINGS_OPERATIONS.patchMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.patchMcpServer.response,
+  },
+  settingsRemoveMcpServer: {
+    method: 'DELETE',
+    path: '/v1/settings/mcp-servers/:id',
+    body: FLEET_SETTINGS_OPERATIONS.removeMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.removeMcpServer.response,
+  },
+  settingsTestMcpServer: {
+    method: 'POST',
+    path: '/v1/settings/mcp-servers/:id/test',
+    body: FLEET_SETTINGS_OPERATIONS.testMcpServer.input,
+    response: FLEET_SETTINGS_OPERATIONS.testMcpServer.response,
+  },
+  settingsRuntimes: {
+    method: 'GET',
+    path: '/v1/settings/runtimes',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.runtimes.response,
+  },
+  settingsRuntimeAction: {
+    method: 'POST',
+    path: '/v1/settings/runtimes/:id/actions',
+    body: FLEET_SETTINGS_OPERATIONS.runtimeAction.input,
+    response: FLEET_SETTINGS_OPERATIONS.runtimeAction.response,
+  },
+  settingsSetRuntimeAutomatic: {
+    method: 'PUT',
+    path: '/v1/settings/runtimes/:id/automatic',
+    body: FLEET_SETTINGS_OPERATIONS.setRuntimeAutomatic.input,
+    response: FLEET_SETTINGS_OPERATIONS.setRuntimeAutomatic.response,
+  },
+  settingsPreferences: {
+    method: 'GET',
+    path: '/v1/settings/preferences',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.preferences.response,
+  },
+  settingsSetPreferences: {
+    method: 'PUT',
+    path: '/v1/settings/preferences',
+    body: FLEET_SETTINGS_OPERATIONS.setPreferences.input,
+    response: FLEET_SETTINGS_OPERATIONS.setPreferences.response,
+  },
   memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
   memoryPatch: {
     method: 'PATCH',
@@ -1213,6 +1809,8 @@ export const FLEET_INSTANCE_ROUTES = {
     body: null,
     response: fleetInstanceEnvironmentStatusSchema,
   },
+  /** Capability `runtime-updates`: checks for Claude Code and Codex releases in the background. */
+  runtimesCheck: { method: 'POST', path: '/v1/runtimes/check', body: null, response: fleetRuntimesCheckResponseSchema },
   /** Capability `environment-compaction`: the model options of the environment's accounts; `current` is null. */
   environmentSelections: {
     method: 'GET',
@@ -1256,6 +1854,8 @@ export const FLEET_INSTANCE_ROUTES = {
   },
   // Binary: the image bytes with their Content-Type.
   botImage: { method: 'GET', path: '/v1/bots/:botId/images/:imageId', body: null, response: null },
+  botFileMeta: { method: 'GET', path: '/v1/bots/:botId/files/:fileId', body: null, response: fleetFileRefSchema },
+  botFile: { method: 'GET', path: '/v1/bots/:botId/files/:fileId/content', body: null, response: null },
   botInputSend: {
     method: 'POST',
     path: '/v1/bots/:botId/inputs',

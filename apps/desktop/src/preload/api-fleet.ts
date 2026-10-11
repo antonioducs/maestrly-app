@@ -7,6 +7,8 @@ import type {
   FleetBotMcpServers,
   FleetSubscriptionKind,
 } from '@maestrly/bot-fleet-protocol'
+import type { FleetInstallerStatus } from '../shared/fleet-installer'
+import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
 import { ipcRenderer } from 'electron'
 import type {
   FleetOwnerMemory,
@@ -112,7 +114,12 @@ export type FleetCreateBotInput = Omit<FleetCreateBotRequest, 'idempotencyKey' |
 export type FleetOwnerMemoryCreateInput = { content: string; replacesId?: string; environmentId?: string | null }
 export type FleetScreenData = { channelId: string; data: ArrayBuffer }
 /** An image the owner attaches from the Mac; main base64-encodes it for the gateway. */
-export type FleetOutgoingAttachment = { name: string; mediaType: FleetImageMediaType; data: Uint8Array }
+export type FleetOutgoingAttachment = {
+  kind?: 'image' | 'pdf' | 'text'
+  name: string
+  mediaType: FleetImageMediaType | 'application/pdf' | 'text/plain'
+  data: Uint8Array
+}
 /** Bytes of a bot image (a FleetImageRef from the transcript). */
 export type FleetImageData = { mediaType: FleetImageMediaType; data: Uint8Array }
 export type FleetScreenState = {
@@ -127,6 +134,7 @@ export type {
   FleetScreenTarget,
   FleetScreenTargetInput,
 } from '../shared/fleet-targets'
+export type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
 export type {
   FleetApiKeyProviderKind,
   FleetActivityEntry,
@@ -163,6 +171,8 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 // Provisioning and sign-ins take a target: an environment (shared by its bots), a bot, or a bare bot id as the views
 // from before environments pass it.
 export const fleetApi = {
+  fleetInstallerProvideBotEnvironment: (): Promise<FleetInstallerStatus> =>
+    ipcRenderer.invoke('fleet:installer:provideBotEnvironment'),
   fleetLoginStart: (
     target: FleetProvisioningTargetInput,
     request: FleetLoginStartRequest
@@ -237,6 +247,9 @@ export const fleetApi = {
   /** Cancels an update that waits for the environment's bots. */
   fleetEnvironmentUpdateCancel: (environmentId: string): Promise<FleetEnvironment> =>
     ipcRenderer.invoke('fleet:environmentUpdateCancel', environmentId),
+  /** Asks the environment to check for Claude Code and Codex releases; gateways with `runtime-updates` only. */
+  fleetEnvironmentRuntimesCheck: (environmentId: string): Promise<FleetEnvironment> =>
+    ipcRenderer.invoke('fleet:environmentRuntimesCheck', environmentId),
   fleetPatchEnvironment: (environmentId: string, patch: FleetPatchEnvironmentRequest): Promise<FleetEnvironment> =>
     ipcRenderer.invoke('fleet:patchEnvironment', environmentId, patch),
   /** Empty for gateways without environments. */
@@ -280,6 +293,11 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
   fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
     ipcRenderer.invoke('fleet:getImage', botId, imageId),
+  fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:downloadFile', botId, fileId),
+  fleetRevealDownload: (receipt: string): Promise<void> => ipcRenderer.invoke('fleet:revealDownload', receipt),
+  fleetGetDownload: (botId: string, fileId: string): Promise<string | null> =>
+    ipcRenderer.invoke('fleet:getDownload', botId, fileId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
   fleetResolveInteraction: (
@@ -335,6 +353,24 @@ export const fleetApi = {
   fleetScreenSend: (channelId: string, data: ArrayBuffer): Promise<void> =>
     ipcRenderer.invoke('fleet:screenSend', channelId, data),
   fleetScreenClose: (channelId: string): Promise<void> => ipcRenderer.invoke('fleet:screenClose', channelId),
+  fleetScreenClipboardRead: (channelId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:screenClipboardRead', channelId),
+  fleetScreenClipboardWrite: (channelId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:screenClipboardWrite', channelId, text),
+  /** What this Mac gives a bot, and every Mac linked to it. */
+  fleetDesktopAccess: (botId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:get', botId),
+  /** Gives a bot access to projects on this Mac, or changes it. */
+  fleetDesktopAccessSave: (botId: string, input: FleetDesktopAccessInput): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:save', botId, input),
+  /** Takes this Mac's access back; the bot's conversations stay here. */
+  fleetDesktopAccessDisable: (botId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:disable', botId),
+  /** Removes another Mac's link; that Mac revokes its side when it hears of it. */
+  fleetDesktopAccessRemoveOther: (botId: string, desktopId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:removeOther', botId, desktopId),
+  onFleetDesktopAccess: (cb: (payload: { botId: string }) => void): (() => void) =>
+    subscribe('fleet:desktop-access', cb),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),

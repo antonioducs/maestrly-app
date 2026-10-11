@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { once } from 'node:events'
 import { randomBytes, randomUUID } from 'node:crypto'
 import http from 'node:http'
+import { Readable } from 'node:stream'
 import net, { type AddressInfo } from 'node:net'
 import {
   FLEET_PROTOCOL_HEADER,
@@ -99,7 +100,7 @@ const profileOf = (botId: string) => ({
   ceiling: 'ask' as const,
   selection: null,
   compaction: null,
-  gateway: { peersEnabled: true },
+  gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
 })
 
 function fakeBot(botId: string, slot: number) {
@@ -128,6 +129,16 @@ function fakeBot(botId: string, slot: number) {
     deleteMemory: vi.fn(async (_id: string) => {}),
     transcript: vi.fn(async (_before: string | null, _limit: number) => ({ items: [], before: null })),
     image: vi.fn(async (_imageId: string) => ({ mediaType: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) })),
+    fileMeta: vi.fn(async (fileId: string) => ({
+      id: fileId,
+      name: 'report.txt',
+      mediaType: 'text/plain',
+      byteSize: Buffer.byteLength(botId),
+    })),
+    file: vi.fn(async (fileId: string) => ({
+      ref: { id: fileId, name: 'report.txt', mediaType: 'text/plain', byteSize: Buffer.byteLength(botId) },
+      stream: Readable.from([Buffer.from(botId)]),
+    })),
     input: vi.fn(async (_value: FleetInstanceInput) => ({
       inputId: `input-${botId}`,
       itemId: `input:${botId}`,
@@ -233,6 +244,7 @@ function fakeEnvironment() {
     addApiKeyAccount: vi.fn(async (_value: FleetAddApiKeyAccountRequest) => ({ providerId: 'prov_test' })),
     removeAccount: vi.fn(async (_providerId: string) => {}),
     open: vi.fn(async (_target: FleetUiOpenRequest['target']) => {}),
+    checkRuntimes: vi.fn(() => {}),
   }
   const typed: InstanceEnvironment = environment
   const bot: InstanceBot = bots.get('alpha')!
@@ -341,6 +353,29 @@ async function readFrames(response: Response, count: number): Promise<FleetInsta
   }
   return frames().map((frame) => JSON.parse(frame.slice(frame.indexOf('data: ') + 6)) as FleetInstanceEvent)
 }
+/** Reads a stream's events a few at a time, keeping what arrived beyond the ones asked for. */
+function eventReader(response: Response): (count: number) => Promise<FleetInstanceEvent[]> {
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  let taken = 0
+  // Only frames already ended by a blank line count.
+  const frames = () =>
+    text
+      .split('\n\n')
+      .slice(0, -1)
+      .filter((frame) => frame.includes('data: '))
+  return async (count) => {
+    while (frames().length < taken + count) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    const next = frames().slice(taken, taken + count)
+    taken += next.length
+    return next.map((frame) => JSON.parse(frame.slice(frame.indexOf('data: ') + 6)) as FleetInstanceEvent)
+  }
+}
 const ownerInput = (text = 'Hi') => ({ idempotencyKey: randomUUID(), source: 'owner', text })
 
 describe('instance control HTTP', () => {
@@ -367,8 +402,40 @@ describe('instance control HTTP', () => {
     })
   })
 
+  it('starts runtime checks in the background and answers at once', async () => {
+    expect(INSTANCE_CAPABILITIES).toContain('runtime-updates')
+    const { base, environment } = await setup()
+    const denied = await fetch(base + '/v1/runtimes/check', {
+      method: 'POST',
+      headers: { [FLEET_PROTOCOL_HEADER]: '1' },
+    })
+    expect(denied.status).toBe(401)
+    expect(environment.checkRuntimes).not.toHaveBeenCalled()
+    const checked = await send(base, 'POST', '/v1/runtimes/check')
+    expect(checked.status).toBe(200)
+    expect(await checked.json()).toEqual({ ok: true })
+    expect(environment.checkRuntimes).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses settings explicitly when the legacy environment has no service', async () => {
+    const { base } = await setup()
+    const response = await send(base, 'GET', '/v1/settings/preferences')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'CONFLICT' })
+  })
+
   it("lists the environment's models for its default compaction model", async () => {
-    expect(INSTANCE_CAPABILITIES).toEqual(['provisioning', 'environments', 'environment-compaction', 'context-limit'])
+    expect(INSTANCE_CAPABILITIES).toEqual([
+      'files',
+      'environment-settings-v1',
+      'provisioning',
+      'environments',
+      'environment-compaction',
+      'context-limit',
+      'transcript-reasoning',
+      'runtime-updates',
+      'desktop-bridge',
+    ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
     expect(response.status).toBe(200)
@@ -426,6 +493,50 @@ describe('instance control HTTP', () => {
     for (const target of ['accounts', 'skills', 'mcp'] as const)
       expect((await send(base, 'POST', '/v1/ui/open', { target })).status).toBe(204)
     expect(environment.open.mock.calls).toEqual([['accounts'], ['skills'], ['mcp']])
+  })
+
+  it('serves private file bytes for the addressed bot and refuses unauthenticated or invalid paths', async () => {
+    const { base, bots } = await setup()
+    const route = '/v1/bots/beta/files/f-synthetic'
+    const meta = await send(base, 'GET', route)
+    expect(meta.status).toBe(200)
+    expect(await meta.json()).toMatchObject({ id: 'f-synthetic', name: 'report.txt', byteSize: 4 })
+    const response = await send(base, 'GET', route + '/content')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-disposition')).toContain('attachment;')
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(await response.text()).toBe('beta')
+    expect(bots.get('beta')!.file).toHaveBeenCalledWith('f-synthetic')
+    expect(bots.get('alpha')!.file).not.toHaveBeenCalled()
+    expect((await send(base, 'GET', route + '/content', undefined, { Authorization: 'Bearer wrong' })).status).toBe(401)
+    expect((await send(base, 'GET', route + '/content', undefined, { Origin: 'https://example.test' })).status).toBe(
+      403
+    )
+    expect((await send(base, 'GET', '/v1/bots/unknown/files/f-synthetic/content')).status).toBe(404)
+    expect((await send(base, 'GET', '/v1/bots/beta/files/..%2Fsecret/content')).status).toBe(400)
+  })
+
+  it('streams empty files and aborts truncated files without writing a JSON error into the download', async () => {
+    const { base, bots } = await setup()
+    const beta = bots.get('beta')!
+    beta.file.mockResolvedValueOnce({
+      ref: { id: 'f-empty', name: 'empty.txt', mediaType: 'text/plain', byteSize: 0 },
+      stream: Readable.from([]),
+    })
+    const empty = await send(base, 'GET', '/v1/bots/beta/files/f-empty/content')
+    expect(empty.status).toBe(200)
+    expect(await empty.text()).toBe('')
+    beta.file.mockResolvedValueOnce({
+      ref: { id: 'f-broken', name: 'broken.txt', mediaType: 'text/plain', byteSize: 6 },
+      stream: Readable.from(
+        (async function* () {
+          yield Buffer.from('beta')
+          await new Promise((resolve) => setTimeout(resolve, 5))
+        })()
+      ),
+    })
+    const broken = await send(base, 'GET', '/v1/bots/beta/files/f-broken/content')
+    await expect(broken.arrayBuffer()).rejects.toThrow()
   })
 
   it('serves binary images only with fleet credentials and keeps the larger body limit on bot inputs', async () => {
@@ -542,6 +653,43 @@ describe('instance control HTTP', () => {
     expect((await send(base, 'GET', '/v1/events?since=x')).status).toBe(400)
     expect(events.replay(events.lastSeq + 1)).toBeNull()
   })
+
+  it('streams reasoning items only to a reader that asks for them, replayed or live', async () => {
+    const { base, events } = await setup()
+    const at = '2026-09-29T10:00:00.000Z'
+    const upsert = (kind: 'assistant' | 'reasoning', id: string) =>
+      events.publish({
+        type: 'transcript.upsert',
+        botId: 'alpha',
+        item:
+          kind === 'assistant'
+            ? { kind, id, at, text: 'Answer', streaming: false }
+            : { kind, id, at, text: 'Thinking', truncated: false, streaming: false },
+      })
+    upsert('reasoning', 'm:0')
+    upsert('assistant', 'm:1')
+    const open = async (query: string) => {
+      const controller = new AbortController()
+      const stream = await fetch(base + '/v1/events?since=0' + query, { headers: headers(), signal: controller.signal })
+      return { controller, next: eventReader(stream) }
+    }
+    const plain = await open('')
+    expect(
+      (await plain.next(1)).map((event) => [event.seq, event.type === 'transcript.upsert' && event.item.id])
+    ).toEqual([[2, 'm:1']])
+    const asked = await open('&reasoning=1')
+    expect((await asked.next(2)).map((event) => event.type === 'transcript.upsert' && event.item.kind)).toEqual([
+      'reasoning',
+      'assistant',
+    ])
+    // Live events follow the same rule; the gap a filtered event leaves in the sequence is harmless.
+    upsert('reasoning', 'm:2')
+    upsert('assistant', 'm:3')
+    expect((await plain.next(1)).map((event) => event.seq)).toEqual([4])
+    expect((await asked.next(2)).map((event) => event.seq)).toEqual([3, 4])
+    plain.controller.abort()
+    asked.controller.abort()
+  })
 })
 
 describe('bot routes', () => {
@@ -566,8 +714,17 @@ describe('bot routes', () => {
       status: 200,
     },
     { method: 'DELETE', path: 'memories/m1', call: 'deleteMemory', args: ['m1'], status: 204 },
-    { method: 'GET', path: 'transcript?before=item-9&limit=20', call: 'transcript', args: ['item-9', 20], status: 200 },
-    { method: 'GET', path: 'transcript', call: 'transcript', args: [null, 200], status: 200 },
+    {
+      method: 'GET',
+      path: 'transcript?before=item-9&limit=20',
+      call: 'transcript',
+      args: ['item-9', 20, false],
+      status: 200,
+    },
+    { method: 'GET', path: 'transcript', call: 'transcript', args: [null, 200, false], status: 200 },
+    // Only a reader that asks gets `reasoning` items.
+    { method: 'GET', path: 'transcript?reasoning=1', call: 'transcript', args: [null, 200, true], status: 200 },
+    { method: 'GET', path: 'transcript?reasoning=true', call: 'transcript', args: [null, 200, false], status: 200 },
     { method: 'GET', path: 'images/img-1', call: 'image', args: ['img-1'], status: 200 },
     {
       method: 'POST',

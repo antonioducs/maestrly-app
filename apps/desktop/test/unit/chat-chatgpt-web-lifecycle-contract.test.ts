@@ -69,7 +69,11 @@ describe('ChatGPT Web companion lifecycle contract', () => {
   it('copies only active keys without exposing global status secrets', () => {
     expect(manager).toContain('export function companionSessionKey(conversationId: string)')
     expect(manager).toContain('sessionForConversation(conversationId)?.sessionKey ?? null')
-    expect(service).toContain("'chat:chatgpt-web:companion-session-key'")
+    expect(service).toContain("'chat:chatgpt-web:companion-copy-session-key'")
+    expect(service).toContain(
+      'copyCompanionText(conversationId ? chatGptWeb.companionSessionKey(conversationId) : null)'
+    )
+    expect(service).not.toContain("'chat:chatgpt-web:companion-session-key'")
     expect(sessionBanner).toContain('chatGptWebCompanionCopySessionKey(conversationId)')
     expect(sessionBanner).toContain("t('chatgptWeb.copySessionKey')")
   })

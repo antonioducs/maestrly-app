@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   CODEX_MAX_DOWNLOAD_BYTES,
+  CODEX_RELEASE_PROFILE,
   CodexReleaseDiscoveryError,
   codexDownloadCeiling,
   compareStableVersions,
   discoverCodexRelease,
 } from '../../src/main/runtime-assets/codex-releases'
 import {
-  CodexReleaseMetadataUnavailableError,
-  CodexReleaseStore,
-  type CodexReleaseStorage,
-} from '../../src/main/runtime-assets/codex-release-store'
+  RuntimeReleaseMetadataUnavailableError,
+  RuntimeReleaseStore,
+  type RuntimeReleaseStorage,
+  type RuntimeReleaseStoreOptions,
+} from '../../src/main/runtime-assets/release-store'
 import { RUNTIME_ASSET_REGISTRY, type RuntimeAssetDefinition } from '../../src/main/runtime-assets/registry'
 
 const INTEGRITY = `sha512-${'Q'.repeat(86)}==`
@@ -232,7 +234,7 @@ describe('discoverCodexRelease', () => {
 
 function memoryStorage(initial: string | null = null) {
   let value = initial
-  const storage: CodexReleaseStorage & { value: () => string | null } = {
+  const storage: RuntimeReleaseStorage & { value: () => string | null } = {
     read: vi.fn(() => value),
     write: vi.fn((next: string) => {
       value = next
@@ -246,23 +248,27 @@ async function discovered(version: string): Promise<RuntimeAssetDefinition> {
   return discoverCodexRelease('mac-arm64', undefined, { fetch: registryFetch(standardRoutes(version)) })
 }
 
-describe('CodexReleaseStore', () => {
+function codexStore(options: Omit<RuntimeReleaseStoreOptions, 'profile'>): RuntimeReleaseStore {
+  return new RuntimeReleaseStore({ profile: CODEX_RELEASE_PROFILE, ...options })
+}
+
+describe('RuntimeReleaseStore with the Codex profile', () => {
   const embedded = RUNTIME_ASSET_REGISTRY['codex-runtime']
   const now = () => new Date('2026-09-22T12:00:00.000Z')
 
   it('defaults to notify-only and persists the automatic preference', () => {
     const storage = memoryStorage()
-    const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const store = codexStore({ storage, target: 'mac-arm64', embedded, now })
     expect(store.automatic).toBe(false)
     store.setAutomatic(true)
 
-    const reloaded = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const reloaded = codexStore({ storage, target: 'mac-arm64', embedded, now })
     expect(reloaded.automatic).toBe(true)
   })
 
   it('records a checked candidate without accepting it for activation', async () => {
     const storage = memoryStorage()
-    const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const store = codexStore({ storage, target: 'mac-arm64', embedded, now })
     store.recordCheck(await discovered('0.156.0'))
 
     expect(store.lastCheckedAt).toBe('2026-09-22T12:00:00.000Z')
@@ -273,20 +279,18 @@ describe('CodexReleaseStore', () => {
   it('recognizes an accepted dynamic version after an offline restart', async () => {
     const storage = memoryStorage()
     const definition = await discovered('0.156.0')
-    new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now }).accept(definition, 1)
+    codexStore({ storage, target: 'mac-arm64', embedded, now }).accept(definition, 1)
 
-    const restarted = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const restarted = codexStore({ storage, target: 'mac-arm64', embedded, now })
     expect(restarted.acceptedDefinition('0.156.0')).toEqual(definition)
     expect(restarted.acceptedRelease('0.156.0')).toMatchObject({ compatibilityRevision: 1 })
     // Other hosts' profiles never reuse this target's metadata.
-    expect(
-      new CodexReleaseStore({ storage, target: 'linux-x64', embedded, now }).acceptedDefinition('0.156.0')
-    ).toBeNull()
+    expect(codexStore({ storage, target: 'linux-x64', embedded, now }).acceptedDefinition('0.156.0')).toBeNull()
   })
 
   it('never accepts versions older than the embedded pin', async () => {
     const storage = memoryStorage()
-    const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const store = codexStore({ storage, target: 'mac-arm64', embedded, now })
     store.accept(await discovered('0.150.0'), 1)
     expect(store.acceptedDefinition('0.150.0')).toBeNull()
     // The embedded version is served by the registry itself.
@@ -296,23 +300,23 @@ describe('CodexReleaseStore', () => {
 
   it('drops tampered records instead of trusting them', async () => {
     const storage = memoryStorage()
-    new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now }).accept(await discovered('0.156.0'), 1)
+    codexStore({ storage, target: 'mac-arm64', embedded, now }).accept(await discovered('0.156.0'), 1)
     const tampered = storage
       .value()!
       .replace(
         'https://registry.npmjs.org/@openai/codex/-/codex-0.156.0-darwin-arm64.tgz',
         'https://evil.example/codex.tgz'
       )
-    const reloaded = new CodexReleaseStore({ storage: memoryStorage(tampered), target: 'mac-arm64', embedded, now })
+    const reloaded = codexStore({ storage: memoryStorage(tampered), target: 'mac-arm64', embedded, now })
     expect(reloaded.acceptedDefinition('0.156.0')).toBeNull()
-    expect(
-      new CodexReleaseStore({ storage: memoryStorage('{not json'), target: 'mac-arm64', embedded, now }).automatic
-    ).toBe(false)
+    expect(codexStore({ storage: memoryStorage('{not json'), target: 'mac-arm64', embedded, now }).automatic).toBe(
+      false
+    )
   })
 
   it('tracks rejection, revalidation, and pruning', async () => {
     const storage = memoryStorage()
-    const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const store = codexStore({ storage, target: 'mac-arm64', embedded, now })
     store.accept(await discovered('0.156.0'), 0)
     store.accept(await discovered('0.157.0'), 1)
     store.reject('0.157.0', 'rollback')
@@ -331,22 +335,22 @@ describe('CodexReleaseStore', () => {
 
   it('reports unavailable storage without caching the failure', () => {
     let fail = true
-    const storage: CodexReleaseStorage = {
+    const storage: RuntimeReleaseStorage = {
       read: () => {
         if (fail) throw new Error('database closed')
         return null
       },
       write: () => undefined,
     }
-    const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
-    expect(() => store.acceptedDefinition('0.156.0')).toThrow(CodexReleaseMetadataUnavailableError)
+    const store = codexStore({ storage, target: 'mac-arm64', embedded, now })
+    expect(() => store.acceptedDefinition('0.156.0')).toThrow(RuntimeReleaseMetadataUnavailableError)
     fail = false
     expect(store.acceptedDefinition('0.156.0')).toBeNull()
   })
 
   it('leaves state unchanged when persistence fails', async () => {
     const storage = memoryStorage()
-    const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded, now })
+    const store = codexStore({ storage, target: 'mac-arm64', embedded, now })
     const definition = await discovered('0.156.0')
     vi.mocked(storage.write).mockImplementationOnce(() => {
       throw new Error('disk full')

@@ -38,7 +38,7 @@ and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
 ## ws
 
 The bot gateway and the desktop app include [ws](https://github.com/websockets/ws)
-8.21.3 for WebSocket communication: the gateway for screens and bridges, the
+8.22.0 for WebSocket communication: the gateway for screens and bridges, the
 desktop app for the bridge to a workspaces host. It is licensed under the MIT
 License.
 
@@ -126,7 +126,7 @@ Maestrly is not affiliated with or endorsed by GitHub.
 
 ## Anthropic Claude Agent SDK
 
-Maestrly integrates `@anthropic-ai/claude-agent-sdk` 0.3.263 to communicate
+Maestrly integrates `@anthropic-ai/claude-agent-sdk` 0.3.285 to communicate
 with a separately installed and authenticated Claude Code runtime. The package
 declares `SEE LICENSE IN README.md`; its distributed README links Anthropic's
 [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms),
@@ -135,7 +135,9 @@ declares `SEE LICENSE IN README.md`; its distributed README links Anthropic's
 
 Maestrly does not redistribute the optional platform-specific Claude Code
 binaries shipped as SDK convenience dependencies. Users install Claude Code
-separately and authenticate their own Claude subscription.
+separately and authenticate their own Claude subscription. Fleet bots can also
+download newer official `@anthropic-ai/claude-code-linux-<arch>` packages from
+the npm registry into their own environment, under the same terms.
 
 ## Local ML runtime
 
@@ -145,6 +147,28 @@ The archive preserves the license files shipped by those upstream packages.
 Models are obtained separately and remain subject to their own model-card
 licenses and terms. See
 [`apps/desktop/runtime-assets/local-ml/README.md`](apps/desktop/runtime-assets/local-ml/README.md).
+
+For voice dictation the archive also contains:
+
+- the [whisper.cpp](https://github.com/ggml-org/whisper.cpp) N-API addon from
+  [`@fugood/node-whisper-<platform>-<arch>`](https://www.npmjs.com/package/@fugood/whisper.node)
+  1.1.3, MIT License, Copyright (c) 2025 ggml / whisper.cpp contributors, Jhen-Jie
+  Hong, and Hans Chen. It statically links whisper.cpp and ggml, MIT License,
+  Copyright (c) 2023-2026 The ggml authors. The platform packages ship no license
+  file, so the texts are distributed as
+  [`whisper-node-MIT.txt`](apps/desktop/resources/licenses/whisper-node-MIT.txt) and
+  [`whisper-cpp-MIT.txt`](apps/desktop/resources/licenses/whisper-cpp-MIT.txt);
+- the [Silero VAD](https://github.com/snakers4/silero-vad) v6.2.0 model in GGML
+  format (`ggml-silero-v6.2.0.bin` from
+  [ggml-org/whisper-vad](https://huggingface.co/ggml-org/whisper-vad)), MIT
+  License, Copyright (c) 2020-present Silero Team, distributed as
+  [`silero-vad-MIT.txt`](apps/desktop/resources/licenses/silero-vad-MIT.txt).
+
+The speech model, OpenAI Whisper large-v3-turbo (MIT License, Copyright (c) 2022
+OpenAI) in the GGML format published by
+[ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp), is not
+distributed with Maestrly. It is downloaded from Hugging Face only when the user
+chooses to install it for dictation.
 
 ## unpdf and PDF.js
 
@@ -159,7 +183,7 @@ are in
 
 ## Cursor SDK
 
-Maestrly packages `@cursor/sdk` 1.0.31 and one matching supported native helper
+Maestrly packages `@cursor/sdk` 1.0.34 and one matching supported native helper
 package. These are proprietary Anysphere components, separate from Maestrly's
 MIT-licensed source. The upstream license is reproduced verbatim in
 [`cursor-sdk-LICENSE.md`](apps/desktop/resources/licenses/cursor-sdk-LICENSE.md);
@@ -167,3 +191,15 @@ component attribution is in
 [`cursor-sdk-NOTICE.txt`](apps/desktop/resources/licenses/cursor-sdk-NOTICE.txt).
 Use of Cursor services remains subject to Cursor's terms. Maestrly is not
 affiliated with or endorsed by Anysphere or Cursor.
+
+## Google Antigravity ACP server
+
+The optional Google AI subscription integration downloads Google's unmodified
+Antigravity ACP server directly from `dl.google.com` on first sign-in. Version
+1.2.1 is the reference and minimum; newer official releases discovered through
+the ACP registry can be installed after compatibility validation. Bot environments
+update installed runtimes automatically by default. The lean application package
+and bot image do not contain the server. It is a proprietary
+Google component, separate from Maestrly's MIT-licensed source, and its use and
+the Google AI services it reaches remain subject to Google's terms. Maestrly is
+not affiliated with or endorsed by Google.

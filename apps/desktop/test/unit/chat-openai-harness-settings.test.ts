@@ -88,6 +88,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),
   isClaudeSubscriptionProvider: vi.fn(() => false),
   isCursorSubscriptionProvider: vi.fn(() => false),
+  isAntigravitySubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn(
     (providerId: string) => providerId.startsWith('builtin-') || providerId.startsWith('builtin_')
@@ -240,6 +241,28 @@ describe('OpenAI harness kill switch', () => {
     expect(
       ((await handlers.get('chat:config')!(undefined as never)) as { imageGenEnabled: boolean }).imageGenEnabled
     ).toBe(false)
+  })
+
+  it('defaults Maestrly tools and every group on, and persists group switches', async () => {
+    const handlers = register()
+    const config = async () =>
+      (await handlers.get('chat:config')!(undefined as never)) as {
+        appToolsEnabled: boolean
+        appToolGroups: Record<string, boolean>
+      }
+
+    expect((await config()).appToolsEnabled).toBe(true)
+    expect(Object.values((await config()).appToolGroups)).toEqual(Array(8).fill(true))
+
+    expect(handlers.get('chat:set-app-tool-group')?.(undefined as never, 'browser', false)).toEqual({ ok: true })
+    expect(h.setAppFlag).toHaveBeenCalledWith('chat.appTools.group.browser', false)
+    expect((await config()).appToolGroups).toMatchObject({ browser: false, terminal: true })
+
+    expect(handlers.get('chat:set-app-tool-group')?.(undefined as never, 'computer', false)).toEqual({ ok: false })
+    expect(handlers.get('chat:set-app-tool-group')?.(undefined as never, 'debug', 'off')).toEqual({ ok: false })
+
+    expect(handlers.get('chat:set-app-tools')?.(undefined as never, false)).toEqual({ ok: true })
+    expect((await config()).appToolsEnabled).toBe(false)
   })
 
   it('persists bash filters across configuration reads', async () => {

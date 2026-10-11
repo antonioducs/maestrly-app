@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const state = vi.hoisted(() => ({
   settings: new Map<string, string>(),
@@ -8,9 +11,17 @@ const state = vi.hoisted(() => ({
   events: [] as {
     onConnected: () => Promise<void>
     onEvent: (event: unknown) => void
+    options: { desktopBridge?: boolean } | undefined
   }[],
   broadcasts: [] as { channel: string; payload: unknown }[],
+  download: vi.fn(),
+  reveal: vi.fn(),
 }))
+vi.mock('electron', async (original) => ({
+  ...(await original<typeof import('electron')>()),
+  shell: { showItemInFolder: state.reveal },
+}))
+vi.mock('../../src/main/fleet/client/downloads', () => ({ saveFleetFile: state.download }))
 vi.mock('../../src/main/store', () => ({
   getAppSetting: (key: string) => state.settings.get(key) ?? null,
   setAppSetting: (key: string, value: string) => {
@@ -37,8 +48,16 @@ vi.mock('../../src/main/window-ipc', () => ({
 }))
 vi.mock('../../src/main/fleet/client/events', () => ({
   FleetEvents: class {
-    constructor(_api: unknown, onEvent: (event: unknown) => void, _onState: unknown, onConnected: () => Promise<void>) {
-      state.events.push({ onConnected, onEvent })
+    constructor(
+      _api: unknown,
+      onEvent: (event: unknown) => void,
+      _onState: unknown,
+      onConnected: () => Promise<void>,
+      _pause?: unknown,
+      _heartbeat?: unknown,
+      options?: { desktopBridge?: boolean }
+    ) {
+      state.events.push({ onConnected, onEvent, options })
     }
     start() {}
     stop() {}
@@ -70,6 +89,8 @@ function response(data: unknown): Response {
   })
 }
 beforeEach(() => {
+  state.download.mockReset()
+  state.reveal.mockReset()
   state.settings.clear()
   state.secure.clear()
   state.features = undefined
@@ -103,6 +124,123 @@ beforeEach(() => {
   )
 })
 describe('fleet client service', () => {
+  it('restores existing downloads across service restarts and isolates paired gateways', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'fleet-history-'))
+    try {
+      const firstPath = join(directory, 'report.pdf')
+      const secondPath = join(directory, 'report (1).pdf')
+      await writeFile(firstPath, 'first')
+      await writeFile(secondPath, 'second')
+      const service = new FleetClientService()
+      Object.assign(service, {
+        api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+        connection: { features: ['files'], deviceId: 'device-1' },
+      })
+      state.download.mockResolvedValueOnce(firstPath).mockResolvedValueOnce(secondPath)
+      const first = await service.downloadFile('bot', 'f-file')
+      const second = await service.downloadFile('bot', 'f-file')
+      expect(second).not.toBe(first)
+      await expect(service.revealDownload(firstPath)).rejects.toThrow('FLEET_LOCAL_DOWNLOAD_MISSING')
+      await expect(service.revealDownload('550e8400-e29b-41d4-a716-446655440000')).rejects.toThrow()
+      expect(state.reveal).not.toHaveBeenCalled()
+      service.stop()
+      const restarted = new FleetClientService()
+      Object.assign(restarted, { connection: { deviceId: 'device-1' } })
+      expect(await restarted.getDownload('bot', 'f-file')).toBe(second)
+      expect(await restarted.getDownload('other-bot', 'f-file')).toBeNull()
+      await restarted.revealDownload(first)
+      await restarted.revealDownload(second)
+      expect(state.reveal.mock.calls).toEqual([[firstPath], [secondPath]])
+      Object.assign(restarted, { connection: { deviceId: 'another-gateway-device' } })
+      expect(await restarted.getDownload('bot', 'f-file')).toBeNull()
+      Object.assign(restarted, { connection: { deviceId: 'device-1' } })
+      await rm(secondPath)
+      expect(await restarted.getDownload('bot', 'f-file')).toBe(first)
+      await rm(firstPath)
+      expect(await restarted.getDownload('bot', 'f-file')).toBeNull()
+      await expect(restarted.revealDownload(second)).rejects.toThrow('FLEET_LOCAL_DOWNLOAD_MISSING')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  it('cancels active file transfers when this connection is stopped', async () => {
+    const service = new FleetClientService()
+    Object.assign(service, {
+      api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+      connection: { features: ['files'], deviceId: 'device-1' },
+    })
+    state.download.mockImplementation(
+      (_api, _botId, _fileId, { signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    )
+    const saving = service.downloadFile('bot', 'f-file')
+    await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
+    service.stop()
+    await expect(saving).rejects.toThrow()
+    expect(state.download.mock.calls[0][3].signal.aborted).toBe(true)
+  })
+
+  it('never starts saving a file if the connection changed during metadata checks', async () => {
+    const service = new FleetClientService()
+    let finish!: (value: { capabilities: string[] }) => void
+    Object.assign(service, {
+      api: {
+        call: () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      },
+      connection: { features: ['files'], deviceId: 'device-1' },
+    })
+    const saving = service.downloadFile('bot', 'f-file')
+    service.stop()
+    finish({ capabilities: ['files'] })
+    await expect(saving).rejects.toThrow()
+    expect(state.download).not.toHaveBeenCalled()
+  })
+  it('hands desktop calls to the bridge only, announces it on the stream, and ends its access when unpairing', async () => {
+    const bridge = {
+      handle: vi.fn(() => true),
+      connected: vi.fn(async () => {}),
+      unpaired: vi.fn(async () => {}),
+      stop: vi.fn(),
+    }
+    const service = new FleetClientService()
+    service.desktopBridge = bridge
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    expect(state.events[0].options).toEqual({ desktopBridge: true })
+    await state.events[0].onConnected()
+    expect(bridge.connected).toHaveBeenCalled()
+    const call = {
+      type: 'desktop.call',
+      at: '2026-10-05T10:00:00.000Z',
+      callId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      botId: 'scout',
+      desktopId: 'dsk_0123456789abcdefABCD',
+      op: 'listWorkspaces',
+      input: {},
+      expiresAt: '2026-10-05T10:00:25.000Z',
+    }
+    state.broadcasts.length = 0
+    state.events[0].onEvent(call)
+    expect(bridge.handle).toHaveBeenLastCalledWith(call)
+    // No window ever sees a call.
+    expect(state.broadcasts.filter((event) => event.channel === 'fleet:event')).toEqual([])
+    const links = { type: 'desktop_link.updated', at: call.at, botId: 'scout', links: [] }
+    state.events[0].onEvent(links)
+    expect(bridge.handle).toHaveBeenLastCalledWith(links)
+    expect(state.broadcasts.filter((event) => event.channel === 'fleet:event').map((event) => event.payload)).toEqual([
+      links,
+    ])
+    await service.disconnect()
+    expect(bridge.unpaired).toHaveBeenCalledWith('device-1')
+    expect(bridge.stop).toHaveBeenCalled()
+
+    // Without a bridge this Mac never says it takes desktop calls.
+    const plain = new FleetClientService()
+    await plain.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    expect(state.events.at(-1)?.options).toEqual({ desktopBridge: false })
+  })
   it('refreshes advertised features on connect and every reconnect, defaulting absent metadata to empty', async () => {
     state.features = ['provisioning']
     const service = new FleetClientService()

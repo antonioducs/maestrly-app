@@ -1,13 +1,18 @@
+import { artifactRoute } from './artifact-routes.js'
+import { isArtifactViewerRequest, viewerUnavailable } from './artifact-viewer-proxy.js'
 import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
-import { BlockList, isIP } from 'node:net'
+import { FleetNetwork } from './network.js'
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_MESSAGE_BODY_MAX,
+  FLEET_ARTIFACT_BODY_MAX,
   FLEET_SKILL_BODY_MAX,
+  FLEET_DESKTOP_BRIDGE_LIMITS,
+  type FleetInternalDesktopCallRequest,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
   type FleetRoute,
@@ -23,6 +28,7 @@ import { Peers } from './peers.js'
 import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
+import { DesktopBridge } from './desktop-bridge.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -82,48 +88,15 @@ export function createGatewayServers(ctx: GatewayContext) {
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
+  const network = ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network)
+  const desktops = ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events)
+  ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
+  ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
   const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
   ctx.lifecycle.onCloseEnvironmentBridges = (id) => bridge.closeEnvironment(id)
-  let subnetBlock = new BlockList()
-  // Traffic reaching a published port from the host (Docker's port proxy, `tailscale serve`) arrives from the
-  // bridge gateway address, which lies inside the fleet subnet. Bots use their own addresses and cannot
-  // complete a TCP handshake while spoofing the gateway's, so that single address is not treated as a bot.
-  let hostGateways = new Set<string>()
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
-  const refreshSubnets = async () => {
-    const subnets = await ctx.lifecycle.docker.networkInspect(ctx.config.network)
-    if (!subnets.length) throw new GatewayError('DOCKER_UNAVAILABLE', 'Fleet network has no subnet')
-    const next = new BlockList()
-    const gateways = new Set<string>()
-    for (const { subnet, gateway } of subnets) {
-      const [address, prefix] = subnet.split('/')
-      const family = isIP(address)
-      if (!family || prefix === undefined) throw new GatewayError('DOCKER_UNAVAILABLE', 'Invalid fleet network subnet')
-      next.addSubnet(address, Number(prefix), family === 4 ? 'ipv4' : 'ipv6')
-      if (gateway && isIP(gateway)) gateways.add(gateway)
-    }
-    subnetBlock = next
-    hostGateways = gateways
-  }
-  const remote = (address: string | undefined) => {
-    const normalized = address?.startsWith('::ffff:') ? address.slice(7) : (address ?? '')
-    const family = isIP(normalized)
-    return { address: normalized, family }
-  }
-  const insideFleet = (address: string | undefined) => {
-    const value = remote(address)
-    return (
-      !!value.family &&
-      !hostGateways.has(value.address) &&
-      subnetBlock.check(value.address, value.family === 4 ? 'ipv4' : 'ipv6')
-    )
-  }
-  const loopback = (address: string | undefined) => {
-    const value = remote(address)
-    return value.address === '::1' || value.address.startsWith('127.')
-  }
   const revokeDevice = async (deviceId: string) => {
     if (revoking.has(deviceId)) return
     revoking.add(deviceId)
@@ -131,6 +104,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       screen.closeDevice(deviceId)
       bridge.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
+      desktops.revokeDevice(deviceId)
       await Promise.allSettled(
         [...ctx.lifecycle.takeovers]
           .filter(([, state]) => state.deviceId === deviceId && state.state === 'human')
@@ -148,7 +122,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         .map((device) => revokeDevice(device.id))
     )
   }
-  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, bridge, revokeDevice }
+  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, desktops, bridge, revokeDevice }
   ctx.lifecycle.onTurnFinished = (id, event) => {
     if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
   }
@@ -159,10 +133,17 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       if (
         internal
-          ? !(insideFleet(req.socket.remoteAddress) || loopback(req.socket.remoteAddress))
-          : insideFleet(req.socket.remoteAddress)
+          ? !(network.insideFleet(req.socket.remoteAddress) || network.loopback(req.socket.remoteAddress))
+          : network.insideFleet(req.socket.remoteAddress)
       )
         throw new GatewayError('FORBIDDEN', 'Network access forbidden')
+      // The artifact viewer shares the public port. Its host checks Host, Origin, sessions and capabilities itself,
+      // and its writes must carry the viewer's Origin; the fleet API below still refuses any Origin.
+      if (!internal && isArtifactViewerRequest(req.url ?? '/')) {
+        if (ctx.artifacts) await ctx.artifacts.serveViewer(req, res)
+        else viewerUnavailable(res)
+        return
+      }
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const url = new URL(req.url ?? '/', 'http://gateway')
       const match = matchRoute(internal ? FLEET_INTERNAL_ROUTES : FLEET_GATEWAY_ROUTES, req.method ?? '', url.pathname)
@@ -178,14 +159,23 @@ export function createGatewayServers(ctx: GatewayContext) {
         ? match.route.body.parse(
             await readBody(
               req,
-              !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
-                ? FLEET_SKILL_BODY_MAX
-                : !internal && match.key === 'botMessageSend'
-                  ? FLEET_MESSAGE_BODY_MAX
-                  : 1024 * 1024
+              match.key === 'artifactUpload' || match.key === 'artifactBotUpload'
+                ? FLEET_ARTIFACT_BODY_MAX
+                : !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
+                  ? FLEET_SKILL_BODY_MAX
+                  : !internal && match.key === 'botMessageSend'
+                    ? FLEET_MESSAGE_BODY_MAX
+                    : !internal && match.key === 'desktopCallResult'
+                      ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
+                      : 1024 * 1024
             )
           )
         : undefined
+      if (match.key.startsWith('artifact')) {
+        const identity = internal ? { botId: caller! } : { deviceId: ctx.auth.device(req.headers.authorization).id }
+        const result = await artifactRoute(activeCtx, match.key, body, identity)
+        return send(res, 200, match.route.response?.parse(result) ?? result)
+      }
       if (internal) {
         if (match.key.startsWith('routine')) {
           const bot = ctx.store.getBot(caller!)
@@ -229,6 +219,13 @@ export function createGatewayServers(ctx: GatewayContext) {
             () => ({ response: ownerMemory.save({ kind: 'bot', botId: caller! }, request), status: 201 })
           )
           return send(res, status, match.route.response!.parse(response))
+        } else if (match.key === 'desktops' || match.key === 'desktopCall') {
+          // The calling bot is the one its token names; the Mac is the one its link names, never the bot's choice.
+          const bot = ctx.store.getBot(caller!)
+          if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          if (match.key === 'desktops') return send(res, 200, { desktops: desktops.links(caller!) })
+          const result = await desktops.call(caller!, body as FleetInternalDesktopCallRequest)
+          return send(res, 200, match.route.response!.parse(result))
         } else {
           const result =
             match.key === 'peers'
@@ -252,7 +249,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     let status = 404
     let error: GatewayError = new GatewayError('NOT_FOUND', 'Route not found')
     try {
-      if (insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
+      if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const { pathname } = new URL(req.url ?? '/', 'http://gateway')
       if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
@@ -282,9 +279,10 @@ export function createGatewayServers(ctx: GatewayContext) {
     bridge,
     sweepRevocations,
     async listen() {
-      await refreshSubnets()
+      await network.refresh()
+      await ctx.artifacts?.start()
       refreshTimer = setInterval(() => {
-        void refreshSubnets().catch(() => {})
+        void network.refresh().catch(() => {})
       }, 60000)
       revokeTimer = setInterval(() => {
         void sweepRevocations()
@@ -303,6 +301,8 @@ export function createGatewayServers(ctx: GatewayContext) {
     async close() {
       if (refreshTimer) clearInterval(refreshTimer)
       if (revokeTimer) clearInterval(revokeTimer)
+      desktops.close()
+      await ctx.artifacts?.close()
       routines.stop()
       screen.close()
       bridge.close()

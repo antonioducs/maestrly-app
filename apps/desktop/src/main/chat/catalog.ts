@@ -115,13 +115,28 @@ export function isCursorSubscriptionProvider(providerId: string | null | undefin
   return !!providerId && subscriptionBaseProviderId(providerId) === CURSOR_SUBSCRIPTION_PROVIDER_ID
 }
 
+/** Google AI (Pro/Ultra) subscription through Google's official Antigravity ACP server. */
+export const ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID = 'builtin_antigravity_subscription'
+export const ANTIGRAVITY_SUBSCRIPTION_PROVIDER: ChatProvider = {
+  id: ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID,
+  name: 'Google AI',
+  baseURL: 'antigravity://subscription',
+  kind: 'antigravity-subscription',
+  builtin: 'antigravity-subscription',
+}
+
+export function isAntigravitySubscriptionProvider(providerId: string | null | undefined): boolean {
+  return !!providerId && subscriptionBaseProviderId(providerId) === ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID
+}
+
 export function isSubscriptionProvider(providerId: string | null | undefined): boolean {
   return (
     isCodexSubscriptionProvider(providerId) ||
     isGitHubCopilotSubscriptionProvider(providerId) ||
     isClaudeSubscriptionProvider(providerId) ||
     isGrokSubscriptionProvider(providerId) ||
-    isCursorSubscriptionProvider(providerId)
+    isCursorSubscriptionProvider(providerId) ||
+    isAntigravitySubscriptionProvider(providerId)
   )
 }
 
@@ -153,6 +168,45 @@ export function isManagedProvider(providerId: string | null | undefined): boolea
 // valid without migration. Each additional account derives providerId `builtin_*@acc_<uuid>`.
 // ----------------------------------------------------------------------------
 
+/** Labels never change default-slot credential locations or provider IDs. */
+export const SUBSCRIPTION_DEFAULT_LABELS_KEY = 'chat.subscriptionDefaultLabels'
+
+export function defaultSubscriptionLabel(kind: ChatSubscriptionProviderKind): string | null {
+  try {
+    const labels: unknown = JSON.parse(getAppSetting(SUBSCRIPTION_DEFAULT_LABELS_KEY) ?? '{}')
+    if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return null
+    const value = (labels as Record<string, unknown>)[kind]
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  } catch {
+    return null
+  }
+}
+
+export function renameDefaultSubscriptionAccount(kind: ChatSubscriptionProviderKind, label: string): void {
+  if (!isChatSubscriptionProviderKind(kind) || !label.trim()) throw new Error('Invalid account label.')
+  const labels: Record<string, string> = {}
+  for (const key of Object.keys(SUBSCRIPTION_BASE_PROVIDERS) as ChatSubscriptionProviderKind[]) {
+    const previous = defaultSubscriptionLabel(key)
+    if (previous) labels[key] = previous
+  }
+  labels[kind] = label.trim()
+  setAppSetting(SUBSCRIPTION_DEFAULT_LABELS_KEY, JSON.stringify(labels))
+}
+
+export function removeDefaultSubscriptionAccountLabel(kind: ChatSubscriptionProviderKind): void {
+  const labels: Record<string, string> = {}
+  for (const key of Object.keys(SUBSCRIPTION_BASE_PROVIDERS) as ChatSubscriptionProviderKind[]) {
+    const label = defaultSubscriptionLabel(key)
+    if (key !== kind && label) labels[key] = label
+  }
+  setAppSetting(SUBSCRIPTION_DEFAULT_LABELS_KEY, JSON.stringify(labels))
+}
+
+function labeledDefaultProvider(base: ChatProvider): ChatProvider {
+  const label = base.builtin && defaultSubscriptionLabel(base.builtin)
+  return label ? { ...base, name: label, accountLabel: label } : base
+}
+
 const SUBSCRIPTION_ACCOUNTS_KEY = 'chat.subscriptionAccounts'
 
 const SUBSCRIPTION_BASE_PROVIDERS: Record<ChatSubscriptionProviderKind, ChatProvider> = {
@@ -161,6 +215,7 @@ const SUBSCRIPTION_BASE_PROVIDERS: Record<ChatSubscriptionProviderKind, ChatProv
   'claude-subscription': CLAUDE_SUBSCRIPTION_PROVIDER,
   'grok-subscription': GROK_SUBSCRIPTION_PROVIDER,
   'cursor-subscription': CURSOR_SUBSCRIPTION_PROVIDER,
+  'antigravity-subscription': ANTIGRAVITY_SUBSCRIPTION_PROVIDER,
 }
 
 /** Persisted additional accounts (creation order). */
@@ -250,7 +305,7 @@ function getSubscriptionProvider(id: string): ChatProvider | undefined {
   )
   if (!base) return undefined
   const accountId = subscriptionAccountId(id)
-  if (!accountId) return base
+  if (!accountId) return labeledDefaultProvider(base)
   const account = getSubscriptionAccount(accountId)
   return account && account.kind === base.builtin ? providerForSubscriptionAccount(account) : undefined
 }
@@ -354,7 +409,7 @@ export function listProviders(): ChatProvider[] {
 export function listAvailableChatProviders(): ChatProvider[] {
   const accounts = listSubscriptionAccounts()
   const withAccounts = (base: ChatProvider): ChatProvider[] => [
-    base,
+    labeledDefaultProvider(base),
     ...accounts.filter((a) => a.kind === base.builtin).map(providerForSubscriptionAccount),
   ]
   return [
@@ -363,6 +418,7 @@ export function listAvailableChatProviders(): ChatProvider[] {
     ...withAccounts(CLAUDE_SUBSCRIPTION_PROVIDER),
     ...withAccounts(GROK_SUBSCRIPTION_PROVIDER),
     ...withAccounts(CURSOR_SUBSCRIPTION_PROVIDER),
+    ...withAccounts(ANTIGRAVITY_SUBSCRIPTION_PROVIDER),
     ...listUserProviders(),
   ]
 }

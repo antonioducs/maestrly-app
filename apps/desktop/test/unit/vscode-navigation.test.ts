@@ -66,7 +66,7 @@ describe('VS Code navigation bridge', () => {
   })
 
   it('reseeds the extension with actual workbench commands and rejects stale sidecars', () => {
-    expect(EXT_VERSION).toBe('0.0.16')
+    expect(EXT_VERSION).toBe('0.0.17')
     expect(EXT_JS).toContain("'workbench.action.navigateBack'")
     expect(EXT_JS).toContain("'workbench.action.navigateForward'")
     expect(EXT_JS).toContain('Date.now() - data.ts > 5000')

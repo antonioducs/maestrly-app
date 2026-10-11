@@ -18,6 +18,7 @@ flowchart LR
   Main --> MCP[Configured MCP servers]
   Main --> ML[Local ML utility process]
   Main --> Browser[Embedded browser surfaces]
+  Main --> Artifacts[Artifact host utility process]
 ```
 
 The primary renderer runs with context isolation enabled and Node integration
@@ -39,6 +40,7 @@ separate Linux gateway and desktop containers used by remote bots, see the
 | `src/shared/` | Pure shared code | Types, schemas, i18n catalogs, domain rules, and serialization contracts |
 | `apps/desktop/runtime-assets/` | Package/runtime tooling | Optional Local ML runtime manifests, archives, and model preparation |
 | `resources/` | Packaged assets | Icons, sounds, notices, and target-specific staged resources |
+| `packages/artifact-host/` | Artifact host package | Artifact storage, versions, HTTP server, and viewer shell; desktop utility process or embedded gateway host |
 
 Shared modules must not import Electron, React, or Node-only APIs. Renderer code
 does not receive raw database handles, arbitrary IPC channels, process handles,
@@ -80,8 +82,8 @@ being exposed directly to React.
 
 The chat service owns conversations, streams, tool state, permissions, usage,
 and persistence. Provider adapters translate one stable internal contract into
-API-key, Codex, Claude, GitHub Copilot, Grok, ChatGPT Web, or compatible
-provider protocols. Provider failures are isolated from other
+API-key, Codex, Claude, GitHub Copilot, Grok, Google Antigravity ACP, ChatGPT
+Web, or compatible provider protocols. Provider failures are isolated from other
 local features.
 
 Maestro coordinates parent and subagent turns through explicit execution
@@ -117,6 +119,36 @@ The ChatGPT Web bridge and embedded editor bind to loopback and use random local
 capability tokens. Tokens are not a substitute for operating-system isolation;
 they limit accidental or unrelated local access while the owning process is
 alive.
+
+[Artifacts](artifacts.md) are hosted only on the bot server. Pages render in a
+sandboxed, opaque-origin frame; see the [security model](security-model.md#artifacts).
+The desktop keeps the artifact host package only for what earlier versions
+published on this computer: it starts the host in a utility process, on a random
+loopback port, to list, move, export, or delete those artifacts, and stops it
+when idle. The main process talks to it over a typed message channel and never
+opens its database. Those artifacts never open in a viewer or accept new
+versions.
+
+The bot gateway embeds the same artifact host with `/data/artifacts` storage
+and a separate viewer listener on container port 4010, published on host
+loopback. Fleet network clients cannot connect to that viewer; the Docker
+bridge gateway remains allowed for forwarded host connections. Paired devices
+call typed admin/upload RPCs through the device API; bots use their internal API
+with method and ownership restrictions. Neither API exposes database snapshots.
+The viewer accepts remapped loopback ports and exact configured public origins.
+
+The desktop publishes only to the paired server and never falls back to this
+computer on failure. The Artifacts center lists the server's artifacts,
+identifying device and bot ownership; conversation tools retain their narrower
+owner and conversation/project scope. The desktop renders missing server
+thumbnails when it lists those versions. Moving an earlier local artifact uses
+device-only export, blob upload, and import RPCs that keep its ID: the gateway
+records the moving device as owner, and the desktop deletes the local copy only
+after reading the server's copy back and finding it identical.
+Installer-managed VPS connections use independent gateway and artifact SSH
+tunnels; local Docker uses a separate loopback artifact port. Public addresses
+and external visitor access are configured manually. See
+[artifact hosting](artifacts.md#hosting).
 
 ## Local ML and package boundaries
 

@@ -21,9 +21,11 @@ import type { DesktopModelCatalog } from './desktop-executor'
 import type { DesktopExecutorSettings } from './executor-settings'
 import type { DesktopProjectChatClient } from './project-chat-client'
 import { registerProjectChatContext } from './project-chat-context'
-import { ProjectChatProjection, chatWorkspaceKey, publicChatText } from './project-chat-projection'
+import { ProjectChatProjection, chatPublicId, publicChatText } from './project-chat-projection'
 import * as journal from './project-chat-store'
 
+export const chatWorkspaceKey = (b: PlatformProjectBinding) =>
+  chatPublicId(b.connectionId + ':' + b.projectId + ':' + b.workspaceId)
 export function projectChatPreferences(
   session: Pick<ProjectChatSession, 'mode' | 'reasoning' | 'fastMode' | 'permMode'>,
   settings: DesktopExecutorSettings,
@@ -66,7 +68,7 @@ export interface RemoteChatHost {
   ): Promise<{ done: Promise<{ status: string; error?: string }>; cancel(): void }>
   decide(conversationId: string, interaction: ProjectChatInteraction): Promise<void>
 }
-export const nativeRemoteChatHost: RemoteChatHost = {
+const nativeHost: RemoteChatHost = {
   async start(conversationId, prompt, signal) {
     const { startExecutorChatTurn } = await import('../chat/service')
     return startExecutorChatTurn({ conversationId, prompt, signal, remoteAdmission: true })
@@ -89,16 +91,16 @@ export const nativeRemoteChatHost: RemoteChatHost = {
   },
 }
 export class ProjectChatWorker {
-  protected stopped = false
-  protected controller: AbortController | null = null
+  private stopped = false
+  private controller: AbortController | null = null
   constructor(
-    protected client: DesktopProjectChatClient,
-    protected catalog: DesktopModelCatalog,
-    protected settings: DesktopExecutorSettings,
-    protected bindings: PlatformProjectBinding[],
-    protected instanceId: string,
-    protected url: string,
-    protected host: RemoteChatHost = nativeRemoteChatHost
+    private client: DesktopProjectChatClient,
+    private catalog: DesktopModelCatalog,
+    private settings: DesktopExecutorSettings,
+    private bindings: PlatformProjectBinding[],
+    private instanceId: string,
+    private url: string,
+    private host: RemoteChatHost = nativeHost
   ) {}
   async inventory(): Promise<ChatInventory> {
     const workspaces: ChatInventory['workspaces'] = []
@@ -142,18 +144,8 @@ export class ProjectChatWorker {
     this.stopped = true
     this.controller?.abort()
   }
-  /**
-   * Whether a pending turn belongs to this loop. Two workers share the local journal on one computer, so
-   * each one must only recover the turns it started: recovering someone else's would interrupt a turn that
-   * is still running.
-   */
-  protected ownsTurn(turnId: string): boolean {
-    return !journal.delegationAttemptFor(turnId)
-  }
-
   async recover() {
     for (const turn of journal.pendingChatTurns(this.instanceId)) {
-      if (!this.ownsTurn(turn.turn_id)) continue
       try {
         if (turn.state === 'finishing') await this.flush(turn.turn_id, turn.lease_id)
         await this.client.complete(
@@ -180,7 +172,7 @@ export class ProjectChatWorker {
       try {
         await this.recover()
         if (Date.now() - at > 30000) {
-          await this.publishInventory()
+          await this.client.inventory(await this.inventory())
           at = Date.now()
         }
         await this.runOnce()
@@ -190,38 +182,14 @@ export class ProjectChatWorker {
       if (!this.stopped) await pause(500)
     }
   }
-  /** Overridden by the delegation worker, which advertises its own inventory. */
-  protected async publishInventory(): Promise<void> {
-    await this.client.inventory(await this.inventory())
-  }
-  /** Source of work for this loop. The delegation worker claims stages instead of interactive turns. */
-  protected claimNext(): Promise<ProjectChatClaim | null> {
-    return this.client.claim()
-  }
-  /**
-   * Hook that runs after the local turn finished and before the completion is reported, so a stage receipt
-   * reaches the server in the same exchange that concludes the turn.
-   */
-  protected async beforeComplete(
-    _claim: ProjectChatClaim,
-    _leaseId: string,
-    _completion: { state: 'succeeded' | 'failed' | 'cancelled' | 'interrupted'; error: string | null },
-    _context: { conversationId: string | null; startedAt: number }
-  ): Promise<void> {}
-  /** Cleanup for resources a subclass attached to this turn, always awaited. */
-  protected async afterTurn(_claim: ProjectChatClaim): Promise<void> {}
-  /** Prompt actually sent to the local engine. Delegation stages replace the interactive framing. */
-  protected renderPrompt(conversationId: string, session: ProjectChatSession, prompt: string): string {
-    return projectChatPrompt(conversationId, session, prompt)
-  }
-  protected async flush(turnId: string, leaseId: string) {
+  private async flush(turnId: string, leaseId: string) {
     for (let batch = journal.chatOutbox(turnId); batch.length; batch = journal.chatOutbox(turnId)) {
       const result = await this.client.events(turnId, leaseId, batch)
       if (result.accepted.length !== batch.length) throw new Error('Chat upload acknowledgement was incomplete.')
       journal.ackChatEvents(result.accepted)
     }
   }
-  protected async prepare(claim: ProjectChatClaim): Promise<string> {
+  private async prepare(claim: ProjectChatClaim) {
     const b = this.bindings.find(
       (b) =>
         b.projectId === claim.session.projectId &&
@@ -275,7 +243,7 @@ export class ProjectChatWorker {
   }
   async runOnce(): Promise<boolean> {
     if (this.stopped) return false
-    const claim = await this.claimNext()
+    const claim = await this.client.claim()
     if (!claim) return false
     const { turn, session } = claim,
       leaseId = turn.leaseId!
@@ -301,7 +269,6 @@ export class ProjectChatWorker {
         handle?.cancel()
       }
     }, 250)
-    const startedAt = Date.now()
     let pending: ChatPayload[] = []
     const enqueue = (payload: ChatPayload) => {
       // Adjacent text chunks are coalesced; identifiers and durable ordering survive upload retries.
@@ -422,7 +389,7 @@ export class ProjectChatWorker {
         }
       }
       handle = await withRemoteChatPolicy(policy, () =>
-        this.host.start(conversationId, this.renderPrompt(conversationId, session, prompt), abort.signal)
+        this.host.start(conversationId, projectChatPrompt(conversationId, session, prompt), abort.signal)
       )
       if (abort.signal.aborted) handle.cancel()
       const result = await handle.done
@@ -443,7 +410,6 @@ export class ProjectChatWorker {
         error: failure?.message ?? result.error ?? null,
       }
       journal.recordChatCompletion(turn.id, completion)
-      await this.beforeComplete(claim, leaseId, completion, { conversationId, startedAt })
       await this.client.complete(turn.id, completion)
       journal.finishLocalChatTurn(turn.id)
     } catch (error) {
@@ -463,7 +429,6 @@ export class ProjectChatWorker {
       try {
         persist()
         await this.flush(turn.id, leaseId)
-        await this.beforeComplete(claim, leaseId, completion, { conversationId: null, startedAt })
         await this.client.complete(turn.id, completion)
         journal.finishLocalChatTurn(turn.id)
       } catch (e) {
@@ -475,7 +440,6 @@ export class ProjectChatWorker {
       detach()
       releasePolicy()
       releaseContext()
-      await this.afterTurn(claim).catch(() => undefined)
       this.controller = null
     }
     return true

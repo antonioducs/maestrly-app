@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { closeDb, freshDb } from '../helpers/db'
 
 const h = vi.hoisted(() => ({ getConversation: vi.fn(), listPages: vi.fn(), writePage: vi.fn() }))
-vi.mock('../../src/main/store', () => ({ getConversation: h.getConversation }))
+vi.mock('../../src/main/store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/store')>()),
+  getConversation: h.getConversation,
+}))
 vi.mock('../../src/main/notes/notes-service', () => ({
   listPages: h.listPages,
   writePage: h.writePage,
@@ -28,7 +32,11 @@ function context() {
   return { ctx, handlers }
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  freshDb()
+})
+afterEach(closeDb)
 
 describe('standalone project tool admission', () => {
   it('does not register project notes or project memory directly', () => {
@@ -36,7 +44,15 @@ describe('standalone project tool admission', () => {
     const { ctx, handlers } = context()
     registerProjectNotesTools(ctx)
     registerMemoryTools(ctx)
-    expect(handlers.size).toBe(0)
+    expect([...handlers.keys()].sort()).toEqual([
+      'memory_archive',
+      'memory_forget',
+      'memory_list',
+      'memory_read',
+      'memory_restore',
+      'memory_search',
+      'memory_upsert',
+    ])
   })
 
   it('rechecks scope when a previously registered project notes handler is called', async () => {

@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import {autonomousReportTools} from '../autonomous-tools'
 /**
  * Tool registry + Vercel AI SDK adapter. Ported from opencode tool/registry.ts: replaces
@@ -19,7 +20,13 @@ import { generateImageTool } from './generate-image'
 import { gitDiffTool } from './git-diff'
 import { readExecutionContextTool, searchExecutionContextTool } from './execution-context'
 import { submitReviewTool } from './submit-review'
-import { listConversationModelsTool, startConversationsTool } from './conversation-dispatch'
+import {
+  createWorkspaceTool,
+  findGithubRepositoriesTool,
+  listConversationModelsTool,
+  listConversationWorkspacesTool,
+  startConversationsTool,
+} from './conversation-dispatch'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -44,7 +51,10 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   readExecutionContextTool,
   submitReviewTool,
   listConversationModelsTool,
+  listConversationWorkspacesTool,
   startConversationsTool,
+  findGithubRepositoriesTool,
+  createWorkspaceTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 
@@ -249,6 +259,7 @@ export function builtinToolNamesForMode(mode: ChatBehavior): Set<string> {
       : capabilities === 'plan'
         ? new Set([...READ_ONLY_TOOL_NAMES, PLAN_TOOL_NAME])
         : new Set(READ_ONLY_TOOL_NAMES)
+  if (isBotMode()) selected.delete(PLAN_TOOL_NAME)
   return selected
 }
 
@@ -280,6 +291,7 @@ export function buildTools(opts: {
 }): ToolSet {
   const out: ToolSet = {}
   for (const def of ALL_TOOLS) {
+    if (def.name === PLAN_TOOL_NAME && isBotMode()) continue
     if (opts.enabled && !opts.enabled.has(def.name)) continue
     out[def.name] = toAiTool(def, opts.makeCtx)
   }

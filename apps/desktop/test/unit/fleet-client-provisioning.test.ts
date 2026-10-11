@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     { id: 'copilot', name: 'Copilot', builtin: 'github-copilot-subscription' },
     { id: 'cursor', name: 'Cursor', builtin: 'cursor-subscription' },
     { id: 'codex', name: 'Codex', builtin: 'codex-subscription' },
+    { id: 'antigravity', name: 'Google AI', builtin: 'antigravity-subscription' },
   ],
   key: vi.fn((): string | null => 'synthetic-api-secret'),
   package: vi.fn(
@@ -46,6 +47,9 @@ vi.mock('../../src/main/chat/codex-subscription', () => ({
 }))
 vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   getClaudeSubscriptionManager: () => ({ peekStatus: () => null }),
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
+  getAntigravitySubscriptionManager: () => ({ getStatus: () => ({ authenticated: true }) }),
 }))
 vi.mock('../../src/main/chat/grok-subscription', () => ({
   getGrokSubscriptionManager: () => ({ getStatusSnapshot: () => null }),
@@ -79,6 +83,13 @@ describe('Mac provisioning', () => {
   it('returns inventory without stored secrets or starting runtimes', async () => {
     const inventory = await buildMacInventory()
     expect(inventory.apiKeys[0].localOnly).toBe(true)
+    expect(inventory.logins).toContainEqual({
+      id: 'antigravity:default',
+      kind: 'antigravity',
+      label: 'Google AI',
+      email: null,
+    })
+    expect(inventory.copies.map((item) => item.kind)).not.toContain('antigravity')
     expect(inventory.logins[0]).toMatchObject({ email: 'owner@example.test' })
     for (const secret of [
       'synthetic-api-secret',

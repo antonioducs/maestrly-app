@@ -80,6 +80,10 @@ const { getPerformanceDiagnostics, registerPerformanceWebContents, unregisterPer
 const { registerPerformanceCache, unregisterPerformanceCache } = await import('../../src/main/performance/metrics')
 const { EXTERNAL_RSS_SAMPLE_INTERVAL_MS } = await import('../../src/shared/memory-policy')
 
+// Registration happens once, on module load, and Vitest clears mock history before each test: keep what import did.
+const pressureSampleRegistrations = h.registerPressureSampleSource.mock.calls.map(([source]) => source)
+const pressureSampleSource = pressureSampleRegistrations[0] as () => Promise<{ workingSetBytes: number }>
+
 /** ProcessMetric in Electron format, with memory in KiB. */
 function processMetric(pid: number, name: string, workingSetKiB: number, peakKiB: number, privateKiB?: number) {
   return {
@@ -98,8 +102,6 @@ function processMetric(pid: number, name: string, workingSetKiB: number, peakKiB
 
 beforeEach(() => {
   h.noteMemorySample.mockReset()
-  // Keep registerPressureSampleSource history: registration happens once on module load.
-  // Its dedicated assertion relies on the calls accumulated since import.
   h.getAppMetrics.mockReset()
   h.collectOwnedProcessSnapshots.mockReset().mockResolvedValue([])
   h.ownedProcessRegistryFingerprint.mockReset().mockReturnValue('')
@@ -203,8 +205,8 @@ describe('getPerformanceDiagnostics — memory units', () => {
   })
 
   it('registers the periodic pressure sample source with the reclaimer', async () => {
-    expect(h.registerPressureSampleSource).toHaveBeenCalledTimes(1)
-    expect(typeof h.registerPressureSampleSource.mock.calls[0]![0]).toBe('function')
+    expect(pressureSampleRegistrations).toHaveLength(1)
+    expect(typeof pressureSampleSource).toBe('function')
   })
 
   it('does not add in-process caches to pressure totals; attribution is not resident memory', async () => {
@@ -244,9 +246,7 @@ describe('getPerformanceDiagnostics — memory units', () => {
       h.collectOwnedProcessSnapshots
         .mockResolvedValueOnce([{ key: 'pty-1', kind: 'pty', pid: 999, state: 'idle', rss: 10 * 1024 * 1024 }])
         .mockResolvedValueOnce([{ key: 'pty-1', kind: 'pty', pid: 999, state: 'idle', rss: 20 * 1024 * 1024 }])
-      const source = h.registerPressureSampleSource.mock.calls[0]![0] as () => Promise<{
-        workingSetBytes: number
-      }>
+      const source = pressureSampleSource
 
       // Tick 1: stale cache requires a fresh sample and spawn.
       expect((await source()).workingSetBytes).toBe(100_000 * 1024 + 10 * 1024 * 1024)
@@ -288,9 +288,7 @@ describe('getPerformanceDiagnostics — memory units', () => {
             pids: [700, 701],
           },
         ])
-      const source = h.registerPressureSampleSource.mock.calls[0]![0] as () => Promise<{
-        workingSetBytes: number
-      }>
+      const source = pressureSampleSource
 
       // Tick 1: fresh sample includes only the PTY.
       expect((await source()).workingSetBytes).toBe(100_000 * 1024 + 10 * 1024 * 1024)
@@ -332,9 +330,7 @@ describe('getPerformanceDiagnostics — memory units', () => {
           },
         ])
         .mockResolvedValueOnce([{ key: 'pty-1', kind: 'pty', pid: 999, state: 'idle', rss: 10 * 1024 * 1024 }])
-      const source = h.registerPressureSampleSource.mock.calls[0]![0] as () => Promise<{
-        workingSetBytes: number
-      }>
+      const source = pressureSampleSource
 
       // Tick 1: fresh sample includes PTY and serve-web pressure.
       expect((await source()).workingSetBytes).toBe(100_000 * 1024 + (10 + 80) * 1024 * 1024)
@@ -484,9 +480,7 @@ describe('getPerformanceDiagnostics — memory units', () => {
             },
           ]
         })
-      const source = h.registerPressureSampleSource.mock.calls[0]![0] as () => Promise<{
-        workingSetBytes: number
-      }>
+      const source = pressureSampleSource
       // Tick 1: the previous cache has expired; collect the tree and RSS.
       expect((await source()).workingSetBytes).toBe(100_000 * 1024 + 60 * 1024 * 1024)
       expect(h.collectOwnedProcessSnapshots).toHaveBeenCalledTimes(1)
@@ -517,9 +511,7 @@ describe('getPerformanceDiagnostics — memory units', () => {
       h.collectOwnedProcessSnapshots
         .mockResolvedValueOnce([{ key: 'pty-1', kind: 'pty', pid: 999, state: 'idle', rss: 10 * 1024 * 1024 }])
         .mockResolvedValueOnce([{ key: 'pty-1', kind: 'pty', pid: 999, state: 'idle', rss: 20 * 1024 * 1024 }])
-      const source = h.registerPressureSampleSource.mock.calls[0]![0] as () => Promise<{
-        workingSetBytes: number
-      }>
+      const source = pressureSampleSource
 
       // Tick 1: fresh sample.
       expect((await source()).workingSetBytes).toBe(100_000 * 1024 + 10 * 1024 * 1024)

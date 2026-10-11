@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "outDir": "build/shell",
+    "rootDir": "src/shell",
+    "skipLibCheck": true
+  },
+  "include": ["src/shell/**/*.ts"]
+}

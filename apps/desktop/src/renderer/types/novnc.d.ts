@@ -7,6 +7,8 @@ declare module '@novnc/novnc' {
     qualityLevel: number
     compressionLevel: number
     focus(options?: FocusOptions): void
+    clipboardPasteFrom(text: string): void
+    sendKey(keysym: number, code: string, down?: boolean): void
     disconnect(): void
   }
 }

@@ -213,6 +213,31 @@ export function ChatGptWebAccessEditor({
         </div>
       </section>
 
+      {!project && (
+        <section className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/[0.05] p-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium">{t('chatGptWebAccess.personalMemoryTitle')}</span>
+            <OptionSelect
+              aria-label={t('chatGptWebAccess.personalMemoryTitle')}
+              className={selectClassName}
+              value={capabilities.personalMemory ?? 'off'}
+              disabled={controlsDisabled}
+              onValueChange={(value) => {
+                if (!controlsDisabled) onChange({ ...capabilities, personalMemory: value as ChatGptWebCapabilityScope })
+              }}
+            >
+              <SelectOption value="off">{t('chatGptWebAccess.scopeOff')}</SelectOption>
+              <SelectOption value="read">{t('chatGptWebAccess.scopeRead')}</SelectOption>
+              <SelectOption value="write">{t('chatGptWebAccess.scopeWrite')}</SelectOption>
+            </OptionSelect>
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">{t('chatGptWebAccess.personalMemoryDescription')}</p>
+          {capabilities.personalMemory === 'write' && (
+            <p className="mt-1 text-[10px] text-amber-200">{t('chatGptWebAccess.personalMemoryWriteDescription')}</p>
+          )}
+        </section>
+      )}
+
       {project && (
         <section className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/[0.05] p-2.5">
           <div className="flex items-start gap-2">

@@ -39,6 +39,7 @@ export function useSidebarMenus({
   groups,
   startRename,
   onPinConversation,
+  onOpenChatWindow,
   onArchiveConversation,
   onDeleteConversation,
   onMigrateConversation,
@@ -60,6 +61,7 @@ export function useSidebarMenus({
   startRename: (conv: Conversation, instanceKey: string) => void
 
   onPinConversation: (conv: Conversation, pinned: boolean) => Promise<void> | void
+  onOpenChatWindow: (conv: Conversation) => void
   onArchiveConversation: (conv: Conversation, archived: boolean) => void
   onDeleteConversation: (conv: Conversation) => void
   onMigrateConversation: (conv: Conversation) => void
@@ -148,6 +150,16 @@ export function useSidebarMenus({
 
   const convMenuItems = (conv: Conversation, isArchived: boolean, instanceKey: string, m: MenuKit) => (
     <>
+      {!isArchived && (
+        <m.Item
+          onClick={(event: MouseEvent) => {
+            event.stopPropagation()
+            onOpenChatWindow(conv)
+          }}
+        >
+          <ExternalLink /> {t('chatWindow.open')}
+        </m.Item>
+      )}
       <m.Item
         onClick={(e: MouseEvent) => {
           e.stopPropagation()

@@ -1,3 +1,5 @@
+import { ArtifactHosting } from '../src/artifact-hosting.js'
+import { FleetNetwork } from '../src/network.js'
 import { afterEach, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
@@ -41,9 +43,10 @@ afterEach(async () => {
 /**
  * A synthetic bot instance. With `environments` it hosts several bots like an environment's Maestrly: it installs
  * and uninstalls them and serves each one's routes under `/v1/bots/:botId`, recorded in `botRequests`. With
- * `compaction` it also lists its environment's models, as a Maestrly with environment compaction defaults does.
+ * `compaction` it also lists its environment's models, as a Maestrly with environment compaction defaults does. With
+ * `runtimes` its statuses report its Claude Code and Codex versions and it accepts runtime checks.
  */
-async function fake(environments: boolean, compaction = false) {
+async function fake(environments: boolean, compaction = false, runtimes = false) {
   let account: { id: string; label: string } | null = null
   const installed = new Map<string, { slot: number; gatewayToken: string }>()
   const installs: FleetInstanceBotInstall[] = []
@@ -65,7 +68,7 @@ async function fake(environments: boolean, compaction = false) {
    * Installations to refuse with a synthetic internal error, or to drop (the connection closes unanswered), the next
    * ones first; and how many installations were asked for, answered or not.
    */
-  const control = { installFailures: 0, installDrops: 0, installAttempts: 0 }
+  const control = { installFailures: 0, installDrops: 0, installAttempts: 0, runtimeChecks: 0 }
   const selectionOptions = [
     {
       id: 'prov_test::model-a',
@@ -79,8 +82,39 @@ async function fake(environments: boolean, compaction = false) {
   ]
   const provisioning = {
     capabilities: environments
-      ? ['provisioning', 'environments', ...(compaction ? ['environment-compaction'] : [])]
+      ? [
+          'provisioning',
+          'environments',
+          ...(compaction ? ['environment-compaction'] : []),
+          ...(runtimes ? ['runtime-updates'] : []),
+        ]
       : ['provisioning'],
+    runtimes: runtimes
+      ? ([
+          {
+            id: 'claude-code',
+            version: '2.1.285',
+            source: 'image',
+            pendingVersion: null,
+            automatic: true,
+            state: 'up-to-date',
+            availableVersion: null,
+            lastCheckedAt: '2026-09-29T10:00:00.000Z',
+            error: null,
+          },
+          {
+            id: 'codex',
+            version: '0.155.1',
+            source: 'image',
+            pendingVersion: null,
+            automatic: true,
+            state: 'up-to-date',
+            availableVersion: null,
+            lastCheckedAt: '2026-09-29T10:00:00.000Z',
+            error: null,
+          },
+        ] as import('@maestrly/bot-fleet-protocol').FleetRuntimeInfo[])
+      : null,
     results: { results: [{ index: 0, target: 'prov_test', outcome: 'added', error: null }] } as FleetImportResults,
     /** What a workspaces host says about its running chats on a health check; null says nothing. */
     busy: null as boolean | null,
@@ -173,6 +207,7 @@ async function fake(environments: boolean, compaction = false) {
       queue: [],
       activity: null,
       pending: [],
+      ...(provisioning.runtimes ? { runtimes: provisioning.runtimes } : {}),
       lastEventSeq: 0,
     }
     let body: unknown
@@ -311,6 +346,10 @@ async function fake(environments: boolean, compaction = false) {
         hold = { state: 'none', reason: null, since: null, interruptedTurn: false }
         return send(200, hold)
       }
+      if (runtimes && req.url === '/v1/runtimes/check' && req.method === 'POST') {
+        control.runtimeChecks++
+        return send(200, { ok: true })
+      }
       if (req.url === '/v1/ui/open' && req.method === 'POST') {
         uiOpens.push(body)
         res.writeHead(204)
@@ -366,9 +405,9 @@ async function fake(environments: boolean, compaction = false) {
  */
 export async function harness(
   now: () => number = Date.now,
-  options: { environments?: boolean; compaction?: boolean } = {}
+  options: { environments?: boolean; compaction?: boolean; runtimes?: boolean } = {}
 ) {
-  const instance = await fake(options.environments === true, options.compaction === true),
+  const instance = await fake(options.environments === true, options.compaction === true, options.runtimes === true),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
   const cfg = loadConfig({
@@ -394,7 +433,18 @@ export async function harness(
     one = auth.pair(auth.createPairing().code, 'Mac', 'one'),
     events: import('@maestrly/bot-fleet-protocol').FleetGatewayEvent[] = []
   lifecycle.onEvent = (event) => events.push(event)
+  const network = new FleetNetwork(docker, cfg.network)
+  const artifacts = new ArtifactHosting({
+    store,
+    config: { ...cfg, artifactsPort: 0 },
+    network,
+    emit: (event) => events.push(event),
+    onEnabledChange: () => lifecycle.refreshProfiles(),
+  })
+  lifecycle.artifactsEnabled = () => artifacts.settings().enabled
   const gateway = createGatewayServers({
+    network,
+    artifacts,
     auth,
     config: { ...cfg, publicPort: 0, internalPort: 0 },
     events: new EventHub(async () => {}),
@@ -431,6 +481,7 @@ export async function harness(
     })
   return {
     dir,
+    artifacts,
     store,
     docker,
     lifecycle,

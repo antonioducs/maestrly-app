@@ -108,6 +108,16 @@ export function useFleet() {
       setActionError({ botId: null, environmentId, message: fleetErrorMessage(error) })
     }
   }, [])
+  /** Asks the environment to check for Claude Code and Codex releases; the answer shows the check started. */
+  const checkEnvironmentRuntimes = useCallback(async (environmentId: string) => {
+    setActionError(null)
+    try {
+      const environment = await window.api.fleetEnvironmentRuntimesCheck(environmentId)
+      dispatch({ type: 'event', value: { type: 'environment.updated', at: new Date().toISOString(), environment } })
+    } catch (error) {
+      setActionError({ botId: null, environmentId, message: fleetErrorMessage(error) })
+    }
+  }, [])
   const resolve = useCallback(
     async (botId: string, id: string, resolution: FleetInteractionResolution) => {
       await window.api.fleetResolveInteraction(botId, id, resolution)
@@ -128,6 +138,7 @@ export function useFleet() {
     environmentAction,
     updateEnvironment,
     cancelEnvironmentUpdate,
+    checkEnvironmentRuntimes,
     resolve,
     actionError,
   }

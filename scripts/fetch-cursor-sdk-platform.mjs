@@ -5,33 +5,33 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-export const CURSOR_SDK_VERSION = '1.0.31'
-// npm dist.integrity, verified 2026-09-19. Upgrades require deliberate repinning.
+export const CURSOR_SDK_VERSION = '1.0.34'
+// npm dist.integrity, checked against downloaded bytes 2026-09-30. Upgrades require deliberate repinning.
 export const TARGETS = [
   {
     id: 'mac-arm64',
     npmSuffix: 'darwin-arm64',
-    integrity: 'sha512-i6INDIQhV7xDeFKfND0yr/SOwv4uJthPMfXXvNpZapO+IbJTx30aPzJVMBqdksvDHyn/cekJB/92Jkz+a5K8Ow==',
+    integrity: 'sha512-V8ocCa606x3It1Be/2qSOxL3iXow9dgNiOX71cQORAQt7c8i6g+/hFw4KpOz/cUn4RZ8zv1S87ZyLy+c+AJ9eQ==',
   },
   {
     id: 'mac-x64',
     npmSuffix: 'darwin-x64',
-    integrity: 'sha512-vCmrGykwflJNAAr4RVY4UlZ+F0fmUF+WCR8zFzP4Jl1Da2b8Oh1rxrVLbIbleS1/LKsX/OPbTQNRL0SEER95Sg==',
+    integrity: 'sha512-luq4CjDveDFoIo5pcP9Vrwp+yCMM4sMr2AVO7UqHpDskKUaQEX6iHOHjqYP6jkUMzFbf1fXkEYyBJlhKCGmdxg==',
   },
   {
     id: 'linux-arm64',
     npmSuffix: 'linux-arm64',
-    integrity: 'sha512-BHTwumfhWjTy0k41+KaaXfTm3MGu6WEYU76FmXqc/r1+ynuQroqfBKWyfH4XBcx3uzyaZJQLxNB9BBbs8yHUig==',
+    integrity: 'sha512-o0/EOyl5WadSqg7oFx7bfsnYh6XLaw3g6BeNqYav2Al85Qzk/AgLZHbjs1unBPBpQos54+goEbgrfZuST1mzyA==',
   },
   {
     id: 'linux-x64',
     npmSuffix: 'linux-x64',
-    integrity: 'sha512-y+ahiKQvEISUn9y6z75jwKjLQkrJ/nY7ehL1Vi9X8zdbjz14fiEtMTICAHccTiTq5cf6dZjXC5QfPdJRat6dhg==',
+    integrity: 'sha512-5i2g8OCSnjiTQfhwV42y5Xpa4sAzwWEIs+oO47iG4QUXWuymrjnjZcQynAtsNkpZ7bzBaYT/0/geW08IJ7zuLg==',
   },
   {
     id: 'win-x64',
     npmSuffix: 'win32-x64',
-    integrity: 'sha512-5ti4AwUz8kh5ovM86K/fTiHmVGL6jk1faQkTCX08lcCxFSlUDwpeyhn90pWsbNFQ4Vy2PttqEjanV6895p13eA==',
+    integrity: 'sha512-yn3V3ueSqbQWj+uaJp/lRFHaVmMgpJqQdI4MLv416Jgm5kfffrVTo7/ffjFu/CGhVUTvkPaifMXvI+zFhx3oOw==',
   },
 ]
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -131,38 +131,67 @@ export function platformPackageSuffixesToPrune(targets) {
   const keep = new Set(targets.map((target) => target.npmSuffix))
   return TARGETS.filter((target) => !keep.has(target.npmSuffix)).map((target) => target.npmSuffix)
 }
-export async function main(argv = process.argv.slice(2)) {
-  const options = parseArgs(argv)
-  const sdk = JSON.parse(readFileSync(path.join(root, 'node_modules/@cursor/sdk/package.json'), 'utf8'))
-  if (sdk.version !== CURSOR_SDK_VERSION) fail(`Expected @cursor/sdk ${CURSOR_SDK_VERSION}, found ${sdk.version}`)
-  for (const target of options.targets) {
-    const destination = path.join(root, 'node_modules/@cursor', `sdk-${target.npmSuffix}`)
-    const temporary = `${destination}.tmp-${process.pid}`
-    rmSync(temporary, { recursive: true, force: true })
-    try {
-      const url = `https://registry.npmjs.org/@cursor/sdk-${target.npmSuffix}/-/sdk-${target.npmSuffix}-${CURSOR_SDK_VERSION}.tgz`
-      const response = await fetch(url, { signal: AbortSignal.timeout(120000) })
-      if (!response.ok) fail(`Download failed (${response.status}): ${url}`)
-      const tarball = Buffer.from(await response.arrayBuffer())
-      verifyIntegrity(tarball, target.integrity)
-      extractPackage(tarball, temporary)
-      const pkg = JSON.parse(readFileSync(path.join(temporary, 'package.json'), 'utf8'))
-      if (
-        pkg.name !== `@cursor/sdk-${target.npmSuffix}` ||
-        pkg.version !== CURSOR_SDK_VERSION ||
-        !existsSync(path.join(temporary, 'vendor/tree-sitter/index.js'))
-      )
-        fail('Invalid SDK platform package')
-      rmSync(destination, { recursive: true, force: true })
-      renameSync(temporary, destination)
-      console.log(`[cursor-sdk] Verified ${target.id}@${CURSOR_SDK_VERSION}`)
-    } finally {
-      rmSync(temporary, { recursive: true, force: true })
+/**
+ * Resolve `@cursor/sdk` as the desktop workspace does: apps/desktop/node_modules
+ * first, then each parent up to the checkout root, so both npm layouts work.
+ */
+export function resolveCursorSdk(repoRoot = root) {
+  const searched = []
+  for (let dir = path.join(repoRoot, 'apps', 'desktop'); ; dir = path.dirname(dir)) {
+    const directory = path.join(dir, 'node_modules', '@cursor', 'sdk')
+    searched.push(directory)
+    const manifest = path.join(directory, 'package.json')
+    if (existsSync(manifest)) {
+      const { version } = JSON.parse(readFileSync(manifest, 'utf8'))
+      if (version !== CURSOR_SDK_VERSION) {
+        fail(`Expected @cursor/sdk ${CURSOR_SDK_VERSION}, found ${version} at ${directory}`)
+      }
+      // The SDK locates helpers as node_modules/@cursor/sdk-<platform>, beside itself.
+      return { directory, helperRoot: path.dirname(directory) }
     }
+    if (path.resolve(dir) === path.resolve(repoRoot) || path.dirname(dir) === dir) break
   }
+  fail(`@cursor/sdk is not installed for apps/desktop; searched ${searched.join(', ')}`)
+}
+export function helperBinary(target) {
+  return target.npmSuffix.startsWith('win32-') ? 'rg.exe' : 'rg'
+}
+/** Download, verify, and atomically replace one helper beside the resolved SDK. */
+export async function installTarget(target, helperRoot, { fetch: download = globalThis.fetch } = {}) {
+  const destination = path.join(helperRoot, `sdk-${target.npmSuffix}`)
+  const temporary = `${destination}.tmp-${process.pid}`
+  rmSync(temporary, { recursive: true, force: true })
+  try {
+    const url = `https://registry.npmjs.org/@cursor/sdk-${target.npmSuffix}/-/sdk-${target.npmSuffix}-${CURSOR_SDK_VERSION}.tgz`
+    const response = await download(url, { signal: AbortSignal.timeout(120000) })
+    if (!response.ok) fail(`Download failed (${response.status}): ${url}`)
+    const tarball = Buffer.from(await response.arrayBuffer())
+    verifyIntegrity(tarball, target.integrity)
+    extractPackage(tarball, temporary)
+    const manifest = path.join(temporary, 'package.json')
+    const pkg = existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf8')) : {}
+    if (
+      pkg.name !== `@cursor/sdk-${target.npmSuffix}` ||
+      pkg.version !== CURSOR_SDK_VERSION ||
+      !existsSync(path.join(temporary, 'bin', helperBinary(target))) ||
+      !existsSync(path.join(temporary, 'vendor/tree-sitter/index.js'))
+    )
+      fail('Invalid SDK platform package')
+    rmSync(destination, { recursive: true, force: true })
+    renameSync(temporary, destination)
+    console.log(`[cursor-sdk] Verified ${target.id}@${CURSOR_SDK_VERSION} at ${destination}`)
+    return destination
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
+}
+export async function main(argv = process.argv.slice(2), { repoRoot = root, fetch: download = globalThis.fetch } = {}) {
+  const options = parseArgs(argv)
+  const { helperRoot } = resolveCursorSdk(repoRoot)
+  for (const target of options.targets) await installTarget(target, helperRoot, { fetch: download })
   if (options.prune)
     for (const suffix of platformPackageSuffixesToPrune(options.targets)) {
-      rmSync(path.join(root, 'node_modules/@cursor', `sdk-${suffix}`), { recursive: true, force: true })
+      rmSync(path.join(helperRoot, `sdk-${suffix}`), { recursive: true, force: true })
     }
   if (!options.targets.length)
     console.log('[cursor-sdk] Windows ARM64: provider unavailable; continuing application build')

@@ -17,6 +17,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, Pencil, ArrowDown } from 'lucide-react'
+import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPrefill } from '@/lib/composer-prefill'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -74,9 +75,11 @@ import { ChatMessageList } from './ChatMessageList'
 import {
   boundChatHistoryWindow,
   mergeLiveChatHistory,
+  withConversationId,
   CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
+import { useChatOwnerWindow, useChatSourceConversation } from '@/lib/chat-window-context'
 import { draftAttachmentKind, hasArtifactAttachment } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -102,6 +105,7 @@ import { ContextCompactionStatus } from './ContextCompactionStatus'
 import { BackgroundCompactionStatus } from './BackgroundCompactionStatus'
 import { contextMeterReading, sameContextModel, selectContextObservation } from './context-observation'
 import { ChatMicButton } from './ChatMicButton'
+import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
@@ -170,6 +174,8 @@ export function ChatView({
 }: Props) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
+  const ownerWindow = useChatOwnerWindow()
+  const showSourceConversation = useChatSourceConversation()
   // A released chat still belongs to its bot; what changes is that the person may write in it too.
   const botBlocked = botManaged && !botConversation?.botManualChatEnabled
   const [currentExperience, setCurrentExperience] = useState(experience)
@@ -254,7 +260,21 @@ export function ChatView({
     (reviewLoop.driver === 'chatgpt-web'
       ? isReviewLoopConversationReserved(reviewLoop.status)
       : reviewLoop.status !== 'finished' && reviewLoop.status !== 'cancelled' && reviewLoop.status !== 'interrupted')
-  const [draft, setDraft] = useState('')
+  // A conversation opened for a purpose (such as a suggested request) starts with that text in the composer.
+  const [draft, setDraft] = useState(() => peekComposerPrefill(conversationId) ?? '')
+  useEffect(() => clearComposerPrefill(conversationId), [conversationId])
+  // Text offered while this conversation is already on screen joins what is being written; nothing is sent.
+  useEffect(() => {
+    const onDraft = (event: Event) => {
+      if ((event as CustomEvent<{ conversationId?: string }>).detail?.conversationId !== conversationId) return
+      const offered = peekComposerPrefill(conversationId)
+      if (offered === undefined) return
+      clearComposerPrefill(conversationId)
+      setDraft((current) => joinDraft(current, offered))
+    }
+    window.addEventListener(COMPOSER_DRAFT_EVENT, onDraft)
+    return () => window.removeEventListener(COMPOSER_DRAFT_EVENT, onDraft)
+  }, [conversationId])
 
   // Promoted attachments are handled by ChatComposer.
   const [draftMentions, setDraftMentions] = useState<StructuredAgentMentionDraft[]>([])
@@ -445,7 +465,11 @@ export function ChatView({
     ): ChatMessage[] => {
       const keepIds = keepIdsFor()
       if (anchorId) keepIds.add(anchorId)
-      return boundChatHistoryWindow({ messages: prev, incoming, side, keepIds }).messages
+      // A response that starts before any history arrived has no conversation id of its own.
+      return withConversationId(
+        boundChatHistoryWindow({ messages: prev, incoming, side, keepIds }).messages,
+        convIdRef.current
+      )
     },
     []
   )
@@ -701,9 +725,9 @@ export function ChatView({
         closeSearch()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [visible, searchOpen, closeSearch])
+    ownerWindow.addEventListener('keydown', onKey)
+    return () => ownerWindow.removeEventListener('keydown', onKey)
+  }, [visible, searchOpen, closeSearch, ownerWindow])
 
   useEffect(
     () => () => {
@@ -762,10 +786,15 @@ export function ChatView({
   // Covers every artifact-backed attachment (images and PDFs), not only images: see hasArtifactAttachment.
   const imagesSentRef = useRef(false)
 
+  // This composer showed the user message it sent. Any other turn (a bot, another window, a queued handoff) reaches
+  // this view only as stream events, so its user message must be read back once it is saved.
+  const optimisticSentRef = useRef(false)
+
   useEffect(() => {
     slashSentRef.current = false
     agentMentionsSentRef.current = false
     imagesSentRef.current = false
+    optimisticSentRef.current = false
   }, [conversationId])
 
   const doSend = useCallback(
@@ -832,6 +861,7 @@ export function ChatView({
           )
         )
       }
+      optimisticSentRef.current = updateVisual
       streamingRef.current = true
       turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
@@ -858,6 +888,7 @@ export function ChatView({
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
+        optimisticSentRef.current = false
         streamingRef.current = false
         if (visibleRef.current) setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
@@ -1036,14 +1067,17 @@ export function ChatView({
       const localSlash = slashSentRef.current
       const localAgentMentions = agentMentionsSentRef.current
       const localImages = imagesSentRef.current
+      const optimistic = optimisticSentRef.current
       slashSentRef.current = false
       agentMentionsSentRef.current = false
       imagesSentRef.current = false
+      optimisticSentRef.current = false
       const saved = ev as { compacted?: boolean; imagesDescribed?: number; memoryRecalled?: boolean }
       if (
         shouldReloadOnUserSaved({
           memoryRecalled: saved.memoryRecalled,
-          streaming: streamingRef.current,
+          // Not the streaming flag: this very event already set it, so a message sent elsewhere never loaded.
+          optimistic,
           compacted: saved.compacted,
           imagesDescribed: saved.imagesDescribed,
           localSlash,
@@ -1308,7 +1342,7 @@ export function ChatView({
         if (convIdRef.current === conversationId) setReasoning(effort)
       })
     load()
-    // A bot, a delegated stage or a provider failover moves this conversation's account, model, effort
+    // A fleet bot, a project chat or a provider failover moves this conversation's account, model, effort
     // and behavior mode without anyone touching the pickers. Read them again so the composer never
     // shows a selection the next turn will not use.
     return api.onChatSettingsChanged(conversationId, () => {
@@ -1543,9 +1577,11 @@ export function ChatView({
   const opensFiles = useHostInfo().desktopEffects
   const openMention = useCallback(
     (relPath: string, startLine?: number, endLine?: number) => {
-      if (opensFiles) void api.openPlanFile(conversationId, relPath, startLine, endLine)
+      if (!opensFiles) return
+      showSourceConversation()
+      void api.openPlanFile(conversationId, relPath, startLine, endLine)
     },
-    [api, conversationId, opensFiles]
+    [api, conversationId, opensFiles, showSourceConversation]
   )
 
   const [remoteCmds, setRemoteCmds] = useState<{
@@ -1819,12 +1855,14 @@ export function ChatView({
       agentMentionsSentRef.current = agentMentions.length > 0
 
       imagesSentRef.current = resendHasImage
+      optimisticSentRef.current = true
       setStreaming(true)
       const res = await api.chatResend(conversationId, id, text, agentMentions)
       if (!res.ok) {
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
+        optimisticSentRef.current = false
         setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
       }
@@ -1901,33 +1939,36 @@ export function ChatView({
     [api, conversationId]
   )
 
-  const beginSubagentPaneResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    const root = rootRef.current
-    if (!root) return
-    const onMove = (move: MouseEvent) => {
-      const rect = root.getBoundingClientRect()
-      const percent = ((rect.right - move.clientX) / Math.max(1, rect.width)) * 100
-      setSubagentPaneWidth(Math.max(28, Math.min(65, percent)))
-    }
-    const onUp = () => {
-      document.body.style.cursor = ''
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    document.body.style.cursor = 'col-resize'
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp, { once: true })
-  }, [])
+  const beginSubagentPaneResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const root = rootRef.current
+      if (!root) return
+      const onMove = (move: MouseEvent) => {
+        const rect = root.getBoundingClientRect()
+        const percent = ((rect.right - move.clientX) / Math.max(1, rect.width)) * 100
+        setSubagentPaneWidth(Math.max(28, Math.min(65, percent)))
+      }
+      const onUp = () => {
+        ownerWindow.document.body.style.cursor = ''
+        ownerWindow.removeEventListener('mousemove', onMove)
+        ownerWindow.removeEventListener('mouseup', onUp)
+      }
+      ownerWindow.document.body.style.cursor = 'col-resize'
+      ownerWindow.addEventListener('mousemove', onMove)
+      ownerWindow.addEventListener('mouseup', onUp, { once: true })
+    },
+    [ownerWindow]
+  )
 
   useEffect(() => {
     if (!selectedSubagentSessionId) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setSelectedSubagentSessionId(null)
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedSubagentSessionId])
+    ownerWindow.addEventListener('keydown', onKeyDown)
+    return () => ownerWindow.removeEventListener('keydown', onKeyDown)
+  }, [selectedSubagentSessionId, ownerWindow])
 
   const reasoningEfforts = modelMeta?.reasoning
     ? modelMeta.reasoningEfforts?.length
@@ -2220,6 +2261,11 @@ export function ChatView({
                 micSlot={
                   <ChatMicButton
                     onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
+                    onAutoSend={(t) => {
+                      if (keyMissing || reviewLoopActive || botBlocked) return false
+                      submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
+                      return true
+                    }}
                     disabled={keyMissing}
                   />
                 }

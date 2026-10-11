@@ -2,10 +2,10 @@
 
 ## Setup
 
-Use Git, Node.js 22.15–22.x, npm 10 or newer, and the committed lockfile.
+Use Git, Node.js 24.11–24.x, npm 10 or newer, and the committed lockfile.
 Native modules also need the host toolchain when a prebuilt binary is unavailable:
 
-- macOS: Xcode Command Line Tools.
+- macOS 13 or later (required by Electron): Xcode Command Line Tools.
 - Linux: Python 3, `make`, and a C/C++ compiler. On supported Debian/Ubuntu hosts,
   `npx playwright install-deps chromium` installs Electron test libraries.
 - Windows: Python 3 and Visual Studio Build Tools with Desktop development with C++.
@@ -119,6 +119,16 @@ automatically only when the user enables it. Development and E2E runs never
 check in the background. Conversations already open keep their runtime until
 Maestrly restarts.
 
+Bots also manage Claude Code this way (`claude-code-runtime`, listed only in
+bot mode). `CLAUDE_CODE_PINNED_VERSION` and its per-target hashes in
+`registry.ts` must match the `claudeCodeVersion` of the pinned
+`@anthropic-ai/claude-agent-sdk`; the registry test fails when they drift, so
+update both whenever the SDK moves. Its checks live in
+`runtime-assets/claude-code-compatibility.ts`, with
+`CLAUDE_CODE_COMPATIBILITY_REVISION`. Bot images keep the SDK-bundled binary as
+the floor, and `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` keeps a local fleet
+from downloading releases.
+
 The compatibility check lives in `runtime-assets/codex-compatibility.ts`.
 Increase `CODEX_COMPATIBILITY_REVISION` when the app starts depending on a new
 Codex contract, so independently installed releases are validated again. The
@@ -142,9 +152,13 @@ concurrent targets:
 
 | Command | Target |
 | --- | --- |
-| `npm run package` | macOS arm64, ad-hoc signed app |
+| `npm run package` | macOS 13 or later, arm64, ad-hoc signed app |
 | `npm run package:linux` | Linux x64, AppImage and DEB |
 | `npm run package:win` | Windows x64, per-user NSIS installer |
+
+Release staging makes `latest-mac.yml` require `minimumSystemVersion` 22.0.0
+or later (Darwin 22, macOS 13), so installed apps on macOS 12 are not offered
+updates they cannot run.
 
 Beta and additional architecture commands are in [package.json](../package.json).
 Windows/Linux arm64 require compatible native dependencies and are not verified
@@ -187,9 +201,12 @@ Signed publication follows [Releasing](releasing.md).
 
 ## Cursor SDK packaging and checks
 
-Cursor is pinned to `@cursor/sdk` 1.0.31. Postinstall fetches the host helper;
+Cursor is pinned to `@cursor/sdk` 1.0.34. Postinstall fetches the host helper;
 `fetch-cursor-sdk-platform.mjs` verifies its npm archive against a committed
-SHA-512 pin before extraction. Update the runtime platform hash table and the
+SHA-512 pin before extraction. The fetcher resolves the SDK the way
+`apps/desktop` does, so npm may hoist it to the root `node_modules` or nest it
+in `apps/desktop/node_modules`; helpers are installed beside the resolved SDK
+and its version must match the pin. Update the runtime platform hash table and the
 fetcher's pins together when upgrading. The package wrapper stages only the
 selected target helper, restores the host helper after cross-builds, and runs
 `verify-packaged-cursor-sdk.mjs` on unpacked apps and installers. Native binaries

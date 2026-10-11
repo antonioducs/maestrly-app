@@ -4,6 +4,11 @@ const h = vi.hoisted(() => ({
   generateText: vi.fn(),
   runCodexEphemeralWithFailover: vi.fn(),
   recordModelCallUsage: vi.fn(),
+  runAntigravityIsolatedPrompt: vi.fn(),
+  antigravityManager: {
+    getStatus: () => ({ state: 'signed-in', authenticated: true }),
+    getAccountIdentity: () => ({ fingerprint: 'project:test', epoch: 1 }),
+  },
 }))
 vi.mock('ai', () => ({ generateText: h.generateText }))
 vi.mock('../../src/main/store', () => ({ getConversation: () => ({ scope: 'project' }) }))
@@ -15,6 +20,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isClaudeSubscriptionProvider: () => false,
   isGitHubCopilotSubscriptionProvider: () => false,
   isCursorSubscriptionProvider: () => false,
+  isAntigravitySubscriptionProvider: (id: string) => id === 'antigravity-subscription',
   isGrokSubscriptionProvider: () => false,
 }))
 vi.mock('../../src/main/chat/provider', () => ({ resolveLanguageModel: () => ({ modelId: 'test' }) }))
@@ -38,6 +44,12 @@ vi.mock('../../src/main/chat/github-copilot/manager', () => ({ getGitHubCopilotS
 vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({ getCursorSubscriptionManager: vi.fn() }))
 vi.mock('../../src/main/chat/grok-subscription/manager', () => ({ getGrokSubscriptionManager: vi.fn() }))
 vi.mock('../../src/main/chat/cursor-subscription/portable-summarizer', () => ({ summarizeWithCursorRuntime: vi.fn() }))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
+  getAntigravitySubscriptionManager: () => h.antigravityManager,
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/isolated-prompt', () => ({
+  runAntigravityIsolatedPrompt: h.runAntigravityIsolatedPrompt,
+}))
 
 import { runOneShotText } from '../../src/main/chat/one-shot-text'
 
@@ -86,6 +98,25 @@ describe('runOneShotText', () => {
     expect(h.generateText.mock.calls[0][0]).not.toHaveProperty('messages')
     expect(result).toEqual({ text: 'api', usage: { input: 6, output: 2, cacheRead: 4, cacheCreate: 0 } })
     expect(h.recordModelCallUsage).toHaveBeenCalledWith(expect.objectContaining({ agent: args.agent }))
+  })
+  it('routes Google AI through an isolated Antigravity prompt', async () => {
+    h.runAntigravityIsolatedPrompt.mockResolvedValue({ text: 'gemini' })
+    const result = await runOneShotText({
+      ...args,
+      selection: { providerId: 'antigravity-subscription', modelId: 'gemini-3.1-pro', effort: 'low' },
+    })
+    expect(h.runAntigravityIsolatedPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manager: h.antigravityManager,
+        accountIdentity: { fingerprint: 'project:test', epoch: 1 },
+        modelId: 'gemini-3.1-pro',
+        reasoningEffort: 'low',
+        system: args.system,
+        prompt: args.prompt,
+      })
+    )
+    expect(result).toEqual({ text: 'gemini', usage: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 } })
+    expect(h.generateText).not.toHaveBeenCalled()
   })
   it('rejects unknown providers', async () => {
     await expect(runOneShotText({ ...args, selection: { providerId: 'unknown', modelId: 'test' } })).rejects.toThrow(

@@ -1,3 +1,4 @@
+import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import type { PermissionScope } from '../../../shared/conversation-scope'
 import { governAutonomousTools, autonomousPolicy, AUTONOMOUS_INSTRUCTIONS } from '../autonomous'
 import { createHash, randomUUID } from 'node:crypto'
@@ -25,7 +26,8 @@ import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import { applyChatEvent } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
-import { getAppFlag, getConversation, getConvUiPrefs } from '../../store'
+import { getConversation, getConvUiPrefs } from '../../store'
+import { resolveAppToolAccess } from '../app-tool-access'
 import { stagePlan } from '../../plan-broker'
 import { gitEnvInfo } from '../../git-service'
 import { buildAppTools, buildMcpTools } from '../mcp'
@@ -568,7 +570,8 @@ async function prepareRuntime(
     })
   }
   const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
-  const appToolsEnabled = !args.reviewerRuntime && (prefs?.app ?? getAppFlag('chat.appTools', false))
+  const appAccess = resolveAppToolAccess(args.conversationId)
+  const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp = args.reviewerRuntime
     ? { tools: {}, close: async () => {} }
@@ -587,22 +590,25 @@ async function prepareRuntime(
             signal: args.signal,
           }),
       })
-  const app = appToolsEnabled
-    ? await buildAppTools({
-        conversationId: args.conversationId,
-        mode: args.mode,
-        gate,
-        exclude: new Set(['review_plan']),
-        supportsImages: true,
-        describeImage: (image) =>
-          describeEphemeralToolImage({
-            image,
-            conversationId: args.conversationId,
-            cwd: args.cwd,
-            signal: args.signal,
-          }),
-      })
-    : { tools: {}, close: async () => {} }
+  const app =
+    !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+      ? await buildAppTools({
+          only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
+          disabledGroups: appAccess.disabledGroups,
+          conversationId: args.conversationId,
+          mode: args.mode,
+          gate,
+          exclude: new Set(['review_plan']),
+          supportsImages: true,
+          describeImage: (image) =>
+            describeEphemeralToolImage({
+              image,
+              conversationId: args.conversationId,
+              cwd: args.cwd,
+              signal: args.signal,
+            }),
+        })
+      : { tools: {}, close: async () => {} }
 
   try {
     const skills =
@@ -746,6 +752,7 @@ async function prepareRuntime(
         scope: args.projectId === null ? 'standalone' : 'project',
         cwd: args.cwd,
         appToolsEnabled,
+        disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: notes,
       }) +
@@ -764,6 +771,7 @@ async function prepareRuntime(
         cwd: args.cwd,
         mode: args.mode,
         appToolsEnabled,
+        disabledAppToolGroups: appAccess.disabledGroups,
         hasNotesTab: notes,
         projectContext,
         skillsContext: skillContext,

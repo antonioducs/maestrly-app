@@ -50,7 +50,7 @@ const profile = (botId: string, name: string): FleetInstanceProfile => ({
   ceiling: 'ask',
   selection: null,
   compaction,
-  gateway: { peersEnabled: true },
+  gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
 })
 const extracted = JSON.stringify({
   memories: [{ action: 'create', type: 'decision', title: 'Blue-green deploy', content: 'Switch blue to green.' }],
@@ -138,12 +138,15 @@ function fakeDisplays() {
       env: {
         DISPLAY: `:${slot}`,
         DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/${botId}/bus`,
-        BROWSER: '/usr/local/bin/maestrly-bot-browser',
+        BROWSER: '/usr/local/bin/maestrly-open-url',
         MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/${botId}/chromium`,
+        GTK_THEME: 'Adwaita:dark',
+        MAESTRLY_DESKTOP_SOCKET: `${home}/.cache/maestrly-bots/${botId}/desktop.sock`,
       },
       browserArea: fleetEnvironmentTile(slot),
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
+    redecorate: vi.fn(async (_botId: string) => {}),
     acquireVnc: vi.fn(async () => ({ port: 5903, release: vi.fn() })),
     dispose: vi.fn(async () => {}),
   }
@@ -296,6 +299,7 @@ describe('background work of an uninstalled bot', () => {
     const second = environment()
     await second.runtime.start()
     expect(second.runtime.bots().map((bot) => bot.botId)).toEqual(['beta'])
+    expect(memorySpaceForConversation(first.convA)).toBeNull()
     expect(new BackgroundCompactionStore().get(first.convA)).toMatchObject({ pauseReason: 'suspended' })
 
     // Installed again, it resumes with its own conversation, settings and memory space.
@@ -469,5 +473,48 @@ describe('context limit of a bot conversation', () => {
     await setup.runtime.uninstallBot('alpha', { purge: false })
     expect(getConversationContextLimit(convA)).toBeUndefined()
     expect(getConversationContextLimit(convB)).toBeUndefined()
+  })
+
+  it("shows the new model's window as soon as the owner switches models", async () => {
+    const modelB = { ...model, modelId: 'model-b' }
+    vi.mocked(chatService.listChatRunnerCapabilities).mockResolvedValue([model, modelB])
+    vi.mocked(chatService.effectiveModelMeta).mockImplementation(async (modelId: string) => ({
+      meta: modelId === 'model-b' ? ({ contextWindow: 200_000 } as never) : null,
+    }))
+    const selected = (modelId: string): FleetInstanceProfile => ({
+      ...profile('alpha', 'Alpha'),
+      selection: { providerId: 'synthetic', modelId, reasoning: 'low', fastMode: false },
+    })
+    const setup = environment()
+    await setup.runtime.start()
+    await setup.runtime.installBot({ profile: selected('model-a'), slot: 1, gatewayToken: tokenA })
+    const convA = setup.runtime.bot('alpha').primaryConversationId!
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId: convA,
+      role: 'assistant',
+      createdAt: 2,
+      parts: [{ type: 'text', id: randomUUID(), text: 'Understood.' }],
+      contextSnapshot: {
+        usedTokens: 50_000,
+        modelContextWindow: 1_000_000,
+        model: { providerId: 'synthetic', modelId: 'model-a' },
+        quality: 'measured',
+        observedAt: 2,
+        sequence: 1,
+      },
+    })
+    await setup.runtime.installBot({ profile: selected('model-a'), slot: 1, gatewayToken: tokenA })
+    expect((await setup.runtime.bot('alpha').status()).usage).toMatchObject({
+      contextUsedTokens: 50_000,
+      contextWindowTokens: 1_000_000,
+    })
+
+    // No turn runs on the new model: its window comes from its metadata, not from the old model's sample.
+    await setup.runtime.installBot({ profile: selected('model-b'), slot: 1, gatewayToken: tokenA })
+    expect((await setup.runtime.bot('alpha').status()).usage).toMatchObject({
+      contextUsedTokens: 50_000,
+      contextWindowTokens: 200_000,
+    })
   })
 })

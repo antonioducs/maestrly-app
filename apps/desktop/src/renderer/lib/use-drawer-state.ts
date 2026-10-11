@@ -254,6 +254,13 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   }, [openDrawerTab, api])
 
   useEffect(() => {
+    return api.onDrawerBrowserFocus(({ convId }) => {
+      setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
+      openDrawerTab(convId, 'browser')
+    })
+  }, [openDrawerTab, api])
+
+  useEffect(() => {
     return api.onChatGptWebOpen((convId) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'chatgpt')

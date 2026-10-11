@@ -5,6 +5,11 @@ import { getCodexThreadBinding, retireCodexThreadBinding } from '../codex-subscr
 import { getClaudeSessionBinding, retireClaudeSessionBinding } from '../claude-agent-sdk/session-store'
 import { getGitHubCopilotSessionBinding, retireGitHubCopilotSessionBinding } from '../github-copilot/session-store'
 import { getCursorAgentBinding, retireCursorAgentBinding } from '../cursor-subscription/session-store'
+import { getAntigravitySubscriptionManager } from '../antigravity-subscription/manager'
+import {
+  getAntigravitySessionBinding,
+  retireAntigravitySessionBinding,
+} from '../antigravity-subscription/session-store'
 import { estimatePortableContextTokens } from '../portable-context'
 
 export interface PreparedMarker {
@@ -81,5 +86,13 @@ export function commitPreparedActivation(args: {
   if (copilot) retireGitHubCopilotSessionBinding(args.conversationId, copilot.sessionId)
   const cursor = getCursorAgentBinding(args.conversationId)
   if (cursor) retireCursorAgentBinding(args.conversationId, cursor.agentId)
+  const antigravity = getAntigravitySessionBinding(args.conversationId)
+  if (antigravity) {
+    retireAntigravitySessionBinding(args.conversationId, antigravity.sessionId)
+    // The next turn seeds a fresh ACP session; the retired one only occupies the account's GEMINI_HOME.
+    void getAntigravitySubscriptionManager(antigravity.accountId)
+      .deleteSession(antigravity.sessionId)
+      .catch(() => undefined)
+  }
   return newestAssistant ? { messageId: newestAssistant.id, snapshot } : null
 }

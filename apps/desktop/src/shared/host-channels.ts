@@ -3,12 +3,27 @@
  * calling computer's own window, native views, devices and app; desktop-effect channels open windows, dialogs or files
  * on the host's own desktop, which nobody sees on a server.
  */
-const LOCAL_ONLY_PREFIXES = ['fleet:', 'update:', 'sound:', 'popup:', 'float:', 'performance:', 'host:', 'hosts:']
+// `artifacts:` is this computer's artifacts center, which reaches the paired server's artifacts itself; `chat-window:`
+// opens a conversation of this computer in a window of its own.
+const LOCAL_ONLY_PREFIXES = [
+  'fleet:',
+  'update:',
+  'sound:',
+  'popup:',
+  'float:',
+  'performance:',
+  'host:',
+  'hosts:',
+  'artifacts:',
+  'chat-window:',
+]
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:info',
   'open:url',
   'chat:ensure-mic-access',
   'chat:transcribe',
+  'chat:asr-warm',
+  'chat:asr-support',
   'drawer:suppress-views',
   'drawer:layout',
   'drawer:capture-slot',
@@ -50,6 +65,10 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
   'workspace:pick',
   'project-setup:pick-directory',
   'plan:open-file',
+  // The host's main process writes to the clipboard of its own desktop.
+  'chat:chatgpt-web:companion-copy-prompt',
+  'chat:chatgpt-web:companion-copy-session-key',
+  'project-setup:projects-directory-pick',
 ])
 
 export type RemoteChannelRefusal = 'local-only' | 'desktop-effect'

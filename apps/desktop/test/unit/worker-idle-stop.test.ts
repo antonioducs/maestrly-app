@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WORKER_IDLE_TTL_MS } from '../../src/shared/memory-policy'
@@ -48,7 +49,7 @@ const h = vi.hoisted(() => {
     ensureRuntimeAsset: vi.fn<
       (_id: string, _signal?: AbortSignal) => Promise<{ state: string; path: string }>
     >(async () => ({ state: 'ready', path: '/runtime' })),
-    readyRuntimeAsset: vi.fn(async () => ({ state: 'ready', path: '/runtime' })),
+    readyRuntimeAsset: vi.fn(async (_id: string) => ({ state: 'ready', path: '/runtime' })),
     releaseRuntimeLease,
     acquireRuntimeAssetLease: vi.fn(async () => ({
       id: 'local-ml-runtime',
@@ -77,7 +78,7 @@ vi.mock('../../src/main/runtime-assets/app-service', () => ({
   acquireRuntimeAssetLease: h.acquireRuntimeAssetLease,
 }))
 
-import { stopAsrWorker, transcribe } from '../../src/main/asr-service'
+import { stopAsrWorker, transcribe, warmAsr } from '../../src/main/asr-service'
 import {
   embedTexts,
   stopEmbeddingWorker,
@@ -139,6 +140,15 @@ describe('bounded idle stop for local workers', () => {
     expect(h.acquireRuntimeAssetLease).toHaveBeenCalledWith('local-ml-runtime')
     expect(worker.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'init', moduleUrl: pathToFileURL('/runtime/runtime.mjs').href })
+    )
+    expect(h.readyRuntimeAsset).toHaveBeenCalledWith('whisper-model')
+    expect(h.acquireRuntimeAssetLease).toHaveBeenCalledWith('whisper-model', '/runtime')
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'init',
+        modelPath: path.join('/runtime', 'ggml-large-v3-turbo-q5_0.bin'),
+        useGpu: process.platform === 'darwin',
+      })
     )
 
     await vi.advanceTimersByTimeAsync(WORKER_IDLE_TTL_MS)
@@ -215,6 +225,39 @@ describe('bounded idle stop for local workers', () => {
 
     await vi.advanceTimersByTimeAsync(WORKER_IDLE_TTL_MS)
     expect(worker.kill).toHaveBeenCalledTimes(1)
+  })
+
+  it('ASR reports a missing voice model without starting a worker', async () => {
+    h.readyRuntimeAsset.mockImplementation(async (id: string) => {
+      if (id === 'whisper-model') throw new Error('not installed')
+      return { state: 'ready', path: '/runtime' }
+    })
+    await expect(transcribe(new Float32Array([0.1]))).resolves.toEqual({
+      text: null,
+      silent: false,
+      modelMissing: true,
+    })
+    await expect(warmAsr()).resolves.toBe(false)
+    expect(h.fork).not.toHaveBeenCalled()
+  })
+
+  it('ASR forwards the language and warms through the same worker', async () => {
+    const result = transcribe(new Float32Array([0.1]), { language: 'pt' })
+    const worker = await latestWorkerAsync()
+    const request = await requestAsync(worker, 'transcribe')
+    expect(request).toMatchObject({ language: 'pt' })
+    worker.emit('message', { type: 'transcribe:result', id: request.id, text: 'olá' })
+    await expect(result).resolves.toEqual({ text: 'olá', silent: false })
+
+    const warm = warmAsr()
+    worker.emit('message', {
+      type: 'transcribe:result',
+      id: (await requestAsync(worker, 'warm')).id,
+      text: '',
+      silent: true,
+    })
+    await expect(warm).resolves.toBe(true)
+    expect(h.fork).toHaveBeenCalledTimes(1)
   })
 
   it('ASR shutdown resolves pending work and clears the idle timer', async () => {

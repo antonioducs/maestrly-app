@@ -84,6 +84,8 @@ try {
   else run('npm', npmArgs)
   if (npmCli) run(process.execPath, [npmCli, 'run', 'build:fleet-protocol'])
   else run('npm', ['run', 'build:fleet-protocol'])
+  if (npmCli) run(process.execPath, [npmCli, 'run', 'build:artifact-host'])
+  else run('npm', ['run', 'build:artifact-host'])
   run(process.execPath, ['scripts/build-local-ml-runtime.mjs', ...runtimeFetchArgs])
   const manifest = JSON.parse(readFileSync(path.join(desktopRoot, 'runtime-assets/local-ml/manifest.json'), 'utf8'))
   const archive = `local-ml-runtime-${manifest.version}-${runtimeTargets[0]}.tar.gz`

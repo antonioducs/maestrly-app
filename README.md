@@ -49,13 +49,17 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
   adding a project, choosing a folder, or creating a Git repository. See
   [desktop chats](docs/chat-context.md#chats-and-projects).
 - **Chat and providers:** API-key providers plus user-enabled Codex, Claude,
-  GitHub Copilot, Cursor, Grok, and ChatGPT Web integrations.
+  GitHub Copilot, Cursor, Grok, Google AI (Antigravity), and ChatGPT Web
+  integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,
   review loops, permissions, and usage accounting.
 - **Workspaces:** conversations on the current branch or isolated Git worktrees,
   with project context and migration recovery.
 - **Developer tools:** native terminals, an embedded editor and browser,
   screenshots, file references, and Git diffs.
+- **Voice dictation:** speak to a chat or bot; speech is transcribed on the
+  computer by whisper.cpp and sent as your message. See
+  [voice dictation](docs/chat-context.md#voice-dictation).
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
 
@@ -65,7 +69,7 @@ Get installers and SHA-256 checksums from [GitHub Releases](https://github.com/a
 
 | Platform | Packages |
 | --- | --- |
-| macOS arm64 | Signed and notarized DMG and ZIP |
+| macOS 13 or later, arm64 | Signed and notarized DMG and ZIP |
 | Linux x64 | AppImage and DEB |
 | Windows x64 | NSIS installer |
 
@@ -73,7 +77,7 @@ Linux and Windows packages are not code-signed. Updates are installed manually.
 
 ## Run from source
 
-Requires Node.js 22.15–22.x, npm 10 or newer, Git, and the host's native compiler
+Requires Node.js 24.11–24.x, npm 10 or newer, Git, and the host's native compiler
 tools. See [Development](docs/development.md) for platform setup.
 
 ```sh
@@ -94,7 +98,8 @@ Project state stays on your machine. AI features require a configured provider;
 API keys and subscription integrations use your own provider account. Local ML
 requires separately prepared runtime and model assets.
 
-See [Cursor setup and platform support](docs/cursor.md) to connect a Cursor account.
+See [Cursor setup and platform support](docs/cursor.md) to connect a Cursor account,
+and [Google AI subscription](docs/antigravity.md) to use a Google AI Pro or Ultra plan.
 
 Provider calls, browser navigation, Git operations, MCP services, and optional
 downloads can access the network. Maestrly does not automatically upload logs or
@@ -116,6 +121,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Development and packaging](docs/development.md)
 - [Releasing](docs/releasing.md)
 - [Local data and recovery](docs/local-data.md)
+- [Artifacts](docs/artifacts.md)
 - [Context usage and compaction](docs/chat-context.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
 - [Changelog](CHANGELOG.md)
@@ -126,7 +132,6 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Runner operations](docs/runner-operations.md)
 - [Platform protocol](docs/platform-protocol.md)
 - [Platform security](docs/platform-security.md)
-- [Delegating work to an external agent](docs/grok-connector.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
 - [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
 - [Backup and restore](docs/backup-restore.md)

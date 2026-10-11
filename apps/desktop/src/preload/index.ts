@@ -1,7 +1,9 @@
+import { fleetEnvironmentSettings } from './api-fleet-environment-settings'
 import './floating-strip'
 import { contextBridge } from 'electron'
 import { appApi } from './api-app'
 import { chatLocalApi } from './api-chat'
+import { chatWindowApi } from './api-chat-window'
 import { drawerApi } from './api-drawer'
 import { popupApi } from './api-popup'
 import { performanceApi } from './api-performance'
@@ -13,6 +15,9 @@ import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { hostsApi } from './api-hosts'
 import { localHostApi } from './host-api'
+import { artifactsApi } from './api-artifacts'
+
+export type * from '../shared/chat-window'
 
 export type {
   ConversationBranchInfo,
@@ -124,6 +129,7 @@ export type * from './api-fleet'
 export type * from './api-fleet-installer'
 export type * from './api-hosts'
 export type * from './api-host-fs'
+export type * from './api-artifacts'
 
 /** This computer's app, window and devices: never routed to another host. */
 const localApi = {
@@ -135,10 +141,13 @@ const localApi = {
   ...soundApi,
   ...updateApi,
   ...chatLocalApi,
+  ...chatWindowApi,
   ...platformLocalApi,
   ...fleetApi,
+  fleetEnvironmentSettings,
   ...fleetInstallerApi,
   ...hostsApi,
+  ...artifactsApi,
 }
 const api = { ...localHostApi, ...localApi }
 

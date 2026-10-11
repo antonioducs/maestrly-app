@@ -155,8 +155,10 @@ export async function verifyCrossLocalMlRuntime({ archive, sidecar, target }) {
     'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node',
     'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime.dll',
     'node_modules/sharp/package.json',
-    'node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node',
-    'node_modules/@img/sharp-win32-x64/lib/libvips-cpp-8.18.6.dll',
+    'node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.5.node',
+    'node_modules/@img/sharp-win32-x64/lib/libvips-cpp-8.18.7.dll',
+    'node_modules/@fugood/node-whisper-win32-x64/index.node',
+    'models/ggml-silero-v6.2.0.bin',
   ]
   const missing = requiredPaths.filter((name) => !inspected.names.has(name))
   if (missing.length > 0) throw new Error(`Missing required ${target} archive paths: ${missing.join(', ')}`)

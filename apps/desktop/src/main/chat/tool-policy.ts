@@ -88,6 +88,7 @@ export const APP_TOOL_POLICY = {
   computer_key: policy(false, false, false),
   bot_peers_list: policy(true, true, false),
   bot_peers_send: policy(false, false, false),
+  bot_share_file: policy(true, false, false),
   owner_memory_save: policy(false, false, false),
   owner_memory_forget: policy(false, false, false),
   routine_report: policy(true, false, false),
@@ -95,6 +96,20 @@ export const APP_TOOL_POLICY = {
   bot_routines_create: policy(false, false, false),
   bot_routines_update: policy(false, false, false),
   bot_routines_delete: policy(false, false, false),
+  // A fleet bot's reach into the owner's Macs: reads stay reads; changes pass the bot's own approval ceiling first,
+  // then the grants and ceiling each Mac keeps for it.
+  desktop_list_desktops: policy(true, true, false),
+  desktop_list_workspaces: policy(true, true, false),
+  desktop_list_selections: policy(true, true, false),
+  desktop_list_chats: policy(true, true, false),
+  desktop_read_chat: policy(true, true, false),
+  desktop_read_chat_history: policy(true, true, false),
+  desktop_wait_events: policy(true, true, false),
+  desktop_create_chat: policy(false, false, false),
+  desktop_send_message: policy(false, false, false),
+  desktop_configure_chat: policy(false, false, false),
+  desktop_cancel_turn: policy(false, false, false),
+  desktop_answer_question: policy(false, false, false),
   request_owner_help: policy(true, false, false),
   browser_tabs: policy(true, true, false),
   browser_switch_tab: policy(true, false, false),
@@ -152,6 +167,14 @@ export const APP_TOOL_POLICY = {
   debug_inspect: policy(false, true, false),
   debug_variables: policy(false, true, false),
   debug_evaluate: policy(false, false, false),
+  artifact_create: policy(true, false, false),
+  artifact_update: policy(true, false, false),
+  artifact_get: policy(true, true, true),
+  artifact_list: policy(true, true, true),
+  artifact_open: policy(true, false, false),
+  artifact_comments: policy(true, true, true),
+  artifact_comment_reply: policy(true, false, false),
+  artifact_comment_resolve: policy(true, false, false),
 } as const satisfies Record<string, AppToolPolicy>
 
 export type AppToolName = keyof typeof APP_TOOL_POLICY
@@ -226,12 +249,20 @@ export function appToolMetadata(name: string): Pick<AppToolPolicy, 'readOnly' | 
 export const EXTERNAL_MCP_RESTRICTED_METADATA = { readOnly: true, parallelSafe: false } as const
 
 /**
- * Built-in, parent-only tools that start persistent conversations. They mutate (worktrees, conversations, turns),
- * so they never enter read-only modes, the structurally read-only Maestro parent, subagents or Maestro workers.
+ * Built-in, parent-only tools that start persistent conversations, and create or clone the projects they work in.
+ * They mutate (projects, worktrees, conversations, turns), so they never enter Plan, the structurally read-only
+ * Maestro parent, subagents or Maestro workers.
+ * Ask receives this narrow handoff capability only for an explicit human dispatch request.
  * Runners add them only for a turn admitted from text the person typed (see conversation-dispatch-authorization).
  */
-export const CONVERSATION_DISPATCH_TOOL_NAMES = ['list_conversation_models', 'start_conversations'] as const
+export const CONVERSATION_DISPATCH_TOOL_NAMES = [
+  'list_conversation_models',
+  'list_conversation_workspaces',
+  'start_conversations',
+  'find_github_repositories',
+  'create_workspace',
+] as const
 
 export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
-  return mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent'
+  return mode === 'ask' || (mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent')
 }

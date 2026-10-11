@@ -1,8 +1,14 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { RUNTIME_ASSET_IDS, RUNTIME_ASSET_STATES } from '../../src/shared/runtime-assets'
+import { RUNTIME_ASSET_IDS, RUNTIME_ASSET_STATES, isUpdatableRuntimeAssetId } from '../../src/shared/runtime-assets'
 import {
+  CLAUDE_CODE_PINNED_VERSION,
   RUNTIME_ASSET_REGISTRY,
   RUNTIME_TARGET_IDS,
+  WHISPER_MODEL_FILE,
+  claudeCodeArtifactUrl,
   hostRuntimeTarget,
   type RuntimeAssetDefinition,
   type RuntimeTargetId,
@@ -10,7 +16,15 @@ import {
 
 describe('runtime asset registry', () => {
   it('exposes immutable known IDs and every lifecycle state', () => {
-    expect(RUNTIME_ASSET_IDS).toEqual(['codex-runtime', 'github-copilot-runtime', 'tunnel-client', 'local-ml-runtime'])
+    expect(RUNTIME_ASSET_IDS).toEqual([
+      'codex-runtime',
+      'claude-code-runtime',
+      'github-copilot-runtime',
+      'tunnel-client',
+      'local-ml-runtime',
+      'whisper-model',
+      'antigravity-acp-runtime',
+    ])
     expect(RUNTIME_ASSET_STATES).toEqual([
       'not-installed',
       'downloading',
@@ -40,20 +54,26 @@ describe('runtime asset registry', () => {
       'win-x64',
     ])
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets['mac-arm64']).toMatchObject({
-      hash: { algorithm: 'sha256', digest: '27f8780e28f728344c243f25030cfc4c7e3cd6c931bb5b96955f239cb8e8d757' },
-      downloadBytes: 40_915_502,
-      unpackedBytes: 141_329_591,
+      hash: { algorithm: 'sha256', digest: '340426b0cd541446c70ff29792727fd2a0faeb5d7f6bb969a7de291959460089' },
+      downloadBytes: 43_294_395,
+      unpackedBytes: 146_635_449,
     })
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets['linux-x64']).toMatchObject({
-      hash: { algorithm: 'sha256', digest: '69def4285a4999cd062a5188b412eae9ba40e4de9b28d7f84d228c1eebf1ada3' },
-      downloadBytes: 42_650_909,
-      unpackedBytes: 141_388_618,
+      hash: { algorithm: 'sha256', digest: 'f8b4bf02d3053710745580b0ba306fa4b7da1386b3975a11768fae33e57b866f' },
+      downloadBytes: 51_830_491,
+      unpackedBytes: 160_270_372,
     })
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets['win-x64']).toMatchObject({
-      hash: { algorithm: 'sha256', digest: 'd5374108a43c62866e5cb350f0b72ea5f56491660da9e92efb11ed27001be183' },
-      downloadBytes: 38_825_531,
-      unpackedBytes: 130_427_312,
+      hash: { algorithm: 'sha256', digest: 'dddcac49613fa2e32a210b03afc3d27f74547c661f7d6d7eabb9027207a2f234' },
+      downloadBytes: 40_936_697,
+      unpackedBytes: 134_478_057,
     })
+    for (const target of Object.values(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets)) {
+      expect(target?.criticalPaths).toContain('models/ggml-silero-v6.2.0.bin')
+      expect(
+        target?.criticalPaths.some((file) => /^node_modules\/@fugood\/node-whisper-[^/]+\/index\.node$/.test(file))
+      ).toBe(true)
+    }
   })
 
   it('matches the exact versions and representative script pins', () => {
@@ -63,7 +83,7 @@ describe('runtime asset registry', () => {
     )
     expect(RUNTIME_ASSET_REGISTRY['github-copilot-runtime']).toMatchObject({ version: '1.0.71' })
     expect(RUNTIME_ASSET_REGISTRY['tunnel-client']).toMatchObject({ version: '0.0.10' })
-    expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime']).toMatchObject({ version: '2.17.2-1' })
+    expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime']).toMatchObject({ version: '2.17.2-3' })
     expect(RUNTIME_ASSET_REGISTRY['tunnel-client'].targets['win-x64']?.hash.digest).toBe(
       '5e64a056f1d96786da0a6f8db1da5f5f4a03fd19a90d951a25cf2ca8d9093d00'
     )
@@ -104,6 +124,78 @@ describe('runtime asset registry', () => {
         expect(target?.maxDownloadBytes, `${id}/${targetId}`).toBeGreaterThanOrEqual(size)
         expect(target?.unpackedBytes, `${id}/${targetId}`).toBeGreaterThan(0)
       }
+  })
+
+  it('pins the Whisper model as one Hugging Face file for every local ML target', () => {
+    const model = RUNTIME_ASSET_REGISTRY['whisper-model']
+    expect(model.version).toBe('large-v3-turbo-q5')
+    expect(Object.keys(model.targets).sort()).toEqual(
+      Object.keys(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets).sort()
+    )
+    for (const target of Object.values(model.targets)) {
+      expect(target).toMatchObject({
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin',
+        archive: 'file',
+        fileName: WHISPER_MODEL_FILE,
+        hash: {
+          algorithm: 'sha256',
+          encoding: 'hex',
+          digest: '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2',
+        },
+        downloadBytes: 574_041_195,
+        maxDownloadBytes: 574_041_195,
+        unpackedBytes: 574_041_195,
+        criticalPaths: [WHISPER_MODEL_FILE],
+      })
+    }
+  })
+
+  it('pins the Claude Code runtime the installed Agent SDK bundles, for the Linux targets bots run on', () => {
+    const sdkEntry = createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk')
+    const sdk = JSON.parse(readFileSync(path.join(path.dirname(sdkEntry), 'package.json'), 'utf8')) as {
+      claudeCodeVersion?: string
+    }
+    expect(CLAUDE_CODE_PINNED_VERSION).toBe(sdk.claudeCodeVersion)
+    const definition = RUNTIME_ASSET_REGISTRY['claude-code-runtime']
+    expect(definition.version).toBe(CLAUDE_CODE_PINNED_VERSION)
+    expect(Object.keys(definition.targets).sort()).toEqual(['linux-arm64', 'linux-x64'])
+    for (const id of ['linux-arm64', 'linux-x64'] as const) {
+      expect(definition.targets[id]).toMatchObject({
+        url: claudeCodeArtifactUrl(CLAUDE_CODE_PINNED_VERSION, id),
+        archive: 'tar.gz',
+        hash: { algorithm: 'sha512', encoding: 'base64' },
+        stripPrefix: 'package',
+        criticalPaths: ['claude', 'package.json'],
+        executablePath: 'claude',
+      })
+    }
+    expect(definition.targets['linux-arm64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_804_240)
+    expect(definition.targets['linux-x64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_536_804)
+  })
+
+  it('pins the Antigravity ACP server for every desktop target', () => {
+    const definition = RUNTIME_ASSET_REGISTRY['antigravity-acp-runtime']
+    expect(definition.version).toBe('1.2.1')
+    expect(Object.keys(definition.targets).sort()).toEqual([...RUNTIME_TARGET_IDS].sort())
+    for (const target of Object.values(definition.targets)) {
+      expect(target?.url).toMatch(
+        /^https:\/\/dl\.google\.com\/agy-extensions\/releases\/(macos|linux|windows)\/agy-acp-server-1\.2\.1-[a-z0-9_-]+\.zip$/
+      )
+      expect(target?.archive).toBe('zip')
+      expect(target?.hash).toMatchObject({ algorithm: 'sha256', encoding: 'hex' })
+      expect(target?.hash.digest).toMatch(/^[0-9a-f]{64}$/)
+      expect(target?.criticalPaths).toContain(target?.executablePath)
+      expect(target?.maxDownloadBytes).toBeGreaterThanOrEqual(target?.downloadBytes ?? Number.POSITIVE_INFINITY)
+    }
+    expect(definition.targets['win-x64']?.executablePath).toBe('agy_acp_server.exe')
+    expect(definition.targets['linux-x64']?.executablePath).toBe('agy_acp_server.par')
+    expect(definition.targets['mac-arm64']).toMatchObject({
+      url: 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.2.1-darwin-arm64.zip',
+      hash: { digest: '0fab9938812e6b32b3b543e65e4f3a0025ceef755413db13542d9a9b81ea803c' },
+      downloadBytes: 111_725_488,
+      unpackedBytes: 397_584_640,
+    })
+    expect(isUpdatableRuntimeAssetId('antigravity-acp-runtime')).toBe(true)
   })
 
   it('maps supported hosts and rejects unsupported targets', () => {

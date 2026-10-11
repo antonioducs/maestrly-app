@@ -1,3 +1,4 @@
+import { isPendingAntigravityArtifact } from './antigravity-releases'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, rename, rm, statfs, writeFile } from 'node:fs/promises'
@@ -141,6 +142,10 @@ export const RUNTIME_ASSET_DISK_SAFETY_MARGIN_BYTES = 32 * 1024 * 1024
 
 export function requiredRuntimeAssetDiskBytes(target: RuntimeAssetTarget): number {
   return target.maxDownloadBytes + target.unpackedBytes + RUNTIME_ASSET_DISK_SAFETY_MARGIN_BYTES
+}
+
+function downloadFileName(target: RuntimeAssetTarget): string {
+  return target.archive === 'zip' ? 'download.zip' : target.archive === 'file' ? 'download.bin' : 'download.tgz'
 }
 
 function message(error: unknown): string {
@@ -642,7 +647,7 @@ export class RuntimeAssetService {
       }
       const operation = `.tmp-${id}-${randomUUID()}`
       const temporary = path.join(this.root, operation)
-      const archive = path.join(temporary, `download.${target.archive === 'zip' ? 'zip' : 'tgz'}`)
+      const archive = path.join(temporary, downloadFileName(target))
       const staging = path.join(temporary, 'staging')
       try {
         await mkdir(temporary, { recursive: true, mode: 0o700 })
@@ -678,7 +683,11 @@ export class RuntimeAssetService {
         if (downloaded.digest !== target.hash.digest)
           throw new Error(`Archive hash mismatch (expected ${target.hash.digest}, got ${downloaded.digest})`)
         this.set({ id, state: 'installing', version: definition.version, target: this.target }, true)
-        await this.extract(archive, staging, target.archive, { stripPrefix: target.stripPrefix, signal })
+        await this.extract(archive, staging, target.archive, {
+          stripPrefix: target.stripPrefix,
+          fileName: target.fileName,
+          signal,
+        })
         const files = await manifestFiles(staging)
         for (const critical of target.criticalPaths) {
           if (!files.some((file) => file.path === critical))
@@ -728,7 +737,8 @@ export class RuntimeAssetService {
             state: 'failed',
             version: definition.version,
             target: this.target,
-            error: message(error),
+            // fetch and stream pipelines reject with a generic AbortError; report the cancel reason instead.
+            error: message(signal.aborted ? (signal.reason ?? error) : error),
           },
           true
         )
@@ -755,12 +765,19 @@ export class RuntimeAssetService {
     options: RuntimeAssetUpdateOptions
   ): Promise<RuntimeAssetStatus> {
     const id = definition.id
+    // The embedded pin and previously accepted digests always override discovery metadata.
+    definition = this.definitionFor(id, definition.version) ?? definition
     const signal = options.signal ?? new AbortController().signal
-    const target = definition.targets[this.target]
+    let target = definition.targets[this.target]
     if (!target) throw new RuntimeAssetUpdateError('failed', `No ${this.target} target is configured for ${id}`)
     if (!/^[A-Za-z0-9.]+(?:-[A-Za-z0-9.]+)*$/.test(definition.version)) {
       throw new RuntimeAssetUpdateError('failed', `Invalid runtime version: ${definition.version}`)
     }
+    const pending = target.hash.provenance === 'google-origin-pending'
+    if (pending && (!isPendingAntigravityArtifact(definition, this.target) || !options.validate || !options.commit)) {
+      throw new RuntimeAssetUpdateError('integrity', 'Untrusted pending runtime artifact')
+    }
+    if (!pending && !target.hash.digest) throw new RuntimeAssetUpdateError('integrity', 'Missing runtime digest')
     if (signal.aborted) throw new RuntimeAssetUpdateError('cancelled', 'Runtime asset update cancelled')
     const directory = `${definition.version}-${this.target}`
     const destination = path.join(this.versionsRoot(id), directory)
@@ -805,7 +822,7 @@ export class RuntimeAssetService {
     }
 
     const temporary = path.join(this.root, `.tmp-${id}-${randomUUID()}`)
-    const archive = path.join(temporary, `download.${target.archive === 'zip' ? 'zip' : 'tgz'}`)
+    const archive = path.join(temporary, downloadFileName(target))
     const staging = path.join(temporary, 'staging')
     let phase: RuntimeAssetUpdatePhase = 'downloading'
     try {
@@ -817,6 +834,18 @@ export class RuntimeAssetService {
       })
       phase = 'verifying'
       report('verifying', downloaded.bytes)
+      if (pending) {
+        if (
+          downloaded.finalUrl !== target.url ||
+          !/^[a-f0-9]{64}$/.test(downloaded.digest) ||
+          downloaded.bytes <= 0 ||
+          downloaded.bytes > target.maxDownloadBytes
+        ) {
+          throw new RuntimeAssetUpdateError('integrity', 'Invalid Google-origin download')
+        }
+        target = { ...target, hash: { algorithm: 'sha256', encoding: 'hex', digest: downloaded.digest } }
+        definition = { ...definition, targets: { [this.target]: target } }
+      }
       if (downloaded.digest !== target.hash.digest) {
         throw new RuntimeAssetUpdateError(
           'integrity',
@@ -825,7 +854,11 @@ export class RuntimeAssetService {
       }
       phase = 'installing'
       report('installing')
-      await this.extract(archive, staging, target.archive, { stripPrefix: target.stripPrefix, signal })
+      await this.extract(archive, staging, target.archive, {
+        stripPrefix: target.stripPrefix,
+        fileName: target.fileName,
+        signal,
+      })
       const files = await manifestFiles(staging)
       for (const critical of target.criticalPaths) {
         if (!files.some((file) => file.path === critical)) {

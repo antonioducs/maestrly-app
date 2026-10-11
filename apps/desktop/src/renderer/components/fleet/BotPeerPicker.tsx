@@ -1,3 +1,4 @@
+import { useChatOwnerWindow, useChatDocument } from '@/lib/chat-window-context'
 import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, Search, X } from 'lucide-react'
@@ -61,6 +62,8 @@ export function BotPeerPicker({
   /** The heading the field belongs to. */
   labelledBy?: string
 }) {
+  const ownerWindow = useChatOwnerWindow()
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('fleet')
   const id = useId()
   const [open, setOpen] = useState(false)
@@ -85,12 +88,12 @@ export function BotPeerPicker({
     if (!anchor || !host) return
     const rect = anchor.getBoundingClientRect()
     const container = fixedContainingBlock(host)
-    const below = window.innerHeight - rect.bottom - 12
+    const below = ownerWindow.innerHeight - rect.bottom - 12
     const above = rect.top - 12
     const up = below < 240 && above > below
     const height = Math.min(PANEL_HEIGHT, up ? above : below)
     const width = Math.max(rect.width, 280)
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+    const left = Math.max(8, Math.min(rect.left, ownerWindow.innerWidth - width - 8))
     setStyle({
       position: 'fixed',
       left: left - container.left,
@@ -98,7 +101,7 @@ export function BotPeerPicker({
       maxHeight: height,
       ...(up ? { bottom: container.bottom - (rect.top - 6) } : { top: rect.bottom + 6 - container.top }),
     })
-  }, [])
+  }, [ownerWindow])
   const close = useCallback((returnFocus: boolean) => {
     setOpen(false)
     setQuery('')
@@ -112,6 +115,7 @@ export function BotPeerPicker({
   }
   useEffect(() => {
     if (!open) return
+    place()
     input.current?.focus()
     const onDown = (event: PointerEvent) => {
       if (!wrap.current?.contains(event.target as Node)) close(false)
@@ -124,17 +128,17 @@ export function BotPeerPicker({
       close(true)
     }
     const onMove = () => place()
-    document.addEventListener('pointerdown', onDown, true)
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('resize', onMove)
-    window.addEventListener('scroll', onMove, true)
+    ownerDocument.addEventListener('pointerdown', onDown, true)
+    ownerWindow.addEventListener('keydown', onKey, true)
+    ownerWindow.addEventListener('resize', onMove)
+    ownerWindow.addEventListener('scroll', onMove, true)
     return () => {
-      document.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('resize', onMove)
-      window.removeEventListener('scroll', onMove, true)
+      ownerDocument.removeEventListener('pointerdown', onDown, true)
+      ownerWindow.removeEventListener('keydown', onKey, true)
+      ownerWindow.removeEventListener('resize', onMove)
+      ownerWindow.removeEventListener('scroll', onMove, true)
     }
-  }, [open, close, place])
+  }, [ownerDocument, ownerWindow, open, close, place])
   useEffect(() => {
     panel.current?.querySelector(`#${CSS.escape(`${id}-option-${active}`)}`)?.scrollIntoView({ block: 'nearest' })
   }, [active, id])
@@ -155,7 +159,7 @@ export function BotPeerPicker({
   const remove = (botId: string, index: number) => {
     onChange(value.filter((item) => item !== botId))
     // The focus moves to the chip that takes its place, else the field.
-    requestAnimationFrame(() => {
+    ownerWindow.requestAnimationFrame(() => {
       const buttons = chipList.current?.querySelectorAll<HTMLButtonElement>('[data-remove]') ?? []
       ;(buttons[index] ?? buttons[index - 1] ?? trigger.current)?.focus()
     })

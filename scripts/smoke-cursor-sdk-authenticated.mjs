@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 // Explicit live opt-in; all local state belongs to this invocation.
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { resolveCursorSdk } from './fetch-cursor-sdk-platform.mjs'
+
+/** Import the pinned SDK the desktop workspace resolves, whether npm hoisted or nested it. */
+export async function importDesktopCursorSdk(subpath = '.', repoRoot) {
+  const { directory } = resolveCursorSdk(repoRoot)
+  const manifest = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'))
+  const entry = manifest.exports?.[subpath]?.import
+  if (typeof entry !== 'string') throw new Error(`@cursor/sdk does not export ${subpath} for import`)
+  return import(pathToFileURL(path.join(directory, entry)).href)
+}
 
 export function parseOptions(argv = process.argv.slice(2), env = process.env) {
   let model = env.MAESTRLY_CURSOR_SMOKE_MODEL
@@ -29,8 +39,8 @@ export async function runSmoke(options = {}, dependencies = {}) {
   const log = dependencies.log ?? console.log
   const makeTemporary = dependencies.mkdtemp ?? mkdtemp
   const remove = dependencies.rm ?? rm
-  const loadSdk = dependencies.loadSdk ?? (() => import('@cursor/sdk'))
-  const loadSqlite = dependencies.loadSqlite ?? (() => import('@cursor/sdk/sqlite'))
+  const loadSdk = dependencies.loadSdk ?? (() => importDesktopCursorSdk('.'))
+  const loadSqlite = dependencies.loadSqlite ?? (() => importDesktopCursorSdk('./sqlite'))
   let stage = 'initialize'
   let root, store, credentialStore, sdk, activeRun
   const agents = new Set()

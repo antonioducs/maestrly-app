@@ -1,0 +1,31 @@
+! The terminal windows of a bot's apps display, after the approved prototype: the dark terminal of its desktop, in
+! DejaVu Sans Mono. Appended to the app defaults of xterm in the image; options on the command line still win.
+*faceName: DejaVu Sans Mono
+*faceSize: 11
+*background: #0b0b0d
+*foreground: #d8d5cc
+*cursorColor: #d8d5cc
+*scrollBar: false
+*internalBorder: 12
+*borderWidth: 0
+*saveLines: 5000
+*metaSendsEscape: true
+*boldMode: false
+*colorBDMode: true
+*colorBD: #f2efe6
+*color0: #1c1c1f
+*color1: #ff7a85
+*color2: #5bd6a0
+*color3: #f2b45c
+*color4: #8ab4ff
+*color5: #c39bff
+*color6: #6fd6d6
+*color7: #d8d5cc
+*color8: #55555c
+*color9: #ff9aa3
+*color10: #7ee6b8
+*color11: #ffcb7d
+*color12: #a9c8ff
+*color13: #d6b8ff
+*color14: #8fe6e6
+*color15: #f2efe6

@@ -19,13 +19,14 @@
   "dependencies": {
     "@maestrly/bot-fleet-protocol": "0.1.0",
     "zod": "4.6.5",
-    "ws": "8.21.3"
+    "ws": "8.22.0",
+    "@maestrly/artifact-host": "0.1.0"
   },
   "devDependencies": {
-    "@types/node": "22.18.1",
-    "@types/ws": "8.18.1",
-    "tsx": "4.23.13",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "@types/node": "24.19.1",
+    "@types/ws": "8.18.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
   }
 }

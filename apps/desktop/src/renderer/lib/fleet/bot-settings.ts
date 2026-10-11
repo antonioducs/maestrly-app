@@ -45,17 +45,27 @@ export type BotSettingsDraft = {
   role: string
   instructions: string
   ceiling: Ceiling
+  publishArtifacts: boolean
   talksTo: string[]
   selectionId: string
   compaction: CompactionForm
 }
-export type BotSettingsField = 'name' | 'role' | 'instructions' | 'ceiling' | 'selection' | 'compaction' | 'talksTo'
+export type BotSettingsField =
+  | 'publishArtifacts'
+  | 'name'
+  | 'role'
+  | 'instructions'
+  | 'ceiling'
+  | 'selection'
+  | 'compaction'
+  | 'talksTo'
 /** Every field that waits for the save button, in page order, with the section that holds it. */
 export const botSettingsFields = [
   { id: 'name', section: 'identity' },
   { id: 'role', section: 'identity' },
   { id: 'instructions', section: 'identity' },
   { id: 'ceiling', section: 'autonomy' },
+  { id: 'publishArtifacts', section: 'autonomy' },
   { id: 'selection', section: 'model' },
   { id: 'compaction', section: 'model' },
   { id: 'talksTo', section: 'peers' },
@@ -76,6 +86,7 @@ export function botSettingsDraft(bot: FleetBot, inheritable: boolean): BotSettin
     role: bot.role,
     instructions: bot.instructions,
     ceiling: bot.ceiling,
+    publishArtifacts: bot.publishArtifacts ?? false,
     talksTo: [...bot.talksTo],
     selectionId: selectionIdOf(bot),
     compaction:
@@ -102,6 +113,7 @@ export function rebaseBotSettingsDraft(
     role: pick('role'),
     instructions: pick('instructions'),
     ceiling: pick('ceiling'),
+    publishArtifacts: pick('publishArtifacts'),
     talksTo: sortedIds(draft.talksTo) === sortedIds(previous.talksTo) ? next.talksTo : draft.talksTo,
     selectionId: pick('selectionId'),
     compaction: pick('compaction'),
@@ -137,6 +149,7 @@ export function changedBotSettings(bot: FleetBot, draft: BotSettingsDraft, inher
     role: draft.role.trim() !== bot.role.trim(),
     instructions: draft.instructions.trim() !== bot.instructions.trim(),
     ceiling: draft.ceiling !== bot.ceiling,
+    publishArtifacts: draft.publishArtifacts !== (bot.publishArtifacts ?? false),
     selection: draft.selectionId !== selectionIdOf(bot),
     compaction: compactionChange(bot, draft.compaction, inheritable).dirty,
     talksTo: sortedIds(draft.talksTo) !== sortedIds(bot.talksTo),
@@ -183,6 +196,7 @@ export function botSettingsPatch(
     else if (field === 'role') patch.role = draft.role.trim()
     else if (field === 'instructions') patch.instructions = draft.instructions.trim()
     else if (field === 'ceiling') patch.ceiling = draft.ceiling
+    else if (field === 'publishArtifacts') patch.publishArtifacts = draft.publishArtifacts
     else if (field === 'talksTo') patch.talksTo = [...draft.talksTo]
     else if (field === 'compaction') patch.compaction = compactionChange(bot, draft.compaction, inheritable).value
     else {

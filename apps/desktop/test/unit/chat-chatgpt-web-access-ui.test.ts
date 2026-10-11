@@ -63,6 +63,15 @@ describe('ChatGPT Web access UI policy', () => {
     expect(hasEffectiveChatGptWebMcpWriteAccess(info, { ...capabilities, mcp: { enabled: 'read' } })).toBe(false)
   })
 
+  it('localizes standalone personal memory access and write constraints', () => {
+    for (const locale of ['en', 'pt-BR'] as const) {
+      const copy = resources[locale].chat.chatGptWebAccess
+      expect(copy.personalMemoryTitle).toBeTruthy()
+      expect(copy.personalMemoryDescription).toBeTruthy()
+      expect(copy.personalMemoryWriteDescription).toBeTruthy()
+    }
+  })
+
   it('registers Off/Read copy for bounded main-conversation access in both locales', () => {
     expect(resources.en.chat.chatGptWebAccess.conversationTitle).toBe('Conversation')
     expect(resources.en.chat.chatGptWebAccess.conversationReadDescription).toContain('bounded')

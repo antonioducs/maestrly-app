@@ -87,3 +87,29 @@ export function onConversationScreenChange(listener: ConversationScreenListener)
     listeners.delete(listener)
   }
 }
+
+/**
+ * The size of a conversation's browser window when its bot's desktop presents it (a unified bot desktop). The window
+ * then sits at the top left of the conversation's window area at this size, without an identity strip, and its popups
+ * open inside it. Changing it notifies the screen listeners, so the windows move at once.
+ */
+const presentedSizes = new Map<string, { width: number; height: number }>()
+
+export function setPresentedBrowserSize(conversationId: string, size: { width: number; height: number } | null): void {
+  if (!conversationId) throw new TypeError('A presented browser needs a conversation id.')
+  if (size === null) {
+    if (!presentedSizes.delete(conversationId)) return
+  } else {
+    if (!isPositiveInteger(size.width) || !isPositiveInteger(size.height))
+      throw new TypeError(`Invalid presented browser size for conversation ${conversationId}.`)
+    const current = presentedSizes.get(conversationId)
+    if (current?.width === size.width && current.height === size.height) return
+    presentedSizes.set(conversationId, Object.freeze({ width: size.width, height: size.height }))
+  }
+  notify(conversationId, screens.get(conversationId) ?? null)
+}
+
+/** The presented size of a conversation's browser, or null when its desktop does not present it. */
+export function presentedBrowserSize(conversationId: string | undefined): { width: number; height: number } | null {
+  return conversationId ? (presentedSizes.get(conversationId) ?? null) : null
+}

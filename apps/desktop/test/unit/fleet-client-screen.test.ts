@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import type { WebContents } from 'electron'
+import { clipboard, type WebContents } from 'electron'
 import type { FleetApiClient } from '../../src/main/fleet/client/api'
 import { FleetScreenBridge } from '../../src/main/fleet/client/screen-bridge'
 
@@ -29,6 +29,10 @@ class FakeSocket extends EventTarget {
 }
 class Owner extends EventEmitter {
   messages: { channel: string; payload: unknown }[] = []
+  focused = true
+  isFocused(): boolean {
+    return this.focused
+  }
   destroyed = false
   isDestroyed(): boolean {
     return this.destroyed
@@ -43,6 +47,147 @@ class Owner extends EventEmitter {
 }
 
 describe('fleet screen bridge', () => {
+  it('reads clipboard only for a focused sender owning an open control session', async () => {
+    const socket = new FakeSocket()
+    const api = {
+      origin: 'https://fleet.example',
+      call: async () => ({ path: '/v1/screen?ticket=test' }),
+    } as unknown as FleetApiClient
+    const bridge = new FleetScreenBridge(
+      () => api,
+      () => socket as unknown as WebSocket
+    )
+    const fake = new Owner()
+    const owner = fake as unknown as WebContents
+    const read = vi.spyOn(clipboard, 'readText').mockResolvedValue('host text')
+    try {
+      const { channelId } = await bridge.openScreen(owner, 'bot', 'control')
+      await expect(bridge.readClipboard(owner, channelId)).rejects.toThrow('Screen channel is not open')
+      socket.open()
+      await expect(bridge.readClipboard(new Owner() as unknown as WebContents, channelId)).rejects.toThrow(
+        'Screen channel unavailable'
+      )
+      fake.focused = false
+      await expect(bridge.readClipboard(owner, channelId)).rejects.toThrow('Screen channel unavailable')
+      fake.focused = true
+      fake.destroyed = true
+      await expect(bridge.readClipboard(owner, channelId)).rejects.toThrow('Screen channel unavailable')
+      fake.destroyed = false
+      expect(read).not.toHaveBeenCalled()
+      await expect(bridge.readClipboard(owner, channelId)).resolves.toBe('host text')
+      read.mockResolvedValueOnce('a'.repeat(1_048_577))
+      await expect(bridge.readClipboard(owner, channelId)).rejects.toThrow('Invalid clipboard text')
+      read.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+      await expect(bridge.readClipboard(owner, channelId)).rejects.toThrow('Clipboard unavailable')
+      bridge.close(owner, channelId)
+      await expect(bridge.readClipboard(owner, channelId)).rejects.toThrow('Screen channel unavailable')
+      const view = await bridge.openScreen(owner, 'bot', 'view')
+      socket.open()
+      await expect(bridge.readClipboard(owner, view.channelId)).rejects.toThrow('Screen channel unavailable')
+      expect(read).toHaveBeenCalledTimes(3)
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it('discloses nothing when the session changes while the native read is pending', async () => {
+    const sockets: FakeSocket[] = []
+    const api = {
+      origin: 'https://fleet.example',
+      call: async () => ({ path: '/v1/screen?ticket=pending-read' }),
+    } as unknown as FleetApiClient
+    const bridge = new FleetScreenBridge(
+      () => api,
+      () => {
+        const socket = new FakeSocket()
+        sockets.push(socket)
+        return socket as unknown as WebSocket
+      }
+    )
+    const fake = new Owner()
+    const owner = fake as unknown as WebContents
+    const channels = (bridge as unknown as { channels: Map<string, object> }).channels
+    const read = vi.spyOn(clipboard, 'readText')
+    const changes: Array<[string, (channelId: string) => void]> = [
+      ['closed', (channelId) => bridge.close(owner, channelId)],
+      ['closed remotely', () => sockets.at(-1)!.remoteClose(4001, 'released')],
+      ['disconnected', () => bridge.closeAll()],
+      ['replaced', (channelId) => channels.set(channelId, { ...channels.get(channelId) })],
+      ['unfocused', () => (fake.focused = false)],
+      ['destroyed', () => (fake.destroyed = true)],
+    ]
+    try {
+      for (const [label, change] of changes) {
+        const { channelId } = await bridge.openScreen(owner, 'bot', 'control')
+        sockets.at(-1)!.open()
+        let finish!: (text: string) => void
+        read.mockReturnValueOnce(new Promise<string>((resolve) => (finish = resolve)))
+        const pending = bridge.readClipboard(owner, channelId)
+        change(channelId)
+        finish('private host text')
+        await expect(pending, label).rejects.toThrow('Screen channel unavailable')
+        fake.focused = true
+        fake.destroyed = false
+        bridge.closeOwner(owner)
+      }
+      expect(read).toHaveBeenCalledTimes(changes.length)
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it('writes only bounded text from an open control channel owned by the sender', async () => {
+    const socket = new FakeSocket()
+    const api = {
+      origin: 'https://fleet.example',
+      call: async () => ({ path: '/v1/screen?ticket=clipboard' }),
+    } as unknown as FleetApiClient
+    const bridge = new FleetScreenBridge(
+      () => api,
+      () => socket as unknown as WebSocket
+    )
+    const fake = new Owner()
+    const owner = fake as unknown as WebContents
+    const other = new Owner() as unknown as WebContents
+    const write = vi.spyOn(clipboard, 'writeText')
+    try {
+      const { channelId } = await bridge.openScreen(owner, 'bot', 'control')
+      await expect(bridge.writeClipboard(owner, channelId, 'before open')).rejects.toThrow('Screen channel is not open')
+      socket.open()
+      await expect(bridge.writeClipboard(other, channelId, 'wrong owner')).rejects.toThrow('Screen channel unavailable')
+      await expect(bridge.writeClipboard(owner, channelId, 123)).rejects.toThrow('Invalid clipboard text')
+      await expect(bridge.writeClipboard(owner, channelId, 'a'.repeat(1_048_577))).rejects.toThrow(
+        'Invalid clipboard text'
+      )
+      expect(write).not.toHaveBeenCalled()
+      // A remote copy completes after focus moves elsewhere, and only once the native write settles.
+      fake.focused = false
+      let settle!: () => void
+      write.mockReturnValueOnce(new Promise<void>((resolve) => (settle = resolve)))
+      let written = false
+      const pending = bridge.writeClipboard(owner, channelId, 'copied text').then(() => {
+        written = true
+      })
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(write).toHaveBeenCalledWith('copied text')
+      expect(written).toBe(false)
+      settle()
+      await pending
+      expect(written).toBe(true)
+      write.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+      await expect(bridge.writeClipboard(owner, channelId, 'failed copy')).rejects.toThrow('Clipboard unavailable')
+      bridge.close(owner, channelId)
+      await expect(bridge.writeClipboard(owner, channelId, 'stale')).rejects.toThrow('Screen channel unavailable')
+      const view = await bridge.openScreen(owner, 'bot', 'view')
+      socket.open()
+      await expect(bridge.writeClipboard(owner, view.channelId, 'view only')).rejects.toThrow(
+        'Screen channel unavailable'
+      )
+      expect(write).toHaveBeenCalledTimes(2)
+    } finally {
+      write.mockRestore()
+    }
+  })
   it('relays binary data both ways, reports close codes, enforces ownership and cap', async () => {
     const sockets: FakeSocket[] = []
     const urls: string[] = []

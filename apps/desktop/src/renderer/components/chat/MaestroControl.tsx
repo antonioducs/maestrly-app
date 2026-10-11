@@ -1,3 +1,4 @@
+import { useChatOwnerWindow, useChatDocument } from '@/lib/chat-window-context'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -389,6 +390,7 @@ export function MaestroConfigEditor({
   savedRevision?: number
   className?: string
 }) {
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
 
   const [editingTarget, setEditingTarget] = useState<'orchestrator' | number | null>(null)
@@ -414,7 +416,7 @@ export function MaestroConfigEditor({
   const removeResource = (index: number) => {
     if (value.pool.length <= 1) return
     const resource = value.pool[index]
-    if (!resource || !window.confirm(t('maestro.confirmRemoveResource', { label: resource.label }))) return
+    if (!resource || !ownerWindow.confirm(t('maestro.confirmRemoveResource', { label: resource.label }))) return
     onChange({ ...value, pool: value.pool.filter((_, resourceIndex) => resourceIndex !== index) })
     setEditingTarget(null)
   }
@@ -590,6 +592,8 @@ export function MaestroControl({
   convertToStandardDisabled?: boolean
   directModelId?: string | null
 }) {
+  const ownerWindow = useChatOwnerWindow()
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const api = useHostApi()
   const [open, setOpen] = useState(false)
@@ -651,10 +655,10 @@ export function MaestroControl({
   }
 
   const requestClose = () => {
-    if (dirty && !window.confirm(t('maestro.confirmDiscard'))) return
+    if (dirty && !ownerWindow.confirm(t('maestro.confirmDiscard'))) return
     discard()
     setOpen(false)
-    requestAnimationFrame(() => triggerRef.current?.focus())
+    ownerWindow.requestAnimationFrame(() => triggerRef.current?.focus())
   }
 
   const save = async (target: 'conversation' | 'global') => {
@@ -715,7 +719,7 @@ export function MaestroControl({
     if (!onConvertToStandard) return
     const model = directModelId || t('maestro.selectedModel')
     const confirmation = dirty ? 'maestro.confirmDirectModelUnsaved' : 'maestro.confirmDirectModel'
-    if (!window.confirm(t(confirmation, { model }))) return
+    if (!ownerWindow.confirm(t(confirmation, { model }))) return
     setBusy(true)
     setError(null)
     try {
@@ -752,7 +756,7 @@ export function MaestroControl({
     setDraft({ ...draft, pool: [...draft.pool, ...imported] })
   }
 
-  const panelHost = open ? document.getElementById(panelHostId) : null
+  const panelHost = open ? ownerDocument.getElementById(panelHostId) : null
 
   return (
     <>

@@ -1,6 +1,12 @@
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { z } from 'zod'
-import { FLEET_BOT_EGRESS_MODES, FLEET_GATEWAY_ENV, FLEET_PORTS, isValidTimeZone } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_BOT_EGRESS_MODES,
+  FLEET_BOT_RUNTIME_UPDATE_MODES,
+  FLEET_GATEWAY_ENV,
+  FLEET_PORTS,
+  isValidTimeZone,
+} from '@maestrly/bot-fleet-protocol'
 
 const bytes = z
   .string()
@@ -16,12 +22,16 @@ const schema = z.object({
   publicHost: z.string().min(1),
   publicPort: port,
   internalPort: port,
+  artifactsHost: z.enum(['127.0.0.1', '0.0.0.0']),
+  artifactsPort: port,
   internalUrl: z.url(),
   botImage: z.string().min(1),
   network: z.string().min(1),
   dockerSocket: z.string().min(1),
   botMemory: bytes,
   botEgress: z.enum(FLEET_BOT_EGRESS_MODES),
+  /** Whether bots update Claude Code and Codex on their own. */
+  botRuntimeUpdates: z.enum(FLEET_BOT_RUNTIME_UPDATE_MODES),
   botShm: bytes,
   /** A directory of the Docker host mounted into the workspaces environment at the same path; null mounts none. */
   workspacesRoot: z
@@ -53,12 +63,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     publicHost: env[FLEET_GATEWAY_ENV.publicHost] ?? '127.0.0.1',
     publicPort: env[FLEET_GATEWAY_ENV.publicPort] ?? FLEET_PORTS.public,
     internalPort: env[FLEET_GATEWAY_ENV.internalPort] ?? FLEET_PORTS.internal,
+    artifactsHost: env[FLEET_GATEWAY_ENV.artifactsHost] ?? '127.0.0.1',
+    artifactsPort: env[FLEET_GATEWAY_ENV.artifactsPort] ?? FLEET_PORTS.artifacts,
     internalUrl: env[FLEET_GATEWAY_ENV.internalUrl] ?? 'http://maestrly-bot-gateway:7444',
     botImage: env[FLEET_GATEWAY_ENV.botImage] ?? 'maestrly/bot-instance:local',
     network: env[FLEET_GATEWAY_ENV.network] ?? 'maestrly-bots',
     dockerSocket: env[FLEET_GATEWAY_ENV.dockerSocket] ?? '/var/run/docker.sock',
     botMemory: env[FLEET_GATEWAY_ENV.botMemory] ?? '4g',
     botEgress: env[FLEET_GATEWAY_ENV.botEgress] ?? 'open',
+    botRuntimeUpdates: env[FLEET_GATEWAY_ENV.botRuntimeUpdates] || 'auto',
     botShm: env[FLEET_GATEWAY_ENV.botShm] ?? '1g',
     workspacesRoot: env[FLEET_GATEWAY_ENV.workspacesRoot]?.trim() || null,
     timezone: env[FLEET_GATEWAY_ENV.timezone] ?? 'UTC',

@@ -23,7 +23,12 @@ import type { ClaudeInteractiveLogin } from '../../../chat/claude-agent-sdk/mana
 import { InstanceHttpError } from '../server'
 import type { forwardLoginCallback } from './callback-forwarder'
 
-export const LOGIN_PROVIDER_NAMES: Record<FleetLoginKind, string> = { codex: 'Codex', claude: 'Claude', grok: 'Grok' }
+export const LOGIN_PROVIDER_NAMES: Record<FleetLoginKind, string> = {
+  codex: 'Codex',
+  claude: 'Claude',
+  grok: 'Grok',
+  antigravity: 'Google AI',
+}
 export interface RemoteLoginDeps {
   now: () => number
   onChanged: () => void
@@ -45,6 +50,10 @@ export interface RemoteLoginDeps {
     cancelLogin(id: string): boolean
     getStatus(): Promise<Pick<GrokSubscriptionStatus, 'account'>>
   }
+  antigravity: (accountId: string | null) => {
+    login(signal: AbortSignal, onBrowserUrl: (url: string) => void): Promise<{ ok: boolean; error?: string }>
+  }
+  ensureAntigravity: (signal: AbortSignal) => Promise<unknown>
   forward: typeof forwardLoginCallback
 }
 interface Entry {
@@ -61,6 +70,7 @@ interface Entry {
 }
 export class RemoteLogins {
   private entries = new Map<string, Entry>()
+  private removingAccounts = new Set<FleetLoginKind>()
   private disposed = false
   constructor(private readonly deps: RemoteLoginDeps) {}
   private entry(id: string): Entry {
@@ -78,6 +88,8 @@ export class RemoteLogins {
   }
   async start(request: FleetLoginStartRequest): Promise<FleetLoginAttempt> {
     if (this.disposed) throw new InstanceHttpError(409, 'CONFLICT', 'Bot sign-ins are shutting down.')
+    if (this.removingAccounts.has(request.kind))
+      throw new InstanceHttpError(409, 'CONFLICT', 'An account is being removed. Wait before signing in again.')
     const pending = [...this.entries.values()]
       .filter((entry) => entry.attempt.state === 'pending' || entry.settling)
       .map((entry) => entry.attempt)
@@ -121,7 +133,8 @@ export class RemoteLogins {
     }, FLEET_PROVISIONING_LIMITS.loginTtlMs)
     entry.timer.unref()
     try {
-      await this.startProvider(entry)
+      if (attempt.kind === 'antigravity') this.startAntigravity(entry)
+      else await this.startProvider(entry)
       releaseReady()
       if (attempt.state === 'pending') this.deps.onChanged()
       return this.get(attempt.loginId)
@@ -131,6 +144,35 @@ export class RemoteLogins {
       if (error instanceof InstanceHttpError) throw error
       throw new InstanceHttpError(502, 'INSTANCE_UNAVAILABLE', 'The provider could not start sign-in.')
     }
+  }
+  private startAntigravity(entry: Entry): void {
+    const controller = new AbortController()
+    const done = (async () => {
+      await this.deps.ensureAntigravity(controller.signal)
+      controller.signal.throwIfAborted()
+      return this.deps.antigravity(entry.attempt.accountId).login(controller.signal, (url) => {
+        if (entry.attempt.state !== 'pending') return
+        try {
+          entry.attempt.browser = this.browser('antigravity', url)
+          this.deps.onChanged()
+        } catch {
+          controller.abort()
+        }
+      })
+    })()
+    entry.cancelProvider = async () => {
+      controller.abort()
+      await done.catch(() => undefined)
+    }
+    void done
+      .then(async (result) => {
+        if (entry.attempt.state !== 'pending') return
+        if (!result.ok) return this.finish(entry, 'failed', 'Google AI sign-in failed. Please try again.')
+        entry.succeeded = true
+        clearTimeout(entry.timer)
+        await this.complete(entry, { label: 'Google AI', email: null, plan: null })
+      })
+      .catch(() => this.finish(entry, 'failed', 'Google AI sign-in could not start. Please try again.'))
   }
   private validateUrl(kind: FleetLoginKind, url: string | null): string {
     if (!url || !fleetLoginUrlAllowed(kind, url))
@@ -282,6 +324,27 @@ export class RemoteLogins {
   }
   async cancel(loginId: string): Promise<void> {
     await this.finish(this.entry(loginId), 'cancelled')
+  }
+
+  /** Stop preparation/authentication before deleting its credential home; no new login can race deletion. */
+  async removeAccount(kind: FleetLoginKind, accountId: string | null, remove: () => Promise<void>): Promise<void> {
+    if (this.removingAccounts.has(kind))
+      throw new InstanceHttpError(409, 'CONFLICT', 'An account is already being removed.')
+    this.removingAccounts.add(kind)
+    try {
+      const matching = [...this.entries.values()].filter(
+        (entry) =>
+          entry.attempt.kind === kind &&
+          entry.attempt.accountId === accountId &&
+          (entry.attempt.state === 'pending' || entry.settling)
+      )
+      await Promise.all(matching.map((entry) => this.finish(entry, 'cancelled')))
+      // Cancelling a login may itself remove the slot allocated for that attempt.
+      if (accountId && matching.some((entry) => entry.createdSlot) && !this.deps.slotExists(kind, accountId)) return
+      await remove()
+    } finally {
+      this.removingAccounts.delete(kind)
+    }
   }
   async dispose(): Promise<void> {
     this.disposed = true

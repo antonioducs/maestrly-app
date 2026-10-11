@@ -129,6 +129,11 @@ describe('computer actions', () => {
         { type: 'text', text: expect.stringContaining('1280 × 800') },
       ])
       expect(capture.getSources).toHaveBeenCalledWith({ types: ['screen'], thumbnailSize: size })
+      // `share` only tells the UI to show the screenshot to the owner: the capture is the same.
+      const listed = (await client.listTools()).tools.find((tool) => tool.name === 'computer_screenshot')
+      expect(Object.keys(listed?.inputSchema.properties ?? {})).toEqual(['share'])
+      expect(listed?.inputSchema.required ?? []).toEqual([])
+      expect(await client.callTool({ name: 'computer_screenshot', arguments: { share: true } })).toEqual(result)
     } finally {
       await client.close()
       await server.close()

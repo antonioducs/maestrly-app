@@ -257,3 +257,67 @@ describe('Mac remote login flow', () => {
     expect(open).toHaveBeenCalledTimes(2)
   })
 })
+
+function googleAttempt(): FleetLoginAttempt {
+  return {
+    ...attempt(),
+    kind: 'antigravity',
+    browser: {
+      authUrl: 'https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2Flocalhost%3A32123%2F',
+      callback: { port: 32123, path: '/' },
+    },
+  }
+}
+it('opens a deferred Google URL exactly once after binding its relay', async () => {
+  const value = googleAttempt()
+  const call = vi
+    .fn()
+    .mockResolvedValueOnce({ ...value, browser: null })
+    .mockResolvedValue(value)
+  const fleet = { call } as unknown as FleetClientService
+  await startBotLogin(fleet, 'bot', { kind: 'antigravity', method: 'browser', slot: 'auto' })
+  expect(open).not.toHaveBeenCalled()
+  await Promise.all([botLoginStatus(fleet, 'bot', value.loginId), botLoginStatus(fleet, 'bot', value.loginId)])
+  await botLoginStatus(fleet, 'bot', value.loginId)
+  expect(relay.start).toHaveBeenCalledTimes(1)
+  expect(relay.start).toHaveBeenCalledWith(expect.objectContaining({ port: 32123, path: '/' }))
+  expect(open).toHaveBeenCalledExactlyOnceWith(value.browser!.authUrl)
+})
+
+it('cancels Google sign-in on an occupied relay port without opening a browser or device fallback', async () => {
+  const value = googleAttempt()
+  const call = vi
+    .fn()
+    .mockResolvedValueOnce({ ...value, browser: null })
+    .mockResolvedValue(value)
+  const fleet = { call } as unknown as FleetClientService
+  await startBotLogin(fleet, 'bot', { kind: 'antigravity', method: 'browser', slot: 'auto' })
+  relay.start.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EADDRINUSE' }))
+  await expect(botLoginStatus(fleet, 'bot', value.loginId)).rejects.toThrow('[fleet:login-port-unavailable]')
+  expect(open).not.toHaveBeenCalled()
+  expect(call.mock.calls.filter(([key]) => key === 'botLoginStart')).toHaveLength(1)
+  expect(call.mock.calls.filter(([key]) => key === 'botLoginCancel')).toHaveLength(1)
+})
+
+it('does not open a deferred Google browser when cancelled during relay binding', async () => {
+  const value = googleAttempt()
+  const call = vi
+    .fn()
+    .mockResolvedValueOnce({ ...value, browser: null })
+    .mockResolvedValue(value)
+  const fleet = { call } as unknown as FleetClientService
+  await startBotLogin(fleet, 'bot', { kind: 'antigravity', method: 'browser', slot: 'auto' })
+  let bound!: (value: { close: typeof relay.close }) => void
+  relay.start.mockReturnValueOnce(
+    new Promise((resolve) => {
+      bound = resolve
+    })
+  )
+  const polling = botLoginStatus(fleet, 'bot', value.loginId)
+  await vi.waitFor(() => expect(relay.start).toHaveBeenCalledTimes(1))
+  await cancelBotLogin(fleet, 'bot', value.loginId)
+  bound({ close: relay.close })
+  await polling
+  expect(open).not.toHaveBeenCalled()
+  expect(relay.close).toHaveBeenCalledTimes(1)
+})

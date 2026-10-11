@@ -38,6 +38,8 @@ function setup(busy = false) {
     removeMcpServer: vi.fn(async () => undefined),
     addApiKeyAccount: vi.fn(async () => ({ providerId: 'p1' })),
     removeAccount: vi.fn(async () => undefined),
+    checkRuntimes: vi.fn(),
+    settings: { accounts: vi.fn() },
   }
   const state = { busy }
   // Used as the control server uses it: through the interface of any environment.
@@ -120,5 +122,13 @@ describe('workspaces host environment', () => {
     await environment.removeMcpServer('m1')
     expect(runtime.removeMcpServer).toHaveBeenCalledWith('m1')
     expect(await environment.selections()).toEqual({ options: [], current: null })
+  })
+
+  it('serves the environment settings of the profile its chats use, and checks the runtimes it runs', () => {
+    const { environment, runtime } = setup()
+    // Without them, the settings routes it advertises answer that the environment must restart to update.
+    expect(environment.settings).toBe(runtime.settings)
+    environment.checkRuntimes()
+    expect(runtime.checkRuntimes).toHaveBeenCalledOnce()
   })
 })

@@ -1,5 +1,6 @@
 import {
   FLEET_IMAGE_LIMITS,
+  FLEET_FILE_LIMITS,
   FLEET_IMAGE_MEDIA_TYPES,
   type FleetCompactionConfig,
   type FleetSelection,
@@ -7,18 +8,62 @@ import {
   type FleetUsage,
 } from '@maestrly/bot-fleet-protocol'
 
-export type ComposerFile = Pick<File, 'name' | 'size' | 'type'>
-export type AttachmentError = 'type' | 'size' | 'count' | 'total'
+/** Unsent text per bot; module scope so it survives leaving the bot's chat and coming back. */
+const botDrafts = new Map<string, string>()
 
-export function validateAttachments(existing: ComposerFile[], incoming: ComposerFile[]): AttachmentError | null {
-  if (incoming.some((file) => !FLEET_IMAGE_MEDIA_TYPES.includes(file.type as (typeof FLEET_IMAGE_MEDIA_TYPES)[number])))
-    return 'type'
-  if (incoming.some((file) => file.size > FLEET_IMAGE_LIMITS.attachmentMaxBytes)) return 'size'
-  if (existing.length + incoming.length > FLEET_IMAGE_LIMITS.attachmentsMax) return 'count'
+export function readBotDraft(botId: string): string {
+  return botDrafts.get(botId) ?? ''
+}
+
+export function writeBotDraft(botId: string, text: string): void {
+  if (text) botDrafts.set(botId, text)
+  else botDrafts.delete(botId)
+}
+
+export type ComposerFile = Pick<File, 'name' | 'size' | 'type'>
+export type AttachmentError = 'type' | 'size' | 'count' | 'total' | 'pdfCount'
+const textExtensions =
+  /\.(txt|md|markdown|json|jsonl|ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|css|html|htm|xml|csv|yml|yaml|toml|sh|bash|sql|c|h|cpp|hpp|rb|php|swift|kt|log|ini|conf)$/i
+const textMediaTypes = new Set([
+  'application/json',
+  'application/xml',
+  'application/javascript',
+  'application/x-sh',
+  'application/yaml',
+  'application/toml',
+])
+export function attachmentKind(file: ComposerFile): 'image' | 'pdf' | 'text' | null {
+  if (FLEET_IMAGE_MEDIA_TYPES.includes(file.type as (typeof FLEET_IMAGE_MEDIA_TYPES)[number])) return 'image'
+  if (file.type === 'application/pdf' || (!file.type && /\.pdf$/i.test(file.name))) return 'pdf'
   if (
-    [...existing, ...incoming].reduce((sum, file) => sum + file.size, 0) > FLEET_IMAGE_LIMITS.attachmentsTotalMaxBytes
+    file.type.startsWith('text/') ||
+    textMediaTypes.has(file.type) ||
+    ((!file.type || file.type === 'application/octet-stream') && textExtensions.test(file.name))
   )
-    return 'total'
+    return 'text'
+  return null
+}
+export function validateAttachments(existing: ComposerFile[], incoming: ComposerFile[]): AttachmentError | null {
+  if (incoming.some((file) => !attachmentKind(file))) return 'type'
+  if (
+    incoming.some((file) => {
+      const kind = attachmentKind(file)
+      return (
+        file.size >
+          (kind === 'pdf'
+            ? FLEET_FILE_LIMITS.pdfMaxBytes
+            : kind === 'text'
+              ? FLEET_FILE_LIMITS.textMaxBytes
+              : FLEET_IMAGE_LIMITS.attachmentMaxBytes) ||
+        (file.size === 0 && kind !== 'text')
+      )
+    })
+  )
+    return 'size'
+  const all = [...existing, ...incoming]
+  if (all.length > FLEET_FILE_LIMITS.attachmentsMax) return 'count'
+  if (all.filter((file) => attachmentKind(file) === 'pdf').length > FLEET_FILE_LIMITS.pdfsMax) return 'pdfCount'
+  if (all.reduce((sum, file) => sum + file.size, 0) > FLEET_FILE_LIMITS.attachmentsTotalMaxBytes) return 'total'
   return null
 }
 

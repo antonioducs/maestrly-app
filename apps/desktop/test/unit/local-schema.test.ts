@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as store from '../../src/main/store'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
+import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 // Keep the full local table inventory explicit so hosted cleanup cannot silently remove local data.
 const LOCAL_TABLES = [
@@ -21,11 +22,8 @@ const LOCAL_TABLES = [
   'bot_local_inventory',
   'bot_local_messages',
   'bot_local_questions',
-  'bot_oauth_config',
-  'bot_oauth_clients',
-  'bot_oauth_requests',
-  'bot_oauth_tokens',
   'bot_question_bindings',
+  'chat_antigravity_sessions',
   'chat_background_compaction',
   'chat_claude_message_map',
   'chat_claude_session_cleanup',
@@ -57,9 +55,8 @@ const LOCAL_TABLES = [
   'platform_chat_outbox',
   'platform_chat_sessions',
   'platform_chat_turns',
-  'platform_delegation_attempts',
-  'platform_delegation_workspaces',
   'schema_migrations',
+  'workspace_creations',
   'workspace_groups',
   'workspaces',
 ].sort()
@@ -116,6 +113,32 @@ describe('local-only SQLite schema', () => {
     expect(store.getDb().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
     restartDb()
     expect(store.getAppSetting('before-extraction')).toBe('preserved')
+  })
+
+  it('drops the OAuth registrations and delegation journals of the retired external agent connection', () => {
+    const conversation = makeConversation(makeWorkspace().id, { name: 'Started by a bot' })
+    store
+      .getDb()
+      .prepare("UPDATE conversations SET bot_origin=?, bot_management_state='active' WHERE id=?")
+      .run(JSON.stringify({ kind: 'bot', connectionId: 'connection', botName: 'Bot' }), conversation.id)
+    // What an earlier release left behind, next to the tables the bots of a bot server keep using.
+    store.getDb().exec(`
+      CREATE TABLE bot_oauth_tokens (token_hash TEXT PRIMARY KEY);
+      CREATE TABLE bot_oauth_clients (client_id TEXT PRIMARY KEY);
+      CREATE TABLE platform_delegation_workspaces (instance_id TEXT, task_id TEXT, conversation_id TEXT);
+      CREATE TABLE platform_delegation_attempts (attempt_id TEXT PRIMARY KEY, turn_id TEXT NOT NULL);
+      INSERT INTO bot_oauth_tokens VALUES ('token');
+      INSERT INTO platform_delegation_attempts VALUES ('attempt', 'turn');
+    `)
+
+    restartDb()
+
+    const schema = readSchema()
+    expect(schema.filter((entry) => entry.type === 'table').map((entry) => entry.name)).toEqual(LOCAL_TABLES)
+    expect(schema.filter((entry) => /oauth|delegation/.test(entry.name))).toEqual([])
+    expect(store.getConversation(conversation.id)?.botOrigin).toMatchObject({ connectionId: 'connection' })
+    expect(store.getDb().prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(store.getDb().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
   })
 
   it('isolates nested transaction rollback while preserving the outer transaction', () => {

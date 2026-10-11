@@ -40,8 +40,8 @@ import { BOT_TRANSCRIPT_MAX_LIMIT, BotTranscriptError, readBotChatHistory, type 
  *
  * Nothing here reaches a server: the person, this computer and the bot connection are the only scopes,
  * and every connection, grant, chat, command, durable event and idempotency receipt is a local row. A
- * bot arrives through the embedded HTTP server and calls `callTool`; the conversation worker reaches
- * the same service in-process. Both keep the relay contract: the commands of one chat run strictly in
+ * bot of a bot server arrives through the desktop bridge and calls `callTool`; the conversation worker
+ * reaches the same service in-process. Both keep the relay contract: the commands of one chat run strictly in
  * order, a claim is fenced by a lease, mutations are idempotent and events are durable before they can
  * be read back.
  */
@@ -344,6 +344,34 @@ export class LocalBotService {
       this.writeGrants(id, input.workspaceIds, actions)
     })
     return this.requireConnection(id)
+  }
+
+  /** The connections whose client id starts with `prefix`, oldest first, revoked ones included. */
+  connectionsByClientPrefix(prefix: string): BotLocalConnection[] {
+    return this.connections().filter((connection) => connection.clientId.startsWith(prefix))
+  }
+
+  /**
+   * Renames a connection or changes the account/model pairs it may run with. Only the person at this computer ever
+   * calls it; grants and the ceiling have their own calls.
+   */
+  updateConnection(
+    connectionId: string,
+    input: { name?: string; providerIds?: string[]; selections?: Array<{ providerId: string; modelId: string }> }
+  ): BotLocalConnection {
+    const connection = this.requireConnection(connectionId)
+    if (connection.revokedAt) fail('This bot connection was revoked.')
+    db()
+      .prepare(
+        'UPDATE bot_local_connections SET name=COALESCE(?,name),provider_ids=COALESCE(?,provider_ids),selections=COALESCE(?,selections),version=version+1 WHERE id=?'
+      )
+      .run(
+        input.name ?? null,
+        input.providerIds ? JSON.stringify(input.providerIds) : null,
+        input.selections ? JSON.stringify(input.selections) : null,
+        connectionId
+      )
+    return this.requireConnection(connectionId)
   }
 
   /** A narrowed grant applies at once: a running command is refused on its next write. */
@@ -677,8 +705,8 @@ export class LocalBotService {
   }
 
   /**
-   * The relay tools, unchanged from the protocol a bot already speaks. The HTTP layer owns their
-   * descriptors and the authorization of the caller; the rules of each call live here.
+   * The conversation tools, unchanged from the protocol a bot already speaks. The desktop bridge owns the
+   * authorization of the caller; the rules of each call, and the validation of its input, live here.
    */
   async callTool(
     connectionId: string,

@@ -49,8 +49,6 @@ jobs:
         run: npm run test:e2e:platform
       - name: Run real desktop project chat
         run: xvfb-run -a node scripts/test-project-chat-e2e.mjs
-      - name: Run real personal bot conversations
-        run: xvfb-run -a node scripts/test-bot-conversations-e2e.mjs
       - name: Preserve desktop end-to-end evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

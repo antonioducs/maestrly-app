@@ -1,6 +1,11 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { jsonSchema, Output, stepCountIs, streamText, tool } from 'ai'
-import { describe, expect, it } from 'vitest'
+import { net } from 'electron'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { addProvider } from '../../src/main/chat/catalog'
+import { setApiKey } from '../../src/main/chat/credentials'
+import { resolveLanguageModel } from '../../src/main/chat/provider'
+import { closeDb, freshDb } from '../helpers/db'
 import { openAIHarnessProviderOptions } from '../../src/main/chat/harness/adapters/responses'
 import { resolveChatHarness as resolveExecution } from '../../src/main/chat/harness/execution'
 import type { ChatProviderKind } from '../../src/shared/chat'
@@ -291,24 +296,31 @@ function applyPatchResponse(): Response {
   ])
 }
 
+beforeEach(freshDb)
+afterEach(() => {
+  vi.restoreAllMocks()
+  closeDb()
+})
+
 describe('OpenAI Responses harness wire contract', () => {
   it('preserves native IDs across stateless turns', async () => {
     const requests: Array<Record<string, unknown>> = []
     const responses = [firstResponse(), secondResponse()]
-    type OpenAISettings = NonNullable<Parameters<typeof createOpenAI>[0]>
-    const fakeFetch: NonNullable<OpenAISettings['fetch']> = async (_input, init) => {
+    vi.spyOn(net, 'fetch').mockImplementation(async (_input, init) => {
       requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
       const response = responses.shift()
       if (!response) throw new Error('unexpected OpenAI request')
-      return response
-    }
-    const openai = createOpenAI({
-      // The app uses the BYOK id as provider name; options deliberately remain under the openai key.
-      name: 'prov_custom_openai',
-      apiKey: 'test-key',
-      baseURL: 'https://openai.invalid/v1',
-      fetch: fakeFetch,
+      return response as never
     })
+    // Production resolver: the BYOK id is the SDK provider name; options deliberately remain under the openai key.
+    const descriptor = addProvider({
+      name: 'Custom OpenAI',
+      baseURL: 'https://openai.invalid/v1',
+      kind: 'openai-responses',
+    })
+    setApiKey(descriptor.id, 'test-key')
+    const model = resolveLanguageModel(descriptor.id, 'gpt-5.4')
+    expect(model.provider).toBe(`${descriptor.id}.responses`)
     const read = tool({
       description: 'Read a workspace file.',
       inputSchema: jsonSchema<{ path: string }>({
@@ -330,7 +342,7 @@ describe('OpenAI Responses harness wire contract', () => {
     const optimized = await optimizeOpenAITools({ read }, { conversationId: 'wire-strict-tools' })
     expect(optimized.strictToolNames).toEqual(['read'])
     const first = streamText({
-      model: openai.responses('gpt-5.4'),
+      model,
       system: 'You are a coding agent.',
       messages: [{ role: 'user', content: 'Inspect src/main.ts.' }],
       tools: optimized.tools,
@@ -398,7 +410,7 @@ describe('OpenAI Responses harness wire contract', () => {
     expect(replay).toMatchObject({ lossless: true, requiresRawResponsesInput: false, issues: [] })
 
     const second = streamText({
-      model: openai.responses('gpt-5.4'),
+      model,
       system: 'You are a coding agent.',
       messages: [
         { role: 'user', content: 'Inspect src/main.ts.' },

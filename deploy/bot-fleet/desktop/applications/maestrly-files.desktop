@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Name[pt_BR]=Arquivos
+Comment=Browse files and folders
+Comment[pt_BR]=Explorar arquivos e pastas
+Exec=maestrly-desktop files
+Icon=/opt/maestrly/desktop/icons/files.svg
+Terminal=false
+Categories=System;FileManager;
+StartupNotify=false

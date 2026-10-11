@@ -46,6 +46,11 @@ describe('planSubagentResume', () => {
       'provider-unsupported',
     ],
     [
+      'google ai worker',
+      { providerId: 'builtin_antigravity_subscription@work', accountId: 'work', resume: { handle: null, replay } },
+      'provider-unsupported',
+    ],
+    [
       'copilot worker',
       { providerId: 'builtin_github_copilot_subscription', accountId: null, resume: { handle: null, replay } },
       'provider-unsupported',

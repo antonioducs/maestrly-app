@@ -3,7 +3,7 @@
  * to prevent CPU inference from blocking IPC/UI. The on-demand local-ml-runtime provides its absolute
  * file URL. Since the worker has no Electron app module, main sends cacheDir/moduleUrl in init over
  * process.parentPort. Requests: init, embed {id,texts}, smoke. Responses: ready, embed:result
- * {id,vecs}, embed:error {id,error}, smoke:result {onnxValue,sharpBytes}, smoke:error {error}.
+ * {id,vecs}, embed:error {id,error}, smoke:result {onnxValue,sharpBytes,vadSegments}, smoke:error {error}.
  */
 
 import { createRequire } from 'node:module'
@@ -57,7 +57,21 @@ type NativeSmokeRuntime = {
 
 type SharpFactory = (input: unknown) => { png(): { toBuffer(): Promise<Uint8Array> } }
 
-async function smokeNativeRuntime(): Promise<{ onnxValue: number; sharpBytes: number }> {
+type WhisperSmokeRuntime = {
+  loadWhisper(): {
+    WhisperVadContext: new (options: {
+      filePath: string
+      useGpu?: boolean
+      nThreads?: number
+    }) => {
+      detectSpeechData(audio: ArrayBuffer): Promise<unknown[]>
+      release(): Promise<void>
+    }
+  }
+  vadModelPath: string
+}
+
+async function smokeNativeRuntime(): Promise<{ onnxValue: number; sharpBytes: number; vadSegments: number }> {
   if (!moduleUrl.startsWith('file:')) throw new Error('Local ML runtime module URL was not initialized')
   const requireFromRuntime = createRequire(moduleUrl)
   const ort = requireFromRuntime('onnxruntime-node') as NativeSmokeRuntime
@@ -71,7 +85,22 @@ async function smokeNativeRuntime(): Promise<{ onnxValue: number; sharpBytes: nu
     .png()
     .toBuffer()
   if (png.length === 0) throw new Error('Sharp native smoke returned an empty image')
-  return { onnxValue, sharpBytes: png.length }
+
+  // The whisper.cpp addon must also load in a signed utilityProcess; the bundled VAD model needs no download.
+  const whisperRuntime = (await import(moduleUrl)) as WhisperSmokeRuntime
+  const vad = new (whisperRuntime.loadWhisper().WhisperVadContext)({
+    filePath: whisperRuntime.vadModelPath,
+    useGpu: false,
+    nThreads: 1,
+  })
+  let vadSegments: number
+  try {
+    vadSegments = (await vad.detectSpeechData(new ArrayBuffer(32000))).length
+  } finally {
+    await vad.release()
+  }
+  if (vadSegments !== 0) throw new Error(`Whisper VAD smoke found ${vadSegments} speech segments in silence`)
+  return { onnxValue, sharpBytes: png.length, vadSegments }
 }
 
 const parentPort = process.parentPort

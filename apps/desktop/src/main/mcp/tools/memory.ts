@@ -1,4 +1,6 @@
+import { trackPersonalMemoryRead } from '../../memory/personal-memory-updates'
 import { z } from 'zod'
+import { isMemorySpaceEnabled } from '../../memory/access'
 import { memoryContentProblem } from '../../memory/content-safety'
 import { LOCAL_MEMORY_SOURCES, LOCAL_MEMORY_STATUSES, MEMORY_TYPES, SHARED_MEMORY_TYPES } from '../../../shared/memory'
 import { appendMemory, readMemory, writeMemory } from '../../memory-service'
@@ -14,7 +16,12 @@ import {
   resolveLocalMemoryId,
 } from '../../memory/local-memory-service'
 import { promoteLocalMemory } from '../../memory/memory-center-service'
-import { memorySpaceForConversation, type MemorySpace } from '../../memory/spaces'
+import {
+  isPersonalMemoryConversation,
+  PERSONAL_MEMORY_SPACE_ID,
+  memorySpaceForConversation,
+  type MemorySpace,
+} from '../../memory/spaces'
 import { searchMemorySpace } from '../../memory/search'
 import { getConversation } from '../../store'
 import type { McpToolContext } from './context'
@@ -25,13 +32,22 @@ const json = (value: unknown) => ok(JSON.stringify(value, null, 2))
 export function registerMemoryTools(ctx: McpToolContext): void {
   const { server, convId, t } = ctx
   const conversation = getConversation(convId)
-  // Project conversations keep their tools while memory is disabled (they report `memory-disabled`); other
-  // conversations get memory only when a host registered a space for them (bots).
-  if (!memorySpaceForConversation(convId) && conversation?.scope !== 'project') return
+  // Bind the host-selected space for this tool session; never follow a later scope change.
+  const boundSpace =
+    memorySpaceForConversation(convId) ??
+    (isPersonalMemoryConversation(convId)
+      ? { id: PERSONAL_MEMORY_SPACE_ID, kind: 'personal' as const, roots: [] }
+      : conversation?.scope === 'project' && conversation.workspaceId
+        ? { id: conversation.workspaceId, kind: 'workspace' as const, roots: [] }
+        : null)
+  if (!boundSpace && conversation?.scope !== 'project') return
   const repositoryTools = conversation?.scope === 'project' && memorySpaceForConversation(convId)?.kind !== 'bot'
   const gate = (): { space: MemorySpace } | { error: ReturnType<typeof err> } => {
     const space = memorySpaceForConversation(convId)
-    if (space) return { space }
+    if (boundSpace && (!space || space.id !== boundSpace.id || space.kind !== boundSpace.kind))
+      return { error: err('memory-disabled') }
+    if (space && isMemorySpaceEnabled(space.id)) return { space }
+    if (space) return { error: err('memory-disabled') }
     const current = getConversation(convId)
     if (current?.scope === 'project' && current.workspaceId) return { error: err('memory-disabled') }
     return { error: err(t('errors.convWsNotFound')) }
@@ -55,7 +71,22 @@ export function registerMemoryTools(ctx: McpToolContext): void {
     async ({ query, limit }) => {
       const g = gate()
       if ('error' in g) return g.error
-      const hits = await searchMemorySpace(g.space, query, { mode: 'search', limit: limit ?? 5 })
+      let hits = await searchMemorySpace(g.space, query, { mode: 'search', limit: limit ?? 5 })
+      const afterSearch = gate()
+      if ('error' in afterSearch) return afterSearch.error
+      if (g.space.kind === 'personal')
+        hits = hits.filter((hit) => {
+          const memory = getLocalMemory(g.space.id, hit.id)
+          if (
+            memory?.status !== 'active' ||
+            memory.title !== hit.title ||
+            (hit.updatedAt !== undefined && hit.updatedAt !== memory.updatedAt) ||
+            !memory.content.replace(/\s+/g, ' ').includes(hit.snippet.replace(/^…|…$/g, ''))
+          )
+            return false
+          trackPersonalMemoryRead(convId, memory)
+          return true
+        })
       markLocalMemoriesUsed(
         g.space.id,
         hits.filter((hit) => hit.kind === 'local').map((hit) => hit.id)
@@ -95,7 +126,20 @@ export function registerMemoryTools(ctx: McpToolContext): void {
     async (filters) => {
       const g = gate()
       if ('error' in g) return g.error
-      return json(listLocalMemories(g.space.id, filters))
+      const memories = listLocalMemories(g.space.id, {
+        ...filters,
+        ...(g.space.kind === 'personal' ? { status: filters.status ?? 'active' } : {}),
+      })
+      if (g.space.kind !== 'personal') return json(memories)
+      return json(
+        memories.map((memory) => {
+          if (memory.status === 'active') {
+            trackPersonalMemoryRead(convId, memory)
+            return memory
+          }
+          return { id: memory.id, status: memory.status, type: memory.type, updatedAt: memory.updatedAt }
+        })
+      )
     }
   )
 
@@ -109,13 +153,18 @@ export function registerMemoryTools(ctx: McpToolContext): void {
     async ({ id }) => {
       const g = gate()
       if ('error' in g) return g.error
-      if (!id)
-        return g.space.kind === 'workspace'
-          ? ok((await readMemory(g.space.id)) || t('returns.memory.empty'))
-          : err('memory-id-required')
+      if (!id) {
+        if (g.space.kind !== 'workspace') return err('memory-id-required')
+        const content = await readMemory(g.space.id)
+        const afterRead = gate()
+        if ('error' in afterRead) return afterRead.error
+        return ok(content || t('returns.memory.empty'))
+      }
       const resolved = resolve(g.space.id, id)
       if ('error' in resolved) return resolved.error
       const memory = getLocalMemory(g.space.id, resolved.id)
+      if (g.space.kind === 'personal' && memory?.status !== 'active') return err('memory-not-found')
+      if (memory && g.space.kind === 'personal') trackPersonalMemoryRead(convId, memory)
       if (memory) markLocalMemoriesUsed(g.space.id, [memory.id])
       return memory ? json(memory) : err('memory-not-found')
     }
@@ -147,6 +196,8 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       if ('error' in g) return g.error
       const resolvedId = id ? resolveLocalMemoryId(g.space.id, id) : undefined
       if (resolvedId === 'ambiguous') return err('memory-id-ambiguous')
+      // Personal IDs identify existing entries; preserve caller-defined creation IDs in legacy spaces.
+      if (id && !resolvedId && g.space.kind === 'personal') return err('memory-not-found')
       if (supersedes_id) {
         const resolved = resolve(g.space.id, supersedes_id)
         if ('error' in resolved) return resolved.error

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { test } from 'node:test'
 
@@ -38,5 +39,23 @@ test('preload does not expose retired Maestrly account or cloud endpoints', () =
   const forbidden = /ipcRenderer\.(?:invoke|send|on)\(\s*['"](?:auth:|license:|legal:|account:|cloud-project:|telemetry:|feedback:)/
   for (const file of sourceFiles(path.join(root, 'apps/desktop/src/preload'))) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), forbidden, path.relative(root, file))
+  }
+})
+
+// Electron 44 no longer runs on macOS 12. Resolve each channel as electron-builder does, including `extends`.
+test('every macOS package channel declares the macOS 13 minimum', async () => {
+  const desktop = path.join(root, 'apps/desktop')
+  const { getConfig } = createRequire(path.join(desktop, 'package.json'))('app-builder-lib/out/util/config/config')
+  const channels = readdirSync(desktop).filter((file) => /^electron-builder(?:\.[a-z.]+)?\.yml$/.test(file))
+  assert.deepEqual(channels.sort(), [
+    'electron-builder.beta.yml',
+    'electron-builder.dev.yml',
+    'electron-builder.release.beta.yml',
+    'electron-builder.release.yml',
+    'electron-builder.yml',
+  ])
+  for (const file of channels) {
+    const config = await getConfig(desktop, path.join(desktop, file), null)
+    assert.equal(config.mac?.minimumSystemVersion, '13.0.0', file)
   }
 })

@@ -1,8 +1,10 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import os from 'node:os'
+import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
+import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
 import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
@@ -22,11 +24,13 @@ import {
   nativeTheme,
   screen,
   session,
+  shell,
   type MenuItemConstructorOptions,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from 'electron'
 import { resolvePreload } from './resolve-preload'
+import { ChatWindowManager, registerChatWindowIpc } from './chat-window-manager'
 import { killAllPtys } from './pty-manager'
 import {
   initTerminalManager,
@@ -114,6 +118,7 @@ import {
   listAllConversations,
   updateConversationStatus,
   getConversation,
+  getWorkspace,
   getSoundSettings,
   getShortcutOpenMode,
   getLocale,
@@ -178,8 +183,26 @@ import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
+import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
+import { fleetInstallerService } from './fleet/installer/service'
+import { ServerArtifacts } from './artifacts/server-artifacts'
+import { createDesktopSources, serverUnavailable } from './artifacts/sources'
+import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
+import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
+import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
+import { createArtifactEventHandler } from './artifacts/activity'
+import { playSound } from './platform'
+import { ArtifactHostProcess, forkArtifactHostWorker } from './artifacts/host-process'
+import { InviteVault } from './artifacts/invite-vault'
+import { registerArtifactsIpc } from './artifacts/ipc'
+import { ArtifactsService } from './artifacts/service'
+import { captureArtifactThumbnail } from './artifacts/thumbnail-capture'
+import { ThumbnailQueue } from './artifacts/thumbnail-queue'
+import { LegacyArtifacts } from './artifacts/legacy'
+import { createConversationFileScope } from './conversation-file-scope'
+import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
@@ -206,6 +229,7 @@ if (process.platform === 'linux') {
 const registry = new AgentRegistry()
 
 let mainWindow: BrowserWindow | null = null
+let chatWindowManager: ChatWindowManager | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 
@@ -235,8 +259,77 @@ function placeEnvironmentScreen(window: BrowserWindow): void {
   window.setBounds(environmentScreenBounds(screen.getPrimaryDisplay().bounds))
 }
 
+// The artifact host on this computer, opened only for what earlier versions published here; created with the store.
+let artifactHost: ArtifactHostProcess | null = null
+let legacyArtifacts: LegacyArtifacts | null = null
+
+function initArtifacts(): void {
+  let thumbnails: ThumbnailQueue | null = null
+  const vault = new InviteVault()
+  const server = new ServerArtifacts({
+    fleet: fleetClientService,
+    viewerPort: () => fleetInstallerService.artifactsViewerPort(),
+  })
+  if (!isBotMode()) {
+    artifactHost = new ArtifactHostProcess({ fork: forkArtifactHostWorker, dataDir: artifactsDataDir })
+    legacyArtifacts = new LegacyArtifacts({
+      dataDir: artifactsDataDir,
+      host: artifactHost,
+      forgetPeople: (ids) => {
+        for (const id of ids) vault.remove(id)
+      },
+      onState: (state) => broadcast('artifacts:legacy-state', state),
+      onChanged: () => broadcast('artifacts:changed'),
+    })
+  }
+  const sources = isBotMode()
+    ? createBotSources((id) => {
+        const bot = botRuntimeForConversation(id)
+        return bot?.artifactsEnabled ? botArtifactSource(bot) : null
+      })
+    : createDesktopSources({
+        server: () => server.source(),
+        unavailable: () => server.unavailable() ?? serverUnavailable(),
+      })
+  const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
+  if (!isBotMode())
+    fleetClientService.onArtifactEvent = (event) => {
+      void server.refresh().then(() => broadcast('artifacts:changed'))
+      if ('artifactId' in event) onArtifactEvent(event)
+      else broadcast('artifacts:changed')
+    }
+  const service = new ArtifactsService({
+    sources,
+    emitChanged: () => broadcast('artifacts:changed'),
+    server: isBotMode() ? undefined : server,
+    legacy: legacyArtifacts ?? undefined,
+    botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
+    vault,
+    getConversation,
+    workspaceName: (id) => getWorkspace(id)?.name,
+    requestThumbnail: (id, version) => thumbnails?.request(id, version),
+    resolveDirectory: async (conversation, relative) =>
+      (await (await createConversationFileScope(conversation)).resolveBridgePath(relative)).target,
+    openExternal: (url) => shell.openExternal(url),
+    openInDrawer: (convId, url, activate) => {
+      createBrowserTab(convId, url, { activate })
+      if (activate) focusBrowserDrawer(convId)
+    },
+  })
+  setArtifactsService(service)
+  thumbnails = new ThumbnailQueue({
+    sourceUrl: (id, version) => service.thumbnailSourceUrl(id, version),
+    capture: captureArtifactThumbnail,
+    save: (id, version, image) => service.saveThumbnail(id, version, image),
+    // Only a code: capture errors can carry the owner link, whose fragment holds a ticket.
+    onError: (error) =>
+      console.warn('[artifacts] thumbnail capture failed:', (error as { code?: unknown })?.code ?? 'unknown'),
+  })
+}
+
 async function stopAllLiveWork(): Promise<void> {
   await botHost.stop()
+  await legacyArtifacts?.dispose()
   await cancelProjectSetupsAndWait?.()
   await Promise.all([
     ...listAllConversations().map((conversation) => stopConversationLive(conversation.id)),
@@ -334,6 +427,9 @@ async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
   if (conversation?.scope === 'standalone') {
     const managed = await validateStandaloneConversationDirectory(conversation)
     if (folder !== managed) throw new Error('Unsafe standalone chat directory.')
+  } else {
+    // The bridge extension writes .maestrly sidecars into main checkouts too, not only app worktrees.
+    void ensureAppOwnedExcludes(folder)
   }
   void watchConversation(convId, folder)
 
@@ -440,10 +536,15 @@ function setupApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+// Set once at startup and consumed by the first window; later windows come from explicit reveals.
+let startHiddenAtLogin = false
+
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
+  const startHidden = startHiddenAtLogin
+  startHiddenAtLogin = false
   mainWindow = new BrowserWindow({
-    show: !isHeadlessInstance(),
+    show: !isHeadlessInstance() && !startHidden,
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -476,7 +577,17 @@ async function createWindow(): Promise<void> {
   wc.on('did-fail-load', (_e, code, desc, url) => console.error(`[did-fail-load] ${code} ${desc} ${url}`))
   wc.on('preload-error', (_e, p, err) => console.error(`[preload-error] ${p}`, err))
 
-  wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+  chatWindowManager?.dispose()
+  chatWindowManager = new ChatWindowManager(wc, {
+    targetExists: (target) =>
+      target.kind === 'bot'
+        ? fleetClientService.getSnapshot().bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived')
+        : !!getConversation(target.id),
+    focusSource: focusMainWindow,
+    workArea: (bounds) =>
+      (bounds ? screen.getDisplayMatching(bounds) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()))
+        .workArea,
+  })
   wc.on('will-navigate', (e) => e.preventDefault())
 
   const sendFullscreen = () => wc.send('window:fullscreen', mainWindow?.isFullScreen() ?? false)
@@ -558,6 +669,7 @@ async function createWindow(): Promise<void> {
     }
     if (!confirmQuitOnce(() => e.preventDefault())) return
 
+    chatWindowManager?.dispose()
     floatingManager.flushPendingFloatPersists()
     floatingManager.disposeAll()
     popupManager.disposeAll()
@@ -572,6 +684,7 @@ async function createWindow(): Promise<void> {
 }
 
 function registerIpc(): void {
+  registerChatWindowIpc(ipcMain, () => chatWindowManager)
   // Every handler is also recorded, unguarded: on a host, the bridge runs it for another computer's renderer.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mhandle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
@@ -712,8 +825,11 @@ function registerIpc(): void {
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
   registerFleetInstallerIpc(reg)
+  // Set before the client starts, so that its first stream already answers bots' desktop calls.
+  registerFleetDesktopBridgeIpc(reg, fleetClientService)
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
+  registerArtifactsIpc(reg, { service: getArtifactsService })
 
   registerHostFsIpc(reg, { roots: hostFsRoots })
   registerHostsIpc(reg)
@@ -732,6 +848,7 @@ if (!app.requestSingleInstanceLock()) {
     const win = BrowserWindow.getAllWindows()[0]
     if (win) {
       if (win.isMinimized()) win.restore()
+      if (!win.isVisible()) win.show()
       win.focus()
     }
   })
@@ -757,7 +874,9 @@ app.whenReady().then(async () => {
       const runtimePath = process.env.MAESTRLY_LOCAL_ML_RUNTIME_PATH?.trim()
       if (!runtimePath) throw new Error('MAESTRLY_LOCAL_ML_RUNTIME_PATH is required for packaged local-ML smoke')
       const result = await runMlWorkerNativeSmoke(runtimePath)
-      console.log(`[packaged-local-ml-smoke] ok: onnx=${result.onnxValue} sharpBytes=${result.sharpBytes}`)
+      console.log(
+        `[packaged-local-ml-smoke] ok: onnx=${result.onnxValue} sharpBytes=${result.sharpBytes} vadSegments=${result.vadSegments}`
+      )
       process.exitCode = 0
     } catch (error) {
       console.error(
@@ -799,6 +918,7 @@ app.whenReady().then(async () => {
 
   // Startup reads the local profile directly; it does not depend on an account or a hosted service.
   initStore()
+  initArtifacts()
   await migrateAllLegacyMemories()
   initMemoryIndexService()
 
@@ -823,11 +943,13 @@ app.whenReady().then(async () => {
     console.warn(`[conversation-migration] ${migrationRecoveries.length} incomplete operation(s) recovered.`)
   }
   setupApplicationMenu()
+  startHiddenAtLogin = !isBotMode() && shouldStartHidden(executorSettings(), wasLaunchedAtLogin())
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
-  // Codex release checks: delayed, production-only, and never for a component the user has not installed.
-  if (!isHeadlessInstance()) startRuntimeAssetUpdates()
+  // Runtime release checks: delayed, packaged builds and bots only, never for a component that is not installed.
+  // Bots also update Claude Code, with the runtime of their image as the floor.
+  startRuntimeAssetUpdates()
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
@@ -1041,6 +1163,8 @@ app.on('before-quit', (e) => {
   }
   if (!confirmQuitOnce(() => e.preventDefault())) return
 
+  chatWindowManager?.dispose()
+
   if (!projectSetupsFlushed && cancelProjectSetupsAndWait) {
     e.preventDefault()
     if (!projectSetupFlushInFlight) {
@@ -1058,7 +1182,7 @@ app.on('before-quit', (e) => {
     e.preventDefault()
     if (!platformRunnerStopping) {
       platformRunnerStopping = true
-      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop()]).finally(() => {
+      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop(), artifactHost?.stop()]).finally(() => {
         platformRunnerStopped = true
         platformRunnerStopping = false
         app.quit()

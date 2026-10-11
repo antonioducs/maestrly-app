@@ -4,6 +4,7 @@ import {
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_BOT_MEMORY_LIMITS,
   FLEET_IMAGE_LIMITS,
+  FLEET_FILE_LIMITS,
   FLEET_IMAGE_MEDIA_TYPES,
   FLEET_INSTRUCTIONS_MAX,
   FLEET_MESSAGE_TEXT_MAX,
@@ -18,7 +19,12 @@ import {
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
   FLEET_SCREEN,
+  FLEET_TODO_LIMITS,
   FLEET_TOOL_OUTPUT_MAX,
+  FLEET_REASONING_TEXT_MAX,
+  FLEET_RUNTIME_IDS,
+  FLEET_RUNTIME_STATES,
+  FLEET_DESKTOP_BRIDGE_LIMITS,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -132,6 +138,32 @@ export const fleetImageRefSchema = z.object({
   name: z.string().max(200).nullable(),
 })
 export type FleetImageRef = z.infer<typeof fleetImageRefSchema>
+
+export const fleetFileIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/)
+export const fleetFileNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((value) => {
+    try {
+      encodeURIComponent(value)
+      return true
+    } catch {
+      return false
+    }
+  }, 'File names must be well-formed Unicode')
+/** A private, bot-scoped file reference. It never exposes a filesystem path or credentials. */
+export const fleetFileRefSchema = z.object({
+  id: fleetFileIdSchema,
+  name: fleetFileNameSchema,
+  mediaType: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/),
+  byteSize: z.number().int().nonnegative().max(FLEET_FILE_LIMITS.downloadMaxBytes),
+})
+export type FleetFileRef = z.infer<typeof fleetFileRefSchema>
 
 /** Context and cost of the bot's primary conversation, computed by the bot's own Maestrly like its composer does. */
 export const fleetUsageSchema = z.object({
@@ -251,6 +283,7 @@ export const fleetBotSchema = z.object({
   ceiling: fleetCeilingSchema,
   selection: fleetSelectionSchema.nullable(),
   talksTo: z.array(fleetBotIdSchema),
+  publishArtifacts: z.boolean().default(false),
   paused: z.boolean(),
   lifecycle: fleetLifecycleSchema,
   setup: fleetBotSetupSchema,
@@ -326,6 +359,31 @@ export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema
 export const fleetEnvironmentKindSchema = z.enum(['bots', 'workspaces'])
 export type FleetEnvironmentKind = z.infer<typeof fleetEnvironmentKindSchema>
 
+/** One runtime of an environment (Claude Code or Codex): the version in use and its release channel. */
+export const fleetRuntimeInfoSchema = z.object({
+  id: z.enum(FLEET_RUNTIME_IDS),
+  /**
+   * The version the bots run now, which work in progress may keep after another was installed. Null when the runtime
+   * is neither shipped by the image nor installed.
+   */
+  version: z.string().max(40).nullable(),
+  /** `image`: the version the bot image ships; `managed`: a newer release the environment installed on its own. */
+  source: z.enum(['image', 'managed']),
+  /**
+   * The version the bots switch to once their work in progress ends (Codex: once none of them is working); null
+   * when they already run the selected version, or for an image that predates it.
+   */
+  pendingVersion: z.string().max(40).nullable().default(null),
+  automatic: z.boolean(),
+  state: z.enum(FLEET_RUNTIME_STATES),
+  availableVersion: z.string().max(40).nullable(),
+  lastCheckedAt: fleetTimestampSchema.nullable(),
+  /** A desktop error code of the last check or update. */
+  error: z.string().max(40).nullable(),
+})
+export type FleetRuntimeInfo = z.infer<typeof fleetRuntimeInfoSchema>
+export const fleetRuntimesSchema = z.array(fleetRuntimeInfoSchema).max(4)
+
 /**
  * An environment: one container with one Maestrly, one home folder and one set of accounts, skills, MCP servers and
  * site logins, shared by its bots. Its lifecycle (start, stop, restart, update) acts on all of them.
@@ -346,6 +404,10 @@ export const fleetEnvironmentSchema = z.object({
   capabilities: z.array(z.string().max(40)).max(20).default([]),
   /** Null when the gateway predates environment updates. */
   update: fleetEnvironmentUpdateSchema.nullable().default(null),
+  /** Null when the gateway or the environment's image predates runtime reports. */
+  runtimes: fleetRuntimesSchema.nullable().default(null),
+  /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
+  additionalRuntimes: fleetRuntimesSchema.optional(),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
@@ -441,6 +503,12 @@ export const fleetBotMemorySchema = z.object({
 })
 export type FleetBotMemory = z.infer<typeof fleetBotMemorySchema>
 
+export const fleetTodoSchema = z.object({
+  content: z.string().min(1).max(FLEET_TODO_LIMITS.contentMax),
+  status: z.enum(['pending', 'in_progress', 'completed']),
+})
+export type FleetTodo = z.infer<typeof fleetTodoSchema>
+
 const transcriptBase = { id: fleetIdSchema, at: fleetTimestampSchema }
 const routineRef = z.object({ id: fleetIdSchema, title: z.string() })
 const peerRef = z.object({ botId: fleetBotIdSchema, name: z.string() })
@@ -455,13 +523,26 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     routine: routineRef.optional(),
     peer: peerRef.optional(),
     queued: z.boolean(),
+    attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
     memories: z
       .array(z.object({ id: z.string(), title: z.string() }))
       .max(10)
       .default([]),
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
+    files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
   }),
   z.object({ ...transcriptBase, kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
+  /**
+   * The model's reasoning (`transcript-reasoning`): sent only to readers that ask for it, cut at
+   * `FLEET_REASONING_TEXT_MAX` (`truncated`).
+   */
+  z.object({
+    ...transcriptBase,
+    kind: z.literal('reasoning'),
+    text: z.string().max(FLEET_REASONING_TEXT_MAX),
+    truncated: z.boolean(),
+    streaming: z.boolean(),
+  }),
   z.object({
     ...transcriptBase,
     kind: z.literal('tool'),
@@ -471,6 +552,12 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     output: z.string().max(FLEET_TOOL_OUTPUT_MAX).nullable(),
     // Screenshots and generated images the tool returned, viewable by the owner.
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.imagesPerItemMax).default([]),
+    // Whether the images are for the owner to see in the conversation (the bot asked to share them) or only in the
+    // tool's details. Absent from instances that predate it, whose images the owner always saw in the conversation.
+    shared: z.boolean().optional(),
+    files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
+    // todo_write only: the list it recorded. Absent from other tools and from instances that predate it.
+    todos: z.array(fleetTodoSchema).max(FLEET_TODO_LIMITS.itemsMax).optional(),
   }),
   z.object({
     ...transcriptBase,
@@ -700,7 +787,84 @@ export const fleetActivityEntrySchema = z.object({
 })
 export type FleetActivityEntry = z.infer<typeof fleetActivityEntrySchema>
 
+const fleetArtifactIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
+
+/**
+ * A Mac as one bot sees it: an opaque id minted by the gateway for that bot and that Mac, never the device id the Mac
+ * paired with. Workspace, conversation and selection ids a Mac hands out are only valid together with its `desktopId`.
+ */
+export const fleetDesktopIdSchema = z.string().regex(/^dsk_[A-Za-z0-9_-]{16,64}$/)
+export type FleetDesktopId = z.infer<typeof fleetDesktopIdSchema>
+/** The name a Mac shows to the bots it links, chosen on that Mac (its pairing name by default). */
+export const fleetDesktopNameSchema = z.string().trim().min(1).max(FLEET_DESKTOP_BRIDGE_LIMITS.nameMax)
+/** A Mac that gave a bot access to its workspaces. `online`: its Maestrly is connected to this server right now. */
+export const fleetDesktopLinkSchema = z.object({
+  desktopId: fleetDesktopIdSchema,
+  name: fleetDesktopNameSchema,
+  online: z.boolean(),
+  lastSeenAt: fleetTimestampSchema.nullable(),
+  linkedAt: fleetTimestampSchema,
+})
+export type FleetDesktopLink = z.infer<typeof fleetDesktopLinkSchema>
+/** The same link as the owner's Macs see it: `self` marks the link of the Mac asking. */
+export const fleetDesktopLinkViewSchema = fleetDesktopLinkSchema.extend({ self: z.boolean() })
+export type FleetDesktopLinkView = z.infer<typeof fleetDesktopLinkViewSchema>
+/**
+ * What a bot may ask a Mac, by its own name: each one is a conversation tool of that Mac's Maestrly, run under the
+ * grants, approval ceiling and idempotency that Mac keeps for the bot. Nothing here approves a permission or a plan.
+ */
+export const FLEET_DESKTOP_OPS = [
+  'listWorkspaces',
+  'listSelections',
+  'listChats',
+  'readChat',
+  'readChatHistory',
+  'waitEvents',
+  'createChat',
+  'sendMessage',
+  'configureChat',
+  'cancelTurn',
+  'answerQuestion',
+] as const
+export const fleetDesktopOpSchema = z.enum(FLEET_DESKTOP_OPS)
+export type FleetDesktopOp = z.infer<typeof fleetDesktopOpSchema>
+/** The ops that change something on the Mac; the others only read. */
+export const FLEET_DESKTOP_WRITE_OPS: readonly FleetDesktopOp[] = [
+  'createChat',
+  'sendMessage',
+  'configureChat',
+  'cancelTurn',
+  'answerQuestion',
+]
+/** UTF-8 size of a value as JSON, the way it crosses the gateway. */
+export function fleetJsonBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value) ?? '').byteLength
+}
+export const fleetDesktopInputSchema = z
+  .record(z.string(), z.unknown())
+  .refine((value) => fleetJsonBytes(value) <= FLEET_DESKTOP_BRIDGE_LIMITS.inputBytesMax, 'The call input is too large')
+/** One call of a bot for one Mac, sent only on that Mac's event stream. */
+export const fleetDesktopCallEventSchema = z.object({
+  type: z.literal('desktop.call'),
+  at: fleetTimestampSchema,
+  callId: z.uuid(),
+  botId: fleetBotIdSchema,
+  desktopId: fleetDesktopIdSchema,
+  op: fleetDesktopOpSchema,
+  input: fleetDesktopInputSchema,
+  /** After this the gateway no longer waits for the result: a Mac that sees it late does not run it. */
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetDesktopCallEvent = z.infer<typeof fleetDesktopCallEventSchema>
+
 export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('artifact.changed'), at: fleetTimestampSchema, artifactId: fleetArtifactIdSchema }),
+  z.object({
+    type: z.literal('artifact.activity'),
+    at: fleetTimestampSchema,
+    artifactId: fleetArtifactIdSchema,
+    kind: z.enum(['device_added', 'access_requested', 'invite_declined', 'comment_added']),
+  }),
   z.object({ type: z.literal('owner_memory.updated'), at: fleetTimestampSchema, revision: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('hello'), at: fleetTimestampSchema, lastActivitySeq: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('bot.updated'), at: fleetTimestampSchema, bot: fleetBotSchema }),
@@ -722,5 +886,14 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('transcript.reset'), at: fleetTimestampSchema, botId: fleetBotIdSchema }),
   z.object({ type: z.literal('activity'), at: fleetTimestampSchema, entry: fleetActivityEntrySchema }),
   z.object({ type: z.literal('peer.message'), at: fleetTimestampSchema, message: fleetPeerMessageSchema }),
+  // Sent only to the streams of Macs that asked for desktop calls (`desktopBridge=1`): older Macs never see them.
+  fleetDesktopCallEventSchema,
+  /** The Macs linked to a bot changed; empty once the bot was deleted. Each Mac reads its own link as `self`. */
+  z.object({
+    type: z.literal('desktop_link.updated'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    links: z.array(fleetDesktopLinkViewSchema).max(FLEET_DESKTOP_BRIDGE_LIMITS.linksPerBotMax),
+  }),
 ])
 export type FleetGatewayEvent = z.infer<typeof fleetGatewayEventSchema>

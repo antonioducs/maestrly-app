@@ -298,7 +298,9 @@ test('server page sets up workspaces, and the sidebar follows the host through t
 
     // Its page is the environment's, without what belongs to bots: no bot list, no screen, no compaction default.
     await expect(page.getByRole('heading', { name: 'Workspaces', exact: true, level: 1 })).toBeVisible()
-    await expect(page.getByText('Chats and workspaces', { exact: true })).toBeVisible()
+    const environmentView = page.locator('[data-environment-view]')
+    await expect(environmentView.getByText('Runs your chats and workspaces on this server')).toBeVisible()
+    await expect(environmentView.getByRole('heading', { name: 'Accounts and tools', exact: true })).toBeVisible()
     await expect(page.getByText('Used by every chat and workspace on this server.')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Environment accounts', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'New bot in this environment' })).toBeHidden()

@@ -1,3 +1,4 @@
+import { useChatDocument, useChatOwnerWindow } from '@/lib/chat-window-context'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Bot, Palette, ClipboardList, MessageCircle, Check, Loader2, Sparkles } from 'lucide-react'
@@ -28,6 +29,8 @@ export function ChatModePicker({
   maestroDisabled?: boolean
   modelId?: string | null
 }) {
+  const ownerDocument = useChatDocument()
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
   const api = useHostApi()
   const [open, setOpen] = useState(false)
@@ -67,13 +70,13 @@ export function ChatModePicker({
       setOpen(false)
       triggerRef.current?.focus()
     }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKeyDown)
+    ownerDocument.addEventListener('mousedown', onDoc)
+    ownerDocument.addEventListener('keydown', onKeyDown)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKeyDown)
+      ownerDocument.removeEventListener('mousedown', onDoc)
+      ownerDocument.removeEventListener('keydown', onKeyDown)
     }
-  }, [open])
+  }, [ownerDocument, open])
 
   const current = CHAT_MODES.find((m) => m.id === mode) ?? CHAT_MODES[0]
   const choose = async (id: ChatMode) => {
@@ -128,7 +131,7 @@ export function ChatModePicker({
       const payload = await api.chatMaestroGetConversation(conversationId)
       const strategy = t(`maestro.strategies.${payload.config.strategy}`)
       const model = modelId || t('mode.selectedModel')
-      if (!window.confirm(t('mode.confirmMaestro', { model, strategy }))) return
+      if (!ownerWindow.confirm(t('mode.confirmMaestro', { model, strategy }))) return
       const result = await onUseMaestro()
       if (!result.ok) {
         setTransitionError(maestroError(result.error))

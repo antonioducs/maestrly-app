@@ -4,6 +4,7 @@ import type { GeneratedImageEmission, GeneratedImageUsage } from './tools/util'
 import type { PermissionBroker } from './permission'
 import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles'
 import { getConvUiPrefs } from '../store'
+import { resolveAppToolAccess } from './app-tool-access'
 import { createMaestroWorkerScope, type MaestroWorkerScope } from '../maestro-worker-scope'
 import { buildAppTools, buildMcpTools } from './mcp'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from './image-interpreter'
@@ -120,6 +121,7 @@ export async function buildMaestroWorkerTools(args: {
       mode: 'agent',
       gate,
       exclude: new Set(['review_plan', 'terminal_focus']),
+      disabledGroups: resolveAppToolAccess(args.conversationId).disabledGroups,
       workerScope: scope,
       supportsImages,
       describeImage,

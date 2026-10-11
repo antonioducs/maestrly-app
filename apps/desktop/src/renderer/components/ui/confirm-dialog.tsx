@@ -1,3 +1,4 @@
+import { useChatDocument, useChatOwnerWindow } from '@/lib/chat-window-context'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
@@ -9,6 +10,7 @@ export function ConfirmDialog({
   confirmLabel,
   busy,
   destructive,
+  error,
   onCancel,
   onConfirm,
 }: {
@@ -17,26 +19,30 @@ export function ConfirmDialog({
   confirmLabel: string
   busy?: boolean
   destructive?: boolean
+  /** Why the last confirmation failed; the dialog stays open so it can be tried again. */
+  error?: string | null
   onCancel: () => void
   onConfirm: () => void
 }) {
+  const ownerDocument = useChatDocument()
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('ui')
   const confirmRef = useRef<HTMLButtonElement>(null)
   // Escape cancels, the decision starts focused, and whatever opened it gets the focus back.
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
+    const opener = ownerDocument.activeElement as HTMLElement | null
     confirmRef.current?.focus()
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.stopPropagation()
       onCancel()
     }
-    window.addEventListener('keydown', onKeyDown, true)
+    ownerWindow.addEventListener('keydown', onKeyDown, true)
     return () => {
-      window.removeEventListener('keydown', onKeyDown, true)
+      ownerWindow.removeEventListener('keydown', onKeyDown, true)
       if (opener?.isConnected) opener.focus()
     }
-  }, [onCancel])
+  }, [ownerDocument, ownerWindow, onCancel])
   return (
     <>
       <div className="fixed inset-0 z-[60] bg-black/50" onClick={onCancel} />
@@ -48,6 +54,11 @@ export function ConfirmDialog({
       >
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{message}</p>
+        {error && (
+          <p role="alert" className="mt-2 text-xs leading-relaxed text-destructive">
+            {error}
+          </p>
+        )}
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}

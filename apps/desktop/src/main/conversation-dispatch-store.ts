@@ -112,6 +112,19 @@ export function listConversationDispatchRequestKeys(sourceConversationId: string
   return rows.map((row) => row.requestKey)
 }
 
+/** Destination workspace of each request of one origin that still owns (or owned) a destination. */
+export function listConversationDispatchTargets(
+  sourceConversationId: string,
+  originKey: string
+): Array<{ requestKey: string; workspaceId: string }> {
+  return getDb()
+    .prepare(
+      `SELECT request_key AS requestKey, workspace_id AS workspaceId FROM conversation_dispatches
+       WHERE source_conversation_id=? AND origin_key=? AND phase <> 'discarded'`
+    )
+    .all(sourceConversationId, originKey) as Array<{ requestKey: string; workspaceId: string }>
+}
+
 export function listConversationDispatchesInPhases(
   phases: readonly ConversationDispatchPhase[]
 ): ConversationDispatchRecord[] {

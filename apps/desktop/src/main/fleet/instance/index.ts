@@ -1,10 +1,17 @@
 import { app, type BrowserWindow } from 'electron'
+import { startBotRuntimes } from '../../runtime-assets/bot-runtimes'
 import { broadcast } from '../../window-ipc'
 import { holdScreenFocus, setScreenFocusOwner, showWindow } from '../../screen-focus'
 import { createInstanceControlServer } from './server'
 import { parseBotInstanceConfig } from './config'
 import { DisplayManager } from './displays'
-import { EnvironmentRuntime, currentEnvironmentRuntime, productionDisplayDeps } from './environment'
+import { startBotDesktop } from './desktop/bot-desktop'
+import {
+  EnvironmentRuntime,
+  currentEnvironmentRuntime,
+  productionDisplayDeps,
+  type BotDesktopTarget,
+} from './environment'
 import type { BotRuntime } from './runtime'
 
 /** The environment runtime of this process, or null outside bot mode and before it starts. */
@@ -72,6 +79,10 @@ export async function startBotInstanceMode(
     home,
     displays,
     floatBrowser: hooks.floatBrowser,
+    // A bot's desktop needs its apps display: outside a container there is none.
+    ...(displays
+      ? { desktop: (target: BotDesktopTarget) => startBotDesktop(target, { floatBrowser: hooks.floatBrowser }) }
+      : {}),
     closeConversation: hooks.closeConversation,
     purgeConversation: hooks.purgeConversation,
     openSettings: (target) => {
@@ -85,8 +96,13 @@ export async function startBotInstanceMode(
         else if (owner && !window.isDestroyed() && window.isVisible()) window.focus()
       }),
   })
+  let stopRuntimes = () => {}
   try {
     await environment.start()
+    stopRuntimes = startBotRuntimes({
+      botStatuses: () => environment.botStatuses(),
+      onRuntimesChanged: () => environment.runtimesChanged(),
+    })
     const server = createInstanceControlServer(config, environment)
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -96,10 +112,12 @@ export async function startBotInstanceMode(
       })
     })
     window.on('closed', async () => {
+      stopRuntimes()
       server.close()
       await environment.dispose()
     })
   } catch (error) {
+    stopRuntimes()
     await environment.dispose()
     throw error
   }

@@ -1,8 +1,11 @@
+import type { ArtifactHostEvent } from '@maestrly/artifact-host'
 import { disposeBotLogins } from './provisioning/logins'
 import os from 'node:os'
+import { shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import {
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_FILES_FEATURE,
   FLEET_PROTOCOL_VERSION,
   isAllowedFleetUrl,
   normalizePairingCode,
@@ -26,6 +29,8 @@ import {
 } from './settings'
 import { FleetScreenBridge } from './screen-bridge'
 import { isHeadlessInstance } from '../../remote-host/server/config'
+import { saveFleetFile } from './downloads'
+import { findFleetDownload, fleetDownloadPath, rememberFleetDownload } from './download-history'
 
 export type FleetConnectionView = {
   features: string[]
@@ -61,7 +66,9 @@ export class FleetClientService {
   }
   private snapshot: FleetSnapshot = emptySnapshot()
   private generation = 0
+  private downloads = new AbortController()
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
+  onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
   private readonly listeners = new Set<() => void>()
 
@@ -80,6 +87,16 @@ export class FleetClientService {
       }
     }
   }
+  /**
+   * Answers bots' desktop calls and keeps this computer's links to them; set by the main process before the client
+   * starts. Without it this computer never says it takes desktop calls, so it is offline for every bot.
+   */
+  desktopBridge: {
+    handle(event: FleetGatewayEvent): boolean
+    connected(): Promise<void>
+    unpaired(deviceId: string): Promise<void>
+    stop(): void
+  } | null = null
 
   start(): void {
     if (isHeadlessInstance()) return
@@ -99,17 +116,25 @@ export class FleetClientService {
   }
 
   stop(): void {
+    this.downloads.abort()
+    this.downloads = new AbortController()
     void disposeBotLogins()
     this.generation++
     this.events?.stop()
     this.events = null
     this.screens.closeAll()
+    this.desktopBridge?.stop()
   }
 
   private setConnection(patch: Partial<FleetConnectionView>): void {
+    if (patch.state === 'unauthorized' || patch.state === 'incompatible') {
+      this.downloads.abort()
+      this.downloads = new AbortController()
+    }
     this.connection = { ...this.connection, ...patch }
     broadcast('fleet:connection', this.connection)
     this.changed()
+    if (patch.state || patch.features) this.onArtifactEvent?.({ type: 'changed' })
   }
 
   getConnection(): FleetConnectionView {
@@ -129,6 +154,28 @@ export class FleetClientService {
   }
   getImage(botId: string, imageId: string) {
     return this.requireApi().getImage(botId, imageId)
+  }
+
+  async downloadFile(botId: string, fileId: string): Promise<string> {
+    const api = this.requireApi()
+    const deviceId = this.connection.deviceId
+    if (!deviceId) throw new Error('Fleet is not paired')
+    const signal = this.downloads.signal
+    if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+    const bot = await api.call('botGet', { params: { id: botId }, signal })
+    signal.throwIfAborted()
+    if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+    const destination = await saveFleetFile(api, botId, fileId, { signal })
+    return rememberFleetDownload(deviceId, botId, fileId, destination)
+  }
+
+  getDownload(botId: string, fileId: string): Promise<string | null> {
+    const deviceId = this.connection.deviceId
+    return deviceId ? findFleetDownload(deviceId, botId, fileId) : Promise.resolve(null)
+  }
+
+  async revealDownload(receipt: string): Promise<void> {
+    shell.showItemInFolder(await fleetDownloadPath(receipt))
   }
 
   private useCredentials(url: string, token: string, tokenPersistence: TokenPersistence): void {
@@ -159,7 +206,12 @@ export class FleetClientService {
         if (generation !== this.generation) return
         this.setConnection({ features: meta.features ?? [] })
         await this.refresh()
-      }
+        // Links may have changed while this computer was away; checking them needs the stream open, not this answer.
+        if (generation === this.generation) void this.desktopBridge?.connected().catch(() => undefined)
+      },
+      undefined,
+      undefined,
+      { desktopBridge: this.desktopBridge !== null }
     )
     this.events.start()
   }
@@ -199,7 +251,10 @@ export class FleetClientService {
   async disconnect(): Promise<void> {
     await disposeBotLogins()
     const api = this.api
+    const deviceId = this.connection.deviceId
     this.stop()
+    // Unpairing ends every access this computer gave its bots; the server forgets the links with the device.
+    if (deviceId) await this.desktopBridge?.unpaired(deviceId).catch(() => undefined)
     this.api = null
     try {
       await api?.call('devicesSelfDelete')
@@ -245,7 +300,22 @@ export class FleetClientService {
   }
 
   private applyEvent(event: FleetGatewayEvent): void {
+    // A desktop call is between the server and this computer's bridge: no window shows it.
+    if (event.type === 'desktop.call') {
+      this.desktopBridge?.handle(event)
+      return
+    }
+    if (event.type === 'desktop_link.updated') this.desktopBridge?.handle(event)
     switch (event.type) {
+      case 'hello':
+        this.onArtifactEvent?.({ type: 'changed' })
+        break
+      case 'artifact.changed':
+        this.onArtifactEvent?.({ type: 'changed', artifactId: event.artifactId })
+        break
+      case 'artifact.activity':
+        this.onArtifactEvent?.({ type: 'activity', artifactId: event.artifactId, kind: event.kind })
+        break
       case 'bot.updated':
         // Archiving emits the archived bot before `bot.removed`; it must not stay listed whatever the order.
         this.snapshot.bots = [

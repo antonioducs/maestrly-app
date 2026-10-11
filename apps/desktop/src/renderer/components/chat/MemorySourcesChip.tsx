@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BrainCircuit } from 'lucide-react'
+import { useChatSourceFocus } from '@/lib/chat-window-context'
 import type { ChatMessage } from '../../../shared/chat'
 
 export function MemorySourcesChip({
@@ -13,6 +14,7 @@ export function MemorySourcesChip({
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
 }) {
   const { t } = useTranslation('chat')
+  const focusSource = useChatSourceFocus()
   const [expanded, setExpanded] = useState(false)
   return (
     <>
@@ -37,6 +39,7 @@ export function MemorySourcesChip({
                   type="button"
                   onClick={() => {
                     if (source.kind === 'local') {
+                      focusSource()
                       window.dispatchEvent(
                         new CustomEvent('maestrly:open-memory', {
                           detail: { conversationId: message.conversationId, memoryId: source.id },

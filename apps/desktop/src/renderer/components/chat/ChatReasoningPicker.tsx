@@ -1,3 +1,4 @@
+import { useChatOwnerWindow, useChatDocument } from '@/lib/chat-window-context'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Brain, Check, Sparkles } from 'lucide-react'
@@ -23,6 +24,8 @@ export function ChatReasoningPicker({
   avoidOverflow?: boolean
   onChange: (effort: ChatReasoningEffort) => void
 }) {
+  const ownerWindow = useChatOwnerWindow()
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>()
@@ -33,11 +36,11 @@ export function ChatReasoningPicker({
     if (!root) return
     setPanelStyle(
       fixedPanelPlacement(root, {
-        width: Math.min(224, window.innerWidth - 16),
-        estimatedHeight: Math.min(288, window.innerHeight * 0.5),
+        width: Math.min(224, ownerWindow.innerWidth - 16),
+        estimatedHeight: Math.min(288, ownerWindow.innerHeight * 0.5),
       }).style
     )
-  }, [avoidOverflow])
+  }, [ownerWindow, avoidOverflow])
 
   const {
     regularEfforts: visibleEfforts,
@@ -64,21 +67,21 @@ export function ChatReasoningPicker({
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
+    ownerDocument.addEventListener('mousedown', onDoc)
+    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+  }, [ownerDocument, open])
 
   useEffect(() => {
     if (!open || !avoidOverflow) return
     positionPanel()
     const reposition = () => positionPanel()
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
+    ownerWindow.addEventListener('resize', reposition)
+    ownerWindow.addEventListener('scroll', reposition, true)
     return () => {
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
+      ownerWindow.removeEventListener('resize', reposition)
+      ownerWindow.removeEventListener('scroll', reposition, true)
     }
-  }, [avoidOverflow, open, positionPanel])
+  }, [ownerWindow, avoidOverflow, open, positionPanel])
 
   const choose = (id: ChatReasoningEffort) => {
     setOpen(false)

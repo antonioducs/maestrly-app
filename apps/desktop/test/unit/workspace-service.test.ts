@@ -57,6 +57,10 @@ vi.mock('../../src/main/chat/cursor-subscription/lifecycle', () => ({
   deleteCursorAgentForConversation: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('../../src/main/chat/antigravity-subscription/lifecycle', () => ({
+  deleteAntigravitySessionForConversation: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../src/main/chat/claude-agent-sdk/lifecycle', () => ({
   deleteClaudeSessionForConversation: vi.fn().mockResolvedValue(undefined),
 }))

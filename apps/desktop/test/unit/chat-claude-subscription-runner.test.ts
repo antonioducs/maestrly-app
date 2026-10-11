@@ -19,12 +19,20 @@ const h = vi.hoisted(() => ({
   buildMcpTools: vi.fn(async () => ({ tools: {}, close: vi.fn(async () => {}) })),
   buildAppTools: vi.fn(async () => ({ tools: {}, close: vi.fn(async () => {}) })),
   gitEnvInfo: vi.fn(async () => null as { branch: string; dirty: boolean } | null),
+  refreshContentionRetryDelay: vi.fn((attempt: number): number | null => (attempt < 3 ? 1 : null)),
+}))
+
+vi.mock('../../src/main/chat/claude-agent-sdk/errors', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/claude-agent-sdk/errors')>()),
+  // The errors tests cover the real schedule; turns here retry without waiting it out.
+  claudeRefreshContentionRetryDelay: (attempt: number) => h.refreshContentionRetryDelay(attempt),
 }))
 
 vi.mock('../../src/main/plan-broker', () => ({
   stagePlan: h.stagePlan,
 }))
-vi.mock('../../src/main/chat/mcp', () => ({
+vi.mock('../../src/main/chat/mcp', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/mcp')>()),
   buildMcpTools: h.buildMcpTools,
   buildAppTools: h.buildAppTools,
 }))
@@ -615,6 +623,66 @@ class AuthenticationErrorManager {
   }
 }
 
+const refreshContentionDiagnostic =
+  'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. This is usually transient; retry in a minute, and if it persists close other Claude Code processes or sign in again'
+
+/** What Claude Code 2.1.284 streams when it cannot take the OAuth refresh lock: a synthetic error and an is_error result. */
+function refreshContentionAttempt(sessionId: string): SDKMessage[] {
+  const envelope = finalAssistant('contention-envelope', [
+    { type: 'text', text: refreshContentionDiagnostic },
+  ]) as unknown as { message: Record<string, unknown> }
+  return [
+    {
+      ...envelope,
+      session_id: sessionId,
+      error: 'server_error',
+      message: { ...envelope.message, id: 'contention-api-message' },
+    } as unknown as SDKMessage,
+    { ...resultMessage(sessionId), is_error: true, result: refreshContentionDiagnostic } as unknown as SDKMessage,
+  ]
+}
+
+function answerAttempt(sessionId: string, uuid: string, text: string): SDKMessage[] {
+  return [
+    { ...finalAssistant(uuid, [{ type: 'text', text }]), session_id: sessionId } as SDKMessage,
+    resultMessage(sessionId),
+  ]
+}
+
+/** Streams one scripted attempt per query and records the user prompt each one received. */
+class ScriptedAttemptsManager {
+  readonly calls: Array<{ options?: Record<string, unknown> }> = []
+  readonly prompts: string[] = []
+  readonly assertAccountIdentity = vi.fn()
+  readonly assertSubscriptionRuntimeAccount = vi.fn()
+  readonly deleteManagedSession = vi.fn(async (_sessionId: string, _cwd: string) => {})
+  readonly requireAuthentication = vi.fn(() => true)
+
+  constructor(private readonly attempts: SDKMessage[][]) {}
+
+  createQuery(input: { prompt: AsyncIterable<unknown>; options?: Record<string, unknown> }) {
+    this.calls.push(input)
+    const messages = this.attempts[this.calls.length - 1] ?? []
+    const prompts = this.prompts
+    return {
+      close: vi.fn(),
+      interrupt: vi.fn(async () => {}),
+      initializationResult: vi.fn(async () => ({ account: { apiProvider: 'firstParty' } })),
+      getContextUsage: vi.fn(async () => ({
+        totalTokens: 100,
+        maxTokens: 200_000,
+        percentage: 0.05,
+        model: 'claude-sonnet',
+      })),
+      async *[Symbol.asyncIterator]() {
+        const prompt = await input.prompt[Symbol.asyncIterator]().next()
+        prompts.push(JSON.stringify(prompt.value))
+        yield* messages
+      },
+    }
+  }
+}
+
 class ManagedTaskQuery implements AsyncIterable<SDKMessage> {
   readonly close = vi.fn()
   readonly interrupt = vi.fn(async () => {})
@@ -929,6 +997,8 @@ describe('Claude official chat runner', () => {
     h.buildAppTools.mockClear()
     h.gitEnvInfo.mockReset()
     h.gitEnvInfo.mockResolvedValue(null)
+    h.refreshContentionRetryDelay.mockReset()
+    h.refreshContentionRetryDelay.mockImplementation((attempt: number) => (attempt < 3 ? 1 : null))
   })
   afterEach(closeDb)
 
@@ -2829,6 +2899,171 @@ describe('Claude official chat runner', () => {
     expect(listChatMessages(conversation.id).at(-1)).toMatchObject({
       errorCode: 'claude-authentication-required',
       parts: [],
+    })
+  })
+
+  describe('OAuth refresh contention', () => {
+    function contentionRun(manager: ScriptedAttemptsManager, signal = new AbortController().signal) {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      const events: ChatStreamEvent[] = []
+      const addUser = (id: string, text: string) =>
+        upsertChatMessage({
+          id,
+          conversationId: conversation.id,
+          role: 'user',
+          parts: [{ type: 'text', id: `${id}-text`, text }],
+          createdAt: Date.now(),
+        })
+      const run = () =>
+        runClaudeChat({
+          conversationId: conversation.id,
+          projectId: workspace.id,
+          cwd: '/repo',
+          selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+          mode: 'ask',
+          permMode: 'ask',
+          manager: manager as unknown as ClaudeSubscriptionManager,
+          accountIdentity: identity,
+          broker: { assert: vi.fn(), on: vi.fn() } as never,
+          questionBroker: { ask: vi.fn() } as never,
+          emit: (event) => events.push(event),
+          signal,
+        })
+      return { conversation, events, addUser, run }
+    }
+
+    it('retries the turn on a fork taken before the failed prompt, without asking for a sign-in', async () => {
+      const manager = new ScriptedAttemptsManager([
+        answerAttempt('claude-session-1', 'first-answer', 'First answer.'),
+        refreshContentionAttempt('claude-session-1'),
+        answerAttempt('claude-session-2', 'second-answer', 'Second answer.'),
+      ])
+      const { conversation, events, addUser, run } = contentionRun(manager)
+      addUser('user-first', 'First request.')
+      await run()
+      const firstAssistant = listChatMessages(conversation.id).at(-1)!
+      addUser('user-second', 'Second request.')
+      events.length = 0
+      await run()
+
+      expect(manager.calls).toHaveLength(3)
+      expect(manager.calls[1].options).toMatchObject({ resume: 'claude-session-1' })
+      expect(manager.calls[1].options).not.toHaveProperty('resumeSessionAt')
+      // The failed attempt appended its prompt to claude-session-1; the retry forks before it.
+      expect(manager.calls[2].options).toMatchObject({
+        resume: 'claude-session-1',
+        resumeSessionAt: 'first-answer',
+        forkSession: true,
+      })
+      expect(manager.prompts[2]).toContain('Second request.')
+      expect(manager.prompts[2]).not.toContain('First request.')
+      expect(manager.deleteManagedSession).not.toHaveBeenCalled()
+      expect(manager.requireAuthentication).not.toHaveBeenCalled()
+      expect(events.filter((event) => event.kind === 'error')).toEqual([])
+      expect(events.filter((event) => event.kind === 'finish')).toHaveLength(1)
+      expect(JSON.stringify(events)).not.toContain('Failed to refresh OAuth token')
+      const assistant = listChatMessages(conversation.id).at(-1)!
+      expect(JSON.stringify(assistant.parts)).toContain('Second answer.')
+      expect(JSON.stringify(assistant.parts)).not.toContain('Failed to refresh OAuth token')
+      expect(getClaudeSessionBinding(conversation.id)).toMatchObject({
+        sessionId: 'claude-session-2',
+        lastAssistantUuid: 'second-answer',
+      })
+      expect(getClaudeMessageMapping(conversation.id, firstAssistant.id)).toMatchObject({
+        sessionId: 'claude-session-2',
+      })
+    })
+
+    it('discards the resumed session holding the failed prompt when every retry fails', async () => {
+      const manager = new ScriptedAttemptsManager([
+        answerAttempt('claude-session-1', 'first-answer', 'First answer.'),
+        ...['claude-session-1', 'fork-1', 'fork-2', 'fork-3'].map(refreshContentionAttempt),
+      ])
+      const { conversation, addUser, run } = contentionRun(manager)
+      addUser('user-first', 'First request.')
+      await run()
+      addUser('user-second', 'Second request.')
+      await run()
+
+      expect(manager.calls).toHaveLength(5)
+      for (const call of manager.calls.slice(2)) {
+        expect(call.options).toMatchObject({
+          resume: 'claude-session-1',
+          resumeSessionAt: 'first-answer',
+          forkSession: true,
+        })
+      }
+      expect(manager.deleteManagedSession.mock.calls.map(([sessionId]) => sessionId)).toEqual([
+        'fork-1',
+        'fork-2',
+        'fork-3',
+        'claude-session-1',
+      ])
+      expect(getClaudeSessionBinding(conversation.id)).toBeNull()
+      expect(manager.requireAuthentication).not.toHaveBeenCalled()
+    })
+
+    it('ends with the transient diagnostic, never a required sign-in, when the contention outlasts the retries', async () => {
+      const manager = new ScriptedAttemptsManager(['s1', 's2', 's3', 's4'].map(refreshContentionAttempt))
+      const { conversation, events, addUser, run } = contentionRun(manager)
+      addUser('user-contention', 'Continue.')
+      await run()
+
+      expect(manager.calls).toHaveLength(4)
+      for (const call of manager.calls) expect(call.options).not.toHaveProperty('resume')
+      // Each failed fresh session is discarded: before the next attempt, and the last one when the turn ends.
+      expect(manager.deleteManagedSession.mock.calls.map(([sessionId]) => sessionId)).toEqual(['s1', 's2', 's3', 's4'])
+      expect(manager.requireAuthentication).not.toHaveBeenCalled()
+      const errors = events.filter((event) => event.kind === 'error')
+      expect(errors).toEqual([expect.objectContaining({ message: refreshContentionDiagnostic })])
+      expect(errors[0]).not.toHaveProperty('code')
+      expect(listChatMessages(conversation.id).at(-1)).toMatchObject({ error: refreshContentionDiagnostic, parts: [] })
+      expect(getClaudeSessionBinding(conversation.id)).toBeNull()
+    })
+
+    it('does not replay a turn whose output already reached the conversation', async () => {
+      const manager = new ScriptedAttemptsManager([
+        [
+          {
+            ...finalAssistant('partial-answer', [{ type: 'text', text: 'Working on it.' }]),
+            session_id: 's1',
+          } as SDKMessage,
+          ...refreshContentionAttempt('s1'),
+        ],
+      ])
+      const { conversation, events, addUser, run } = contentionRun(manager)
+      addUser('user-partial', 'Continue.')
+      await run()
+
+      expect(manager.calls).toHaveLength(1)
+      expect(h.refreshContentionRetryDelay).not.toHaveBeenCalled()
+      expect(manager.requireAuthentication).not.toHaveBeenCalled()
+      expect(events.filter((event) => event.kind === 'error')).toEqual([
+        expect.objectContaining({ message: refreshContentionDiagnostic }),
+      ])
+      const assistant = listChatMessages(conversation.id).at(-1)!
+      expect(JSON.stringify(assistant.parts)).toContain('Working on it.')
+      expect(JSON.stringify(assistant.parts)).not.toContain('Failed to refresh OAuth token')
+    })
+
+    it('stops waiting for the next attempt when the turn is cancelled', async () => {
+      h.refreshContentionRetryDelay.mockImplementation(() => 60_000)
+      const controller = new AbortController()
+      const manager = new ScriptedAttemptsManager([
+        refreshContentionAttempt('s1'),
+        answerAttempt('s2', 'late-answer', 'Too late.'),
+      ])
+      const { events, addUser, run } = contentionRun(manager, controller.signal)
+      addUser('user-cancelled', 'Continue.')
+      const turn = run()
+      await vi.waitFor(() => expect(h.refreshContentionRetryDelay).toHaveBeenCalledOnce())
+      controller.abort()
+      await turn
+
+      expect(manager.calls).toHaveLength(1)
+      expect(events.filter((event) => event.kind === 'aborted')).toHaveLength(1)
+      expect(events.filter((event) => event.kind === 'error')).toEqual([])
     })
   })
 

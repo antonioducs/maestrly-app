@@ -71,6 +71,12 @@ function fixture() {
     renameSlot: vi.fn(),
     removeSlot: vi.fn(async () => {}),
     slotExists: vi.fn(() => false),
+    ensureAntigravity: vi.fn(async (_signal: AbortSignal) => {}),
+    antigravity: vi.fn((_id: string | null) => ({
+      login: vi.fn(
+        async (_signal: AbortSignal, _url: (url: string) => void): Promise<{ ok: boolean }> => ({ ok: true })
+      ),
+    })),
     codex: () => codex,
     claude: () => ({ startInteractiveLogin: vi.fn(async () => interactive) }),
     grok: () => grok,
@@ -87,6 +93,50 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 const start: FleetLoginStartRequest = { kind: 'codex', method: 'browser', slot: 'auto' }
+it.each(['default', 'acc_existing'] as const)(
+  'cancels Google preparation before removing %s and blocks a concurrent login',
+  async (slot) => {
+    const f = fixture()
+    f.deps.slotExists.mockReturnValue(true)
+    let preparingSignal!: AbortSignal
+    f.deps.ensureAntigravity.mockImplementation((signal) => {
+      preparingSignal = signal
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    })
+    const attempt = await f.logins.start({ kind: 'antigravity', method: 'browser', slot })
+    const deletion = deferred<void>()
+    const remove = vi.fn(() => deletion.promise)
+    const removing = f.logins.removeAccount('antigravity', slot === 'default' ? null : slot, remove)
+    await expect(f.logins.start({ kind: 'antigravity', method: 'browser', slot })).rejects.toMatchObject({
+      status: 409,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(preparingSignal.aborted).toBe(true)
+    expect(f.deps.antigravity).not.toHaveBeenCalled()
+    expect(remove).toHaveBeenCalledTimes(1)
+    expect(f.logins.get(attempt.loginId).state).toBe('cancelled')
+    deletion.resolve()
+    await removing
+  }
+)
+
+it('does not remove a newly allocated Google account slot twice when removal cancels preparation', async () => {
+  const f = fixture()
+  f.deps.isConnected.mockReturnValue(true)
+  f.deps.ensureAntigravity.mockImplementation(
+    (signal) =>
+      new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+  )
+  const attempt = await f.logins.start({ kind: 'antigravity', method: 'browser', slot: 'auto' })
+  const remove = vi.fn(async () => {})
+  await f.logins.removeAccount('antigravity', attempt.accountId, remove)
+  expect(f.deps.removeSlot).toHaveBeenCalledExactlyOnceWith('acc_created')
+  expect(remove).not.toHaveBeenCalled()
+  expect(f.deps.antigravity).not.toHaveBeenCalled()
+})
+
 it('forwards a Codex callback, observes completion and stops reporting signing in', async () => {
   const f = fixture()
   const attempt = await f.logins.start(start)
@@ -297,4 +347,68 @@ it.each(
   expect(f.deps.removeSlot).not.toHaveBeenCalled()
   expect(f[kind].cancelLogin).not.toHaveBeenCalled()
   await f.logins.dispose()
+})
+
+it('returns Google sign-in before installation and publishes its browser URL later', async () => {
+  const f = fixture()
+  const installed = deferred<void>()
+  const completed = deferred<{ ok: boolean }>()
+  const url = 'https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2Flocalhost%3A32123%2F'
+  f.deps.ensureAntigravity.mockImplementation(() => installed.promise)
+  const login = vi.fn(async (_signal: AbortSignal, onUrl: (url: string) => void) => {
+    onUrl(url)
+    return completed.promise
+  })
+  f.deps.antigravity.mockReturnValue({ login })
+  const attempt = await f.logins.start({ kind: 'antigravity', method: 'browser', slot: 'auto' })
+  expect(attempt).toMatchObject({ state: 'pending', browser: null })
+  expect(login).not.toHaveBeenCalled()
+  installed.resolve()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.logins.get(attempt.loginId).browser).toEqual({ authUrl: url, callback: { port: 32123, path: '/' } })
+  await f.logins.callback(attempt.loginId, { path: '/', query: 'code=synthetic&state=synthetic' })
+  expect(f.deps.forward).toHaveBeenCalledWith({ port: 32123, path: '/' }, 'code=synthetic&state=synthetic')
+  completed.resolve({ ok: true })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.logins.get(attempt.loginId)).toMatchObject({
+    state: 'completed',
+    account: { label: 'Google AI', email: null, plan: null },
+  })
+})
+
+it('waits for the Google process to stop before deleting a cancelled new slot', async () => {
+  const f = fixture()
+  f.deps.isConnected.mockReturnValue(true)
+  const stopped = deferred<{ ok: boolean }>()
+  let signal: AbortSignal | undefined
+  f.deps.antigravity.mockReturnValue({
+    login: vi.fn(async (value) => {
+      signal = value
+      return stopped.promise
+    }),
+  })
+  const attempt = await f.logins.start({ kind: 'antigravity', method: 'browser', slot: 'auto' })
+  await vi.advanceTimersByTimeAsync(0)
+  const cancelled = f.logins.cancel(attempt.loginId)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(signal?.aborted).toBe(true)
+  expect(f.deps.removeSlot).not.toHaveBeenCalled()
+  stopped.resolve({ ok: false })
+  await cancelled
+  expect(f.deps.removeSlot).toHaveBeenCalledWith('acc_created')
+})
+
+it('cancels installation before starting Google authentication', async () => {
+  const f = fixture()
+  const installed = deferred<void>()
+  f.deps.isConnected.mockReturnValue(true)
+  f.deps.ensureAntigravity.mockImplementation(() => installed.promise)
+  const attempt = await f.logins.start({ kind: 'antigravity', method: 'browser', slot: 'auto' })
+  const cancelled = f.logins.cancel(attempt.loginId)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.deps.removeSlot).not.toHaveBeenCalled()
+  installed.resolve()
+  await cancelled
+  expect(f.deps.antigravity).not.toHaveBeenCalled()
+  expect(f.deps.removeSlot).toHaveBeenCalledWith('acc_created')
 })

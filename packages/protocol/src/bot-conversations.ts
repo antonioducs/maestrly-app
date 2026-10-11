@@ -3,33 +3,22 @@ import { opaqueIdSchema, utcDateTimeSchema } from './identity.js'
 import { chatPartSchema, chatQuestionSchema } from './project-chat.js'
 
 /**
- * Personal bot conversations.
+ * Conversations a bot runs in the projects of a computer.
  *
- * A person connects their own bot (for example a Grok bot) to the native chats that already run on their
- * own desktop. Nothing here belongs to an organization, project, board, card or runner: the owner, the bot
- * connection, the desktop and the workspace are the only scopes. The personal MCP endpoint runs inside
- * the desktop. Remote clients see opaque workspace identifiers, never local paths. The same contracts
- * remain usable by the separately deployed legacy relay.
+ * The bot of a bot server works in the native chats of a desktop its owner paired with that server. Nothing here
+ * belongs to an organization, project, board, card or runner: the owner, the bot connection, the desktop and the
+ * workspace are the only scopes. A bot sees opaque workspace identifiers, never local paths.
  */
-export const BOT_MCP_PATH = '/mcp/bots' as const
-export const BOT_PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource/mcp/bots' as const
-export const BOT_OWNER_ROOT = '/api/v1/bots' as const
-export const BOT_DESKTOP_ROOT = '/api/v1/bot-desktops' as const
 export const BOT_DESKTOP_CAPABILITY = 'bot:conversations:v1' as const
-/** Longest a wait call blocks before it must answer, so a relayed bot turn never hangs. */
+/** Longest a wait call blocks before it must answer, so a bot turn never hangs. */
 export const BOT_WAIT_MAX_SECONDS = 20
-
-/** Audience the bot MCP endpoint accepts. Separate from the REST and connector audiences on purpose. */
-export function botMcpResource(canonicalUrl: string): string {
-  return canonicalUrl.replace(/\/$/, '') + BOT_MCP_PATH
-}
-export function botProtectedResourceMetadataUrl(canonicalUrl: string): string {
-  return canonicalUrl.replace(/\/$/, '') + BOT_PROTECTED_RESOURCE_PATH
-}
 
 const id = z.string().uuid()
 const key = z.string().min(1).max(191)
-const answerMatrix = z.array(z.array(z.string().max(8000)).max(20)).min(1).max(10)
+const answerMatrix = z
+  .array(z.array(z.string().max(8000)).max(20))
+  .min(1)
+  .max(10)
 
 export const botActionSchema = z.enum([
   /** List conversations the connection owns and read their transcript. */
@@ -42,7 +31,7 @@ export const botActionSchema = z.enum([
   'chats:answer',
 ])
 export const BOT_ACTIONS = botActionSchema.options
-/** Actions that never mutate desktop state; used to pick the required OAuth scope. */
+/** Actions that never mutate desktop state. */
 export const BOT_READ_ACTIONS: ReadonlyArray<BotAction> = ['chats:read']
 export function botActionIsRead(action: BotAction): boolean {
   return BOT_READ_ACTIONS.includes(action)
@@ -95,24 +84,6 @@ export const botInventorySchema = z
   })
   .strict()
 
-export const botDesktopSchema = z
-  .object({
-    id,
-    ownerUserId: opaqueIdSchema,
-    name: z.string().min(1).max(160),
-    online: z.boolean(),
-    lastSeenAt: utcDateTimeSchema.nullable(),
-    revokedAt: utcDateTimeSchema.nullable(),
-    inventory: botInventorySchema.nullable(),
-    createdAt: utcDateTimeSchema,
-  })
-  .strict()
-export const botDesktopCreateSchema = z.object({ name: z.string().trim().min(1).max(160) }).strict()
-/** The device credential is returned once and is only ever stored by the desktop main process. */
-export const botDesktopRegistrationSchema = z
-  .object({ desktop: botDesktopSchema, credential: z.string().min(32).max(191) })
-  .strict()
-
 export const botGrantSchema = z
   .object({ workspaceId: key, actions: z.array(botActionSchema).min(1).max(BOT_ACTIONS.length) })
   .strict()
@@ -128,40 +99,6 @@ export const botConnectionSchema = z
     revokedAt: utcDateTimeSchema.nullable(),
     version: z.number().int().positive(),
   })
-  .strict()
-
-export const botConnectionCreateSchema = z
-  .object({
-    name: z.string().trim().min(1).max(160),
-    desktopId: id,
-    grants: z.array(botGrantSchema).min(1).max(200),
-    /** Reuse an OAuth client the owner already registered; omit to have one registered automatically. */
-    clientId: z.string().trim().min(1).max(191).optional(),
-  })
-  .strict()
-
-export const botConnectionPatchSchema = z
-  .object({
-    expectedVersion: z.number().int().positive(),
-    name: z.string().trim().min(1).max(160).optional(),
-    grants: z.array(botGrantSchema).max(200).optional(),
-    revoked: z.boolean().optional(),
-  })
-  .strict()
-
-/** Everything the owner must give the bot so it can authorize against this instance. */
-export const botMcpConfigSchema = z
-  .object({
-    url: z.string().url(),
-    resource: z.string().url(),
-    authorizationServer: z.string().url(),
-    protectedResourceMetadataUrl: z.string().url(),
-    clientId: key,
-    scopes: z.array(key).min(1).max(20),
-  })
-  .strict()
-export const botConnectionRegistrationSchema = z
-  .object({ connection: botConnectionSchema, mcp: botMcpConfigSchema })
   .strict()
 
 export const botManagementStateSchema = z.enum(['active', 'paused', 'revoked'])
@@ -240,7 +177,15 @@ export const botQuestionSchema = z
   .strict()
 
 export const botEventPayloadSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('owner-attention'), attention: z.object({ kind: z.enum(['permission', 'plan']), title: z.string().max(500) }).strict().nullable() }).strict(),
+  z
+    .object({
+      type: z.literal('owner-attention'),
+      attention: z
+        .object({ kind: z.enum(['permission', 'plan']), title: z.string().max(500) })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
   z.object({ type: z.literal('message'), message: botMessageSchema }).strict(),
   z
     .object({
@@ -303,7 +248,11 @@ export const botConversationSnapshotSchema = z
     questions: z.array(botQuestionSchema).max(100),
     pendingCommand: botCommandSchema.nullable(),
     cursor: z.number().int().nonnegative(),
-    ownerAttention: z.object({ kind: z.enum(['permission', 'plan']), title: z.string().max(500) }).strict().nullable().optional(),
+    ownerAttention: z
+      .object({ kind: z.enum(['permission', 'plan']), title: z.string().max(500) })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict()
 
@@ -324,15 +273,8 @@ export type BotSelectionPatch = z.infer<typeof botSelectionPatchSchema>
 export type BotWorkspace = z.infer<typeof botWorkspaceSchema>
 export type BotSelectionOption = z.infer<typeof botSelectionOptionSchema>
 export type BotInventory = z.infer<typeof botInventorySchema>
-export type BotDesktop = z.infer<typeof botDesktopSchema>
-export type BotDesktopCreate = z.infer<typeof botDesktopCreateSchema>
-export type BotDesktopRegistration = z.infer<typeof botDesktopRegistrationSchema>
 export type BotGrant = z.infer<typeof botGrantSchema>
 export type BotConnection = z.infer<typeof botConnectionSchema>
-export type BotConnectionCreate = z.infer<typeof botConnectionCreateSchema>
-export type BotConnectionPatch = z.infer<typeof botConnectionPatchSchema>
-export type BotMcpConfig = z.infer<typeof botMcpConfigSchema>
-export type BotConnectionRegistration = z.infer<typeof botConnectionRegistrationSchema>
 export type BotManagementState = z.infer<typeof botManagementStateSchema>
 export type BotConversation = z.infer<typeof botConversationSchema>
 export type BotCommandKind = z.infer<typeof botCommandKindSchema>

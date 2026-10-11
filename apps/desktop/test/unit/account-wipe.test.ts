@@ -99,45 +99,7 @@ describe('resetLocalAppData', () => {
     expect(listSubscriptionAccounts()).toEqual([])
   })
 
-  it('removes embedded bot OAuth credentials, requests and configuration on reset', async () => {
-    const db = getDb()
-    db.prepare('INSERT INTO bot_oauth_config VALUES(1,?)').run('https://maestrly.example')
-    db.prepare('INSERT INTO bot_oauth_clients VALUES(?,?,?,?)').run('client', 'Fixture', '[]', 1)
-    db.prepare(`INSERT INTO bot_oauth_requests
-      (id,client_id,redirect_uri,scope,code_challenge,poll_hash,status,created_at,expires_at)
-      VALUES(?,?,?,?,?,?,?,?,?)`).run(
-      'request',
-      'client',
-      'https://maestrly.example/callback',
-      'api:read',
-      'challenge',
-      'poll-hash',
-      'pending',
-      1,
-      Date.now() + 60_000
-    )
-    db.prepare(`INSERT INTO bot_oauth_tokens
-      (token_hash,kind,request_id,client_id,connection_id,scope,resource,created_at,expires_at)
-      VALUES(?,?,?,?,?,?,?,?,?)`).run(
-      'token-hash',
-      'access',
-      'request',
-      'client',
-      'bot',
-      'api:read',
-      'https://maestrly.example/mcp/bots',
-      1,
-      Date.now() + 60_000
-    )
-
-    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
-
-    for (const table of ['bot_oauth_tokens', 'bot_oauth_requests', 'bot_oauth_clients', 'bot_oauth_config']) {
-      expect(db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get()).toEqual({ total: 0 })
-    }
-  })
-
-  it('removes the embedded bot relay: its connections, chats, commands and durable events', async () => {
+  it('removes what the bots of a bot server keep on this computer: connections, chats, commands and durable events', async () => {
     const db = getDb()
     const workspace = makeWorkspace()
     const connection = localBotService.createConnection({
@@ -346,14 +308,15 @@ describe('resetLocalAppData', () => {
     }
   )
 
-  it('removes attachment images and tool output, including orphaned files', async () => {
-    for (const root of ['chat-attachment-images', 'chat-tool-output']) {
+  it('removes attachment images, tool output and artifacts, including orphaned files', async () => {
+    for (const root of ['chat-attachment-images', 'chat-tool-output', 'artifacts']) {
       mkdirSync(path.join(h.userData, root), { recursive: true })
       writeFileSync(path.join(h.userData, root, 'orphan'), 'sensitive content')
     }
     await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
     expect(existsSync(path.join(h.userData, 'chat-attachment-images'))).toBe(false)
     expect(existsSync(path.join(h.userData, 'chat-tool-output'))).toBe(false)
+    expect(existsSync(path.join(h.userData, 'artifacts'))).toBe(false)
   })
 
   it('reports database cleanup failures and rolls back owners without removing their files', async () => {

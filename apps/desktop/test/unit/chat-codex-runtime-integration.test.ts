@@ -249,7 +249,8 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
           clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
           capabilities: { experimentalApi: true },
           env: { CODEX_HOME: home, OPENAI_API_KEY: 'fixture-key', ...codexHostMcpProcessEnv() },
-          defaultRequestTimeoutMs: 10000,
+          // Cold Windows CI launches can exceed 10s; use the client's normal 30s deadline there.
+          defaultRequestTimeoutMs: process.platform === 'win32' ? 30_000 : 10_000,
         })
         const model = mode === 'direct' ? 'gpt-5.6-sol' : 'gpt-6-luna'
         const started = await client.startThread({
@@ -310,7 +311,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         await removeTemporaryDirectory(home)
       }
     },
-    30000
+    process.platform === 'win32' ? 60_000 : 30_000
   )
 
   it('forwards deferred tool images from exec to the next model request', async () => {

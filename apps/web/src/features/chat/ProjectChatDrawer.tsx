@@ -275,8 +275,9 @@ export function ProjectChatDrawer({
                       ...draftSettings,
                       baseBranch: selectedBranch,
                       title: t('New conversation'),
-                      boardId: boardId ?? null,
-                      cardId: cardId ?? null,
+                      // Empty context IDs (e.g. before boards load) mean a project-level conversation.
+                      boardId: boardId || null,
+                      cardId: cardId || null,
                     })
                   )
                 }}

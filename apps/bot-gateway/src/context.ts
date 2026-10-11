@@ -1,3 +1,6 @@
+import type { ArtifactHosting } from './artifact-hosting.js'
+import type { DesktopBridge } from './desktop-bridge.js'
+import type { FleetNetwork } from './network.js'
 import type { OwnerMemory } from './owner-memory.js'
 import type { Auth } from './auth.js'
 import type { GatewayConfig } from './config.js'
@@ -10,6 +13,8 @@ import type { Routines } from './routines.js'
 import type { ScreenProxy } from './screen.js'
 import type { BridgeProxy } from './bridge.js'
 export type GatewayContext = {
+  artifacts?: ArtifactHosting
+  network?: FleetNetwork
   auth: Auth
   config: GatewayConfig
   events: EventHub
@@ -21,5 +26,6 @@ export type GatewayContext = {
   routines?: Routines
   screen?: ScreenProxy
   bridge?: BridgeProxy
+  desktops?: DesktopBridge
   revokeDevice?: (deviceId: string) => Promise<void>
 }

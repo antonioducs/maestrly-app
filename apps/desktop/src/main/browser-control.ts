@@ -814,6 +814,55 @@ export async function moveMouse(wc: WebContents, x: number, y: number): Promise<
   return setMousePosition(wc, x, y)
 }
 
+/**
+ * Input a bot's desktop forwards to one of its browser views: its pages, its tab strip and address bar, and its
+ * popups. It goes through the view's own DevTools session, never through the environment display's shared keyboard.
+ * `x`/`y` are CSS pixels of the view.
+ */
+export interface PresentedMouseInput {
+  type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel'
+  x: number
+  y: number
+  button: 'none' | 'left' | 'middle' | 'right'
+  buttons: number
+  clickCount: number
+  modifiers: number
+  deltaX?: number
+  deltaY?: number
+}
+export async function dispatchPresentedMouse(wc: WebContents, event: PresentedMouseInput): Promise<void> {
+  if (!Number.isFinite(event.x) || !Number.isFinite(event.y)) throw new Error('mouse coordinates must be finite')
+  await ensureAttached(wc)
+  await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
+    ...event,
+    ...(event.type === 'mouseWheel' ? { deltaX: event.deltaX ?? 0, deltaY: event.deltaY ?? 0 } : {}),
+  })
+  if (event.type !== 'mouseWheel') setMousePosition(wc, event.x, event.y)
+}
+
+export interface PresentedKeyInput {
+  type: 'keyDown' | 'rawKeyDown' | 'keyUp'
+  key: string
+  code: string
+  windowsVirtualKeyCode: number
+  nativeVirtualKeyCode: number
+  modifiers: number
+  text?: string
+  unmodifiedText?: string
+  location?: number
+  autoRepeat?: boolean
+}
+export async function dispatchPresentedKey(wc: WebContents, event: PresentedKeyInput): Promise<void> {
+  await ensureAttached(wc)
+  await wc.debugger.sendCommand('Input.dispatchKeyEvent', event)
+}
+
+/** Lets a view behave as focused (caret, focus events) while the desktop shows it, though its window is not. */
+export async function setPresentedFocusEmulation(wc: WebContents, enabled: boolean): Promise<void> {
+  await ensureAttached(wc)
+  await wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled })
+}
+
 /** Current synthetic cursor position in CSS pixels. */
 export function mousePosition(wc: WebContents): { x: number; y: number } {
   return { ...(mousePositions.get(wc) ?? { x: 0, y: 0 }) }

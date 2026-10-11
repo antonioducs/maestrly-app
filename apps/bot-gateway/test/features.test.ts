@@ -7,6 +7,9 @@ import type net from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import {
+  FLEET_ARTIFACTS_FEATURE,
+  FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+  FLEET_ARTIFACTS_TRANSFER_FEATURE,
   FLEET_PROTOCOL_HEADER,
   fleetInstanceInputSchema,
   fleetInstanceProfileSchema,
@@ -22,6 +25,7 @@ import { Lifecycle } from '../src/lifecycle.js'
 import { Routines, nextRun, nextWeeklyRun } from '../src/routines.js'
 import { Store } from '../src/store.js'
 import { createSchema5Database } from './store-fixtures.js'
+import { harness } from './harness.js'
 
 const dirs: string[] = []
 const closeFns: (() => Promise<void>)[] = []
@@ -265,7 +269,7 @@ describe('secrets and configuration', () => {
     db.close()
     const migrated = new Store(dir)
     expect(migrated.routineById('old')?.createdBy).toBe('owner')
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '11' })
     migrated.close()
   })
   it('migrates version 3 bots and persists their compaction model', () => {
@@ -275,7 +279,7 @@ describe('secrets and configuration', () => {
     db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
     db.close()
     const migrated = new Store(dir)
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '9' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '11' })
     expect(migrated.db.prepare('PRAGMA table_info(bots)').all()).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'compaction_json' })])
     )
@@ -310,6 +314,16 @@ describe('secrets and configuration', () => {
     ).toBe('/srv/maestrly')
     expect(() =>
       loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: 'srv/maestrly' })
+    ).toThrow()
+  })
+  it('reads whether bots update their runtimes on their own, automatically by default', () => {
+    const dir = temp()
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).botRuntimeUpdates).toBe('auto')
+    expect(
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'off' }).botRuntimeUpdates
+    ).toBe('off')
+    expect(() =>
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'never' })
     ).toThrow()
   })
 })
@@ -779,5 +793,21 @@ describe('routines', () => {
     expect(f.store.routineById(routine.id)?.lastOutcome).toBe('skipped_missed')
     f.lifecycle.close()
     f.store.close()
+  })
+})
+
+describe('artifact viewer', () => {
+  it('advertises that the public port serves the artifact viewer, whether hosting is on or off', async () => {
+    const h = await harness()
+    const features = async () => (await (await h.request('GET', '/v1/meta')).json()).features as string[]
+    expect(await features()).toEqual(
+      expect.arrayContaining([
+        FLEET_ARTIFACTS_FEATURE,
+        FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+        FLEET_ARTIFACTS_TRANSFER_FEATURE,
+      ])
+    )
+    await h.artifacts.update({ enabled: true })
+    expect(await features()).toContain(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)
   })
 })

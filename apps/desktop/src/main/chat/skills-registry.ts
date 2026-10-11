@@ -10,6 +10,7 @@
  * (app_settings `chat.skills.installed`) only tracks ORIGIN for skills installed here (updates).
  */
 import { createHash } from 'node:crypto'
+import { assertSafeSkillPath, withSkillMutation } from './skill-document'
 import { FLEET_PROVISIONING_LIMITS, fleetSkillNameSchema } from '@maestrly/bot-fleet-protocol'
 import { packageSkillDirectory } from './skill-package'
 import { gunzipSync } from 'node:zlib'
@@ -382,6 +383,8 @@ export async function installSkillFromSlug(input: {
   scope: ChatSkillScope
   cwd: string
   overwrite?: boolean
+  expectedName?: string
+  beforeCommit?: () => Promise<void>
   home?: string
 }): Promise<InstallSkillResult> {
   const slug = parseSkillSlug(input.slug)
@@ -396,41 +399,46 @@ export async function installSkillFromSlug(input: {
   const located = locateSkill(entries, slug.skill)
   if (!located) return { ok: false, error: 'no-skill-in-repo' }
   if (!located.root) return { ok: false, error: 'ambiguous-skill', available: located.available }
+  if (input.expectedName && located.name !== input.expectedName) return { ok: false, error: 'skill-name-mismatch' }
   const installRoot = path.resolve(skillInstallRoot(input.scope, input.cwd, input.home ?? os.homedir()))
   const dir = path.join(installRoot, located.name)
   // Disaster guard: empty/unusual names must never resolve to root (overwrite would delete EVERYTHING).
   if (!located.name || dir === installRoot || path.dirname(dir) !== installRoot)
     return { ok: false, error: 'invalid-skill-name' }
-  await cleanupAbandonedInstallArtifacts(installRoot, located.name)
-  const exists = await fsp
-    .stat(dir)
-    .then(() => true)
-    .catch(() => false)
-  if (exists && !input.overwrite) return { ok: false, error: 'already-exists', name: located.name, dir }
-  const files: SkillFile[] = []
-  for (const entry of entries) {
-    if (!entry.path.startsWith(located.root + '/')) continue
-    const segments = safeRelSegments(entry.path.slice(located.root.length + 1))
-    if (segments) files.push({ path: segments.join('/'), data: entry.data, executable: segments[0] === 'scripts' })
-  }
-  try {
-    await installSkillFiles({
-      name: located.name,
-      files,
-      root: installRoot,
-      source: 'registry',
-      provenance: {
-        slug: `${slug.owner}/${slug.repo}@${slug.skill || located.name}`,
-        source: `${slug.owner}/${slug.repo}`,
-        scope: input.scope,
-        dir,
-        installedAt: Date.now(),
-      },
-    })
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  }
-  return { ok: true, name: located.name, dir }
+  return withSkillMutation(dir, async () => {
+    await assertSafeSkillPath(installRoot, true)
+    await cleanupAbandonedInstallArtifacts(installRoot, located.name)
+    const exists = await fsp
+      .stat(dir)
+      .then(() => true)
+      .catch(() => false)
+    if (exists && !input.overwrite) return { ok: false, error: 'already-exists', name: located.name, dir }
+    const files: SkillFile[] = []
+    for (const entry of entries) {
+      if (!entry.path.startsWith(located.root + '/')) continue
+      const segments = safeRelSegments(entry.path.slice(located.root.length + 1))
+      if (segments) files.push({ path: segments.join('/'), data: entry.data, executable: segments[0] === 'scripts' })
+    }
+    try {
+      await installSkillFiles({
+        name: located.name,
+        files,
+        root: installRoot,
+        source: 'registry',
+        beforeCommit: input.beforeCommit,
+        provenance: {
+          slug: `${slug.owner}/${slug.repo}@${slug.skill || located.name}`,
+          source: `${slug.owner}/${slug.repo}`,
+          scope: input.scope,
+          dir,
+          installedAt: Date.now(),
+        },
+      })
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    return { ok: true, name: located.name, dir }
+  })
 }
 
 export interface SkillFile {
@@ -482,11 +490,22 @@ export function skillFilesDigest(files: readonly SkillFile[]): string {
 type SkillFilesInstallInput = {
   name: string
   files: readonly SkillFile[]
+  beforeCommit?: () => Promise<void>
   root?: string
 } & ({ source: 'fleet' } | { source: 'registry'; provenance: InstalledSkillRecord })
 
 /** Shares the atomic swap with registry installs, which retain their existing archive limits and provenance. */
 export async function installSkillFiles(
+  input: SkillFilesInstallInput
+): Promise<{ outcome: SkillInstallOutcome; dir: string }> {
+  const root = path.resolve(input.root ?? skillInstallRoot('global', ''))
+  return withSkillMutation(path.join(root, input.name), async () => {
+    await assertSafeSkillPath(root, true)
+    return installSkillFilesUnlocked(input)
+  })
+}
+
+async function installSkillFilesUnlocked(
   input: SkillFilesInstallInput
 ): Promise<{ outcome: SkillInstallOutcome; dir: string }> {
   const installRoot = path.resolve(input.root ?? skillInstallRoot('global', ''))
@@ -533,6 +552,7 @@ export async function installSkillFiles(
       return { outcome: 'unchanged', dir }
     }
   }
+  await assertSafeSkillPath(dir, true)
   // Stage beside the destination so both renames stay on the same filesystem.
   const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const staging = path.join(installRoot, `.tmp-${input.name}-${stamp}`)
@@ -552,6 +572,8 @@ export async function installSkillFiles(
   let backedUp = false
   let swapped = false
   try {
+    await input.beforeCommit?.()
+    await assertSafeSkillPath(dir, true)
     if (existing) {
       await fsp.rename(dir, backup)
       backedUp = true
@@ -570,6 +592,14 @@ export async function installSkillFiles(
 }
 
 export async function removeGlobalSkill(name: string, root = skillInstallRoot('global', '')): Promise<boolean> {
+  return withSkillMutation(path.join(root, name), async () => {
+    await assertSafeSkillPath(root, true)
+    await assertSafeSkillPath(path.join(root, name), true)
+    return removeGlobalSkillUnlocked(name, root)
+  })
+}
+
+async function removeGlobalSkillUnlocked(name: string, root: string): Promise<boolean> {
   if (!fleetSkillNameSchema.safeParse(name).success) throw new Error('invalid-skill-name')
   const dir = path.join(root, name)
   const exists = await fsp.lstat(dir).catch((error: NodeJS.ErrnoException) => {

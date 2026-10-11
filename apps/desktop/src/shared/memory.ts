@@ -185,3 +185,10 @@ export interface MemorySettings {
     selection: { providerId: string; modelId: string; effort: string; fastMode: boolean } | null
   }
 }
+
+/** Profile-local memory shared by ordinary standalone chats. */
+export const PERSONAL_MEMORY_SPACE_ID = 'personal-chat'
+
+export interface PersonalMemorySettings extends MemorySettings {
+  enabled: boolean
+}

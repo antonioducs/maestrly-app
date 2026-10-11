@@ -282,14 +282,16 @@ export function stopEmbeddingWorker(): void {
 }
 
 /** Packaged smoke check through the same utilityProcess contract without downloading a model. */
-export async function runMlWorkerNativeSmoke(runtimePath: string): Promise<{ onnxValue: number; sharpBytes: number }> {
+export async function runMlWorkerNativeSmoke(
+  runtimePath: string
+): Promise<{ onnxValue: number; sharpBytes: number; vadSegments: number }> {
   const workerPath = path.join(app.getAppPath(), 'out', 'main', 'ml-worker.js')
   const moduleUrl = pathToFileURL(path.join(path.resolve(runtimePath), 'runtime.mjs')).href
   const process = utilityProcess.fork(workerPath, [], { serviceName: 'packaged-local-ml-smoke', stdio: 'pipe' })
   return new Promise((resolve, reject) => {
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
-    const finish = (error?: Error, result?: { onnxValue: number; sharpBytes: number }) => {
+    const finish = (error?: Error, result?: { onnxValue: number; sharpBytes: number; vadSegments: number }) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
@@ -302,14 +304,26 @@ export async function runMlWorkerNativeSmoke(runtimePath: string): Promise<{ onn
       else resolve(result!)
     }
     timer = setTimeout(() => finish(new Error('Timed out waiting for packaged local-ML utilityProcess smoke')), 120_000)
-    process.on('message', (message: { type?: string; error?: string; onnxValue?: number; sharpBytes?: number }) => {
-      if (message.type === 'ready') process.postMessage({ type: 'smoke' })
-      else if (message.type === 'smoke:result') {
-        if (typeof message.onnxValue !== 'number' || typeof message.sharpBytes !== 'number') {
-          finish(new Error('Packaged local-ML smoke returned an incomplete native result'))
-        } else finish(undefined, { onnxValue: message.onnxValue, sharpBytes: message.sharpBytes })
-      } else if (message.type === 'smoke:error') finish(new Error(message.error ?? 'Packaged local-ML smoke failed'))
-    })
+    process.on(
+      'message',
+      (message: { type?: string; error?: string; onnxValue?: number; sharpBytes?: number; vadSegments?: number }) => {
+        if (message.type === 'ready') process.postMessage({ type: 'smoke' })
+        else if (message.type === 'smoke:result') {
+          if (
+            typeof message.onnxValue !== 'number' ||
+            typeof message.sharpBytes !== 'number' ||
+            typeof message.vadSegments !== 'number'
+          ) {
+            finish(new Error('Packaged local-ML smoke returned an incomplete native result'))
+          } else
+            finish(undefined, {
+              onnxValue: message.onnxValue,
+              sharpBytes: message.sharpBytes,
+              vadSegments: message.vadSegments,
+            })
+        } else if (message.type === 'smoke:error') finish(new Error(message.error ?? 'Packaged local-ML smoke failed'))
+      }
+    )
     process.on('exit', (code) => {
       if (!settled) finish(new Error(`Packaged local-ML utilityProcess exited before smoke completion (code ${code})`))
     })

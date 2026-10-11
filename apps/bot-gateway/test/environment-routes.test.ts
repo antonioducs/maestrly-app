@@ -71,11 +71,19 @@ describe('environment routes', () => {
     const h = await harness(Date.now, { environments: true })
     const docker = h.lifecycle.docker as FakeDockerDriver
     expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
+      'files',
+      'environment-settings-v1',
+      'artifacts',
+      'artifacts-gateway-viewer',
+      'artifacts-transfer',
       'provisioning',
       'environments',
       'environment-compaction',
       'environment-updates',
       'context-limit',
+      'transcript-reasoning',
+      'runtime-updates',
+      'desktop-bridge',
       'workspaces-host',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }

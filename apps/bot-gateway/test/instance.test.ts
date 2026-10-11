@@ -4,6 +4,7 @@ import type net from 'node:net'
 import { FLEET_PROTOCOL_HEADER, type FleetInstanceBotInstall } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from '../src/errors.js'
 import { InstanceClient, InstanceUnreachableError } from '../src/instance.js'
+import { harness } from './harness.js'
 
 const servers: http.Server[] = []
 afterEach(async () => {
@@ -115,5 +116,83 @@ describe('instance client', () => {
       expect(error).toBeInstanceOf(InstanceUnreachableError)
       expect(error).toMatchObject({ code: 'INSTANCE_UNAVAILABLE', message: 'Bot instance unavailable' })
     }
+  })
+})
+
+describe('transcript reasoning', () => {
+  const at = '2026-09-29T10:00:00.000Z'
+  const reasoning = { kind: 'reasoning', id: 'm:0', at, text: 'Thinking', truncated: false, streaming: false }
+
+  it('asks a bot for reasoning items only for a device that asked for them', async () => {
+    const page = { items: [reasoning], before: null }
+    const origin = await instance({
+      'GET /v1/bots/alpha/transcript?limit=200&reasoning=1': json(200, page),
+      'GET /v1/bots/alpha/transcript?before=m%3A5&limit=20': json(200, { items: [], before: null }),
+    })
+    const client = new InstanceClient('work', 'control', origin).forBot('alpha', true)
+    expect(await client.transcript(undefined, 200, true)).toEqual(page)
+    expect(await client.transcript('m:5', 20)).toEqual({ items: [], before: null })
+  })
+
+  it('reads the event stream with reasoning items, which the gateway passes on to devices that ask', async () => {
+    const event = { seq: 1, at, botId: 'alpha', type: 'transcript.upsert', item: reasoning }
+    const origin = await instance({
+      'GET /v1/events?since=0&reasoning=1': (res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.end('id: 1\nevent: fleet\ndata: ' + JSON.stringify(event) + '\n\n')
+      },
+    })
+    const received = []
+    for await (const value of new InstanceClient('work', 'control', origin).events(0)) received.push(value)
+    expect(received).toEqual([event])
+  })
+})
+
+describe('bot profile sent to its environment', () => {
+  it('carries the bot tint when the bot is installed and when it changes', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const sent = () => h.instance.installs.findLast((item) => item.profile.botId === h.bot.id)
+    expect(sent()?.profile.tint).toBe(h.store.getBot(h.bot.id)?.tint)
+    await h.lifecycle.patch(h.bot.id, { tint: '#3fb58a' })
+    expect(sent()?.profile.tint).toBe('#3fb58a')
+  })
+})
+
+describe('private file transport', () => {
+  it('lets file streams outlive the normal RPC timeout while remaining cancellable', async () => {
+    const origin = await instance({
+      'GET /v1/bots/bot/files/file/content': (res) => {
+        res.writeHead(200, { 'content-type': 'text/plain', 'content-length': 4 })
+        res.write('ab')
+        setTimeout(() => res.end('cd'), 50)
+      },
+    })
+    const client = new InstanceClient('environment', 'control', origin, 5).forBot('bot', true)
+    expect(await (await client.file('file')).text()).toBe('abcd')
+    const controller = new AbortController()
+    const response = await client.file('file', controller.signal)
+    controller.abort()
+    await expect(response.text()).rejects.toThrow()
+  })
+  it.each([Buffer.from([0, 255, 2]), Buffer.alloc(0)])('reads authenticated exact binary bytes (%s)', async (bytes) => {
+    const ref = { id: 'file', name: 'document.bin', mediaType: 'application/octet-stream', byteSize: bytes.length }
+    const origin = await instance({
+      'GET /v1/bots/bot/files/file': json(200, ref),
+      'GET /v1/bots/bot/files/file/content': (res) =>
+        res.writeHead(200, { 'content-type': ref.mediaType, 'content-length': bytes.length }).end(bytes),
+    })
+    const client = new InstanceClient('environment', 'control', origin).forBot('bot', true)
+    expect(await client.fileMeta('file')).toEqual(ref)
+    expect(Buffer.from(await (await client.file('file')).arrayBuffer())).toEqual(bytes)
+  })
+  it('rejects redirects and invalid metadata', async () => {
+    const origin = await instance({
+      'GET /v1/bots/bot/files/file/content': (res) => res.writeHead(302, { location: '/other' }).end(),
+      'GET /v1/bots/bot/files/file': json(200, { id: 'other', name: 'a', mediaType: 'text/plain', byteSize: 0 }),
+    })
+    const client = new InstanceClient('environment', 'control', origin).forBot('bot', true)
+    await expect(client.file('file')).rejects.toBeInstanceOf(GatewayError)
+    await expect(client.fileMeta('file')).rejects.toBeInstanceOf(GatewayError)
+    await expect(client.file('../file')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   })
 })

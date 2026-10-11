@@ -17,11 +17,12 @@ const notBots = (): InstanceHttpError =>
 /**
  * What a workspaces host answers on the control API a bot environment serves: it reports itself to the gateway and
  * takes accounts, sign-ins, skills and MCP servers with the code a bot environment runs (an environment runtime with
- * no bots), and it refuses everything about bots and screens. Its chats and workspaces are not here: they are reached
- * over the bridge.
+ * no bots), and it refuses everything about bots and screens. Its environment settings are the profile its chats use.
+ * Its chats and workspaces are not here: they are reached over the bridge.
  */
 export class HostEnvironment implements InstanceEnvironment {
   readonly events: InstanceEnvironment['events']
+  readonly settings: InstanceEnvironment['settings']
 
   constructor(
     private readonly runtime: EnvironmentRuntime,
@@ -29,6 +30,7 @@ export class HostEnvironment implements InstanceEnvironment {
     private readonly busy: () => boolean
   ) {
     this.events = runtime.events
+    this.settings = runtime.settings
   }
 
   health() {
@@ -106,5 +108,8 @@ export class HostEnvironment implements InstanceEnvironment {
   }
   removeAccount(providerId: string) {
     return this.runtime.removeAccount(providerId)
+  }
+  checkRuntimes() {
+    this.runtime.checkRuntimes()
   }
 }

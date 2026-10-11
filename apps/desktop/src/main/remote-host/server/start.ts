@@ -1,6 +1,7 @@
 import { app, type BrowserWindow } from 'electron'
 import { EnvironmentRuntime } from '../../fleet/instance/environment'
 import { type BridgeUpgrade, createInstanceControlServer } from '../../fleet/instance/server'
+import { setProjectsDirectoryFallback } from '../../projects-directory'
 import { parseServerModeConfig } from './config'
 import { HostEnvironment } from './host-environment'
 
@@ -24,6 +25,7 @@ export interface ServerHostDeps {
 export async function startServerHostMode(window: BrowserWindow, deps: ServerHostDeps): Promise<boolean> {
   const config = parseServerModeConfig()
   if (!config) return false
+  setProjectsDirectoryFallback(config.workspacesRoot)
   // An environment runtime with no bots and no displays: it provisions accounts, sign-ins, skills and MCP servers.
   const runtime = new EnvironmentRuntime({
     config,

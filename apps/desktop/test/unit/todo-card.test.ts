@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { MessagePart } from '../../src/shared/chat'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-import { TodoCard } from '../../src/renderer/components/chat/TodoCard'
+import { TodoCard, TodoList } from '../../src/renderer/components/chat/TodoCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
@@ -74,5 +74,14 @@ describe('TodoCard unvalidated tool input', () => {
     const html = renderTodos({ todos: [{ content: 'Recovered task', status: 'completed' }] })
     expect(html).toContain('Recovered task')
     expect(html).toContain('1/1')
+  })
+
+  it('renders a bot checklist exactly like the desktop card for the same list', () => {
+    const todos = [
+      { content: 'Inspect files', status: 'completed' as const },
+      { content: 'Fix rendering', status: 'in_progress' as const },
+    ]
+    expect(renderToStaticMarkup(createElement(TodoList, { todos }))).toBe(renderTodos({ todos }))
+    expect(renderToStaticMarkup(createElement(TodoList, { todos: [] }))).toBe('')
   })
 })

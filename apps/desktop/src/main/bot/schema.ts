@@ -30,7 +30,7 @@ export function initializeBotCommandSchema(db: DatabaseSync): void {
 /**
  * The embedded bot relay of this computer.
  *
- * A personal bot is answered entirely from here: its connection, the grants the person gave it, the
+ * A bot of a bot server is answered entirely from here: its connection, the grants the person gave it, the
  * inventory this desktop published for it, its chats, commands, durable events and idempotency
  * receipts. No account, organization or remote instance takes part in any of these rows.
  */

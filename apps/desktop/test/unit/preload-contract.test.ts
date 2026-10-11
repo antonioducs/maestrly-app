@@ -7,6 +7,7 @@ import * as electron from 'electron' // Alias to the same stub instance imported
 import { localDataApi } from '../../src/preload/api-local-data'
 import { appApi, appHostApi } from '../../src/preload/api-app'
 import { chatApi, chatLocalApi } from '../../src/preload/api-chat'
+import { chatWindowApi } from '../../src/preload/api-chat-window'
 import { conversationMigrationApi } from '../../src/preload/api-conversation-migration'
 import { drawerApi, drawerHostApi } from '../../src/preload/api-drawer'
 import { memoryApi } from '../../src/preload/api-memory'
@@ -25,9 +26,12 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
+import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
 import { hostFsApi } from '../../src/preload/api-host-fs'
+import { artifactsApi } from '../../src/preload/api-artifacts'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -65,13 +69,16 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['updateApi', updateApi],
   ['chatApi', chatApi],
   ['chatLocalApi', chatLocalApi],
+  ['chatWindowApi', chatWindowApi],
   ['platformApi', platformApi],
   ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
+  ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['hostsApi', hostsApi],
   ['hostFsApi', hostFsApi],
+  ['artifactsApi', artifactsApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -145,6 +152,32 @@ const preloadText = [...preloadFiles.values()].join('\n')
 // Verify the exposed API includes core workspace wrappers.
 // ---------------------------------------------------------------------------
 describe('preload API — exposure', () => {
+  it('forwards chat window identity and unsubscribes lifecycle events', async () => {
+    const target = { kind: 'conversation', id: 'chat', title: 'Chat' }
+    await api.chatWindowPrepare(target)
+    await api.chatWindowFocus('conversation:chat')
+    await api.chatWindowShowSource('conversation:chat')
+    await api.chatWindowClose('conversation:chat')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['chat-window:prepare', target],
+      ['chat-window:focus', 'conversation:chat'],
+      ['chat-window:show-source', 'conversation:chat'],
+      ['chat-window:close', 'conversation:chat'],
+    ])
+    for (const [method, channel] of [
+      ['onChatWindowCloseRequested', 'chat-window:close-requested'],
+      ['onChatWindowClosed', 'chat-window:closed'],
+    ]) {
+      const callback = vi.fn()
+      const off = api[method](callback) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1] as Fn
+      expect(onSpy).toHaveBeenCalledWith(channel, listener)
+      listener({}, 'conversation:chat')
+      expect(callback).toHaveBeenCalledWith('conversation:chat')
+      off()
+      expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
+    }
+  })
   it('exposes an api object through contextBridge with conversation wrappers', () => {
     expect(typeof api).toBe('object')
     expect(typeof api.onConversationOpen).toBe('function')
@@ -237,9 +270,47 @@ describe('preload API — exposure', () => {
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('fleet:installer:status', onSpy.mock.calls.at(-1)?.[1])
   })
+  it('forwards artifact calls to their channels in argument order', async () => {
+    const artifacts = (api as unknown as { artifacts: Record<string, Fn> }).artifacts
+    await artifacts.list()
+    await artifacts.detail('artifact')
+    await artifacts.remove('artifact')
+    await artifacts.openExternal('artifact', 2)
+    await artifacts.openInConversation('conversation', 'artifact', 3)
+    await artifacts.legacyList()
+    await artifacts.legacyState()
+    await artifacts.legacyMove(['artifact'])
+    await artifacts.legacyStop()
+    await artifacts.legacyDelete()
+    expect(invokeSpy.mock.calls).toEqual([
+      ['artifacts:list'],
+      ['artifacts:detail', 'artifact'],
+      ['artifacts:delete', 'artifact'],
+      ['artifacts:open-external', 'artifact', 2],
+      ['artifacts:open-in-conversation', 'conversation', 'artifact', 3],
+      ['artifacts:legacy-list'],
+      ['artifacts:legacy-state'],
+      ['artifacts:legacy-move', ['artifact']],
+      ['artifacts:legacy-stop'],
+      ['artifacts:legacy-delete', undefined],
+    ])
+    for (const [subscribe, channel] of [
+      ['onChanged', 'artifacts:changed'],
+      ['onLegacyState', 'artifacts:legacy-state'],
+    ] as const) {
+      const off = artifacts[subscribe](vi.fn()) as () => void
+      expect(onSpy).toHaveBeenLastCalledWith(channel, expect.any(Function))
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, onSpy.mock.calls.at(-1)?.[1])
+    }
+    const off = api.onDrawerBrowserFocus(vi.fn()) as () => void
+    expect(onSpy).toHaveBeenLastCalledWith('drawer:browser-focus', expect.any(Function))
+    off()
+  })
+
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(497)
+    expect(keys).toHaveLength(532)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -290,6 +361,24 @@ describe('preload API — exposure', () => {
     expect(removeListenerSpy).toHaveBeenLastCalledWith('hosts:changed', listener)
   })
 
+  it('routes copied screen text through the main process with its channel id', async () => {
+    await api.fleetScreenClipboardRead('screen-channel')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardRead', 'screen-channel')
+    await api.fleetScreenClipboardWrite('screen-channel', 'copied text')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardWrite', 'screen-channel', 'copied text')
+  })
+
+  it('exposes a fixed, environment-addressed method for every settings operation', () => {
+    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(Object.keys(FLEET_SETTINGS_OPERATIONS).sort())
+    expect(api.fleetEnvironmentSettings).toBe(fleetEnvironmentSettings)
+    const input = { expectedRevision: 'synthetic-revision' }
+    for (const [name, method] of Object.entries(fleetEnvironmentSettings)) {
+      invokeSpy.mockClear()
+      method('synthetic-environment', input as never)
+      expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, 'synthetic-environment', input)
+    }
+  })
+
   it('composes disjoint slices whose union equals the exposed API', () => {
     const apiKeys = Object.keys(api).sort()
     const ownerByKey = new Map<string, string[]>()
@@ -320,6 +409,16 @@ describe('preload API — exposure', () => {
 // Distinct sentinel arguments make accidental reordering fail the assertion.
 // ---------------------------------------------------------------------------
 describe('preload API — channels and argument order (ipcRenderer.invoke)', () => {
+  it('personal memory search and index wrappers never take a workspace or repository root', () => {
+    const filters = { limit: 10, pinned: true }
+    api.searchPersonalMemories('synthetic query', filters)
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:search', 'synthetic query', filters)
+    api.getPersonalMemoryIndexStatus()
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-status-get')
+    api.rebuildPersonalMemoryIndex()
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-rebuild')
+  })
+
   it('runtime assets preserve IDs and explicit channels', () => {
     api.runtimeAssetStatus('codex-runtime')
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:status', 'codex-runtime')
@@ -355,6 +454,29 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
       ['project-setup:cancel', request.operationId],
       ['project-setup:resolve-empty-remote', { operationId: request.operationId, decision: 'initialize-local' }],
     ])
+  })
+
+  it('projects folder and chat-created workspaces use their own channels', () => {
+    api.getProjectsDirectory()
+    api.pickProjectsDirectory()
+    api.clearProjectsDirectory()
+    expect(invokeSpy.mock.calls).toEqual([
+      ['project-setup:projects-directory-get'],
+      ['project-setup:projects-directory-pick'],
+      ['project-setup:projects-directory-clear'],
+    ])
+    for (const [method, channel] of [
+      ['onProjectsDirectoryChanged', 'project-setup:projects-directory-changed'],
+      ['onWorkspacesChanged', 'workspace:changed'],
+      ['onWorkspaceCreationProgress', 'workspace-creation:progress'],
+    ] as const) {
+      const off = api[method](vi.fn()) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1]
+      expect(onSpy).toHaveBeenLastCalledWith(channel, listener)
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, listener)
+      expect(mainText).toContain(`'${channel}'`)
+    }
   })
 
   it('setWorkspaceDefaultBranch(ws,branch) -> workspace:set-default-branch (invoke)', () => {
@@ -1050,6 +1172,16 @@ describe('preload API — chat pagination (#559)', () => {
     expect(removeListenerSpy).toHaveBeenCalledWith('chat:cursor-subscription:auth-changed', listener)
   })
 
+  it('chatSetAppToolGroup(group, enabled) -> chat:set-app-tool-group preserves both arguments', () => {
+    api.chatSetAppToolGroup('debug', false)
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-app-tool-group', 'debug', false)
+  })
+
+  it('chatSetConvTools(id, patch) -> chat:set-conv-tools forwards app-tool group overrides', () => {
+    api.chatSetConvTools('conversation-1', { appGroups: { browser: false } })
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-conv-tools', 'conversation-1', { appGroups: { browser: false } })
+  })
+
   it('chatSetBashFilters(enabled) -> chat:set-bash-filters preserves the boolean', () => {
     api.chatSetBashFilters(false)
     expect(invokeSpy).toHaveBeenCalledWith('chat:set-bash-filters', false)
@@ -1158,19 +1290,22 @@ describe('preload API — chat pagination (#559)', () => {
       conversationId: 'conv-web',
     })
 
-    invokeSpy.mockResolvedValueOnce({ ok: true, kickoff: 'safe-prompt' })
-    await api.chatGptWebCompanionCopyPrompt('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-prompt', {
+    // Main writes the clipboard; preload only relays the result and never receives the copied value.
+    invokeSpy.mockResolvedValueOnce({ ok: true })
+    await expect(api.chatGptWebCompanionCopyPrompt('conv-web')).resolves.toEqual({ ok: true })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-copy-prompt', {
       conversationId: 'conv-web',
     })
-    expect(clipboardWriteSpy).toHaveBeenCalledWith('safe-prompt')
 
-    invokeSpy.mockResolvedValueOnce({ ok: true, sessionKey: 'safe-session-key' })
-    await api.chatGptWebCompanionCopySessionKey('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-session-key', {
+    invokeSpy.mockResolvedValueOnce({ ok: false, error: 'session-not-found' })
+    await expect(api.chatGptWebCompanionCopySessionKey('conv-web')).resolves.toEqual({
+      ok: false,
+      error: 'session-not-found',
+    })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-copy-session-key', {
       conversationId: 'conv-web',
     })
-    expect(clipboardWriteSpy).toHaveBeenCalledWith('safe-session-key')
+    expect(clipboardWriteSpy).not.toHaveBeenCalled()
 
     api.chatGptWebCompanionOpen('conv-web')
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-open', {

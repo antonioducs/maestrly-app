@@ -1,3 +1,5 @@
+import { readPersonalMemorySettings } from './personal-memory-settings'
+import type { MemorySpace } from './spaces'
 import type { MemorySettings } from '../../shared/memory'
 import { getAppSetting } from '../store'
 
@@ -42,4 +44,8 @@ export function readMemorySettings(): MemorySettings {
     console.warn('[memory] settings unreadable, using defaults:', error instanceof Error ? error.message : error)
     return DEFAULT_MEMORY_SETTINGS
   }
+}
+
+export function memorySettingsForSpace(space: Pick<MemorySpace, 'kind'>): MemorySettings {
+  return space.kind === 'personal' ? readPersonalMemorySettings() : readMemorySettings()
 }

@@ -232,3 +232,58 @@ describe('LazyMcpRuntime', () => {
     expect(serialized).not.toContain('failure-with-secret-value')
   })
 })
+
+it('retires invalidated transports after active calls finish while new calls use new settings', async () => {
+  const old = connection(),
+    current = connection()
+  let finish!: () => void
+  let started!: () => void
+  const running = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  old.callTool.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ content: [{ type: 'text', text: 'old result' }] })
+        started()
+      })
+  )
+  const connect = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce(current)
+  const runtime = new LazyMcpRuntime({ connect })
+  const pending = runtime.callTool(server(), 'lookup', {})
+  await running
+  runtime.invalidate(server().id)
+  expect(old.close).not.toHaveBeenCalled()
+  await runtime.callTool(server({ command: 'new-fixture' }), 'lookup', {})
+  expect(current.callTool).toHaveBeenCalledOnce()
+  expect(old.close).not.toHaveBeenCalled()
+  finish()
+  await expect(pending).resolves.toMatchObject({ content: [{ text: 'old result' }] })
+  expect(old.close).toHaveBeenCalledOnce()
+  await runtime.dispose()
+})
+
+it('retains a connection invalidated during discovery and closes it when discovery finishes', async () => {
+  const connected = connection()
+  let finish!: () => void
+  let started!: () => void
+  const listing = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  connected.listTools.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve([])
+        started()
+      })
+  )
+  const runtime = new LazyMcpRuntime({ connect: async () => connected })
+  const pending = runtime.listTools(server())
+  await listing
+  runtime.invalidate(server().id)
+  expect(connected.close).not.toHaveBeenCalled()
+  finish()
+  await pending
+  expect(connected.close).toHaveBeenCalledOnce()
+  await runtime.dispose()
+})

@@ -1,0 +1,193 @@
+#!/usr/local/bin/node
+'use strict'
+
+// Shows one of this bot's terminals in the window that runs it (an xterm that Maestrly opens). The shell lives in the
+// Maestrly app; this program only relays: the current screen and the live output go to the terminal, and keys and
+// window size go back. Closing the window ends this program and leaves the shell running.
+//
+// It reads MAESTRLY_DESKTOP_SOCKET and MAESTRLY_PTY_ID from the environment and speaks the wire format of
+// apps/desktop/src/main/fleet/instance/desktop/socket-protocol.ts: a `pty` line, then frames
+// [type u8][length u32 BE][data] with 1 = data, 2 = size (cols u16, rows u16) and 3 = exit (code i32, message).
+// When the shell ended with a failure, the window waits for a key so the message can be read. Plain Node, no
+// dependencies.
+
+// getBuiltinModule works whether Node runs this file as CommonJS (installed in /usr/local/bin) or as an ES module
+// (run from the repository, whose package.json says "type": "module").
+const net = process.getBuiltinModule('node:net')
+
+const FRAME_DATA = 1
+const FRAME_SIZE = 2
+const FRAME_EXIT = 3
+const FRAME_MAX = 1024 * 1024
+const INPUT_CHUNK = 64 * 1024
+const REPLY_MAX = 64 * 1024
+const DIMENSION_MAX = 1000
+
+const socketPath = process.env.MAESTRLY_DESKTOP_SOCKET
+const ptyId = process.env.MAESTRLY_PTY_ID
+
+function die(message) {
+  process.stderr.write('maestrly-pty-attach: ' + message + '\n')
+  process.exit(2)
+}
+
+if (!socketPath) die('MAESTRLY_DESKTOP_SOCKET is not set; this program works inside a bot desktop.')
+if (!ptyId) die('MAESTRLY_PTY_ID is not set.')
+
+function dimension(value, fallback) {
+  const number = Math.floor(Number(value))
+  return Number.isFinite(number) && number >= 1 ? Math.min(number, DIMENSION_MAX) : fallback
+}
+
+function windowSize() {
+  let columns = process.stdout.columns
+  let rows = process.stdout.rows
+  if (process.stdout.isTTY && typeof process.stdout.getWindowSize === 'function') {
+    try {
+      ;[columns, rows] = process.stdout.getWindowSize()
+    } catch (error) {
+      // Keep the size the stream already knows.
+    }
+  }
+  return { cols: dimension(columns, 80), rows: dimension(rows, 24) }
+}
+
+function frame(type, payload) {
+  const header = Buffer.alloc(5)
+  header.writeUInt8(type, 0)
+  header.writeUInt32BE(payload.length, 1)
+  return Buffer.concat([header, payload])
+}
+
+const socket = net.createConnection(socketPath)
+let received = Buffer.alloc(0)
+let attached = false
+let finished = false
+let exitFrame = null
+let rawMode = false
+let inputStarted = false
+
+function restoreTerminal() {
+  if (!rawMode) return
+  rawMode = false
+  try {
+    process.stdin.setRawMode(false)
+  } catch (error) {
+    // The terminal is gone.
+  }
+}
+process.on('exit', restoreTerminal)
+
+/** Gives the keyboard back, so nothing keeps the program running. */
+function stopInput() {
+  restoreTerminal()
+  if (inputStarted) process.stdin.destroy()
+}
+
+function fail(message) {
+  if (finished) return
+  finished = true
+  stopInput()
+  process.stderr.write('maestrly-pty-attach: ' + message + '\n')
+  process.exitCode = 1
+  socket.destroy()
+}
+
+function sendSize() {
+  const size = windowSize()
+  const payload = Buffer.alloc(4)
+  payload.writeUInt16BE(size.cols, 0)
+  payload.writeUInt16BE(size.rows, 2)
+  socket.write(frame(FRAME_SIZE, payload))
+}
+
+function startInput() {
+  inputStarted = true
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true)
+    rawMode = true
+  }
+  process.stdin.on('data', (chunk) => {
+    if (!attached || finished) return
+    for (let offset = 0; offset < chunk.length; offset += INPUT_CHUNK) {
+      socket.write(frame(FRAME_DATA, chunk.subarray(offset, offset + INPUT_CHUNK)))
+    }
+  })
+  process.stdin.on('end', () => socket.end())
+  process.stdin.on('error', () => {})
+  process.stdin.resume()
+  process.on('SIGWINCH', () => {
+    if (attached && !finished) sendSize()
+  })
+}
+
+function onFrames() {
+  for (;;) {
+    if (received.length < 5) return
+    const type = received.readUInt8(0)
+    const length = received.readUInt32BE(1)
+    if ((type !== FRAME_DATA && type !== FRAME_SIZE && type !== FRAME_EXIT) || length > FRAME_MAX) {
+      fail('the desktop service sent an invalid frame')
+      return
+    }
+    if (received.length < 5 + length) return
+    const payload = received.subarray(5, 5 + length)
+    received = received.subarray(5 + length)
+    if (type === FRAME_DATA) process.stdout.write(payload)
+    else if (type === FRAME_EXIT && length >= 4) {
+      exitFrame = { code: payload.readInt32BE(0), message: payload.toString('utf8', 4) }
+      if (exitFrame.message) process.stdout.write('\r\n' + exitFrame.message + '\r\n')
+    }
+  }
+}
+
+function onData(chunk) {
+  if (finished) return
+  received = Buffer.concat([received, chunk])
+  if (!attached) {
+    const end = received.indexOf(0x0a)
+    if (end < 0) {
+      if (received.length > REPLY_MAX) fail('the desktop service sent an invalid answer')
+      return
+    }
+    const answer = received.toString('utf8', 0, end).split('\t')
+    received = received.subarray(end + 1)
+    if (answer[0] === 'err') {
+      fail(Buffer.from(answer[1] || '', 'base64').toString('utf8') || 'the terminal is not available')
+      return
+    }
+    if (answer[0] !== 'ok') {
+      fail('the desktop service sent an invalid answer')
+      return
+    }
+    attached = true
+    startInput()
+  }
+  onFrames()
+}
+
+socket.on('connect', () => {
+  const size = windowSize()
+  socket.write(['pty', Buffer.from(ptyId, 'utf8').toString('base64'), size.cols, size.rows].join('\t') + '\n')
+})
+socket.on('data', onData)
+socket.on('error', (error) => fail('cannot reach the desktop service: ' + error.message))
+socket.on('close', () => {
+  if (finished) return
+  finished = true
+  if (!exitFrame) {
+    stopInput()
+    process.stderr.write(
+      'maestrly-pty-attach: the desktop service closed the connection' + (attached ? '' : ' without an answer') + '\n'
+    )
+    process.exitCode = 1
+    return
+  }
+  const code = exitFrame.code >= 0 && exitFrame.code <= 255 ? exitFrame.code : 1
+  process.exitCode = code
+  if (code !== 0 && process.stdin.isTTY) {
+    // Let the person read how the shell ended before the window goes away.
+    process.stdin.removeAllListeners('data')
+    process.stdin.once('data', stopInput)
+  } else stopInput()
+})

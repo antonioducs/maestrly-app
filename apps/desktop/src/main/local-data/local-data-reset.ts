@@ -15,6 +15,7 @@ import { getClaudeSubscriptionManager } from '../chat/claude-agent-sdk/manager'
 import { clearAllClaudeSessionCleanup } from '../chat/claude-agent-sdk/session-store'
 import { deleteAllManagedCursorAgents, wipeAllCursorSubscriptionState } from '../chat/cursor-subscription/lifecycle'
 import { clearAllCursorAgentCleanup } from '../chat/cursor-subscription/session-store'
+import { wipeAllAntigravitySubscriptionState } from '../chat/antigravity-subscription/lifecycle'
 import { getGrokSubscriptionManager } from '../chat/grok-subscription/manager'
 import { listSubscriptionAccounts, removeSubscriptionAccount } from '../chat/catalog'
 import { clearEphemeralToolImages } from '../chat/tool-output'
@@ -94,6 +95,13 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     cursorWiped = true
   })
   if (!cursorWiped) assertComplete('Local data cleanup was incomplete.')
+  // Signs every Google AI account out and removes the app-owned Antigravity homes (tokens and ACP sessions).
+  let antigravityWiped = false
+  await attempt(async () => {
+    await wipeAllAntigravitySubscriptionState(accountIds('antigravity-subscription'))
+    antigravityWiped = true
+  })
+  if (!antigravityWiped) assertComplete('Local data cleanup was incomplete.')
   for (const account of accounts) await attempt(() => removeSubscriptionAccount(account.id))
 
   // Validate and remove managed chat directories before rows, preserving identity on failure.
@@ -130,15 +138,12 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
         'bot_local_inventory',
         'bot_local_grants',
         'bot_local_connections',
-        'bot_oauth_tokens',
-        'bot_oauth_requests',
-        'bot_oauth_clients',
-        'bot_oauth_config',
         'bot_command_outbox',
         'bot_command_receipts',
         'bot_question_bindings',
         'bot_conversation_allocations',
         'conversation_dispatches',
+        'workspace_creations',
         'chat_usage_ledger',
         'workspace_groups',
         'permission_saved',
@@ -159,6 +164,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     'chat-generated-images',
     'chat-attachment-images',
     'chat-tool-output',
+    'artifacts',
   ]) {
     await attempt(() => fsp.rm(path.join(app.getPath('userData'), directory), { recursive: true, force: true }))
   }

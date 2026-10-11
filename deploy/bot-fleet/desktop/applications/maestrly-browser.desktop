@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Browser
+Name[pt_BR]=Navegador
+Comment=Browse the web
+Comment[pt_BR]=Navegar na web
+Exec=maestrly-desktop browser
+Icon=/opt/maestrly/desktop/icons/browser.svg
+Terminal=false
+Categories=Network;WebBrowser;
+StartupNotify=false

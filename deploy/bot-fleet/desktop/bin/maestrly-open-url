@@ -1,0 +1,6 @@
+#!/bin/sh
+# Opens an http or https address in this bot's own browser, through its desktop service. It is the bot's $BROWSER and
+# its handler for http and https links. The environment's own Maestrly has no desktop socket: its links keep opening in
+# Chromium, as before.
+if [ -z "${MAESTRLY_DESKTOP_SOCKET:-}" ]; then exec chromium "$@"; fi
+exec /usr/local/bin/maestrly-desktop url "$1"

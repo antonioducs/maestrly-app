@@ -37,6 +37,7 @@ export function resolveChatGptWebCapabilities(
     gh: scope === 'standalone' ? 'off' : stored?.gh === 'off' ? 'off' : 'read',
     conversation: stored?.conversation === 'read' ? 'read' : 'off',
     memory: scope === 'standalone' ? 'off' : stored?.memory === 'read' ? 'read' : 'off',
+    personalMemory: scope === 'standalone' && validMcpScope(stored?.personalMemory) ? stored.personalMemory : 'off',
     browser: stored?.browser === 'inspect' || stored?.browser === 'interact' ? stored.browser : 'off',
     mcp,
   }
@@ -73,12 +74,13 @@ export function chatGptWebCapabilityFingerprint(
     .update(
       JSON.stringify([
         'chatgpt-web-capabilities',
-        7,
+        8,
         capabilities.kanban ?? 'read',
         capabilities.git,
         capabilities.gh,
         capabilities.conversation,
         capabilities.memory,
+        capabilities.personalMemory ?? 'off',
         capabilities.browser,
         mcp,
       ])

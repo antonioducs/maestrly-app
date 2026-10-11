@@ -10,6 +10,7 @@ import type {
 import { isProjectSetupRequest } from '../../shared/project-setup'
 import { projectSetupService, type ProjectSetupContext } from './service'
 import { consumeE2EProjectPicker } from '../test-mode'
+import { getProjectsDirectory, setProjectsDirectory } from '../projects-directory'
 
 interface OperationRecord {
   operationId: string
@@ -28,6 +29,19 @@ export interface ProjectSetupIpcDeps {
     execute: (request: ProjectSetupRequest, context: ProjectSetupContext) => Promise<ProjectSetupResult<Workspace>>
   }
   showDirectoryPicker?: (window: BrowserWindow, purpose: 'open' | 'parent') => Promise<string | null>
+  projectsDirectory?: {
+    get: () => string | null
+    set: (value: string | null) => Promise<string | null>
+    changed: (value: string | null) => void
+  }
+}
+
+const defaultProjectsDirectory: NonNullable<ProjectSetupIpcDeps['projectsDirectory']> = {
+  get: getProjectsDirectory,
+  set: setProjectsDirectory,
+  changed: (value) => {
+    void import('../window-ipc').then(({ broadcast }) => broadcast('project-setup:projects-directory-changed', value))
+  },
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -69,15 +83,44 @@ export function registerProjectSetupIpc(
     }
   }
 
+  const projectsDirectory = deps.projectsDirectory ?? defaultProjectsDirectory
+  const pickDirectory = async (window: BrowserWindow, purpose: 'open' | 'parent'): Promise<string | null> => {
+    if (deps.showDirectoryPicker) return deps.showDirectoryPicker(window, purpose)
+    const e2ePath = consumeE2EProjectPicker()
+    if (e2ePath !== undefined) return e2ePath
+    const result = await dialog.showOpenDialog(window, {
+      properties: purpose === 'parent' ? ['openDirectory', 'createDirectory'] : ['openDirectory'],
+      ...(purpose === 'parent' && projectsDirectory.get() ? { defaultPath: projectsDirectory.get()! } : {}),
+    })
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  }
+
   reg.mhandle('project-setup:pick-directory', async (event, purpose: 'open' | 'parent') => {
     if (purpose !== 'open' && purpose !== 'parent') return null
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return null
-    if (deps.showDirectoryPicker) return deps.showDirectoryPicker(window, purpose)
-    const e2ePath = consumeE2EProjectPicker()
-    if (e2ePath !== undefined) return e2ePath
-    const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'] })
-    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+    return pickDirectory(window, purpose)
+  })
+
+  reg.mhandle('project-setup:projects-directory-get', () => projectsDirectory.get())
+  // Picks and persists in one step, so the chat card and Settings never hand a renderer-chosen path to main.
+  reg.mhandle('project-setup:projects-directory-pick', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return { ok: false, path: projectsDirectory.get() }
+    const selected = await pickDirectory(window, 'parent')
+    if (!selected) return { ok: false, path: projectsDirectory.get() }
+    try {
+      const saved = await projectsDirectory.set(selected)
+      projectsDirectory.changed(saved)
+      return { ok: true, path: saved }
+    } catch (error) {
+      return { ok: false, path: projectsDirectory.get(), error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  reg.mhandle('project-setup:projects-directory-clear', async () => {
+    await projectsDirectory.set(null)
+    projectsDirectory.changed(null)
+    return null
   })
 
   reg.mhandle('project-setup:start', async (event, request: ProjectSetupRequest) => {

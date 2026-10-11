@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { APP_TOOL_POLICY, appToolAllowed, appToolMetadata } from '../../src/main/chat/tool-policy'
@@ -7,6 +7,13 @@ import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-m
 import { insertConversation } from '../../src/main/store'
 import { freshDb, closeDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
+
+const botState = vi.hoisted(() => ({ enabled: false, conversationId: '' }))
+vi.mock('../../src/main/fleet/instance', () => ({
+  requestOwnerHelp: vi.fn(),
+  botRuntimeForConversation: (id: string) =>
+    id === botState.conversationId ? { artifactsEnabled: botState.enabled } : null,
+}))
 
 interface ToolShape {
   name: string
@@ -31,6 +38,7 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'computer_key',
   'bot_peers_list',
   'bot_peers_send',
+  'bot_share_file',
   'bot_routines_list',
   'bot_routines_create',
   'bot_routines_update',
@@ -39,6 +47,18 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'owner_memory_save',
   'owner_memory_forget',
   'routine_report',
+  'desktop_list_desktops',
+  'desktop_list_workspaces',
+  'desktop_list_selections',
+  'desktop_list_chats',
+  'desktop_read_chat',
+  'desktop_read_chat_history',
+  'desktop_wait_events',
+  'desktop_create_chat',
+  'desktop_send_message',
+  'desktop_configure_chat',
+  'desktop_cancel_turn',
+  'desktop_answer_question',
 ]
 
 const EXPECTED_TOOL_NAMES = [
@@ -119,6 +139,14 @@ const EXPECTED_TOOL_NAMES = [
   'debug_inspect',
   'debug_variables',
   'debug_evaluate',
+  'artifact_create',
+  'artifact_update',
+  'artifact_get',
+  'artifact_list',
+  'artifact_open',
+  'artifact_comments',
+  'artifact_comment_reply',
+  'artifact_comment_resolve',
 ] as const
 
 // Board tools register only for linked board or project-chat conversations.
@@ -172,7 +200,7 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('browser_type', ['clear', 'ref', 'text'], ['ref', 'text']),
   shape('browser_press_key', ['key', 'modifiers'], ['key']),
   shape('browser_read_text'),
-  shape('browser_screenshot'),
+  shape('browser_screenshot', ['share']),
   shape('browser_evaluate', ['expression'], ['expression']),
   shape('browser_mouse_move', ['x', 'y'], ['x', 'y']),
   shape('browser_scroll', ['container', 'dx', 'dy', 'selector', 'to', 'x', 'y']),
@@ -240,6 +268,18 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('debug_inspect', ['frameId']),
   shape('debug_variables', ['ref'], ['ref']),
   shape('debug_evaluate', ['expression', 'frameId'], ['expression']),
+  shape('artifact_create', ['description', 'directory', 'entry', 'files', 'title'], ['title']),
+  shape(
+    'artifact_update',
+    ['baseVersion', 'delete', 'directory', 'edits', 'entry', 'files', 'id', 'summary'],
+    ['baseVersion', 'id']
+  ),
+  shape('artifact_get', ['id', 'path', 'version'], ['id']),
+  shape('artifact_list', ['scope']),
+  shape('artifact_open', ['id', 'version'], ['id']),
+  shape('artifact_comments', ['cursor', 'id', 'status', 'version'], ['id']),
+  shape('artifact_comment_reply', ['body', 'commentId', 'id'], ['body', 'commentId', 'id']),
+  shape('artifact_comment_resolve', ['commentId', 'id'], ['commentId', 'id']),
 ]
 
 async function listToolInventory(convId: string, includeDescriptions = false): Promise<ToolShape[]> {
@@ -304,7 +344,58 @@ describe('MCP app tools inventory', () => {
     workspaceId = ws.id
     convId = makeConversation(ws.id).id
   })
-  afterEach(closeDb)
+  afterEach(() => {
+    botState.enabled = false
+    botState.conversationId = ''
+    vi.unstubAllEnvs()
+    closeDb()
+  })
+
+  it.each([true, false])('gates the seven bot artifact tools by runtime authorization: %s', async (enabled) => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    botState.enabled = enabled
+    botState.conversationId = convId
+    const names = (await listToolInventory(convId))
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith('artifact_'))
+    expect(names).toEqual(
+      enabled
+        ? [
+            'artifact_create',
+            'artifact_update',
+            'artifact_get',
+            'artifact_list',
+            'artifact_comments',
+            'artifact_comment_reply',
+            'artifact_comment_resolve',
+          ]
+        : []
+    )
+    expect(names).not.toContain('artifact_open')
+  })
+
+  it('omits desktop-only app tools from bot catalogs and rejects their calls', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const inventory = await listToolInventory(convId)
+    const names = inventory.map((entry) => entry.name)
+    expect(names.filter((name) => /^(?:notes_|project_notes_|debug_)/.test(name))).toEqual([])
+    expect(names).not.toContain('terminal_focus')
+    expect(names).toEqual(
+      expect.arrayContaining(['terminal_run', 'terminal_read', 'browser_navigate', 'request_owner_help'])
+    )
+    for (const name of ['notes_list_pages', 'project_notes_list_pages', 'debug_status', 'terminal_focus']) {
+      expect(await callAppTool(convId, name, { id: 'missing' })).toMatchObject({ isError: true })
+    }
+    const app = await buildAppTools({ conversationId: convId, mode: 'agent', gate: async () => {} })
+    try {
+      expect(app.tools.debug_status).toBeUndefined()
+      expect(app.tools.terminal_focus).toBeUndefined()
+      expect(app.tools.notes_list_pages).toBeUndefined()
+      expect(app.tools.terminal_run).toBeDefined()
+    } finally {
+      await app.close()
+    }
+  })
 
   it('omits project tools from standalone sessions while retaining generic tools', async () => {
     insertConversation({
@@ -329,7 +420,16 @@ describe('MCP app tools inventory', () => {
     expect(names).toContain('notes_write_page')
     expect(names).toContain('terminal_create')
     expect(names).toContain('browser_navigate')
-    expect(names.some((name) => /^(project_notes_|memory_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
+    expect(names.filter((name) => name.startsWith('memory_')).sort()).toEqual([
+      'memory_archive',
+      'memory_forget',
+      'memory_list',
+      'memory_read',
+      'memory_restore',
+      'memory_search',
+      'memory_upsert',
+    ])
+    expect(names.some((name) => /^(project_notes_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
   })
 
   it('keeps the registered tool names and input schema shapes stable', async () => {
@@ -346,6 +446,8 @@ describe('MCP app tools inventory', () => {
     // Large viewports are automatically scaled down, never cropped, to fit the image limit.
     expect(screenshot?.description).toContain('fit the model image limit')
     expect(screenshot?.description).toContain('never cropped')
+    // The screenshot is shown to the user only when the model asks for it.
+    expect(screenshot?.description).toContain('share=true')
   })
 
   it('advertises deliberate narrow memory lookup and tracks an explicit read', async () => {
@@ -371,7 +473,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(77)
+    expect(registered).toHaveLength(85)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
@@ -394,6 +496,35 @@ describe('MCP app tools inventory', () => {
     }
   })
 
+  it('omits the app-tool groups the user turned off, even from an explicit allowlist', async () => {
+    const app = await buildAppTools({
+      conversationId: convId,
+      mode: 'agent',
+      gate: async () => {},
+      disabledGroups: ['terminal', 'browser'],
+    })
+    try {
+      expect(Object.keys(app.tools).sort()).toEqual(
+        EXPECTED_TOOL_NAMES.filter((name) => !/^(terminal_|browser_)/.test(name)).sort()
+      )
+    } finally {
+      await app.close()
+    }
+
+    const memory = await buildAppTools({
+      conversationId: convId,
+      mode: 'agent',
+      gate: async () => {},
+      only: new Set(['memory_search', 'memory_read', 'notes_list_pages']),
+      disabledGroups: ['memory'],
+    })
+    try {
+      expect(Object.keys(memory.tools)).toEqual(['notes_list_pages'])
+    } finally {
+      await memory.close()
+    }
+  })
+
   it('keeps critical Plan/Ask policy sentinels explicit', () => {
     expect(appToolAllowed('plan', 'notes_write_page')).toBe(true)
     expect(appToolAllowed('ask', 'memory_search')).toBe(true)
@@ -411,5 +542,15 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('ask', 'bot_routines_create')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_update')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_delete')).toBe(false)
+    expect(appToolAllowed('plan', 'artifact_create')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_get')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_list')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_create')).toBe(false)
+    expect(appToolAllowed('maestro', 'artifact_open')).toBe(false)
+    expect(appToolAllowed('ask', 'artifact_comments')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_comments')).toBe(true)
+    expect(appToolAllowed('plan', 'artifact_comment_reply')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_comment_reply')).toBe(false)
+    expect(appToolAllowed('maestro', 'artifact_comment_resolve')).toBe(false)
   })
 })

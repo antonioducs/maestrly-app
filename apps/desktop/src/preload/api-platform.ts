@@ -1,6 +1,6 @@
 import { ipcRenderer } from 'electron'
 import type { IpcTransport } from './ipc-transport'
-import type { DelegationStatusView, DesktopExecutorSettings, DesktopExecutionRecord, DeviceAuthorizationView, EmbeddedRunnerView, PlatformConnectionView, PlatformProjectBinding, RemotePlatformProject } from '../shared/platform'
+import type { DesktopExecutorSettings, DesktopExecutionRecord, DeviceAuthorizationView, EmbeddedRunnerView, PlatformConnectionView, PlatformProjectBinding, RemotePlatformProject } from '../shared/platform'
 
 /** The tray of this computer's app asks its window to open the executor settings. */
 export const platformLocalApi = {
@@ -36,7 +36,6 @@ export function makePlatformApi(ipcRenderer: IpcTransport) {
     platformSetProjectBinding: (binding: PlatformProjectBinding): Promise<void> => ipcRenderer.invoke('platform:set-project-binding', binding),
     platformRemoveProjectBinding: (workspaceId: string): Promise<void> => ipcRenderer.invoke('platform:remove-project-binding', workspaceId),
     platformRunnerStatus: (): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-status'),
-    platformDelegationStatus: (): Promise<DelegationStatusView> => ipcRenderer.invoke('platform:delegation-status'),
     platformRunnerStart: (connectionId: string): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-start', connectionId),
     platformRunnerStop: (): Promise<void> => ipcRenderer.invoke('platform:runner-stop'),
   }

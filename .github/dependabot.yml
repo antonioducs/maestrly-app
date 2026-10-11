@@ -7,6 +7,9 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # vitest and its plugins require the exact same version, so they must move together.
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
       npm-minor-and-patch:
         update-types: [minor, patch]
     ignore:
@@ -15,6 +18,13 @@ updates:
       - dependency-name: "@github/copilot"
       - dependency-name: "@github/copilot-sdk"
       - dependency-name: "@anthropic-ai/claude-agent-sdk"
+      - dependency-name: "@cursor/sdk"
+      # Node types follow the Node major in .nvmrc and package.json engines.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # electron-vite declares the Vite majors it supports; wait for it before moving Vite.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

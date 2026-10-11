@@ -10,6 +10,10 @@ import { registerDebugTools } from './mcp/tools/debug'
 import { registerBoardTools } from './mcp/tools/board'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
 import { registerBotModeTools } from './mcp/tools/bot-instance'
+import { registerArtifactTools } from './mcp/tools/artifacts'
+import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
+import { botRuntimeForConversation } from './fleet/instance'
+import { isBotMode } from './fleet/instance/config'
 
 /**
  * In-process native Chat tool registry. Client and server connect exclusively through
@@ -40,6 +44,13 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   if (conversation) registerHistoryTools(ctx)
   registerMemoryTools(ctx)
   registerDebugTools(ctx)
+  if (!isBotMode()) {
+    registerArtifactTools(ctx)
+    registerArtifactCommentTools(ctx)
+  } else if (botRuntimeForConversation(conversationId)?.artifactsEnabled) {
+    registerArtifactTools(ctx, undefined, { open: false })
+    registerArtifactCommentTools(ctx)
+  }
   if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
   registerBotModeTools(ctx)
   return server

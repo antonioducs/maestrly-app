@@ -1,4 +1,5 @@
-import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { useChatOwnerWindow } from '@/lib/chat-window-context'
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ReviewLoopInfo } from '../../../shared/chat'
@@ -12,14 +13,18 @@ interface Props {
 }
 
 export function ReviewLoopSplitView({ loop, ratio, onRatioChange, onFocus, onDismiss }: Props) {
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
   const rootRef = useRef<HTMLDivElement>(null)
+  const stopDragRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopDragRef.current?.(), [ownerWindow])
   const reviewer = loop.participants.reviewer
   if (!reviewer) return null
 
   const drag = (event: ReactPointerEvent<HTMLDivElement>) => {
     const root = rootRef.current
     if (!root) return
+    stopDragRef.current?.()
     event.currentTarget.setPointerCapture(event.pointerId)
     const move = (next: PointerEvent) => {
       const bounds = root.getBoundingClientRect()
@@ -27,11 +32,13 @@ export function ReviewLoopSplitView({ loop, ratio, onRatioChange, onFocus, onDis
       onRatioChange(Math.min(75, Math.max(25, value)))
     }
     const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
+      ownerWindow.removeEventListener('pointermove', move)
+      ownerWindow.removeEventListener('pointerup', up)
+      stopDragRef.current = null
     }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up, { once: true })
+    stopDragRef.current = up
+    ownerWindow.addEventListener('pointermove', move)
+    ownerWindow.addEventListener('pointerup', up, { once: true })
   }
 
   const label = (role: 'executor' | 'reviewer') => {

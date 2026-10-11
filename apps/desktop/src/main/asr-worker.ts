@@ -1,57 +1,75 @@
 /**
- * Voice-transcription utilityProcess runs Whisper through transformers.js/ONNX outside main to avoid
- * CPU-bound inference blocking UI/IPC. It inherits the asar hook and receives cacheDir/moduleUrl over
- * process.parentPort. Xenova/whisper-base is multilingual with automatic language detection; .en
- * variants cannot support all locales. Input is renderer-decoded/resampled mono 16 kHz Float32Array
- * PCM. Requests: init and transcribe {id,audio}. Responses: ready, transcribe:result {id,text},
- * transcribe:error {id,error}.
+ * Voice-transcription utilityProcess runs whisper.cpp (large-v3-turbo) outside main to avoid CPU/GPU-bound
+ * inference blocking UI/IPC. The local-ml-runtime asset provides the N-API addon and the Silero VAD model
+ * through runtime.mjs; the speech model path comes from the whisper-model asset. Silero VAD gates every
+ * request, because Whisper invents text ("Obrigado.") from silence or room noise. Input is renderer-decoded
+ * mono 16 kHz Float32Array PCM. Requests: init {moduleUrl,modelPath,useGpu}, transcribe {id,audio,language},
+ * warm {id}. Responses: ready, transcribe:result {id,text,silent}, transcribe:error {id,error}.
  */
 
-export {} // mark as an ES module so top-level state cannot collide with ml-worker
+import { availableParallelism } from 'node:os'
+import { cleanTranscript, floatToPcm16, speechSpan, type SpeechSegment } from './asr-audio'
 
-type Transcriber = (audio: Float32Array, opts?: Record<string, unknown>) => Promise<{ text?: string }>
-
-const MODEL = 'Xenova/whisper-base'
-let pipePromise: Promise<Transcriber> | null = null
-let cacheDir = ''
-let moduleUrl = ''
-
-/**
- * Clean Whisper output by removing special tokens and non-speech/silence markers such as [S],
- * [BLANK_AUDIO], [Music], or [Silence]. Return empty text for empty results or degenerate repetitions
- * of one short token.
- */
-function cleanTranscript(raw: string): string {
-  let t = (raw ?? '').replace(/<\|[^|]*\|>/g, ' ').replace(/\[[^\]\n]{0,40}\]/g, ' ')
-  t = t.replace(/\s+/g, ' ').trim()
-  const words = t.split(' ').filter(Boolean)
-  if (words.length >= 6) {
-    const uniq = new Set(words.map((w) => w.toLowerCase().replace(/[.,!?;:]+$/, '')))
-    if (uniq.size <= 2 && [...uniq].every((w) => w.length <= 3)) return '' // ex.: "S S S" / "you you you"
-  }
-  return t
+interface WhisperContextLike {
+  transcribeData(
+    audio: ArrayBuffer,
+    options?: { language?: string; maxThreads?: number }
+  ): { promise: Promise<{ result: string }> }
+  release(): Promise<void>
+}
+interface VadContextLike {
+  detectSpeechData(audio: ArrayBuffer): Promise<SpeechSegment[]>
+  release(): Promise<void>
+}
+interface WhisperAddon {
+  WhisperContext: new (o: { filePath: string; useGpu?: boolean; useFlashAttn?: boolean }) => WhisperContextLike
+  WhisperVadContext: new (o: { filePath: string; useGpu?: boolean; nThreads?: number }) => VadContextLike
 }
 
-function getTranscriber(): Promise<Transcriber> {
-  if (!pipePromise) {
-    pipePromise = (async () => {
-      if (!moduleUrl.startsWith('file:')) throw new Error('Local ML runtime module URL was not initialized')
-      const { pipeline, env } = (await import(moduleUrl)) as {
-        pipeline: (task: string, model: string) => Promise<unknown>
-        env: { allowLocalModels: boolean; cacheDir?: string }
+let config = { moduleUrl: '', modelPath: '', useGpu: false }
+let engine: Promise<{ whisper: WhisperContextLike; vad: VadContextLike }> | null = null
+let warmed: Promise<void> | null = null
+const maxThreads = Math.min(8, Math.max(1, availableParallelism() - 1))
+
+function getEngine(): Promise<{ whisper: WhisperContextLike; vad: VadContextLike }> {
+  if (!engine) {
+    engine = (async () => {
+      if (!config.moduleUrl.startsWith('file:') || !config.modelPath) throw new Error('ASR worker was not initialized')
+      const runtime = (await import(config.moduleUrl)) as { loadWhisper(): WhisperAddon; vadModelPath: string }
+      const addon = runtime.loadWhisper()
+      return {
+        whisper: new addon.WhisperContext({
+          filePath: config.modelPath,
+          useGpu: config.useGpu,
+          useFlashAttn: config.useGpu,
+        }),
+        vad: new addon.WhisperVadContext({ filePath: runtime.vadModelPath, useGpu: false, nThreads: 2 }),
       }
-      env.allowLocalModels = false
-      if (cacheDir) env.cacheDir = cacheDir // cache the model in userData, sharing the embeddings directory
-      const p = await pipeline('automatic-speech-recognition', MODEL)
-      return p as unknown as Transcriber
     })()
-    // Reset rejected model loads so transient download/cache failures can be retried on the next
-    // transcription.
-    pipePromise.catch(() => {
-      pipePromise = null
+    // A failed load can be retried by the next request.
+    engine.catch(() => {
+      engine = null
     })
   }
-  return pipePromise
+  return engine
+}
+
+/**
+ * Load both models and run one throwaway pass, which compiles the Metal shaders on first use (seconds, once per
+ * machine). Runs once per worker: the renderer warms on every recording start, and the addon serializes inference,
+ * so repeating the pass would delay the real request.
+ */
+function warm(): Promise<void> {
+  if (!warmed) {
+    warmed = (async () => {
+      const { whisper } = await getEngine()
+      await whisper.transcribeData(floatToPcm16(new Float32Array(16000)), { language: 'en', maxThreads }).promise
+    })()
+    warmed.catch(() => {
+      warmed = null
+    })
+  }
+  return warmed
 }
 
 const parentPort = process.parentPort
@@ -61,18 +79,27 @@ parentPort.on('message', async (e) => {
     type: string
     id?: string
     audio?: Float32Array
-    cacheDir?: string
+    language?: string
     moduleUrl?: string
+    modelPath?: string
+    useGpu?: boolean
   }
   if (msg.type === 'init') {
-    cacheDir = msg.cacheDir ?? ''
-    moduleUrl = msg.moduleUrl ?? ''
+    config = { moduleUrl: msg.moduleUrl ?? '', modelPath: msg.modelPath ?? '', useGpu: msg.useGpu === true }
     parentPort.postMessage({ type: 'ready' })
+    return
+  }
+  if (msg.type === 'warm' && msg.id) {
+    try {
+      await warm()
+      parentPort.postMessage({ type: 'transcribe:result', id: msg.id, text: '', silent: true })
+    } catch (err) {
+      parentPort.postMessage({ type: 'transcribe:error', id: msg.id, error: String((err as Error)?.message ?? err) })
+    }
     return
   }
   if (msg.type === 'transcribe' && msg.id) {
     try {
-      const t = await getTranscriber()
       const audio = msg.audio instanceof Float32Array ? msg.audio : new Float32Array(msg.audio ?? [])
       // Audio-level diagnostics distinguish a silent stream or missing microphone permission from model
       // errors.
@@ -85,21 +112,32 @@ parentPort.on('message', async (e) => {
       }
       const rms = audio.length ? Math.sqrt(sumSq / audio.length) : 0
       console.log(
-        `[asr] amostras: ${audio.length} (~${(audio.length / 16000).toFixed(1)}s) pico=${peak.toFixed(4)} rms=${rms.toFixed(4)}`
+        `[asr] samples: ${audio.length} (~${(audio.length / 16000).toFixed(1)}s) peak=${peak.toFixed(4)} rms=${rms.toFixed(4)}`
       )
       const silent = rms < 0.0008 // effectively silent audio, such as denied microphone access producing zeros
       if (silent || audio.length < 1600) {
         parentPort.postMessage({ type: 'transcribe:result', id: msg.id, text: '', silent: true })
         return
       }
-      // Omit language for automatic detection; chunk/stride settings keep long audio within Whisper's
-      // window.
-      const out = await t(audio, { chunk_length_s: 30, stride_length_s: 5 })
-      console.log('[asr] raw Whisper output:', JSON.stringify((out?.text ?? '').slice(0, 200)))
+      const { whisper, vad } = await getEngine()
+      const span = speechSpan(await vad.detectSpeechData(floatToPcm16(audio)), audio.length)
+      if (!span) {
+        console.log('[asr] VAD found no speech')
+        parentPort.postMessage({ type: 'transcribe:result', id: msg.id, text: '', silent: true })
+        return
+      }
+      // Pass 'auto' explicitly: whisper.cpp defaults to English when no language is given.
+      const language = msg.language || 'auto'
+      const started = Date.now()
+      const out = await whisper.transcribeData(floatToPcm16(audio.subarray(span.start, span.end)), {
+        language,
+        maxThreads,
+      }).promise
+      console.log(`[asr] whisper ${Date.now() - started} ms:`, JSON.stringify((out?.result ?? '').slice(0, 200)))
       parentPort.postMessage({
         type: 'transcribe:result',
         id: msg.id,
-        text: cleanTranscript(out?.text ?? ''),
+        text: cleanTranscript(out?.result ?? ''),
         silent: false,
       })
     } catch (err) {

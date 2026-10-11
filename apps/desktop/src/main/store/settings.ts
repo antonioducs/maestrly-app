@@ -137,7 +137,7 @@ export function getHiddenChatModels(): Record<string, string[]> {
   try {
     const parsed: unknown = JSON.parse(raw)
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const out: Record<string, string[]> = {}
+    const out: Record<string, string[]> = Object.create(null)
     for (const [providerId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!providerId || !Array.isArray(value)) continue
       const ids = value.filter((id): id is string => typeof id === 'string' && id.length > 0)
@@ -159,7 +159,8 @@ export function setHiddenChatModels(providerId: string, hidden: readonly string[
   if (typeof providerId !== 'string' || !providerId) return
   const map = getHiddenChatModels()
   const ids = [...new Set((hidden ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0))]
-  if (ids.length > 0) map[providerId] = ids
+  if (ids.length > 0)
+    Object.defineProperty(map, providerId, { value: ids, enumerable: true, configurable: true, writable: true })
   else delete map[providerId]
   setAppSetting(CHAT_HIDDEN_MODELS_KEY, JSON.stringify(map))
 }

@@ -8,7 +8,7 @@
 
 export const EXT_PUBLISHER = 'claude-agents'
 export const EXT_NAME = 'bridge'
-export const EXT_VERSION = '0.0.16' // bump to reseed after moving sidecars into .maestrly
+export const EXT_VERSION = '0.0.17' // bump to reseed after the bridge stopped writing unsolicited snapshots
 export const EXT_ID = `${EXT_PUBLISHER}.${EXT_NAME}`
 export const EXT_DIRNAME = `${EXT_ID}-${EXT_VERSION}`
 /**
@@ -527,9 +527,10 @@ function setupMemorySnapshot(context) {
       await writeSnapshot(data.id)
     } catch (e) {}
   }
+  // Answer only explicit requests: an unsolicited snapshot would leave an untracked sidecar in checkouts
+  // whose info/exclude the app has not prepared yet.
   const iv = setInterval(tick, 200)
   context.subscriptions.push({ dispose: () => clearInterval(iv) })
-  void writeSnapshot('')
 }
 
 function deactivate() {}

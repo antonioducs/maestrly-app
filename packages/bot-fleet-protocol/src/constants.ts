@@ -30,6 +30,10 @@ export const FLEET_COMPACTION_LIMITS = {
 export const FLEET_COMPACTION_SUMMARY_MAX = 16_000
 export const FLEET_PEER_MESSAGE_MAX = 4_000
 export const FLEET_TOOL_OUTPUT_MAX = 400
+/** The to-do list a bot keeps with todo_write, shown to the owner as a checklist; longer lists and items are cut. */
+export const FLEET_TODO_LIMITS = { itemsMax: 50, contentMax: 500 } as const
+/** Reasoning shown in the transcript is cut here (the bot keeps all of it). */
+export const FLEET_REASONING_TEXT_MAX = 16_000
 export const FLEET_QUEUE_PREVIEW_MAX = 80
 
 /** Image limits. Attachments match the desktop composer's own limits; reads cover tool screenshots too. */
@@ -41,10 +45,31 @@ export const FLEET_IMAGE_LIMITS = {
   imageReadMaxBytes: 32 * 1024 * 1024,
   imagesPerItemMax: 8,
 } as const
+/** Gateway and instance capability for document attachments and private file downloads. */
+export const FLEET_FILES_FEATURE = 'files'
+export const FLEET_FILE_LIMITS = {
+  pdfMaxBytes: 10 * 1024 * 1024,
+  pdfsMax: 4,
+  textMaxBytes: 256 * 1024,
+  attachmentsMax: 8,
+  attachmentsTotalMaxBytes: 20 * 1024 * 1024,
+  downloadMaxBytes: 100 * 1024 * 1024,
+  publishedTotalMaxBytes: 1024 * 1024 * 1024,
+  publishedCountMax: 200,
+} as const
 /** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 
+export const FLEET_ARTIFACTS_FEATURE = 'artifacts'
+/** The gateway also serves the artifact viewer on its public port, so one address reaches bots and artifacts. */
+export const FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE = 'artifacts-gateway-viewer'
+/** A paired device can move an artifact in with its ID, history and comments (`exportArtifact`, `importArtifact`). */
+export const FLEET_ARTIFACTS_TRANSFER_FEATURE = 'artifacts-transfer'
+/** JSON body limit for artifact uploads, including base64 encoding. */
+export const FLEET_ARTIFACT_BODY_MAX = 72 * 1024 * 1024
+
 export const FLEET_PORTS = {
+  artifacts: 4010,
   public: 7443,
   internal: 7444,
   instanceControl: 7680,
@@ -60,6 +85,8 @@ export const FLEET_GATEWAY_ENV = {
   publicHost: 'MAESTRLY_GATEWAY_PUBLIC_HOST',
   publicPort: 'MAESTRLY_GATEWAY_PUBLIC_PORT',
   internalPort: 'MAESTRLY_GATEWAY_INTERNAL_PORT',
+  artifactsPort: 'MAESTRLY_GATEWAY_ARTIFACTS_PORT',
+  artifactsHost: 'MAESTRLY_GATEWAY_ARTIFACTS_HOST',
   internalUrl: 'MAESTRLY_GATEWAY_INTERNAL_URL',
   botImage: 'MAESTRLY_GATEWAY_BOT_IMAGE',
   network: 'MAESTRLY_GATEWAY_NETWORK',
@@ -69,6 +96,8 @@ export const FLEET_GATEWAY_ENV = {
   botShm: 'MAESTRLY_GATEWAY_BOT_SHM',
   /** A directory of the Docker host that the gateway mounts into its workspaces environment at the same path. */
   workspacesRoot: 'MAESTRLY_GATEWAY_WORKSPACES_ROOT',
+  /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
+  botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
   timezone: 'TZ',
 } as const
 
@@ -87,10 +116,15 @@ export const FLEET_BOT_ENV = {
   serverMode: 'MAESTRLY_SERVER_MODE',
   /** The mounted host directory of a workspaces environment, when the gateway has one. */
   workspacesRoot: 'MAESTRLY_WORKSPACES_ROOT',
+  runtimeUpdates: 'MAESTRLY_BOT_RUNTIME_UPDATES',
 } as const
 
 export const FLEET_BOT_EGRESS_MODES = ['open', 'public'] as const
 export type FleetBotEgress = (typeof FLEET_BOT_EGRESS_MODES)[number]
+
+/** Whether bots check for and install new Claude Code and Codex releases on their own. */
+export const FLEET_BOT_RUNTIME_UPDATE_MODES = ['auto', 'off'] as const
+export type FleetBotRuntimeUpdates = (typeof FLEET_BOT_RUNTIME_UPDATE_MODES)[number]
 
 export const FLEET_SCREEN_CLOSE_CODES = {
   released: 4001,
@@ -149,6 +183,39 @@ export const FLEET_ENVIRONMENT_COMPACTION_FEATURE = 'environment-compaction'
  * environment reports whether its container runs an older image than the configured one.
  */
 export const FLEET_ENVIRONMENT_UPDATES_FEATURE = 'environment-updates'
+/**
+ * Gateway feature (`/v1/meta`) and bot capability (instance health and status): transcripts carry the model's
+ * reasoning as `reasoning` items. A bot and a gateway send them only to a reader that asks with `reasoning=1` on the
+ * transcript and event routes, so an older gateway or Mac never receives an item kind it cannot read.
+ */
+export const FLEET_TRANSCRIPT_REASONING_FEATURE = 'transcript-reasoning'
+/** The query parameter a reader of transcripts and events sets to `1` to receive `reasoning` items. */
+export const FLEET_REASONING_QUERY = 'reasoning'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: an environment reports the versions of its Claude Code and
+ * Codex runtimes and can be asked to check for newer releases.
+ */
+export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
+/**
+ * Instance capability: each bot has one desktop, its apps display, where the environment's Maestrly browser is
+ * presented beside its other programs. Screens open its `apps` surface; images without it keep separate Browser and
+ * Apps areas.
+ */
+export const FLEET_UNIFIED_DESKTOP_FEATURE = 'unified-desktop'
+export const FLEET_RUNTIME_IDS = ['claude-code', 'codex', 'antigravity-acp'] as const
+/** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
+export const FLEET_RUNTIME_STATES = [
+  'idle',
+  'checking',
+  'up-to-date',
+  'available',
+  'downloading',
+  'verifying',
+  'installing',
+  'validating',
+  'rolling-back',
+  'failed',
+] as const
 /** Bot statuses that a restart of their environment would interrupt: an update waits while any bot has one. */
 export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as const
 /**
@@ -176,3 +243,27 @@ export const FLEET_ENVIRONMENT_LIMITS = {
  * settings); tile k (1 to 8) holds the browser of the bot in slot k.
  */
 export const FLEET_ENVIRONMENT_DISPLAY = { columns: 3, rows: 3, width: 3840, height: 2400 } as const
+
+/** Typed, revision-aware environment configuration, independent of any bot. */
+export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'
+
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: a bot reaches the workspaces of the Macs that gave it access,
+ * one Mac at a time, through each Mac's own event stream. Every Mac decides on its own: the gateway only keeps which
+ * Macs linked which bot and routes a call to the one it names; grants, conversations and worktrees stay on the Mac.
+ */
+export const FLEET_DESKTOP_BRIDGE_FEATURE = 'desktop-bridge'
+/** The query parameter a device's event stream sets to `1` to receive desktop calls: it is then online for its bots. */
+export const FLEET_DESKTOP_BRIDGE_QUERY = 'desktopBridge'
+/**
+ * How long the gateway waits for a Mac to answer one call (a wait for conversation events takes up to 20 s on the
+ * Mac), how many calls of one bot may wait at once, how many Macs may link one bot, and the size of what crosses.
+ */
+export const FLEET_DESKTOP_BRIDGE_LIMITS = {
+  callTimeoutMs: 25_000,
+  pendingPerBotMax: 16,
+  linksPerBotMax: 20,
+  nameMax: 60,
+  inputBytesMax: 320 * 1024,
+  resultBytesMax: 2 * 1024 * 1024,
+} as const

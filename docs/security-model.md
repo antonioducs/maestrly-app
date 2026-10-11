@@ -97,7 +97,39 @@ servers retain independent credential stores. Maestrly App cannot guarantee
 their encryption, expiry, revocation, or provider retention. Renderer state sees
 connection presence and sanitized status, not credential values.
 
+The Google Antigravity ACP server is one of these stores. Each Google account
+runs its own server process with an app-owned home directory (created with
+owner-only permissions) as `HOME` and `GEMINI_HOME`, and the server writes its
+OAuth token to a file there. Maestrly reads only the `project_id` field of that
+file to identify the account and never uses the token itself. Signing out or
+resetting local data deletes the directory.
+
 ### Configuring bot environments from a paired device
+
+The environment settings API is an explicit set of validated owner operations
+under `/v1/environments/:eid/settings/`. It requires both gateway and running
+image support for `environment-settings-v1`, uses the existing paired-device
+and control-token boundary, and adds no public instance port. A bot's gateway
+token cannot call these administrator routes. Reads and writes always identify
+the environment; they cannot fall back to the controller's local profile.
+
+Settings responses contain opaque revisions. Substitutive edits and removals
+compare those revisions before changing data, including changes made by local
+settings or imports. Encrypted detail writes invalidate the same revisions.
+MCP URL/command/argument values and header/environment values remain protected;
+responses expose only presence, key names, and a sanitized HTTP host. Omitted
+replacements preserve stored secrets; removal is explicit. Credential-bearing
+writes require secure storage and preserve the previous configuration on failure.
+
+MCP connection diagnostics can start a configured stdio process or connect to its
+HTTP endpoint inside the environment. They list tools without executing them,
+use an isolated connection with a deadline, deduplicate concurrent diagnostics
+of one revision, and allow at most four active diagnostics. Reconfiguring a
+server retires its pooled connection after existing calls finish. Global skill
+editing accepts a managed skill name and bounded Markdown, never a caller's
+filesystem path. Writes validate containment, reject unsafe symlinks, preserve
+bundled resources, and replace the manifest atomically.
+
 
 Every paired device can configure every environment and bot on its gateway.
 Selected stored credentials flow from the desktop app's main process through the gateway
@@ -113,13 +145,13 @@ paired device's name and counts only, also when a desktop app from before enviro
 configures one of its bots. Unchanged imports and interactive logins do not
 create this activity; the existing API-key removal route does not create it
 either. Copilot and Cursor imports share the same credential between your computer and
-the environment. Codex, Claude and Grok sign in to separate sessions in the
+the environment. Codex, Claude, Grok and Google AI sign in to separate sessions in the
 environment. Accounts and MCP imports are refused when secure storage is
 unavailable in the environment.
 
 Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
 `claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
-subdomains for Grok. The desktop app's callback relay binds only to loopback, accepts the
+subdomains for Grok; and `accounts.google.com` for Google AI. The desktop app's callback relay binds only to loopback, accepts the
 attempt's exact callback path and closes on completion, cancellation or expiry.
 It never renders bot-provided content and redirects only to allowed provider
 origins; other responses use the desktop app's own completion or failure page. Codex
@@ -161,8 +193,172 @@ capabilities to arbitrary pages.
 The embedded VS Code server and ChatGPT Web bridge bind to loopback and use
 random tokens. The editor token file receives best-effort owner-only permissions.
 The ChatGPT bridge uses a random per-session path and validates loopback hosts.
+The Google Antigravity tool endpoint binds to `127.0.0.1`, rejects non-loopback
+`Host` headers, and requires a random bearer token per ACP session; each token
+exposes only the tools that session was granted, and every call still passes
+Maestrly's permission broker.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
+
+## Artifacts
+
+Artifacts are active HTML, CSS, and JavaScript written by agents, so the desktop
+renders them as untrusted content. They are hosted only on the bot server. The
+desktop starts a local artifact host only for what earlier versions published on
+this computer, to list, export, move, or delete it; those artifacts never open
+in a viewer. That host runs in an Electron utility process that receives only its
+configuration and holds no app credentials. It is not a sandbox: it runs as the
+same user with full Node.js access, and it isolates crashes and keeps secrets out
+of its memory. It listens on an ephemeral `127.0.0.1` port and stops when idle.
+
+Every artifact host refuses requests whose `Host` is neither a loopback name nor
+the public address the owner configured, which blocks DNS rebinding. Other
+people reach the server's host only through a route the owner runs, such as
+Tailscale Serve. Artifact IDs and tokens carry at least 128 random
+bits, and tokens are stored as SHA-256 digests. A missing, deleted, private, or
+expired artifact, and one that is not shared with whoever asks, answer the same
+404, and responses ask crawlers not to index them.
+
+On a bot server, the same host package runs inside the gateway process, sharing
+its process authority, and stores data under `/data/artifacts`. The container's
+viewer listener binds to `0.0.0.0:4010` so Docker can forward it; installed
+setups publish it on host loopback only. This is not a public host bind.
+Connections from fleet network clients are refused, with the Docker bridge
+gateway exempt so host port forwarding and proxies can reach the viewer.
+`anyLoopbackPort` permits loopback Host values on remapped or SSH-forwarded
+ports. Non-loopback Host values still require the exact configured public
+address allowlist; arbitrary DNS names are not accepted.
+
+The gateway's public port also forwards the viewer's paths (`/a/`, `/c/`,
+`/_maestrly/shell/`, and `/robots.txt`) to that listener over the container's
+loopback, after applying its fleet network rule to the original client. It keeps
+the request's Host, Origin, and cookies, so the host applies the same checks as
+on its own port, and limits request bodies to 1 MiB. The target is fixed, never
+taken from the request; restarting or disabling hosting cuts requests in
+progress, and requests in the meantime are answered as unavailable. The bot API
+on that port still refuses any request with an `Origin` header and requires a
+device token. Sharing an origin with the viewer gives artifact pages no access to
+it: they run with an opaque origin, and the bot API uses bearer tokens, not
+cookies.
+
+Paired devices use authenticated `/v1/artifacts/admin` and
+`/v1/artifacts/upload` RPC endpoints to manage server artifacts. New desktop
+publications are stamped with the authenticated device's owner ID. Bots use
+`/internal/v1/artifacts/admin` and `/internal/v1/artifacts/upload` with their
+bot credential: both server hosting and the bot's publication flag must be on.
+The gateway enforces bot ownership and a method allowlist, overwrites supplied
+ownership on creation, and permits replies and resolution only in that scope.
+Bots cannot mint owner viewer tickets or administer sharing or deletion. A
+paired desktop may manage all server artifacts, but its conversation tools
+remain scoped to its own device and project or standalone conversation.
+
+Moving an earlier local artifact uses three device-only methods: export
+returns an artifact's manifest, blob upload stores content under the SHA-256 the
+host computes from the bytes, within the file size and storage limits, and import
+recreates the artifact under its original ID only when every referenced blob is
+present and the manifest passes the normal path, file, version, and thumbnail
+checks. Uploaded blobs that no import references are removed when the host
+restarts. Import never overwrites a different artifact with the same ID, records
+the authenticated device as owner, and carries no
+sharing state, people, sessions, or activity, so a moved artifact starts
+private. Bots cannot call these methods.
+
+Admin request bodies are limited to 1 MiB and upload bodies to 72 MiB; normal
+artifact file and version limits still apply. The database snapshot method is
+not exposed over either network API. Server artifacts are excluded from desktop
+export and reset. Disabling hosting preserves data, and unpairing does not stop
+the server; explicit server removal with data deletion erases it.
+
+The owner signs in with a single-use ticket that the desktop mints, which
+expires after 60 seconds and travels in the URL fragment, so it never reaches
+server logs or `Referer`. The viewer removes it from the address bar before
+using it. The resulting session cookie is `HttpOnly`, `SameSite=Strict`, and
+scoped to that artifact's API path. The viewer's API accepts writes only with
+the exact origin, a custom header, and a JSON body. The viewer cannot share,
+delete, or change access; those actions exist only in the desktop.
+
+Sharing is decided by one rule, checked on every API request and on every content
+file: the owner always enters; a private artifact blocks everyone else; an
+invited or approved person enters within the invitation's expiry; a guest enters
+only through a link that has not expired. Revoking a person deletes them with
+their link's digest and their sessions, so nothing of theirs can be presented
+again. Revoking a person or making the artifact private therefore takes effect on
+the next request, including for content already open.
+
+- **Personal links** carry a 256-bit token in the URL fragment. The viewer
+  removes it from the address bar, shows who is being invited, and exchanges it
+  for a session only after the visitor confirms, so link scanners and previews
+  join nothing. The host stores the token's digest; the desktop keeps the token
+  itself encrypted with `safeStorage`, or only in memory when that is
+  unavailable, so the owner can copy the link again.
+- **Access requests** are tied to the asking browser by a random secret in an
+  `HttpOnly`, `SameSite=Strict` cookie scoped to the artifact's API, stored as a
+  digest. Approval creates the session when that browser next checks its
+  request. Names and messages are length-limited, shown as text, and the owner
+  confirms the name.
+- **Access codes** are stored with scrypt and a salt of their own. A browser
+  waits 15 minutes after five wrong codes, and an artifact accepts 100 attempts
+  per hour. Changing the code ends guest sessions.
+- **Request limits** apply per host, per artifact, and per session, in memory.
+  They do not use client addresses, since requests arrive through a proxy.
+- The host stores a coarse device label, never an IP address or a raw user
+  agent, and logs no URL, header, or body.
+
+Comments are text written by people outside the app, so they are treated as
+untrusted everywhere. The viewer and the desktop render them as plain text,
+never as HTML or Markdown, with length limits on bodies, names, and quotes.
+Comments are typed, listed, and drawn as pins in the viewer shell, above the
+page's frame and never inside it: the frame keeps its opaque origin and cannot
+read them. The shell sends the frame only what to find, which is the page's own
+text (a quote) or a place in it (an element selector and a point in its box),
+with comment IDs; never a name or a comment's text. The frame's script reports
+where those are and what the reader selected, and paints the active passage with
+the CSS Custom Highlight API without changing the page. In comment mode that
+script, which runs before the page's own scripts, keeps clicks from reaching the
+page. Messages from the frame are hints: the shell validates and caps them,
+shows them as text, and the host checks every anchor again. A viewer sees
+whether a comment is its own, never the internal ID of its author. Which
+conversations a reader has read is kept in their browser's storage for the
+host's origin, which the page's opaque origin cannot reach.
+
+The owner's viewer shows who can open the page (the visibility, the page's link,
+people's names and device counts, and how many access requests wait), read-only:
+it has no control that changes access.
+
+An agent receives comments only when it asks for them or when the owner chooses
+**Send to conversation**, which fills the message box without sending. The
+`artifact_comments` result starts with a notice that the comments come from
+outside the conversation and are feedback, not instructions, and carries them as
+JSON inside an envelope in which every `<` is escaped, so a comment cannot close
+it or pose as the host. No comment starts an agent turn by itself, and an agent
+can only reply to and resolve threads of artifacts in its own scope.
+
+Artifact content is served from a separate path carrying an HMAC-signed
+capability bound to the session, the artifact, the version, and an expiry of 12
+hours. Its responses carry a sandbox Content Security Policy without
+`allow-same-origin` or `allow-top-navigation`, so content has an opaque origin
+even when opened directly: it cannot read cookies, call the host API, navigate
+the viewer, submit forms, or register service workers. Network access is limited
+to its own files and a fixed allowlist of CDNs. Messages from content to the
+viewer are validated, capped, and rendered as text.
+
+After a local publication, and when a listed server version lacks a preview,
+the desktop renders the new version for a preview, in
+an offscreen window that is never shown. It loads the owner view through a fresh
+single-use ticket, like any other opening, so the page runs under the same
+sandbox and Content Security Policy. The window uses an in-memory partition of
+its own that grants no permission, opens no window, allows no download, and lets
+no top-level navigation leave the host. After the capture the desktop ends that
+owner session and clears the partition. Only the resulting image reaches the
+desktop, which stores it through the host's admin interface after checking its
+format and size.
+
+The drawer browser partition is shared with the agent's browser tools, so an
+agent browsing there acts with the owner's artifact session. That grants no
+more than the artifact tools already do. Agents can read and write only the
+artifacts of their own project or standalone conversation. No agent tool
+deletes an artifact, shares it, invites people, approves requests, or changes
+who can open it.
 
 ## Bot server access
 
@@ -249,6 +445,17 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   are never returned. The gateway keeps each environment's control token and
   keyring password and each bot's gateway token in plaintext in its database;
   host root and anyone who controls the Docker socket can read them.
+- **Your computers' projects.** A bot reaches a computer's projects only after
+  that computer links it, from the bot's settings on that computer, and only
+  within the grants, models and approval ceiling chosen there. Nothing connects
+  to the computer: the gateway sends a call only on the event stream that
+  computer opened, takes the answer only from it, and fails the call at once
+  when that computer is offline. The computer runs each call as the bot's
+  conversation tool under its own grants, never approves a permission or a
+  plan for it, and never returns a local path or its own id. Whoever controls
+  the gateway or a bot of that environment can make calls as that bot, so give
+  a bot only the projects you would let it work in. See
+  [Work in the projects of your computers](bot-fleet.md#work-in-the-projects-of-your-computers).
 
 ## Remote workspaces
 
@@ -309,20 +516,6 @@ server with that host's control token.
 
 ## MCP, skills, and memory
 
-The optional personal bot endpoint runs inside Desktop and binds to loopback by
-default. The owner can explicitly select a network bind address and is responsible
-for publishing it over HTTPS. OAuth uses PKCE and requires consent in Desktop;
-tokens are scoped to a bot and the configured public audience. Workspace grants,
-pausing and revocation are enforced locally. Changing the public URL invalidates
-existing authorizations. Bot clients receive their own conversations and events,
-but cannot approve permission requests or plans. A bot conversation refuses the
-owner's own messages until the owner explicitly releases it; a released
-conversation still admits one turn at a time, and a bot can neither cancel nor
-steer a turn the owner started, nor change its account, model or approval mode.
-Reading a conversation back is scoped to one conversation of the calling
-connection and carries public message text only, never reasoning, tool results or
-attachments. See [bot setup](grok-connector.md).
-
 A stdio MCP server is an executable chosen by the user. A remote MCP server is a
 network service chosen by the user. Either can return hostile text, request
 powerful tool actions, or perform side effects outside Maestrly App's visibility.
@@ -337,6 +530,37 @@ Desktop project memory and notes stay in the local profile. Search indexes and
 embeddings are reproducible caches, not authoritative copies. Promoting local memory into a repository is an
 explicit write and then follows that repository's own review and disclosure
 rules.
+
+### Personal chat memory
+
+Ordinary desktop Chats share one personal memory collection in the local profile.
+The host derives its space from the calling conversation; memory tools do not
+accept a space selector. Project conversations, bot-originated conversations and
+fleet runtimes cannot use that collection through their memory tools. This is a
+host-tool access boundary, not an operating-system sandbox for agents allowed to
+run commands with the user's filesystem permissions.
+
+Personal reads remain available in Ask/Plan; mutations require Agent/Design and
+the existing permission broker. These tools do not require enabling unrelated
+app tools. A shared collection does not grant another chat's saved permissions
+or access to its transcript. The user can manage entries while assistant access
+is disabled. Disabling personal memory prevents new tool access, context
+injection and background writes; it cannot retract data already sent to a
+provider or erase historical messages.
+
+Companion has a separate personal-memory capability, disabled by default.
+Project-memory consent does not grant personal access. Read and Write are
+session-scoped, and context delivery must respect the same capability as tools.
+Revoked or ended sessions cannot continue reading or writing the collection.
+
+Personal background extraction is independently opt-in and sends local
+conversation excerpts to the selected model. Each accepted operation must cite
+a user message from the processed excerpt. This validates provenance, not the
+truth of the extracted claim. Assistant/tool text is not an authorized source of
+personal facts. Cancellation and target-version checks discard late or stale
+results. Memories remain evidence below system instructions, the user's current
+instructions and permission policy. Personal memory is not synchronized with
+the fleet gateway or other devices.
 
 ## Agent and bot memory
 
@@ -386,12 +610,39 @@ inherit explicit execution profiles and cannot silently become a separate
 authority. Context budgeting and redaction reduce accidental disclosure but
 cannot determine whether user-authored prompt content is sensitive.
 
+The Google Antigravity ACP server's native tools are all disabled, including its
+file viewer, which would otherwise read its working directory and the account
+home without asking. Its permission requests are approved once only for calls
+to Maestrly's own tool endpoint and rejected otherwise. The server's working
+directory is an app-owned folder, never the project, so it does not load hooks or
+settings from repository files.
+
 ## Runtime and package provenance
 
 Optional provider binaries and Local ML assets use pinned versions, target
 selection, and integrity or manifest checks where their upstream format permits.
 The package wrapper stages one target architecture, rejects foreign native
 packages, verifies resources outside the ASAR, and enforces size/leakage budgets.
+
+The Google Antigravity ACP server is downloaded on sign-in and can be updated
+independently of Maestrly. Discovery reads bounded metadata from the ACP
+registry's `antigravity-acp/agent.json` on `raw.githubusercontent.com`, requiring a
+stable version and canonical per-platform `dl.google.com` archive URLs and launch
+arguments. Google does not publish checksums for these archives. The built-in
+version has measured SHA-256 pins; new versions rely on Google's HTTPS origin
+with redirects prohibited, then record a locally computed digest after layout
+checks and a credential-free ACP handshake. This is origin trust, not publisher
+signature verification. Subsequent downloads of an accepted version must match
+its recorded digest; accepted metadata and current/previous pointers support
+offline verification and rollback. Codex and Claude still require npm's published
+SHA-512 integrity.
+
+The ACP validation process has a temporary home and working directory and no
+account credentials. It checks protocol, agent version and required advertised
+capabilities; it cannot prove authenticated model/tool behavior. An incompatible
+candidate is not activated. Desktop updates are manual by default; bots update
+installed ACP runtimes automatically. Active processes keep their leases until
+they exit. Bots recycle them only while idle; account homes and sign-in survive.
 
 The Codex runtime can also be updated independently of Maestrly releases. The
 main process reads only the `latest` stable version document of `@openai/codex`
@@ -411,6 +662,17 @@ the active pointer swapped. Failures leave the active version in place, open
 connections keep the version they leased, and the previous version remains
 available for an offline rollback. Checks are notify-only by default; automatic
 installation is opt-in and skips versions that failed or were rolled back.
+
+Bots update Claude Code the same way, only inside fleet environments. They read
+the `latest` version document of `@anthropic-ai/claude-code` and the platform
+package it declares for the environment's architecture, and accept a release
+only when the package names and versions agree, the tarball is the canonical
+npm URL, SHA-512 integrity is published, and the extracted size is within a
+limit. Validation runs the downloaded binary for its version and starts an
+Agent SDK session in a temporary profile that receives only operational
+environment variables, never an account, API key, or setting of the bot. A bot
+never uses a release older than the one its image ships. Bot checks are
+automatic by default and can be turned off per server.
 
 The electron-builder base configuration is an allowlist. Source trees, private
 environment files, unrelated build output, and unstaged runtime families must

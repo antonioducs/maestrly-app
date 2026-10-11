@@ -213,6 +213,12 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
               .sort((a, b) => a.seq - b.seq)
               .slice(-200),
           }
+        case 'artifact.changed':
+        case 'artifact.activity':
+        // Desktop access is read by the bot settings that show it, on its own channel.
+        case 'desktop.call':
+        case 'desktop_link.updated':
+          return state
         case 'owner_memory.updated':
           return { ...state, ownerMemoryRevision: event.revision }
         case 'environment.updated':

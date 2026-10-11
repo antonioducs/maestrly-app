@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FLEET_FILES_FEATURE } from '@maestrly/bot-fleet-protocol'
 import type { FleetBot, FleetSelection, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
 import type { FleetOutgoingAttachment } from '../../../preload/api-fleet'
 import type { ChatSlashCommand } from '../../../shared/chat'
@@ -12,17 +13,21 @@ import { ChatContextMeterDisplay } from '@/components/chat/ChatContextMeter'
 import { ChatReasoningPicker } from '@/components/chat/ChatReasoningPicker'
 import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
 import { ChatMicButton } from '@/components/chat/ChatMicButton'
+import { appendDictation } from '@/lib/dictation'
 import { ContextCompactionStatus } from '@/components/chat/ContextCompactionStatus'
 import { BackgroundCompactionStatus } from '@/components/chat/BackgroundCompactionStatus'
 import { botChatComposerSource } from '@/components/chat/chat-composer-source'
 import { backgroundCompactionState, compactionProgress } from '@/lib/fleet/compaction'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import {
+  attachmentKind,
   fleetUsageLimit,
   formatFleetTokens,
   formatFleetUsage,
+  readBotDraft,
   selectionPatch,
   validateAttachments,
+  writeBotDraft,
 } from '@/lib/fleet/composer'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
@@ -37,6 +42,7 @@ export function BotComposer({
   onOpenScreen,
   onOpenSettings,
   onOpenEnvironmentScreen,
+  onOpenEnvironmentSettings,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -44,9 +50,24 @@ export function BotComposer({
   onOpenSettings: () => void
   /** A bot of an environment manages skills, accounts and MCP servers on its environment's screen. */
   onOpenEnvironmentScreen?: () => void
+  onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
 }) {
   const { t } = useTranslation('fleet')
-  const [draft, setDraft] = useState('')
+  const [draftState, setDraftState] = useState(() => ({ botId: bot.id, text: readBotDraft(bot.id) }))
+  const draft = draftState.botId === bot.id ? draftState.text : readBotDraft(bot.id)
+  // Bound to the bot it was created for: a send that finishes after switching bots clears that bot's draft only.
+  const setDraft = useCallback(
+    (next: string | ((previous: string) => string)) => {
+      const botId = bot.id
+      setDraftState((previous) => {
+        const base = previous.botId === botId ? previous.text : readBotDraft(botId)
+        const text = typeof next === 'function' ? next(base) : next
+        writeBotDraft(botId, text)
+        return { botId, text }
+      })
+    },
+    [bot.id]
+  )
   const [images, setImages] = useState<PendingImage[]>([])
   const imagesRef = useRef(images)
   imagesRef.current = images
@@ -59,6 +80,8 @@ export function BotComposer({
   onOpenScreenRef.current = onOpenScreen
   const onOpenEnvironmentScreenRef = useRef(onOpenEnvironmentScreen)
   onOpenEnvironmentScreenRef.current = onOpenEnvironmentScreen
+  const onOpenEnvironmentSettingsRef = useRef(onOpenEnvironmentSettings)
+  onOpenEnvironmentSettingsRef.current = onOpenEnvironmentSettings
   // An environment still on an image from before environments has no environment screen: its settings open in the
   // bot's browser area, with a takeover, as they did before environments.
   const environment = hasEnvironments(fleet.state.connection)
@@ -88,6 +111,10 @@ export function BotComposer({
             bot: {
               ...botSource.bot,
               manage: async (target: 'skills' | 'mcp') => {
+                if (onOpenEnvironmentSettingsRef.current) {
+                  onOpenEnvironmentSettingsRef.current(target)
+                  return
+                }
                 await window.api.fleetEnvironmentUiOpen(environmentId, target)
                 onOpenEnvironmentScreenRef.current?.()
               },
@@ -151,7 +178,6 @@ export function BotComposer({
     }
   }, [bot.id, locked])
   useEffect(() => {
-    setDraft('')
     setImages((previous) => {
       previous.forEach(({ attachment }) => URL.revokeObjectURL(attachment.previewUrl ?? ''))
       return []
@@ -163,8 +189,14 @@ export function BotComposer({
     []
   )
 
+  const filesEnabled =
+    fleet.state.connection.features.includes(FLEET_FILES_FEATURE) && bot.capabilities.includes(FLEET_FILES_FEATURE)
   const addFiles = (files: File[]) => {
     if (!files.length) return
+    if (!filesEnabled && files.some((file) => attachmentKind(file) !== 'image')) {
+      setError(t('composer.attachmentError.unsupported'))
+      return
+    }
     const issue = validateAttachments(
       imagesRef.current.map((image) => image.file),
       files
@@ -180,10 +212,15 @@ export function BotComposer({
         attachment: {
           id: crypto.randomUUID(),
           name: file.name,
-          mediaType: file.type,
-          kind: 'image' as const,
+          mediaType:
+            attachmentKind(file) === 'pdf'
+              ? 'application/pdf'
+              : attachmentKind(file) === 'text'
+                ? 'text/plain'
+                : file.type,
+          kind: attachmentKind(file)!,
           byteSize: file.size,
-          previewUrl: URL.createObjectURL(file),
+          previewUrl: attachmentKind(file) === 'image' ? URL.createObjectURL(file) : undefined,
         },
       })),
     ])
@@ -217,13 +254,18 @@ export function BotComposer({
   }
   const send = async (text: string) => {
     if (busy || locked) return
+    if (!filesEnabled && imagesRef.current.some(({ file }) => attachmentKind(file) !== 'image')) {
+      setError(t('composer.attachmentError.unsupported'))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
       const attachments: FleetOutgoingAttachment[] = await Promise.all(
-        imagesRef.current.map(async ({ file }) => ({
+        imagesRef.current.map(async ({ file, attachment }) => ({
+          kind: attachment.kind,
           name: file.name,
-          mediaType: file.type as FleetOutgoingAttachment['mediaType'],
+          mediaType: attachment.mediaType as FleetOutgoingAttachment['mediaType'],
           data: new Uint8Array(await file.arrayBuffer()),
         }))
       )
@@ -235,7 +277,13 @@ export function BotComposer({
       })
       await fleet.loadTranscript(bot.id)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(
+        String(cause).includes('FLEET_FILES_UNSUPPORTED')
+          ? t('composer.attachmentError.unsupported')
+          : String(cause).includes('FLEET_ATTACHMENT_INVALID')
+            ? t('composer.attachmentError.invalid')
+            : fleetErrorMessage(cause)
+      )
     } finally {
       setBusy(false)
     }
@@ -296,7 +344,12 @@ export function BotComposer({
         }}
         micSlot={
           <ChatMicButton
-            onTranscribed={(text) => setDraft((previous) => (previous.trim() ? `${previous.trimEnd()} ${text}` : text))}
+            onTranscribed={(text) => setDraft((previous) => appendDictation(previous, text))}
+            onAutoSend={(text) => {
+              if (busy || locked) return false
+              void send(appendDictation(draft, text))
+              return true
+            }}
             disabled={locked || busy}
           />
         }
@@ -309,13 +362,25 @@ export function BotComposer({
               fontScale={1}
               onFontScale={() => {}}
               source={source}
-              manageMcpLabel={environmentId ? t('composer.manageMcpEnvironment') : t('composer.manageMcp')}
+              manageMcpLabel={
+                onOpenEnvironmentSettings
+                  ? t('composer.manageMcpSettings')
+                  : environmentId
+                    ? t('composer.manageMcpEnvironment')
+                    : t('composer.manageMcp')
+              }
             />
             <ChatSkillsMenu
               conversationId={bot.id}
               onChanged={reloadCommands}
               source={source}
-              manageSkillsLabel={environmentId ? t('composer.manageSkillsEnvironment') : t('composer.manageSkills')}
+              manageSkillsLabel={
+                onOpenEnvironmentSettings
+                  ? t('composer.manageSkillsSettings')
+                  : environmentId
+                    ? t('composer.manageSkillsEnvironment')
+                    : t('composer.manageSkills')
+              }
               emptySkillsLabel={t('composer.noSkills')}
             />
             {option && option.efforts.length > 0 && (

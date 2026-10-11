@@ -1,15 +1,12 @@
 import { expect, it } from 'vitest'
 import {
   BOT_ACTIONS,
-  BOT_MCP_PATH,
   BOT_WAIT_MAX_SECONDS,
   applyBotConversationEvent,
   botClaimSchema,
   botCommandSchema,
   botConnectionSchema,
   botConversationSchema,
-  botMcpResource,
-  botProtectedResourceMetadataUrl,
   botQuestionSchema,
   botSelectionSchema,
   parseBotCommandPayload,
@@ -44,17 +41,11 @@ const command = {
   version: 1,
 }
 
-it('keeps the bot audience separate from the REST and connector audiences', () => {
-  expect(BOT_MCP_PATH).toBe('/mcp/bots')
-  expect(botMcpResource('https://team.example/')).toBe('https://team.example/mcp/bots')
-  expect(botMcpResource('https://team.example')).not.toBe('https://team.example/mcp')
-  expect(botProtectedResourceMetadataUrl('https://team.example')).toBe(
-    'https://team.example/.well-known/oauth-protected-resource/mcp/bots'
-  )
+it('bounds how long a wait call blocks', () => {
   expect(BOT_WAIT_MAX_SECONDS).toBe(20)
 })
 
-it('describes a personal connection without any organization, project or runner', () => {
+it('describes a bot connection without any organization, project or runner', () => {
   const connection = botConnectionSchema.parse({
     id: connectionId,
     name: 'Grok',
@@ -200,13 +191,15 @@ it('applies relayed events in order and refuses a gap', () => {
   })
   expect(continued.messages[0]!.parts).toEqual([{ id: 'p1', type: 'text', text: 'Hello there' }])
   // A replayed event changes nothing; a missing one is reported instead of silently applied.
-  expect(applyBotConversationEvent(continued, {
-    version: 1,
-    conversationId,
-    sequence: 3,
-    eventId: 'c',
-    payload: { type: 'delta', messageId, partId: 'p1', kind: 'text', delta: ' again' },
-  })).toBe(continued)
+  expect(
+    applyBotConversationEvent(continued, {
+      version: 1,
+      conversationId,
+      sequence: 3,
+      eventId: 'c',
+      payload: { type: 'delta', messageId, partId: 'p1', kind: 'text', delta: ' again' },
+    })
+  ).toBe(continued)
   expect(() =>
     applyBotConversationEvent(continued, {
       version: 1,

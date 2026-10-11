@@ -1,4 +1,4 @@
-FROM node:22.22.0-bookworm-slim AS build
+FROM node:24.21.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/package.json
@@ -13,7 +13,7 @@ COPY packages packages
 COPY apps/runner apps/runner
 RUN npm run build:protocol && npm run build:sdk && npm run build --workspace @maestrly/runner-core && npm run build:runner
 
-FROM node:22.22.0-bookworm-slim
+FROM node:24.21.0-bookworm-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules

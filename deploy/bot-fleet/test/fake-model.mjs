@@ -30,6 +30,24 @@ function turn(messages, marker) {
   return { tools, last: tools.length ? contentText(tools.at(-1).content) : '' }
 }
 
+// One `desktopId=name:online:workspaces` entry per computer a desktop tool listed, or `unreadable`.
+function desktopSummary(output) {
+  try {
+    const value = JSON.parse(output)
+    return (value.desktops ?? [])
+      .map((desktop) =>
+        [
+          desktop.desktopId + '=' + desktop.name,
+          desktop.online ? 'on' : 'off',
+          (desktop.workspaces ?? []).map((workspace) => workspace.workspaceId).join('+') || desktop.error || '-',
+        ].join(':')
+      )
+      .join(' ')
+  } catch {
+    return 'unreadable'
+  }
+}
+
 // Resolves true once `parties` different roles arrived under `name`, or false after `timeoutMs`.
 function arrive(name, role, parties, timeoutMs) {
   let barrier = barriers.get(name)
@@ -91,6 +109,14 @@ async function reply(req) {
         summary: 'E2E-RUN-1 done', notes_for_next_run: 'check the second shelf',
       })
     return { text: 'E2E-ROUTINE-DONE' }
+  }
+  if (text.includes('E2E-ARTIFACT-CREATE')) {
+    if (toolReturned) return { text: 'E2E-ARTIFACT-CREATED' }
+    // Files are structured input; validate the tool declaration without treating arrays as primitive values.
+    return { name: toolName(req.tools ?? [], 'artifact_create'), args: {
+      title: 'E2E bot page',
+      files: [{ path: 'index.html', content: '<!doctype html><html><body><h1>E2E-BOT-ARTIFACT-CONTENT</h1></body></html>' }],
+    } }
   }
   if (text.includes('E2E-ROUTINE-CREATE')) {
     const userIndex = messages.lastIndexOf(lastUser)
@@ -179,6 +205,45 @@ async function reply(req) {
         : { text: 'E2E-HOST-BROWSER-UNREAD ' + last.slice(0, 200) }
     // The screenshot's note says where the page is scrolled; a failed capture says why instead.
     return { text: /Scroll y=\d+\/\d+/.test(last) ? 'E2E-HOST-BROWSER-OK' : 'E2E-HOST-BROWSER-NO-SCREENSHOT ' + last.slice(0, 200) }
+  }
+  // A bot reaches the owner's computers: all of them at once, then one computer per call.
+  if (text.includes('E2E-DESKTOPS-LIST')) {
+    const { tools, last } = turn(messages, 'E2E-DESKTOPS-LIST')
+    if (tools.length === 0) return validatedTool(req, 'desktop_list_workspaces', {})
+    return { text: 'E2E-DESKTOPS-SEEN ' + desktopSummary(last) }
+  }
+  if (text.includes('E2E-DESKTOPS-CREATE')) {
+    const targets = [['a', field(text, 'a')], ['b', field(text, 'b')]]
+    const { tools } = turn(messages, 'E2E-DESKTOPS-CREATE')
+    if (tools.length < targets.length) {
+      const [name, desktopId] = targets[tools.length]
+      return validatedTool(req, 'desktop_create_chat', {
+        desktopId,
+        workspaceId: 'w-' + name,
+        name: 'E2E chat ' + name,
+        baseBranch: 'main',
+        selection: { selectionId: 'sel-' + name },
+        message: 'E2E work on ' + name,
+      })
+    }
+    const created = tools.map((entry) => /"conversation":\{"id":"([^"]+)"/.exec(contentText(entry.content))?.[1] ?? 'none')
+    return { text: 'E2E-DESKTOPS-CREATED a=' + created[0] + ' b=' + created[1] }
+  }
+  if (text.includes('E2E-DESKTOPS-OFFLINE')) {
+    const { tools } = turn(messages, 'E2E-DESKTOPS-OFFLINE')
+    if (tools.length === 0) return validatedTool(req, 'desktop_list_chats', { desktopId: field(text, 'b') })
+    if (tools.length === 1) return validatedTool(req, 'desktop_list_chats', { desktopId: field(text, 'a') })
+    const [offline, online] = tools.map((entry) => contentText(entry.content))
+    return {
+      text:
+        'E2E-DESKTOPS-OFFLINE-SEEN b=' + (offline.includes('desktop_offline') ? 'offline' : 'reached') +
+        ' a=' + (online.includes('"conversations"') ? 'ok' : 'failed'),
+    }
+  }
+  if (text.includes('E2E-DESKTOPS-LINKS')) {
+    const { tools, last } = turn(messages, 'E2E-DESKTOPS-LINKS')
+    if (tools.length === 0) return validatedTool(req, 'desktop_list_desktops', {})
+    return { text: 'E2E-DESKTOPS-LINKED ' + desktopSummary(last) }
   }
   if (text.includes('E2E-ALIVE')) return { text: 'E2E-ALIVE-OK tag=' + field(text, 'tag') }
   // A turn that stays busy for a while, so something else can happen during it.

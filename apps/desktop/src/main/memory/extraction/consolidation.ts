@@ -1,3 +1,5 @@
+import { extractionAllowed, extractionCommitGuard, matchesSnapshot, withSpaceApply } from './guards'
+import { extractionSystemPrompt } from './prompt'
 import { transaction } from '../../store/db'
 import { randomUUID } from 'node:crypto'
 import { recordChatUsageAttempt } from '../../chat/chat-store'
@@ -38,8 +40,17 @@ export async function maybeConsolidate(input: {
   now: number
   /** Once aborted (the extraction was cancelled), the answer is discarded and nothing is written. */
   signal?: AbortSignal
+  authorized?: () => boolean
 }): Promise<{ merges: number }> {
-  if (running.has(input.space.id) || input.signal?.aborted) return { merges: 0 }
+  if (
+    running.has(input.space.id) ||
+    input.signal?.aborted ||
+    !extractionAllowed(input.space) ||
+    input.authorized?.() === false
+  )
+    return { merges: 0 }
+  const commitAllowed = extractionCommitGuard(input.space)
+  const allowed = () => commitAllowed() && input.authorized?.() !== false
   const run = Symbol(input.space.id)
   running.set(input.space.id, run)
   const release = () => {
@@ -56,6 +67,9 @@ export async function maybeConsolidate(input: {
       limit: CONSOLIDATION_LIMITS.maxInput,
     })
     const system =
+      (input.space.kind === 'personal'
+        ? `${extractionSystemPrompt('personal')}\nConsolidate only existing personal facts; use the merge schema below instead of extraction operations.\n`
+        : '') +
       'You merge duplicate or overlapping memories of an AI agent. Merge only memories that describe the same thing; never merge different topics. Keep every unique fact in the merged content. Return ONLY {"merges":[{"ids":["<id>","<id>"],"type":"decision|constraint|preference|procedure|lesson|reference","title":"…","content":"…"}]} with at most 10 merges, or {"merges":[]}.'
     const memories: typeof candidates = []
     const lines: string[] = []
@@ -69,7 +83,7 @@ export async function maybeConsolidate(input: {
       lines.push(line)
       chars += size
     }
-    const snapshots = new Map(memories.map((memory) => [memory.id, memory.updatedAt]))
+    const snapshots = new Map(memories.map((memory) => [memory.id, memory]))
     const prompt = lines.join('\n')
     const result = await input.oneShot({
       selection: input.selection,
@@ -86,49 +100,62 @@ export async function maybeConsolidate(input: {
       model: { providerId: input.selection.providerId, modelId: input.selection.modelId },
       usage: result.usage,
     })
-    if (input.signal?.aborted) return { merges: 0 }
-    let merges = 0
-    const text = result.text.replace(/```(?:json)?/gi, '')
-    let raw: unknown = null
-    try {
-      raw = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
-    } catch {
-      raw = null
-    }
-    const list = Array.isArray((raw as { merges?: unknown })?.merges) ? (raw as { merges: unknown[] }).merges : []
-    for (const item of list.slice(0, CONSOLIDATION_LIMITS.maxMerges)) {
-      const parsed = merge.safeParse(item)
-      if (!parsed.success) continue
-      if (parsed.data.ids.some((id) => !snapshots.has(id))) continue
-      const targets = parsed.data.ids.map((id) => getLocalMemory(input.space.id, id))
-      if (
-        targets.some(
-          (target) => target?.status !== 'active' || target.pinned || target.updatedAt !== snapshots.get(target.id)
+    if (input.signal?.aborted || !allowed()) return { merges: 0 }
+    return await withSpaceApply(input.space.id, () => {
+      if (input.signal?.aborted || !allowed()) return { merges: 0 }
+      let merges = 0
+      const text = result.text.replace(/```(?:json)?/gi, '')
+      let raw: unknown = null
+      try {
+        raw = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
+      } catch {
+        raw = null
+      }
+      const list = Array.isArray((raw as { merges?: unknown })?.merges) ? (raw as { merges: unknown[] }).merges : []
+      for (const item of list.slice(0, CONSOLIDATION_LIMITS.maxMerges)) {
+        if (input.signal?.aborted || !allowed()) return { merges }
+        const parsed = merge.safeParse(item)
+        if (!parsed.success || new Set(parsed.data.ids).size !== parsed.data.ids.length) continue
+        if (parsed.data.ids.some((id) => !snapshots.has(id))) continue
+        const targets = parsed.data.ids.map((id) => getLocalMemory(input.space.id, id))
+        if (
+          targets.some(
+            (target) =>
+              target?.status !== 'active' || target.pinned || !matchesSnapshot(target, snapshots.get(target.id))
+          )
         )
-      )
-        continue
-      const title = normalizeMemoryText(parsed.data.title)
-      const content = normalizeMemoryText(parsed.data.content)
-      if (memoryContentProblem(`${title}\n${content}`)) continue
-      let applied = false
-      transaction(() => {
-        const saved = createLocalMemory({
-          workspaceId: input.space.id,
-          title,
-          content,
-          type: parsed.data.type,
-          source: 'auto',
-          originConversationId: input.conversationId,
-          supersedesId: targets[0]!.id,
+          continue
+        const title = normalizeMemoryText(parsed.data.title)
+        const content = normalizeMemoryText(parsed.data.content)
+        if (memoryContentProblem(`${title}\n${content}`)) continue
+        let applied = false
+        transaction(() => {
+          const saved = createLocalMemory({
+            workspaceId: input.space.id,
+            title,
+            content,
+            type: parsed.data.type,
+            source: 'auto',
+            originConversationId:
+              input.space.kind === 'personal' ? targets[0]!.originConversationId : input.conversationId,
+            ...(input.space.kind === 'personal' ? { originMessageId: targets[0]!.originMessageId } : {}),
+            supersedesId: targets[0]!.id,
+          })
+          if (saved.duplicate) return
+          for (const target of targets.slice(1)) updateLocalMemory(input.space.id, target!.id, { status: 'superseded' })
+          applied = true
         })
-        if (saved.duplicate) return
-        for (const target of targets.slice(1)) updateLocalMemory(input.space.id, target!.id, { status: 'superseded' })
-        applied = true
+        if (applied) merges += 1
+      }
+      if (input.signal?.aborted || !allowed()) return { merges }
+      saveConsolidationState({
+        spaceId: input.space.id,
+        autoCreatedSince: 0,
+        lastRunAt: input.now,
+        updatedAt: input.now,
       })
-      if (applied) merges += 1
-    }
-    saveConsolidationState({ spaceId: input.space.id, autoCreatedSince: 0, lastRunAt: input.now, updatedAt: input.now })
-    return { merges }
+      return { merges }
+    })
   } finally {
     input.signal?.removeEventListener('abort', release)
     release()

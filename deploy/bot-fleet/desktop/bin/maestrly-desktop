@@ -1,0 +1,74 @@
+#!/usr/local/bin/node
+'use strict'
+
+// Asks the desktop service of this bot to do something on its desktop:
+//   maestrly-desktop <browser|terminal|files|url> [url]
+// It writes one line to the bot's socket (MAESTRLY_DESKTOP_SOCKET) and reads the answer: `ok`, or `err` and a base64
+// message, which goes to stderr with exit status 1. The wire format is the one of
+// apps/desktop/src/main/fleet/instance/desktop/socket-protocol.ts. Plain Node, no dependencies.
+
+// getBuiltinModule works whether Node runs this file as CommonJS (installed in /usr/local/bin) or as an ES module
+// (run from the repository, whose package.json says "type": "module").
+const net = process.getBuiltinModule('node:net')
+
+const USAGE = 'Usage: maestrly-desktop <browser|terminal|files|url> [url]'
+const COMMANDS = ['browser', 'terminal', 'files', 'url']
+const ANSWER_TIMEOUT_MS = 30000
+const ANSWER_MAX_BYTES = 64 * 1024
+
+function usageError(message) {
+  process.stderr.write(message + '\n')
+  process.exitCode = 2
+}
+
+function main() {
+  const args = process.argv.slice(2)
+  const command = args[0]
+  if (!COMMANDS.includes(command) || args.length !== (command === 'url' ? 2 : 1)) {
+    usageError(USAGE)
+    return
+  }
+  const socketPath = process.env.MAESTRLY_DESKTOP_SOCKET
+  if (!socketPath) {
+    usageError('maestrly-desktop: MAESTRLY_DESKTOP_SOCKET is not set; this program works inside a bot desktop.')
+    return
+  }
+
+  const fields = ['cmd', command]
+  if (command === 'url') fields.push(Buffer.from(args[1], 'utf8').toString('base64'))
+
+  const socket = net.createConnection(socketPath)
+  let answered = false
+  let received = Buffer.alloc(0)
+
+  const timer = setTimeout(() => finish(1, 'maestrly-desktop: the desktop service did not answer'), ANSWER_TIMEOUT_MS)
+
+  function finish(code, message) {
+    if (answered) return
+    answered = true
+    clearTimeout(timer)
+    if (message) process.stderr.write(message + '\n')
+    process.exitCode = code
+    socket.destroy()
+  }
+
+  socket.on('connect', () => socket.write(fields.join('\t') + '\n'))
+  socket.on('data', (chunk) => {
+    if (answered) return
+    received = Buffer.concat([received, chunk])
+    const end = received.indexOf(0x0a)
+    if (end < 0) {
+      if (received.length > ANSWER_MAX_BYTES) finish(1, 'maestrly-desktop: the desktop service sent an invalid answer')
+      return
+    }
+    const answer = received.toString('utf8', 0, end).split('\t')
+    if (answer[0] === 'ok') finish(0)
+    else if (answer[0] === 'err') {
+      finish(1, Buffer.from(answer[1] || '', 'base64').toString('utf8') || 'maestrly-desktop: the command failed')
+    } else finish(1, 'maestrly-desktop: the desktop service sent an invalid answer')
+  })
+  socket.on('error', (error) => finish(1, 'maestrly-desktop: cannot reach the desktop service: ' + error.message))
+  socket.on('close', () => finish(1, 'maestrly-desktop: the desktop service closed the connection without an answer'))
+}
+
+main()

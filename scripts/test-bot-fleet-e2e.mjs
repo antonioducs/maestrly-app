@@ -75,8 +75,7 @@ function run(command, args, options = {}) {
 }
 const docker = (args, options) => {
   const environmentExec =
-    args[0] === 'exec' &&
-    args.some((arg) => /^maestrly-env-/.test(arg) || /^maestrly-bot-(?!gateway(?:$|-))/.test(arg))
+    args[0] === 'exec' && args.some((arg) => /^maestrly-env-/.test(arg) || /^maestrly-bot-(?!gateway(?:$|-))/.test(arg))
   const explicitUser = args.includes('-u') || args.includes('--user')
   return run('docker', environmentExec && !explicitUser ? ['exec', '-u', '1000', ...args.slice(1)] : args, options)
 }
@@ -156,6 +155,98 @@ async function subscribe() {
   await poll('SSE hello', () => events.some((event) => event.type === 'hello'), 10000)
 }
 const bot = (id) => request('GET', '/v1/bots/' + id)
+/** A device paired with its own pairing code, as each of the owner's computers is. */
+async function pairDevice(deviceName) {
+  const output = (
+    await compose(['exec', '-T', 'maestrly-bot-gateway', 'node', 'apps/bot-gateway/dist/main.js', 'pair'])
+  ).stdout
+  const code = /[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/.exec(output)?.[0]
+  assert.ok(code, 'Pairing code absent from gateway CLI output')
+  return (await request('POST', '/v1/pair', { code: code.replace('-', ''), deviceName }, { headers: {} })).token
+}
+/**
+ * One of the owner's computers, played by this script: it pairs, opens its own event stream asking for desktop calls,
+ * and answers each call the way a Maestrly desktop does, with synthetic workspaces and conversations of its own.
+ */
+async function syntheticComputer(name) {
+  const deviceToken = await pairDevice('E2E ' + name)
+  const headers = { Authorization: 'Bearer ' + deviceToken, 'X-Maestrly-Fleet-Protocol': '1' }
+  const state = { calls: [], links: [], created: [], abort: null }
+  const answer = async (callId, body) => {
+    const response = await fetch(base + '/v1/desktop-calls/' + callId + '/result', {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    })
+    assert.equal(response.status, 204)
+  }
+  const reply = (event) => {
+    if (event.op === 'listWorkspaces')
+      return {
+        desktop: { id: event.desktopId, name },
+        workspaces: [{ workspaceId: 'w-' + name, label: 'project-' + name, branches: ['main'], defaultBranch: 'main' }],
+        selections: [
+          {
+            selectionId: 'sel-' + name,
+            label: 'e2e-model',
+            providerLabel: 'E2E',
+            reasoningEfforts: [],
+            fastMode: false,
+            modes: ['agent'],
+            permissionModes: ['ask', 'auto'],
+          },
+        ],
+      }
+    if (event.op === 'createChat') {
+      const conversation = { id: randomUUID(), workspaceId: event.input.workspaceId, name: event.input.name }
+      state.created.push(conversation)
+      return { conversation }
+    }
+    if (event.op === 'listChats') return { conversations: state.created }
+    return {}
+  }
+  const connect = async () => {
+    state.abort = new AbortController()
+    const response = await fetch(base + '/v1/events?reasoning=1&desktopBridge=1', {
+      headers,
+      signal: state.abort.signal,
+    })
+    assert.equal(response.status, 200)
+    void (async () => {
+      const decoder = new TextDecoder()
+      let buffer = ''
+      try {
+        for await (const chunk of response.body) {
+          buffer += decoder.decode(chunk, { stream: true })
+          let boundary
+          while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, boundary)
+            buffer = buffer.slice(boundary + 2)
+            const data = frame.split('\n').find((line) => line.startsWith('data: '))
+            if (!data) continue
+            const event = JSON.parse(data.slice(6))
+            if (event.type === 'desktop_link.updated') state.links.push(event)
+            if (event.type !== 'desktop.call') continue
+            state.calls.push(event)
+            await answer(event.callId, { ok: true, value: reply(event) })
+          }
+        }
+      } catch {
+        // The script closed this computer's stream.
+      }
+    })()
+  }
+  await connect()
+  return {
+    name,
+    state,
+    request: (method, route, body, options = {}) =>
+      request(method, route, body, { ...options, headers: { Authorization: 'Bearer ' + deviceToken } }),
+    disconnect: () => state.abort?.abort(),
+    connect,
+  }
+}
 const transcript = async (id) => (await request('GET', '/v1/bots/' + id + '/transcript?limit=500')).items
 const historyIds = async (id) => (await transcript(id)).map((item) => item.id)
 async function fleetImage(botId, imageId) {
@@ -594,8 +685,19 @@ class Rfb {
     }
     return pixelCount
   }
-  pointer(x, y) {
-    this.send(Buffer.from([5, 0, x >> 8, x & 255, y >> 8, y & 255]))
+  pointer(x, y, buttons = 0) {
+    this.send(Buffer.from([5, buttons, x >> 8, x & 255, y >> 8, y & 255]))
+  }
+  key(keysym, down) {
+    const message = Buffer.alloc(8)
+    message[0] = 4
+    message[1] = down ? 1 : 0
+    message.writeUInt32BE(keysym, 4)
+    this.send(message)
+  }
+  tap(keysym) {
+    this.key(keysym, true)
+    this.key(keysym, false)
   }
   async closeCode() {
     await poll('RFB socket close', () => this.closed !== null && this.closed, 10000)
@@ -623,10 +725,14 @@ async function capture(name, display = ':0', fileName = 'e2e-scout.png') {
   const target = path.join(root, '.bot-fleet-local/screens', fileName)
   mkdirSync(path.dirname(target), { recursive: true })
   await new Promise((resolve, reject) => {
-    const child = spawn('docker', ['exec', '-u', '1000', name, 'import', '-display', display, '-window', 'root', 'png:-'], {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const child = spawn(
+      'docker',
+      ['exec', '-u', '1000', name, 'import', '-display', display, '-window', 'root', 'png:-'],
+      {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    )
     const file = createWriteStream(target)
     let stderr = ''
     child.stdout.pipe(file)
@@ -694,8 +800,11 @@ async function main() {
     ...process.env,
     MAESTRLY_GATEWAY_NETWORK: network,
     MAESTRLY_GATEWAY_PORT: String(port),
+    MAESTRLY_ARTIFACTS_PORT: String(await freePort()),
     MAESTRLY_GATEWAY_BIND: '127.0.0.1',
     MAESTRLY_GATEWAY_BOT_EGRESS: 'public',
+    // Bots must not download Claude Code or Codex releases during the test.
+    MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'off',
   }
   await compose(['up', '-d', '--no-build'])
   const meta = await poll('gateway /v1/meta', () => request('GET', '/v1/meta'), 30000)
@@ -726,7 +835,7 @@ async function main() {
     'E2E_DEV_ID=' + devId,
     '-v',
     fakeFile + ':/app/fake-model.mjs:ro',
-    'node:22.22.0-bookworm-slim',
+    'node:24.21.0-bookworm-slim',
     'node',
     '/app/fake-model.mjs',
   ])
@@ -793,6 +902,39 @@ async function main() {
     [...containers].sort()
   )
   pass('two bot containers', 'running, setup, appVersion ' + version + '; one maestrly-env-* container each, slot 1')
+  // Each environment reports the Claude Code and Codex its image ships. The server turned automatic checks off, so
+  // neither runtime was ever checked or replaced.
+  const claudeCodeVersion = JSON.parse(
+    readFileSync(path.join(root, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'), 'utf8')
+  ).claudeCodeVersion
+  for (const [environmentId, name] of [
+    [devEnvId, containers[0]],
+    [scoutEnvId, containers[1]],
+  ]) {
+    const reported = await poll(environmentId + ' runtimes', async () => {
+      const environment = await request('GET', '/v1/environments/' + environmentId)
+      return environment.runtimes?.length === 2 && environment.runtimes
+    })
+    const claude = reported.find((runtime) => runtime.id === 'claude-code')
+    const codex = reported.find((runtime) => runtime.id === 'codex')
+    assert.deepEqual(
+      {
+        version: claude?.version,
+        source: claude?.source,
+        pending: claude?.pendingVersion,
+        state: claude?.state,
+        checked: claude?.lastCheckedAt,
+      },
+      { version: claudeCodeVersion, source: 'image', pending: null, state: 'idle', checked: null }
+    )
+    assert.equal(codex?.source, 'image')
+    assert.equal(codex.pendingVersion, null)
+    assert.match(codex?.version ?? '', /^\d+\.\d+\.\d+$/)
+    assert.equal(codex.lastCheckedAt, null)
+    const env = JSON.parse((await docker(['inspect', '-f', '{{json .Config.Env}}', name])).stdout)
+    assert.ok(env.includes('MAESTRLY_BOT_RUNTIME_UPDATES=off'))
+  }
+  pass('runtime versions', 'Claude Code ' + claudeCodeVersion + ' and Codex from the image, reported and never checked')
   const egressContainer = containers[1]
   assert.equal(
     (await docker(['inspect', '-f', '{{.Config.User}} {{json .HostConfig.CapAdd}}', egressContainer])).stdout.trim(),
@@ -815,19 +957,33 @@ async function main() {
     const hostLookup = await docker(['exec', fakeName, 'getent', 'ahostsv4', 'host.docker.internal'], {
       allowFailure: true,
     })
-    const targetHost = hostLookup.code === 0
-      ? hostLookup.stdout.trim().split(/\s+/)[0]
-      : (await docker(['network', 'inspect', '-f', '{{(index .IPAM.Config 0).Gateway}}', network])).stdout.trim()
+    const targetHost =
+      hostLookup.code === 0
+        ? hostLookup.stdout.trim().split(/\s+/)[0]
+        : (await docker(['network', 'inspect', '-f', '{{(index .IPAM.Config 0).Gateway}}', network])).stdout.trim()
     const sidecarControl = await docker(
-      ['exec', fakeName, 'node', '-e',
+      [
+        'exec',
+        fakeName,
+        'node',
+        '-e',
         "const net=require('node:net');const s=net.connect(Number(process.argv[2]),process.argv[1]);s.setTimeout(3000);s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1))",
-        targetHost, String(listenerPort)],
+        targetHost,
+        String(listenerPort),
+      ],
       { allowFailure: true }
     )
-    assert.equal(sidecarControl.code, 0, 'Cannot verify host egress here: the model sidecar cannot reach the host listener')
+    assert.equal(
+      sidecarControl.code,
+      0,
+      'Cannot verify host egress here: the model sidecar cannot reach the host listener'
+    )
     assert.equal(await canConnect(egressContainer, targetHost, listenerPort), false, 'Bot reached the host listener')
     assert.equal(await canConnect(egressContainer, '169.254.169.254', 80), false, 'Bot reached metadata address')
-    pass('egress guard', 'root container, NET_ADMIN removed from Maestrly; firewall blocks host and metadata while gateway remains reachable')
+    pass(
+      'egress guard',
+      'root container, NET_ADMIN removed from Maestrly; firewall blocks host and metadata while gateway remains reachable'
+    )
   } finally {
     await new Promise((resolve) => listener.close(resolve))
   }
@@ -848,7 +1004,7 @@ async function main() {
   assert.equal(plainShell.length, binaries.length + 3)
   for (const line of plainShell.slice(0, binaries.length)) assert.ok(line.startsWith('/'))
   const nodeVersion = plainShell[binaries.length]
-  assert.match(nodeVersion, /^v22\./)
+  assert.match(nodeVersion, /^v24\./)
   assert.equal(plainShell[binaries.length + 1], '/home/bot/.local')
   assert.equal(plainShell[binaries.length + 2], '42')
   const loginShell = (
@@ -1209,6 +1365,222 @@ async function main() {
     await request('GET', environmentRoute + '/mcp-servers'),
     await request('GET', provisioningRoute + '/mcp-servers')
   )
+  // Exercise settings through the public gateway and the running instance. The model/tool turn below
+  // proves omitted credentials, transport values and bundled executable files survived these edits.
+  const settingsRoute = environmentRoute + '/settings'
+  const accountsBefore = await request('GET', settingsRoute + '/accounts')
+  assert.ok(!JSON.stringify(accountsBefore).includes(modelKey), 'Settings accounts must not expose the API key')
+  const settingsAccount = accountsBefore.apiKeys.find((item) => item.providerId === selection.providerId)
+  assert.ok(settingsAccount)
+  assert.ok(settingsAccount.keyHint === null || settingsAccount.keyHint.length <= 8)
+  assert.ok(!Object.hasOwn(settingsAccount, 'apiKey') && !Object.hasOwn(settingsAccount, 'key'))
+  const renamedAccounts = await request('PATCH', settingsRoute + '/accounts/' + selection.providerId, {
+    providerId: selection.providerId,
+    expectedRevision: accountsBefore.revision,
+    name: 'E2E Settings Model',
+  })
+  assert.equal(
+    renamedAccounts.apiKeys.find((item) => item.providerId === selection.providerId)?.name,
+    'E2E Settings Model'
+  )
+  const restoredAccounts = await request('PATCH', settingsRoute + '/accounts/' + selection.providerId, {
+    providerId: selection.providerId,
+    expectedRevision: renamedAccounts.revision,
+    name: settingsAccount.name,
+  })
+  assert.ok(!JSON.stringify(restoredAccounts).includes(modelKey))
+
+  const modelsBefore = await request('GET', settingsRoute + '/models')
+  const providerModels = modelsBefore.providers.find((item) => item.providerId === selection.providerId)
+  assert.ok(providerModels)
+  assert.ok(providerModels.models.some((item) => item.id === 'e2e-model'))
+  assert.ok(
+    providerModels.models.some((item) => item.id === 'e2e-model-b'),
+    'Settings must list the full model catalog'
+  )
+  const botBeforeFilter = await bot(scoutId)
+  const hiddenModels = await request('PUT', settingsRoute + '/models/' + selection.providerId + '/filter', {
+    providerId: selection.providerId,
+    expectedRevision: providerModels.revision,
+    hiddenModelIds: [...new Set([...providerModels.hiddenModelIds, selection.modelId])],
+  })
+  const hiddenProvider = hiddenModels.providers.find((item) => item.providerId === selection.providerId)
+  assert.ok(
+    hiddenProvider.models.some((item) => item.id === selection.modelId),
+    'Hidden models remain in settings'
+  )
+  assert.ok(hiddenProvider.hiddenModelIds.includes(selection.modelId))
+  const filteredSelections = await request('GET', provisioningRoute + '/selections')
+  assert.equal(filteredSelections.current?.modelId, selection.modelId)
+  assert.equal(filteredSelections.current?.providerId, selection.providerId)
+  assert.ok(
+    !filteredSelections.options.some(
+      (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
+    )
+  )
+  const botAfterFilter = await bot(scoutId)
+  assert.deepEqual(botAfterFilter.selection, botBeforeFilter.selection)
+  assert.deepEqual(botAfterFilter.compaction, botBeforeFilter.compaction)
+  assert.equal(botAfterFilter.compactionState?.configured, true)
+  assert.equal(botAfterFilter.accounts.connected, true)
+  await request('PUT', settingsRoute + '/models/' + selection.providerId + '/filter', {
+    providerId: selection.providerId,
+    expectedRevision: hiddenProvider.revision,
+    hiddenModelIds: providerModels.hiddenModelIds,
+  })
+  assert.ok(
+    (await request('GET', provisioningRoute + '/selections')).options.some(
+      (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
+    )
+  )
+
+  const skillRoute = settingsRoute + '/skills/' + skill.name
+  const skillDocument = await request('GET', skillRoute)
+  assert.equal(skillDocument.editable, true)
+  assert.ok(skillDocument.files.includes('scripts/mcp-echo.mjs'))
+  const markdownWithMetadata = skillDocument.markdown.replace('---\n', '---\nx-e2e-unknown: retain-this-value\n')
+  const skillWithMetadata = await request('PUT', skillRoute, {
+    name: skill.name,
+    expectedRevision: skillDocument.revision,
+    markdown: markdownWithMetadata,
+  })
+  assert.equal(skillWithMetadata.markdown, markdownWithMetadata)
+  const editedMarkdown = markdownWithMetadata + '\nRemote settings E2E preserves raw **Markdown**.\n'
+  const editedSkill = await request('PUT', skillRoute, {
+    name: skill.name,
+    expectedRevision: skillWithMetadata.revision,
+    markdown: editedMarkdown,
+  })
+  assert.equal(editedSkill.markdown, editedMarkdown)
+  assert.deepEqual(editedSkill.files, skillDocument.files)
+  await request(
+    'PUT',
+    skillRoute,
+    {
+      name: skill.name,
+      expectedRevision: skillWithMetadata.revision,
+      markdown: markdownWithMetadata,
+    },
+    { status: 409 }
+  )
+  assert.equal((await request('GET', skillRoute)).markdown, editedMarkdown)
+  assert.equal(
+    (await request('GET', provisioningRoute + '/skills')).skills.find((item) => item.name === skill.name)?.files,
+    2
+  )
+
+  const settingsMcpRoute = settingsRoute + '/mcp-servers/' + server.id
+  const mcpBefore = await request('GET', settingsMcpRoute)
+  assert.equal(mcpBefore.transport, 'stdio')
+  assert.equal(mcpBefore.hasCommand, true)
+  assert.equal(mcpBefore.hasArgs, true)
+  const mcpDisabled = await request('PATCH', settingsMcpRoute, {
+    id: server.id,
+    expectedRevision: mcpBefore.revision,
+    enabled: false,
+    env: { set: { E2E_SETTINGS_SECRET: 'synthetic-settings-env-secret' } },
+  })
+  assert.equal(mcpDisabled.enabled, false)
+  const mcpEnabled = await request('PATCH', settingsMcpRoute, {
+    id: server.id,
+    expectedRevision: mcpDisabled.revision,
+    enabled: true,
+    name: 'e2e-echo',
+  })
+  assert.equal(mcpEnabled.enabled, true)
+  assert.equal(mcpEnabled.transport, mcpBefore.transport)
+  assert.equal(mcpEnabled.hasCommand, true)
+  assert.equal(mcpEnabled.hasArgs, true)
+  assert.ok(mcpEnabled.envKeys.includes('E2E_SETTINGS_SECRET'))
+  assert.deepEqual(mcpEnabled.headerKeys, [])
+  const httpMcp = await request('POST', settingsRoute + '/mcp-servers', {
+    name: 'e2e-settings-http',
+    transport: 'http',
+    enabled: false,
+    url: 'https://example.test/mcp?token=synthetic-url-secret',
+    headers: { 'X-E2E-Settings': 'synthetic-settings-header-secret' },
+  })
+  const httpMcpRenamed = await request('PATCH', settingsRoute + '/mcp-servers/' + httpMcp.id, {
+    id: httpMcp.id,
+    expectedRevision: httpMcp.revision,
+    name: 'e2e-settings-http-renamed',
+  })
+  assert.ok(httpMcpRenamed.headerKeys.includes('X-E2E-Settings'))
+  assert.equal(httpMcpRenamed.hasUrl, true)
+  const invalidMcpPatch = await request(
+    'PATCH',
+    settingsMcpRoute,
+    {
+      id: server.id,
+      expectedRevision: mcpEnabled.revision,
+      name: 'x'.repeat(101),
+      env: { set: { E2E_SETTINGS_SECRET: 'synthetic-rejected-env-secret' } },
+    },
+    { status: 400 }
+  )
+  assert.ok(
+    !JSON.stringify(invalidMcpPatch).includes('synthetic-rejected-env-secret'),
+    'Validation errors must be sanitized'
+  )
+  assert.equal((await request('GET', settingsMcpRoute)).revision, mcpEnabled.revision)
+  const mcpSummaries = await request('GET', settingsRoute + '/mcp-servers')
+  for (const summary of [...mcpSummaries.servers, mcpEnabled]) {
+    for (const field of ['url', 'command', 'args', 'headers', 'env'])
+      assert.ok(!Object.hasOwn(summary, field), 'MCP settings must omit transport and secret values')
+  }
+  for (const secret of [
+    'synthetic-settings-env-secret',
+    'synthetic-settings-header-secret',
+    'synthetic-url-secret',
+    '/home/bot/.agents/skills/e2e-toolkit/scripts/mcp-echo.mjs',
+  ])
+    assert.ok(!JSON.stringify(mcpSummaries).includes(secret), 'MCP settings summary must be sanitized')
+  assert.deepEqual(await request('POST', settingsMcpRoute + '/test', { id: server.id }), { code: 'ok', toolCount: 1 })
+  assert.deepEqual(
+    await request('DELETE', settingsRoute + '/mcp-servers/' + httpMcp.id, {
+      id: httpMcp.id,
+      expectedRevision: httpMcpRenamed.revision,
+    }),
+    { removed: true }
+  )
+
+  const preferencesBefore = await request('GET', settingsRoute + '/preferences')
+  assert.equal(typeof preferencesBefore.imageGenEnabled, 'boolean')
+  const preferencesChanged = await request('PUT', settingsRoute + '/preferences', {
+    expectedRevision: preferencesBefore.revision,
+    imageGenEnabled: !preferencesBefore.imageGenEnabled,
+  })
+  assert.equal(preferencesChanged.imageGenEnabled, !preferencesBefore.imageGenEnabled)
+  await request(
+    'PUT',
+    settingsRoute + '/preferences',
+    {
+      expectedRevision: preferencesBefore.revision,
+      imageGenEnabled: preferencesBefore.imageGenEnabled,
+    },
+    { status: 409 }
+  )
+  assert.equal(
+    (await request('GET', settingsRoute + '/preferences')).imageGenEnabled,
+    preferencesChanged.imageGenEnabled
+  )
+  await request('PUT', settingsRoute + '/preferences', {
+    expectedRevision: preferencesChanged.revision,
+    imageGenEnabled: preferencesBefore.imageGenEnabled,
+  })
+  assert.equal(
+    (await request('GET', settingsRoute + '/preferences')).imageGenEnabled,
+    preferencesBefore.imageGenEnabled
+  )
+
+  // Reads must not start runtime checks or downloads; no action endpoint is invoked here.
+  const runtimesBefore = await request('GET', settingsRoute + '/runtimes')
+  assert.deepEqual(runtimesBefore.runtimes.map((item) => item.id).sort(), ['antigravity-acp', 'claude-code', 'codex'])
+  assert.ok(
+    runtimesBefore.runtimes.every((item) => !['checking', 'installing'].includes(item.state) && item.progress === null)
+  )
+  assert.deepEqual(await request('GET', settingsRoute + '/runtimes'), runtimesBefore)
+
   // Configuration is recorded on the environment, with no bot.
   const configured = await activityEntries()
   assert.ok(
@@ -1245,6 +1617,10 @@ async function main() {
         item.output?.includes('E2E-ECHO:ping')
     )
   )
+  pass(
+    'remote environment settings',
+    'sanitized accounts/MCP; preserved key, models, skill bundle and echo transport; revision conflicts; preferences restored; three runtime snapshots'
+  )
   await request('DELETE', provisioningRoute + '/mcp-servers/' + server.id, undefined, { status: 204 })
   await request('DELETE', provisioningRoute + '/skills/' + skill.name, undefined, { status: 204 })
   assert.ok(!(await request('GET', provisioningRoute + '/mcp-servers')).servers.some((item) => item.id === server.id))
@@ -1255,6 +1631,97 @@ async function main() {
   pass(
     'provisioning from the Mac',
     "account replay unchanged; skill and MCP server reached the model and are the environment's; removed again"
+  )
+
+  // A real bot publishes through its scoped gateway RPC; the paired device can inspect and open the result.
+  const artifactBase = 'http://127.0.0.1:' + composeEnv.MAESTRLY_ARTIFACTS_PORT
+  assert.ok(meta.features.includes('artifacts'))
+  const artifactHost = await request('PATCH', '/v1/artifacts/host', {
+    enabled: true,
+    publicAddress: artifactBase,
+    ownerName: 'E2E owner',
+    linkExpiryDays: 30,
+    quotaGb: 2,
+  })
+  assert.equal(artifactHost.status.state, 'running')
+  assert.equal((await request('PATCH', '/v1/bots/' + scoutId, { publishArtifacts: true })).publishArtifacts, true)
+  await poll(
+    'Scout artifact publishing enabled',
+    async () => (await instanceStatus(containers[1])).bots.find((entry) => entry.botId === scoutId)?.status.ready
+  )
+  await answer(await send(scoutId, 'E2E-ARTIFACT-CREATE'), 'E2E-ARTIFACT-CREATED', { approve: true })
+  const artifactAdmin = async (method, args = []) => {
+    const result = await request('POST', '/v1/artifacts/admin', { method, args })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    return result.value
+  }
+  const published = (await artifactAdmin('list')).filter((item) => item.title === 'E2E bot page')
+  assert.equal(published.length, 1)
+  const artifact = published[0]
+  assert.equal(artifact.ownerKind, 'bot')
+  assert.equal(artifact.ownerId, scoutId)
+  assert.equal(artifact.workspaceId, null)
+  assert.equal(artifact.currentVersion, 1)
+  const scoutRuntime = (await instanceStatus(containers[1])).bots.find((entry) => entry.botId === scoutId)
+  assert.equal(artifact.conversationId, scoutRuntime.status.conversationId)
+  assert.equal(typeof artifact.conversationTitle, 'string')
+  assert.ok(artifact.conversationTitle.length > 0)
+  const ticket = await artifactAdmin('mintOwnerTicket', [artifact.id])
+  const viewer = artifactBase + '/a/' + artifact.id
+  assert.equal((await fetch(viewer + '/api/state')).status, 404)
+  const session = await fetch(viewer + '/api/session/owner', {
+    method: 'POST',
+    headers: { origin: artifactBase, 'content-type': 'application/json', 'x-maestrly-artifact': '1' },
+    body: JSON.stringify({ ticket: ticket.ticket }),
+  })
+  assert.equal(session.status, 204)
+  const cookie = session.headers.get('set-cookie')?.split(';')[0]
+  assert.ok(cookie)
+  const viewerState = await fetch(viewer + '/api/state', { headers: { cookie } })
+  assert.equal(viewerState.status, 200)
+  const state = await viewerState.json()
+  assert.equal(state.identity.kind, 'owner')
+  assert.equal(state.artifact.id, artifact.id)
+  assert.equal(state.artifact.title, 'E2E bot page')
+  const frame = await fetch(viewer + '/api/frame', {
+    method: 'POST',
+    headers: { cookie, origin: artifactBase, 'content-type': 'application/json', 'x-maestrly-artifact': '1' },
+    body: JSON.stringify({ version: 1 }),
+  })
+  assert.equal(frame.status, 200)
+  const contentUrl = new URL((await frame.json()).url, artifactBase)
+  const content = await fetch(contentUrl)
+  assert.equal(content.status, 200)
+  assert.ok((await content.text()).includes('E2E-BOT-ARTIFACT-CONTENT'))
+  // The listener accepts then destroys fleet sockets, so a successful TCP connect is not proof of access.
+  const denied = await docker([
+    'exec',
+    containers[1],
+    'node',
+    '-e',
+    `
+    const http = require('node:http')
+    const request = http.get('http://maestrly-bot-gateway:4010/a/' + process.argv[1], () => {
+      console.error('Fleet container received an HTTP response from the artifact listener')
+      process.exit(1)
+    })
+    request.setTimeout(5000, () => { console.error('Artifact listener did not reject promptly'); process.exit(2) })
+    request.on('error', (error) => {
+      if (error.code !== 'ECONNRESET') { console.error(error.code); process.exit(3) }
+      console.log('artifact HTTP refused: ' + error.code)
+    })
+  `,
+    // A random id may start with "-", which node would read as one of its own options.
+    '--',
+    artifact.id,
+  ])
+  assert.ok(denied.stdout.includes('artifact HTTP refused: ECONNRESET'))
+  assert.equal(await artifactAdmin('delete', [artifact.id]), true)
+  assert.equal((await fetch(viewer + '/api/state', { headers: { cookie } })).status, 404)
+  assert.equal((await fetch(contentUrl)).status, 404)
+  pass(
+    'bot artifacts',
+    'bot-owned page with conversation metadata; owner viewer API and HTML verified; fleet HTTP refused; deletion revoked API and content'
   )
 
   const sendMemoryMessage = (text) =>
@@ -1809,6 +2276,41 @@ async function main() {
     },
     10000
   )
+  // With Caps Lock on, a Mac viewer (noVNC) sends the lock key on each toggle and letters already capitalised. The
+  // letters keep the viewer's case, Shift included, and the display's own lock stays off.
+  const capsWindow = 'e2e-apps-capslock'
+  await openEventWindow(containers[1], ':1', capsWindow)
+  scoutAppsControl.pointer(300, 300, 1)
+  scoutAppsControl.pointer(300, 300)
+  await poll(
+    capsWindow + ' focused',
+    async () =>
+      (
+        await docker(['exec', '-e', 'DISPLAY=:1', containers[1], 'xdotool', 'getactivewindow', 'getwindowname'], {
+          allowFailure: true,
+        })
+      ).stdout.trim() === capsWindow,
+    10000
+  )
+  const [capsLock, shift] = [0xffe5, 0xffe1]
+  scoutAppsControl.tap(capsLock)
+  scoutAppsControl.tap(0x41)
+  scoutAppsControl.tap(0x42)
+  scoutAppsControl.key(shift, true)
+  scoutAppsControl.tap(0x43)
+  scoutAppsControl.key(shift, false)
+  scoutAppsControl.tap(capsLock)
+  scoutAppsControl.tap(0x64)
+  const capsTyped = await poll(
+    'Caps Lock letters on :1',
+    async () => {
+      const log = await eventWindowLog(containers[1], capsWindow)
+      return log.text.length >= 4 && log
+    },
+    10000
+  )
+  assert.equal(capsTyped.text, 'ABCd', 'Caps Lock on the viewer changed the case of its letters')
+  await docker(['exec', containers[1], 'pkill', '-f', 'xev -name ' + capsWindow], { allowFailure: true })
   await request('POST', '/v1/bots/' + partnerId + '/takeover')
   const partnerAppsControl = await openScreen(await screenTicket(partnerId, 'control', 'apps'))
   partnerAppsControl.pointer(200, 250)
@@ -1878,7 +2380,8 @@ async function main() {
   pass(
     'screens of a shared environment',
     '5 surfaces viewed; environment control without takeover at :0 (50,60); second :0 control 409 and 4003 at use; ' +
-      `apps controls at :1 (300,300) and :2 (200,250) at once; browser controls at :0 (${scoutTile.x + 100},100) and ` +
+      `apps controls at :1 (300,300) and :2 (200,250) at once; Caps Lock typed ${capsTyped.text} at :1; ` +
+      `browser controls at :0 (${scoutTile.x + 100},100) and ` +
       `(${partnerTile.x + 100},100); release closed only that bot's controls; PNG ${environmentPng}`
   )
 
@@ -2171,6 +2674,66 @@ async function main() {
     "Dev's environment got its own account; Scout's environment memory reached Dev only once made global; no shared cookie"
   )
 
+  // Two of the owner's computers give Dev access to their workspaces, each on its own; the bot reaches each one
+  // through that computer's own event stream and nothing else.
+  const computerA = await syntheticComputer('a')
+  const computerB = await syntheticComputer('b')
+  const linkA = await computerA.request('PUT', '/v1/bots/' + devId + '/desktop-link', { name: 'Computer A' })
+  const linkB = await computerB.request('PUT', '/v1/bots/' + devId + '/desktop-link', { name: 'Computer B' })
+  assert.match(linkA.desktopId, /^dsk_/)
+  assert.notEqual(linkA.desktopId, linkB.desktopId)
+  assert.deepEqual(
+    (await computerA.request('GET', '/v1/bots/' + devId + '/desktop-links')).links.map((link) => [
+      link.name,
+      link.self,
+    ]),
+    [
+      ['Computer A', true],
+      ['Computer B', false],
+    ]
+  )
+  const listed = await answer(await send(devId, 'E2E-DESKTOPS-LIST'), 'E2E-DESKTOPS-SEEN', { noPermission: true })
+  assert.ok(listed.text.includes(`${linkA.desktopId}=Computer A:on:w-a`), listed.text)
+  assert.ok(listed.text.includes(`${linkB.desktopId}=Computer B:on:w-b`), listed.text)
+  const created = await answer(
+    await send(devId, `E2E-DESKTOPS-CREATE a=${linkA.desktopId} b=${linkB.desktopId}`),
+    'E2E-DESKTOPS-CREATED',
+    { noPermission: true }
+  )
+  assert.equal(computerA.state.created.length, 1)
+  assert.equal(computerB.state.created.length, 1)
+  assert.ok(created.text.includes('a=' + computerA.state.created[0].id), created.text)
+  assert.ok(created.text.includes('b=' + computerB.state.created[0].id), created.text)
+  // Every call reached only the computer it named.
+  assert.ok(computerA.state.calls.every((call) => call.desktopId === linkA.desktopId && call.botId === devId))
+  assert.ok(computerB.state.calls.every((call) => call.desktopId === linkB.desktopId && call.botId === devId))
+  assert.deepEqual(
+    computerA.state.calls.map((call) => call.op),
+    ['listWorkspaces', 'createChat']
+  )
+  // One computer goes away: the bot hears it is offline at once, and the other keeps working.
+  computerB.disconnect()
+  await poll('Computer B offline', async () => {
+    const links = (await computerA.request('GET', '/v1/bots/' + devId + '/desktop-links')).links
+    return links.find((link) => link.desktopId === linkB.desktopId)?.online === false
+  })
+  await answer(
+    await send(devId, `E2E-DESKTOPS-OFFLINE a=${linkA.desktopId} b=${linkB.desktopId}`),
+    'E2E-DESKTOPS-OFFLINE-SEEN b=offline a=ok',
+    { noPermission: true }
+  )
+  // Removing one computer's link, from another computer, cuts that computer only.
+  await computerA.request('DELETE', '/v1/bots/' + devId + '/desktop-links/' + linkB.desktopId, undefined, {
+    status: 204,
+  })
+  const linked = await answer(await send(devId, 'E2E-DESKTOPS-LINKS'), 'E2E-DESKTOPS-LINKED', { noPermission: true })
+  assert.ok(linked.text.includes(`${linkA.desktopId}=Computer A:on`), linked.text)
+  assert.ok(!linked.text.includes(linkB.desktopId), linked.text)
+  pass(
+    'bot reaches the workspaces of two computers',
+    'listed both, created one conversation on each, offline computer failed at once, removed link cut only that one'
+  )
+
   await request('POST', '/v1/bots/' + devId + '/archive')
   await poll('Dev uninstalled again', async () => (await instanceStatus(containers[0])).bots.length === 0)
   assert.equal((await containerState(containers[0]))?.running, true)
@@ -2183,6 +2746,12 @@ async function main() {
   assert.deepEqual((await request('GET', devRoute)).botIds, [])
   assert.deepEqual((await request('GET', '/v1/archived-bots')).bots, [])
   await request('GET', '/v1/bots/' + devId, undefined, { status: 404 })
+  // Deleting the bot took its links: the computer that still linked it hears it has none left.
+  await poll('Computer A told the links of Dev are gone', async () =>
+    computerA.state.links.some((event) => event.botId === devId && event.links.length === 0)
+  )
+  await computerA.request('GET', '/v1/bots/' + devId + '/desktop-links', undefined, { status: 404 })
+  computerA.disconnect()
   const activity = await activityEntries()
   assert.ok(activity.every((item) => item.botId !== devId))
   const deletedEntry = activity.find((item) => item.kind === 'bot_deleted')

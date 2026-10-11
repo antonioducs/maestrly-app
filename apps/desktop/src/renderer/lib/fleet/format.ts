@@ -1,5 +1,6 @@
 import type { FleetActivity, FleetBot, FleetEnvironment, FleetHostInfo } from '@maestrly/bot-fleet-protocol'
 import { compareByName } from './selectors'
+import { baseToolName } from '../agent-activity'
 
 export function formatPairingCode(value: string): string {
   const characters = value
@@ -85,4 +86,14 @@ export function memorySegments(
 
 export function gb(bytes: number): string {
   return (bytes / 1024 ** 3).toFixed(1)
+}
+
+/** The first word of a bot's name: how the computer's header and its return button address the bot. */
+export function botFirstName(name: string): string {
+  return name.trim().split(/\s+/)[0] ?? name
+}
+
+/** Whether a tool works on the bot's computer (its browser, desktop or terminal), which the owner can watch there. */
+export function isComputerTool(name: string): boolean {
+  return /^(browser|computer|terminal)_/.test(baseToolName(name))
 }

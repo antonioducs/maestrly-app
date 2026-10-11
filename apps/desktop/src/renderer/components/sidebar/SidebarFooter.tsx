@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Activity, Archive, Settings, HelpCircle, Info, Sparkles, BookOpen, LifeBuoy } from 'lucide-react'
+import { Activity, AppWindow, Archive, Settings, HelpCircle, Info, Sparkles, BookOpen, LifeBuoy } from 'lucide-react'
 import type { WorkspaceWithConversations } from '../../../preload'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { useSettings } from '@/lib/use-settings'
 import { useOnboarding } from '@/lib/use-onboarding'
 import { SUPPORT_LINKS } from '../../../shared/support'
 import { UpdateCard } from './UpdateCard'
+import { useUnseenArtifactEvents } from '@/components/artifacts/use-artifact-activity'
 import { QuickSubscriptionUsageDialog } from '@/components/chat/QuickSubscriptionUsageDialog'
 import { connectedQuickUsageTargets, type QuickUsageTarget } from '@/components/chat/quick-subscription-usage'
 import {
@@ -37,6 +38,7 @@ export function SidebarFooter({
   const { openSettings } = useSettings()
 
   const { openOnboarding } = useOnboarding()
+  const unseenArtifactEvents = useUnseenArtifactEvents()
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageTargets, setUsageTargets] = useState<QuickUsageTarget[]>([])
   const usageTargetsRequestRef = useRef(0)
@@ -96,6 +98,25 @@ export function SidebarFooter({
           <span className="truncate">{t('sidebar.usage')}</span>
         </button>
       )}
+
+      <button
+        onClick={() => window.dispatchEvent(new CustomEvent('maestrly:open-artifacts'))}
+        className="no-drag flex shrink-0 items-center gap-2 hairline-t px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
+        title={t('artifacts.sidebarTitle')}
+        data-testid="sidebar-artifacts"
+      >
+        <AppWindow className="size-3.5 shrink-0" />
+        <span className="truncate">{t('artifacts.sidebar')}</span>
+        {unseenArtifactEvents > 0 && (
+          <span
+            data-testid="sidebar-artifacts-unseen"
+            aria-label={t('artifacts.events.unseen', { count: unseenArtifactEvents })}
+            className="ml-auto min-w-[18px] rounded-full bg-primary px-1.5 text-center text-[10.5px] font-semibold leading-[18px] text-primary-foreground"
+          >
+            {unseenArtifactEvents > 99 ? '99+' : unseenArtifactEvents}
+          </span>
+        )}
+      </button>
 
       <button
         onClick={openSettings}

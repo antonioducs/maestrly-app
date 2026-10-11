@@ -6,7 +6,20 @@ import { ChatImageLightbox } from '@/components/chat/ChatImageLightbox'
 import { holdFleetImage, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { isImageNotFound } from '@/lib/fleet/errors'
 
-function ImageTile({ botId, image, cache }: { botId: string; image: FleetImageRef; cache: FleetImageCache }) {
+/** `tile`: a small square that opens the image. `large`: the image itself, for what the bot shared with the owner. */
+type ImageSize = 'tile' | 'large'
+
+function ImageTile({
+  botId,
+  image,
+  cache,
+  size,
+}: {
+  botId: string
+  image: FleetImageRef
+  cache: FleetImageCache
+  size: ImageSize
+}) {
   const { t } = useTranslation('fleet')
   const [url, setUrl] = useState<string | null>(null)
   // 'missing': the bot no longer has it (404). 'error': the load failed (bot restarting, network) and can be retried.
@@ -41,7 +54,16 @@ function ImageTile({ botId, image, cache }: { botId: string; image: FleetImageRe
         )}
       </div>
     )
-  if (!url) return <div className="size-24 animate-pulse rounded-md bg-surface-elevated" />
+  if (!url)
+    return (
+      <div
+        className={
+          size === 'large'
+            ? 'h-48 w-72 max-w-full animate-pulse rounded-md bg-surface-elevated'
+            : 'size-24 animate-pulse rounded-md bg-surface-elevated'
+        }
+      />
+    )
   return (
     <>
       <button
@@ -53,7 +75,11 @@ function ImageTile({ botId, image, cache }: { botId: string; image: FleetImageRe
         <img
           src={url}
           alt={image.name ?? t('transcript.image')}
-          className="size-24 rounded-md border border-border object-cover"
+          className={
+            size === 'large'
+              ? 'max-h-[420px] max-w-full rounded-md border border-border object-contain'
+              : 'size-24 rounded-md border border-border object-cover'
+          }
         />
       </button>
       {open && <ChatImageLightbox src={url} name={image.name ?? image.id} onClose={() => setOpen(false)} />}
@@ -65,16 +91,18 @@ export function BotTranscriptImages({
   botId,
   images,
   cache,
+  size = 'tile',
 }: {
   botId: string
   images: FleetImageRef[]
   cache: FleetImageCache
+  size?: ImageSize
 }) {
   if (!images.length) return null
   return (
     <div className="mt-2 flex flex-wrap gap-2">
       {images.map((image) => (
-        <ImageTile key={image.id} botId={botId} image={image} cache={cache} />
+        <ImageTile key={image.id} botId={botId} image={image} cache={cache} size={size} />
       ))}
     </div>
   )

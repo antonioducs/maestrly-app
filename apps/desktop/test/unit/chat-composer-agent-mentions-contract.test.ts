@@ -41,9 +41,9 @@ describe('shared contenteditable MentionEditor contract', () => {
     expect(editorCoreSource).toContain("child.dataset.agentMentionId ?? ''")
     expect(editorCoreSource).toContain('span.dataset.agentMentionId = id')
     // Assign IDs when autocomplete selects chips and preserve them in the DOM.
-    expect(editorCoreSource).toContain('makeAgentChip(t, agent, crypto.randomUUID())')
+    expect(editorCoreSource).toContain('makeAgentChip(editor.ownerDocument, t, agent, crypto.randomUUID())')
     expect(editorCoreSource).toContain(
-      "function makeAgentChip(t: TFunction<'chat'>, agent: SubagentAgentDto, id: string)"
+      "function makeAgentChip(document: Document, t: TFunction<'chat'>, agent: SubagentAgentDto, id: string)"
     )
   })
 
@@ -56,7 +56,7 @@ describe('shared contenteditable MentionEditor contract', () => {
     expect(editorCoreSource).not.toContain('findAgentMentions(text)')
     // Create chips only at validated occurrence ranges with their IDs.
     expect(editorCoreSource).toMatch(
-      /byIndex\.set\(\s*m\.start,\s*\{ end: m\.end, el: makeAgentChip\(t, agent, m\.id\) \}\s*\)/
+      /byIndex\.set\(\s*m\.start,\s*\{ end: m\.end, el: makeAgentChip\(document, t, agent, m\.id\) \}\s*\)/
     )
   })
 
@@ -402,7 +402,7 @@ describe('preload structured send and resend contract', () => {
 
 describe('pure user-saved reload decisions', () => {
   const base = {
-    streaming: true,
+    optimistic: true,
     compacted: undefined as boolean | undefined,
     imagesDescribed: 0,
     localSlash: false,
@@ -410,15 +410,15 @@ describe('pure user-saved reload decisions', () => {
     localImages: false,
   }
 
-  it('streaming plus ordinary send without mentions does NOT reload', () => {
+  it('an ordinary send this composer showed does NOT reload', () => {
     expect(shouldReloadOnUserSaved(base)).toBe(false)
   })
 
-  it('streaming plus a structured mention reloads', () => {
+  it('a shown send with a structured mention reloads', () => {
     expect(shouldReloadOnUserSaved({ ...base, localAgentMentions: true })).toBe(true)
   })
 
-  it('streaming plus a slash command reloads', () => {
+  it('a shown send with a slash command reloads', () => {
     expect(shouldReloadOnUserSaved({ ...base, localSlash: true })).toBe(true)
   })
 
@@ -427,21 +427,21 @@ describe('pure user-saved reload decisions', () => {
     expect(shouldReloadOnUserSaved({ ...base, imagesDescribed: 2 })).toBe(true)
   })
 
-  it('outside streaming reloads changes made by background turns', () => {
-    expect(shouldReloadOnUserSaved({ ...base, streaming: false })).toBe(true)
+  it('reloads a message this composer did not show, from a bot or another window', () => {
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: false })).toBe(true)
   })
 
   it('applies send reconciliation combinations to resend', () => {
     // Resend during catalog loading still triggers mention reconciliation.
-    expect(shouldReloadOnUserSaved({ ...base, streaming: true, localAgentMentions: true, localSlash: false })).toBe(
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: true, localAgentMentions: true, localSlash: false })).toBe(
       true
     )
     // Resending /skill args sets localSlash=true and reloads.
-    expect(shouldReloadOnUserSaved({ ...base, streaming: true, localSlash: true, localAgentMentions: false })).toBe(
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: true, localSlash: true, localAgentMentions: false })).toBe(
       true
     )
-    // Ordinary resend without slash or mentions during streaming does NOT trigger an extra reload.
-    expect(shouldReloadOnUserSaved({ ...base, streaming: true, localSlash: false, localAgentMentions: false })).toBe(
+    // Ordinary resend without slash or mentions does NOT trigger an extra reload.
+    expect(shouldReloadOnUserSaved({ ...base, optimistic: true, localSlash: false, localAgentMentions: false })).toBe(
       false
     )
   })

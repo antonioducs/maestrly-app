@@ -206,4 +206,43 @@ describe('project setup IPC', () => {
     await shutdown
     expect(await running).toEqual({ status: 'canceled' })
   })
+
+  it('picks, validates, persists and announces the projects folder in main', async () => {
+    const { reg, handles } = registrar()
+    let saved: string | null = null
+    const projectsDirectory = {
+      get: () => saved,
+      set: vi.fn(async (value: string | null) => {
+        if (value === '/not-a-folder') throw new Error('The projects folder must be a directory.')
+        saved = value
+        return value
+      }),
+      changed: vi.fn(),
+    }
+    const picks = ['/Users/me/Projects', null, '/not-a-folder']
+    const showDirectoryPicker = vi.fn(async () => picks.shift() ?? null)
+    registerProjectSetupIpc(reg, { projectsDirectory, showDirectoryPicker })
+    const event = { sender: new Sender(1) } as never
+
+    expect(await handles.get('project-setup:projects-directory-get')!(event)).toBeNull()
+    expect(await handles.get('project-setup:projects-directory-pick')!(event)).toEqual({
+      ok: true,
+      path: '/Users/me/Projects',
+    })
+    expect(showDirectoryPicker).toHaveBeenLastCalledWith(expect.anything(), 'parent')
+    expect(projectsDirectory.changed).toHaveBeenCalledWith('/Users/me/Projects')
+    // Cancelling keeps the current folder; an invalid choice is reported and not saved.
+    expect(await handles.get('project-setup:projects-directory-pick')!(event)).toEqual({
+      ok: false,
+      path: '/Users/me/Projects',
+    })
+    expect(await handles.get('project-setup:projects-directory-pick')!(event)).toEqual({
+      ok: false,
+      path: '/Users/me/Projects',
+      error: 'The projects folder must be a directory.',
+    })
+    expect(await handles.get('project-setup:projects-directory-clear')!(event)).toBeNull()
+    expect(saved).toBeNull()
+    expect(projectsDirectory.changed).toHaveBeenLastCalledWith(null)
+  })
 })

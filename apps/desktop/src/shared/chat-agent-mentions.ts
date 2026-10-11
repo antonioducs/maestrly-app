@@ -140,8 +140,12 @@ export function buildAgentMentionParts(
   }))
 }
 
+/**
+ * Whether the view reads the saved user message back instead of keeping what it shows. `optimistic`: this composer
+ * already shows the message it sent; a message sent from anywhere else (a bot, another window) is not shown yet.
+ */
 export function shouldReloadOnUserSaved(args: {
-  streaming: boolean
+  optimistic: boolean
   memoryRecalled?: boolean
   compacted?: boolean
   imagesDescribed?: number
@@ -152,7 +156,7 @@ export function shouldReloadOnUserSaved(args: {
 }): boolean {
   return (
     args.memoryRecalled === true ||
-    !args.streaming ||
+    !args.optimistic ||
     args.compacted === true ||
     (args.imagesDescribed ?? 0) > 0 ||
     args.localSlash ||

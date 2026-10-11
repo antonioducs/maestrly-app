@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { mkdir, open } from 'node:fs/promises'
+import { mkdir, open, rename } from 'node:fs/promises'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
@@ -10,6 +10,7 @@ import type { ArchiveFormat } from './registry'
 export interface ExtractOptions {
   readonly stripPrefix?: string
   readonly signal?: AbortSignal
+  readonly fileName?: string
 }
 
 function safeOutput(root: string, rawName: string, stripPrefix?: string): string | null {
@@ -156,11 +157,21 @@ export async function extractZip(archive: string, destination: string, options: 
   if (files === 0) throw new Error('Archive contained no regular files')
 }
 
+async function installSingleFile(file: string, destination: string, fileName: string | undefined): Promise<void> {
+  if (!fileName) throw new Error('A single-file runtime asset needs a fileName')
+  const output = safeOutput(destination, fileName)
+  if (!output || path.dirname(output) !== path.resolve(destination)) throw new Error(`Unsafe archive path: ${fileName}`)
+  await mkdir(destination, { recursive: true })
+  // The download already lives in the operation's temporary directory, so a rename stays on one filesystem.
+  await rename(file, output)
+}
+
 export async function extractArchive(
   archive: string,
   destination: string,
   format: ArchiveFormat,
   options: ExtractOptions = {}
 ): Promise<void> {
+  if (format === 'file') return installSingleFile(archive, destination, options.fileName)
   return format === 'tar.gz' ? extractTarGz(archive, destination, options) : extractZip(archive, destination, options)
 }

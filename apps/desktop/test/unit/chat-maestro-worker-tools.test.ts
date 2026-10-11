@@ -23,7 +23,8 @@ vi.mock('../../src/main/chat/mcp', () => ({
   buildMcpTools: h.buildMcpTools,
 }))
 vi.mock('../../src/main/store', () => ({
-  getConvUiPrefs: vi.fn(() => ({ chat: { tools: { mcpDisabled: ['disabled-server'] } } })),
+  getConvUiPrefs: vi.fn(() => ({ chat: { tools: { mcpDisabled: ['disabled-server'], appGroups: { debug: false } } } })),
+  getAppFlag: vi.fn((_key: string, fallback: boolean) => fallback),
 }))
 vi.mock('../../src/main/chat/image-interpreter', () => ({
   hasConfiguredImageInterpreter: vi.fn(() => false),
@@ -95,6 +96,7 @@ describe('Maestro full worker tool runtime', () => {
         conversationId: 'conv-1',
         mode: 'agent',
         exclude: new Set(['review_plan', 'terminal_focus']),
+        disabledGroups: ['debug'],
         workerScope: expect.objectContaining({ id: 'delegate-1', conversationId: 'conv-1' }),
       })
     )

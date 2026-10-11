@@ -1,11 +1,16 @@
 import { randomBytes, randomInt } from 'node:crypto'
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
+import os from 'node:os'
+import { ADMIN_METHODS, UPLOAD_METHODS, callAdmin, openArtifactHost, type ArtifactHost } from '@maestrly/artifact-host'
 import {
   FLEET_GATEWAY_ROUTES,
   fleetBotSchema,
+  fleetArtifactSettingsSchema,
+  fleetArtifactSettingsPatchSchema,
+  type FleetArtifactSettings,
   fleetEnvironmentSchema,
   fleetHostInfoSchema,
   type FleetArchivedEnvironment,
@@ -22,6 +27,10 @@ import { commandOf } from '../../fixtures/fleet-installer-fakes'
  */
 
 const GB = 1024 ** 3
+const VIEWER_PATH = /^\/(?:a|c|_maestrly\/shell)\/|^\/robots\.txt$/
+const HOP_BY_HOP = ['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-connection']
+const endToEnd = (headers: IncomingMessage['headers']) =>
+  Object.fromEntries(Object.entries(headers).filter(([name]) => !HOP_BY_HOP.includes(name)))
 const now = () => new Date().toISOString()
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
@@ -39,7 +48,7 @@ export class FakeGateway {
   readonly requests: FakeGatewayRequest[] = []
   readonly pairings: Array<{ code: string; deviceName: string; deviceId: string }> = []
   private readonly codes = new Set<string>()
-  private readonly tokens = new Set<string>()
+  private readonly tokens = new Map<string, string>()
   private readonly streams = new Set<ServerResponse>()
   private readonly server = createServer((request, response) => {
     this.handle(request, response).catch((error: unknown) => {
@@ -56,8 +65,84 @@ export class FakeGateway {
   private bots: FleetBot[] = []
   private archived: FleetArchivedEnvironment[] = []
 
-  constructor(private readonly hostname: string) {
+  private artifactHost: ArtifactHost | null = null
+  private artifactDir: string | null = null
+  private artifactPort = 0
+  private artifactSettings: FleetArtifactSettings = {
+    enabled: false,
+    publicAddress: '',
+    ownerName: '',
+    linkExpiryDays: 30,
+    quotaGb: 2,
+  }
+
+  constructor(
+    private readonly hostname: string,
+    /**
+     * With `gatewayViewer`, the API port also serves the artifact viewer, as a current gateway does. With `transfer`, a
+     * device can move artifacts in (`exportArtifact`, `putBlobs`, `importArtifact`).
+     */
+    private readonly options: { artifacts?: boolean; gatewayViewer?: boolean; transfer?: boolean } = {}
+  ) {
     this.reset()
+  }
+
+  /** The real viewer listener, including when reached through the fake VPS's port 4010. */
+  get hostPort(): number | null {
+    return this.artifactHost?.port ?? null
+  }
+
+  /** Final cleanup, unlike stop(), which preserves the simulated gateway volume. */
+  async close(): Promise<void> {
+    await this.stop()
+    if (this.artifactDir) await rm(this.artifactDir, { recursive: true, force: true })
+    this.artifactDir = null
+  }
+
+  private async openArtifacts(): Promise<void> {
+    await this.artifactHost?.close()
+    this.artifactHost = null
+    if (!this.options.artifacts || !this.artifactSettings.enabled) return
+    this.artifactDir ??= await mkdtemp(path.join(os.tmpdir(), 'maestrly-fake-artifact-host-'))
+    this.artifactHost = await openArtifactHost(
+      {
+        dataDir: this.artifactDir,
+        port: this.artifactPort,
+        anyLoopbackPort: true,
+        quotaBytes: this.artifactSettings.quotaGb * GB,
+        publicOrigins: this.artifactSettings.publicAddress ? [this.artifactSettings.publicAddress] : [],
+        ownerName: this.artifactSettings.ownerName,
+      },
+      {
+        onEvent: (event) => {
+          const value = {
+            ...event,
+            type: event.type === 'changed' ? 'artifact.changed' : 'artifact.activity',
+            at: now(),
+          }
+          // The real gateway names its frames; the desktop reads only `fleet` events.
+          for (const stream of this.streams) stream.write(`event: fleet\ndata: ${JSON.stringify(value)}\n\n`)
+        },
+      }
+    )
+    this.artifactPort = this.artifactHost.port
+  }
+
+  private async artifactState() {
+    return {
+      settings: this.artifactSettings,
+      status: {
+        ...(this.artifactHost
+          ? await this.artifactHost.admin.status()
+          : {
+              artifactCount: 0,
+              storageBytes: 0,
+              quotaBytes: this.artifactSettings.quotaGb * GB,
+            }),
+        state: this.artifactHost ? 'running' : 'off',
+        problem: null,
+      },
+    }
   }
 
   get running(): boolean {
@@ -69,7 +154,9 @@ export class FakeGateway {
   }
 
   /** Listens on this loopback port, or any with 0, as the started container does. */
-  start(port: number): Promise<number> {
+  async start(port: number, hostPort = this.artifactPort): Promise<number> {
+    this.artifactPort = hostPort
+    await this.openArtifacts()
     return new Promise((resolve, reject) => {
       this.server.once('error', reject)
       this.server.listen(port, '127.0.0.1', () => {
@@ -81,6 +168,8 @@ export class FakeGateway {
   }
 
   async stop(): Promise<void> {
+    await this.artifactHost?.close()
+    this.artifactHost = null
     if (!this.listening) return
     this.listening = false
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()))
@@ -99,6 +188,7 @@ export class FakeGateway {
   reset(): void {
     this.codes.clear()
     this.tokens.clear()
+    this.artifactSettings = { enabled: false, publicAddress: '', ownerName: '', linkExpiryDays: 30, quotaGb: 2 }
     const at = now()
     const capabilities = ['provisioning', 'environments']
     this.environments = [
@@ -154,8 +244,45 @@ export class FakeGateway {
     return `${code.slice(0, 4)}-${code.slice(4)}`
   }
 
+  /** Forwards a viewer request to the real artifact host, keeping its Host, Origin and cookies. */
+  private forwardViewer(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const port = this.artifactHost?.port
+    if (!port) {
+      response.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' })
+      response.end('Artifact hosting is unavailable')
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      const upstream = httpRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          method: request.method,
+          path: request.url,
+          headers: endToEnd(request.headers),
+          setHost: false,
+          agent: false,
+        },
+        (reply) => {
+          response.writeHead(reply.statusCode ?? 502, endToEnd(reply.headers))
+          reply.pipe(response)
+        }
+      )
+      upstream.on('error', () => {
+        if (!response.headersSent) response.writeHead(503).end()
+        else response.destroy()
+      })
+      response.on('close', () => {
+        if (!response.writableFinished) upstream.destroy()
+        resolve()
+      })
+      request.pipe(upstream)
+    })
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (this.options.gatewayViewer && VIEWER_PATH.test(url.pathname)) return this.forwardViewer(request, response)
     const send = (status: number, value?: unknown) => {
       if (value === undefined) {
         response.writeHead(status)
@@ -189,7 +316,14 @@ export class FakeGateway {
           gatewayVersion: this.version,
           botImage: 'e2e',
           botImageVersion: null,
-          features: ['provisioning', 'environments', 'environment-updates'],
+          features: [
+            'provisioning',
+            'environments',
+            'environment-updates',
+            ...(this.options.artifacts ? ['artifacts'] : []),
+            ...(this.options.artifacts && this.options.gatewayViewer ? ['artifacts-gateway-viewer'] : []),
+            ...(this.options.artifacts && this.options.transfer ? ['artifacts-transfer'] : []),
+          ],
         })
       case 'pair': {
         const { code, deviceName } = body as { code: string; deviceName: string }
@@ -197,7 +331,7 @@ export class FakeGateway {
           return send(401, { code: 'UNAUTHORIZED', message: 'Pairing code expired or used' })
         const deviceId = `device-${++this.devices}`
         const issued = `token-${randomBytes(12).toString('hex')}`
-        this.tokens.add(issued)
+        this.tokens.set(issued, deviceId)
         this.pairings.push({ code, deviceName, deviceId })
         return send(200, { deviceId, token: issued })
       }
@@ -229,6 +363,51 @@ export class FakeGateway {
             dockerVersion: '28.0.1',
           })
         )
+      case 'artifactHost':
+      case 'artifactHostPatch':
+        if (!this.options.artifacts) return send(404, { code: 'NOT_FOUND', message: 'Artifacts unavailable' })
+        if (key === 'artifactHostPatch') {
+          this.artifactSettings = fleetArtifactSettingsSchema.parse({
+            ...this.artifactSettings,
+            ...fleetArtifactSettingsPatchSchema.parse(body),
+          })
+          await this.openArtifacts()
+        }
+        return send(200, await this.artifactState())
+      case 'artifactAdmin':
+      case 'artifactUpload': {
+        if (!this.options.artifacts) return send(404, { code: 'NOT_FOUND', message: 'Artifacts unavailable' })
+        if (!this.artifactHost)
+          return send(200, {
+            ok: false,
+            error: { code: 'host_unavailable', message: 'Artifact hosting is off', details: { reason: 'server_off' } },
+          })
+        const { method, args } = body as { method: string; args: unknown[] }
+        const transfer = ['exportArtifact', 'putBlobs', 'importArtifact']
+        const offered = (name: string) => this.options.transfer || !transfer.includes(name)
+        return send(
+          200,
+          await callAdmin(this.artifactHost.admin, method, args, {
+            allowed:
+              key === 'artifactUpload'
+                ? UPLOAD_METHODS.filter(offered)
+                : ADMIN_METHODS.filter(
+                    (name) =>
+                      name !== 'snapshot' && !(UPLOAD_METHODS as readonly string[]).includes(name) && offered(name)
+                  ),
+            // Paired owner devices can administer all artifacts, but cannot impersonate a publishing bot.
+            guard: (name, values) =>
+              name === 'create' || name === 'importArtifact'
+                ? [
+                    {
+                      ...(values[0] as Record<string, unknown>),
+                      owner: { kind: 'device', id: this.tokens.get(token!) },
+                    },
+                  ]
+                : values,
+          })
+        )
+      }
       case 'botsList':
         return send(200, { bots: this.bots })
       case 'environmentsList':
@@ -397,7 +576,11 @@ export class FakeDockerEngine {
     if (/^\d+\.\d+\.\d+/.test(tag)) gateway.version = tag
     // A changed `.env` recreates the container: its connections end, and the gateway keeps its volume.
     if (gateway.running) gateway.dropConnections()
-    else await gateway.start(this.options.listenPort(published))
+    else
+      await gateway.start(
+        this.options.listenPort(published),
+        this.options.listenPort(Number(values.get('MAESTRLY_ARTIFACTS_PORT')) || 0)
+      )
     this.upEnv = env
     this.published = published
     return ok('Container maestrly-bots-maestrly-bot-gateway-1  Started\n')
@@ -524,7 +707,8 @@ export class FakeVps {
     })
   }
 
-  readonly forwardTo = (port: number): number | null => (port === 7443 ? this.gateway.port : null)
+  readonly forwardTo = (port: number): number | null =>
+    port === 7443 ? this.gateway.port : port === 4010 ? this.gateway.hostPort : null
 
   readonly exec = async (command: string, input: string, user: string): Promise<FakeExecResult> => {
     const words = shellWords(command)

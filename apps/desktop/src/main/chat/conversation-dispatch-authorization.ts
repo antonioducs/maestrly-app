@@ -86,14 +86,23 @@ export interface ConversationDispatchIntent {
   reason?: Exclude<ConversationDispatchDenial, 'no-human-turn' | 'turn-ended' | 'count-exceeded'>
 }
 
-export interface ConversationDispatchGrant {
+/** A live turn started by text the person typed. Enough to create or clone a project they asked for. */
+export interface HumanTurnGrant {
   conversationId: string
   messageId: string
   /** Durable origin key shared by every record created under this grant. */
   originKey: string
-  maxConversations: number | null
   token: object
   signal: AbortSignal
+}
+
+export interface ConversationDispatchGrant extends HumanTurnGrant {
+  maxConversations: number | null
+  /**
+   * Set when the message did not ask for conversations: only work in these projects, created by create_workspace in
+   * this turn, may start, one conversation each.
+   */
+  onlyWorkspaceIds?: string[]
 }
 
 export class ConversationDispatchDeniedError extends Error {
@@ -127,7 +136,7 @@ export function conversationDispatchDenialMessage(code: ConversationDispatchDeni
       return `The person asked for at most ${limit ?? 0} conversation(s) in this turn; this request would exceed it.`
     case 'not-requested':
       return (
-        'The latest message does not explicitly ask to open/create/start other conversations. Do not start any. If it ' +
+        'The latest message does not explicitly ask to open/create/start other conversations or send work for development in a workspace. Do not start any. If it ' +
         'would help, suggest it and let the person ask explicitly (for example: "Open one conversation for each card").'
       )
   }
@@ -171,6 +180,11 @@ const OPEN_VERBS = String.raw`(?:abra|abram|abre|abrir|open|inicie|iniciem|inici
 /** Verbs that hand work over ("send the plan to a new conversation"); they need a target that is new. */
 const SEND_VERBS = String.raw`(?:envie|enviem|envia|enviar|mande|mandem|manda|mandar|encaminhe|encaminha|encaminhar|delegue|delega|delegar|passe|passa|passar|mova|mover|send|forward|hand\s+off|hand\s+over|move|delegate|pass)`
 
+// A handoff must name both the purpose and a workspace/project target in the same directive.
+// The name itself may have been stripped as quoted content; target selection is validated by the service.
+const DEVELOPMENT_TARGET =
+  /^\s+(?:(?:this|the|that|este|esse|o|um)\s+(?:plan|plano|task|tarefa|work|trabalho)\s+)?(?:for|to|para|pra)\s+(?:(?:o|a)\s+)?(?:development|implementation|desenvolvimento|implementacao)\s+(?:in|to|at|no|na|em|para|pro|pra)\s+(?:(?:the|o|a)\s+)?(?:workspace|project|projeto)\b/
+
 const QUALIFIER =
   /\b(?:nova|novas|novo|novos|outra|outras|outro|outros|separad[ao]s?|propri[ao]s?|dedicad[ao]s?|diferentes?|new|another|other|separate|own|dedicated|different|fresh|\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|one|two|three|four|five|six|seven|eight|nine|ten|varias|varios|several|multiple)\b/
 const NEW_TARGET = new RegExp(
@@ -189,7 +203,8 @@ const PREFIX_TOKEN = [
 /** Only these may precede the imperative verb in its segment. */
 const PREFIX_OK = new RegExp(String.raw`^(?:${PREFIX_TOKEN})(?:\s+(?:${PREFIX_TOKEN}))*$`)
 
-const POLITE_QUESTION = /(?:^|\s)(?:(?:voce|vc|tu)\s+)?(?:pode|poderia|podes|podia)(?:\s|$)|(?:^|\s)(?:could|can|would|will)\s+you(?:\s|$)/
+const POLITE_QUESTION =
+  /(?:^|\s)(?:(?:voce|vc|tu)\s+)?(?:pode|poderia|podes|podia)(?:\s|$)|(?:^|\s)(?:could|can|would|will)\s+you(?:\s|$)/
 
 const NEGATION =
   /\b(?:nao|nunca|jamais|nem|evite|evitar|pare\s+de|don't|dont|do\s+not|never|no\s+need|avoid|stop|instead\s+of|em\s+vez\s+de|rather\s+than)\b/
@@ -205,7 +220,8 @@ const CAPABILITY =
 const HYPOTHETICAL =
   /\b(?:(?:quando|se|caso|when|whenever|if)\s+(?:eu|a\s+gente|nos|i|we|alguem|someone|o\s+usuario|um\s+usuario|the\s+user|a\s+user)|imagine|imagina|suponha|supondo|suppose|exemplo|example|e\.g|for\s+instance|poder|seria\s+(?:bom|legal|otimo)|would\s+be\s+(?:nice|great|good)|feature|features|funcionalidade|funcionalidades|recurso|capacidade|capability|ability|able\s+to|suporte\s+(?:a|para)|support\s+for|ideia|idea|proposta|proposal)\b/
 
-const PER_ITEM = /\b(?:cada|each|per|por\s+(?:card|cards|task|tasks|tarefa|tarefas|ticket|tickets|item|itens|issue|issues|subtask|subtasks|subtarefa|subtarefas))\b/
+const PER_ITEM =
+  /\b(?:cada|each|per|por\s+(?:card|cards|task|tasks|tarefa|tarefas|ticket|tickets|item|itens|issue|issues|subtask|subtasks|subtarefa|subtarefas))\b/
 const MORE = /\b(?:outra|outro|outras|outros|another|mais\s+uma|mais\s+um|one\s+more|also\s+one)\b/
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -270,14 +286,15 @@ function segmentRequest(segment: string, sentenceBefore: string, isQuestion: boo
       const index = match.index ?? 0
       const prefix = segment.slice(0, index).trim()
       const rest = segment.slice(index + match[0].length)
+      const handoff = group.kind === 'send' && DEVELOPMENT_TARGET.test(rest)
       const nounMatch = NOUN.exec(rest)
-      if (!nounMatch) continue
-      const between = rest.slice(0, nounMatch.index)
+      if (!nounMatch && !handoff) continue
+      const between = handoff ? rest : rest.slice(0, nounMatch!.index)
       // Keep the object phrase short: "abra uma nova conversa", not a noun mentioned much later.
-      if (between.split(' ').filter(Boolean).length > 8) continue
-      const noun = nounMatch[0]
+      if (!handoff && between.split(' ').filter(Boolean).length > 8) continue
+      const noun = handoff ? '' : nounMatch![0]
       const objectPhrase = `${between}${noun}`
-      const after = rest.slice(nounMatch.index + noun.length)
+      const after = handoff ? '' : rest.slice(nounMatch!.index + noun.length)
       if (group.kind === 'open') {
         const qualified =
           QUALIFIER.test(between) ||
@@ -286,7 +303,7 @@ function segmentRequest(segment: string, sentenceBefore: string, isQuestion: boo
           (/\ban?\b/.test(between) && /^(?:conversations?|chats?)$/.test(noun))
         if (!qualified) continue
       }
-      if (group.kind === 'send' && !NEW_TARGET.test(`${objectPhrase}${after.slice(0, 40)}`)) continue
+      if (group.kind === 'send' && !handoff && !NEW_TARGET.test(`${objectPhrase}${after.slice(0, 40)}`)) continue
       if (NEGATION.test(prefix) || NEGATION.test(between)) {
         deny('negated')
         continue
@@ -308,7 +325,7 @@ function segmentRequest(segment: string, sentenceBefore: string, isQuestion: boo
         deny('question')
         continue
       }
-      return { count: requestedCount(objectPhrase, noun, after) }
+      return { count: handoff ? 1 : requestedCount(objectPhrase, noun, after) }
     }
   }
   return denial
@@ -369,21 +386,33 @@ export function detectConversationDispatchIntent(text: string): ConversationDisp
 export function evaluateConversationDispatchGrant(
   origin: HumanTurnOrigin | null
 ): { ok: true; grant: ConversationDispatchGrant } | { ok: false; code: ConversationDispatchDenial; message: string } {
-  if (!origin) return { ok: false, code: 'no-human-turn', message: conversationDispatchDenialMessage('no-human-turn') }
-  if (origin.signal.aborted || origins.get(origin.conversationId)?.token !== origin.token)
-    return { ok: false, code: 'turn-ended', message: conversationDispatchDenialMessage('turn-ended') }
-  const intent = detectConversationDispatchIntent(origin.text)
+  const turn = evaluateHumanTurnGrant(origin)
+  if (!turn.ok) return turn
+  const intent = detectConversationDispatchIntent(origin!.text)
   if (!intent.explicit) {
     const code = intent.reason ?? 'not-requested'
     return { ok: false, code, message: conversationDispatchDenialMessage(code) }
   }
+  return { ok: true, grant: { ...turn.grant, maxConversations: intent.maxConversations } }
+}
+
+/**
+ * Provenance and liveness only, with no reading of the message: creating or cloning a project is judged by the agent
+ * from the whole conversation ("cria lá pra mim" refers to what was said before), like any other tool it runs for the
+ * person. Child, bot, unattended and host-generated turns never register an origin, so they never get here.
+ */
+export function evaluateHumanTurnGrant(
+  origin: HumanTurnOrigin | null
+): { ok: true; grant: HumanTurnGrant } | { ok: false; code: 'no-human-turn' | 'turn-ended'; message: string } {
+  if (!origin) return { ok: false, code: 'no-human-turn', message: conversationDispatchDenialMessage('no-human-turn') }
+  if (origin.signal.aborted || origins.get(origin.conversationId)?.token !== origin.token)
+    return { ok: false, code: 'turn-ended', message: conversationDispatchDenialMessage('turn-ended') }
   return {
     ok: true,
     grant: {
       conversationId: origin.conversationId,
       messageId: origin.messageId,
       originKey: `message:${origin.messageId}`,
-      maxConversations: intent.maxConversations,
       token: origin.token,
       signal: origin.signal,
     },
@@ -391,7 +420,7 @@ export function evaluateConversationDispatchGrant(
 }
 
 /** Recheck immediately before a mutation: the admitted turn must still be the conversation's live turn. */
-export function assertConversationDispatchGrantCurrent(grant: ConversationDispatchGrant): void {
+export function assertConversationDispatchGrantCurrent(grant: HumanTurnGrant): void {
   if (grant.signal.aborted || origins.get(grant.conversationId)?.token !== grant.token) {
     throw new ConversationDispatchDeniedError('turn-ended', conversationDispatchDenialMessage('turn-ended'))
   }

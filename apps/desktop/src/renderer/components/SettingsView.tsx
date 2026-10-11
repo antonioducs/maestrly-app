@@ -36,20 +36,20 @@ import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
 import type { ChatSettingsOptions } from '@/components/chat/chat-settings-tabs'
-import { LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
+import { AgentActivitySection, LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
 import { TabOrderSection } from '@/components/settings/TabOrderSection'
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
 import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/TerminalShellSection'
-import { DefaultPermissionSection } from '@/components/settings/ExecutionSections'
+import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components/settings/ExecutionSections'
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
-import { BotSection } from '@/components/bot/BotSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
+import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 /** The sections about a Maestrly profile, which a host has; the others are this computer's window and app. */
-const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'bots', 'platform', 'usage', 'execution'])
+const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'platform', 'usage', 'execution'])
 
 interface Props {
   fleet?: FleetController
@@ -60,20 +60,10 @@ interface Props {
   chat?: ChatSettingsOptions
 
   onShowSidebar?: () => void
-  /** Opens the project setup dialog, so a section that needs a project can offer it without guesswork. */
-  onAddProject?: () => Promise<unknown> | void
   onClose: () => void
 }
 
-export function SettingsView({
-  fleet,
-  initialSection = 'chat',
-  sections,
-  chat,
-  onShowSidebar,
-  onAddProject,
-  onClose,
-}: Props) {
+export function SettingsView({ fleet, initialSection = 'chat', sections, chat, onShowSidebar, onClose }: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
   // Sections about a Maestrly profile (its chat, bots, platform, usage and execution settings) show the profile of
@@ -115,6 +105,8 @@ export function SettingsView({
   const [tabOrder, setTabOrder] = useState<DrawerTab[]>(DEFAULT_MAIN_ORDER)
 
   const [section, setSection] = useState<SettingsSection>(initialSection)
+  // Set when Settings → Artifacts sends the owner to set up a bot server, so its setup opens on that choice.
+  const [fleetSetup, setFleetSetup] = useState<BotServerSetupChoice | null>(null)
 
   useEffect(() => {
     setSection(initialSection)
@@ -322,6 +314,7 @@ export function SettingsView({
   const selectSection = (next: SettingsSection) => {
     if (next !== 'tools') setRecording(null)
     setSection(next)
+    setFleetSetup(null)
   }
 
   return (
@@ -411,6 +404,7 @@ export function SettingsView({
             {section === 'usage' && inProfile(<UsagePanel />)}
 
             {section === 'appearance' && <LanguageSection t={t} locale={locale} setLocale={setLocale} />}
+            {section === 'appearance' && <AgentActivitySection t={t} />}
 
             {section === 'tools' && (
               <TabOrderSection
@@ -425,19 +419,28 @@ export function SettingsView({
             {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chat} />)}
 
             {section === 'platform' && inProfile(<PlatformSection />)}
-            {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
-            {section === 'bots' &&
-              inProfile(
-                // Adding a project from here opens this computer's project setup.
-                <BotSection
-                  onNavigate={selectSection}
-                  {...(onAddProject && !profileHost.remote ? { onAddProject } : {})}
-                />
-              )}
+            {section === 'artifacts' && (
+              <ArtifactsSettings
+                onOpenFleet={() => selectSection('fleet')}
+                onSetupServer={(choice) => {
+                  selectSection('fleet')
+                  setFleetSetup(choice)
+                }}
+              />
+            )}
+            {section === 'fleet' && fleet && (
+              <FleetSettings
+                fleet={fleet}
+                {...(fleetSetup ? { initialSetup: fleetSetup, defaultHosts: 'artifacts-only' } : {})}
+              />
+            )}
 
             {section === 'execution' && (
               <DefaultPermissionSection t={t} mode={defaultPermissionMode} onChange={updateDefaultPermissionMode} />
             )}
+            {section === 'execution' &&
+              !window.api.platformInfo.botMode &&
+              inProfile(<ProjectsDirectorySection t={t} />)}
 
             {section === 'appearance' && (
               <SoundSection

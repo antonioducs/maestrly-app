@@ -6,7 +6,7 @@ export type ClaudeQuotaClassification =
   | { kind: 'suspect' }
   | { kind: 'other' }
 
-// SDK 0.3.263's official error-path prefixes, kept local so classification does not bootstrap the SDK.
+// SDK 0.3.285's official error-path prefixes, kept local so classification does not bootstrap the SDK.
 const USAGE_LIMIT_ERROR_PREFIXES = [
   "You've hit your",
   "You've reached your",

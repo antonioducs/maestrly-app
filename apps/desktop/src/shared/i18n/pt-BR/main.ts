@@ -8,6 +8,11 @@ export default {
     invalidTarget: 'alvo inválido',
   },
   workspace: {
+    publicRepoHeader: 'Repositório público',
+    publicRepoQuestion: 'Criar {{repo}} no GitHub como repositório PÚBLICO? Qualquer pessoa poderá vê-lo.',
+    publicRepoConfirm: 'Criar público',
+    publicRepoPrivate: 'Deixar privado',
+    publicRepoCancel: 'Cancelar',
     notGitRepo: 'A pasta selecionada não é um repositório git.',
     bareNotSupported: 'Repositórios bare não são suportados.',
     cannotResolveRoot: 'Não foi possível resolver a raiz do repositório.',
@@ -18,6 +23,15 @@ export default {
   debug: {
     extTimeout:
       'timeout: a extensão não respondeu. Abra a aba “Código” desta conversa (o VS Code precisa estar carregado para controlar o debug).',
+  },
+  botDesktop: {
+    presenterUnavailable: 'A janela do navegador não está disponível neste computador.',
+    noConversation: 'Este bot ainda não tem conversa.',
+    invalidUrl: 'Só links http e https abrem no navegador.',
+    terminalFailed: 'Não foi possível abrir a janela do terminal.',
+    terminalTitle: 'Terminal {{number}}',
+    exitOk: 'O shell terminou.',
+    exitFailed: 'O shell terminou com o código {{code}}. Pressione qualquer tecla para fechar esta janela.',
   },
   floating: {
     browser: 'Navegador',

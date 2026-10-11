@@ -74,7 +74,7 @@ describe("a bot's own Maestrly window", () => {
     const main = source('main/index.ts')
     // A bot and a workspaces host share the hidden, menu-less window; `isHeadlessInstance` is true in bot mode.
     expect(main).toMatch(
-      /show: !isHeadlessInstance\(\),[\s\S]*if \(isHeadlessInstance\(\)\) mainWindow\.removeMenu\(\)/
+      /show: !isHeadlessInstance\(\) && !startHidden,[\s\S]*if \(isHeadlessInstance\(\)\) mainWindow\.removeMenu\(\)/
     )
     expect(source('main/remote-host/server/config.ts')).toContain('isBotMode(env) || isServerMode(env)')
   })

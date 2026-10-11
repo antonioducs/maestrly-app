@@ -45,15 +45,23 @@ function partLine(part: MessagePart): string | null {
 
 export function renderExtractionTranscript(
   messages: ReadonlyArray<{ seq: number; message: StoredChatMessage }>,
-  opts: { bot: boolean }
+  opts: { bot: boolean; personal?: boolean }
 ): ExtractionBlock[] {
   const blocks: ExtractionBlock[] = []
   for (const { seq, message } of messages) {
     if (message.internal && message.role === 'user') continue
-    const lines = message.parts.map(partLine).filter((line): line is string => Boolean(line?.trim()))
+    if (opts.personal && message.role !== 'user') continue
+    const parts = opts.personal ? message.parts.filter((part) => part.type === 'text') : message.parts
+    const lines = parts.map(partLine).filter((line): line is string => Boolean(line?.trim()))
     if (!lines.length) continue
     const body = lines.join('\n')
-    blocks.push({ seq, messageId: message.id, text: `${label(message, opts.bot, body)}: ${body}` })
+    blocks.push({
+      seq,
+      messageId: message.id,
+      text: opts.personal
+        ? JSON.stringify({ role: 'user', messageId: message.id, text: body })
+        : `${label(message, opts.bot, body)}: ${body}`,
+    })
   }
   return blocks
 }

@@ -63,6 +63,39 @@ export const conversationDispatchSourceRefSchema = z
 
 export type ConversationDispatchSourceRef = z.infer<typeof conversationDispatchSourceRefSchema>
 
+/** Registered repository and exact branch names for an isolated development handoff. */
+export const conversationDispatchTargetSchema = z
+  .object({
+    workspaceId: identifier
+      .optional()
+      .describe('Registered workspace ID from list_conversation_workspaces. Required for standalone chats.'),
+    branch: z
+      .string()
+      .min(1)
+      .max(300)
+      .optional()
+      .describe('Exact NEW branch name requested by the person; existing branches are never reused.'),
+    baseBranch: z
+      .string()
+      .min(1)
+      .max(300)
+      .optional()
+      .describe(
+        'Local or qualified remote branch, e.g. main or origin/main. Defaults to the target workspace default branch.'
+      ),
+  })
+  .strict()
+
+export type ConversationDispatchTarget = z.infer<typeof conversationDispatchTargetSchema>
+
+export interface ConversationDispatchWorkspaceOption {
+  workspaceId: string
+  name: string
+  path: string
+  defaultBranch: string
+  branches: string[]
+}
+
 export const conversationDispatchTaskSchema = z
   .object({
     requestKey: z
@@ -85,6 +118,9 @@ export const conversationDispatchTaskSchema = z
       .max(CONVERSATION_DISPATCH_MAX_PROMPT)
       .describe('Self-contained task: goal, context already gathered, acceptance criteria, constraints.'),
     source: conversationDispatchSourceRefSchema.optional(),
+    target: conversationDispatchTargetSchema
+      .optional()
+      .describe('Per-task destination overrides, merged with the batch target. Requires worktree placement.'),
     settings: conversationDispatchSettingsRequestSchema
       .optional()
       .describe('Per-task overrides of the batch defaults.'),
@@ -101,12 +137,17 @@ export const conversationDispatchBatchSchema = z
       .min(1)
       .max(CONVERSATION_DISPATCH_MAX_BATCH)
       .describe(`One entry per conversation (at most ${CONVERSATION_DISPATCH_MAX_BATCH} per call).`),
+    target: conversationDispatchTargetSchema
+      .optional()
+      .describe('Destination defaults shared by all tasks. Standalone chats must select a workspace.'),
     defaults: conversationDispatchSettingsRequestSchema
       .optional()
       .describe('Settings shared by every task; omitted fields inherit from this conversation.'),
     placement: conversationDispatchPlacementSchema
       .optional()
-      .describe('"worktree" (default): own branch per task from the current commit. "shared": this checkout.'),
+      .describe(
+        '"worktree" (default): own branch from the target base, or the current commit without a target. "shared": this checkout, without a target.'
+      ),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -115,6 +156,16 @@ export const conversationDispatchBatchSchema = z
       if (seen.has(task.requestKey))
         ctx.addIssue({ code: 'custom', path: ['tasks', index, 'requestKey'], message: 'Duplicate requestKey.' })
       seen.add(task.requestKey)
+      if (
+        (task.placement ?? value.placement ?? 'worktree') === 'shared' &&
+        Object.values({ ...value.target, ...task.target }).some((field) => field !== undefined)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tasks', index, 'target'],
+          message: 'Targets require worktree placement.',
+        })
+      }
     })
   })
 
@@ -157,6 +208,8 @@ export interface ConversationDispatchItemResult {
   conversationName?: string
   placement?: ConversationDispatchPlacement
   branch?: string
+  workspaceId?: string
+  baseRevision?: string
   settings?: ConversationDispatchSettings
   /** Settings the caller did not specify and that were inherited or reset for compatibility. */
   inherited?: string[]
@@ -188,6 +241,7 @@ export function conversationDispatchFingerprintInput(input: {
   placement: ConversationDispatchPlacement
   settings: ConversationDispatchSettingsRequest | ConversationDispatchSettings
   source?: ConversationDispatchSourceRef
+  target?: ConversationDispatchTarget
 }): string {
   const settings = input.settings
   return JSON.stringify([
@@ -200,6 +254,9 @@ export function conversationDispatchFingerprintInput(input: {
     settings.fastMode ?? null,
     input.source?.label ?? null,
     input.source?.url ?? null,
+    ...(input.target && Object.values(input.target).some((field) => field !== undefined)
+      ? [input.target.workspaceId ?? null, input.target.branch ?? null, input.target.baseBranch ?? null]
+      : []),
   ])
 }
 
@@ -244,6 +301,8 @@ export function parseConversationDispatchBatchResult(text: string): Conversation
         ...(text('conversationName') ? { conversationName: text('conversationName') } : {}),
         ...(item.placement === 'shared' || item.placement === 'worktree' ? { placement: item.placement } : {}),
         ...(text('branch') ? { branch: text('branch') } : {}),
+        ...(text('workspaceId') ? { workspaceId: text('workspaceId') } : {}),
+        ...(text('baseRevision') ? { baseRevision: text('baseRevision') } : {}),
         ...(text('error') ? { error: text('error') } : {}),
         ...(item.replayed === true ? { replayed: true } : {}),
         ...(item.settings && typeof item.settings === 'object'

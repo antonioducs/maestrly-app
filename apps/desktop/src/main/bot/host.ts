@@ -1,14 +1,6 @@
 import { z } from 'zod'
-import { BOT_ACTIONS, BOT_MCP_PATH } from '@maestrly/protocol'
-import { DEFAULT_BOT_PERMISSION_CEILING } from '../../shared/bot'
-import type {
-  BotConnectionView,
-  BotPermissionCeiling,
-  BotServerInput,
-  BotServerView,
-  BotSettingsView,
-  BotSetupInput,
-} from '../../shared/bot'
+import { randomUUID } from 'node:crypto'
+import type { BotActionName, BotPermissionCeiling } from '../../shared/bot'
 import { getAppSetting, setAppSetting, getConversation, getWorkspace, listAllConversations } from '../store'
 import { broadcast } from '../window-ipc'
 import { renameConversation } from '../workspace-service'
@@ -20,70 +12,30 @@ import { findBotConversation, getBotConversationBinding, setBotManagementState, 
 import { observeBotPauses, pauseBotForHuman } from './control'
 import { BOT_LOCAL_INSTANCE_ID, localBotService, type BotLocalConnection } from './local-service'
 import { LocalBotTransport } from './local-transport'
-import { BotHttpServer } from './http-server'
-import { BOT_OAUTH_SCOPES, LocalBotOAuth, normalizeBotPublicUrl } from './oauth'
 
 /**
- * Personal bots, hosted by this computer.
+ * The bots of a bot server that work in this computer's projects.
  *
- * The embedded server answers the bot, the local service keeps the chats and their commands, and the
- * existing conversation worker runs them against the native chat runtime. There is no account, bridge
- * or remote instance in this path: a bot is authorized here, by the person sitting at this computer.
+ * The local service keeps the chats and their commands, and the existing conversation worker runs them against the
+ * native chat runtime. Nothing here listens on a port: a bot's calls arrive through the desktop bridge, on the event
+ * stream this computer opened to its bot server, and a bot gets access only from the person at this computer.
  */
-const LEGACY_KEY = 'bot.connections.v1'
-const SERVER_KEY = 'bot.server.v1'
 const PENDING_PAUSES_KEY = 'bot.pending-pauses.v1'
+/**
+ * Client ids of the connections a fleet bot holds here start with this. They reach this computer through the bot
+ * server this computer paired with, and are managed from that bot's settings.
+ */
+export const FLEET_BOT_CLIENT_PREFIX = 'fleet:'
+const isFleetConnection = (connection: { clientId: string }) => connection.clientId.startsWith(FLEET_BOT_CLIENT_PREFIX)
 
-/** Records written before the server was embedded. They are preserved and must be reconnected here. */
-const legacySchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    clientId: z.string().default(''),
-    desktopId: z.string().default(''),
-    workspaceIds: z.array(z.string()).default([]),
-    revokedAt: z.string().nullable().default(null),
-    mcpConfig: z.string().default(''),
-    actions: z.array(z.enum(['chats:read', 'chats:write', 'chats:control', 'chats:answer'])).default([...BOT_ACTIONS]),
-  })
-  .passthrough()
-
-const serverSchema = z
-  .object({
-    enabled: z.boolean().default(false),
-    host: z.string().trim().min(1).max(191).default('127.0.0.1'),
-    port: z.number().int().min(0).max(65_535).default(14_310),
-    publicUrl: z.string().trim().max(2_048).default(''),
-  })
-  .strict()
-type BotServerConfig = z.infer<typeof serverSchema>
-
-/** The published address is configuration, never a request header: it is the whole bot audience. */
-function addressOf(config: BotServerConfig): string {
-  try {
-    return normalizeBotPublicUrl(config.publicUrl)
-  } catch {
-    return ''
-  }
-}
-
-/** Clients register through OAuth discovery before requesting consent for a local bot connection. */
-function configText(address: string): string {
-  // Until an address is published there is nothing truthful to hand a bot.
-  if (!address) return ''
-  return JSON.stringify(
-    {
-      mcpServers: {
-        maestrly: {
-          type: 'http',
-          url: `${address}${BOT_MCP_PATH}`,
-          oauth: { scopes: [...BOT_OAUTH_SCOPES], resource: `${address}${BOT_MCP_PATH}` },
-        },
-      },
-    },
-    null,
-    2
-  )
+/** What a person grants a fleet bot on this computer: projects, models, actions and an approval ceiling. */
+export interface FleetBotGrantInput {
+  name: string
+  workspaceIds: string[]
+  actions: BotActionName[]
+  providerIds: string[]
+  selections: Array<{ providerId: string; modelId: string }>
+  permissionCeiling: BotPermissionCeiling
 }
 
 interface RunningBot {
@@ -94,14 +46,8 @@ interface RunningBot {
 
 export class BotHost {
   private readonly service = localBotService
-  private readonly oauth = new LocalBotOAuth()
   private readonly running = new Map<string, RunningBot>()
   private readonly starting = new Map<string, Promise<void>>()
-  private server: BotHttpServer | null = null
-  private serverTransition: Promise<void> = Promise.resolve()
-  private serverState: BotServerView['state'] = 'stopped'
-  private serverError: string | undefined
-  private error: string | undefined
   private restoring = false
   private stopped = false
   private flushingPauses: Promise<void> | null = null
@@ -113,142 +59,98 @@ export class BotHost {
       const pending = this.pendingPauses()
       if (!pending.includes(conversationId))
         setAppSetting(PENDING_PAUSES_KEY, JSON.stringify([...pending, conversationId]))
-      void this.flushPauses().catch((error) => {
-        this.error = this.errorText(error)
-      })
+      void this.flushPauses().catch((error) => this.report(error))
     })
   }
 
-  settings(): BotSettingsView {
-    const config = this.serverConfig()
-    const address = addressOf(config)
-    const connections = [
-      ...this.service.connections().map((connection) => this.view(connection, address)),
-      ...this.legacyConnections(),
-    ]
-    return {
-      connections,
-      server: {
-        ...config,
-        publicUrl: address,
-        state: this.serverState,
-        ...(this.serverError ? { error: this.serverError } : {}),
-      },
-      pendingAuthorizations: this.pendingAuthorizations(),
-      state: this.restoring
-        ? 'connecting'
-        : this.error
-          ? 'error'
-          : this.running.size
-            ? 'connected'
-            : connections.some((connection) => !connection.revokedAt)
-              ? 'offline'
-              : 'stopped',
-      ...(this.error ? { error: this.error } : {}),
-    }
-  }
-
-  async connect(input: BotSetupInput): Promise<BotSettingsView> {
-    this.stopped = false
-    this.error = undefined
-    for (const workspaceId of input.workspaceIds)
-      if (!getWorkspace(workspaceId)) throw new Error('A selected local project is unavailable.')
-    const ceiling = input.permissionCeiling ?? DEFAULT_BOT_PERMISSION_CEILING
-    const catalog = new BotModelCatalog(input.providerIds, input.selections, ceiling)
-    const inventory = await catalog.inventory(input.workspaceIds)
-    if (!inventory.selections.length) throw new Error('Connect and select an available model account for this bot.')
-    if (input.selections && inventory.selections.length !== input.selections.length)
-      throw new Error('One of the selected account/model pairs is no longer available.')
-    if (inventory.workspaces.length !== input.workspaceIds.length)
-      throw new Error('A selected local repository is unavailable.')
-    const connection = this.service.createConnection({
-      name: input.name,
-      workspaceIds: input.workspaceIds,
-      providerIds: input.providerIds,
-      actions: input.actions ?? [...BOT_ACTIONS],
-      permissionCeiling: ceiling,
-      ...(input.clientId ? { clientId: input.clientId } : {}),
-      ...(input.selections ? { selections: input.selections } : {}),
-    })
-    this.service.saveInventory(connection.id, inventory)
-    await this.ensureServer()
-    try {
-      await this.start(connection)
-    } catch (error) {
-      // The connection is saved: only its worker failed to start, and the person can retry it.
-      this.error = this.errorText(error)
-    }
-    return this.settings()
-  }
-
-  async revoke(connectionId: string): Promise<BotSettingsView> {
-    const legacy = this.legacyRecords().find((record) => record.id === connectionId)
-    if (legacy) {
-      // The record stays visible; it is only marked revoked, and it was never running here.
-      this.markLocal(connectionId, 'revoked')
-      const revokedAt = legacy.revokedAt ?? new Date().toISOString()
-      setAppSetting(
-        LEGACY_KEY,
-        JSON.stringify(
-          this.legacyRecords().map((record) => (record.id === connectionId ? { ...record, revokedAt } : record))
-        )
-      )
-      return this.settings()
-    }
-    const connection = this.service.requireConnection(connectionId)
-    await this.stopBot(connection.id)
-    this.markLocal(connection.id, 'revoked')
-    this.service.revokeConnection(connection.id)
-    this.oauth.revoke(connection.id)
-    return this.settings()
-  }
-
-  async updateWorkspaces(connectionId: string, workspaceIds: string[]): Promise<BotSettingsView> {
-    if (this.legacyRecords().some((record) => record.id === connectionId))
-      throw new Error('Reconnect this bot on this computer before changing its projects.')
-    const connection = this.service.requireConnection(connectionId)
-    if (connection.revokedAt) throw new Error('This bot connection was revoked.')
-    for (const id of workspaceIds) if (!getWorkspace(id)) throw new Error('A selected local project is unavailable.')
-    await this.stopBot(connection.id)
-    // Admission is narrowed before the new inventory is published, so nothing widens in between.
-    const next = this.service.setGrants(connection.id, workspaceIds)
-    this.service.saveInventory(
-      next.id,
-      await new BotModelCatalog(next.providerIds, next.selections ?? undefined, next.permissionCeiling).inventory(
-        workspaceIds
-      )
-    )
-    for (const conversation of listAllConversations())
-      if (
-        conversation.botOrigin?.connectionId === next.id &&
-        conversation.workspaceId &&
-        !workspaceIds.includes(conversation.workspaceId)
-      )
-        pauseBotForHuman(conversation.id)
-    await this.flushPauses()
-    await this.start(next)
-    return this.settings()
+  /** The connections fleet bots hold here under a client id prefix (one bot server pairing, one bot), revoked included. */
+  fleetConnections(prefix: string): BotLocalConnection[] {
+    if (!prefix.startsWith(FLEET_BOT_CLIENT_PREFIX)) throw new Error('Not a fleet bot connection prefix.')
+    return this.service.connectionsByClientPrefix(prefix)
   }
 
   /**
-   * Move how far this bot's conversations may go on their own. A running turn keeps the ceiling it was
-   * admitted under; the worker is stopped and started again so the next one reads the new one.
+   * Gives a fleet bot access to projects on this computer, or changes what it has. Only the person at this computer
+   * calls it, from that bot's settings. A narrowed grant pauses the bot's chats in the projects it lost.
    */
-  async setPermissionCeiling(connectionId: string, ceiling: BotPermissionCeiling): Promise<BotSettingsView> {
-    if (this.legacyRecords().some((record) => record.id === connectionId))
-      throw new Error('Reconnect this bot on this computer before changing its approvals.')
+  async saveFleetConnection(
+    prefix: string,
+    input: FleetBotGrantInput
+  ): Promise<{ connection: BotLocalConnection; created: boolean }> {
+    if (!prefix.startsWith(FLEET_BOT_CLIENT_PREFIX)) throw new Error('Not a fleet bot connection prefix.')
+    for (const workspaceId of input.workspaceIds)
+      if (!getWorkspace(workspaceId)) throw new Error('A selected local project is unavailable.')
+    const catalog = new BotModelCatalog(input.providerIds, input.selections, input.permissionCeiling)
+    const inventory = await catalog.inventory(input.workspaceIds)
+    if (!inventory.selections.length) throw new Error('Connect and select an available model account for this bot.')
+    if (inventory.selections.length !== input.selections.length)
+      throw new Error('One of the selected account/model pairs is no longer available.')
+    if (inventory.workspaces.length !== input.workspaceIds.length)
+      throw new Error('A selected local repository is unavailable.')
+    this.stopped = false
+    const active = this.fleetConnections(prefix).find((connection) => !connection.revokedAt)
+    if (!active) {
+      const connection = this.service.createConnection({
+        name: input.name,
+        clientId: prefix + randomUUID(),
+        workspaceIds: input.workspaceIds,
+        providerIds: input.providerIds,
+        actions: input.actions,
+        selections: input.selections,
+        permissionCeiling: input.permissionCeiling,
+      })
+      this.service.saveInventory(connection.id, inventory)
+      try {
+        await this.start(connection)
+      } catch (error) {
+        // The connection is saved: only its worker failed to start, and the next start retries it.
+        this.report(error)
+      }
+      return { connection, created: true }
+    }
+    await this.stopBot(active.id)
+    try {
+      this.service.setGrants(active.id, input.workspaceIds, input.actions)
+      this.service.setPermissionCeiling(active.id, input.permissionCeiling)
+      const next = this.service.updateConnection(active.id, {
+        name: input.name,
+        providerIds: input.providerIds,
+        selections: input.selections,
+      })
+      this.service.saveInventory(next.id, inventory)
+      this.pauseChatsOutside(next.id, input.workspaceIds)
+      await this.flushPauses()
+      return { connection: next, created: false }
+    } finally {
+      const current = this.service.connection(active.id)
+      if (current && !current.revokedAt) await this.start(current)
+    }
+  }
+
+  /** Takes a fleet bot's access back: its chats stay on this computer, revoked, and its worker stops. */
+  async revokeFleetConnection(connectionId: string): Promise<void> {
     const connection = this.service.requireConnection(connectionId)
-    if (connection.revokedAt) throw new Error('This bot connection was revoked.')
+    if (!isFleetConnection(connection)) throw new Error('Not a fleet bot connection.')
     await this.stopBot(connection.id)
-    const next = this.service.setPermissionCeiling(connection.id, ceiling)
-    this.service.saveInventory(
-      next.id,
-      await new BotModelCatalog(next.providerIds, next.selections ?? undefined, next.permissionCeiling).inventory(
-        next.workspaceIds
-      )
-    )
-    await this.start(next)
-    return this.settings()
+    this.markLocal(connection.id, 'revoked')
+    this.service.revokeConnection(connection.id)
+  }
+
+  /** Runs one conversation tool for a fleet bot, under the grants of its connection here. */
+  async callFleetTool(
+    connectionId: string,
+    name: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    const connection = this.service.requireConnection(connectionId)
+    if (!isFleetConnection(connection)) throw new Error('Not a fleet bot connection.')
+    return this.service.callTool(connection.id, name, input, signal)
+  }
+
+  /** The id this computer gives itself in what a bot reads; never sent anywhere else. */
+  localDesktopId(): string {
+    return this.service.desktopId()
   }
 
   async setManagement(conversationId: string, state: 'active' | 'paused'): Promise<void> {
@@ -288,81 +190,36 @@ export class BotHost {
     broadcast('conversation:open', { conversation: getConversation(conversationId), focus: false })
   }
 
+  /**
+   * Starts the worker of every fleet bot that still has access. A connection that does not belong to a bot server is
+   * left over from the endpoint personal bots used to reach: it is revoked, and its chats stay as the person's own. A
+   * project that left this computer stops being offered, and the bot's chats in it leave bot control.
+   */
   async restore(): Promise<void> {
     if (this.restoring || this.stopped) return
     this.restoring = true
     try {
-      await this.ensureServer()
       await this.flushPauses()
       for (const connection of this.service.connections().filter((item) => !item.revokedAt)) {
         try {
-          await this.start(connection)
+          if (!isFleetConnection(connection)) await this.retire(connection)
+          else await this.start(this.withoutMissingProjects(connection))
         } catch (error) {
-          this.error = this.errorText(error)
+          this.report(error)
         }
       }
+      await this.flushPauses()
     } catch (error) {
-      this.error = this.errorText(error)
+      this.report(error)
     } finally {
       this.restoring = false
     }
   }
 
-  async refresh(): Promise<BotSettingsView> {
-    this.stopped = false
-    this.error = undefined
-    for (const connection of this.service.connections().filter((item) => !item.revokedAt)) {
-      // A project that left this computer stops being offered and its chats leave bot control.
-      const available = connection.workspaceIds.filter((id) => getWorkspace(id))
-      if (available.length === connection.workspaceIds.length) continue
-      await this.stopBot(connection.id)
-      this.service.setGrants(connection.id, available)
-      for (const conversation of listAllConversations())
-        if (
-          conversation.botOrigin?.connectionId === connection.id &&
-          conversation.workspaceId &&
-          !available.includes(conversation.workspaceId)
-        )
-          pauseBotForHuman(conversation.id)
-    }
-    await this.restore()
-    return this.settings()
-  }
-
-  /** The embedded server is the only address a bot uses; moving it invalidates what it was issued. */
-  async configureServer(input: BotServerInput): Promise<BotSettingsView> {
-    const current = this.serverConfig()
-    const next = serverSchema.parse({
-      enabled: input.enabled ?? current.enabled,
-      host: input.host ?? current.host,
-      port: input.port ?? current.port,
-      publicUrl: input.publicUrl ?? current.publicUrl,
-    })
-    if (next.publicUrl) next.publicUrl = normalizeBotPublicUrl(next.publicUrl)
-    const moved = next.publicUrl !== addressOf(current)
-    setAppSetting(SERVER_KEY, JSON.stringify(next))
-    if (moved) this.oauth.invalidate()
-    this.stopped = false
-    await this.ensureServer()
-    return this.settings()
-  }
-
-  /** The person decides here which connection a waiting bot is allowed to act as, or refuses it. */
-  authorize(id: string, approved: boolean, connectionId: string): BotSettingsView {
-    if (approved) {
-      const connection = this.service.requireConnection(connectionId)
-      if (connection.revokedAt) throw new Error('That bot connection was revoked.')
-    }
-    this.oauth.decide(id, approved, connectionId)
-    return this.settings()
-  }
-
   async stop(): Promise<void> {
     this.stopped = true
-    await this.serverTransition
     await Promise.allSettled([...this.starting.values()])
     await Promise.allSettled([...this.running.keys()].map((id) => this.stopBot(id)))
-    await this.stopServer()
   }
 
   async dispose(): Promise<void> {
@@ -370,58 +227,28 @@ export class BotHost {
     this.pauseUnsubscribe()
   }
 
-  private view(connection: BotLocalConnection, address: string): BotConnectionView {
-    return {
-      id: connection.id,
-      name: connection.name,
-      clientId: connection.clientId,
-      desktopId: connection.desktopId,
-      workspaceIds: connection.workspaceIds,
-      revokedAt: connection.revokedAt,
-      mcpConfig: configText(address),
-      actions: connection.actions,
-      permissionCeiling: connection.permissionCeiling,
-      legacy: false,
-    }
+  private async retire(connection: BotLocalConnection): Promise<void> {
+    await this.stopBot(connection.id)
+    this.markLocal(connection.id, 'revoked')
+    this.service.revokeConnection(connection.id)
   }
 
-  private legacyConnections(): BotConnectionView[] {
-    return this.legacyRecords().map((record) => ({
-      id: record.id,
-      name: record.name,
-      clientId: record.clientId,
-      desktopId: record.desktopId,
-      workspaceIds: record.workspaceIds,
-      revokedAt: record.revokedAt,
-      mcpConfig: record.mcpConfig,
-      actions: record.actions,
-      // It never ran here, so nothing it did was ever governed by a ceiling chosen on this computer.
-      permissionCeiling: DEFAULT_BOT_PERMISSION_CEILING,
-      legacy: true,
-    }))
+  private withoutMissingProjects(connection: BotLocalConnection): BotLocalConnection {
+    const available = connection.workspaceIds.filter((id) => getWorkspace(id))
+    if (available.length === connection.workspaceIds.length) return connection
+    const next = this.service.setGrants(connection.id, available)
+    this.pauseChatsOutside(connection.id, available)
+    return next
   }
 
-  private legacyRecords(): Array<z.infer<typeof legacySchema>> {
-    const raw = getAppSetting(LEGACY_KEY)
-    if (!raw) return []
-    try {
-      const parsed = legacySchema.array().safeParse(JSON.parse(raw))
-      return parsed.success ? parsed.data : []
-    } catch {
-      // An unreadable saved record is still never deleted; it is simply not shown.
-      return []
-    }
-  }
-
-  private pendingAuthorizations() {
-    try {
-      return this.oauth
-        .pending()
-        .map((entry) => ({ id: entry.id, clientName: entry.clientName, redirectUri: entry.redirectUri }))
-    } catch (error) {
-      this.error = this.errorText(error)
-      return []
-    }
+  private pauseChatsOutside(connectionId: string, workspaceIds: string[]): void {
+    for (const conversation of listAllConversations())
+      if (
+        conversation.botOrigin?.connectionId === connectionId &&
+        conversation.workspaceId &&
+        !workspaceIds.includes(conversation.workspaceId)
+      )
+        pauseBotForHuman(conversation.id)
   }
 
   private async start(connection: BotLocalConnection): Promise<void> {
@@ -470,16 +297,12 @@ export class BotHost {
       void catalog
         .inventory(current.workspaceIds)
         .then((value) => client.inventory(value))
-        .catch((error) => {
-          this.error = this.errorText(error)
-        })
+        .catch((error) => this.report(error))
         .finally(() => {
           publishing = false
         })
     }, 15_000)
-    const loop = worker.run((error) => {
-      this.error = this.errorText(error)
-    })
+    const loop = worker.run((error) => this.report(error))
     this.running.set(connection.id, { worker, timer, loop })
   }
 
@@ -492,63 +315,6 @@ export class BotHost {
     clearInterval(running.timer)
     await running.worker.stop()
     await running.loop
-  }
-
-  /** Brings the embedded server in line with the saved configuration, without ever throwing at it. */
-  private ensureServer(): Promise<void> {
-    const transition = this.serverTransition.then(() => this.reconcileServer())
-    this.serverTransition = transition.catch(() => {})
-    return transition
-  }
-
-  private async reconcileServer(): Promise<void> {
-    await this.stopServer()
-    const config = this.serverConfig()
-    if (!config.enabled || this.stopped) return
-    if (!addressOf(config)) {
-      this.serverState = 'error'
-      this.serverError = 'Publish an HTTPS address for this computer before enabling the bot endpoint.'
-      return
-    }
-    this.serverState = 'starting'
-    this.serverError = undefined
-    const server = new BotHttpServer({
-      oauth: this.oauth,
-      callTool: (connectionId, name, input, signal) => this.service.callTool(connectionId, name, input, signal),
-    })
-    try {
-      await server.start({ host: config.host, port: config.port, publicUrl: addressOf(config) })
-      if (this.stopped) {
-        await server.stop()
-        this.serverState = 'stopped'
-        return
-      }
-      this.server = server
-      this.serverState = 'listening'
-    } catch (error) {
-      this.serverState = 'error'
-      this.serverError = this.errorText(error)
-      await server.stop().catch(() => {})
-    }
-  }
-
-  private async stopServer(): Promise<void> {
-    const server = this.server
-    this.server = null
-    this.serverState = 'stopped'
-    this.serverError = undefined
-    if (server) await server.stop().catch(() => {})
-  }
-
-  private serverConfig(): BotServerConfig {
-    const raw = getAppSetting(SERVER_KEY)
-    if (!raw) return serverSchema.parse({})
-    try {
-      const parsed = serverSchema.safeParse(JSON.parse(raw))
-      return parsed.success ? parsed.data : serverSchema.parse({})
-    } catch {
-      return serverSchema.parse({})
-    }
   }
 
   /** Keeps the relay record of a chat in step with the local one the person just acted on. */
@@ -591,8 +357,9 @@ export class BotHost {
     }
   }
 
-  private errorText(error: unknown): string {
-    return error instanceof Error ? error.message : String(error)
+  /** No screen shows a worker's failure any more, so it goes to the log instead of being dropped. */
+  private report(error: unknown): void {
+    console.error('[bot-host]', error instanceof Error ? error.message : String(error))
   }
 }
 

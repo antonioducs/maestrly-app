@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   type FLEET_GATEWAY_ROUTES,
   fleetBotIdSchema,
   fleetEnvironmentIdSchema,
@@ -10,6 +11,7 @@ import {
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
   FLEET_UPDATES_UNSUPPORTED,
+  FLEET_RUNTIME_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
@@ -30,6 +32,11 @@ export function requireEnvironments(fleet: FleetFeatures): void {
 export function requireEnvironmentUpdates(fleet: FleetFeatures): void {
   if (!fleet.hasFeature(FLEET_ENVIRONMENT_UPDATES_FEATURE))
     throw new FleetClientError('INVALID_REQUEST', 400, FLEET_UPDATES_UNSUPPORTED)
+}
+/** Runtime checks exist only on gateways that relay the environments' runtimes. */
+export function requireRuntimeUpdates(fleet: FleetFeatures): void {
+  if (!fleet.hasFeature(FLEET_RUNTIME_UPDATES_FEATURE))
+    throw new FleetClientError('INVALID_REQUEST', 400, FLEET_RUNTIME_UPDATES_UNSUPPORTED)
 }
 
 // A bare string is a bot id, as the views from before environments send it.

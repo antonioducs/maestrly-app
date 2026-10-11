@@ -15,9 +15,9 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
-import { conversationScreen } from '../conversation-screen'
+import { conversationScreen, presentedBrowserSize } from '../conversation-screen'
 import { isHeadlessInstance } from '../remote-host/server/config'
-import { centerInArea, clampToArea, insideWindowFrame } from '../fleet/instance/window-bounds'
+import { centerInArea, clampToArea, insideWindowFrame, popupArea } from '../fleet/instance/window-bounds'
 import { refocusScreen, setScreenFocusOwner, showWindow } from '../screen-focus'
 import {
   OFFSCREEN,
@@ -42,6 +42,7 @@ import { applyLayout } from './layout'
 import { layoutFloatingTab } from './float'
 import { focusViewInMain } from './popup'
 import { setDrawerPlacementPerformance } from './performance'
+import { refreshUnthrottledBrowserRendering } from './browser-rendering'
 
 type WindowOpenHandler = Parameters<WebContents['setWindowOpenHandler']>[0]
 
@@ -145,6 +146,46 @@ function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<Na
   })
 }
 
+// The first callback runs while the renderer builds the frame that paints the current document state. The second
+// runs only after that frame was produced, because Blink may begin the next main frame before submitting the last.
+const RENDERED_FRAMES_SCRIPT =
+  'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))'
+
+/**
+ * Chromium keeps serving the surface it last received until the renderer submits a new frame. After a scroll, or
+ * after a hidden parked tab is shown by the capture host, an immediate capture can therefore return stale pixels.
+ * WebFrameMain is used because WebContents.executeJavaScript waits for loading to stop. A disposed or crashed frame
+ * has no newer paint to wait for, so evaluation failures fall through to the capture itself.
+ */
+function waitForRendererPaint(wc: WebContents, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (complete: () => void) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      complete()
+    }
+    const onAbort = () => finish(() => reject(new Error('browser surface capture canceled')))
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    let painted: Promise<unknown>
+    try {
+      painted = wc.mainFrame.executeJavaScript(RENDERED_FRAMES_SCRIPT)
+    } catch {
+      finish(() => resolve())
+      return
+    }
+    void painted.then(
+      () => finish(() => resolve()),
+      () => finish(() => resolve())
+    )
+  })
+}
+
 function viewIsPresented(owner: BrowserWindow | null, bounds: Rectangle): boolean {
   if (!owner || owner.isDestroyed() || !owner.isVisible()) return false
   const host = owner.getContentBounds()
@@ -214,6 +255,7 @@ async function captureBrowserView(
       } catch (error) {
         throw new Error(`screenshot surface preparation failed: ${String((error as Error)?.message ?? error)}`)
       }
+      await waitForRendererPaint(wc, signal)
       captured = await capturePresentedFrame(wc, signal)
     } catch (error) {
       captureError = error
@@ -439,6 +481,12 @@ export function hardenBrowserSession(): void {
   session.fromPartition(BROWSER_PARTITION).setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
 }
 
+/** Where a conversation's popups stay: inside its presented browser, or its whole screen area; none without one. */
+function popupWindowArea(convId: string) {
+  const area = conversationScreen(convId)?.windowArea
+  return area ? popupArea(area, presentedBrowserSize(convId)) : undefined
+}
+
 function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebContentsView {
   const resourceId = tab.id
   const v = new WebContentsView({
@@ -532,7 +580,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     try {
       // A conversation with its own screen area keeps its popups there, window manager frame included: they keep the
       // frame for its close button. Others center on their display.
-      const area = conversationScreen(convId)?.windowArea
+      const area = popupWindowArea(convId)
       if (area) child.setBounds(centerInArea(child.getBounds(), insideWindowFrame(area)))
       else child.center()
       showWindow(child)
@@ -541,7 +589,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     }
     // A page may move or resize its popup (window.moveTo, window.resizeTo); inside a screen area it stays there.
     child.webContents.on('content-bounds-updated', (event, bounds) => {
-      const area = conversationScreen(convId)?.windowArea
+      const area = popupWindowArea(convId)
       if (!area) return
       event.preventDefault()
       if (!child.isDestroyed()) child.setBounds(clampToArea(bounds, insideWindowFrame(area)))
@@ -579,6 +627,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   }
   wc.on('did-navigate', navPersist)
   wc.on('did-navigate-in-page', navPersist)
+  wc.on('dom-ready', () => refreshUnthrottledBrowserRendering(wc))
   wc.on('did-start-loading', emit)
   wc.on('did-stop-loading', emit)
   wc.on('page-title-updated', emit)
@@ -595,6 +644,31 @@ export function focusBrowserPopup(convId: string): boolean {
   if (!popup) return false
   popup.focus()
   return true
+}
+
+/**
+ * The views of a conversation's browser that its bot's desktop presents: its tab strip and address bar, its active
+ * page, and its visible popups, newest first.
+ */
+export function presentedBrowserViews(convId: string): {
+  chrome: WebContentsView | null
+  page: WebContentsView | null
+  popups: BrowserWindow[]
+} {
+  const d = drawers.get(convId)
+  if (!d) return { chrome: null, page: null, popups: [] }
+  const page = d.browserTabs.find((tab) => tab.id === d.activeBrowserId)?.view ?? null
+  const popups = [...d.oauthWindows].reverse().filter((child) => !child.isDestroyed() && child.isVisible())
+  return { chrome: d.browserChromeView, page, popups }
+}
+
+const browserStateListeners = new Set<(convId: string) => void>()
+/** Observes changes of a browser's tabs, titles and addresses; returns the function that stops observing. */
+export function onBrowserStateChange(listener: (convId: string) => void): () => void {
+  browserStateListeners.add(listener)
+  return () => {
+    browserStateListeners.delete(listener)
+  }
 }
 
 // Debounce per-conversation tab URL/order/active-state persistence rather than writing on every navigation.
@@ -1053,8 +1127,24 @@ export function getBrowserStateForScope(convId: string, ownerScopeId: string): B
   return projectBrowserState(convId, d, tabs, tabs[0]?.id ?? null)
 }
 
+/** Asks the renderer to open this conversation's drawer on its Browser tab, as terminal focus does. */
+export function focusBrowserDrawer(convId: string): void {
+  if (typeof windowIpc.sendToConversation === 'function') {
+    windowIpc.sendToConversation(convId, 'drawer:browser-focus', { convId }, { panel: 'browser' })
+  } else {
+    windowIpc.broadcast('drawer:browser-focus', { convId })
+  }
+}
+
 export function emitBrowserState(convId: string): void {
   if (!drawers.has(convId)) return
+  for (const listener of [...browserStateListeners]) {
+    try {
+      listener(convId)
+    } catch (error) {
+      console.error('A browser state listener failed:', error instanceof Error ? error.message : String(error))
+    }
+  }
   // Broadcast chrome updates filtered by convId, including floating browsers in background conversations
   // controlled through MCP.
   const state = getBrowserState(convId)

@@ -3,18 +3,23 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   FLEET_TOOL_OUTPUT_MAX,
+  FLEET_TODO_LIMITS,
   FLEET_COMPACTION_SUMMARY_MAX,
+  FLEET_REASONING_TEXT_MAX,
   compareFleetTranscriptItems,
   fleetTranscriptItemSchema,
   type FleetTranscriptItem,
   type FleetTranscriptPage,
   type FleetQuestion,
   type FleetImageRef,
+  type FleetFileRef,
+  type FleetTodo,
 } from '@maestrly/bot-fleet-protocol'
-import type { ChatMessage, ChatQuestion, MessagePart } from '../../../shared/chat'
+import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
 import { appendSettledLog, promptForInput, readSettledLog, settledLog, type QueuedInput } from './queue'
 import { imageId } from './images'
+import { publishedFileRefs } from './attachment-files'
 import { fleetImageMediaTypeSchema } from '@maestrly/bot-fleet-protocol'
 
 const at = (time: number): string => new Date(time).toISOString()
@@ -36,6 +41,13 @@ export function fleetQuestions(questions: ChatQuestion[]): FleetQuestion[] {
     options: question.options.map((option) => ({ label: option.label, description: option.description ?? null })),
     multiSelect: !!question.multiSelect,
   }))
+}
+/** A todo_write list within the protocol limits: an item over them would drop the whole tool item from the page. */
+function fleetTodos(input: unknown): FleetTodo[] {
+  return chatTodosFromInput(input)
+    .filter((todo) => todo.content)
+    .slice(0, FLEET_TODO_LIMITS.itemsMax)
+    .map((todo) => ({ content: short(todo.content, FLEET_TODO_LIMITS.contentMax), status: todo.status }))
 }
 export function toolTarget(input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
@@ -95,6 +107,8 @@ function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
   if (typeof value.text === 'string') return peerOutput(value.text)
   return {}
 }
+const sharesImages = (input: unknown): boolean =>
+  input !== null && typeof input === 'object' && (input as { share?: unknown }).share === true
 function toolItem(
   message: ChatMessage,
   part: Extract<MessagePart, { type: 'tool' }>,
@@ -127,6 +141,7 @@ function toolItem(
         routineTitle = short(result.title, 80)
     } catch {}
   }
+  const files = status === 'completed' ? publishedFileRefs(part.toolName, output ?? '') : undefined
   return {
     kind: 'tool',
     id: `${message.id}:${index}`,
@@ -142,6 +157,10 @@ function toolItem(
           : 'running',
     output: output ? short(output, FLEET_TOOL_OUTPUT_MAX) : null,
     images,
+    // The owner sees a tool's images in the conversation only when the bot asked to share them (`share: true`).
+    ...(images.length ? { shared: sharesImages(part.input) } : {}),
+    ...(files ? { files } : {}),
+    ...(part.toolName === 'todo_write' ? { todos: fleetTodos(part.input) } : {}),
   }
 }
 function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
@@ -160,6 +179,32 @@ function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
       byteSize: entry.byteSize ?? null,
       name: entry.name,
     }))
+}
+function ownerFileRefs(message: ChatMessage): FleetFileRef[] {
+  return message.parts
+    .flatMap((entry): FleetFileRef[] => {
+      if (entry.type !== 'file') return []
+      if (entry.kind === 'pdf' && entry.artifactId && entry.byteSize !== undefined)
+        return [
+          {
+            id: imageId('a', message.id, entry.id),
+            name: entry.name,
+            mediaType: 'application/pdf',
+            byteSize: entry.byteSize,
+          },
+        ]
+      if (entry.kind === 'text')
+        return [
+          {
+            id: imageId('a', message.id, entry.id),
+            name: entry.name,
+            mediaType: 'text/plain',
+            byteSize: Buffer.byteLength(entry.data ?? '', 'utf8'),
+          },
+        ]
+      return []
+    })
+    .slice(0, 8)
 }
 /** The queued inputs a projection links native user messages to. */
 export interface TranscriptInputs {
@@ -221,7 +266,19 @@ export function projectMessages(
     for (const [index, part] of message.parts.entries()) {
       const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
       const time = at(message.createdAt)
-      if (part.type === 'reasoning') continue
+      if (part.type === 'reasoning') {
+        // Readers that did not ask for reasoning never get these items (`transcript-reasoning`).
+        if (message.role === 'assistant' && part.text.trim())
+          items.push({
+            kind: 'reasoning',
+            id,
+            at: time,
+            text: short(part.text, FLEET_REASONING_TEXT_MAX),
+            truncated: part.text.length > FLEET_REASONING_TEXT_MAX,
+            streaming: !message.finishReason && !message.error,
+          })
+        continue
+      }
       if (part.type === 'compaction') {
         const runtime = part.strategy?.endsWith('-native') === true
         items.push({
@@ -234,7 +291,7 @@ export function projectMessages(
         })
       } else if (part.type === 'text') {
         if (message.role === 'user') {
-          if (!part.text && !linked) continue
+          if (!part.text && !linked && !ownerImageRefs(message).length && !ownerFileRefs(message).length) continue
           items.push({
             kind: 'user',
             id,
@@ -249,6 +306,7 @@ export function projectMessages(
               .slice(0, 10)
               .map((source) => ({ id: source.id, title: source.title })),
             images: ownerImageRefs(message),
+            files: ownerFileRefs(message),
           })
         } else if (message.role === 'assistant') {
           items.push({
@@ -295,18 +353,22 @@ export function projectMessages(
         const previous = [...items]
           .reverse()
           .find((entry) => entry.kind === 'tool' && entry.id.startsWith(message.id + ':'))
-        if (previous?.kind === 'tool' && previous.images.length < 8)
+        if (previous?.kind === 'tool' && previous.images.length < 8) {
           previous.images.push({
             id: imageId('g', message.id, part.id),
             mediaType: part.mediaType as FleetImageRef['mediaType'],
             byteSize: part.byteSize ?? null,
             name: part.name,
           })
+          // A generated image is meant for the owner, whatever the tool before it did.
+          previous.shared = true
+        }
       }
     }
     if (message.role === 'user' && !message.parts.some((part) => part.type === 'text')) {
       const images = ownerImageRefs(message)
-      if (images.length)
+      const files = ownerFileRefs(message)
+      if (images.length || files.length)
         items.push({
           kind: 'user',
           id: linked?.itemId ?? `${message.id}:0`,
@@ -321,6 +383,7 @@ export function projectMessages(
             .slice(0, 10)
             .map((source) => ({ id: source.id, title: source.title })),
           images,
+          files,
         })
     }
     for (const item of items) projected.push({ messageId: message.id, item })

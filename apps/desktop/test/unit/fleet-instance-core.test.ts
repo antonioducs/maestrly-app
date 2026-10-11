@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { FLEET_REASONING_TEXT_MAX, FLEET_TODO_LIMITS, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, MessagePart } from '../../src/shared/chat'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
@@ -27,6 +27,7 @@ import { botIdentityPrompt, setBotIdentity } from '../../src/main/fleet/instance
 import { initialFloatingBounds } from '../../src/main/fleet/instance/window-bounds'
 import { FleetImageStore, imageId, imageMediaType } from '../../src/main/fleet/instance/images'
 import { clearEphemeralToolImages, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
+import { setHiddenChatModels } from '../../src/main/store/settings'
 import { freshDb, closeDb } from '../helpers/db'
 
 const key = () => randomUUID()
@@ -42,6 +43,7 @@ describe('fleet conversation admission', () => {
         pending: () => [],
         queue: { list: () => [{ id: 'input', input: { source: 'owner', text: 'Waiting' } }] },
         holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+        host: {},
         events: { lastSeq: 0 },
         accountOptions: [
           {
@@ -96,6 +98,7 @@ describe('fleet conversation admission', () => {
         pending: () => [],
         queue: { list: () => [] },
         holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+        host: {},
         events: { lastSeq: 0 },
         accountOptions: [],
         stored: null,
@@ -120,7 +123,70 @@ describe('fleet conversation admission', () => {
 })
 
 describe('fleet model selection', () => {
-  it('filters the bot hidden models and falls back when the saved model is hidden', () => {
+  it('rejects a new hidden main or compaction selection before persisting the bot profile', async () => {
+    freshDb()
+    try {
+      setHiddenChatModels('provider', ['hidden'])
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
+      Object.assign(runtime, { botId: 'bot', disposed: false, stored: null })
+      const profile = {
+        botId: 'bot',
+        name: 'Bot',
+        instructions: '',
+        ceiling: 'ask' as const,
+        selection: null,
+        compaction: null,
+        gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
+      }
+      const selection = { providerId: 'provider', modelId: 'hidden', reasoning: null, fastMode: false }
+      await expect(runtime.profile({ ...profile, selection })).rejects.toThrow('Hidden models cannot be selected')
+      await expect(
+        runtime.profile({ ...profile, compaction: { ...selection, intervalTokens: 100000, contextLimitTokens: null } })
+      ).rejects.toThrow('Hidden models cannot be selected')
+    } finally {
+      closeDb()
+    }
+  })
+  it('keeps an already chosen environment default when a bot inherits it after it was hidden', async () => {
+    freshDb()
+    try {
+      setHiddenChatModels('provider', ['hidden'])
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
+      Object.assign(runtime, {
+        botId: 'bot',
+        disposed: false,
+        stored: null,
+        accountOptions: [],
+        ensureConversation: vi.fn(async () => {}),
+        refreshAccounts: vi.fn(async () => {}),
+        changed: vi.fn(),
+        tick: vi.fn(async () => {}),
+        status: vi.fn(async () => ({})),
+      })
+      await expect(
+        runtime.profile({
+          botId: 'bot',
+          name: 'Bot',
+          instructions: '',
+          ceiling: 'ask',
+          selection: null,
+          compaction: {
+            providerId: 'provider',
+            modelId: 'hidden',
+            reasoning: null,
+            fastMode: false,
+            intervalTokens: 100000,
+          },
+          compactionInherited: true,
+          gateway: { peersEnabled: true, artifactsEnabled: false, desktopBridgeEnabled: false },
+        })
+      ).resolves.toEqual({})
+      expect(runtime.settingsUsage().compaction?.modelId).toBe('hidden')
+    } finally {
+      closeDb()
+    }
+  })
+  it('preserves a hidden current selection and falls back only after its removal', () => {
     const models = [
       {
         id: 'p::hidden',
@@ -145,11 +211,17 @@ describe('fleet model selection', () => {
     expect(visible.map((item) => item.modelId)).toEqual(['visible'])
     expect(
       effectiveFleetSelection(
-        visible,
+        models,
         { providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true },
-        { providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: true }
+        { providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: true },
+        visible
       )
-    ).toEqual({ providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: false })
+    ).toEqual({ providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true })
+    const defaults = { providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true }
+    expect(effectiveFleetSelection(models, null, defaults, visible)?.modelId).toBe('visible')
+    expect(effectiveFleetSelection(visible, { ...defaults }, defaults, visible)?.modelId).toBe('visible')
+    expect(effectiveFleetSelection(models, null, defaults, [])).toBeNull()
+    expect(effectiveFleetSelection(models, { ...defaults }, defaults, [])?.modelId).toBe('hidden')
   })
 })
 describe('fleet image ids and signatures', () => {
@@ -228,16 +300,72 @@ describe('bot identity', () => {
       ceiling: 'ask',
       selection: null,
       compaction: null,
-      gateway: { peersEnabled: false },
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
     })
     expect(botIdentityPrompt('/bot/chat')).toBe('')
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
     expect(botIdentityPrompt('/other/chat')).toBe('')
     expect(botIdentityPrompt('/bot/chat')).toContain('# Bot identity\nYour name is Scout.')
     expect(botIdentityPrompt('/bot/chat')).toContain('Track updates.')
-    expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 22')
+    expect(botIdentityPrompt('/bot/chat')).toContain('Plan review is unavailable')
+    expect(botIdentityPrompt('/bot/chat')).toContain('present it directly in the conversation')
+    expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 24')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
+    // Screenshots reach the owner's conversation only when the bot shares them.
+    expect(botIdentityPrompt('/bot/chat')).toContain('with share set to true')
+    expect(botIdentityPrompt('/bot/chat')).not.toContain('automatically appear')
+  })
+
+  it("keeps the owner's computer out of reach unless the gateway routes desktop calls, and then sets the rules", () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask' as const,
+      selection: null,
+      compaction: null,
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
+    }
+    setBotIdentity('/bot/macs', profile)
+    const closed = botIdentityPrompt('/bot/macs')
+    expect(closed).toContain("Never try to reach the owner's computer.")
+    expect(closed).not.toContain('desktop_')
+    setBotIdentity('/bot/macs', { ...profile, gateway: { ...profile.gateway, desktopBridgeEnabled: true } })
+    const open = botIdentityPrompt('/bot/macs')
+    expect(open).not.toContain("Never try to reach the owner's computer.")
+    expect(open).toContain('only through the desktop_* tools, and only the computers that gave you access')
+    expect(open).toContain('use the computer it was created on')
+    expect(open).toContain('ask which one before you start')
+    expect(open).toContain('do not move the work to another computer on your own')
+    expect(open).toContain('Permission prompts and plan approvals in those conversations stay with the owner')
+  })
+
+  it('describes one desktop with the browser and terminals as windows, or else two screens', () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask' as const,
+      selection: null,
+      compaction: null,
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
+    }
+    let unified = true
+    setBotIdentity('/bot/desk', profile, () => [], { unifiedDesktop: () => unified })
+    const desktop = botIdentityPrompt('/bot/desk')
+    expect(desktop).toContain('one Linux desktop of your own')
+    expect(desktop).toContain('your Maestrly browser is a window there')
+    expect(desktop).toContain('terminal_*')
+    expect(desktop).toContain('browser_*')
+    expect(desktop).toContain('computer_*')
+    expect(desktop).not.toContain('two screens')
+    unified = false
+    const screens = botIdentityPrompt('/bot/desk')
+    expect(screens).toContain('two screens of your own')
+    expect(screens).not.toContain('one Linux desktop')
   })
 })
 
@@ -556,8 +684,35 @@ describe('transcript projection', () => {
       ],
     }
     expect(projectChatMessages([message])).toMatchObject([
-      { kind: 'tool', images: [{ id: imageId('g', 'assistant', 'generated') }] },
+      { kind: 'tool', images: [{ id: imageId('g', 'assistant', 'generated') }], shared: true },
     ])
+  })
+  it('marks the images of a tool as shared only when the bot asked to share them', () => {
+    const screenshot = (id: string, input: unknown): MessagePart => ({
+      type: 'tool',
+      id,
+      toolCallId: id,
+      toolName: 'browser_screenshot',
+      input,
+      state: {
+        status: 'completed',
+        output: { text: 'Captured', images: [{ id: 'tool-image:' + id, mediaType: 'image/png' }] },
+      },
+    })
+    const message: ChatMessage = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      parts: [screenshot('inspect', {}), screenshot('shared', { share: true }), screenshot('loose', { share: 'yes' })],
+    }
+    const refs = (part: MessagePart) => [
+      { id: 'img-' + (part.type === 'tool' ? part.id : ''), mediaType: 'image/png' as const, byteSize: 1, name: null },
+    ]
+    const items = projectChatMessages([message], [], (part) => refs(part))
+    expect(items.map((item) => (item.kind === 'tool' ? item.shared : undefined))).toEqual([false, true, false])
+    // Nothing to show, nothing to flag.
+    expect(projectChatMessages([message])[0]).not.toHaveProperty('shared')
   })
   it('keeps continuation source before and after native message id mapping', () => {
     const createdAt = Date.UTC(2026, 0, 1)
@@ -629,7 +784,7 @@ describe('transcript projection', () => {
     })
     expect(permissionTool({ action: 'mcp', resources: ['computer_click'] }, [])).toBeNull()
   })
-  it('maps native parts, keeps user metadata, omits reasoning and pages by stable ids', () => {
+  it('maps native parts, keeps user metadata, projects reasoning and pages by stable ids', () => {
     const createdAt = Date.UTC(2026, 0, 1)
     const messages = [
       {
@@ -690,16 +845,46 @@ describe('transcript projection', () => {
       },
     ]
     const items = projectChatMessages(messages, inputs)
-    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'tool', 'question', 'tool'])
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'reasoning', 'tool', 'question', 'tool'])
     expect(items[0]).toMatchObject({ id: 'input:stable', kind: 'user', text: 'Original', source: 'routine' })
-    expect(items[2]).toMatchObject({ id: 'assistant-message:2', target: 'example.com/path', state: 'done' })
-    expect(items[4]).toMatchObject({ target: '(10, 20)', state: 'error' })
+    // Reasoning keeps its part's place; readers that did not ask for it never receive it.
+    expect(items[2]).toEqual({
+      kind: 'reasoning',
+      id: 'assistant-message:1',
+      at: new Date(createdAt + 1).toISOString(),
+      text: 'secret',
+      truncated: false,
+      streaming: true,
+    })
+    expect(items[3]).toMatchObject({ id: 'assistant-message:2', target: 'example.com/path', state: 'done' })
+    expect(items[5]).toMatchObject({ target: '(10, 20)', state: 'error' })
     expect(toolTarget({ command: 'x'.repeat(100) })).toHaveLength(80)
     const page = transcriptPage(items, null, 2)
     expect(page.items).toHaveLength(2)
     expect(transcriptPage(items, page.before, 2).items.map((item) => item.id)).toEqual(
-      items.slice(1, 3).map((item) => item.id)
+      items.slice(2, 4).map((item) => item.id)
     )
+  })
+
+  it('projects reasoning of assistant messages only, cut for display and settled once the message ends', () => {
+    const long = 'x'.repeat(FLEET_REASONING_TEXT_MAX + 5)
+    const message = (id: string, role: 'user' | 'assistant', finishReason?: string) =>
+      ({
+        id,
+        conversationId: 'c',
+        role,
+        createdAt: Date.UTC(2026, 0, 1),
+        finishReason,
+        parts: [
+          { type: 'reasoning', id: 'long', text: long },
+          { type: 'reasoning', id: 'blank', text: '  \n' },
+        ],
+      }) as ChatMessage
+    expect(projectChatMessages([message('asked', 'user')])).toEqual([])
+    const [item, ...rest] = projectChatMessages([message('done', 'assistant', 'stop')])
+    expect(rest).toEqual([])
+    expect(item).toMatchObject({ kind: 'reasoning', truncated: true, streaming: false })
+    expect(item.kind === 'reasoning' && item.text).toBe(long.slice(0, FLEET_REASONING_TEXT_MAX))
   })
 })
 
@@ -731,7 +916,7 @@ describe('transcript extras persistence', () => {
 })
 
 describe('additional tool states', () => {
-  it('projects pending, running, denied and awaiting permission without reasoning', () => {
+  it('projects pending, running, denied and awaiting permission, and the reasoning after them', () => {
     const parts = ['pending', 'running', 'denied', 'awaiting-permission'].map((status, index) => ({
       type: 'tool',
       id: String(index),
@@ -750,13 +935,14 @@ describe('additional tool states', () => {
       conversationId: 'c',
       role: 'assistant',
       createdAt: Date.now(),
-      parts: [...parts, { type: 'reasoning', id: 'r', text: 'hidden' }],
+      parts: [...parts, { type: 'reasoning', id: 'r', text: 'thinking' }],
     } as ChatMessage
     expect(projectChatMessages([message]).map((item) => (item.kind === 'tool' ? item.state : item.kind))).toEqual([
       'running',
       'running',
       'error',
       'running',
+      'reasoning',
     ])
     const aborted = {
       ...message,
@@ -773,6 +959,59 @@ describe('additional tool states', () => {
       ],
     } as ChatMessage
     expect(projectChatMessages([aborted])[0]).toMatchObject({ kind: 'tool', state: 'interrupted' })
+  })
+  it('sends the todo_write checklist within protocol limits and no todos for other tools', () => {
+    const tool = (toolCallId: string, toolName: string, input: unknown) => ({
+      type: 'tool',
+      id: toolCallId,
+      toolCallId,
+      toolName,
+      input,
+      state: { status: 'completed', output: 'To-do list (current):\n[x] Inspect files' },
+    })
+    const long = 'x'.repeat(FLEET_TODO_LIMITS.contentMax + 20)
+    const message = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      finishReason: 'stop',
+      parts: [
+        tool('todo', 'todo_write', {
+          todos: [
+            { content: 'Inspect files', status: 'completed' },
+            { content: 'Fix rendering', status: 'in_progress' },
+            { content: 'Unknown status', status: 'blocked' },
+            { content: '', status: 'pending' },
+            null,
+            { content: long, status: 'pending' },
+          ],
+        }),
+        tool('many', 'todo_write', {
+          todos: Array.from({ length: FLEET_TODO_LIMITS.itemsMax + 5 }, (_, index) => ({
+            content: `Step ${index}`,
+            status: 'pending',
+          })),
+        }),
+        tool('partial', 'todo_write', { todos: '[{"content":' }),
+        tool('shell', 'bash', { command: 'npm test' }),
+      ],
+    } as ChatMessage
+    const [todo, many, partial, shell] = projectChatMessages([message])
+    expect(todo).toMatchObject({
+      kind: 'tool',
+      name: 'todo_write',
+      state: 'done',
+      todos: [
+        { content: 'Inspect files', status: 'completed' },
+        { content: 'Fix rendering', status: 'in_progress' },
+        { content: long.slice(0, FLEET_TODO_LIMITS.contentMax), status: 'pending' },
+      ],
+    })
+    expect(many.kind === 'tool' && many.todos).toHaveLength(FLEET_TODO_LIMITS.itemsMax)
+    expect(partial).toMatchObject({ kind: 'tool', todos: [] })
+    expect(shell).toMatchObject({ kind: 'tool', name: 'bash' })
+    expect(shell).not.toHaveProperty('todos')
   })
 })
 

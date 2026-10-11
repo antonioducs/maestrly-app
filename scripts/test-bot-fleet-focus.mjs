@@ -49,6 +49,11 @@ const headers = {
 // The environment display :0 is a grid of 1280x800 tiles, three per row: tile 0 shows Maestrly's settings, and tile
 // <slot> the browser of the bot in that slot.
 const TILE = { width: 1280, height: 800, columns: 3 }
+/**
+ * A bot's browser window in its tile once its desktop presents it (DEFAULT_PRESENTER_GEOMETRY): at the top left, this
+ * size, without an identity strip. Its tab strip and address bar take the top 78 pixels.
+ */
+const PRESENTED = { width: 1120, height: 640, addressBarY: 58 }
 const KEYSYM = { alt: 0xffe9, tab: 0xff09, f4: 0xffc1 }
 const browserWindow = (botName) => botName + ' — Browser'
 const execFileAsync = promisify(execFile)
@@ -253,7 +258,7 @@ const browserOpen = async (botName) =>
 /** Opens a fixture page in the browser of the bot in `slot` as that bot would: through the address bar. */
 async function navigate(slot, page) {
   const { x, y } = tileOrigin(slot)
-  await xdotool('mousemove', String(x + 500), String(y + 85), 'click', '1', 'key', 'ctrl+a')
+  await xdotool('mousemove', String(x + 500), String(y + PRESENTED.addressBarY), 'click', '1', 'key', 'ctrl+a')
   await xdotool('type', '--clearmodifiers', '--delay', '0', '--', 'http://127.0.0.1:8111/' + page)
   await xdotool('key', 'Return')
   await poll('page ' + page, async () => (await fixture()).ready.includes(page))
@@ -304,6 +309,12 @@ async function main() {
   await addBot('alpha', 'Alpha', 1)
   await addBot('beta', 'Beta', 2)
   for (const botName of ['Alpha', 'Beta']) await poll(botName + "'s browser", () => browserOpen(botName))
+  // Each bot's desktop shows its browser once the bot starts, which gives the browser its presented size.
+  for (const botName of ['Alpha', 'Beta'])
+    await poll(botName + "'s presented browser", async () => {
+      const area = await geometry(browserWindow(botName))
+      return area.width === PRESENTED.width && area.height === PRESENTED.height
+    })
   await sleep(3000)
   await navigate(1, 'alpha')
   await navigate(2, 'beta')
@@ -384,7 +395,7 @@ async function main() {
   check('Alt+Tab keeps the keyboard in Alpha', cycled.focus === browserWindow('Alpha'), cycled)
 
   // The "Open popup" button fills the bottom of Alpha's page.
-  await alpha.click(TILE.width / 2, TILE.height - 40)
+  await alpha.click(PRESENTED.width / 2, PRESENTED.height - 40)
   await poll("Alpha's popup", async () => (await fixture()).ready.includes('alpha-popup'))
   await sleep(800)
   const alphaPopup = await step("Alpha's own popup opened")

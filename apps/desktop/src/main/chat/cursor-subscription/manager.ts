@@ -22,6 +22,7 @@ import type { AgentOptions, LocalAgentStore, SDKAgent, SDKUser, ToolName } from 
 import { app } from 'electron'
 import {
   CURSOR_SDK_PLATFORM_INTEGRITY,
+  CURSOR_SDK_VERSION,
   isCursorSdkPlatformSupported,
   resolveCursorSdkPlatformTarget,
 } from '../cursor-sdk/platform'
@@ -536,7 +537,7 @@ export class CursorSubscriptionManager {
     try {
       await store.agents.delete({ filter: agentId ? { agentIds: [agentId] } : {} })
     } catch (error) {
-      // SDK 1.0.31 throws this exact error for an empty match. Retried tombstones
+      // The SDK (checked through 1.0.34) throws this exact error for an empty match. Retried tombstones
       // and first-use cleanup must remain idempotent; all storage errors propagate.
       if (!(error instanceof Error) || error.message !== 'No agents matched delete filter') throw error
     }
@@ -782,7 +783,7 @@ export async function disposeCursorSubscriptionManagers(): Promise<void> {
 }
 
 export const CURSOR_SUBSCRIPTION_PLATFORM = {
-  version: Object.keys(CURSOR_SDK_PLATFORM_INTEGRITY).length > 0 ? '1.0.31' : 'unknown',
+  version: Object.keys(CURSOR_SDK_PLATFORM_INTEGRITY).length > 0 ? CURSOR_SDK_VERSION : 'unknown',
   target: resolveCursorSdkPlatformTarget(),
   supported: isCursorSdkPlatformSupported(),
 }

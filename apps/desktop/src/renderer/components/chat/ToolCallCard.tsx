@@ -47,16 +47,19 @@ function pretty(value: unknown): string {
   }
 }
 
-const ToolImagePreview = memo(function ToolImagePreview({
+export const ToolImagePreview = memo(function ToolImagePreview({
   image,
   conversationId,
   messageId,
   toolPartId,
+  onOpenImage,
 }: {
   image: ChatToolImage
   conversationId: string
   messageId: string
   toolPartId: string
+  /** The image opens in a lightbox on click. */
+  onOpenImage?: (src: string, name: string) => void
 }) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
@@ -116,6 +119,7 @@ const ToolImagePreview = memo(function ToolImagePreview({
     }
   }, [api, conversationId, image.id, messageId, nearViewport, toolPartId])
 
+  const name = image.name ?? t('tool.imageOutput')
   return (
     <div ref={containerRef} className="flex min-w-0 flex-col gap-1.5 rounded bg-black/30 p-2">
       {state.status === 'loading' && (
@@ -130,18 +134,55 @@ const ToolImagePreview = memo(function ToolImagePreview({
           {t('tool.imageUnavailable')}
         </div>
       )}
-      {state.status === 'ready' && (
-        <img
-          src={state.src}
-          alt={image.name ?? t('tool.imageOutput')}
-          className="max-h-[420px] w-full rounded object-contain"
-        />
-      )}
+      {state.status === 'ready' &&
+        (onOpenImage ? (
+          <button
+            type="button"
+            title={name}
+            onClick={() => onOpenImage(state.src, name)}
+            className="rounded transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <img src={state.src} alt={name} className="max-h-[420px] w-full rounded object-contain" />
+          </button>
+        ) : (
+          <img src={state.src} alt={name} className="max-h-[420px] w-full rounded object-contain" />
+        ))}
     </div>
   )
 })
 
-export const ToolCallCard = memo(function ToolCallCard({
+/** The screenshots the agent chose to show the person: outside the activity, one click from the lightbox. */
+export function SharedToolImages({
+  part,
+  conversationId,
+  messageId,
+  onOpenImage,
+}: {
+  part: ToolPart
+  conversationId: string
+  messageId: string
+  onOpenImage?: (src: string, name: string) => void
+}) {
+  const images = toolOutputImages(part.state.status === 'completed' ? part.state.output : undefined)
+  if (!images.length) return null
+  return (
+    <div className="flex min-w-0 max-w-full flex-col gap-2">
+      {images.map((image) => (
+        <ToolImagePreview
+          key={image.id}
+          image={image}
+          conversationId={conversationId}
+          messageId={messageId}
+          toolPartId={part.id}
+          onOpenImage={onOpenImage}
+        />
+      ))}
+    </div>
+  )
+}
+
+/** A tool call's arguments, result and images: the body of its card, and of its step in an activity timeline. */
+export function ToolCallDetails({
   part,
   conversationId,
   messageId,
@@ -151,7 +192,6 @@ export const ToolCallCard = memo(function ToolCallCard({
   messageId: string
 }) {
   const { t } = useTranslation('chat')
-  const [open, setOpen] = useState(false)
   const out =
     part.state.status === 'completed'
       ? part.state.output
@@ -167,6 +207,55 @@ export const ToolCallCard = memo(function ToolCallCard({
       ? stripMaestroLiveEnvelope(out)
       : `${stripMaestroLiveEnvelope(toolOutputText(out))}${toolOutputImages(out).length ? `\n[${toolOutputImages(out).length} image output(s)]` : ''}`
   const images = toolOutputImages(out)
+  return (
+    <>
+      {part.input != null && (
+        <>
+          <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('tool.arguments')}</div>
+          <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[12px] text-foreground/90">
+            {pretty(part.input)}
+          </pre>
+        </>
+      )}
+      {outputText && (
+        <>
+          <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('tool.result')}</div>
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[12px] text-foreground/90">
+            {outputText}
+          </pre>
+        </>
+      )}
+      {images.length > 0 && (
+        <div className="mt-2 flex flex-col gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <ImageIcon className="h-3.5 w-3.5" />
+            {t('tool.imageOutput')}
+          </div>
+          {images.map((image) => (
+            <ToolImagePreview
+              key={image.id}
+              image={image}
+              conversationId={conversationId}
+              messageId={messageId}
+              toolPartId={part.id}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+export const ToolCallCard = memo(function ToolCallCard({
+  part,
+  conversationId,
+  messageId,
+}: {
+  part: ToolPart
+  conversationId: string
+  messageId: string
+}) {
+  const [open, setOpen] = useState(false)
   return (
     <div className="min-w-0 max-w-full rounded-lg border border-border bg-white/[0.02] text-[13px]">
       <button
@@ -187,41 +276,7 @@ export const ToolCallCard = memo(function ToolCallCard({
       </button>
       {open && (
         <div className="border-t border-border px-3 py-2">
-          {part.input != null && (
-            <>
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-                {t('tool.arguments')}
-              </div>
-              <pre className="mb-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[12px] text-foreground/90">
-                {pretty(part.input)}
-              </pre>
-            </>
-          )}
-          {outputText && (
-            <>
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('tool.result')}</div>
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[12px] text-foreground/90">
-                {outputText}
-              </pre>
-            </>
-          )}
-          {images.length > 0 && (
-            <div className="mt-2 flex flex-col gap-2">
-              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-                <ImageIcon className="h-3.5 w-3.5" />
-                {t('tool.imageOutput')}
-              </div>
-              {images.map((image) => (
-                <ToolImagePreview
-                  key={image.id}
-                  image={image}
-                  conversationId={conversationId}
-                  messageId={messageId}
-                  toolPartId={part.id}
-                />
-              ))}
-            </div>
-          )}
+          <ToolCallDetails part={part} conversationId={conversationId} messageId={messageId} />
         </div>
       )}
     </div>

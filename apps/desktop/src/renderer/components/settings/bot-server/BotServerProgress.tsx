@@ -60,6 +60,11 @@ export function BotServerProgress({
           </li>
         ))}
       </ol>
+      {job.warning && (
+        <p role="status" className="rounded-md border border-amber-500/40 p-3 text-sm text-amber-500">
+          {t(`botServer.warnings.${job.warning}`)}
+        </p>
+      )}
       {job.error && (
         <p role="alert" className="rounded-md border border-destructive/40 p-3 text-sm text-destructive">
           {t(`botServer.error.${job.error.code}`)}

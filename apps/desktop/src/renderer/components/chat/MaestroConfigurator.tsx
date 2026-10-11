@@ -1,3 +1,4 @@
+import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Loader2, RefreshCw, RotateCcw, Send, Sparkles, Square, X } from 'lucide-react'
@@ -124,6 +125,7 @@ export function MaestroConfigurator({
   onApply: (config: MaestroConfigV1) => void
   onClose: () => void
 }) {
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
   const api = useHostApi()
   const [messages, setMessages] = useState<MaestroConfiguratorMessage[]>([])
@@ -291,7 +293,7 @@ export function MaestroConfigurator({
   }
 
   const reset = async () => {
-    if (messages.length > 0 && !window.confirm(t('maestro.configurator.confirmReset'))) return
+    if (messages.length > 0 && !ownerWindow.confirm(t('maestro.configurator.confirmReset'))) return
     try {
       await api.chatMaestroConfiguratorReset()
       setMessages([])

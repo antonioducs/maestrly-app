@@ -1,0 +1,94 @@
+!# Maestrly: the dark title bars of a bot's apps display, after the approved prototype.
+!# Bars #1c1c1f (active) and #161618 (inactive), text #edeae3. The title font and size are set in openbox-rc.xml.
+
+*.font: shadow=n
+
+!# Frame
+border.width: 1
+padding.width: 12
+padding.height: 12
+window.handle.width: 0
+window.client.padding.width: 0
+window.client.padding.height: 0
+menu.overlap: 2
+window.label.text.justify: left
+
+window.active.border.color: #0d0d10
+window.inactive.border.color: #0d0d10
+window.active.title.separator.color: #0d0d10
+window.inactive.title.separator.color: #0d0d10
+window.active.client.color: #161618
+window.inactive.client.color: #161618
+
+!# Title bars
+window.active.title.bg: flat solid
+window.active.title.bg.color: #1c1c1f
+window.inactive.title.bg: flat solid
+window.inactive.title.bg.color: #161618
+window.active.label.bg: parentrelative
+window.inactive.label.bg: parentrelative
+window.active.label.text.color: #edeae3
+window.inactive.label.text.color: #7d7a74
+
+window.*.handle.bg: flat solid
+window.*.handle.bg.color: #161618
+window.*.grip.bg: flat solid
+window.*.grip.bg.color: #161618
+
+!# Buttons: glyphs are the .xbm files next to this file
+window.*.button.*.bg: flat solid
+window.active.button.*.bg.color: #1c1c1f
+window.inactive.button.*.bg.color: #161618
+window.active.button.*.image.color: #c9c6bf
+window.inactive.button.*.image.color: #6a6863
+window.active.button.hover.bg.color: #38383d
+window.active.button.hover.image.color: #edeae3
+window.inactive.button.hover.bg.color: #2a2a2e
+window.inactive.button.hover.image.color: #edeae3
+window.active.button.pressed.bg.color: #2a2a2e
+window.active.button.pressed.image.color: #edeae3
+window.inactive.button.pressed.bg.color: #2a2a2e
+window.inactive.button.pressed.image.color: #edeae3
+window.active.button.close.hover.bg.color: #e5484d
+window.active.button.close.hover.image.color: #ffffff
+window.inactive.button.close.hover.bg.color: #e5484d
+window.inactive.button.close.hover.image.color: #ffffff
+window.active.button.close.pressed.bg.color: #c93a3f
+window.active.button.close.pressed.image.color: #ffffff
+window.inactive.button.close.pressed.bg.color: #c93a3f
+window.inactive.button.close.pressed.image.color: #ffffff
+
+!# Menus (window menu and root menu)
+menu.border.color: #2c2c33
+menu.border.width: 1
+menu.title.bg: flat solid
+menu.title.bg.color: #1c1c1f
+menu.title.text.color: #edeae3
+menu.items.bg: flat solid
+menu.items.bg.color: #161618
+menu.items.text.color: #edeae3
+menu.items.disabled.text.color: #6a6863
+menu.items.active.bg: flat solid
+menu.items.active.bg.color: #38383d
+menu.items.active.text.color: #ffffff
+menu.items.active.disabled.text.color: #6a6863
+menu.separator.width: 1
+menu.separator.padding.width: 0
+menu.separator.padding.height: 3
+menu.separator.color: #2c2c33
+
+!# On-screen display (Alt+Tab)
+osd.border.width: 1
+osd.border.color: #2c2c33
+osd.bg: flat solid
+osd.bg.color: #161618
+osd.label.bg: parentrelative
+osd.label.text.color: #edeae3
+osd.hilight.bg: flat solid
+osd.hilight.bg.color: #38383d
+osd.unhilight.bg: flat solid
+osd.unhilight.bg.color: #1c1c1f
+osd.active.label.bg: parentrelative
+osd.active.label.text.color: #edeae3
+osd.inactive.label.bg: parentrelative
+osd.inactive.label.text.color: #7d7a74

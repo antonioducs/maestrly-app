@@ -21,6 +21,7 @@ import { tMain } from './i18n'
 import { deleteCodexThreadForConversation } from './chat/codex-subscription/lifecycle'
 import { deleteGitHubCopilotSessionForConversation } from './chat/github-copilot/lifecycle'
 import { deleteCursorAgentForConversation } from './chat/cursor-subscription/lifecycle'
+import { deleteAntigravitySessionForConversation } from './chat/antigravity-subscription/lifecycle'
 import { deleteClaudeSessionForConversation } from './chat/claude-agent-sdk/lifecycle'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
 import { scheduleWorkspaceMemoryIndexWarmup, stopWorkspaceMemoryIndex } from './memory/index'
@@ -119,6 +120,7 @@ export async function deleteConversation(
   assertConversationMigrationMutationAllowed(id, 'Delete conversation')
 
   await deleteCursorAgentForConversation(id)
+  await deleteAntigravitySessionForConversation(id)
   await deleteCodexThreadForConversation(id)
   await deleteGitHubCopilotSessionForConversation(id, { strict: true })
   await deleteClaudeSessionForConversation(id, { strict: true })
@@ -279,9 +281,9 @@ export async function createConversation(args: CreateConversationArgs): Promise<
       branch: args.branch,
       base,
       isNewBranch: args.isNewBranch,
-      dest: externalWorktreeDir(ws.id, args.branch),
+      dest: externalWorktreeDir(ws.id, args.baseRevision && args.id ? `dispatch-${args.id}` : args.branch),
       // A pinned task branch must be new: never attach to an existing branch or checkout.
-      ...(args.baseRevision ? { baseRevision: args.baseRevision, exclusive: true } : {}),
+      ...(args.baseRevision ? { baseRevision: args.baseRevision, exclusive: true, reserveDestination: !!args.id } : {}),
     })
     branch = args.branch
   } else {

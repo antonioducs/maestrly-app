@@ -423,6 +423,26 @@ const environmentSteps = (f: Fixture, id: string) =>
 const container = (f: Fixture, name: string) => [...f.docker.containers.values()].find((item) => item.name === name)
 
 describe('environments', () => {
+  it('turns runtime updates off in containers when the server does, recreating containers that differ', async () => {
+    const f = fixture({ MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'off' })
+    await f.instance('work')
+    await environment(f, 'Work', ['Ads'])
+    const off = container(f, 'maestrly-env-work')!
+    expect(off.spec.env).toContain('MAESTRLY_BOT_RUNTIME_UPDATES=off')
+    expect(off.labels['org.maestrly.fleet.runtime-updates']).toBe('off')
+
+    f.cfg.botRuntimeUpdates = 'auto'
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    const auto = container(f, 'maestrly-env-work')!
+    expect(auto).not.toBe(off)
+    expect(auto.spec.env.some((item) => item.startsWith('MAESTRLY_BOT_RUNTIME_UPDATES='))).toBe(false)
+    expect(auto.labels['org.maestrly.fleet.runtime-updates']).toBe('auto')
+
+    // Unchanged: a restart keeps the same container.
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    expect(container(f, 'maestrly-env-work')).toBe(auto)
+  })
+
   it('guards public egress containers and recreates a container whose egress changed', async () => {
     const f = fixture({ MAESTRLY_GATEWAY_BOT_EGRESS: 'public' })
     await f.instance('work')

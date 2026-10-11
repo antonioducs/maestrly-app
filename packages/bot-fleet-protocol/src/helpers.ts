@@ -1,6 +1,6 @@
 import type { FleetLoginKind } from './api.js'
-import { FLEET_ENVIRONMENT_DISPLAY, FLEET_UPDATE_BUSY_STATUSES } from './constants.js'
-import type { FleetBot } from './domain.js'
+import { FLEET_ENVIRONMENT_DISPLAY, FLEET_REASONING_QUERY, FLEET_UPDATE_BUSY_STATUSES } from './constants.js'
+import type { FleetBot, FleetTranscriptItem } from './domain.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
 export function deriveBotId(name: string, existingIds: Iterable<string>): string {
@@ -90,6 +90,16 @@ export function compareFleetTranscriptItems(a: { id: string; at: string }, b: { 
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
+/** Whether a reader of transcripts or events asked for `reasoning` items (`transcript-reasoning`). */
+export function fleetReaderWantsReasoning(search: URLSearchParams): boolean {
+  return search.get(FLEET_REASONING_QUERY) === '1'
+}
+
+/** Whether a transcript item may go to a reader: `reasoning` items only to one that asked for them. */
+export function fleetTranscriptItemReadable(item: Pick<FleetTranscriptItem, 'kind'>, reasoning: boolean): boolean {
+  return reasoning || item.kind !== 'reasoning'
+}
+
 export function isValidTimeZone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat('en', { timeZone: timezone })
@@ -155,6 +165,7 @@ export function fleetLoginUrlAllowed(kind: FleetLoginKind, value: string): boole
     return false
   }
   if (url.protocol !== 'https:' || url.username || url.password) return false
+  if (kind === 'antigravity') return url.origin === 'https://accounts.google.com'
   if (kind === 'codex') return url.origin === 'https://auth.openai.com'
   if (kind === 'claude')
     return ['https://claude.com', 'https://claude.ai', 'https://platform.claude.com'].includes(url.origin)

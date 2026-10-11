@@ -1,14 +1,26 @@
+import { environmentSettingsRoute } from './environment-settings.js'
+import { FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
+import { once } from 'node:events'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_ARTIFACTS_FEATURE,
+  FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+  FLEET_ARTIFACTS_TRANSFER_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_IMAGE_LIMITS,
+  FLEET_FILES_FEATURE,
+  FLEET_FILE_LIMITS,
+  fleetFileIdSchema,
+  FLEET_TRANSCRIPT_REASONING_FEATURE,
+  fleetReaderWantsReasoning,
   normalizePairingCode,
   type FleetCreateBotRequest,
   type FleetCreateEnvironmentRequest,
@@ -18,6 +30,10 @@ import {
   type FleetSendMessageRequest,
   type FleetAddApiKeyAccountRequest,
   type FleetConversationCallRequest,
+  type FleetDesktopCallResult,
+  type FleetDesktopLinkRequest,
+  FLEET_DESKTOP_BRIDGE_FEATURE,
+  FLEET_DESKTOP_BRIDGE_QUERY,
 } from '@maestrly/bot-fleet-protocol'
 import type { ServerResponse } from 'node:http'
 import type { GatewayContext } from '../context.js'
@@ -46,6 +62,12 @@ const PROVISIONING = new Set([
 function requireBot(ctx: GatewayContext, id: string) {
   const bot = ctx.lifecycle.get(id)
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+  return bot
+}
+/** A bot that exists, archived or not: only deleting it removes its records. */
+function requireBotRecord(ctx: GatewayContext, id: string) {
+  const bot = ctx.store.getBot(id)
+  if (!bot) throw new GatewayError('NOT_FOUND', 'Bot not found')
   return bot
 }
 /** Older Macs address an archived environment of one through its bot; shared environments need their own routes. */
@@ -84,7 +106,9 @@ function recordConfiguration(
   ctx: GatewayContext,
   environmentId: string,
   res: ServerResponse,
-  counts: Partial<Record<'accounts' | 'skills' | 'mcpServers' | 'removed', number>>
+  counts: Partial<
+    Record<'accounts' | 'skills' | 'mcpServers' | 'removed' | 'models' | 'runtimes' | 'preferences', number>
+  >
 ) {
   if (!Object.values(counts).some((count) => count > 0)) return
   const device = ctx.auth.device(res.req?.headers.authorization)
@@ -174,6 +198,34 @@ export async function publicRoute(
 ): Promise<Result> {
   const id = params.id,
     eid = params.eid
+  if (key.startsWith('settings')) {
+    ctx.auth.device(res.req?.headers.authorization)
+    const result = await environmentSettingsRoute(key, params, body, ctx)
+    if (
+      ![
+        'settingsAccounts',
+        'settingsModels',
+        'settingsSkills',
+        'settingsSkill',
+        'settingsSearchSkills',
+        'settingsSkillGroups',
+        'settingsMcpServers',
+        'settingsMcpServer',
+        'settingsTestMcpServer',
+        'settingsRuntimes',
+        'settingsPreferences',
+      ].includes(key)
+    )
+      recordConfiguration(ctx, eid, res, {
+        accounts: key.includes('Account') || key.includes('Subscription') ? 1 : 0,
+        skills: key.includes('Skill') ? 1 : 0,
+        mcpServers: key.includes('Mcp') ? 1 : 0,
+        models: key.includes('Model') ? 1 : 0,
+        runtimes: key.includes('Runtime') ? 1 : 0,
+        preferences: key === 'settingsSetPreferences' ? 1 : 0,
+      })
+    return result
+  }
   if (key.startsWith('environment') && PROVISIONING.has(key.slice('environment'.length))) {
     requireEnvironment(ctx, eid)
     requireEnvironmentProvisioning(ctx, eid)
@@ -232,11 +284,19 @@ export async function publicRoute(
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: ctx.host.gatewayVersion,
           features: [
+            FLEET_FILES_FEATURE,
+            FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+            FLEET_ARTIFACTS_FEATURE,
+            FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+            FLEET_ARTIFACTS_TRANSFER_FEATURE,
             FLEET_PROVISIONING_FEATURE,
             FLEET_ENVIRONMENTS_FEATURE,
             FLEET_ENVIRONMENT_COMPACTION_FEATURE,
             FLEET_ENVIRONMENT_UPDATES_FEATURE,
             FLEET_CONTEXT_LIMIT_FEATURE,
+            FLEET_TRANSCRIPT_REASONING_FEATURE,
+            FLEET_RUNTIME_UPDATES_FEATURE,
+            FLEET_DESKTOP_BRIDGE_FEATURE,
             FLEET_WORKSPACES_HOST_FEATURE,
           ],
           botImage: ctx.config.botImage,
@@ -300,6 +360,14 @@ export async function publicRoute(
       }
     case 'environmentUpdateCancel':
       return { body: await ctx.lifecycle.cancelUpdate(eid) }
+    case 'environmentRuntimesCheck': {
+      requireEnvironment(ctx, eid)
+      const client = ctx.lifecycle.environmentInstance(eid)
+      if (!ctx.lifecycle.environment(eid)?.capabilities.includes(FLEET_RUNTIME_UPDATES_FEATURE))
+        throw new GatewayError('CONFLICT', 'Restart this environment to update it before checking its runtimes.')
+      await client.runtimesCheck()
+      return { body: requireEnvironment(ctx, eid) }
+    }
     case 'environmentArchive':
       return { body: await ctx.lifecycle.archiveEnvironment(eid) }
     case 'archivedEnvironmentsList':
@@ -425,8 +493,69 @@ export async function publicRoute(
       return {
         body: await ctx.lifecycle
           .instanceFor(id)
-          .transcript(url.searchParams.get('before') ?? undefined, number(url.searchParams.get('limit'), 500, 200)),
+          .transcript(
+            url.searchParams.get('before') ?? undefined,
+            number(url.searchParams.get('limit'), 500, 200),
+            fleetReaderWantsReasoning(url.searchParams)
+          ),
       }
+    case 'botFileMeta':
+    case 'botFile': {
+      if (!fleetFileIdSchema.safeParse(params.fileId).success)
+        throw new GatewayError('INVALID_REQUEST', 'Invalid file id')
+      requireBot(ctx, id)
+      const client = ctx.lifecycle.instanceFor(id)
+      const controller = new AbortController()
+      const closed = () => controller.abort()
+      res.once('close', closed)
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+      try {
+        const ref = await client.fileMeta(params.fileId, controller.signal)
+        controller.signal.throwIfAborted()
+        if (key === 'botFileMeta') {
+          res.setHeader('Cache-Control', 'private, no-store')
+          res.setHeader('X-Content-Type-Options', 'nosniff')
+          return { body: ref }
+        }
+        const response = await client.file(params.fileId, controller.signal)
+        reader = response.body!.getReader()
+        if (
+          Number(response.headers.get('content-length')) !== ref.byteSize ||
+          response.headers.get('content-type') !== ref.mediaType
+        )
+          throw new GatewayError('INSTANCE_UNAVAILABLE', 'Invalid file response')
+        res.writeHead(200, {
+          'Content-Type': ref.mediaType,
+          'Content-Length': ref.byteSize,
+          'Content-Disposition':
+            "attachment; filename*=UTF-8''" +
+            encodeURIComponent(ref.name).replace(/['()*]/g, (char) => '%' + char.charCodeAt(0).toString(16)),
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'private, no-store',
+        })
+        let size = 0
+        for (;;) {
+          controller.signal.throwIfAborted()
+          const next = await reader.read()
+          if (next.done) break
+          size += next.value.byteLength
+          if (size > ref.byteSize || size > FLEET_FILE_LIMITS.downloadMaxBytes) throw new Error('Oversized file')
+          if (!res.write(next.value)) await once(res, 'drain', { signal: controller.signal })
+        }
+        if (size !== ref.byteSize) throw new Error('Truncated file')
+        res.end()
+        return { stream: true }
+      } catch (error) {
+        if (!res.headersSent && !res.destroyed) throw error
+        res.destroy()
+        return { stream: true }
+      } finally {
+        controller.abort()
+        await reader?.cancel().catch(() => undefined)
+        reader?.releaseLock()
+        res.off('close', closed)
+      }
+    }
     case 'botImage': {
       const response = await ctx.lifecycle.instanceFor(id).image(params.imageId)
       const mediaType = response.headers.get('content-type')!
@@ -455,7 +584,21 @@ export async function publicRoute(
     case 'botMessageSend': {
       const input = body as FleetSendMessageRequest,
         scope = 'botMessageSend:' + id
-      const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex')
+      if (
+        input.attachments.some((attachment) => attachment.kind && attachment.kind !== 'image') &&
+        !ctx.lifecycle.statuses.get(id)?.capabilities.includes(FLEET_FILES_FEATURE)
+      )
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to send documents')
+      // Preserve receipts written before image inputs had an explicit kind.
+      const fingerprint = {
+        ...input,
+        attachments: input.attachments.map((attachment) => {
+          if (attachment.kind !== 'image') return attachment
+          const { kind: _kind, ...legacy } = attachment
+          return legacy
+        }),
+      }
+      const hash = createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex')
       const prior = ctx.store.priorIdempotency(scope, input.idempotencyKey, hash)
       if (prior) return { body: prior.response, status: prior.status }
       const pendingKey = scope + ':' + input.idempotencyKey
@@ -526,6 +669,33 @@ export async function publicRoute(
     case 'botRoutineRun':
       requireBot(ctx, id)
       return { body: await ctx.routines!.run(id, params.rid) }
+    // A Mac links only itself; it may list a bot's Macs, and remove another Mac's link, but never act as another Mac.
+    case 'botDesktopLinkPut': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: ctx.desktops!.linkDevice(id, device, (body as FleetDesktopLinkRequest).name) }
+    }
+    case 'botDesktopLinkDelete': {
+      requireBotRecord(ctx, id)
+      ctx.desktops!.unlinkDevice(id, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    }
+    case 'botDesktopLinks': {
+      // An archived bot keeps its links (restoring it restores its access); a deleted one has none.
+      requireBotRecord(ctx, id)
+      return { body: { links: ctx.desktops!.views(id, ctx.auth.device(res.req?.headers.authorization).id) } }
+    }
+    case 'botDesktopLinkRemove':
+      requireBotRecord(ctx, id)
+      ctx.desktops!.remove(id, params.desktopId)
+      return { status: 204 }
+    case 'desktopCallResult':
+      ctx.desktops!.result(
+        params.callId,
+        ctx.auth.device(res.req?.headers.authorization).id,
+        body as FleetDesktopCallResult
+      )
+      return { status: 204 }
     case 'inbox':
       return {
         body: {
@@ -547,7 +717,11 @@ export async function publicRoute(
         },
       }
     case 'events':
-      ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id)
+      ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id, {
+        reasoning: fleetReaderWantsReasoning(url.searchParams),
+        // A Mac that answers desktop calls says so; until it does, it is offline for the bots it linked.
+        desktopBridge: url.searchParams.get(FLEET_DESKTOP_BRIDGE_QUERY) === '1',
+      })
       return { stream: true }
     default:
       throw new GatewayError('NOT_FOUND', 'Route not found')

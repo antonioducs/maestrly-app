@@ -11,6 +11,7 @@ import {
 import {
   FLEET_BOT_ENV,
   FLEET_BOT_EGRESS_MODES,
+  FLEET_BOT_RUNTIME_UPDATE_MODES,
   FLEET_GATEWAY_ENV,
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -18,7 +19,12 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
+  FLEET_RUNTIME_IDS,
+  FLEET_RUNTIME_UPDATES_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   type FleetRoute,
+  fleetRuntimeInfoSchema,
+  fleetRuntimesCheckResponseSchema,
   fleetBotBlocksUpdate,
   fleetEnvironmentUpdateRequestSchema,
   fleetArchivedBotSchema,
@@ -50,6 +56,9 @@ import {
   FLEET_COMPACTION_LIMITS,
   FLEET_COMPACTION_SUMMARY_MAX,
   FLEET_CONVERSATION_OPS,
+  FLEET_REASONING_TEXT_MAX,
+  fleetReaderWantsReasoning,
+  fleetTranscriptItemReadable,
   fleetActivitySchema,
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
@@ -153,10 +162,70 @@ const status = {
 }
 
 describe('domain contracts', () => {
+  it('defaults artifact permissions for old bots and instance profiles', () => {
+    expect(fleetBotSchema.parse(bot).publishArtifacts).toBe(false)
+    expect(fleetBotSchema.parse({ ...bot, publishArtifacts: true }).publishArtifacts).toBe(true)
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: true },
+    }
+    expect(fleetInstanceProfileSchema.parse(profile).gateway).toEqual({
+      peersEnabled: true,
+      artifactsEnabled: false,
+      desktopBridgeEnabled: false,
+    })
+    expect(
+      fleetInstanceProfileSchema.parse({
+        ...profile,
+        gateway: { peersEnabled: true, artifactsEnabled: true },
+      }).gateway.artifactsEnabled
+    ).toBe(true)
+    const request = { name: 'Scout', instructions: '', ceiling: 'ask', talksTo: [], idempotencyKey: key }
+    expect(fleetCreateBotRequestSchema.parse(request)).toEqual(request)
+    expect(fleetPatchBotRequestSchema.parse({})).toEqual({})
+    for (const publishArtifacts of [true, false]) {
+      expect(fleetCreateBotRequestSchema.parse({ ...request, publishArtifacts }).publishArtifacts).toBe(
+        publishArtifacts
+      )
+      expect(fleetPatchBotRequestSchema.parse({ publishArtifacts })).toEqual({ publishArtifacts })
+    }
+    expect(fleetCreateBotRequestSchema.safeParse({ ...request, publishArtifacts: 'true' }).success).toBe(false)
+    expect(fleetPatchBotRequestSchema.safeParse({ publishArtifacts: 'false' }).success).toBe(false)
+    expect(fleetBotSchema.safeParse({ ...bot, publishArtifacts: 'true' }).success).toBe(false)
+    expect(
+      fleetInstanceProfileSchema.safeParse({
+        ...profile,
+        gateway: { peersEnabled: true, artifactsEnabled: 'true' },
+      }).success
+    ).toBe(false)
+  })
+
+  it('names the unified desktop capability and accepts an optional bot tint', () => {
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: true },
+    }
+    expect(FLEET_UNIFIED_DESKTOP_FEATURE).toBe('unified-desktop')
+    expect(fleetInstanceProfileSchema.parse(profile).tint).toBeUndefined()
+    expect(fleetInstanceProfileSchema.parse({ ...profile, tint: '#8b6cf0' }).tint).toBe('#8b6cf0')
+    expect(() => fleetInstanceProfileSchema.parse({ ...profile, tint: 'purple' })).toThrow()
+  })
+
   it('exports the fleet egress modes and environment keys', () => {
     expect(FLEET_BOT_EGRESS_MODES).toEqual(['open', 'public'])
     expect(FLEET_GATEWAY_ENV.botEgress).toBe('MAESTRLY_GATEWAY_BOT_EGRESS')
     expect(FLEET_BOT_ENV.egress).toBe('MAESTRLY_BOT_EGRESS')
+    expect(FLEET_BOT_RUNTIME_UPDATE_MODES).toEqual(['auto', 'off'])
+    expect(FLEET_GATEWAY_ENV.botRuntimeUpdates).toBe('MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES')
+    expect(FLEET_BOT_ENV.runtimeUpdates).toBe('MAESTRLY_BOT_RUNTIME_UPDATES')
   })
   it('preserves structured permission tools in transcript, pending inbox, and events', () => {
     const tool = { name: 'computer_click', target: '(10, 20)' }
@@ -265,6 +334,36 @@ describe('domain contracts', () => {
     ).toBe(false)
     expect(fleetInteractionResolutionSchema.parse({ kind: 'question_dismiss' }).kind).toBe('question_dismiss')
     expect(fleetInteractionResolutionSchema.safeParse({ kind: 'permission', reply: 'maybe' }).success).toBe(false)
+  })
+
+  it('carries a todo_write checklist on tool items and keeps items without one valid', () => {
+    const tool = { kind: 'tool', id: 't:0', at, name: 'todo_write', target: null, state: 'done', output: null }
+    const todos = [
+      { content: 'Inspect files', status: 'completed' },
+      { content: 'Fix rendering', status: 'in_progress' },
+      { content: 'Run tests', status: 'pending' },
+    ]
+    expect(fleetTranscriptItemSchema.parse({ ...tool, todos })).toMatchObject({ todos })
+    // Instances that predate the checklist send no todos: the item stays valid and carries none.
+    expect(fleetTranscriptItemSchema.parse(tool)).not.toHaveProperty('todos')
+    expect(fleetTranscriptItemSchema.parse({ ...tool, todos: [] })).toMatchObject({ todos: [] })
+    const invalid = [
+      [{ content: '', status: 'pending' }],
+      [{ content: 'x'.repeat(provisioning.FLEET_TODO_LIMITS.contentMax + 1), status: 'pending' }],
+      [{ content: 'Unknown status', status: 'blocked' }],
+      Array.from({ length: provisioning.FLEET_TODO_LIMITS.itemsMax + 1 }, () => todos[2]),
+    ]
+    for (const entries of invalid)
+      expect(fleetTranscriptItemSchema.safeParse({ ...tool, todos: entries }).success).toBe(false)
+  })
+
+  it('says whether the images of a tool item are shared, and keeps items without the flag valid', () => {
+    const tool = { kind: 'tool', id: 't:0', at, name: 'browser_screenshot', target: null, state: 'done', output: null }
+    expect(fleetTranscriptItemSchema.parse({ ...tool, shared: true })).toMatchObject({ shared: true })
+    expect(fleetTranscriptItemSchema.parse({ ...tool, shared: false })).toMatchObject({ shared: false })
+    // Instances that predate the flag send none: the owner always saw their tool images.
+    expect(fleetTranscriptItemSchema.parse(tool)).not.toHaveProperty('shared')
+    expect(fleetTranscriptItemSchema.safeParse({ ...tool, shared: 'yes' }).success).toBe(false)
   })
 
   it('validates routines and schedule shape without imposing an IANA check in the schema', () => {
@@ -483,6 +582,25 @@ describe('routes and helpers', () => {
     ).toBe(false)
     expect(fleetTranscriptItemSchema.safeParse({ ...item, origin: 'other' }).success).toBe(false)
     expect(FLEET_CONVERSATION_OPS).toEqual(expect.arrayContaining(['chatCompact', 'chatBackgroundCompactionRetry']))
+  })
+
+  it('carries reasoning only to readers that ask for it, cut for display', () => {
+    const at = '2026-09-29T10:00:00.000Z'
+    const item = { id: 'm:1', at, kind: 'reasoning', text: 'Checking the tests', truncated: false, streaming: true }
+    expect(fleetTranscriptItemSchema.parse(item)).toEqual(item)
+    expect(fleetGatewayEventSchema.parse({ type: 'transcript.upsert', at, botId: 'alpha', item }).type).toBe(
+      'transcript.upsert'
+    )
+    expect(
+      fleetTranscriptItemSchema.safeParse({ ...item, text: 'x'.repeat(FLEET_REASONING_TEXT_MAX + 1) }).success
+    ).toBe(false)
+    expect(fleetTranscriptItemSchema.safeParse({ ...item, truncated: undefined }).success).toBe(false)
+    expect(fleetReaderWantsReasoning(new URLSearchParams('since=0&reasoning=1'))).toBe(true)
+    for (const query of ['', 'reasoning=0', 'reasoning=true', 'reasoning'])
+      expect(fleetReaderWantsReasoning(new URLSearchParams(query)), query).toBe(false)
+    expect(fleetTranscriptItemReadable(item as { kind: 'reasoning' }, false)).toBe(false)
+    expect(fleetTranscriptItemReadable(item as { kind: 'reasoning' }, true)).toBe(true)
+    expect(fleetTranscriptItemReadable({ kind: 'assistant' }, false)).toBe(true)
   })
 
   it('schedules routines weekly or every N minutes within the limits, and says who created them', () => {
@@ -1162,7 +1280,11 @@ describe('environment contracts', () => {
     const install = { profile, slot: 1, gatewayToken: 'g'.repeat(16) }
     expect(fleetInstanceBotInstallSchema.parse(install)).toEqual({
       ...install,
-      profile: { ...profile, compaction: null },
+      profile: {
+        ...profile,
+        compaction: null,
+        gateway: { ...profile.gateway, artifactsEnabled: false, desktopBridgeEnabled: false },
+      },
     })
     expect(fleetInstanceBotInstallSchema.parse({ ...install, slot: 8, gatewayToken: 'g'.repeat(200) }).slot).toBe(8)
     expect(fleetInstanceBotInstallSchema.parse(install).paused).toBeUndefined()
@@ -1305,6 +1427,49 @@ describe('environment contracts', () => {
     expect(fleetEnvironmentUpdateRequestSchema.safeParse({}).success).toBe(false)
   })
 
+  it('reports the runtime versions of an environment and the routes that check them', () => {
+    expect(FLEET_RUNTIME_UPDATES_FEATURE).toBe('runtime-updates')
+    expect(FLEET_RUNTIME_IDS).toEqual(['claude-code', 'codex', 'antigravity-acp'])
+    expect(fleetEnvironmentSchema.parse(environment).runtimes).toBeNull()
+    expect(fleetInstanceStatusSchema.parse(status).runtimes).toBeNull()
+    const claude = {
+      id: 'claude-code',
+      version: '2.1.285',
+      source: 'image',
+      automatic: true,
+      state: 'available',
+      availableVersion: '2.1.290',
+      lastCheckedAt: '2026-09-29T10:00:00.000Z',
+      error: null,
+    } as const
+    // An image that predates the pending version reports none.
+    const reported = { ...claude, pendingVersion: null }
+    expect(fleetRuntimeInfoSchema.parse(claude)).toEqual(reported)
+    expect(fleetEnvironmentSchema.parse({ ...environment, runtimes: [claude] }).runtimes).toEqual([reported])
+    expect(fleetInstanceStatusSchema.parse({ ...status, runtimes: [claude] }).runtimes).toEqual([reported])
+    const switching = { ...claude, id: 'codex', version: '0.155.1', pendingVersion: '0.160.0' } as const
+    expect(fleetRuntimeInfoSchema.parse(switching)).toEqual(switching)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, pendingVersion: 'x'.repeat(41) }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, state: 'unknown' }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, id: 'copilot' }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, source: 'system' }).success).toBe(false)
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.runtimesCheck,
+      'POST',
+      '/v1/runtimes/check',
+      null,
+      fleetRuntimesCheckResponseSchema
+    )
+    expect(fleetRuntimesCheckResponseSchema.parse({ ok: true })).toEqual({ ok: true })
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.environmentRuntimesCheck,
+      'POST',
+      '/v1/environments/:eid/runtimes/check',
+      null,
+      fleetEnvironmentSchema
+    )
+  })
+
   it('mirrors every bot provisioning route on the environment', () => {
     const pairs = [
       ['botApiKeyAccountAdd', 'environmentApiKeyAccountAdd'],
@@ -1433,4 +1598,179 @@ describe('environment contracts', () => {
         }
     }
   })
+})
+
+describe('desktop bridge contracts', () => {
+  const expectRoute = (
+    route: FleetRoute,
+    method: FleetRoute['method'],
+    path: string,
+    body: FleetRoute['body'],
+    response: FleetRoute['response']
+  ) => {
+    expect({ method: route.method, path: route.path }).toEqual({ method, path })
+    expect(route.body).toBe(body)
+    expect(route.response).toBe(response)
+  }
+  const at = '2026-10-05T10:00:00.000Z'
+  const link = { desktopId: 'dsk_0123456789abcdefABCD', name: 'MacBook', online: true, lastSeenAt: null, linkedAt: at }
+
+  it('names the feature, the stream parameter and the limits', () => {
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_FEATURE).toBe('desktop-bridge')
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_QUERY).toBe('desktopBridge')
+    // A wait for conversation events takes up to 20 seconds on the Mac; the gateway waits a little longer.
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.callTimeoutMs).toBeGreaterThan(20_000)
+    expect(provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.inputBytesMax).toBeLessThan(
+      provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
+    )
+  })
+
+  it('keeps the desktop id opaque and the name short', () => {
+    expect(provisioning.fleetDesktopLinkSchema.parse(link)).toEqual(link)
+    for (const desktopId of ['dsk_short', '7c9e6679-7425-40de-944b-e07fc1f90ae7', 'dsk_has spaces in it here', ''])
+      expect(provisioning.fleetDesktopLinkSchema.safeParse({ ...link, desktopId }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkRequestSchema.parse({ name: '  iMac  ' })).toEqual({ name: 'iMac' })
+    expect(provisioning.fleetDesktopLinkRequestSchema.safeParse({ name: ' ' }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkRequestSchema.safeParse({ name: 'x'.repeat(61) }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkRequestSchema.safeParse({ name: 'iMac', deviceId: 'x' }).success).toBe(false)
+    expect(provisioning.fleetDesktopLinkViewSchema.parse({ ...link, self: true }).self).toBe(true)
+  })
+
+  it('carries a call to one Mac with a known op and a bounded input, and its answer or failure back', () => {
+    const request = { desktopId: link.desktopId, op: 'createChat', input: { workspaceId: 'w-1' } }
+    expect(provisioning.fleetInternalDesktopCallRequestSchema.parse(request)).toEqual(request)
+    expect(
+      provisioning.fleetInternalDesktopCallRequestSchema.parse({ desktopId: link.desktopId, op: 'listWorkspaces' })
+        .input
+    ).toEqual({})
+    expect(
+      provisioning.fleetInternalDesktopCallRequestSchema.safeParse({ ...request, op: 'approvePlan' }).success
+    ).toBe(false)
+    expect(
+      provisioning.fleetInternalDesktopCallRequestSchema.safeParse({
+        ...request,
+        input: { text: 'x'.repeat(provisioning.FLEET_DESKTOP_BRIDGE_LIMITS.inputBytesMax) },
+      }).success
+    ).toBe(false)
+    // Nothing a bot may ask approves a permission or a plan.
+    expect(provisioning.FLEET_DESKTOP_OPS.some((op) => /permission|plan|approve/i.test(op))).toBe(false)
+    expect(provisioning.FLEET_DESKTOP_WRITE_OPS).toEqual([
+      'createChat',
+      'sendMessage',
+      'configureChat',
+      'cancelTurn',
+      'answerQuestion',
+    ])
+    expect(provisioning.fleetDesktopCallResultSchema.parse({ ok: true, value: { chats: [] } })).toEqual({
+      ok: true,
+      value: { chats: [] },
+    })
+    const failure = { ok: false, error: { code: 'desktop_offline', message: 'MacBook is offline' } }
+    expect(provisioning.fleetDesktopCallResultSchema.parse(failure)).toEqual(failure)
+    expect(
+      provisioning.fleetDesktopCallResultSchema.safeParse({ ok: false, error: { code: 'nope', message: '' } }).success
+    ).toBe(false)
+  })
+
+  it('announces calls and link changes as gateway events', () => {
+    const call = {
+      type: 'desktop.call',
+      at,
+      callId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      botId: 'scout',
+      desktopId: link.desktopId,
+      op: 'readChat',
+      input: { conversationId: 'c' },
+      expiresAt: at,
+    }
+    expect(fleetGatewayEventSchema.parse(call)).toEqual(call)
+    expect(fleetGatewayEventSchema.safeParse({ ...call, op: 'resolvePermission' }).success).toBe(false)
+    const updated = { type: 'desktop_link.updated', at, botId: 'scout', links: [{ ...link, self: false }] }
+    expect(fleetGatewayEventSchema.parse(updated)).toEqual(updated)
+    expect(fleetGatewayEventSchema.parse({ ...updated, links: [] }).type).toBe('desktop_link.updated')
+  })
+
+  it('tells a bot whether its gateway routes desktop calls, never by default', () => {
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: false, desktopBridgeEnabled: true },
+    }
+    expect(fleetInstanceProfileSchema.parse(profile).gateway.desktopBridgeEnabled).toBe(true)
+    expect(
+      fleetInstanceProfileSchema.parse({ ...profile, gateway: { peersEnabled: false } }).gateway.desktopBridgeEnabled
+    ).toBe(false)
+  })
+
+  it('declares the bridge routes of the gateway and of its internal API', () => {
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.botDesktopLinkPut,
+      'PUT',
+      '/v1/bots/:id/desktop-link',
+      provisioning.fleetDesktopLinkRequestSchema,
+      provisioning.fleetDesktopLinkViewSchema
+    )
+    expectRoute(FLEET_GATEWAY_ROUTES.botDesktopLinkDelete, 'DELETE', '/v1/bots/:id/desktop-link', null, null)
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.botDesktopLinks,
+      'GET',
+      '/v1/bots/:id/desktop-links',
+      null,
+      provisioning.fleetDesktopLinksResponseSchema
+    )
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.botDesktopLinkRemove,
+      'DELETE',
+      '/v1/bots/:id/desktop-links/:desktopId',
+      null,
+      null
+    )
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.desktopCallResult,
+      'POST',
+      '/v1/desktop-calls/:callId/result',
+      provisioning.fleetDesktopCallResultSchema,
+      null
+    )
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.desktops,
+      'GET',
+      '/internal/v1/desktops',
+      null,
+      provisioning.fleetInternalDesktopsResponseSchema
+    )
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.desktopCall,
+      'POST',
+      '/internal/v1/desktop/calls',
+      provisioning.fleetInternalDesktopCallRequestSchema,
+      provisioning.fleetDesktopCallResultSchema
+    )
+  })
+})
+
+it('supports Google browser sign-in without accepting Google credential imports', () => {
+  expect(provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'antigravity', method: 'browser' }).success).toBe(
+    true
+  )
+  expect(provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'antigravity', method: 'device' }).success).toBe(
+    false
+  )
+  expect(
+    provisioning.fleetAccountImportRequestSchema.safeParse({ items: [{ type: 'antigravity', token: 'synthetic' }] })
+      .success
+  ).toBe(false)
+  expect(provisioning.fleetLoginUrlAllowed('antigravity', 'https://accounts.google.com/o/oauth2/auth')).toBe(true)
+  for (const url of [
+    'https://accounts.google.com.evil.test/',
+    'https://evil.accounts.google.com/',
+    'https://accounts.google.com:444/',
+    'http://accounts.google.com/',
+    'https://user@accounts.google.com/',
+  ]) {
+    expect(provisioning.fleetLoginUrlAllowed('antigravity', url)).toBe(false)
+  }
 })

@@ -103,7 +103,10 @@ export function BotAccountsSection({
                     .join(' · ')}
                 </span>
                 {item.state === 'signed-out' &&
-                  (item.kind === 'codex' || item.kind === 'claude' || item.kind === 'grok') && (
+                  (item.kind === 'codex' ||
+                    item.kind === 'claude' ||
+                    item.kind === 'grok' ||
+                    item.kind === 'antigravity') && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -132,7 +135,7 @@ export function BotAccountsSection({
             <Button size="sm" variant="outline" disabled={!subject.running} onClick={() => setImporting(true)}>
               {t('provisioning.fromMacButton')}
             </Button>
-            {(['codex', 'claude', 'grok'] as const).map((kind) => (
+            {(['codex', 'claude', 'grok', 'antigravity'] as const).map((kind) => (
               <Button
                 key={kind}
                 size="sm"

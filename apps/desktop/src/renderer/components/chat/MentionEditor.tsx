@@ -60,7 +60,13 @@ const FOLDER_SVG =
 const BOT_SVG =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>'
 
-function makeChip(t: TFunction<'chat'>, path: string, startLine?: number, endLine?: number): HTMLSpanElement {
+function makeChip(
+  document: Document,
+  t: TFunction<'chat'>,
+  path: string,
+  startLine?: number,
+  endLine?: number
+): HTMLSpanElement {
   const span = document.createElement('span')
   span.dataset.mention = path
   if (startLine) span.dataset.sl = String(startLine)
@@ -80,7 +86,7 @@ function makeChip(t: TFunction<'chat'>, path: string, startLine?: number, endLin
   return span
 }
 
-function makeAgentChip(t: TFunction<'chat'>, agent: SubagentAgentDto, id: string): HTMLSpanElement {
+function makeAgentChip(document: Document, t: TFunction<'chat'>, agent: SubagentAgentDto, id: string): HTMLSpanElement {
   const span = document.createElement('span')
   span.dataset.agentMention = agent.name
   span.dataset.agentMentionId = id
@@ -102,6 +108,7 @@ function insertChipAt(
   trigger: '@' | '#',
   chip: HTMLSpanElement
 ): void {
+  const document = editor.ownerDocument
   const parent = node.parentNode
   if (!parent) return
   const full = node.textContent ?? ''
@@ -116,10 +123,15 @@ function insertChipAt(
   const range = document.createRange()
   range.setStart(space, 1)
   range.collapse(true)
-  const sel = window.getSelection()
+  const sel = document.getSelection()
   sel?.removeAllRanges()
   sel?.addRange(range)
   editor.focus()
+}
+
+// Adoption preserves the source realm's prototype; new chips use the destination realm.
+function isHtmlElement(node: Node): node is HTMLElement {
+  return node.nodeType === 1 && 'dataset' in node
 }
 
 function serializeWithMentions(root: HTMLElement): { text: string; mentions: StructuredAgentMentionDraft[] } {
@@ -131,19 +143,19 @@ function serializeWithMentions(root: HTMLElement): { text: string; mentions: Str
         out += child.textContent ?? ''
       } else if (child.nodeName === 'BR') {
         out += '\n'
-      } else if (child instanceof HTMLElement && child.dataset.mention != null) {
+      } else if (isHtmlElement(child) && child.dataset.mention != null) {
         const p = child.dataset.mention
         const sl = child.dataset.sl
         const el = child.dataset.el
         out += '@' + p + (sl ? ':L' + sl + (el && el !== sl ? '-' + el : '') : '')
-      } else if (child instanceof HTMLElement && child.dataset.agentMention != null) {
+      } else if (isHtmlElement(child) && child.dataset.agentMention != null) {
         const raw = child.dataset.agentMention
         const id = child.dataset.agentMentionId ?? ''
         const start = out.length
         out += '#' + raw
         const name = normalizeSubagentProfileKey(raw)
         if (id && name) mentions.push({ id, name, start, end: out.length })
-      } else if (child instanceof HTMLElement && (child.nodeName === 'DIV' || child.nodeName === 'P')) {
+      } else if (isHtmlElement(child) && (child.nodeName === 'DIV' || child.nodeName === 'P')) {
         if (out && !out.endsWith('\n')) out += '\n'
         walk(child)
       } else {
@@ -164,6 +176,7 @@ function renderValue(
   agents: readonly SubagentAgentDto[] | null,
   structured: readonly StructuredAgentMentionDraft[]
 ): void {
+  const document = root.ownerDocument
   root.replaceChildren()
   const frag = document.createDocumentFragment()
   const pushText = (s: string) => {
@@ -171,7 +184,7 @@ function renderValue(
   }
   const byIndex = new Map<number, { end: number; el: Node }>()
   for (const m of findMentions(text)) {
-    byIndex.set(m.index, { end: m.index + m.raw.length, el: makeChip(t, m.path, m.startLine, m.endLine) })
+    byIndex.set(m.index, { end: m.index + m.raw.length, el: makeChip(document, t, m.path, m.startLine, m.endLine) })
   }
   if (agents === null) {
     for (const m of structured) {
@@ -185,7 +198,7 @@ function renderValue(
         description: m.name,
         source: 'loading',
       }
-      byIndex.set(m.start, { end: m.end, el: makeAgentChip(t, stub, m.id) })
+      byIndex.set(m.start, { end: m.end, el: makeAgentChip(document, t, stub, m.id) })
     }
   } else {
     const available = new Map(agents.map((a) => [normalizeSubagentProfileKey(a.name), a]))
@@ -196,7 +209,7 @@ function renderValue(
     )) {
       const agent = available.get(m.name)
       if (!agent) continue
-      byIndex.set(m.start, { end: m.end, el: makeAgentChip(t, agent, m.id) })
+      byIndex.set(m.start, { end: m.end, el: makeAgentChip(document, t, agent, m.id) })
     }
   }
   let last = 0
@@ -211,6 +224,7 @@ function renderValue(
 }
 
 function focusEditorAtEnd(el: HTMLDivElement): void {
+  const document = el.ownerDocument
   try {
     el.focus({ preventScroll: true })
   } catch {
@@ -219,7 +233,7 @@ function focusEditorAtEnd(el: HTMLDivElement): void {
   const range = document.createRange()
   range.selectNodeContents(el)
   range.collapse(false)
-  const sel = window.getSelection()
+  const sel = document.getSelection()
   sel?.removeAllRanges()
   sel?.addRange(range)
 }
@@ -301,6 +315,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   useEffect(() => {
     const el = editorRef.current
     if (!el) return
+    const document = el.ownerDocument
     if (value === lastValueRef.current && agentsKey === lastAgentsRef.current) return
     renderValue(t, el, value, agents, structuredMentions)
     lastValueRef.current = value
@@ -314,7 +329,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       const range = document.createRange()
       range.selectNodeContents(el)
       range.collapse(false)
-      const sel = window.getSelection()
+      const sel = editorRef.current?.ownerDocument.getSelection()
       sel?.removeAllRanges()
       sel?.addRange(range)
     }
@@ -334,7 +349,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
 
   const detectMention = () => {
     if (composingRef.current) return
-    const sel = window.getSelection()
+    const sel = editorRef.current?.ownerDocument.getSelection()
     if (!sel?.isCollapsed || !sel.anchorNode || sel.anchorNode.nodeType !== Node.TEXT_NODE) {
       setMention(null)
       return
@@ -391,7 +406,13 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     }
 
     const chipPath = hit.path.includes('/') || hit.path.includes('.') ? hit.path : './' + hit.path
-    insertChipAt(editor, mention.node, mention.atOffset, '@', makeChip(t, chipPath, undefined, undefined))
+    insertChipAt(
+      editor,
+      mention.node,
+      mention.atOffset,
+      '@',
+      makeChip(editor.ownerDocument, t, chipPath, undefined, undefined)
+    )
     setMention(null)
     setHits([])
     emitChange()
@@ -405,17 +426,23 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       return
     }
 
-    insertChipAt(editor, mention.node, mention.atOffset, '#', makeAgentChip(t, agent, crypto.randomUUID()))
+    insertChipAt(
+      editor,
+      mention.node,
+      mention.atOffset,
+      '#',
+      makeAgentChip(editor.ownerDocument, t, agent, crypto.randomUUID())
+    )
     setMention(null)
     emitChange()
   }
 
   const insertTextAtCaret = (text: string) => {
-    const sel = window.getSelection()
+    const sel = editorRef.current?.ownerDocument.getSelection()
     if (!sel?.rangeCount) return
     const range = sel.getRangeAt(0)
     range.deleteContents()
-    const node = document.createTextNode(text)
+    const node = range.startContainer.ownerDocument!.createTextNode(text)
     range.insertNode(node)
     range.setStartAfter(node)
     range.collapse(true)
@@ -424,10 +451,11 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   }
 
   const insertLineBreak = () => {
-    const sel = window.getSelection()
+    const sel = editorRef.current?.ownerDocument.getSelection()
     if (!sel?.rangeCount) return
     const range = sel.getRangeAt(0)
     range.deleteContents()
+    const document = range.startContainer.ownerDocument!
     const br = document.createElement('br')
     range.insertNode(br)
     const next = br.nextSibling

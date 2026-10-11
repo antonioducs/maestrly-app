@@ -26,6 +26,8 @@ type ActiveLogin = {
   relay: LoginRelay | null
   timer: ReturnType<typeof setTimeout>
   release: () => void
+  closing?: boolean
+  browserStart?: Promise<void>
 }
 const active = new Set<ActiveLogin>()
 const reservations = new Set<() => void>()
@@ -45,12 +47,14 @@ function validate(attempt: FleetLoginAttempt): void {
       callback.path !== attempt.browser.callback.path ||
       (attempt.kind === 'codex' && (callback.port !== 1455 || callback.path !== '/auth/callback')) ||
       (attempt.kind === 'claude' && callback.path !== '/callback') ||
+      (attempt.kind === 'antigravity' && callback.path !== '/') ||
       attempt.kind === 'grok'
     )
       throw macProvisioningError('login-unexpected-page', unexpected)
   }
 }
 async function finish(login: ActiveLogin): Promise<void> {
+  login.closing = true
   active.delete(login)
   clearTimeout(login.timer)
   try {
@@ -147,6 +151,11 @@ export async function startBotLogin(
           if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
           return await startBotLogin(fleet, target, { ...body, method: 'device' })
         }
+        if (attempt.kind === 'antigravity')
+          throw macProvisioningError(
+            'login-port-unavailable',
+            'Google sign-in callback port is busy. Close the other sign-in and try again.'
+          )
         relayState = 'unavailable'
       }
     }
@@ -160,6 +169,7 @@ export async function startBotLogin(
     )
     timer.unref()
     registered = { fleet, target: fleetTargetKey(target), loginId: current.loginId, relay, timer, release }
+    if (current.browser) registered.browserStart = Promise.resolve()
     active.add(registered)
     const url = current.browser?.authUrl ?? current.device?.verificationUrl
     if (url) await shell.openExternal(url)
@@ -182,6 +192,47 @@ export async function botLoginStatus(
   const target = resolveProvisioningTarget(fleet, rawTarget)
   const route = provisioningRoute(target, 'loginGet', { lid: loginId })
   const attempt = fleetLoginAttemptSchema.parse(await fleet.call(route.key, { params: route.params }))
+  validate(attempt)
+  if (attempt.kind === 'antigravity' && attempt.state === 'pending' && attempt.browser) {
+    for (const login of attemptsOf(fleet, fleetTargetKey(target), loginId)) {
+      login.browserStart ??= (async () => {
+        const browser = attempt.browser!
+        const callback = provisioningRoute(target, 'loginCallback', { lid: loginId })
+        try {
+          login.relay = await LoginRelay.start({
+            ...browser.callback,
+            ttlMs: Math.min(
+              FLEET_PROVISIONING_LIMITS.loginTtlMs,
+              Math.max(0, Date.parse(attempt.expiresAt) - Date.now())
+            ),
+            forward: async (query) =>
+              fleetLoginCallbackResponseSchema.parse(
+                await fleet.call(callback.key, {
+                  params: callback.params,
+                  body: fleetLoginCallbackRequestSchema.parse({ path: browser.callback.path, query }),
+                })
+              ),
+            page: relayPage,
+            redirectAllowed: (url) => fleetLoginUrlAllowed('antigravity', url),
+          })
+          if (!active.has(login) || login.closing) {
+            await login.relay.close()
+            return
+          }
+          await shell.openExternal(browser.authUrl)
+        } catch (error) {
+          await cancelBotLogin(fleet, target, loginId).catch(() => undefined)
+          if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE')
+            throw macProvisioningError(
+              'login-port-unavailable',
+              'Google sign-in callback port is busy. Close the other sign-in and try again.'
+            )
+          throw error
+        }
+      })()
+      await login.browserStart
+    }
+  }
   if (attempt.state !== 'pending') await closeAttempt(fleet, fleetTargetKey(target), loginId)
   return attempt
 }
@@ -208,6 +259,7 @@ export async function cancelBotLogin(
   const attempts = attemptsOf(fleet, fleetTargetKey(target), loginId)
   await Promise.all(
     attempts.map(async (login) => {
+      login.closing = true
       await login.relay?.close()
       login.relay = null
     })
@@ -227,6 +279,14 @@ export async function reopenBotLogin(
 ): Promise<void> {
   const attempt = await botLoginStatus(fleet, rawTarget, loginId)
   validate(attempt)
+  if (
+    attempt.kind === 'antigravity' &&
+    (attempt.state !== 'pending' ||
+      !attemptsOf(fleet, fleetTargetKey(resolveProvisioningTarget(fleet, rawTarget)), loginId).some(
+        (login) => login.relay && !login.closing
+      ))
+  )
+    throw macProvisioningError('login-page-unavailable', 'This sign-in page is unavailable.')
   const url =
     page === 'auth'
       ? attempt.browser?.authUrl

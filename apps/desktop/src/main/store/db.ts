@@ -4,7 +4,6 @@ import { conversationScopeConstraint, migrateStandaloneConversations } from './s
 import { app } from 'electron'
 import { prepareProductionDatabasePath } from './database-path-migration'
 import { initializeBotCommandSchema } from '../bot/schema'
-import { initializeBotOAuthSchema } from '../bot/oauth'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -27,6 +26,20 @@ const LEGACY_MANAGEMENT_TABLES = [
   'board_cards',
   'board_columns',
   'boards',
+] as const
+
+/**
+ * The retired external agent connection: its OAuth registrations (nothing serves `/mcp/bots` any more) and the
+ * executor side of delegated development tasks. The runtime a bot server's bots use on this computer keeps its tables.
+ * Children come before their owners, so a foreign key never blocks a drop.
+ */
+const RETIRED_EXTERNAL_AGENT_TABLES = [
+  'bot_oauth_tokens',
+  'bot_oauth_requests',
+  'bot_oauth_clients',
+  'bot_oauth_config',
+  'platform_delegation_attempts',
+  'platform_delegation_workspaces',
 ] as const
 
 function tableExists(name: string): boolean {
@@ -152,6 +165,11 @@ function purgeLegacyProjectManagementSchema(): void {
   }
 }
 
+/** Remove the retired external agent connection; conversations a bot created are not touched. */
+function purgeRetiredExternalAgentSchema(): void {
+  for (const table of RETIRED_EXTERNAL_AGENT_TABLES) db.exec(`DROP TABLE IF EXISTS ${table};`)
+}
+
 /**
  * Open/create SQLite and ensure schema, migrations, and backfills. Tests may inject paths for real
  * WAL/FK behavior. Production resolves its userData database after a consistent legacy snapshot
@@ -183,7 +201,6 @@ export function initStore(file?: string): void {
 
 function initializeSchema(): void {
   initializeBotCommandSchema(db)
-  initializeBotOAuthSchema(db)
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_chat_sessions (
       instance_id TEXT NOT NULL, session_id TEXT NOT NULL, conversation_id TEXT NOT NULL UNIQUE,
@@ -197,15 +214,6 @@ function initializeSchema(): void {
       seq INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, event_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS platform_chat_outbox_turn ON platform_chat_outbox(turn_id,seq);
-    CREATE TABLE IF NOT EXISTS platform_delegation_workspaces (
-      instance_id TEXT NOT NULL, task_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
-      PRIMARY KEY(instance_id, task_id)
-    );
-    CREATE TABLE IF NOT EXISTS platform_delegation_attempts (
-      attempt_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, task_id TEXT NOT NULL, stage_id TEXT NOT NULL,
-      turn_id TEXT NOT NULL, lease_id TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT
-    );
-    CREATE INDEX IF NOT EXISTS platform_delegation_attempts_turn ON platform_delegation_attempts(turn_id);
   `)
   // Drop known ledger triggers before schema creation because IF NOT EXISTS would preserve an outdated
   // privacy implementation.
@@ -214,6 +222,7 @@ function initializeSchema(): void {
     DROP TRIGGER IF EXISTS trg_chat_usage_ledger_after_usage_update;
   `)
   purgeLegacyProjectManagementSchema()
+  purgeRetiredExternalAgentSchema()
   const usageLedgerCols = db.prepare('PRAGMA table_info(chat_usage_ledger)').all() as Array<{ name: string }>
   if (usageLedgerCols.length > 0 && !usageLedgerCols.some((column) => column.name === 'conversation_id')) {
     // The ledger deliberately has no FK: this optional owner key keeps per-conversation billing history after
@@ -798,6 +807,20 @@ function initializeSchema(): void {
         updated_at = excluded.updated_at;
     END;
 
+    -- Antigravity ACP sessions live in the account's app-owned GEMINI_HOME; the host deletes their files before
+    -- the conversation row, so no cleanup queue is needed.
+    CREATE TABLE IF NOT EXISTS chat_antigravity_sessions (
+      conversation_id     TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      account_id          TEXT NOT NULL DEFAULT '',
+      account_fingerprint TEXT NOT NULL,
+      session_id          TEXT NOT NULL,
+      model_value         TEXT NOT NULL,
+      tool_signature      TEXT NOT NULL,
+      instruction_hash    TEXT NOT NULL,
+      last_message_id     TEXT,
+      updated_at          INTEGER NOT NULL
+    );
+
     -- Durable tool results keyed by call_id prevent repeated side effects when sampling resumes after tool
     -- completion but before provider confirmation.
     CREATE TABLE IF NOT EXISTS chat_tool_executions (
@@ -1044,6 +1067,29 @@ function initializeSchema(): void {
       UPDATE conversation_dispatches SET phase='deleted', updated_at=CAST(unixepoch('subsec') * 1000 AS INTEGER)
       WHERE conversation_id=OLD.id AND phase <> 'discarded';
     END;
+  `)
+  // Projects created or cloned from a chat turn. Keyed like conversation dispatches so a repeated call replays the
+  // registered workspace instead of cloning again; a failed attempt can be retried with the same key.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workspace_creations (
+      creation_id TEXT PRIMARY KEY,
+      source_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      origin_key TEXT NOT NULL,
+      request_key TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      source_json TEXT NOT NULL,
+      name TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      remote_url TEXT,
+      phase TEXT NOT NULL CHECK(phase IN ('creating','registered','failed')),
+      workspace_id TEXT,
+      reused INTEGER NOT NULL DEFAULT 0,
+      remote_json TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(source_conversation_id, origin_key, request_key)
+    );
   `)
   // Workspace project memory defaults enabled.
   const wsCols = db.prepare('PRAGMA table_info(workspaces)').all() as Array<{ name: string }>

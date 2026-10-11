@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import { z } from 'zod'
 import {
   listPages,
@@ -13,6 +14,7 @@ import type { McpToolContext } from './context'
 import { ok, err } from './context'
 
 export function registerConversationNotesTools(ctx: McpToolContext): void {
+  if (isBotMode()) return
   const { server, convId, t } = ctx
   // Conversation/project Markdown notebooks with nested pages. Tool writes are reflected live in the notes
   // UI.
@@ -108,6 +110,7 @@ export function registerConversationNotesTools(ctx: McpToolContext): void {
 }
 
 export function registerProjectNotesTools(ctx: McpToolContext): void {
+  if (isBotMode()) return
   const { server, convId, t } = ctx
   if (getConversation(convId)?.scope === 'standalone') return
   // Content-writing tools advertise Mermaid support so the model can create diagrams rendered by notes UI.

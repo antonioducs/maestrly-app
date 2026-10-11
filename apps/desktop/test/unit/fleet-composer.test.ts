@@ -5,8 +5,10 @@ import {
   fleetUsageLimit,
   formatFleetTokens,
   formatFleetUsage,
+  readBotDraft,
   selectionPatch,
   validateAttachments,
+  writeBotDraft,
 } from '../../src/renderer/lib/fleet/composer'
 import { createFleetImageCache, holdFleetImage } from '../../src/renderer/lib/fleet/image-cache'
 import type { FleetImageData } from '../../src/preload/api-fleet'
@@ -23,8 +25,18 @@ const model: FleetSelectionOption = {
 }
 
 describe('fleet composer helpers', () => {
+  it('keeps each bot unsent draft apart until it is cleared', () => {
+    writeBotDraft('bot-a', 'half written')
+    writeBotDraft('bot-b', 'other')
+    expect(readBotDraft('bot-a')).toBe('half written')
+    expect(readBotDraft('bot-b')).toBe('other')
+    writeBotDraft('bot-a', '')
+    expect(readBotDraft('bot-a')).toBe('')
+    expect(readBotDraft('bot-c')).toBe('')
+  })
+
   it('validates attachment type, per-image size, count, and aggregate size', () => {
-    expect(validateAttachments([], [file(1, 'text/plain')])).toBe('type')
+    expect(validateAttachments([], [file(1, 'application/zip')])).toBe('type')
     expect(validateAttachments([], [file(FLEET_IMAGE_LIMITS.attachmentMaxBytes + 1)])).toBe('size')
     expect(validateAttachments(Array(8).fill(file(1)), [file(1)])).toBe('count')
     expect(validateAttachments(Array(4).fill(file(5 * 1024 * 1024)), [file(1)])).toBe('total')

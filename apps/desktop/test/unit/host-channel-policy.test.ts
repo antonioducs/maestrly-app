@@ -5,9 +5,12 @@
 import * as electron from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { appApi } from '../../src/preload/api-app'
+import { artifactsApi } from '../../src/preload/api-artifacts'
 import { chatLocalApi } from '../../src/preload/api-chat'
+import { chatWindowApi } from '../../src/preload/api-chat-window'
 import { drawerApi } from '../../src/preload/api-drawer'
 import { fleetApi } from '../../src/preload/api-fleet'
+import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
 import { performanceApi } from '../../src/preload/api-performance'
@@ -80,10 +83,13 @@ describe('host channel policy', () => {
       ...soundApi,
       ...updateApi,
       ...chatLocalApi,
+      ...chatWindowApi,
       ...platformLocalApi,
       ...fleetApi,
+      ...fleetEnvironmentSettings,
       ...fleetInstallerApi,
       ...hostsApi,
+      ...artifactsApi,
     }
     const byMember = channelsOf(local, seen)
     expect(new Set([...byMember.values()].flat()).size).toBeGreaterThan(100)

@@ -7,6 +7,8 @@ import type { ChatAgent } from '../../src/main/chat/agents'
 import type { CursorSubscriptionManager } from '../../src/main/chat/cursor-subscription/manager'
 import type { SubagentTextUpdate } from '../../src/main/chat/subagent-text-stream'
 
+vi.mock('../../src/main/store', () => ({ getConversation: () => ({ scope: 'project' }) }))
+
 vi.mock('../../src/main/chat/harness/flags', () => ({ captureHarnessFlags: () => ({}) }))
 
 const cleanup = vi.hoisted(() => ({

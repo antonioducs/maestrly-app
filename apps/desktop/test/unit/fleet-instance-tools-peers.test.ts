@@ -135,7 +135,10 @@ describe('bot instance tool registration and gateway', () => {
       gatewayConfig: null,
       peerNames: new Map(),
     })
-    expect((await bot.client.listTools()).tools.map((tool) => tool.name)).toEqual(['request_owner_help'])
+    expect((await bot.client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      'bot_share_file',
+      'request_owner_help',
+    ])
     await bot.client.close()
     await bot.server.close()
     // A container's own gateway variables no longer give a conversation gateway access: each bot has its own token.
@@ -148,6 +151,7 @@ describe('bot instance tool registration and gateway', () => {
     await legacy.client.close()
     await legacy.server.close()
     const allTools = [
+      'bot_share_file',
       'request_owner_help',
       'bot_peers_list',
       'bot_peers_send',
