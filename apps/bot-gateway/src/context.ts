@@ -12,6 +12,7 @@ import type { Peers } from './peers.js'
 import type { Routines } from './routines.js'
 import type { ScreenProxy } from './screen.js'
 import type { BridgeProxy } from './bridge.js'
+import type { HostFilesProxy } from './host-files.js'
 export type GatewayContext = {
   artifacts?: ArtifactHosting
   network?: FleetNetwork
@@ -26,6 +27,7 @@ export type GatewayContext = {
   routines?: Routines
   screen?: ScreenProxy
   bridge?: BridgeProxy
+  hostFiles?: HostFilesProxy
   desktops?: DesktopBridge
   revokeDevice?: (deviceId: string) => Promise<void>
 }

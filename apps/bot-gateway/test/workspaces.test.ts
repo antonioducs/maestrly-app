@@ -175,6 +175,17 @@ describe('workspaces environments', () => {
 })
 
 describe('workspaces environment routes', () => {
+  it('moves host files only for a paired device, and only to a running workspaces environment', async () => {
+    const h = await setup()
+    const stat = '/v1/environments/' + h.bot.environmentId + '/host-files/stat'
+    const anonymous = await h.request('POST', stat, { path: '/a' }, false, { 'X-Maestrly-Fleet-Protocol': '1' })
+    expect(anonymous.status).toBe(401)
+    const bots = await h.request('POST', stat, { path: '/a' })
+    expect(bots.status).toBe(409)
+    expect((await json(bots)).message).toBe('The workspaces environment is not running.')
+    expect((await json(await h.request('GET', '/v1/meta'))).features).toContain('host-files')
+  })
+
   it('advertises the feature and creates and lists a workspaces environment', async () => {
     const h = await setup()
     expect((await json(await h.request('GET', '/v1/meta'))).features).toContain('workspaces-host')

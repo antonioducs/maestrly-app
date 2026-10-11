@@ -5,6 +5,7 @@ import http, {
   type OutgoingHttpHeaders,
   type ServerResponse,
 } from 'node:http'
+import { endToEnd, upstreamHeaders } from './forward-headers.js'
 
 /**
  * The artifact viewer's paths: the shell and its assets, the viewer's API under `/a/`, and page content under `/c/`.
@@ -15,18 +16,6 @@ const ROBOTS = '/robots.txt'
 /** The viewer's API takes small JSON bodies; the host refuses more than 64 KiB and drops a connection past 1 MiB. */
 export const MAX_VIEWER_BODY_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 30_000
-/** Headers that describe one connection, never forwarded across the proxy (RFC 9110, section 7.6.1). */
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-connection',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-])
 
 /** Whether a request target is one of the viewer's paths. Only origin-form targets match. */
 export function isArtifactViewerRequest(target: string): boolean {
@@ -34,32 +23,6 @@ export function isArtifactViewerRequest(target: string): boolean {
   const query = target.indexOf('?')
   const pathname = query >= 0 ? target.slice(0, query) : target
   return pathname === ROBOTS || VIEWER_PREFIXES.some((prefix) => pathname.startsWith(prefix))
-}
-
-/** The end-to-end headers of a message. Host is always kept: the artifact host validates it. */
-function endToEnd(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
-  const listed = new Set(
-    String(headers.connection ?? '')
-      .split(',')
-      .map((token) => token.trim().toLowerCase())
-      .filter((token) => token && token !== 'host')
-  )
-  const result: OutgoingHttpHeaders = {}
-  for (const [name, value] of Object.entries(headers))
-    if (value !== undefined && !HOP_BY_HOP.has(name) && !listed.has(name)) result[name] = value
-  return result
-}
-
-/**
- * The headers sent to the host. Body framing comes from the request itself, never from its Connection list: a length
- * when it declared one, otherwise explicit chunks, which Node would not add by default for DELETE.
- */
-function upstreamHeaders(req: IncomingMessage): OutgoingHttpHeaders {
-  const headers = endToEnd(req.headers)
-  delete headers['content-length']
-  if (req.headers['content-length'] !== undefined) headers['content-length'] = req.headers['content-length']
-  else if (req.headers['transfer-encoding'] !== undefined) headers['transfer-encoding'] = 'chunked'
-  return headers
 }
 
 function plain(res: ServerResponse, status: number, body: string, close = false): void {

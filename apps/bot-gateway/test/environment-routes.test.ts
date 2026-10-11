@@ -85,6 +85,7 @@ describe('environment routes', () => {
       'runtime-updates',
       'desktop-bridge',
       'workspaces-host',
+      'host-files',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)

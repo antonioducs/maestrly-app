@@ -519,7 +519,7 @@ export class Lifecycle {
    * What an environment's Maestrly can do. One from before environments names nothing at its health check: its bot's
    * status tells instead (as it does for configuration from the Mac), and never that it hosts several bots.
    */
-  private environmentCapabilities(id: string): string[] {
+  environmentCapabilities(id: string): string[] {
     const instance = this.instances.get(id)
     if (!instance || instance.capabilities.includes(FLEET_ENVIRONMENTS_FEATURE)) return instance?.capabilities ?? []
     const bot = this.singleBot(id)

@@ -28,6 +28,7 @@ import { Peers } from './peers.js'
 import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
+import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
 import { DesktopBridge } from './desktop-bridge.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
@@ -93,7 +94,11 @@ export function createGatewayServers(ctx: GatewayContext) {
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
   ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
   const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
-  ctx.lifecycle.onCloseEnvironmentBridges = (id) => bridge.closeEnvironment(id)
+  const hostFiles = ctx.hostFiles ?? new HostFilesProxy(lifecycleHostFilesDeps(ctx.lifecycle))
+  ctx.lifecycle.onCloseEnvironmentBridges = (id) => {
+    bridge.closeEnvironment(id)
+    hostFiles.closeEnvironment(id)
+  }
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -103,6 +108,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       screen.closeDevice(deviceId)
       bridge.closeDevice(deviceId)
+      hostFiles.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
       desktops.revokeDevice(deviceId)
       await Promise.allSettled(
@@ -122,7 +128,17 @@ export function createGatewayServers(ctx: GatewayContext) {
         .map((device) => revokeDevice(device.id))
     )
   }
-  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, desktops, bridge, revokeDevice }
+  const activeCtx: GatewayContext = {
+    ...ctx,
+    ownerMemory,
+    peers,
+    routines,
+    screen,
+    desktops,
+    bridge,
+    hostFiles,
+    revokeDevice,
+  }
   ctx.lifecycle.onTurnFinished = (id, event) => {
     if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
   }
@@ -155,6 +171,16 @@ export function createGatewayServers(ctx: GatewayContext) {
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
       const caller = internal ? ctx.auth.internalBot(req.headers.authorization) : null
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
+      // Host-file bodies are streamed to the workspaces host as they arrive; the gateway never buffers or parses them.
+      if (!internal && isHostFileRoute(match.key))
+        return await hostFiles.forward(
+          match.key,
+          match.params,
+          url,
+          req,
+          res,
+          ctx.auth.device(req.headers.authorization).id
+        )
       const body = match.route.body
         ? match.route.body.parse(
             await readBody(
@@ -306,6 +332,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       routines.stop()
       screen.close()
       bridge.close()
+      hostFiles.close()
       ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(
