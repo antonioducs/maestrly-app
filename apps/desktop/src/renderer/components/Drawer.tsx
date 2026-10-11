@@ -196,7 +196,7 @@ export function Drawer({
     if (restarting) return
     setRestarting(true)
     void window.api
-      .drawerRestartVSCode()
+      .drawerRestartVSCode(convId ?? undefined)
       .catch((e) => console.error('vscode restart:', e))
       .finally(() => setRestarting(false))
   }

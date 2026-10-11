@@ -18,12 +18,15 @@ export function mainTabsForFeatures(order: DrawerTab[], chatGptWebEnabled: boole
   return chatGptWebEnabled ? order : order.filter((tab) => tab !== 'chatgpt')
 }
 
-/** The tools a conversation of a remote host shows on this computer; its editor stays on the host. */
+/** The tools a conversation of any remote host shows on this computer. */
 const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'files', 'plan', 'review', 'notes'])
 
-/** Which remote hosts stream their browser to this computer (RemoteHostInfo.browser), by host id. */
-export type RemoteBrowserHosts = (hostId: HostId) => boolean
-const NO_REMOTE_BROWSERS: RemoteBrowserHosts = () => false
+/**
+ * Whether a remote host serves one of the tools it offers only when it says so: its browser (streamed here,
+ * RemoteHostInfo.browser) and its editor (RemoteHostInfo.editor).
+ */
+export type RemoteToolHosts = (hostId: HostId, tab: 'browser' | 'vscode') => boolean
+const NO_REMOTE_TOOLS: RemoteToolHosts = () => false
 
 /** The remote host of a conversation, from the window's id of it; null for this computer's. */
 const remoteHostOf = (conv: unknown): HostId | null => {
@@ -37,12 +40,12 @@ export function tabAvailableInContext(
   tab: DrawerTab,
   conv: unknown,
   chatGptWebEnabled = true,
-  remoteBrowsers: RemoteBrowserHosts = NO_REMOTE_BROWSERS
+  remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): boolean {
   const remoteHost = remoteHostOf(conv)
   if (remoteHost !== null && !REMOTE_HOST_TABS.has(tab)) {
-    // A remote host's browser is streamed here once the host says it can.
-    if (tab !== 'browser' || !remoteBrowsers(remoteHost)) return false
+    // A remote host's browser and editor are shown here once the host says it serves them.
+    if ((tab !== 'browser' && tab !== 'vscode') || !remoteTools(remoteHost, tab)) return false
   }
   // Files moves files to and from a host: a conversation of this computer has its files at hand.
   if (tab === 'files' && remoteHost === null) return false
@@ -55,9 +58,9 @@ export function mainTabsForContext(
   order: DrawerTab[],
   conv: unknown,
   chatGptWebEnabled = true,
-  remoteBrowsers: RemoteBrowserHosts = NO_REMOTE_BROWSERS
+  remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): DrawerTab[] {
-  return order.filter((tab) => tabAvailableInContext(tab, conv, chatGptWebEnabled, remoteBrowsers))
+  return order.filter((tab) => tabAvailableInContext(tab, conv, chatGptWebEnabled, remoteTools))
 }
 
 export function reorderVisibleTabs(
@@ -82,14 +85,14 @@ export function sanitizeOpenTabs(
   raw: unknown,
   conv: unknown,
   chatGptWebEnabled = true,
-  remoteBrowsers: RemoteBrowserHosts = NO_REMOTE_BROWSERS
+  remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): DrawerTab[] {
   const arr = Array.isArray(raw) ? (raw as unknown[]) : []
   const seen = new Set<DrawerTab>()
   const out: DrawerTab[] = []
   for (const t of arr) {
     if (!DEFAULT_MAIN_ORDER.includes(t as DrawerTab) || seen.has(t as DrawerTab)) continue
-    if (!tabAvailableInContext(t as DrawerTab, conv, chatGptWebEnabled, remoteBrowsers)) continue
+    if (!tabAvailableInContext(t as DrawerTab, conv, chatGptWebEnabled, remoteTools)) continue
     seen.add(t as DrawerTab)
     out.push(t as DrawerTab)
   }

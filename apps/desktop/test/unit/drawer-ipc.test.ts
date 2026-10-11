@@ -104,7 +104,10 @@ import {
   isTabVisibleInSlot,
   setDialogSuppressionOwners,
   setLayout,
+  showVSCodeLoadingAll,
 } from '../../src/main/drawer-manager'
+import { setRemoteEditorHosts } from '../../src/main/drawer-scope'
+import { waitForEditorReady } from '../../src/main/vscode/vscode-server'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
 import {
   acknowledgeBrowserFrame,
@@ -239,6 +242,28 @@ describe('registerDrawerIpc', () => {
     expect(acknowledgeBrowserFrame).toHaveBeenCalledWith(sender, 'conv', 'stream-id', 3)
     expect(inputBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', { type: 'text', text: 'a' })
     expect(copyBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', true)
+  })
+
+  it("restarts a remote host's editor for its conversation, and this computer's otherwise", async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    const restartRemoteVSCode = vi.fn(async () => undefined)
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn(), restartRemoteVSCode })
+    const restart = mhandles.get('drawer:restart-vscode')!
+    // A host that does not serve its editor has no Code tab to restart.
+    await restart({} as never, 'server-1/workspaces#conv-1')
+    expect(restartRemoteVSCode).not.toHaveBeenCalled()
+    setRemoteEditorHosts(() => true)
+    try {
+      await restart({} as never, 'server-1/workspaces#conv-1')
+    } finally {
+      setRemoteEditorHosts(() => false)
+    }
+    expect(restartRemoteVSCode).toHaveBeenCalledWith('server-1/workspaces#conv-1')
+    expect(showVSCodeLoadingAll).not.toHaveBeenCalled()
+    vi.mocked(waitForEditorReady).mockResolvedValue(undefined)
+    await restart({} as never, undefined)
+    expect(showVSCodeLoadingAll).toHaveBeenCalledWith('restarting')
+    expect(restartRemoteVSCode).toHaveBeenCalledTimes(1)
   })
 
   it('popup:open-floating releases the stack before detaching the same view', () => {

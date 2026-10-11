@@ -28,7 +28,8 @@ const convKey = hostKey(host, conv)
 function PlanPanelHost({ conv }: { conv: string }) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
-  const opensFiles = useHostInfo().desktopEffects
+  // A file chip opens the file in the conversation's editor: this computer's, or a remote host's when it serves one.
+  const opensFiles = useHostInfo().editor
   const [plan, setPlan] = useState<PlanReceived | null>(null)
   useEffect(() => {
     let alive = true
@@ -91,7 +92,8 @@ function HostPanel() {
 
 function PanelRoot() {
   const api = useHostApi()
-  const opensFiles = useHostInfo().desktopEffects
+  // A file chip opens the file in the conversation's editor: this computer's, or a remote host's when it serves one.
+  const opensFiles = useHostInfo().editor
   switch (panel) {
     case 'notes':
       return <NotesPanel key={conv} scope="conv" scopeId={conv} showMerge visible />

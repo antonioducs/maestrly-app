@@ -42,9 +42,12 @@ import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
-import { registerHostsIpc } from './remote-host/client/ipc'
+import { hostRegistry, registerHostsIpc } from './remote-host/client/ipc'
+import { RemoteEditors } from './remote-host/client/editor'
+import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
+import { setRemoteVSCodeHandlers } from './drawer/vscode'
 import { registerHostTransfersIpc } from './host-transfers/ipc'
-import { conversationTabAllowed, isRemoteConversation } from './drawer-scope'
+import { conversationTabAllowed, isRemoteConversation, setRemoteEditorHosts } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -427,7 +430,16 @@ function detachByShortcut(convId: string, tab: FloatTab): boolean {
 }
 
 // Resolve the conversation directory when opening a cold editor popup.
+// The editors of remote hosts' conversations, shown in this window's drawer (drawer/remote-vscode).
+let remoteEditors: RemoteEditors | null = null
+const remoteVSCodeDeps = () => ({ editors: remoteEditors!, settingsJson: getMergedSettingsJson })
+
 async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
+  // A remote host's conversation opens the host's editor in its own folder there; the renderer's folder is ignored.
+  if (isRemoteConversation(convId)) {
+    if (remoteEditors && conversationTabAllowed(convId, 'vscode')) await loadRemoteVSCode(convId, remoteVSCodeDeps())
+    return
+  }
   const conversation = getConversation(convId)
   if (conversation?.scope === 'standalone') {
     const managed = await validateStandaloneConversationDirectory(conversation)
@@ -812,6 +824,8 @@ function registerIpc(): void {
       focusMainWindow()
       safeWindowSend(mainWindow, 'conversation:open', { conversation, focus: true })
     },
+    restartRemoteVSCode: (convId) =>
+      remoteEditors ? restartRemoteVSCode(convId, remoteVSCodeDeps()) : Promise.resolve(),
   })
 
   registerReviewIpc(reg)
@@ -855,6 +869,21 @@ function registerIpc(): void {
     bridgeInFlight: hasVSCodeBridgeInFlight,
   })
   registerHostsIpc(reg)
+  remoteEditors = new RemoteEditors({
+    registry: hostRegistry,
+    fleet: fleetClientService,
+    portsFile: path.join(app.getPath('userData'), 'remote-editor-ports.json'),
+    origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
+  })
+  setRemoteVSCodeHandlers(remoteVSCodeHandlers({ editors: remoteEditors }))
+  // A remote host's conversation shows a Code tab once the host says it serves its editor.
+  setRemoteEditorHosts(
+    (hostId) =>
+      hostRegistry()
+        ?.list()
+        .some((host) => host.id === hostId && host.editor) ?? false
+  )
+  app.once('before-quit', () => remoteEditors?.close())
   registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })
 
   registerSettingsIpc(reg, {
@@ -1050,10 +1079,10 @@ app.whenReady().then(async () => {
         hostName: os.hostname(),
         homeDir: os.homedir(),
         roots: hostFsRoots().map((root) => root.path),
-        // Nobody sees this host's desktop. Its browser is streamed to the computer that shows it (drawer/browser-stream);
-        // its editor is not shown on a computer yet.
+        // Nobody sees this host's desktop. Its browser is streamed to the computer that shows it (drawer/browser-stream),
+        // and that computer opens its editor through the control server (remote-host/server/host-editor).
         desktopEffects: false,
-        editor: false,
+        editor: true,
         browser: true,
       }),
       // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the

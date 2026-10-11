@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest'
 const getConversation = vi.fn()
 vi.mock('../../src/main/store', () => ({ getConversation: (id: string) => getConversation(id) }))
 
-import { conversationTabAllowed, isRemoteConversation, panelSearch } from '../../src/main/drawer-scope'
+import {
+  conversationTabAllowed,
+  isRemoteConversation,
+  panelSearch,
+  setRemoteEditorHosts,
+} from '../../src/main/drawer-scope'
 
 const REMOTE = 'server-1/workspaces#conv-1'
 
@@ -30,6 +35,19 @@ describe('drawer scope', () => {
     for (const tab of ['browser', 'vscode', 'chatgpt'] as const)
       expect(conversationTabAllowed(REMOTE, tab), tab).toBe(false)
     expect(getConversation).not.toHaveBeenCalled()
+  })
+
+  it("admits the editor of a remote host's conversation once its host serves one", () => {
+    setRemoteEditorHosts((hostId) => hostId === 'server-1/workspaces')
+    try {
+      expect(conversationTabAllowed(REMOTE, 'vscode')).toBe(true)
+      expect(conversationTabAllowed('server-2/workspaces#conv-1', 'vscode')).toBe(false)
+      // Its browser is streamed into the DOM, not a native view of this computer; its companion stays local only.
+      expect(conversationTabAllowed(REMOTE, 'browser')).toBe(false)
+      expect(conversationTabAllowed(REMOTE, 'chatgpt')).toBe(false)
+    } finally {
+      setRemoteEditorHosts(() => false)
+    }
   })
 
   it("tells a panel's page its host and the host's own id", () => {

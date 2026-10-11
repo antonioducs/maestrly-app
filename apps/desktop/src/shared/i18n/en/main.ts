@@ -84,6 +84,23 @@ export default {
       'Bringing up a new editor server without closing the app. Your conversation and terminals stay intact.',
     errorTitle: 'Couldn’t set up VS Code',
     errorSub: 'Failed to download the editor. Check your internet connection and open the Code tab again to retry.',
+    remoteDownloadingTitle: 'Setting up VS Code on the server',
+    remoteDownloadingSub:
+      'The server downloads VS Code the first time its editor opens. This may take a minute; it runs there, in the conversation’s folder.',
+    remoteStartingTitle: 'Starting the server’s editor',
+    remoteStartingSub: 'Opening VS Code on the server for this conversation…',
+    remoteOfflineTitle: 'The server is not connected',
+    remoteOfflineSub: 'Open the Code tab again once the server is back.',
+    remoteUnauthorizedTitle: 'This computer is not paired with the server',
+    remoteUnauthorizedSub: 'Pair it again in Settings → Bot server, then open the Code tab again.',
+    remoteGatewayUpdateTitle: 'Update the bot server to open its editor',
+    remoteGatewayUpdateSub:
+      'The bot server runs a version from before the remote editor. Update it, then open the Code tab again.',
+    remoteHostUpdateTitle: 'Update the workspaces environment to open its editor',
+    remoteHostUpdateSub: 'Use Update bots on the server page, then open the Code tab again.',
+    remoteFailedTitle: 'Couldn’t start VS Code on the server',
+    remoteFailedSub:
+      'The server could not download or start the editor. Check its internet connection and open the Code tab again to retry.',
     chatgptRestoringTitle: 'Restoring ChatGPT…',
     chatgptRestoringSub: 'Reloading the last conversation. Your login and session stay intact.',
   },

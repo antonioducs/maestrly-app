@@ -84,6 +84,23 @@ export default {
     errorTitle: 'Não foi possível preparar o VS Code',
     errorSub:
       'Falha ao baixar o editor. Verifique sua conexão com a internet e abra a aba Código novamente para tentar de novo.',
+    remoteDownloadingTitle: 'Preparando o VS Code no servidor',
+    remoteDownloadingSub:
+      'O servidor baixa o VS Code na primeira vez que o editor abre. Pode levar um minuto; ele roda lá, na pasta da conversa.',
+    remoteStartingTitle: 'Iniciando o editor do servidor',
+    remoteStartingSub: 'Abrindo o VS Code no servidor para esta conversa…',
+    remoteOfflineTitle: 'O servidor não está conectado',
+    remoteOfflineSub: 'Abra a aba Código novamente quando o servidor voltar.',
+    remoteUnauthorizedTitle: 'Este computador não está pareado com o servidor',
+    remoteUnauthorizedSub: 'Pareie de novo em Configurações → Servidor de bots e abra a aba Código novamente.',
+    remoteGatewayUpdateTitle: 'Atualize o servidor de bots para abrir o editor',
+    remoteGatewayUpdateSub:
+      'O servidor de bots roda uma versão anterior ao editor remoto. Atualize-o e abra a aba Código novamente.',
+    remoteHostUpdateTitle: 'Atualize o ambiente de workspaces para abrir o editor',
+    remoteHostUpdateSub: 'Use Atualizar bots na página do servidor e abra a aba Código novamente.',
+    remoteFailedTitle: 'Não foi possível iniciar o VS Code no servidor',
+    remoteFailedSub:
+      'O servidor não conseguiu baixar ou iniciar o editor. Verifique a conexão dele com a internet e abra a aba Código novamente para tentar de novo.',
     chatgptRestoringTitle: 'Restaurando ChatGPT…',
     chatgptRestoringSub: 'Recarregando a última conversa. Login e sessão permanecem intactos.',
   },

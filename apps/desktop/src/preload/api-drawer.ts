@@ -79,7 +79,8 @@ export const drawerApi = {
   drawerCaptureSlot: (convId: string): Promise<string | null> => ipcRenderer.invoke('drawer:capture-slot', convId),
   drawerLoadVSCode: (convId: string, folder: string): Promise<void> =>
     ipcRenderer.invoke('drawer:load-vscode', convId, folder),
-  drawerRestartVSCode: (): Promise<void> => ipcRenderer.invoke('drawer:restart-vscode'),
+  /** Restarts the editor server: this computer's, or the host's of a remote conversation (`convId`, its host key). */
+  drawerRestartVSCode: (convId?: string): Promise<void> => ipcRenderer.invoke('drawer:restart-vscode', convId),
   drawerDisposeConversation: (convId: string) => ipcRenderer.send('drawer:dispose-conversation', convId),
   drawerEnsurePanel: (convId: string, tab: 'terminal' | 'files' | 'plan' | 'review' | 'notes') =>
     ipcRenderer.send('drawer:ensure-panel', convId, tab),

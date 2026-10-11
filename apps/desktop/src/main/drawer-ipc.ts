@@ -60,6 +60,8 @@ export interface DrawerIpcDeps {
   /** Recreates a cold-evicted ChatGPT view only when the conversation still owns an active session. */
   restoreChatGptView?: (convId: string) => Promise<boolean>
   openConversation?: (convId: string) => void
+  /** Restarts a remote host's editor and reloads this computer's views of it (drawer/remote-vscode). */
+  restartRemoteVSCode?: (convId: string) => Promise<void>
 }
 
 /** Canonical source for deciding whether a Companion completion is visible to the user. */
@@ -163,7 +165,12 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
   // #318: Restart a stalled or crashed serve-web without closing the app, then reload all open Code tabs
   // with its new URL. The global server may choose a different port.
-  reg.mhandle('drawer:restart-vscode', async () => {
+  reg.mhandle('drawer:restart-vscode', async (_e, convId?: unknown) => {
+    // A remote host's conversation restarts that host's editor; this computer's editor server keeps running.
+    if (typeof convId === 'string' && isRemoteConversation(convId)) {
+      if (conversationTabAllowed(convId, 'vscode')) await deps.restartRemoteVSCode?.(convId)
+      return
+    }
     showVSCodeLoadingAll('restarting') // show immediate feedback in open tabs during server restart
     await restartVSCodeServer()
     const settingsJson = await getMergedSettingsJson()

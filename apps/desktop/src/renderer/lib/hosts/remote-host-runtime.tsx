@@ -161,6 +161,16 @@ export function RemoteHostRuntime({
       }),
     [api, hostId, openDrawerTab, setDrawerOpenByConv]
   )
+  // The agent needs the conversation's editor (a debug tool, a Plan file): its drawer opens on the host's Code tab.
+  useEffect(
+    () =>
+      api.onDrawerVSCodeFocus(({ convId }) => {
+        const key = hostKey(hostId, convId)
+        setDrawerOpenByConv((previous) => (previous[key] ? previous : { ...previous, [key]: true }))
+        openDrawerTab(key, 'vscode')
+      }),
+    [api, hostId, openDrawerTab, setDrawerOpenByConv]
+  )
   // The agent showed the conversation's browser: its drawer opens on the Browser tab, streamed from the host.
   useEffect(
     () =>

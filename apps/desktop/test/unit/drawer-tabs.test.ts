@@ -96,8 +96,8 @@ describe("tools of a remote host's conversation", () => {
     expect(sanitizeOpenTabs(['browser', 'terminal'], { id: 'conv-1' })).toEqual(['browser', 'terminal'])
   })
 
-  it('offers the browser of a host that streams it, and still never its editor', () => {
-    const streams = (hostId: string) => hostId === 'server-1/workspaces'
+  it('offers the browser of a host that streams it, and its editor only when it serves one', () => {
+    const streams = (hostId: string, tab: 'browser' | 'vscode') => hostId === 'server-1/workspaces' && tab === 'browser'
     expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true, streams)).toEqual([
       'browser',
       'terminal',
@@ -110,5 +110,21 @@ describe("tools of a remote host's conversation", () => {
     expect(tabAvailableInContext('browser', { id: 'server-2/workspaces#conv-1' }, true, streams)).toBe(false)
     expect(tabAvailableInContext('vscode', remote, true, streams)).toBe(false)
     expect(sanitizeOpenTabs(['browser', 'vscode', 'notes'], remote, true, streams)).toEqual(['browser', 'notes'])
+  })
+
+  it('offers the editor of a host that serves it, never the companion', () => {
+    const serves = (hostId: string) => hostId === 'server-1/workspaces'
+    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true, serves)).toEqual([
+      'browser',
+      'vscode',
+      'terminal',
+      'files',
+      'plan',
+      'review',
+      'notes',
+    ])
+    expect(tabAvailableInContext('vscode', { id: 'server-2/workspaces#conv-1' }, true, serves)).toBe(false)
+    expect(tabAvailableInContext('chatgpt', remote, true, serves)).toBe(false)
+    expect(sanitizeOpenTabs(['vscode', 'terminal'], remote, true, serves)).toEqual(['vscode', 'terminal'])
   })
 })
