@@ -228,6 +228,11 @@ export const FLEET_CONTEXT_LIMIT_FEATURE = 'context-limit'
  * bridge to it. As an instance capability: the image runs Maestrly in server mode and serves that bridge.
  */
 export const FLEET_WORKSPACES_HOST_FEATURE = 'workspaces-host'
+/**
+ * Gateway feature (`/v1/meta`): paired computers move files to and from a workspaces environment through the gateway.
+ * As an instance capability: the environment's Maestrly serves those files.
+ */
+export const FLEET_HOST_FILES_FEATURE = 'host-files'
 /** Where a workspaces environment's control server accepts the bridge, as a WebSocket upgrade. */
 export const FLEET_INSTANCE_BRIDGE_PATH = '/v1/bridge'
 /** A bridge ticket is one-use and short-lived; each paired computer holds a bounded number of bridges. */

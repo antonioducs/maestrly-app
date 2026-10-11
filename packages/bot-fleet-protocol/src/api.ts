@@ -1,4 +1,14 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
+import {
+  fleetHostFileDigestRequestSchema,
+  fleetHostFileDigestSchema,
+  fleetHostFileStatRequestSchema,
+  fleetHostFileStatSchema,
+  fleetHostFileUploadBeginSchema,
+  fleetHostFileUploadCommitSchema,
+  fleetHostFileUploadResultSchema,
+  fleetHostFileUploadSchema,
+} from './host-files.js'
 import { z } from 'zod'
 import {
   FLEET_ENVIRONMENT_LIMITS,
@@ -1401,6 +1411,29 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   /** The bridge itself: a WebSocket upgrade with a ticket, passed through to the workspaces environment. */
   bridge: { method: 'GET', path: '/v1/bridge', body: null, response: null },
+  // Passed through to the workspaces host untouched: the instance route of the same key defines bodies and answers.
+  hostFileStat: { method: 'POST', path: '/v1/environments/:eid/host-files/stat', body: null, response: null },
+  hostFileContent: { method: 'GET', path: '/v1/environments/:eid/host-files/content', body: null, response: null },
+  hostFileDigest: { method: 'POST', path: '/v1/environments/:eid/host-files/digest', body: null, response: null },
+  hostFileUploadBegin: { method: 'POST', path: '/v1/environments/:eid/host-files/uploads', body: null, response: null },
+  hostFileUploadChunk: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/host-files/uploads/:uploadId',
+    body: null,
+    response: null,
+  },
+  hostFileUploadCommit: {
+    method: 'POST',
+    path: '/v1/environments/:eid/host-files/uploads/:uploadId/commit',
+    body: null,
+    response: null,
+  },
+  hostFileUploadAbort: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/host-files/uploads/:uploadId',
+    body: null,
+    response: null,
+  },
   botUiOpen: { method: 'POST', path: '/v1/bots/:id/ui/open', body: fleetUiOpenRequestSchema, response: null },
   botConversationCall: {
     method: 'POST',
@@ -1894,7 +1927,47 @@ export const FLEET_INSTANCE_ROUTES = {
   botScreenControl: { method: 'GET', path: '/v1/bots/:botId/screen/:surface/control', body: null, response: null },
   environmentScreenView: { method: 'GET', path: '/v1/screen/environment/view', body: null, response: null },
   environmentScreenControl: { method: 'GET', path: '/v1/screen/environment/control', body: null, response: null },
+  // A workspaces host's files: content and chunks carry raw bytes, so their bodies and answers are not JSON.
+  hostFileStat: {
+    method: 'POST',
+    path: '/v1/host-files/stat',
+    body: fleetHostFileStatRequestSchema,
+    response: fleetHostFileStatSchema,
+  },
+  hostFileContent: { method: 'GET', path: '/v1/host-files/content', body: null, response: null },
+  hostFileDigest: {
+    method: 'POST',
+    path: '/v1/host-files/digest',
+    body: fleetHostFileDigestRequestSchema,
+    response: fleetHostFileDigestSchema,
+  },
+  hostFileUploadBegin: {
+    method: 'POST',
+    path: '/v1/host-files/uploads',
+    body: fleetHostFileUploadBeginSchema,
+    response: fleetHostFileUploadSchema,
+  },
+  hostFileUploadChunk: { method: 'PUT', path: '/v1/host-files/uploads/:uploadId', body: null, response: null },
+  hostFileUploadCommit: {
+    method: 'POST',
+    path: '/v1/host-files/uploads/:uploadId/commit',
+    body: fleetHostFileUploadCommitSchema,
+    response: fleetHostFileUploadResultSchema,
+  },
+  hostFileUploadAbort: { method: 'DELETE', path: '/v1/host-files/uploads/:uploadId', body: null, response: null },
 } as const satisfies Record<string, FleetRoute>
+
+/** The routes that move a workspaces host's files; each gateway route passes through to the instance route. */
+export const FLEET_HOST_FILE_ROUTE_KEYS = [
+  'hostFileStat',
+  'hostFileContent',
+  'hostFileDigest',
+  'hostFileUploadBegin',
+  'hostFileUploadChunk',
+  'hostFileUploadCommit',
+  'hostFileUploadAbort',
+] as const
+export type FleetHostFileRouteKey = (typeof FLEET_HOST_FILE_ROUTE_KEYS)[number]
 
 export function buildPath(
   pattern: string,
