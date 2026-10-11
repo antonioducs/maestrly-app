@@ -21,7 +21,11 @@ import { settingsApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { makeHostApi } from '../../src/preload/host-api'
-import { HOST_DESKTOP_EFFECT_CHANNELS, remoteChannelRefusal } from '../../src/shared/host-channels'
+import {
+  HOST_DESKTOP_EFFECT_CHANNELS,
+  REMOTE_VIEWER_CHANNELS,
+  remoteChannelRefusal,
+} from '../../src/shared/host-channels'
 
 // Stands for any argument: a callable object whose every property is itself, and which prints as a string.
 const dummy: any = new Proxy(() => {}, {
@@ -99,6 +103,24 @@ describe('host channel policy', () => {
       used.filter((channel) => remoteChannelRefusal(channel) !== 'local-only').map((channel) => `${member}: ${channel}`)
     )
     expect(allowed).toEqual([])
+  })
+
+  it('lets remote origins reach the browser stream, and only through the host API', () => {
+    const seen: string[] = []
+    const byMember = channelsOf(
+      makeHostApi({
+        invoke: async (channel) => void seen.push(channel),
+        send: (channel) => void seen.push(channel),
+        on: () => {},
+        removeListener: () => {},
+      }),
+      seen
+    )
+    const streamChannels = [...byMember]
+      .filter(([member]) => member.startsWith('browserStream'))
+      .flatMap(([, used]) => used)
+    expect(new Set(streamChannels)).toEqual(REMOTE_VIEWER_CHANNELS)
+    for (const channel of REMOTE_VIEWER_CHANNELS) expect(remoteChannelRefusal(channel)).toBeNull()
   })
 
   it('treats an unknown channel as a host channel, left for the handler table to refuse', () => {

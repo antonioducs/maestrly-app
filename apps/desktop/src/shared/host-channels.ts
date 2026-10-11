@@ -72,6 +72,22 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
   'project-setup:projects-directory-pick',
 ])
 
+/**
+ * Channels a host serves only to another computer's renderer: the conversation's browser, streamed to that computer's
+ * window. A window of the host itself shows its browser natively, so their handlers refuse every local sender.
+ */
+export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
+  'drawer:browser-stream-start',
+  'drawer:browser-stream-resize',
+  'drawer:browser-stream-ack',
+  'drawer:browser-stream-stop',
+  'drawer:browser-input',
+  'drawer:browser-copy',
+  'drawer:browser-paste',
+  'drawer:browser-select-choose',
+  'drawer:browser-popup-close',
+])
+
 export type RemoteChannelRefusal = 'local-only' | 'desktop-effect'
 
 /** Why a host refuses a channel from another computer's renderer, or null when it may run. */

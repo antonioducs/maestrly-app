@@ -2,6 +2,16 @@ import { ipcRenderer } from 'electron'
 import type { IpcTransport } from './ipc-transport'
 import type { FloatTab } from '../shared/tool-tabs'
 import type { PtyOutputSnapshot } from '../shared/pty'
+import type {
+  BrowserSelectRequest,
+  BrowserStreamCursor,
+  BrowserStreamEnded,
+  BrowserStreamFrame,
+  BrowserStreamInput,
+  BrowserStreamNotice,
+  BrowserStreamSource,
+  BrowserStreamStarted,
+} from '../shared/browser-stream'
 
 export interface FloatingBounds {
   x: number
@@ -173,6 +183,61 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       return () => ipcRenderer.removeListener('drawer:browser-state', listener)
     },
     getBrowserState: (convId: string): Promise<BrowserState> => ipcRenderer.invoke('drawer:browser-state-get', convId),
+    /**
+     * The conversation's browser on a remote host, streamed to this window (see shared/browser-stream). Only a remote
+     * host serves these; one window watches a conversation's browser at a time, and the last to start takes it over.
+     */
+    browserStreamStart: (convId: string, width: number, height: number): Promise<BrowserStreamStarted> =>
+      ipcRenderer.invoke('drawer:browser-stream-start', convId, width, height),
+    browserStreamResize: (convId: string, streamId: string, width: number, height: number) =>
+      ipcRenderer.send('drawer:browser-stream-resize', convId, streamId, width, height),
+    /** Sent once each frame was drawn or dropped: the host sends the next ones only as earlier ones are acknowledged. */
+    browserStreamAck: (convId: string, streamId: string, seq: number) =>
+      ipcRenderer.send('drawer:browser-stream-ack', convId, streamId, seq),
+    browserStreamStop: (convId: string, streamId: string) =>
+      ipcRenderer.send('drawer:browser-stream-stop', convId, streamId),
+    browserStreamInput: (convId: string, streamId: string, input: BrowserStreamInput) =>
+      ipcRenderer.send('drawer:browser-input', convId, streamId, input),
+    /** Copies (or cuts) the page's selection; resolves with its text, or null when nothing was copied. */
+    browserStreamCopy: (convId: string, streamId: string, cut: boolean): Promise<string | null> =>
+      ipcRenderer.invoke('drawer:browser-copy', convId, streamId, cut),
+    browserStreamPaste: (convId: string, streamId: string, data: { text: string; html?: string }) =>
+      ipcRenderer.send('drawer:browser-paste', convId, streamId, data),
+    /** The option picked for a `<select>` request, or null when the list was dismissed. */
+    browserStreamChooseOption: (convId: string, streamId: string, requestId: string, index: number | null) =>
+      ipcRenderer.send('drawer:browser-select-choose', convId, streamId, requestId, index),
+    browserStreamClosePopup: (convId: string, streamId: string) =>
+      ipcRenderer.send('drawer:browser-popup-close', convId, streamId),
+    onBrowserStreamFrame: (cb: (frame: BrowserStreamFrame) => void): (() => void) => {
+      const listener = (_e: unknown, frame: BrowserStreamFrame) => cb(frame)
+      ipcRenderer.on('drawer:browser-frame', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-frame', listener)
+    },
+    onBrowserStreamSource: (cb: (source: BrowserStreamSource) => void): (() => void) => {
+      const listener = (_e: unknown, source: BrowserStreamSource) => cb(source)
+      ipcRenderer.on('drawer:browser-stream-source', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-stream-source', listener)
+    },
+    onBrowserStreamEnded: (cb: (ended: BrowserStreamEnded) => void): (() => void) => {
+      const listener = (_e: unknown, ended: BrowserStreamEnded) => cb(ended)
+      ipcRenderer.on('drawer:browser-stream-ended', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-stream-ended', listener)
+    },
+    onBrowserStreamCursor: (cb: (cursor: BrowserStreamCursor) => void): (() => void) => {
+      const listener = (_e: unknown, cursor: BrowserStreamCursor) => cb(cursor)
+      ipcRenderer.on('drawer:browser-cursor', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-cursor', listener)
+    },
+    onBrowserSelect: (cb: (request: BrowserSelectRequest) => void): (() => void) => {
+      const listener = (_e: unknown, request: BrowserSelectRequest) => cb(request)
+      ipcRenderer.on('drawer:browser-select', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-select', listener)
+    },
+    onBrowserStreamNotice: (cb: (notice: BrowserStreamNotice) => void): (() => void) => {
+      const listener = (_e: unknown, notice: BrowserStreamNotice) => cb(notice)
+      ipcRenderer.on('drawer:browser-stream-notice', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-stream-notice', listener)
+    },
     savePlanDraft: (convId: string, draft: unknown): void => {
       ipcRenderer.send('panel:plan-draft-save', convId, draft)
     },
