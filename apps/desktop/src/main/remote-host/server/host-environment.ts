@@ -6,6 +6,7 @@ import {
   type FleetMcpImportRequest,
   type FleetSkillInstallRequest,
   type FleetSubscriptionKind,
+  FLEET_HOST_EDITOR_FEATURE,
   FLEET_HOST_FILES_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
 } from '@maestrly/bot-fleet-protocol'
@@ -38,7 +39,12 @@ export class HostEnvironment implements InstanceEnvironment {
     const health = this.runtime.health()
     return {
       ...health,
-      capabilities: [...health.capabilities, FLEET_WORKSPACES_HOST_FEATURE, FLEET_HOST_FILES_FEATURE],
+      capabilities: [
+        ...health.capabilities,
+        FLEET_WORKSPACES_HOST_FEATURE,
+        FLEET_HOST_FILES_FEATURE,
+        FLEET_HOST_EDITOR_FEATURE,
+      ],
       busy: this.busy(),
     }
   }
@@ -46,7 +52,12 @@ export class HostEnvironment implements InstanceEnvironment {
     const status = await this.runtime.environmentStatus()
     return {
       ...status,
-      capabilities: [...status.capabilities, FLEET_WORKSPACES_HOST_FEATURE, FLEET_HOST_FILES_FEATURE],
+      capabilities: [
+        ...status.capabilities,
+        FLEET_WORKSPACES_HOST_FEATURE,
+        FLEET_HOST_FILES_FEATURE,
+        FLEET_HOST_EDITOR_FEATURE,
+      ],
       bots: [],
     }
   }

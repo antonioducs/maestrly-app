@@ -135,8 +135,20 @@ function registerVSCodeReclaimable(convId: string, generation: number): void {
   })
 }
 
+// Editor connections other computers hold through this host's control server (remote-host/server/host-editor).
+let remoteEditorSockets = 0
+
+/**
+ * Another computer used this host's editor and holds `openSockets` connections to it now. While any is open the
+ * editor server stays up; without one, its idle period starts again from now.
+ */
+export function noteRemoteEditorActivity(openSockets: number): void {
+  remoteEditorSockets = openSockets
+  scheduleVSCodeServerIdle()
+}
+
 function scheduleVSCodeServerIdle(): void {
-  if (materializedVSCodeCount() > 0 || hasVSCodeBridgeInFlight()) {
+  if (materializedVSCodeCount() > 0 || remoteEditorSockets > 0 || hasVSCodeBridgeInFlight()) {
     unregisterReclaimable(SERVER_IDLE_KEY)
     return
   }
@@ -153,12 +165,15 @@ function scheduleVSCodeServerIdle(): void {
     priority: 80,
     protection: () => {
       if (materializedVSCodeCount() > 0) return { protected: true, reasons: ['views'] }
+      if (remoteEditorSockets > 0) return { protected: true, reasons: ['remote-editor'] }
       if (hasVSCodeBridgeInFlight()) return { protected: true, reasons: ['bridge-in-flight'] }
       return { protected: false, reasons: [] }
     },
-    prepare: async () => ({ ok: materializedVSCodeCount() === 0 && !hasVSCodeBridgeInFlight() }),
+    prepare: async () => ({
+      ok: materializedVSCodeCount() === 0 && remoteEditorSockets === 0 && !hasVSCodeBridgeInFlight(),
+    }),
     evict: () => {
-      if (materializedVSCodeCount() > 0 || hasVSCodeBridgeInFlight()) return
+      if (materializedVSCodeCount() > 0 || remoteEditorSockets > 0 || hasVSCodeBridgeInFlight()) return
       stopVSCodeServer()
       unregisterReclaimable(SERVER_IDLE_KEY)
     },

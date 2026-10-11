@@ -11,6 +11,7 @@ import { chmod0600 } from '../secret-file'
 import { vscodeUserDir, vscodeExtDir, killProcessTree, isLinux, isWin, spawnCli } from '../platform'
 import { EXT_ID, EXT_DIRNAME, EXT_VERSION, EXT_PACKAGE_JSON, EXT_JS } from './vscode-ext-source'
 import { registerOwnedProcess, unregisterOwnedProcess } from '../performance/owned-processes'
+import { isE2E } from '../test-mode'
 
 /**
  * Run one authenticated loopback official VS Code serve-web for all conversations, varying folder in
@@ -23,6 +24,15 @@ let port = PORT_BASE // actual free port selected at startup, avoiding orphan se
 let serverProc: ChildProcess | null = null
 let token = ''
 let ready: Promise<void> | null = null
+// An editor server an E2E test runs itself, used instead of downloading and starting VS Code.
+let e2eServerRunning = false
+
+/** E2E only: `MAESTRLY_E2E_VSCODE_SERVER=<port>:<token>` names an editor server the test runs on the loopback. */
+function e2eServer(): { port: number; token: string } | null {
+  if (!isE2E()) return null
+  const match = /^(\d{1,5}):([A-Za-z0-9_-]{8,128})$/.exec(process.env.MAESTRLY_E2E_VSCODE_SERVER ?? '')
+  return match ? { port: Number(match[1]), token: match[2] } : null
+}
 
 function dataDir(): string {
   return path.join(app.getPath('userData'), 'vscode-serve-web')
@@ -210,6 +220,14 @@ function waitForHttp(url: string, timeoutMs: number): Promise<void> {
 /** Idempotently start on the first call and reuse the server afterward. */
 export function startVSCodeServer(): Promise<void> {
   if (ready) return ready
+  const fake = e2eServer()
+  if (fake) {
+    port = fake.port
+    token = fake.token
+    e2eServerRunning = true
+    ready = Promise.resolve()
+    return ready
+  }
 
   const startPromise = (async () => {
     // The previous server is stopped, so safely promote a downloaded pending CLI version before startup.
@@ -376,7 +394,15 @@ export function waitForEditorReady(timeoutMs = 120000): Promise<void> {
  * for next opening.
  */
 export function isVSCodeServerRunning(): boolean {
-  return serverProc != null
+  return serverProc != null || e2eServerRunning
+}
+
+/**
+ * Where the running editor server listens on the loopback, and its connection token: a workspaces host passes its
+ * editor's requests there (remote-host/server/host-editor).
+ */
+export function vscodeServerEndpoint(): { port: number; token: string } {
+  return { port, token }
 }
 
 export function stopVSCodeServer(): void {
@@ -385,6 +411,7 @@ export function stopVSCodeServer(): void {
   // replacement server.
   serverProc = null
   ready = null
+  e2eServerRunning = false
   unregisterOwnedProcess('vscode-serve-web')
   if (!p?.pid) return
   // Kill launcher and descendant server together so no orphan retains the port: POSIX process group or

@@ -5,7 +5,10 @@ import { EnvironmentRuntime } from '../../fleet/instance/environment'
 import { type BridgeUpgrade, createInstanceControlServer } from '../../fleet/instance/server'
 import { setProjectsDirectoryFallback } from '../../projects-directory'
 import { hostFsRoots } from '../host-fs'
+import { noteRemoteEditorActivity } from '../../drawer/vscode'
+import { startVSCodeServer, vscodeServerEndpoint } from '../../vscode/vscode-server'
 import { parseServerModeConfig } from './config'
+import { HostEditor } from './host-editor'
 import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
 
@@ -51,9 +54,18 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       uploadsDir: path.join(app.getPath('userData'), 'host-file-uploads'),
     })
     void hostFiles.sweep().catch(() => undefined)
+    // Computers open the host's editor (VS Code's serve-web, started when one asks for it) through this server.
+    const editor = new HostEditor({
+      ensureServer: async () => {
+        await startVSCodeServer()
+        return vscodeServerEndpoint()
+      },
+      onActivity: noteRemoteEditorActivity,
+    })
     const server = createInstanceControlServer(config, new HostEnvironment(runtime, deps.busy), {
       bridge: deps.hub,
       hostFiles,
+      editor,
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -64,6 +76,7 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
     })
     window.on('closed', async () => {
       deps.hub.closeAll()
+      editor.closeAll()
       server.close()
       await runtime.dispose()
     })

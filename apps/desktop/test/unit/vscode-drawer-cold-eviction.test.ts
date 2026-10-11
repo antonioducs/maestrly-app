@@ -27,7 +27,10 @@ const h = vi.hoisted(() => {
       return this.on(event, wrapped)
     }
     removeListener(event: string, listener: (...args: unknown[]) => void): this {
-      this.listeners.set(event, (this.listeners.get(event) ?? []).filter((candidate) => candidate !== listener))
+      this.listeners.set(
+        event,
+        (this.listeners.get(event) ?? []).filter((candidate) => candidate !== listener)
+      )
       return this
     }
   }
@@ -81,12 +84,14 @@ import {
   closeVSCodeView,
   isVSCodeShowing,
   loadVSCode,
+  noteRemoteEditorActivity,
   noteVSCodeSurfaceVisibility,
 } from '../../src/main/drawer/vscode'
 import { drawers, getDrawer, initDrawer, setActiveConvId, setSlot, setVisibleKind } from '../../src/main/drawer/state'
 import { getConversation } from '../../src/main/store'
 import { requestVSCodeMemorySnapshot } from '../../src/main/vscode/vscode-memory'
-import { VSCODE_VIEW_COLD_TTL_MS } from '../../src/main/performance/policy'
+import { VSCODE_SERVER_IDLE_TTL_MS, VSCODE_VIEW_COLD_TTL_MS } from '../../src/main/performance/policy'
+import { isVSCodeServerRunning, stopVSCodeServer } from '../../src/main/vscode/vscode-server'
 import { disposeMemoryReclaimer, runMemoryReclaim } from '../../src/main/performance/memory-reclaimer'
 
 describe('VS Code cold eviction: rematerialization always loads content', () => {
@@ -216,6 +221,23 @@ describe('VS Code cold eviction: rematerialization always loads content', () => 
     expect(getDrawer(convId).vscodeView).not.toBeNull()
     await vi.advanceTimersByTimeAsync(1)
     expect(getDrawer(convId).vscodeView).toBeNull()
+  })
+
+  it("keeps a host's editor server up while another computer holds editor connections", async () => {
+    vi.mocked(isVSCodeServerRunning).mockReturnValue(true)
+    noteRemoteEditorActivity(2)
+    await vi.advanceTimersByTimeAsync(VSCODE_SERVER_IDLE_TTL_MS * 2)
+    expect(stopVSCodeServer).not.toHaveBeenCalled()
+
+    // The last connection closed: the idle period starts then, and a later request starts it again.
+    noteRemoteEditorActivity(0)
+    await vi.advanceTimersByTimeAsync(VSCODE_SERVER_IDLE_TTL_MS / 2)
+    noteRemoteEditorActivity(0)
+    await vi.advanceTimersByTimeAsync(VSCODE_SERVER_IDLE_TTL_MS - 1000)
+    expect(stopVSCodeServer).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(VSCODE_SERVER_IDLE_TTL_MS)
+    expect(stopVSCodeServer).toHaveBeenCalledTimes(1)
+    vi.mocked(isVSCodeServerRunning).mockReturnValue(false)
   })
 
   it('queries the snapshot before evicting an eligible hidden view', async () => {

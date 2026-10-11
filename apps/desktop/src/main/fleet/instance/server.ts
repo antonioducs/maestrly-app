@@ -1,6 +1,7 @@
 import {
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
+  parseFleetInstanceEditorPath,
   type FleetEnvironmentSettingsService,
   type FleetHostFileDigestRequest,
   type FleetHostFileStatRequest,
@@ -402,10 +403,19 @@ export interface BridgeUpgrade {
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void
 }
 
+/**
+ * Serves the requests and upgrades under the editor prefix, once authenticated; a workspaces host passes its editor
+ * (remote-host/server/host-editor). `editorPath` is the editor's own path and query.
+ */
+export interface EditorRoutes {
+  request(request: IncomingMessage, response: ServerResponse, editorPath: string): Promise<void>
+  upgrade(request: IncomingMessage, socket: Duplex, head: Buffer, editorPath: string): void
+}
+
 export function createInstanceControlServer(
   config: BotInstanceConfig,
   environment: InstanceEnvironment,
-  options: { bridge?: BridgeUpgrade; hostFiles?: HostFilesRoutes } = {}
+  options: { bridge?: BridgeUpgrade; hostFiles?: HostFilesRoutes; editor?: EditorRoutes } = {}
 ): http.Server {
   const hostFiles = (): HostFilesRoutes => {
     if (!options.hostFiles) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
@@ -594,6 +604,10 @@ export function createInstanceControlServer(
       if (!authorized(request.headers.authorization, config.controlToken))
         throw new InstanceHttpError(401, 'UNAUTHORIZED', 'Invalid control credentials.')
       const url = new URL(request.url ?? '/', 'http://localhost')
+      // The editor's requests stream both ways, as the editor sends and answers them.
+      const editorPath = options.editor ? parseFleetInstanceEditorPath(url.pathname) : null
+      if (options.editor && editorPath !== null)
+        return await options.editor.request(request, response, editorPath + url.search)
       const match = routeFor(request.method ?? '', url.pathname)
       if (!match) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
       if (SCREEN_ROUTES.has(match.key)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
@@ -723,6 +737,9 @@ export function createInstanceControlServer(
           return fail(400, 'INVALID_REQUEST', 'WebSocket upgrade required.')
         return options.bridge.handleUpgrade(request, socket, head)
       }
+      const editorPath = options.editor ? parseFleetInstanceEditorPath(url.pathname) : null
+      if (options.editor && editorPath !== null && request.method === 'GET')
+        return options.editor.upgrade(request, socket, head, editorPath + url.search)
       const screen = request.method === 'GET' ? screenFor(url.pathname) : null
       if (!screen) return fail(404, 'NOT_FOUND', 'Route not found.')
       if (
