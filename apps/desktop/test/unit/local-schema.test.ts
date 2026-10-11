@@ -47,6 +47,8 @@ const LOCAL_TABLES = [
   'conversation_migrations',
   'conversation_repos',
   'conversations',
+  'host_transfer_ranges',
+  'host_transfers',
   'local_memories',
   'local_memory_migrations',
   'memory_consolidation_state',

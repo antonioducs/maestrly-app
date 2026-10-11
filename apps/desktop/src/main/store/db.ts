@@ -4,6 +4,7 @@ import { conversationScopeConstraint, migrateStandaloneConversations } from './s
 import { app } from 'electron'
 import { prepareProductionDatabasePath } from './database-path-migration'
 import { initializeBotCommandSchema } from '../bot/schema'
+import { initializeHostTransferSchema } from '../host-transfers/schema'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -201,6 +202,7 @@ export function initStore(file?: string): void {
 
 function initializeSchema(): void {
   initializeBotCommandSchema(db)
+  initializeHostTransferSchema(db)
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_chat_sessions (
       instance_id TEXT NOT NULL, session_id TEXT NOT NULL, conversation_id TEXT NOT NULL UNIQUE,
