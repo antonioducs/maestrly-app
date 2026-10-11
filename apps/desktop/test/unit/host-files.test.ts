@@ -95,7 +95,7 @@ const chunk = (uploadId: string, offset: number, bytes: Uint8Array, options: { z
       'x-maestrly-length': String(bytes.length),
       ...(options.zstd ? { 'x-maestrly-encoding': 'zstd' } : {}),
     },
-    body: options.zstd ? zstdCompressSync(bytes) : bytes,
+    body: options.zstd ? zstdCompressSync(bytes) : Buffer.from(bytes),
   })
 
 describe('host files', () => {

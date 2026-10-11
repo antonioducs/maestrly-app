@@ -126,6 +126,11 @@ export class HostRegistry {
     }
   }
 
+  /** The development host reached without a server, when this window has one. */
+  directHost(): DirectHost | null {
+    return this.deps.direct?.host ?? null
+  }
+
   /** The connection of a remote host that is listed, whatever its state. */
   get(hostId: HostId): HostConnection | null {
     return this.remotes.get(hostId)?.connection ?? null

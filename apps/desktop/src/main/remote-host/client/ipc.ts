@@ -37,6 +37,13 @@ export function originRole(sender: WebContents): RemoteOriginRole {
 }
 
 let registry: HostRegistry | null = null
+const hostsListeners = new Set<() => void>()
+
+/** Calls `listener` whenever the hosts or their states change; returns its removal. */
+export function onHostsChanged(listener: () => void): () => void {
+  hostsListeners.add(listener)
+  return () => hostsListeners.delete(listener)
+}
 
 /** The hosts of this computer's windows; null before IPC is registered. */
 export const hostRegistry = (): HostRegistry | null => registry
@@ -65,7 +72,10 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
     }),
     openSocket: (url) => new WebSocket(url),
     direct: direct && { host: direct, openSocket: openDirectSocket },
-    onChanged: (list) => broadcast('hosts:changed', list),
+    onChanged: (list) => {
+      broadcast('hosts:changed', list)
+      for (const listener of hostsListeners) listener()
+    },
     onEvent: (hostId, origin, channel, args) => {
       const target = webContents.fromId(origin)
       if (target && !target.isDestroyed()) target.send('host:event', hostId, channel, args)

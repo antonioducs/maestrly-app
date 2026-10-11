@@ -148,6 +148,12 @@ export class FleetClientService {
     return this.connection.features.includes(feature)
   }
 
+  /** The paired gateway's origin and this device's headers, for requests that stream: null while unpaired. */
+  hostFilesAccess(): { origin: string; headers: Record<string, string> } | null {
+    const api = this.api
+    return api ? { origin: api.origin, headers: api.headers() } : null
+  }
+
   private requireApi(): FleetApiClient {
     if (!this.api) throw new FleetClientError('UNAUTHORIZED', 401, 'Fleet is not connected')
     return this.api
