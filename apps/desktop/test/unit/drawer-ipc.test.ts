@@ -68,6 +68,7 @@ vi.mock('../../src/main/drawer-manager', () => ({
 
 vi.mock('../../src/main/drawer/browser-stream', () => ({
   acknowledgeBrowserFrame: vi.fn(),
+  chooseBrowserStreamOption: vi.fn(),
   closeBrowserStreamPopup: vi.fn(),
   copyBrowserStream: vi.fn(),
   inputBrowserStream: vi.fn(),
@@ -188,6 +189,7 @@ describe('registerDrawerIpc', () => {
       'drawer:browser-input',
       'drawer:browser-paste',
       'drawer:browser-popup-close',
+      'drawer:browser-select-choose',
       'drawer:browser-stream-ack',
       'drawer:browser-stream-resize',
       'drawer:browser-stream-stop',

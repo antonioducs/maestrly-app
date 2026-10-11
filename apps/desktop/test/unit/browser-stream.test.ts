@@ -105,6 +105,7 @@ vi.mock('../../src/main/drawer/stream-window', () => ({
 import {
   STREAM_RELEASE_GRACE_MS,
   acknowledgeBrowserFrame,
+  chooseBrowserStreamOption,
   copyBrowserStream,
   inputBrowserStream,
   pasteBrowserStream,
@@ -195,6 +196,8 @@ describe('remote browser stream', () => {
     expect(tab.debugger.sent('Page.startScreencast')).toEqual([
       { format: 'jpeg', quality: 70, maxWidth: 800, maxHeight: 600, everyNthFrame: 1 },
     ])
+    expect(tab.debugger.sent('Page.setInterceptFileChooserDialog')).toEqual([{ enabled: true }])
+    expect(h.page.interceptSelects).toHaveBeenCalledWith(tab, expect.any(Function))
     expect(tab.invalidate).toHaveBeenCalled()
 
     frame(tab, 7)
@@ -368,6 +371,40 @@ describe('remote browser stream', () => {
     pasteBrowserStream(sender, 'conv-1', streamId, { text: 7 })
     await settle()
     expect(tab.paste).toHaveBeenCalledTimes(1)
+  })
+
+  it("relays the page's lists to the viewer and its choice back, and reports refused file choosers", async () => {
+    const { sender, streamId } = await started()
+    tab.zoom = 1.5
+    const onRequest = (h.page.interceptSelects.mock.calls[0] as unknown[])[1] as (request: unknown) => void
+    onRequest({
+      requestId: '3:1',
+      options: [{ label: 'Alpha', disabled: false, group: null }],
+      selectedIndex: 0,
+      rect: { x: 10, y: 20, width: 100, height: 30 },
+    })
+    expect(sender.events('drawer:browser-select')).toEqual([
+      {
+        convId: 'conv-1',
+        streamId,
+        source: 1,
+        requestId: '3:1',
+        options: [{ label: 'Alpha', disabled: false, group: null }],
+        selectedIndex: 0,
+        rect: { x: 15, y: 30, width: 150, height: 45 },
+      },
+    ])
+    chooseBrowserStreamOption(sender, 'conv-1', streamId, '3:1', 0)
+    chooseBrowserStreamOption(sender, 'conv-1', streamId, '3:1', -1)
+    chooseBrowserStreamOption(viewer(), 'conv-1', streamId, '3:1', 0)
+    await settle()
+    expect(h.page.chooseSelectOption).toHaveBeenCalledTimes(1)
+    expect(h.page.chooseSelectOption).toHaveBeenCalledWith(tab, '3:1', 0)
+
+    tab.debugger.emit('message', {}, 'Page.fileChooserOpened', { mode: 'selectSingle' })
+    expect(sender.events('drawer:browser-stream-notice')).toEqual([
+      { convId: 'conv-1', streamId, notice: 'file-chooser' },
+    ])
   })
 
   it('keeps the page presented for a grace period after the viewer leaves', async () => {

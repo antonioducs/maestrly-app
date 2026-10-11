@@ -44,6 +44,7 @@ import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
 import {
   acknowledgeBrowserFrame,
+  chooseBrowserStreamOption,
   closeBrowserStreamPopup,
   copyBrowserStream,
   inputBrowserStream,
@@ -143,6 +144,9 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   )
   reg.mon('drawer:browser-paste', (e, convId: unknown, streamId: unknown, data: unknown) =>
     pasteBrowserStream(e.sender, convId, streamId, data)
+  )
+  reg.mon('drawer:browser-select-choose', (e, convId: unknown, streamId: unknown, requestId: unknown, index: unknown) =>
+    chooseBrowserStreamOption(e.sender, convId, streamId, requestId, index)
   )
   reg.mon('drawer:browser-popup-close', (e, convId: unknown, streamId: unknown) =>
     closeBrowserStreamPopup(e.sender, convId, streamId)

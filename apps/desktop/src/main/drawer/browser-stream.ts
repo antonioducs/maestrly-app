@@ -5,11 +5,13 @@ import {
   browserStreamCursor,
   isBrowserStreamId,
   parseBrowserStreamInput,
+  type BrowserSelectRequest,
   type BrowserStreamCursor,
   type BrowserStreamEndReason,
   type BrowserStreamEnded,
   type BrowserStreamFrame,
   type BrowserStreamInput,
+  type BrowserStreamNotice,
   type BrowserStreamSource,
   type BrowserStreamStarted,
 } from '../../shared/browser-stream'
@@ -24,7 +26,7 @@ import { isRemoteUiTarget } from '../remote-ui-targets'
 import { isServerMode } from '../remote-host/server/config'
 import { getConversation } from '../store'
 import { ensureBrowser, onBrowserPopupsChange, onBrowserStateChange, presentedBrowserViews } from './browser'
-import { readPageSelection } from './browser-stream-page'
+import { chooseSelectOption, interceptSelects, readPageSelection, type PageSelectRequest } from './browser-stream-page'
 import { onStreamWindowClosed, presentBrowserForStream, releaseBrowserStream } from './stream-window'
 
 /**
@@ -307,6 +309,7 @@ function attachSource(
       }
       if (wc.isDestroyed()) return
       void sendCdp(wc, 'Page.stopScreencast').catch(() => {})
+      void sendCdp(wc, 'Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {})
       if (stream.focused) void setPresentedFocusEmulation(wc, false).catch(() => {})
     },
   }
@@ -315,6 +318,10 @@ function attachSource(
 
   const onMessage = (_event: unknown, method: string, params: unknown): void => {
     if (method === 'Page.screencastFrame') onScreencastFrame(stream, source, params as ScreencastFrameParams)
+    else if (method === 'Page.fileChooserOpened' && current()) {
+      const notice: BrowserStreamNotice = { convId: stream.convId, streamId: stream.streamId, notice: 'file-chooser' }
+      notify(stream, 'drawer:browser-stream-notice', notice)
+    }
   }
   const onCursor = (_event: unknown, type: unknown): void => {
     if (!current()) return
@@ -347,9 +354,33 @@ function attachSource(
       () => wc.removeListener('did-navigate', onPopupChanged)
     )
   }
+  const onSelect = (request: PageSelectRequest): void => {
+    if (!current()) return
+    const zoom = wc.isDestroyed() ? 1 : wc.getZoomFactor() || 1
+    const event: BrowserSelectRequest = {
+      convId: stream.convId,
+      streamId: stream.streamId,
+      source: source.id,
+      requestId: request.requestId,
+      options: request.options,
+      selectedIndex: request.selectedIndex,
+      rect: {
+        x: request.rect.x * zoom,
+        y: request.rect.y * zoom,
+        width: request.rect.width * zoom,
+        height: request.rect.height * zoom,
+      },
+    }
+    notify(stream, 'drawer:browser-select', event)
+  }
+
   notify(stream, 'drawer:browser-stream-source', sourceEvent(stream))
   void (async () => {
     await ensureBrowserDebugger(wc)
+    if (!current()) return
+    cleanups.push(interceptSelects(wc, onSelect))
+    // A file chooser would open a dialog nobody sees on the host: the page's request is reported instead.
+    await sendCdp(wc, 'Page.setInterceptFileChooserDialog', { enabled: true }).catch(() => {})
     if (!current()) return
     if (stream.focused) await setPresentedFocusEmulation(wc, true).catch(() => {})
     if (!current()) return
@@ -637,6 +668,22 @@ export function pasteBrowserStream(sender: unknown, convId: unknown, streamId: u
       await sleep(PASTE_HOLD_MS)
     })
   ).catch(() => {})
+}
+
+/** The option the viewer picked for a `<select>` request of the current page, or null when it dismissed the list. */
+export function chooseBrowserStreamOption(
+  sender: unknown,
+  convId: unknown,
+  streamId: unknown,
+  requestId: unknown,
+  index: unknown
+): void {
+  const stream = viewerStream(sender, convId, streamId)
+  if (!stream || typeof requestId !== 'string' || requestId.length > 32) return
+  if (index !== null && !(Number.isInteger(index) && (index as number) >= 0)) return
+  void enqueueInput(stream, (source) => chooseSelectOption(source.wc, requestId, index as number | null)).catch(
+    () => {}
+  )
 }
 
 /** Closes the sign-in window the viewer sees, as its close button would. */
