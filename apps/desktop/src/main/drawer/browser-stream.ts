@@ -1,19 +1,30 @@
 import { randomBytes } from 'node:crypto'
-import type { BrowserWindow, WebContents } from 'electron'
+import { ClipboardItem, clipboard, type BrowserWindow, type WebContents } from 'electron'
 import {
   BROWSER_STREAM_LIMITS,
+  browserStreamCursor,
   isBrowserStreamId,
+  parseBrowserStreamInput,
+  type BrowserStreamCursor,
   type BrowserStreamEndReason,
   type BrowserStreamEnded,
   type BrowserStreamFrame,
+  type BrowserStreamInput,
   type BrowserStreamSource,
   type BrowserStreamStarted,
 } from '../../shared/browser-stream'
-import { ensureBrowserDebugger } from '../browser-control'
+import {
+  dispatchPresentedKey,
+  dispatchPresentedMouse,
+  ensureBrowserDebugger,
+  insertPresentedText,
+  setPresentedFocusEmulation,
+} from '../browser-control'
 import { isRemoteUiTarget } from '../remote-ui-targets'
 import { isServerMode } from '../remote-host/server/config'
 import { getConversation } from '../store'
 import { ensureBrowser, onBrowserPopupsChange, onBrowserStateChange, presentedBrowserViews } from './browser'
+import { readPageSelection } from './browser-stream-page'
 import { onStreamWindowClosed, presentBrowserForStream, releaseBrowserStream } from './stream-window'
 
 /**
@@ -21,7 +32,8 @@ import { onStreamWindowClosed, presentBrowserForStream, releaseBrowserStream } f
  * shared/browser-stream). The page paints in its stream window (drawer/stream-window); its DevTools session sends
  * JPEG frames, which go to the one renderer that started the stream. Pacing is end to end: the page's next frame is
  * acknowledged to Chromium only once the window acknowledged a frame, so at most two frames are on their way and a
- * slow link lowers the frame rate instead of filling the bridge.
+ * slow link lowers the frame rate instead of filling the bridge. Input from the window goes to the page's DevTools
+ * session; nothing touches the host's display.
  */
 
 /** What the stream needs of a renderer of another computer (a remote-host VirtualSender). */
@@ -45,6 +57,10 @@ const FAST_RTT_MS = 120
 const QUALITY_HOLD_MS = 5_000
 /** A frame unacknowledged this long is counted as lost, so one missing acknowledgement cannot stall the stream. */
 const FRAME_ACK_TIMEOUT_MS = 10_000
+const COPY_SETTLE_MS = 500
+const COPY_POLL_MS = 25
+/** The page reads the clipboard after `paste()` returns; the next clipboard user waits this long. */
+const PASTE_HOLD_MS = 150
 
 interface Source {
   id: number
@@ -53,6 +69,7 @@ interface Source {
   popup: BrowserWindow | null
   /** Increases each time the screencast (re)starts; acknowledgements of an earlier one are not passed to Chromium. */
   epoch: number
+  cursor: string | null
   detach: () => void
 }
 
@@ -78,6 +95,8 @@ interface Stream {
   quality: keyof typeof QUALITY
   qualityChangedAt: number
   rtts: number[]
+  focused: boolean
+  input: Promise<void>
 }
 
 interface ScreencastFrameParams {
@@ -88,6 +107,7 @@ interface ScreencastFrameParams {
 
 const streams = new Map<string, Stream>()
 const releaseTimers = new Map<string, ReturnType<typeof setTimeout>>()
+let clipboardTail: Promise<unknown> = Promise.resolve()
 let listening = false
 
 function listen(): void {
@@ -112,6 +132,15 @@ function listen(): void {
 
 const sendCdp = (wc: WebContents, method: string, params?: Record<string, unknown>): Promise<unknown> =>
   wc.debugger.sendCommand(method, params)
+
+/** Serializes everything that uses the host's one clipboard (copies and pastes of every stream). */
+function withClipboard<T>(operation: () => Promise<T>): Promise<T> {
+  const result = clipboardTail.catch(() => {}).then(operation)
+  clipboardTail = result.catch(() => {})
+  return result
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 function notify<T extends object>(stream: Stream, channel: string, payload: T): void {
   if (streams.get(stream.convId) !== stream || stream.viewer.isDestroyed()) return
@@ -267,6 +296,7 @@ function attachSource(
     wc,
     popup: target.popup,
     epoch: 0,
+    cursor: null,
     detach: () => {
       for (const cleanup of cleanups.splice(0)) {
         try {
@@ -277,6 +307,7 @@ function attachSource(
       }
       if (wc.isDestroyed()) return
       void sendCdp(wc, 'Page.stopScreencast').catch(() => {})
+      if (stream.focused) void setPresentedFocusEmulation(wc, false).catch(() => {})
     },
   }
   stream.source = source
@@ -284,6 +315,14 @@ function attachSource(
 
   const onMessage = (_event: unknown, method: string, params: unknown): void => {
     if (method === 'Page.screencastFrame') onScreencastFrame(stream, source, params as ScreencastFrameParams)
+  }
+  const onCursor = (_event: unknown, type: unknown): void => {
+    if (!current()) return
+    const cursor = browserStreamCursor(type)
+    if (cursor === source.cursor) return
+    source.cursor = cursor
+    const payload: BrowserStreamCursor = { convId: stream.convId, streamId: stream.streamId, cursor }
+    notify(stream, 'drawer:browser-cursor', payload)
   }
   const onDestroyed = (): void => {
     if (current()) syncSource(stream)
@@ -293,9 +332,11 @@ function attachSource(
     if (current() && source.kind === 'popup') notify(stream, 'drawer:browser-stream-source', sourceEvent(stream))
   }
   wc.debugger.on('message', onMessage)
+  wc.on('cursor-changed', onCursor)
   wc.once('destroyed', onDestroyed)
   cleanups.push(
     () => wc.debugger.removeListener('message', onMessage),
+    () => wc.removeListener('cursor-changed', onCursor),
     () => wc.removeListener('destroyed', onDestroyed)
   )
   if (source.kind === 'popup') {
@@ -309,6 +350,8 @@ function attachSource(
   notify(stream, 'drawer:browser-stream-source', sourceEvent(stream))
   void (async () => {
     await ensureBrowserDebugger(wc)
+    if (!current()) return
+    if (stream.focused) await setPresentedFocusEmulation(wc, true).catch(() => {})
     if (!current()) return
     await startScreencast(stream, source)
   })().catch(() => {
@@ -406,6 +449,8 @@ export function startBrowserStream(
     quality: 'normal',
     qualityChangedAt: 0,
     rtts: [],
+    focused: false,
+    input: Promise.resolve(),
   }
   streams.set(convId, stream)
   viewer.once('destroyed', stream.onViewerGone)
@@ -461,9 +506,150 @@ export function stopBrowserStream(sender: unknown, convId: unknown, streamId: un
   scheduleRelease(stream.convId)
 }
 
+function enqueueInput(stream: Stream, operation: (source: Source) => Promise<unknown> | unknown): Promise<void> {
+  const source = stream.source
+  const run = stream.input
+    .catch(() => {})
+    .then(async () => {
+      // Input goes only to the page it was aimed at.
+      if (!source || stream.source !== source || streams.get(stream.convId) !== stream || source.wc.isDestroyed())
+        return
+      await operation(source)
+    })
+  stream.input = run.catch(() => {})
+  return run
+}
+
+const MOUSE_TYPES = { move: 'mouseMoved', down: 'mousePressed', up: 'mouseReleased' } as const
+
+async function dispatch(source: Source, input: BrowserStreamInput): Promise<void> {
+  const wc = source.wc
+  // Input arrives in the frame's pixels; DevTools takes CSS pixels, fewer of them on a zoomed page.
+  const zoom = wc.getZoomFactor() || 1
+  switch (input.type) {
+    case 'mouse':
+      return dispatchPresentedMouse(wc, {
+        type: MOUSE_TYPES[input.action],
+        x: input.x / zoom,
+        y: input.y / zoom,
+        button: input.button,
+        buttons: input.buttons,
+        clickCount: input.clickCount,
+        modifiers: input.modifiers,
+      })
+    case 'wheel':
+      return dispatchPresentedMouse(wc, {
+        type: 'mouseWheel',
+        x: input.x / zoom,
+        y: input.y / zoom,
+        button: 'none',
+        buttons: 0,
+        clickCount: 0,
+        modifiers: input.modifiers,
+        deltaX: input.deltaX,
+        deltaY: input.deltaY,
+      })
+    case 'key':
+      return dispatchPresentedKey(wc, {
+        type: input.action === 'up' ? 'keyUp' : input.text ? 'keyDown' : 'rawKeyDown',
+        key: input.key,
+        code: input.code,
+        windowsVirtualKeyCode: input.keyCode,
+        nativeVirtualKeyCode: input.keyCode,
+        modifiers: input.modifiers,
+        ...(input.location ? { location: input.location } : {}),
+        ...(input.autoRepeat ? { autoRepeat: true } : {}),
+        ...(input.text && input.action === 'down' ? { text: input.text, unmodifiedText: input.text } : {}),
+        ...(input.commands && input.action === 'down' ? { commands: input.commands } : {}),
+      })
+    case 'text':
+      return insertPresentedText(wc, input.text)
+    case 'edit':
+      wc[input.command]()
+      return
+    case 'focus':
+      return setPresentedFocusEmulation(wc, input.focused)
+  }
+}
+
+export function inputBrowserStream(sender: unknown, convId: unknown, streamId: unknown, raw: unknown): void {
+  const stream = viewerStream(sender, convId, streamId)
+  const input = stream && parseBrowserStreamInput(raw)
+  if (!stream || !input) return
+  if (input.type === 'focus') stream.focused = input.focused
+  void enqueueInput(stream, (source) => dispatch(source, input)).catch(() => {})
+}
+
+const capText = (text: string): string => text.slice(0, BROWSER_STREAM_LIMITS.maxClipboardChars)
+
+/**
+ * Copies (or cuts) the page's selection through the page's own copy command, so a page that handles copying (an
+ * editor that puts its own text there) is copied as it would be locally. A sentinel on the host's clipboard tells a
+ * real copy from none; when nothing changed it in time, the selection is read from the page instead.
+ */
+export async function copyBrowserStream(
+  sender: unknown,
+  convId: unknown,
+  streamId: unknown,
+  cut: unknown
+): Promise<string | null> {
+  const stream = viewerStream(sender, convId, streamId)
+  if (!stream) return null
+  let copied: string | null = null
+  await enqueueInput(stream, (source) =>
+    withClipboard(async () => {
+      const sentinel = `⁣maestrly-copy-${randomBytes(12).toString('hex')}`
+      await clipboard.writeText(sentinel)
+      if (cut === true) source.wc.cut()
+      else source.wc.copy()
+      const deadline = Date.now() + COPY_SETTLE_MS
+      while (Date.now() < deadline) {
+        await sleep(COPY_POLL_MS)
+        const text = await clipboard.readText()
+        if (text !== sentinel) {
+          copied = capText(text)
+          return
+        }
+      }
+      const selected = await readPageSelection(source.wc)
+      copied = selected ? capText(selected) : null
+    })
+  )
+  return copied
+}
+
+/** Pastes what the viewer's clipboard held through the page's own paste command, after earlier input. */
+export function pasteBrowserStream(sender: unknown, convId: unknown, streamId: unknown, data: unknown): void {
+  const stream = viewerStream(sender, convId, streamId)
+  if (!stream || !data || typeof data !== 'object') return
+  const { text, html } = data as { text?: unknown; html?: unknown }
+  if (typeof text !== 'string' || text.length > BROWSER_STREAM_LIMITS.maxClipboardChars) return
+  if (html !== undefined && (typeof html !== 'string' || html.length > BROWSER_STREAM_LIMITS.maxPasteHtmlChars)) return
+  void enqueueInput(stream, (source) =>
+    withClipboard(async () => {
+      if (typeof html === 'string' && html) {
+        await clipboard.write([new ClipboardItem({ 'text/plain': text, 'text/html': html })])
+      } else {
+        await clipboard.writeText(text)
+      }
+      if (source.wc.isDestroyed()) return
+      source.wc.paste()
+      await sleep(PASTE_HOLD_MS)
+    })
+  ).catch(() => {})
+}
+
+/** Closes the sign-in window the viewer sees, as its close button would. */
+export function closeBrowserStreamPopup(sender: unknown, convId: unknown, streamId: unknown): void {
+  const stream = viewerStream(sender, convId, streamId)
+  const popup = stream?.source?.kind === 'popup' ? stream.source.popup : null
+  if (popup && !popup.isDestroyed()) popup.close()
+}
+
 /** Test seam: forget every stream and timer. */
 export function resetBrowserStreamsForTest(): void {
   for (const stream of [...streams.values()]) end(stream, null)
   for (const timer of releaseTimers.values()) clearTimeout(timer)
   releaseTimers.clear()
+  clipboardTail = Promise.resolve()
 }

@@ -44,6 +44,10 @@ import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
 import {
   acknowledgeBrowserFrame,
+  closeBrowserStreamPopup,
+  copyBrowserStream,
+  inputBrowserStream,
+  pasteBrowserStream,
   resizeBrowserStream,
   startBrowserStream,
   stopBrowserStream,
@@ -130,6 +134,18 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   )
   reg.mon('drawer:browser-stream-stop', (e, convId: unknown, streamId: unknown) =>
     stopBrowserStream(e.sender, convId, streamId)
+  )
+  reg.mon('drawer:browser-input', (e, convId: unknown, streamId: unknown, input: unknown) =>
+    inputBrowserStream(e.sender, convId, streamId, input)
+  )
+  reg.mhandle('drawer:browser-copy', (e, convId: unknown, streamId: unknown, cut: unknown) =>
+    copyBrowserStream(e.sender, convId, streamId, cut)
+  )
+  reg.mon('drawer:browser-paste', (e, convId: unknown, streamId: unknown, data: unknown) =>
+    pasteBrowserStream(e.sender, convId, streamId, data)
+  )
+  reg.mon('drawer:browser-popup-close', (e, convId: unknown, streamId: unknown) =>
+    closeBrowserStreamPopup(e.sender, convId, streamId)
   )
   // loadVSCodeFolder owns serve-web startup, settings, URL, and the loading page (#318), allowing
   // popup-manager to reuse the flow when opening a cold editor and resolving cwd itself.

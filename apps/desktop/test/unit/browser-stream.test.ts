@@ -20,6 +20,12 @@ const h = vi.hoisted(() => {
     url = 'https://example.com/'
     title = 'Example'
     invalidate = vi.fn()
+    copy = vi.fn()
+    cut = vi.fn()
+    paste = vi.fn()
+    selectAll = vi.fn()
+    undo = vi.fn()
+    redo = vi.fn()
     isDestroyed() {
       return this.destroyed
     }
@@ -33,10 +39,12 @@ const h = vi.hoisted(() => {
       return this.title
     }
   }
+  const clipboardState = { text: '' }
   const browserListeners = { state: new Set<(convId: string) => void>(), popups: new Set<(convId: string) => void>() }
   const views = { page: null as null | { webContents: FakeWebContents }, popups: [] as unknown[] }
   return {
     FakeWebContents,
+    clipboardState,
     browserListeners,
     views,
     remoteSenders: new Set<unknown>(),
@@ -47,11 +55,34 @@ const h = vi.hoisted(() => {
     })),
     release: vi.fn(),
     control: {
+      dispatchPresentedKey: vi.fn(async () => undefined),
+      dispatchPresentedMouse: vi.fn(async () => undefined),
       ensureBrowserDebugger: vi.fn(async () => undefined),
+      insertPresentedText: vi.fn(async () => undefined),
+      setPresentedFocusEmulation: vi.fn(async () => undefined),
+    },
+    page: {
+      interceptSelects: vi.fn(() => vi.fn()),
+      chooseSelectOption: vi.fn(async () => true),
+      readPageSelection: vi.fn(async () => ''),
     },
   }
 })
 
+vi.mock('electron', () => ({
+  clipboard: {
+    readText: async () => h.clipboardState.text,
+    writeText: async (text: string) => {
+      h.clipboardState.text = text
+    },
+    write: async (items: Array<{ items: Record<string, string> }>) => {
+      h.clipboardState.text = items[0].items['text/plain']
+    },
+  },
+  ClipboardItem: class {
+    constructor(readonly items: Record<string, string>) {}
+  },
+}))
 vi.mock('../../src/main/browser-control', () => h.control)
 vi.mock('../../src/main/remote-ui-targets', () => ({
   isRemoteUiTarget: (value: unknown) => h.remoteSenders.has(value),
@@ -64,6 +95,7 @@ vi.mock('../../src/main/drawer/browser', () => ({
   onBrowserPopupsChange: (listener: (convId: string) => void) => h.browserListeners.popups.add(listener),
   presentedBrowserViews: () => ({ chrome: null, page: h.views.page, popups: h.views.popups }),
 }))
+vi.mock('../../src/main/drawer/browser-stream-page', () => h.page)
 vi.mock('../../src/main/drawer/stream-window', () => ({
   onStreamWindowClosed: vi.fn(),
   presentBrowserForStream: h.present,
@@ -73,6 +105,9 @@ vi.mock('../../src/main/drawer/stream-window', () => ({
 import {
   STREAM_RELEASE_GRACE_MS,
   acknowledgeBrowserFrame,
+  copyBrowserStream,
+  inputBrowserStream,
+  pasteBrowserStream,
   resetBrowserStreamsForTest,
   startBrowserStream,
   stopBrowserStream,
@@ -122,6 +157,7 @@ beforeEach(() => {
   h.views.page = { webContents: tab }
   h.views.popups = []
   h.serverMode.value = true
+  h.clipboardState.text = ''
 })
 
 afterEach(() => {
@@ -248,6 +284,90 @@ describe('remote browser stream', () => {
     frame(tab, 2)
     expect(first.sender.events('drawer:browser-frame')).toEqual([])
     expect(second.sender.events('drawer:browser-frame')).toHaveLength(1)
+    inputBrowserStream(first.sender, 'conv-1', first.streamId, { type: 'text', text: 'ignored' })
+    await settle()
+    expect(h.control.insertPresentedText).not.toHaveBeenCalled()
+  })
+
+  it('sends input to the page in its CSS pixels, in order', async () => {
+    const { sender, streamId } = await started()
+    tab.zoom = 2
+    inputBrowserStream(sender, 'conv-1', streamId, {
+      type: 'mouse',
+      action: 'down',
+      x: 200,
+      y: 100,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+      modifiers: 0,
+    })
+    inputBrowserStream(sender, 'conv-1', streamId, {
+      type: 'key',
+      action: 'down',
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      modifiers: 0,
+      location: 0,
+      autoRepeat: false,
+      text: '\r',
+    })
+    inputBrowserStream(sender, 'conv-1', streamId, { type: 'text', text: 'é' })
+    inputBrowserStream(sender, 'conv-1', streamId, { type: 'edit', command: 'selectAll' })
+    inputBrowserStream(sender, 'conv-1', streamId, { type: 'eval', code: '1' })
+    await settle()
+    expect(h.control.dispatchPresentedMouse).toHaveBeenCalledWith(tab, {
+      type: 'mousePressed',
+      x: 100,
+      y: 50,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+      modifiers: 0,
+    })
+    expect(h.control.dispatchPresentedKey).toHaveBeenCalledWith(tab, {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+      modifiers: 0,
+      text: '\r',
+      unmodifiedText: '\r',
+    })
+    expect(h.control.insertPresentedText).toHaveBeenCalledWith(tab, 'é')
+    expect(tab.selectAll).toHaveBeenCalled()
+    const order = [
+      h.control.dispatchPresentedMouse.mock.invocationCallOrder[0],
+      h.control.dispatchPresentedKey.mock.invocationCallOrder[0],
+      h.control.insertPresentedText.mock.invocationCallOrder[0],
+    ]
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+  })
+
+  it('copies through the page and falls back to its selection when nothing reached the clipboard', async () => {
+    const { sender, streamId } = await started()
+    tab.copy.mockImplementation(() => {
+      h.clipboardState.text = 'copied by the page'
+    })
+    await expect(copyBrowserStream(sender, 'conv-1', streamId, false)).resolves.toBe('copied by the page')
+
+    tab.cut.mockImplementation(() => {})
+    h.page.readPageSelection.mockResolvedValueOnce('selected text')
+    await expect(copyBrowserStream(sender, 'conv-1', streamId, true)).resolves.toBe('selected text')
+    expect(tab.cut).toHaveBeenCalled()
+    await expect(copyBrowserStream(viewer(), 'conv-1', streamId, false)).resolves.toBeNull()
+  })
+
+  it('pastes the viewer clipboard through the page', async () => {
+    const { sender, streamId } = await started()
+    pasteBrowserStream(sender, 'conv-1', streamId, { text: 'pasted', html: '<b>pasted</b>' })
+    await vi.waitFor(() => expect(tab.paste).toHaveBeenCalled())
+    expect(h.clipboardState.text).toBe('pasted')
+    pasteBrowserStream(sender, 'conv-1', streamId, { text: 7 })
+    await settle()
+    expect(tab.paste).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the page presented for a grace period after the viewer leaves', async () => {

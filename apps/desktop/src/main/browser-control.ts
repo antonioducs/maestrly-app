@@ -851,10 +851,18 @@ export interface PresentedKeyInput {
   unmodifiedText?: string
   location?: number
   autoRepeat?: boolean
+  /** Editing commands the key runs, such as `deleteToBeginningOfLine`. */
+  commands?: string[]
 }
 export async function dispatchPresentedKey(wc: WebContents, event: PresentedKeyInput): Promise<void> {
   await ensureAttached(wc)
   await wc.debugger.sendCommand('Input.dispatchKeyEvent', event)
+}
+
+/** Inserts text as typing would (composition and dead keys resolved by the sender), without key events. */
+export async function insertPresentedText(wc: WebContents, text: string): Promise<void> {
+  await ensureAttached(wc)
+  await wc.debugger.sendCommand('Input.insertText', { text })
 }
 
 /**

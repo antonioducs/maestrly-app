@@ -68,6 +68,10 @@ vi.mock('../../src/main/drawer-manager', () => ({
 
 vi.mock('../../src/main/drawer/browser-stream', () => ({
   acknowledgeBrowserFrame: vi.fn(),
+  closeBrowserStreamPopup: vi.fn(),
+  copyBrowserStream: vi.fn(),
+  inputBrowserStream: vi.fn(),
+  pasteBrowserStream: vi.fn(),
   resizeBrowserStream: vi.fn(),
   startBrowserStream: vi.fn(),
   stopBrowserStream: vi.fn(),
@@ -101,7 +105,12 @@ import {
   setLayout,
 } from '../../src/main/drawer-manager'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
-import { acknowledgeBrowserFrame, startBrowserStream } from '../../src/main/drawer/browser-stream'
+import {
+  acknowledgeBrowserFrame,
+  copyBrowserStream,
+  inputBrowserStream,
+  startBrowserStream,
+} from '../../src/main/drawer/browser-stream'
 
 describe('registerDrawerIpc', () => {
   beforeEach(() => {
@@ -166,6 +175,7 @@ describe('registerDrawerIpc', () => {
       'panel:plan-draft-get',
     ])
     expect([...mhandles.keys()].sort()).toEqual([
+      'drawer:browser-copy',
       'drawer:browser-stream-start',
       'drawer:clear-cache',
       'drawer:load-vscode',
@@ -175,6 +185,9 @@ describe('registerDrawerIpc', () => {
     expect([...ons.keys()]).toEqual([])
     expect([...mons.keys()].sort()).toEqual([
       'drawer:back',
+      'drawer:browser-input',
+      'drawer:browser-paste',
+      'drawer:browser-popup-close',
       'drawer:browser-stream-ack',
       'drawer:browser-stream-resize',
       'drawer:browser-stream-stop',
@@ -218,8 +231,12 @@ describe('registerDrawerIpc', () => {
     const sender = { id: -1000 }
     await mhandles.get('drawer:browser-stream-start')!({ sender } as never, 'conv', 800, 600)
     mons.get('drawer:browser-stream-ack')!({ sender } as never, 'conv', 'stream-id', 3)
+    mons.get('drawer:browser-input')!({ sender } as never, 'conv', 'stream-id', { type: 'text', text: 'a' })
+    await mhandles.get('drawer:browser-copy')!({ sender } as never, 'conv', 'stream-id', true)
     expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600)
     expect(acknowledgeBrowserFrame).toHaveBeenCalledWith(sender, 'conv', 'stream-id', 3)
+    expect(inputBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', { type: 'text', text: 'a' })
+    expect(copyBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', true)
   })
 
   it('popup:open-floating releases the stack before detaching the same view', () => {
