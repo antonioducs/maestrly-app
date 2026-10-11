@@ -16,6 +16,7 @@ its own, for your chats and workspaces. That container is called a **workspaces 
 | Workspaces, their Git repositories and worktrees, and terminals | Sound, keyboard shortcuts, window layout, and updates of this app |
 | Model accounts, skills, MCP servers, prompts, and memory of the host's profile | This computer's own chats, workspaces, accounts, and settings, unchanged |
 | The agent's browser, with its cookies and site logins | The microphone and voice transcription |
+| VS Code (the **Code** tab), with its extensions and debug sessions | The editor's settings, applied to the server's editor |
 
 A turn that is running on the server keeps running when this computer sleeps, loses its connection, or closes the app.
 When you come back, the conversation shows what happened meanwhile.
@@ -46,9 +47,10 @@ feature: use **Update bots** first.
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
 - **Work in a conversation.** The chat view is the same as for a conversation of this computer. The drawer offers
-  **Browser**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the server, in
-  the conversation's folder. **Browser** shows the agent's browser on the server, live: see [Browser](#browser).
-  **Files** moves files between this computer and the server: see [Files](#files).
+  **Browser**, **Code**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the
+  server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
+  [Browser](#browser). **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this
+  computer and the server: see [Files](#files).
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
@@ -101,6 +103,29 @@ connection it shows fewer pictures per second rather than falling behind. When t
 pictures are smaller and more compressed until it improves. The stream stops when you switch tabs or conversations or
 minimize the window; the page stays open on the server.
 
+## Code
+
+The **Code** tab of the drawer, in a conversation on the server, opens VS Code on the server, in the conversation's
+folder. It runs there, like the terminal: its terminal, Git, extensions, and debugger work on the server's files and
+tools. On this computer it is a window of the drawer like the local editor, so typing, input methods, copy and paste, and
+the display's sharpness are this computer's own.
+
+- **First opening.** The server downloads VS Code from Microsoft the first time its editor opens, which may take a
+  minute; the tab says so meanwhile. Later openings start it in a few seconds. The editor stops on its own 15 minutes
+  after the last window that showed it closes.
+- **Settings.** Your VS Code settings on this computer, including the color theme, apply to the server's editor the
+  first time it opens there. Extensions are not copied: install them in the server's editor, where they stay. A theme
+  that comes from an extension shows the default theme until that extension is installed there.
+- **With the chat.** **Maestrly: Send file to conversation** and **Maestrly: Send selection to conversation** in the
+  editor add a reference to the conversation's composer. A file of a plan opens in the editor, and the agent's debug tools open the **Code** tab when they need it.
+- **Restart.** The restart button next to the tabs restarts the server's editor and opens its windows again; this
+  computer's editor keeps running.
+- **Two computers.** Each computer that opens the same conversation's editor has a window of its own on the same
+  folder. When both change the same file, the last one saved wins, as with two editors on one computer.
+
+The editor is reached through the bot server, with this computer's pairing, like the server's files. On this computer it
+runs at a local address (`127.0.0.1`) that only the drawer's editor windows can use.
+
 ## Files
 
 The **Files** tab of the drawer, in a conversation on the server, shows the server's files and moves them to and from
@@ -151,7 +176,8 @@ renamed, or removed appears here when this window gets the focus again.
 
 ## Not available yet
 
-- **The editor is not shown** for a conversation on a server: its **Code** tab is hidden.
+- **In the server's editor:** this computer's extensions, forwarding a port of the server to this computer (the
+  agent's browser on the server reaches it there), and opening the folder in VS Code desktop.
 - **In the remote browser:** uploading a file through a page (a file field says so instead of opening), DevTools,
   date and color pickers of the page, drop-down lists inside frames of other sites (use the keyboard), the page's
   sound, and downloads, which stay on the server. The picture is not sharper on high-resolution displays.
@@ -180,6 +206,9 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   workspaces environment restarts on it once no chat is running.
 - **A workspace cannot be added under `/srv/maestrly`.** The folder must belong to user id 1000 on the server:
   `sudo chown 1000:1000 /srv/maestrly`.
+- **The Code tab says VS Code could not start on the server.** The environment must reach `code.visualstudio.com` and
+  Microsoft's download servers to fetch the editor the first time. Open the tab again once it can; **Restart VS Code**
+  tries again too.
 - **A cloned repository asks for credentials.** Configure Git credentials in the environment, for example from a
   terminal of a chat on the server. They are kept in the environment's home volume.
 
@@ -190,20 +219,30 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   the control server of an app started with `MAESTRLY_SERVER_MODE=1`, without a bot server. Packaged builds ignore it.
 - `apps/desktop/test/e2e/remote-hosts.spec.ts` runs two instances of the built app, one in server mode, and checks the
   mixed sidebar, a chat turn, a terminal, adding a workspace, the **Files** tab (browsing, preview, rename, delete,
-  upload, download, and opening a file), and the **Browser** tab (frames drawn, address bar, typing with accents, and
-  copying to this computer's clipboard). `remote-hosts-server.spec.ts` does the same through a gateway, from the
-  **Server** page to a stopped and started environment.
+  upload, download, and opening a file), the **Browser** tab (frames drawn, address bar, typing with accents, and
+  copying to this computer's clipboard), and the **Code** tab (the editor through both proxies, its token kept on the
+  host, a Plan file opening it, and a selection reaching the composer). For the editor the host uses a stand-in for
+  serve-web that the test runs: `MAESTRLY_E2E_VSCODE_SERVER=<port>:<token>`, honored only in E2E mode.
+  `remote-hosts-server.spec.ts` does the same through a gateway, from the **Server** page to a stopped and started
+  environment.
 - `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, the
   mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
   streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the
   agent's screenshot while streaming, a takeover, two conversations streamed at once, the stop and the release of its
-  window), a host terminal, an upload and a compressed range download through the gateway, and that revoking the
-  device cuts its transfers. It needs Docker and both images; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+  window), a host terminal, the host's real editor (downloaded and started on the host, its workbench, a static file and
+  its WebSocket through the gateway), an upload and a compressed range download through the gateway, and that revoking
+  the device cuts its transfers and its editor connection. It needs Docker, both images and Internet access for the
+  editor; `npm run test:e2e:bot-fleet` runs it as one of its steps.
 - The browser stream (`apps/desktop/src/main/drawer/browser-stream.ts`) uses the bridge: the host moves the
   conversation's browser views into a shown, unfocusable window of its display while someone watches (Chromium paints
   nothing for a hidden window), streams JPEG frames from the page's DevTools session (`Page.startScreencast`), and holds
   each frame's acknowledgement to Chromium until the window acknowledges it. Input goes back through the same DevTools
   session; the host's display gets no input.
+- The editor (`apps/desktop/src/main/drawer/remote-vscode.ts`) is VS Code's serve-web on the host, started on demand
+  and reached under `/v1/environments/:eid/editor/` of the gateway, which passes requests and WebSockets to
+  `/v1/editor/` of the host's control server (`remote-host/server/host-editor.ts`), which passes them to serve-web on
+  its loopback with the editor's token. On the computer, `remote-host/client/editor-proxy.ts` gives the editor a
+  loopback origin; the bridge only opens, follows, and restarts it (`editor:*` channels).
 - File transfers use the `host-files` routes of the gateway (`/v1/environments/:eid/host-files/…`), passed through to
   the host's control server, never the bridge. A gateway or host without the `host-files` feature makes the **Files**
   tab ask for an update.

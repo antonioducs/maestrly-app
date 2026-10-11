@@ -532,6 +532,33 @@ bots. A paired computer drives it through a **bridge**: see
   returns the page's text to the computer, which writes it to its own
   clipboard. Other pages of the host can read that clipboard while it holds the
   text.
+- **The host's editor stays behind the gateway.** VS Code's serve-web listens
+  only on the host's loopback, with a connection token kept in the host's
+  profile. A computer reaches it under `/v1/environments/:eid/editor/` of the
+  gateway with its device token; the gateway passes requests, WebSockets, and
+  cookies to `/v1/editor/` of the environment's control server with the control
+  token in place of the device's, bounds how many editor connections a device
+  holds, and cuts them when the device is revoked or the environment stops.
+  The host drops the caller's credentials and any editor token it sends, and
+  adds the real token as the cookie serve-web reads. The workbench page
+  receives that token as a cookie too, because VS Code's page sends it in the
+  handshake of its own connection; with it alone nothing reaches the editor,
+  which answers only on the host's loopback and through the control server. It
+  accepts as the editor's origin only a loopback address. The editor can do on
+  the host what its terminal can: it adds no authority. Its channels over the
+  bridge (`editor:*`, in `REMOTE_VIEWER_CHANNELS`) open, follow, and restart it,
+  only for another computer and only in server mode. The first opening
+  downloads VS Code from Microsoft on the host, as the local editor does on a
+  computer.
+- **The editor's local address is guarded on the computer.** The computer gives
+  the editor a loopback origin (`127.0.0.1` and a port), served by a proxy of its
+  main process, which other programs of the computer can reach too. The proxy
+  passes a request only with a random access cookie it sets in the editor views'
+  own session, which pages cannot read (HttpOnly), and only with that origin as
+  Host and, when present, Origin. It removes the page's Origin, Referer, and the
+  access cookie before adding the device's credentials. Each host's editor views
+  use a session of their own, apart from this computer's editor and from other
+  hosts.
 - **Both ends must run the same version.** The computer's renderer calls the
   host's functions directly, so the host refuses a computer of another app
   version or bridge protocol and says which version it runs. It never
