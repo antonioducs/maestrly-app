@@ -20,9 +20,11 @@ describe('host file routes', () => {
       expect(FLEET_GATEWAY_ROUTES[key].body).toBeNull()
       expect(FLEET_GATEWAY_ROUTES[key].response).toBeNull()
     }
-    expect(Object.keys(FLEET_INSTANCE_ROUTES).filter((key) => key.startsWith('hostFile')).sort()).toEqual(
-      [...FLEET_HOST_FILE_ROUTE_KEYS].sort()
-    )
+    expect(
+      Object.keys(FLEET_INSTANCE_ROUTES)
+        .filter((key) => key.startsWith('hostFile'))
+        .sort()
+    ).toEqual([...FLEET_HOST_FILE_ROUTE_KEYS].sort())
   })
 
   it('accept only absolute paths, plain names and bounded sizes', () => {

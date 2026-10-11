@@ -1,10 +1,4 @@
-import http, {
-  type ClientRequest,
-  type IncomingHttpHeaders,
-  type IncomingMessage,
-  type OutgoingHttpHeaders,
-  type ServerResponse,
-} from 'node:http'
+import http, { type ClientRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import { endToEnd, upstreamHeaders } from './forward-headers.js'
 
 /**
