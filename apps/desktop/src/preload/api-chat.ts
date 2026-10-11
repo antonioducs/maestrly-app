@@ -19,6 +19,7 @@ import type {
   ChatFileHit,
   ChatGeneratedImageResult,
   ChatAttachmentImageResult,
+  ChatAttachmentPdfFileResult,
   ChatOpenAttachmentResult,
   ChatAttachmentInput,
   ChatToolImageResult,
@@ -574,6 +575,13 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       partId: string
     ): Promise<ChatOpenAttachmentResult> =>
       ipcRenderer.invoke('chat:open-attachment-pdf', { conversationId, messageId, partId }),
+    /** The host's read-only copy of a PDF attachment, for this computer to download and open. */
+    chatAttachmentPdfFile: (
+      conversationId: string,
+      messageId: string,
+      partId: string
+    ): Promise<ChatAttachmentPdfFileResult> =>
+      ipcRenderer.invoke('chat:attachment-pdf-file', { conversationId, messageId, partId }),
 
     chatRuntime: (conversationId: string): Promise<ChatRuntimeState> =>
       ipcRenderer.invoke('chat:runtime', conversationId),

@@ -17,6 +17,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "chatAsrSupport",
   "chatAsrWarm",
   "chatAttachmentImage",
+  "chatAttachmentPdfFile",
   "chatClear",
   "chatClearKey",
   "chatCodexSubscriptionLogin",

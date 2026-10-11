@@ -407,7 +407,7 @@ import {
   type MaestroToStandardResult,
   type StandardToMaestroResult,
 } from '../../shared/conversation-experience'
-import type { ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
+import type { ChatAttachmentPdfFileResult, ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
@@ -9692,25 +9692,37 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       return { ok: false as const, error: 'not-found' as const }
     }
   )
-  // Opens a PDF attachment in the operating system's default viewer, from a read-only copy (never the artifact).
+  /** A read-only copy of a message's PDF attachment (never the artifact), checked to belong to the conversation. */
+  const attachmentPdfCopy = async (payload?: { conversationId?: string; messageId?: string; partId?: string }) => {
+    const conversationId = typeof payload?.conversationId === 'string' ? payload.conversationId : ''
+    const messageId = typeof payload?.messageId === 'string' ? payload.messageId : ''
+    const partId = typeof payload?.partId === 'string' ? payload.partId : ''
+    if (!conversationId || !messageId || !partId) return { ok: false as const, error: 'not-found' as const }
+    const part = findAttachmentPdfPart(conversationId, messageId, partId)
+    if (!part) return { ok: false as const, error: 'not-found' as const }
+    return materializePdfPreview(conversationId, part)
+  }
+  // Opens a PDF attachment in the operating system's default viewer, from a read-only copy.
   deps.mhandle(
     'chat:open-attachment-pdf',
     async (
       _e,
       payload?: { conversationId?: string; messageId?: string; partId?: string }
     ): Promise<ChatOpenAttachmentResult> => {
-      const conversationId = typeof payload?.conversationId === 'string' ? payload.conversationId : ''
-      const messageId = typeof payload?.messageId === 'string' ? payload.messageId : ''
-      const partId = typeof payload?.partId === 'string' ? payload.partId : ''
-      if (!conversationId || !messageId || !partId) return { ok: false, error: 'not-found' }
-      const part = findAttachmentPdfPart(conversationId, messageId, partId)
-      if (!part) return { ok: false, error: 'not-found' }
-      const preview = await materializePdfPreview(conversationId, part)
+      const preview = await attachmentPdfCopy(payload)
       if (!preview.ok) return preview
       const error = await shell.openPath(preview.path)
       if (error) console.warn('[chat] Could not open PDF attachment:', error)
       return error ? { ok: false, error: 'open-failed' } : { ok: true }
     }
+  )
+  // The same copy, for a computer that downloads it from a host to open it there: nothing opens on the host.
+  deps.mhandle(
+    'chat:attachment-pdf-file',
+    (
+      _e,
+      payload?: { conversationId?: string; messageId?: string; partId?: string }
+    ): Promise<ChatAttachmentPdfFileResult> => attachmentPdfCopy(payload)
   )
   deps.mhandle(
     'chat:send',
