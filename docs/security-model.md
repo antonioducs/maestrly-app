@@ -512,6 +512,26 @@ bots. A paired computer drives it through a **bridge**: see
   person picked in a file dialog or dropped on the window. Each part and each
   whole file is checked with SHA-256 on both ends, which detects corruption, not
   tampering by the server itself.
+- **The host's browser is streamed only to a computer's renderer.** The
+  channels of the remote browser (`REMOTE_VIEWER_CHANNELS` in
+  `apps/desktop/src/shared/host-channels.ts`) run only in server mode and only
+  for a renderer that arrived over the bridge; a window of the host itself is
+  refused. The host sends the page's frames, cursor, and requests to the one
+  renderer that started the stream, under a random stream id that every later
+  call must repeat; another renderer that starts one takes it over, and the
+  first is told. Input goes to the page through its DevTools session, never to
+  the host's display, and only to the page the viewer sees. Each input is
+  checked field by field against a fixed shape, and editing commands come from
+  a fixed list. The page's `<select>` lists and selected text are read by a
+  script in an isolated world that the page cannot see or call, which reports
+  only lists the person opened with real input; what it reports is checked
+  again as untrusted. While a page is streamed, its file chooser is refused
+  instead of opening a dialog on the host. Copying and pasting go through the
+  host's clipboard, one operation at a time and bounded in size: the text the
+  person pastes becomes the host's clipboard for the page to read, and a copy
+  returns the page's text to the computer, which writes it to its own
+  clipboard. Other pages of the host can read that clipboard while it holds the
+  text.
 - **Both ends must run the same version.** The computer's renderer calls the
   host's functions directly, so the host refuses a computer of another app
   version or bridge protocol and says which version it runs. It never

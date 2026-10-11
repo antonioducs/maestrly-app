@@ -46,8 +46,9 @@ feature: use **Update bots** first.
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
 - **Work in a conversation.** The chat view is the same as for a conversation of this computer. The drawer offers
-  **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the server, in the
-  conversation's folder. **Files** moves files between this computer and the server: see [Files](#files).
+  **Browser**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the server, in
+  the conversation's folder. **Browser** shows the agent's browser on the server, live: see [Browser](#browser).
+  **Files** moves files between this computer and the server: see [Files](#files).
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
@@ -72,6 +73,33 @@ A server you manage mounts the folder named by `MAESTRLY_GATEWAY_WORKSPACES_ROOT
 1000, the user the environment runs as. The environment is created with that mount: after you set or change the
 variable, restart the gateway and then restart the workspaces environment. A VPS that Maestrly set up before this
 feature gets `/srv/maestrly` the next time you use **Update bots**.
+
+## Browser
+
+The **Browser** tab of the drawer, in a conversation on the server, shows the conversation's browser on the server: the
+same browser the agent drives, with the server's cookies and site logins. What the agent does in it appears as it
+happens, and you can use it yourself: click, scroll, drag, type, and use its tabs, address bar, **Back**, **Forward**,
+and **Reload**.
+
+- **Keyboard.** Accents, dead keys, input methods, and the emoji picker work as in any field of this computer: the text
+  is composed here and typed into the page. Editing shortcuts follow this computer's habits; on a Mac, ⌘ works as Ctrl
+  does on the server (⌘←/⌘→ go to the start and end of the line, ⌥←/⌥→ move by word). **⌘L**/**Ctrl+L** goes to the
+  address bar, **⌘R**/**Ctrl+R** reloads, and **⌘[**/**⌘]** or **Alt+←**/**Alt+→** go back and forward. Other
+  shortcuts stay with this app.
+- **Copy and paste.** Copying copies the page's selection to this computer's clipboard, through the page's own copy
+  command, so editors that put their own text on the clipboard copy as they would locally. Pasting pastes this
+  computer's text (and its formatting, when the page accepts it). Images and files are not pasted.
+- **Lists.** A drop-down list of the page opens as a list of this window, under the field; choose an option or press
+  Escape. The keyboard also changes a focused list, as in any browser.
+- **Sign-in windows.** A window the page opens to sign in (for example **Sign in with Google**) replaces the page while
+  it is open, under a bar with its address and a **Close** button. It closes by itself when the sign-in finishes.
+- **One device at a time.** When another computer opens the same conversation's browser, it takes over, and this one
+  says **This browser is open on another device**, with **Show here** to take it back.
+
+The browser sends a picture of the page only when the page changes, and at most two pictures travel at once: on a slow
+connection it shows fewer pictures per second rather than falling behind. When the connection is very slow, the
+pictures are smaller and more compressed until it improves. The stream stops when you switch tabs or conversations or
+minimize the window; the page stays open on the server.
 
 ## Files
 
@@ -123,9 +151,10 @@ renamed, or removed appears here when this window gets the focus again.
 
 ## Not available yet
 
-- **The agent's browser and the editor are not shown** for a conversation on a server. The agent can still use its
-  browser there: it runs on the server and keeps its site logins. The **Browser** and **Code** tabs are hidden for
-  those conversations.
+- **The editor is not shown** for a conversation on a server: its **Code** tab is hidden.
+- **In the remote browser:** uploading a file through a page (a file field says so instead of opening), DevTools,
+  date and color pickers of the page, drop-down lists inside frames of other sites (use the keyboard), the page's
+  sound, and downloads, which stay on the server. The picture is not sharper on high-resolution displays.
 - **Whole folders do not move.** **Files** uploads and downloads files one by one; compress a folder in a terminal of
   the server, or use Git. Revealing a file or folder of the server in a file manager is unavailable, because it would
   open on the server's own desktop, which nobody sees.
@@ -160,13 +189,21 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 - `MAESTRLY_DEV_DIRECT_HOST=http://<control token>@<address>:<port>` connects a development or test build straight to
   the control server of an app started with `MAESTRLY_SERVER_MODE=1`, without a bot server. Packaged builds ignore it.
 - `apps/desktop/test/e2e/remote-hosts.spec.ts` runs two instances of the built app, one in server mode, and checks the
-  mixed sidebar, a chat turn, a terminal, adding a workspace, and the **Files** tab: browsing, preview, rename, delete,
-  upload, download, and opening a file. `remote-hosts-server.spec.ts` does the same through a gateway, from the
+  mixed sidebar, a chat turn, a terminal, adding a workspace, the **Files** tab (browsing, preview, rename, delete,
+  upload, download, and opening a file), and the **Browser** tab (frames drawn, address bar, typing with accents, and
+  copying to this computer's clipboard). `remote-hosts-server.spec.ts` does the same through a gateway, from the
   **Server** page to a stopped and started environment.
 - `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, the
-  mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, a host terminal,
-  an upload and a compressed range download through the gateway, and that revoking the device cuts its transfers. It
-  needs Docker and both images; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+  mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
+  streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the
+  agent's screenshot while streaming, a takeover, two conversations streamed at once, the stop and the release of its
+  window), a host terminal, an upload and a compressed range download through the gateway, and that revoking the
+  device cuts its transfers. It needs Docker and both images; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+- The browser stream (`apps/desktop/src/main/drawer/browser-stream.ts`) uses the bridge: the host moves the
+  conversation's browser views into a shown, unfocusable window of its display while someone watches (Chromium paints
+  nothing for a hidden window), streams JPEG frames from the page's DevTools session (`Page.startScreencast`), and holds
+  each frame's acknowledgement to Chromium until the window acknowledges it. Input goes back through the same DevTools
+  session; the host's display gets no input.
 - File transfers use the `host-files` routes of the gateway (`/v1/environments/:eid/host-files/…`), passed through to
   the host's control server, never the bridge. A gateway or host without the `host-files` feature makes the **Files**
   tab ask for an update.
