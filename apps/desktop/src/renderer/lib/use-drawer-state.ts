@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
 import type { Conversation } from '../../preload'
 import type { Tab as DrawerTab } from '@/components/Drawer'
 import { defaultDrawerShortcut, formatAccelerator } from '../../shared/shortcuts'
@@ -12,8 +21,10 @@ import {
   reorderVisibleTabs,
   sanitizeOpenTabs,
   tabAvailableInContext,
+  type RemoteBrowserHosts,
 } from '@/lib/drawer-tabs'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
 import { hostTarget } from '@/lib/hosts/shell-keys'
 
 const MIN_DRAWER = 360
@@ -48,6 +59,14 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const [chatGptWebEnabled, setChatGptWebEnabled] = useState(false)
   const chatGptWebEnabledRef = useRef(false)
   chatGptWebEnabledRef.current = chatGptWebEnabled
+  // A remote host that streams its browser offers a Browser tab for its conversations.
+  const hosts = useHosts()
+  const remoteBrowsers = useMemo<RemoteBrowserHosts>(() => {
+    const ids = new Set(hosts.filter((host) => host.remote && host.browser).map((host) => host.id))
+    return (hostId) => ids.has(hostId)
+  }, [hosts])
+  const remoteBrowsersRef = useRef(remoteBrowsers)
+  remoteBrowsersRef.current = remoteBrowsers
   useEffect(() => {
     let alive = true
     const apply = (status: { enabled: boolean }) => {
@@ -96,7 +115,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const openDrawerTab = useCallback(
     (id: string, t: DrawerTab) => {
       const conv = activeRef.current?.id === id ? activeRef.current : { id }
-      if (!tabAvailableInContext(t, conv, chatGptWebEnabledRef.current)) return
+      if (!tabAvailableInContext(t, conv, chatGptWebEnabledRef.current, remoteBrowsersRef.current)) return
       const list = openTabInList(openTabsRef.current[id] ?? [], t)
       if (list !== openTabsRef.current[id]) {
         openTabsRef.current = { ...openTabsRef.current, [id]: list }
@@ -160,7 +179,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
       let activeNext = drawerTabRef.current
       for (const { conv, openTabs, activeTab } of entries) {
         if (tabsNext[conv.id]) continue
-        const list = sanitizeOpenTabs(openTabs, conv, chatGptWebEnabledRef.current)
+        const list = sanitizeOpenTabs(openTabs, conv, chatGptWebEnabledRef.current, remoteBrowsersRef.current)
         if (list.length === 0) continue
         if (tabsNext === openTabsRef.current) tabsNext = { ...tabsNext }
         tabsNext[conv.id] = list
@@ -183,10 +202,12 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
 
   const [mainTabOrderByConv, setMainTabOrderByConv] = useState<Record<string, DrawerTab[]>>({})
   const mainTabOrder = active
-    ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, chatGptWebEnabled)
+    ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, chatGptWebEnabled, remoteBrowsers)
     : mainTabsForFeatures(DEFAULT_MAIN_ORDER, chatGptWebEnabled)
   const openTabs: DrawerTab[] = active
-    ? (openTabsByConv[active.id] ?? []).filter((t) => tabAvailableInContext(t, active, chatGptWebEnabled))
+    ? (openTabsByConv[active.id] ?? []).filter((t) =>
+        tabAvailableInContext(t, active, chatGptWebEnabled, remoteBrowsers)
+      )
     : []
   const requestedDrawerTab = active ? drawerTabByConv[active.id] : undefined
   const drawerTab: DrawerTab | null =
@@ -198,7 +219,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     const id = activeRef.current?.id
     if (!id) return
     const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
-    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current)
+    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current, remoteBrowsersRef.current)
     const next = reorderVisibleTabs(full, visible, from, to)
     if (next === full) return
     const target = hostTarget(id)

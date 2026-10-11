@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Bug, Eraser, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { Button } from '@/components/ui/button'
 import { useReorder } from '@/components/useReorder'
 
@@ -27,9 +28,20 @@ const EMPTY_BROWSER: BrowserState = {
   devtoolsOpen: false,
 }
 
-export function BrowserChrome({ convId }: { convId: string | null }) {
+/**
+ * The tabs and address bar of a conversation's browser. `convId` is the conversation's id on the host the chrome
+ * renders for; a remote host's browser has no DevTools here.
+ */
+export function BrowserChrome({
+  convId,
+  addressRef,
+}: {
+  convId: string | null
+  addressRef?: React.Ref<HTMLInputElement>
+}) {
   const { t: tr } = useTranslation('ui')
   const api = useHostApi()
+  const remote = useHostInfo().remote
   const [bstate, setBstate] = useState<BrowserState>(EMPTY_BROWSER)
   const [urlInput, setUrlInput] = useState('')
   const activeTab = bstate.tabs.find((t) => t.id === bstate.activeId)
@@ -140,6 +152,7 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
         </Button>
         <form onSubmit={submitUrl} className="flex-1">
           <input
+            ref={addressRef}
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             placeholder={tr('browserChrome.urlPlaceholder')}
@@ -157,21 +170,23 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
             {cacheCleared ? <Check className="size-4 text-emerald-400" /> : <Eraser className="size-4" />}
           </Button>
         </HoverTip>
-        <HoverTip label={tr('browserChrome.toggleDevtools')} align="right">
-          <Button
-            variant={bstate.devtoolsOpen ? 'secondary' : 'ghost'}
-            size="icon"
-            className="size-7"
-            onClick={() => {
-              if (convId) {
-                api.drawerDevTools(convId)
-              }
-            }}
-            aria-label={tr('browserChrome.toggleDevtools')}
-          >
-            <Bug className="size-4" />
-          </Button>
-        </HoverTip>
+        {!remote && (
+          <HoverTip label={tr('browserChrome.toggleDevtools')} align="right">
+            <Button
+              variant={bstate.devtoolsOpen ? 'secondary' : 'ghost'}
+              size="icon"
+              className="size-7"
+              onClick={() => {
+                if (convId) {
+                  api.drawerDevTools(convId)
+                }
+              }}
+              aria-label={tr('browserChrome.toggleDevtools')}
+            >
+              <Bug className="size-4" />
+            </Button>
+          </HoverTip>
+        )}
       </div>
     </>
   )

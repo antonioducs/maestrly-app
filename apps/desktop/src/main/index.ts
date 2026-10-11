@@ -1030,10 +1030,11 @@ app.whenReady().then(async () => {
         hostName: os.hostname(),
         homeDir: os.homedir(),
         roots: hostFsRoots().map((root) => root.path),
-        // Nobody sees this host's desktop; its editor and browser are not shown on a computer yet.
+        // Nobody sees this host's desktop. Its browser is streamed to the computer that shows it (drawer/browser-stream);
+        // its editor is not shown on a computer yet.
         desktopEffects: false,
         editor: false,
-        browser: false,
+        browser: true,
       }),
       // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
       // language of the computer that connected last.

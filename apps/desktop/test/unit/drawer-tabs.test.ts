@@ -95,4 +95,20 @@ describe("tools of a remote host's conversation", () => {
     expect(sanitizeOpenTabs(['browser', 'terminal', 'vscode', 'notes'], remote)).toEqual(['terminal', 'notes'])
     expect(sanitizeOpenTabs(['browser', 'terminal'], { id: 'conv-1' })).toEqual(['browser', 'terminal'])
   })
+
+  it('offers the browser of a host that streams it, and still never its editor', () => {
+    const streams = (hostId: string) => hostId === 'server-1/workspaces'
+    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true, streams)).toEqual([
+      'browser',
+      'terminal',
+      'files',
+      'plan',
+      'review',
+      'notes',
+    ])
+    expect(tabAvailableInContext('browser', remote, true, streams)).toBe(true)
+    expect(tabAvailableInContext('browser', { id: 'server-2/workspaces#conv-1' }, true, streams)).toBe(false)
+    expect(tabAvailableInContext('vscode', remote, true, streams)).toBe(false)
+    expect(sanitizeOpenTabs(['browser', 'vscode', 'notes'], remote, true, streams)).toEqual(['browser', 'notes'])
+  })
 })

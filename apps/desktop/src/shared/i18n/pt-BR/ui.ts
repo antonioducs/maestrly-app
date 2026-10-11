@@ -1583,6 +1583,22 @@ export default {
     toggleDevtools: 'Abrir/fechar ferramentas do desenvolvedor (DevTools)',
   },
 
+  remoteBrowser: {
+    surface: 'Navegador no servidor',
+    keyboard: 'Teclado do navegador no servidor',
+    connecting: 'Conectando ao navegador no servidor…',
+    offline: 'O servidor não está conectado.',
+    unavailable: 'O navegador no servidor não está disponível.',
+    retry: 'Tentar de novo',
+    takenOver: 'Este navegador está aberto em outro dispositivo.',
+    showHere: 'Mostrar aqui',
+    noTab: 'Nenhuma aba aberta.',
+    popup: 'Janela de login: {{host}}',
+    closePopup: 'Fechar',
+    fileChooser: 'O envio de arquivos pelo navegador no servidor ainda não é suportado.',
+    dismiss: 'Dispensar',
+  },
+
   terminalTabs: {
     terminalN: 'Terminal {{n}}',
     newTerminal: 'Novo terminal',

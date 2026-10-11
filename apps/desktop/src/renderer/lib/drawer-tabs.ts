@@ -1,4 +1,4 @@
-import { isRemoteHostId, parseHostKey } from '../../shared/host-key'
+import { type HostId, isRemoteHostId, parseHostKey } from '../../shared/host-key'
 import type { DrawerTab } from '../../shared/tool-tabs'
 
 export type { DrawerTab }
@@ -18,26 +18,46 @@ export function mainTabsForFeatures(order: DrawerTab[], chatGptWebEnabled: boole
   return chatGptWebEnabled ? order : order.filter((tab) => tab !== 'chatgpt')
 }
 
-/** The tools a conversation of a remote host shows on this computer; its browser and editor stay on the host. */
+/** The tools a conversation of a remote host shows on this computer; its editor stays on the host. */
 const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'files', 'plan', 'review', 'notes'])
 
-/** Whether the window's id of a conversation names one of a remote host. */
-const onRemoteHost = (conv: unknown): boolean => {
+/** Which remote hosts stream their browser to this computer (RemoteHostInfo.browser), by host id. */
+export type RemoteBrowserHosts = (hostId: HostId) => boolean
+const NO_REMOTE_BROWSERS: RemoteBrowserHosts = () => false
+
+/** The remote host of a conversation, from the window's id of it; null for this computer's. */
+const remoteHostOf = (conv: unknown): HostId | null => {
   const id = (conv as { id?: unknown } | null)?.id
-  return typeof id === 'string' && isRemoteHostId(parseHostKey(id).hostId)
+  if (typeof id !== 'string') return null
+  const { hostId } = parseHostKey(id)
+  return isRemoteHostId(hostId) ? hostId : null
 }
 
-export function tabAvailableInContext(tab: DrawerTab, conv: unknown, chatGptWebEnabled = true): boolean {
-  if (!REMOTE_HOST_TABS.has(tab) && onRemoteHost(conv)) return false
+export function tabAvailableInContext(
+  tab: DrawerTab,
+  conv: unknown,
+  chatGptWebEnabled = true,
+  remoteBrowsers: RemoteBrowserHosts = NO_REMOTE_BROWSERS
+): boolean {
+  const remoteHost = remoteHostOf(conv)
+  if (remoteHost !== null && !REMOTE_HOST_TABS.has(tab)) {
+    // A remote host's browser is streamed here once the host says it can.
+    if (tab !== 'browser' || !remoteBrowsers(remoteHost)) return false
+  }
   // Files moves files to and from a host: a conversation of this computer has its files at hand.
-  if (tab === 'files' && !onRemoteHost(conv)) return false
+  if (tab === 'files' && remoteHost === null) return false
   if (tab === 'review' && (conv as { scope?: string } | null)?.scope === 'standalone') return false
   if (tab === 'chatgpt' && !chatGptWebEnabled) return false
   return tab !== 'notes' || Boolean(conv)
 }
 
-export function mainTabsForContext(order: DrawerTab[], conv: unknown, chatGptWebEnabled = true): DrawerTab[] {
-  return order.filter((tab) => tabAvailableInContext(tab, conv, chatGptWebEnabled))
+export function mainTabsForContext(
+  order: DrawerTab[],
+  conv: unknown,
+  chatGptWebEnabled = true,
+  remoteBrowsers: RemoteBrowserHosts = NO_REMOTE_BROWSERS
+): DrawerTab[] {
+  return order.filter((tab) => tabAvailableInContext(tab, conv, chatGptWebEnabled, remoteBrowsers))
 }
 
 export function reorderVisibleTabs(
@@ -58,13 +78,18 @@ export function reorderVisibleTabs(
 }
 
 /** Keeps only valid, available, non-duplicated tabs from a persisted open-tab list. */
-export function sanitizeOpenTabs(raw: unknown, conv: unknown, chatGptWebEnabled = true): DrawerTab[] {
+export function sanitizeOpenTabs(
+  raw: unknown,
+  conv: unknown,
+  chatGptWebEnabled = true,
+  remoteBrowsers: RemoteBrowserHosts = NO_REMOTE_BROWSERS
+): DrawerTab[] {
   const arr = Array.isArray(raw) ? (raw as unknown[]) : []
   const seen = new Set<DrawerTab>()
   const out: DrawerTab[] = []
   for (const t of arr) {
     if (!DEFAULT_MAIN_ORDER.includes(t as DrawerTab) || seen.has(t as DrawerTab)) continue
-    if (!tabAvailableInContext(t as DrawerTab, conv, chatGptWebEnabled)) continue
+    if (!tabAvailableInContext(t as DrawerTab, conv, chatGptWebEnabled, remoteBrowsers)) continue
     seen.add(t as DrawerTab)
     out.push(t as DrawerTab)
   }

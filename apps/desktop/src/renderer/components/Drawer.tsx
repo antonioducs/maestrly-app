@@ -35,10 +35,11 @@ import { isReviewLoopConversationReserved } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
-import { isRemoteKey } from '@/lib/hosts/shell-keys'
+import { isRemoteKey, rawId } from '@/lib/hosts/shell-keys'
 import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
+import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
 import { restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from '@/components/chat/ChatGptWebAccessEditor'
 import { ToolPalette } from '@/components/ToolPalette'
@@ -116,6 +117,15 @@ export function Drawer({
   const api = useHostApi()
   const tabDefs = mainTabDefs(t)
   const convId = activeConv?.id ?? null
+  // The window knows a remote host's conversation by its host key; that host's API takes its own id. A remote
+  // host's browser is streamed into the drawer (RemoteBrowserSurface) instead of placed as a native view.
+  const remoteConv = convId !== null && isRemoteKey(convId)
+  const hostConvId = convId === null ? null : rawId(convId)
+  const addressRef = useRef<HTMLInputElement>(null)
+  const focusAddress = useCallback(() => {
+    addressRef.current?.focus()
+    addressRef.current?.select()
+  }, [])
   const setTab = onTabChange
 
   const selectTab = (key: Tab): void => {
@@ -400,8 +410,8 @@ export function Drawer({
   }, [tab, suspended, paletteOpen, convId, visible, floating, chatGptSessionActive, chatGptAccessOpen])
 
   useEffect(() => {
-    if (visible && tab === 'browser' && convId) api.drawerEnsureBrowser(convId)
-  }, [visible, tab, convId, api])
+    if (visible && tab === 'browser' && hostConvId) api.drawerEnsureBrowser(hostConvId)
+  }, [visible, tab, hostConvId, api])
 
   useEffect(() => {
     if (visible && tab === 'vscode' && activeConv) {
@@ -507,7 +517,9 @@ export function Drawer({
         ignoreRef={addBtnRef}
       />
 
-      {tab === 'browser' && !isFloating('browser') && convId && <BrowserChrome convId={convId} />}
+      {tab === 'browser' && !isFloating('browser') && hostConvId && (
+        <BrowserChrome convId={hostConvId} addressRef={addressRef} />
+      )}
 
       <div className="relative min-h-0 flex-1">
         {tab === null && (
@@ -522,10 +534,15 @@ export function Drawer({
           />
         )}
 
+        {tab === 'browser' && remoteConv && hostConvId && (
+          <RemoteBrowserSurface key={convId} convId={hostConvId} active={visible} onFocusAddress={focusAddress} />
+        )}
+
         {tab &&
           SLOT_TABS.has(tab) &&
           convId &&
           !isFloating(tab) &&
+          !(tab === 'browser' && remoteConv) &&
           (tab !== 'chatgpt' || (chatGptSessionActive && !chatGptAccessOpen)) && (
             <div
               ref={slotRef}

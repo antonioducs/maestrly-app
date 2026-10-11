@@ -1570,6 +1570,22 @@ export default {
     toggleDevtools: 'Open/close developer tools (DevTools)',
   },
 
+  remoteBrowser: {
+    surface: 'Browser on the server',
+    keyboard: 'Keyboard of the browser on the server',
+    connecting: 'Connecting to the browser on the server…',
+    offline: 'The server is not connected.',
+    unavailable: 'The browser on the server is unavailable.',
+    retry: 'Try again',
+    takenOver: 'This browser is open on another device.',
+    showHere: 'Show here',
+    noTab: 'No tab is open.',
+    popup: 'Sign-in window: {{host}}',
+    closePopup: 'Close',
+    fileChooser: 'Uploading files through the browser on the server is not supported yet.',
+    dismiss: 'Dismiss',
+  },
+
   terminalTabs: {
     terminalN: 'Terminal {{n}}',
     newTerminal: 'New terminal',

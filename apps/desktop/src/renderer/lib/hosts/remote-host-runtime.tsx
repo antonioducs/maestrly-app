@@ -161,6 +161,16 @@ export function RemoteHostRuntime({
       }),
     [api, hostId, openDrawerTab, setDrawerOpenByConv]
   )
+  // The agent showed the conversation's browser: its drawer opens on the Browser tab, streamed from the host.
+  useEffect(
+    () =>
+      api.onDrawerBrowserFocus(({ convId }) => {
+        const key = hostKey(hostId, convId)
+        setDrawerOpenByConv((previous) => (previous[key] ? previous : { ...previous, [key]: true }))
+        openDrawerTab(key, 'browser')
+      }),
+    [api, hostId, openDrawerTab, setDrawerOpenByConv]
+  )
 
   const actions = useMemo<HostShellActions>(
     () => ({
