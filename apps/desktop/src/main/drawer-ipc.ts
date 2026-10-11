@@ -42,6 +42,12 @@ import { getConversation, patchConvUiPrefs, type FloatingBounds, type FloatTab }
 import { receiveMemoryEvictionReady } from './window-ipc'
 import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
+import {
+  acknowledgeBrowserFrame,
+  resizeBrowserStream,
+  startBrowserStream,
+  stopBrowserStream,
+} from './drawer/browser-stream'
 
 export interface DrawerIpcDeps {
   loadVSCodeFolder: (convId: string, folder: string) => Promise<void>
@@ -111,6 +117,20 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     ensureBrowser(convId)
     return getBrowserState(convId)
   })
+  // The browser streamed to a remote viewer (drawer/browser-stream): each call checks that it comes from the
+  // viewer's renderer through the host bridge, and the stream it names is that viewer's.
+  reg.mhandle('drawer:browser-stream-start', (e, convId: unknown, width: unknown, height: unknown) =>
+    startBrowserStream(e.sender, convId, width, height)
+  )
+  reg.mon('drawer:browser-stream-resize', (e, convId: unknown, streamId: unknown, width: unknown, height: unknown) =>
+    resizeBrowserStream(e.sender, convId, streamId, width, height)
+  )
+  reg.mon('drawer:browser-stream-ack', (e, convId: unknown, streamId: unknown, seq: unknown) =>
+    acknowledgeBrowserFrame(e.sender, convId, streamId, seq)
+  )
+  reg.mon('drawer:browser-stream-stop', (e, convId: unknown, streamId: unknown) =>
+    stopBrowserStream(e.sender, convId, streamId)
+  )
   // loadVSCodeFolder owns serve-web startup, settings, URL, and the loading page (#318), allowing
   // popup-manager to reuse the flow when opening a cold editor and resolving cwd itself.
   reg.mhandle('drawer:load-vscode', async (_e, convId: string, folder: string) => {

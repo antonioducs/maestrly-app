@@ -66,6 +66,13 @@ vi.mock('../../src/main/drawer-manager', () => ({
   toggleBrowserDevTools: vi.fn(),
 }))
 
+vi.mock('../../src/main/drawer/browser-stream', () => ({
+  acknowledgeBrowserFrame: vi.fn(),
+  resizeBrowserStream: vi.fn(),
+  startBrowserStream: vi.fn(),
+  stopBrowserStream: vi.fn(),
+}))
+
 vi.mock('../../src/main/vscode/vscode-server', () => ({
   getMergedSettingsJson: vi.fn(),
   getVSCodeUrl: vi.fn(),
@@ -94,6 +101,7 @@ import {
   setLayout,
 } from '../../src/main/drawer-manager'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
+import { acknowledgeBrowserFrame, startBrowserStream } from '../../src/main/drawer/browser-stream'
 
 describe('registerDrawerIpc', () => {
   beforeEach(() => {
@@ -158,6 +166,7 @@ describe('registerDrawerIpc', () => {
       'panel:plan-draft-get',
     ])
     expect([...mhandles.keys()].sort()).toEqual([
+      'drawer:browser-stream-start',
       'drawer:clear-cache',
       'drawer:load-vscode',
       'drawer:restart-vscode',
@@ -166,6 +175,9 @@ describe('registerDrawerIpc', () => {
     expect([...ons.keys()]).toEqual([])
     expect([...mons.keys()].sort()).toEqual([
       'drawer:back',
+      'drawer:browser-stream-ack',
+      'drawer:browser-stream-resize',
+      'drawer:browser-stream-stop',
       'drawer:close-terminal',
       'drawer:create-terminal',
       'drawer:detach',
@@ -198,6 +210,16 @@ describe('registerDrawerIpc', () => {
       'popup:open-floating',
       'popup:set-suppressed',
     ])
+  })
+
+  it('hands the browser stream calls their sender, which the stream checks itself', async () => {
+    const { reg, mons, mhandles } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const sender = { id: -1000 }
+    await mhandles.get('drawer:browser-stream-start')!({ sender } as never, 'conv', 800, 600)
+    mons.get('drawer:browser-stream-ack')!({ sender } as never, 'conv', 'stream-id', 3)
+    expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600)
+    expect(acknowledgeBrowserFrame).toHaveBeenCalledWith(sender, 'conv', 'stream-id', 3)
   })
 
   it('popup:open-floating releases the stack before detaching the same view', () => {

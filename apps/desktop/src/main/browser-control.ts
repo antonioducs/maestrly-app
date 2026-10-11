@@ -857,6 +857,14 @@ export async function dispatchPresentedKey(wc: WebContents, event: PresentedKeyI
   await wc.debugger.sendCommand('Input.dispatchKeyEvent', event)
 }
 
+/**
+ * Attaches this module's DevTools session to a view, as every control function does first. Other features (the
+ * remote browser stream) send their own protocol commands through the same session.
+ */
+export function ensureBrowserDebugger(wc: WebContents): Promise<void> {
+  return ensureAttached(wc)
+}
+
 /** Lets a view behave as focused (caret, focus events) while the desktop shows it, though its window is not. */
 export async function setPresentedFocusEmulation(wc: WebContents, enabled: boolean): Promise<void> {
   await ensureAttached(wc)
