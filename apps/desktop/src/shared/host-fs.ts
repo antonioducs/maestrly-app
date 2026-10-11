@@ -26,7 +26,28 @@ export interface HostFsListOptions {
   includeFiles?: boolean
 }
 
-export type HostFsErrorCode = 'outside-roots' | 'not-found' | 'not-a-directory' | 'invalid-name' | 'exists'
+export type HostFsErrorCode =
+  | 'outside-roots'
+  | 'not-found'
+  | 'not-a-directory'
+  | 'not-a-file'
+  | 'invalid-name'
+  | 'exists'
+  | 'is-root'
+
+/** The first bytes of a file, as text unless they hold a NUL byte. */
+export interface HostFsPreview {
+  binary: boolean
+  text: string | null
+  truncated: boolean
+  size: number
+}
+
+/** The size and free space of the volume a folder is on. */
+export interface HostFsUsage {
+  total: number
+  free: number
+}
 
 /**
  * The fixed message of each refusal. IPC carries an error's message and nothing else of it, so the window tells the
@@ -36,8 +57,10 @@ export const HOST_FS_ERROR_MESSAGES: Record<HostFsErrorCode, string> = {
   'outside-roots': 'This folder is outside the folders Maestrly can use here.',
   'not-found': 'This folder does not exist.',
   'not-a-directory': 'This is not a folder.',
+  'not-a-file': 'This is not a file.',
   'invalid-name': 'This folder name cannot be used.',
   exists: 'A file or folder with this name already exists.',
+  'is-root': 'This folder cannot be renamed or deleted.',
 }
 
 export function hostFsErrorCode(error: unknown): HostFsErrorCode | null {

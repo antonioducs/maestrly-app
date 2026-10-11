@@ -831,7 +831,7 @@ function registerIpc(): void {
   registerFleetInstanceIpc(reg)
   registerArtifactsIpc(reg, { service: getArtifactsService })
 
-  registerHostFsIpc(reg, { roots: hostFsRoots })
+  registerHostFsIpc(reg, { roots: hostFsRoots, conversationFolder: (id) => getConversation(id)?.cwd ?? null })
   registerHostsIpc(reg)
 
   registerSettingsIpc(reg, {

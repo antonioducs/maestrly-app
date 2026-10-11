@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs'
-import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, statfs } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -8,7 +8,9 @@ import {
   type HostFsErrorCode,
   type HostFsListing,
   type HostFsListOptions,
+  type HostFsPreview,
   type HostFsRoot,
+  type HostFsUsage,
 } from '../../shared/host-fs'
 import type { IpcRegistrar } from '../ipc-registrar'
 
@@ -104,10 +106,14 @@ export async function listHostDirectory(
   }
 }
 
-export async function createHostDirectory(parent: string, name: string, roots: readonly string[]): Promise<string> {
-  const { real } = await resolveInside(parent, roots)
+function checkName(name: unknown): asserts name is string {
   if (typeof name !== 'string' || !/^[^/\\\0]{1,255}$/.test(name) || name === '.' || name === '..')
     throw fail('invalid-name')
+}
+
+export async function createHostDirectory(parent: string, name: string, roots: readonly string[]): Promise<string> {
+  const { real } = await resolveInside(parent, roots)
+  checkName(name)
   const created = path.join(real, name)
   try {
     await mkdir(created)
@@ -116,6 +122,70 @@ export async function createHostDirectory(parent: string, name: string, roots: r
     throw error
   }
   return created
+}
+
+const PREVIEW_BYTES = 64 * 1024
+
+/** The entry a path names inside an allowed folder, never what a link there points to; roots themselves are kept. */
+async function entryInside(target: string, roots: readonly string[]): Promise<string> {
+  if (typeof target !== 'string' || !path.isAbsolute(target)) throw fail('outside-roots')
+  // A root's parent is outside the roots: a root is recognized before its parent is checked.
+  const named = path.resolve(target)
+  if (roots.includes(named) || (await realRoots(roots)).includes(named)) throw fail('is-root')
+  const { real: parent, roots: allowed } = await resolveInside(path.dirname(target), roots)
+  const entry = path.join(parent, path.basename(target))
+  if (allowed.includes(entry)) throw fail('is-root')
+  if (!(await lstat(entry).catch(() => null))) throw fail('not-found')
+  return entry
+}
+
+export async function previewHostFile(target: string, roots: readonly string[]): Promise<HostFsPreview> {
+  const { real } = await resolveInside(target, roots)
+  const info = await stat(real)
+  if (!info.isFile()) throw fail('not-a-file')
+  const handle = await open(real, 'r')
+  try {
+    const sample = Buffer.alloc(Math.min(PREVIEW_BYTES, info.size))
+    const { bytesRead } = await handle.read(sample, 0, sample.length, 0)
+    const bytes = sample.subarray(0, bytesRead)
+    const truncated = info.size > bytesRead
+    if (bytes.includes(0)) return { binary: true, text: null, truncated, size: info.size }
+    // `stream` drops a character cut at the end of the sample instead of showing a replacement mark.
+    return { binary: false, text: new TextDecoder().decode(bytes, { stream: true }), truncated, size: info.size }
+  } finally {
+    await handle.close()
+  }
+}
+
+export async function renameHostEntry(target: string, name: string, roots: readonly string[]): Promise<string> {
+  checkName(name)
+  const entry = await entryInside(target, roots)
+  const destination = path.join(path.dirname(entry), name)
+  if (await lstat(destination).catch(() => null)) throw fail('exists')
+  await rename(entry, destination)
+  return destination
+}
+
+export async function deleteHostEntry(target: string, roots: readonly string[]): Promise<void> {
+  // `rm` removes a link itself, not what it points to.
+  await rm(await entryInside(target, roots), { recursive: true, force: false })
+}
+
+export async function hostFsUsage(target: string, roots: readonly string[]): Promise<HostFsUsage> {
+  const { real } = await resolveInside(target, roots)
+  const info = await statfs(real)
+  return { total: info.blocks * info.bsize, free: info.bavail * info.bsize }
+}
+
+/** A conversation's folder, when it lies inside the allowed folders: where its Files tab opens. */
+export async function conversationHostFolder(cwd: string | null, roots: readonly string[]): Promise<string | null> {
+  if (!cwd) return null
+  try {
+    const { real } = await resolveInside(cwd, roots)
+    return (await stat(real)).isDirectory() ? real : null
+  } catch {
+    return null
+  }
 }
 
 /** This host's home folder and, when the gateway mounted one, its workspaces folder. */
@@ -132,7 +202,10 @@ export function hostFsRoots(env: NodeJS.ProcessEnv = process.env): HostFsRoot[] 
   return roots
 }
 
-export function registerHostFsIpc(reg: IpcRegistrar, deps: { roots: () => HostFsRoot[] }): void {
+export function registerHostFsIpc(
+  reg: IpcRegistrar,
+  deps: { roots: () => HostFsRoot[]; conversationFolder: (conversationId: string) => string | null }
+): void {
   const paths = (): string[] => deps.roots().map((root) => root.path)
   reg.handle('host-fs:roots', () => deps.roots())
   reg.handle('host-fs:list', (_event, target: unknown, options: unknown) => {
@@ -146,4 +219,13 @@ export function registerHostFsIpc(reg: IpcRegistrar, deps: { roots: () => HostFs
   reg.mhandle('host-fs:mkdir', (_event, parent: unknown, name: unknown) =>
     createHostDirectory(parent as string, name as string, paths())
   )
+  reg.handle('host-fs:conversation-folder', (_event, id: unknown) =>
+    typeof id === 'string' ? conversationHostFolder(deps.conversationFolder(id), paths()) : null
+  )
+  reg.handle('host-fs:preview', (_event, target: unknown) => previewHostFile(target as string, paths()))
+  reg.handle('host-fs:usage', (_event, target: unknown) => hostFsUsage(target as string, paths()))
+  reg.mhandle('host-fs:rename', (_event, target: unknown, name: unknown) =>
+    renameHostEntry(target as string, name as string, paths())
+  )
+  reg.mhandle('host-fs:delete', (_event, target: unknown) => deleteHostEntry(target as string, paths()))
 }

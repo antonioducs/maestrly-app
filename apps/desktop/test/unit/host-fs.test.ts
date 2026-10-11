@@ -1,8 +1,27 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createHostDirectory, hostFsRoots, listHostDirectory } from '../../src/main/remote-host/host-fs'
+import {
+  conversationHostFolder,
+  createHostDirectory,
+  deleteHostEntry,
+  hostFsRoots,
+  hostFsUsage,
+  listHostDirectory,
+  previewHostFile,
+  renameHostEntry,
+} from '../../src/main/remote-host/host-fs'
 import { HOST_FS_ERROR_MESSAGES, hostFsErrorCode } from '../../src/shared/host-fs'
 
 let base: string
@@ -106,5 +125,74 @@ describe('host folder refusals across IPC', () => {
     expect(hostFsErrorCode(wrapped)).toBe('exists')
     expect(hostFsErrorCode(new Error('EACCES: permission denied'))).toBeNull()
     expect(new Set(Object.values(HOST_FS_ERROR_MESSAGES)).size).toBe(Object.keys(HOST_FS_ERROR_MESSAGES).length)
+  })
+})
+
+describe('host files of the files panel', () => {
+  let area: string
+  beforeAll(() => {
+    area = path.join(base, 'area')
+    mkdirSync(area)
+  })
+
+  it('previews the start of a text file, and only names a binary one', async () => {
+    writeFileSync(path.join(area, 'short.txt'), 'hello file')
+    expect(await previewHostFile(path.join(area, 'short.txt'), [area])).toEqual({
+      binary: false,
+      text: 'hello file',
+      truncated: false,
+      size: 10,
+    })
+    // A two-byte character straddles the end of the sample: it is left out, not shown as a replacement mark.
+    const long = 'a'.repeat(64 * 1024 - 1) + 'é' + 'b'.repeat(36 * 1024)
+    writeFileSync(path.join(area, 'long.txt'), long)
+    const preview = await previewHostFile(path.join(area, 'long.txt'), [area])
+    expect(preview.truncated).toBe(true)
+    expect(preview.text).toBe('a'.repeat(64 * 1024 - 1))
+    writeFileSync(path.join(area, 'blob.bin'), Buffer.from([1, 0, 2]))
+    expect(await previewHostFile(path.join(area, 'blob.bin'), [area])).toMatchObject({ binary: true, text: null })
+    mkdirSync(path.join(area, 'folder'))
+    expect(await codeOf(previewHostFile(path.join(area, 'folder'), [area]))).toBe('not-a-file')
+  })
+
+  it('renames an entry in its folder', async () => {
+    writeFileSync(path.join(area, 'old.txt'), 'x')
+    writeFileSync(path.join(area, 'taken.txt'), 'y')
+    expect(await renameHostEntry(path.join(area, 'old.txt'), 'new.txt', [area])).toBe(path.join(area, 'new.txt'))
+    expect(readFileSync(path.join(area, 'new.txt'), 'utf8')).toBe('x')
+    expect(await codeOf(renameHostEntry(path.join(area, 'new.txt'), 'a/b', [area]))).toBe('invalid-name')
+    expect(await codeOf(renameHostEntry(path.join(area, 'new.txt'), 'taken.txt', [area]))).toBe('exists')
+    expect(await codeOf(renameHostEntry(area, 'renamed', [area]))).toBe('is-root')
+    expect(await codeOf(renameHostEntry(path.join(area, 'gone.txt'), 'x.txt', [area]))).toBe('not-found')
+  })
+
+  it('deletes files, folders and links, never what a link points to, and never a root', async () => {
+    writeFileSync(path.join(area, 'drop.txt'), 'x')
+    mkdirSync(path.join(area, 'tree', 'deep'), { recursive: true })
+    writeFileSync(path.join(area, 'tree', 'deep', 'f.txt'), 'x')
+    mkdirSync(path.join(area, 'target'))
+    writeFileSync(path.join(area, 'target', 'kept.txt'), 'kept')
+    symlinkSync(path.join(area, 'target'), path.join(area, 'pointer'))
+    await deleteHostEntry(path.join(area, 'drop.txt'), [area])
+    await deleteHostEntry(path.join(area, 'tree'), [area])
+    await deleteHostEntry(path.join(area, 'pointer'), [area])
+    expect(existsSync(path.join(area, 'drop.txt'))).toBe(false)
+    expect(existsSync(path.join(area, 'tree'))).toBe(false)
+    expect(existsSync(path.join(area, 'pointer'))).toBe(false)
+    expect(readFileSync(path.join(area, 'target', 'kept.txt'), 'utf8')).toBe('kept')
+    expect(await codeOf(deleteHostEntry(area, [area]))).toBe('is-root')
+    expect(await codeOf(deleteHostEntry(path.join(outside, 'secret'), [area]))).toBe('outside-roots')
+  })
+
+  it('reports the space of the volume a folder is on', async () => {
+    const usage = await hostFsUsage(area, [area])
+    expect(usage.total).toBeGreaterThan(0)
+    expect(usage.free).toBeLessThanOrEqual(usage.total)
+  })
+
+  it("opens on a conversation's folder only when it lies inside the allowed folders", async () => {
+    expect(await conversationHostFolder(path.join(area, 'target'), [area])).toBe(path.join(area, 'target'))
+    expect(await conversationHostFolder(outside, [area])).toBeNull()
+    expect(await conversationHostFolder(null, [area])).toBeNull()
   })
 })
