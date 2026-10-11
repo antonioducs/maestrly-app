@@ -217,7 +217,7 @@ export class HostTransferEngine {
 
   async retry(id: string, options: { overwrite?: boolean } = {}): Promise<void> {
     const record = store.getHostTransfer(id)
-    if (!record || record.state !== 'failed') return
+    if (record?.state !== 'failed') return
     if (record.error === 'changed' || record.error === 'verification-failed') {
       if (record.direction === 'download') {
         const file = await this.deps.endpoint(record.hostId).json('hostFileStat', { body: { path: record.remotePath } })
