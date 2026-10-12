@@ -73,6 +73,7 @@ describe('environment routes', () => {
     expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
       'files',
       'environment-settings-v1',
+      'account-failover',
       'artifacts',
       'artifacts-gateway-viewer',
       'artifacts-transfer',

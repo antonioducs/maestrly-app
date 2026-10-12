@@ -682,6 +682,12 @@ export default {
       turn_failed: 'Turno falhou',
       turn_cancelled: 'Turno cancelado',
     },
+    accountsExhausted: {
+      claude: 'Todas as contas Claude da lista de troca atingiram o limite de uso.',
+      codex: 'Todas as contas Codex da lista de troca atingiram o limite de uso.',
+      until: 'O bot tenta de novo às {{time}}; a mensagem continua na fila.',
+      queued: 'O bot tenta de novo mais tarde; a mensagem continua na fila.',
+    },
   },
   interaction: {
     useTool: '{{name}} quer usar {{tool}}',

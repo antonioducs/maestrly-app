@@ -1,4 +1,5 @@
 import {
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
   parseFleetInstanceEditorPath,
@@ -97,6 +98,7 @@ export class InstanceHttpError extends Error {
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -506,6 +508,9 @@ export function createInstanceControlServer(
     settingsPreferences: () => settings().preferences(FLEET_SETTINGS_OPERATIONS.preferences.input.parse({})),
     settingsSetPreferences: ({ input }) =>
       settings().setPreferences(FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(input)),
+    settingsFailover: () => settings().failover(FLEET_SETTINGS_OPERATIONS.failover.input.parse({})),
+    settingsSetFailoverRoute: ({ input }) =>
+      settings().setFailoverRoute(FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input.parse(input)),
     health: () => environment.health(),
     environmentStatus: () => environment.environmentStatus(),
     runtimesCheck: () => {

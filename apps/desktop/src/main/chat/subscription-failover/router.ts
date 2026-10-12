@@ -22,6 +22,8 @@ export type {
 
 /** Default backoff when exhaustion has no known resetsAt (never "forever"). */
 export const DEFAULT_PROBE_TTL_MS = 5 * 60_000
+/** How long `recoveryAt` gives a half-open probe in flight before its account is checked again. */
+export const HALF_OPEN_RECHECK_MS = 30_000
 
 function unknownHealth(providerId: string): SubscriptionAccountHealth {
   return { providerId, state: 'unknown' }
@@ -307,6 +309,21 @@ export class SubscriptionFailoverRouter {
       generation: lease.generation,
       state: current.state,
     })
+  }
+
+  /**
+   * The earliest time an account of `chain` may be admitted again: `now` when one already may. An account whose
+   * half-open probe is in flight is checked again `HALF_OPEN_RECHECK_MS` later, when that probe has likely settled.
+   */
+  recoveryAt(chain: readonly string[], now = Date.now()): number {
+    let earliest = Number.POSITIVE_INFINITY
+    for (const providerId of chain) {
+      const current = this.getHealth(providerId)
+      if (current.state === 'available' || current.state === 'unknown') return now
+      const at = current.state === 'half-open' ? now + HALF_OPEN_RECHECK_MS : (current.exhaustion?.nextProbeAt ?? now)
+      earliest = Math.min(earliest, Math.max(now, at))
+    }
+    return Number.isFinite(earliest) ? earliest : now
   }
 
   /** Forget the circuit state for one physical provider after its identity has been drained. */

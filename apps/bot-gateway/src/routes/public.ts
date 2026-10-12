@@ -1,5 +1,5 @@
 import { environmentSettingsRoute } from './environment-settings.js'
-import { FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { FLEET_ACCOUNT_FAILOVER_FEATURE, FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
@@ -216,10 +216,11 @@ export async function publicRoute(
         'settingsTestMcpServer',
         'settingsRuntimes',
         'settingsPreferences',
+        'settingsFailover',
       ].includes(key)
     )
       recordConfiguration(ctx, eid, res, {
-        accounts: key.includes('Account') || key.includes('Subscription') ? 1 : 0,
+        accounts: key.includes('Account') || key.includes('Subscription') || key.includes('Failover') ? 1 : 0,
         skills: key.includes('Skill') ? 1 : 0,
         mcpServers: key.includes('Mcp') ? 1 : 0,
         models: key.includes('Model') ? 1 : 0,
@@ -288,6 +289,7 @@ export async function publicRoute(
           features: [
             FLEET_FILES_FEATURE,
             FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+            FLEET_ACCOUNT_FAILOVER_FEATURE,
             FLEET_ARTIFACTS_FEATURE,
             FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
             FLEET_ARTIFACTS_TRANSFER_FEATURE,

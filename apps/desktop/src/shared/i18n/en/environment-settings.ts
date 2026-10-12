@@ -79,4 +79,16 @@ export default {
   imageGenNote: 'Default availability of image generation for bots in this environment.',
   appTools: 'App tools',
   appToolsLocked: 'App tools stay enabled for remote environments.',
+  failover: {
+    title: 'Automatic account rotation',
+    note: 'When an account reaches its usage limit, the bot’s turn continues on the next account in that account’s list.',
+    enable: 'Rotate when {{name}} reaches its limit',
+    add: 'Add fallback account',
+    moveUp: 'Move {{name}} up',
+    moveDown: 'Move {{name}} down',
+    remove: 'Remove {{name}} from the list',
+    disconnected: 'Disconnected — skipped until you reconnect it.',
+    updateServer: 'Update the bot server to set up automatic account rotation.',
+    restart: 'Restart this environment to update it before setting up automatic account rotation.',
+  },
 }

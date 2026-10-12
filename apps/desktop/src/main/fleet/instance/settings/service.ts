@@ -6,6 +6,7 @@ import { createSkillSettingsService } from './skills'
 import { mcpSettingsService } from './mcp'
 import { runtimes, runtimeAction, setRuntimeAutomatic } from './runtimes'
 import { preferences, setPreferences } from './preferences'
+import { failover, setFailoverRoute } from './failover'
 
 /** Invalidate derived web sessions after a durable write without reporting that write as failed. */
 export function environmentMcpChanged(): void {
@@ -44,5 +45,7 @@ export function createEnvironmentSettingsService(
     setRuntimeAutomatic,
     preferences,
     setPreferences,
+    failover,
+    setFailoverRoute,
   }
 }

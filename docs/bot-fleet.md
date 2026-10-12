@@ -50,6 +50,10 @@ setting is required. The bot's environment must be running and reachable.
 Disconnecting this computer cancels its active transfers and removes incomplete
 downloads; click **Download** again after reconnecting.
 
+Files a bot's browser downloads are saved straight to the environment's
+`~/Downloads` folder, numbered when a name is taken, without a "Save as" dialog;
+the bot shares them with **bot_share_file** like any other file.
+
 Published files are snapshots, so changing the source does not change an existing
 download. They survive environment restarts and updates in the bot's persistent
 data. Each bot can retain up to 200 published files and 1 GiB total; a publication
@@ -468,7 +472,13 @@ tab remains available for application interaction and browser sign-ins.
   remove an account after reviewing its use. Google AI uses its own remote
   sign-in and the existing callback relay; it never copies Google credentials
   from this computer. Leaving a replacement key or protected endpoint unchanged
-  preserves the stored value.
+  preserves the stored value. With two or more Claude or Codex accounts,
+  **Automatic account rotation** gives each account an ordered list of fallback
+  accounts of the same provider: when the account a bot uses reaches its usage
+  limit, the turn continues on the next account of its list. Each change is
+  saved at once. Rotation needs a server and an environment image that support
+  `account-failover`; otherwise the section says to update the server or to
+  restart the environment.
 - **Models:** search the complete catalog, including hidden models, and save or
   discard visibility filters per account. Models already chosen by bots remain
   usable, including an inherited compacting model.
@@ -857,6 +867,8 @@ compatible. See [memory storage](local-data.md#memory-storage),
 | **Sign in again** after restarting | The generated SSH key was held only in memory because secure storage was unavailable. Use **Set up again** with the server's password or key; Maestrly keeps the pairing and replaces its key. |
 | **setup needed** / **Needs a model account** | Add an account under **Environment accounts** in the bot's environment view, or use **Log in on the environment screen**. Then choose the bot's **Main model**. |
 | **Needs a compaction model** | Choose the environment's **Default compaction model**, or a model of the bot's own in its **Settings** tab; reconnect the environment's account if it became unavailable. Queued messages resume when setup is complete. |
+| "Every Claude (or Codex) account in the rotation list reached its usage limit." | The message stays queued. The bot tries again when the first account of the list is expected back, checks at least every 10 minutes meanwhile, and checks at once when you send another message; the conversation says so once. Add another account to the list under **Automatic account rotation**, or wait. |
+| The environment screen shows Maestrly's settings but ignores clicks and scrolling | A native dialog no one answered disabled the window. Environments on images from before this fix opened a "Save as" dialog for every file their browsers downloaded. Restart the environment on a current image: downloads now go straight to `~/Downloads`. |
 | **offline** or **starting** | Check the environment's container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart** on the environment. |
 | "This bot shares its environment. Restart the environment instead." | A desktop app from before environments, or the API, tried to start, stop, or restart one bot of a shared environment. Use the environment's actions in a current desktop app. |
 | "Restart this environment to update it before adding bots." (or before opening a screen or configuring it from your computer) | The environment still runs a bot image from before environments. Restart it from its environment view or the **Server** page. |
