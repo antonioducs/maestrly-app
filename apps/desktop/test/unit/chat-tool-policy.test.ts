@@ -1,4 +1,3 @@
-import { linkedBoardCatalog } from '../../src/main/platform/board-tool-catalog'
 import { describe, expect, it } from 'vitest'
 import type { ToolSet } from 'ai'
 import {
@@ -47,30 +46,14 @@ describe('external MCP tool policy', () => {
 })
 
 describe('Maestrly app-tool policy', () => {
-  it('classifies the complete 148-tool product-policy universe', () => {
-    expect(Object.keys(APP_TOOL_POLICY)).toHaveLength(148)
+  it('classifies the complete 115-tool product-policy universe', () => {
+    expect(Object.keys(APP_TOOL_POLICY)).toHaveLength(115)
     for (const entry of Object.values(APP_TOOL_POLICY)) {
       expect(entry).toEqual({
         allowedInPlanAsk: expect.any(Boolean),
         readOnly: expect.any(Boolean),
         parallelSafe: expect.any(Boolean),
       })
-    }
-  })
-
-  it('keeps board mutation tools out of Plan/Ask while allowing linked-board reads', () => {
-    expect(appToolAllowed('plan', 'board_list_cards')).toBe(true)
-    expect(appToolAllowed('ask', 'board_get_card')).toBe(true)
-    expect(appToolAllowed('plan', 'board_update_card')).toBe(false)
-    expect(appToolAllowed('plan', 'board_create_subtask')).toBe(false)
-    expect(appToolAllowed('ask', 'board_comment')).toBe(false)
-    expect(appToolAllowed('plan', 'board_move_card')).toBe(false)
-  })
-
-  it.each(['plan', 'ask'] as const)('classifies every shared board tool in %s', (mode) => {
-    for (const tool of linkedBoardCatalog) {
-      expect(appToolAllowed(mode, tool.name), tool.name).toBe(tool.readOnly)
-      expect(appToolMetadata(tool.name), tool.name).toEqual({ readOnly: tool.readOnly, parallelSafe: tool.readOnly })
     }
   })
 

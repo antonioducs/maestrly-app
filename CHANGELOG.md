@@ -29,6 +29,19 @@ User-visible changes by version. Downloads are on
   public GitHub repository, as soon as it is asked in an open conversation
   instead of only after switching back to it.
 
+### Removed
+
+- **Breaking:** remove the Kanban platform: the web dashboard, the API server,
+  the headless runner, and their `client-sdk` and `runner-core` packages.
+  Desktop no longer offers **Settings → Platform**, the desktop executor, the
+  workspace link to a Kanban project, the `board_*` and `get_linked_kanban`
+  tools, the GPT Web **Linked Kanban** access, or web project chats. On first
+  launch, the desktop deletes the stored platform connections, credentials,
+  links and executor settings, and removes the executor's login item.
+  Conversations that were projected from the web remain as ordinary local
+  chats. Paired ChatGPT Web conversations ask to be paired again once, because
+  their access no longer includes the Kanban.
+
 ## [0.16.0] - 2026-10-12
 
 ### Added

@@ -135,13 +135,6 @@ export function DesktopApp() {
     handleMoveWorkspaceToGroup,
     handleToggleWorkspaceCollapsed,
   } = ws
-  useEffect(
-    () =>
-      api.onPlatformLinksChanged(() => {
-        void refreshWorkspaces()
-      }),
-    [refreshWorkspaces, api]
-  )
   // Remote hosts: what each one lists arrives from its runtime (rendered below), already keyed for the window.
   const hosts = useHosts()
   const remoteHosts = useMemo(() => hosts.filter((host) => host.remote), [hosts])
@@ -534,21 +527,6 @@ export function DesktopApp() {
   ) as typeof agents.statuses
   const remoteAttention = useMemo(() => Object.values(remote).flatMap((shell) => [...shell.attention]), [remote])
   const attention = remoteAttention.length ? new Set([...agents.attention, ...remoteAttention]) : agents.attention
-  useEffect(() => {
-    let mounted = true
-    const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
-    void api
-      .platformExecutorSettings()
-      .then((settings) => {
-        if (mounted && settings.mode === 'team') openSettings('platform')
-      })
-      .catch(() => {})
-    return () => {
-      mounted = false
-      unsubscribe()
-    }
-  }, [openSettings, api])
-
   const handleSidebarConversationSelect = useCallback(
     (conv: Conversation) => {
       if (isRemoteKey(conv.id)) remoteRef.current[hostOfKey(conv.id)]?.actions.acknowledgeConversation(conv.id)

@@ -2,7 +2,7 @@ import type { HostApi } from '../../../preload'
 import type { BotActionName, BotPermissionCeiling } from '../../../shared/bot'
 
 export type BotWorkspaceOption = Awaited<ReturnType<HostApi['listWorkspaces']>>[number]
-export type BotProviderOption = Awaited<ReturnType<HostApi['platformExecutorProviders']>>[number]
+export type BotProviderOption = Awaited<ReturnType<HostApi['chatExecutionProviders']>>[number]
 
 export const BOT_ACTION_NAMES: readonly BotActionName[] = ['chats:read', 'chats:write', 'chats:control', 'chats:answer']
 

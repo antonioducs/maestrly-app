@@ -7,7 +7,6 @@ import { registerTerminalTools } from './mcp/tools/terminal'
 import { registerConversationNotesTools, registerProjectNotesTools } from './mcp/tools/notes'
 import { registerMemoryTools } from './mcp/tools/memory'
 import { registerDebugTools } from './mcp/tools/debug'
-import { registerBoardTools } from './mcp/tools/board'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
 import { registerBotModeTools } from './mcp/tools/bot-instance'
 import { registerArtifactTools } from './mcp/tools/artifacts'
@@ -51,7 +50,6 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
     registerArtifactTools(ctx, undefined, { open: false })
     registerArtifactCommentTools(ctx)
   }
-  if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
   registerBotModeTools(ctx)
   return server
 }

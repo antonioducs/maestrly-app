@@ -11,7 +11,6 @@ export const APP_TOOL_GROUPS = [
   'history',
   'debug',
   'artifacts',
-  'board',
 ] as const
 
 export type AppToolGroup = (typeof APP_TOOL_GROUPS)[number]
@@ -28,7 +27,6 @@ export const APP_TOOL_GROUP_PATTERNS: Record<AppToolGroup, string> = {
   history: 'history_*',
   debug: 'debug_*',
   artifacts: 'artifact_*',
-  board: 'board_*',
 }
 
 const PREFIXES: ReadonlyArray<readonly [string, AppToolGroup]> = [
@@ -40,11 +38,9 @@ const PREFIXES: ReadonlyArray<readonly [string, AppToolGroup]> = [
   ['history_', 'history'],
   ['debug_', 'debug'],
   ['artifact_', 'artifacts'],
-  ['board_', 'board'],
 ]
 
 export function appToolGroupOf(name: string): AppToolGroup | null {
-  if (name === 'get_linked_kanban') return 'board'
   for (const [prefix, group] of PREFIXES) if (name.startsWith(prefix)) return group
   return null
 }

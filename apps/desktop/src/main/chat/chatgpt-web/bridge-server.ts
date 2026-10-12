@@ -3,7 +3,7 @@
  *
  * The user chats directly in ChatGPT and calls these tools to inspect the local repository. To bring
  * an artifact back, they call `send_to_maestrly`. Read tools remain read-only; the bridge ceases to be
- * strictly read-only when explicitly granted a write capability (Kanban, MCP, browser or review loop). For review loops (`start_review_loop`):
+ * strictly read-only when explicitly granted a write capability (MCP, browser or review loop). For review loops (`start_review_loop`):
  * `submit_review_fix` then starts ONE local Maestrly agent execution at a time, tracked through
  * `wait_review_fix` (server-side long-poll) and concluded through `finish_review_loop`.
  * Loop reasoning (review, convergence decisions) belongs to ChatGPT; this module validates, enforces
@@ -16,7 +16,6 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { z } from 'zod'
-import { linkedBoardCatalog } from '../../platform/board-tool-catalog'
 import type { ChatGptWebBrowserCapability } from '../../../shared/chat'
 import type { BrowserSurface } from '../browser-surface'
 import { globToRegExp, shouldSkipSearchDir } from '../tools/grep'
@@ -194,10 +193,6 @@ interface InvestigationDisclosure {
 export interface BridgeOptions {
   conversationScope?: 'project' | 'standalone'
   fileScope?: ConversationFileScope
-  kanban?: {
-    context(): unknown
-    call(name: import('@maestrly/protocol').LinkedBoardToolName, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
-  }
   /** Repository root exposed to tools (jail). */
   cwd: string
   /** Diff base (`git diff <base>...HEAD`). */
@@ -2375,22 +2370,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       },
     },
     {
-      name: 'get_linked_kanban',
-      description: 'Read the Kanban project linked to this conversation workspace and its access level. No credentials are exposed.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
-      run: () => options.kanban ? externalResult(options.kanban.context()) : ERR('Kanban access is off or this workspace is not linked.'),
-    },
-    ...linkedBoardCatalog.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: z.toJSONSchema(tool.schema) as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
-      annotations: { readOnlyHint: tool.readOnly, destructiveHint: !tool.readOnly, openWorldHint: true },
-      run: (args: Record<string, unknown>) => options.kanban
-        ? runExternal((signal) => options.kanban!.call(tool.name, args, signal))
-        : ERR('Kanban access is off or this workspace is not linked.'),
-    })),
-    {
       name: 'discover_frontend_previews',
       description: 'Discover allowlisted frontend previews in the workspace. Returns opaque IDs, never commands.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -3379,7 +3358,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   /** Sanitized events: review tools NEVER expose findings/notes/prompts in tool-call events. */
   function sanitizedArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {
     if (name === 'personal_memory') return { operation: typeof args.operation === 'string' ? args.operation : 'invalid' }
-    if (name === 'get_linked_kanban' || name.startsWith('board_')) return { argument_keys: Object.keys(args).length }
     if (BROWSER_TOOL_NAMES.has(name)) {
       return {
         ...(typeof args.ref === 'number' ? { ref: args.ref } : {}),
@@ -3464,8 +3442,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     'git_diff', 'git_read', 'gh_read', 'run_check', 'start_review_loop', 'submit_review_fix',
     'wait_review_fix', 'finish_review_loop', 'discover_frontend_previews', 'start_project_environment',
     'wait_project_environment', 'cancel_project_environment', 'search_project_memory', 'read_project_memory_source',
-    'get_linked_kanban',
-  ].includes(name) || name.startsWith('board_') || name.startsWith('kanban_')
+  ].includes(name)
 
   function listTools() {
     return TOOLS.filter(tool => options.conversationScope !== 'standalone' || !requiresProject(tool.name))

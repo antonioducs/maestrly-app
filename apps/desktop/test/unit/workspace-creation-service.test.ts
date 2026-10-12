@@ -75,7 +75,6 @@ function harness(overrides: Partial<WorkspaceCreationServiceDeps> = {}) {
   }
   const deps: WorkspaceCreationServiceDeps = {
     getConversation: (id) => getConversation(id),
-    isWebManaged: () => false,
     getProjectsDirectory: () => projects,
     getWorkspace,
     getWorkspaceByPath,

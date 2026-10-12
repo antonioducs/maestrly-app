@@ -16,7 +16,7 @@ import {
 } from './stream-subscribers'
 
 export { subscribeChatStream, unsubscribeChatStream } from './stream-subscribers'
-import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
+import { remoteChatPolicy } from './remote-policy'
 import {
   clearHumanTurnOrigin,
   isHumanTurnAdmission,
@@ -2470,7 +2470,7 @@ function toRequestPayload(req: PermissionRequest): Extract<ChatPermissionEvent, 
       action: req.action,
       title: req.title,
       resources: req.resources,
-      ...(req.save?.length && !remoteChatPolicy(req.conversationId) && !isWebManagedConversation(req.conversationId)
+      ...(req.save?.length && !remoteChatPolicy(req.conversationId)
         ? { allowAlways: true }
         : {}),
     },
@@ -3698,8 +3698,6 @@ async function startSend(
   // COMPANION AUTOMATION LOCK (central guard): while review/bootstrap is active, only its owning internal turn
   // passes. Covers chat:send, resend, plans, and server-side starts — all enter here.
   if (opts?.runnerSignal?.aborted) return { ok: false, error: 'cancelled' }
-  if (isWebManagedConversation(conversationId) && !opts?.remoteAdmission)
-    return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
   if (opts?.botAdmission) {
     try {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
@@ -9516,8 +9514,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // never the bot's: a manual send is a new turn, not an instruction slipped into the bot's.
       if (activeTurnIsBotOwned(conversationId))
         return { ok: false, error: 'The bot is running this turn; wait for it to finish.' }
-      if (isWebManagedConversation(conversationId))
-        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       const text = typeof rawText === 'string' ? rawText : ''
       const clientUserMessageId = typeof rawClientUserMessageId === 'string' ? rawClientUserMessageId : ''
       if (
@@ -10120,6 +10116,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // DYNAMIC provider models (GET {baseURL}/models), filtered for chat usability (no TTS/ASR/image)
   // and finally by the USER filter (models hidden in Settings). `includeHidden` returns the full
   // list — consumed by the filter management screen itself.
+
+  // Usable accounts and models per provider; bots offer them as the providers a desktop grant may use.
+  deps.mhandle('chat:execution-providers', () =>
+    listChatExecutionModels({ refreshSubscriptionAuth: true, subscriptionProviderTimeoutMs: 8000 })
+  )
 
   deps.mhandle('chat:models', (_e, providerId: string, force?: boolean, includeHidden?: boolean) =>
     typeof providerId === 'string'
@@ -10791,8 +10792,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // A released chat may be edited while it is idle; the reservation below keeps a running turn safe.
       if (botBlocksManualSend(conversationId))
         return { ok: false, error: 'Release this chat for your own messages before editing here.' }
-      if (isWebManagedConversation(conversationId))
-        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       if (typeof conversationId !== 'string' || typeof fromMessageId !== 'string')
         return { ok: false, error: 'invalid-input' }
       const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
@@ -10835,14 +10834,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   deps.mon(
     'chat:permission-respond',
     (_e, requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
-      for (const conversationId of active.keys())
-        if (
-          isWebManagedConversation(conversationId) &&
-          getBroker()
-            .pendingFor(conversationId)
-            .some((p) => p.id === requestId)
-        )
-          return
       if (typeof requestId !== 'string' || !['once', 'always', 'reject'].includes(reply)) return
       try {
         getBroker().reply({ requestId, reply, message })
@@ -10855,8 +10846,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   )
   // ask_question (mark X): user answers (string[][]) → resolve the tool's blocked execute.
   deps.mon('chat:question-respond', (_e, toolCallId: string, answers: string[][]) => {
-    const owner = getQuestionBroker().conversationFor(toolCallId)
-    if (owner && isWebManagedConversation(owner)) return
     if (typeof toolCallId === 'string') getQuestionBroker().reply(toolCallId, Array.isArray(answers) ? answers : [])
   })
 }

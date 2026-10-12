@@ -23,7 +23,6 @@ import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
-import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
@@ -71,8 +70,6 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['chatApi', chatApi],
   ['chatLocalApi', chatLocalApi],
   ['chatWindowApi', chatWindowApi],
-  ['platformApi', platformApi],
-  ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
@@ -320,7 +317,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(574)
+    expect(keys).toHaveLength(554)
     expect(keys.sort()).toMatchSnapshot()
   })
 

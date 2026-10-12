@@ -43,13 +43,12 @@ import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/Termi
 import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components/settings/ExecutionSections'
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
-import { PlatformSection } from '@/components/platform/PlatformSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
 import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 /** The sections about a Maestrly profile, which a host has; the others are this computer's window and app. */
-const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'platform', 'usage', 'execution'])
+const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'usage', 'execution'])
 
 interface Props {
   fleet?: FleetController
@@ -418,7 +417,6 @@ export function SettingsView({ fleet, initialSection = 'chat', sections, chat, o
 
             {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chat} />)}
 
-            {section === 'platform' && inProfile(<PlatformSection />)}
             {section === 'artifacts' && (
               <ArtifactsSettings
                 onOpenFleet={() => selectSection('fleet')}

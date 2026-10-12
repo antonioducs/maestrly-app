@@ -43,6 +43,8 @@ const RETIRED_EXTERNAL_AGENT_TABLES = [
   'platform_delegation_workspaces',
 ] as const
 
+const RETIRED_PLATFORM_TABLES = ['platform_chat_outbox', 'platform_chat_turns', 'platform_chat_sessions'] as const
+
 function tableExists(name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)
 }
@@ -172,6 +174,35 @@ function purgeRetiredExternalAgentSchema(): void {
 }
 
 /**
+ * Remove the retired Kanban platform connection: web project-chat projections, connections, encrypted platform
+ * credentials, workspace links and executor settings. Conversations that were projected stay as local chats.
+ */
+function purgeRetiredPlatformSchema(): void {
+  for (const table of RETIRED_PLATFORM_TABLES) db.exec(`DROP TABLE IF EXISTS ${table};`)
+  if (!tableExists('app_settings')) return
+  retireExecutorLoginItem()
+  db.exec("DELETE FROM app_settings WHERE key LIKE 'platform.%';")
+}
+
+/** The executor registered an OS login item; with its setting gone nothing else could ever remove it. */
+function retireExecutorLoginItem(): void {
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'platform.desktop-executor.v1'").get() as
+    | { value: string }
+    | undefined
+  if (!row || !app.isPackaged) return
+  try {
+    if (JSON.parse(row.value)?.autoStart !== true) return
+    // Windows matches the login item by its arguments.
+    app.setLoginItemSettings({
+      openAtLogin: false,
+      ...(process.platform === 'win32' ? { args: ['--maestrly-login-launch'] } : {}),
+    })
+  } catch {
+    /* A corrupt setting or an unavailable login item API must not block startup. */
+  }
+}
+
+/**
  * Open/create SQLite and ensure schema, migrations, and backfills. Tests may inject paths for real
  * WAL/FK behavior. Production resolves its userData database after a consistent legacy snapshot
  * migration; explicit test paths never enter that migration.
@@ -203,20 +234,6 @@ export function initStore(file?: string): void {
 function initializeSchema(): void {
   initializeBotCommandSchema(db)
   initializeHostTransferSchema(db)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS platform_chat_sessions (
-      instance_id TEXT NOT NULL, session_id TEXT NOT NULL, conversation_id TEXT NOT NULL UNIQUE,
-      PRIMARY KEY(instance_id, session_id)
-    );
-    CREATE TABLE IF NOT EXISTS platform_chat_turns (
-      turn_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, lease_id TEXT NOT NULL,
-      state TEXT NOT NULL, completion TEXT
-    );
-    CREATE TABLE IF NOT EXISTS platform_chat_outbox (
-      seq INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, event_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS platform_chat_outbox_turn ON platform_chat_outbox(turn_id,seq);
-  `)
   // Drop known ledger triggers before schema creation because IF NOT EXISTS would preserve an outdated
   // privacy implementation.
   db.exec(`
@@ -225,6 +242,7 @@ function initializeSchema(): void {
   `)
   purgeLegacyProjectManagementSchema()
   purgeRetiredExternalAgentSchema()
+  purgeRetiredPlatformSchema()
   const usageLedgerCols = db.prepare('PRAGMA table_info(chat_usage_ledger)').all() as Array<{ name: string }>
   if (usageLedgerCols.length > 0 && !usageLedgerCols.some((column) => column.name === 'conversation_id')) {
     // The ledger deliberately has no FK: this optional owner key keeps per-conversation billing history after

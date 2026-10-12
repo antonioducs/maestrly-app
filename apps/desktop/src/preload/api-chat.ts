@@ -469,6 +469,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       return () => ipcRenderer.removeListener(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)
     },
 
+    chatExecutionProviders: (): Promise<Array<{ id: string; name: string; models: string[] }>> =>
+      ipcRenderer.invoke('chat:execution-providers'),
     chatModels: (providerId: string, force?: boolean, includeHidden?: boolean): Promise<string[]> =>
       ipcRenderer.invoke('chat:models', providerId, force, includeHidden),
     onChatModelsCatalogChanged: (callback: () => void): (() => void) => {

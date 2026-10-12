@@ -1,7 +1,6 @@
 import { StandaloneChatList } from './sidebar/StandaloneChatList'
 import { filterStandaloneConversations } from '@/lib/standalone-conversations'
 import type { StandaloneConversation } from '../../shared/conversation'
-import { WorkspaceKanbanLink } from './platform/WorkspaceKanbanLink'
 /** Local workspaces, virtual groups, and pinned conversations.
  * Apply drag sorting only to the complete list so filtered searches cannot corrupt persisted order. */
 import { useEffect, useMemo, useState, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
@@ -42,7 +41,6 @@ import { SidebarFooter } from '@/components/sidebar/SidebarFooter'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
 import { HostSectionHeader, HostSectionNotice, type HostSectionActions } from '@/components/sidebar/HostSection'
 import type { RemoteHostShell } from '@/lib/hosts/remote-host-runtime'
-import { isRemoteKey } from '@/lib/hosts/shell-keys'
 import type { HostView } from '../../shared/hosts'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { fleetSearchCount } from '@/lib/fleet/environments'
@@ -490,7 +488,6 @@ export function Sidebar({
           </ContextMenuTrigger>
           <ContextMenuContent>{workspaceMenuItems(ws, contextKit)}</ContextMenuContent>
         </ContextMenu>
-        {!isRemoteKey(ws.id) && <WorkspaceKanbanLink workspaceId={ws.id} compact />}
 
         {!isCollapsed && (
           <ul>

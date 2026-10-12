@@ -297,7 +297,7 @@ flowchart LR
   Environments <-->|authenticated screen and control :7680| Gateway
 ```
 
-Compose publishes only the gateway's public listener on the Docker host's loopback. An install on a VPS uses an SSH tunnel to that listener; a server you manage can use private HTTPS through Tailscale Serve. The internal listener and each environment's control port stay on the Docker network. VNC listens only on loopback inside each environment container and starts only while a screen is open. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the environment's control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
+Compose publishes only the gateway's public listener on the Docker host's loopback. An install on a VPS uses an SSH tunnel to that listener; a server you manage can use private HTTPS through Tailscale Serve. The internal listener and each environment's control port stay on the Docker network. VNC listens only on loopback inside each environment container and starts only while a screen is open. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the environment's control server.
 
 ### Listeners and screens
 

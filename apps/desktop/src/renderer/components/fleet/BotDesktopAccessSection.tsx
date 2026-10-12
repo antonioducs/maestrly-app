@@ -71,7 +71,7 @@ export function BotDesktopAccessSection({ bot, id }: { bot: FleetBot; id: string
     void Promise.all([
       window.api.fleetDesktopAccess(bot.id),
       localApi.listWorkspaces(),
-      localApi.platformExecutorProviders(),
+      localApi.chatExecutionProviders(),
     ])
       .then(([access, projects, accounts]) => {
         if (!alive) return

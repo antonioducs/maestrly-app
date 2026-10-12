@@ -4,16 +4,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/desktop/package.json apps/desktop/package.json
-COPY apps/server/package.json apps/server/package.json
-COPY apps/runner/package.json apps/runner/package.json
-COPY apps/web/package.json apps/web/package.json
 COPY apps/bot-gateway/package.json apps/bot-gateway/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
-COPY packages/client-sdk/package.json packages/client-sdk/package.json
-COPY packages/runner-core/package.json packages/runner-core/package.json
 COPY packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json
 COPY scripts scripts
-RUN npm ci --include-workspace-root=false --workspace @maestrly/desktop --workspace @maestrly/runner-core --workspace @maestrly/client-sdk --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol
+RUN npm ci --include-workspace-root=false --workspace @maestrly/desktop --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol
 COPY apps/desktop apps/desktop
 COPY packages packages
 COPY config config

@@ -820,7 +820,6 @@ export default {
     // Menu lateral (#556): agrupa as configs por tema p/ a janela deixar de ser uma lista gigante.
     nav: {
       fleet: 'Servidor de bots',
-      platform: 'Plataforma',
       chat: 'Maestrly Chat',
       usage: 'Uso e custos',
       appearance: 'Aparência e sons',

@@ -7,9 +7,7 @@ picker. Use **Connect another account** to connect another account with its own 
 An eligible Cursor account and an internet connection are required. Available
 models and account usage limits come from Cursor.
 
-Cursor is available for chat, Maestro, subagent profiles, and the desktop
-executor's provider selection. For platform tasks, enable the Cursor account on
-a desktop executor.
+Cursor is available for chat, Maestro, and subagent profiles.
 
 The SDK and native helpers ship with the application; installing the Cursor
 editor or a separate Cursor CLI is unnecessary. Supported architectures are

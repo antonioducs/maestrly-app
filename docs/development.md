@@ -33,9 +33,9 @@ and build caches. See [Local data](local-data.md) before resetting or moving pro
 | `scripts/` | Development, runtime, packaging, and verification tools |
 | `apps/desktop/runtime-assets/`, `apps/desktop/resources/`, `config/` | Runtime inputs, packaged assets, and configuration |
 
-## Platform workspaces
+## Workspaces
 
-`apps/web`, `apps/server`, and `apps/runner` build independently. Use the root `dev:web`, `dev:server`, `dev:runner`, and corresponding `build:*` commands. Contracts live in `packages/protocol`, `packages/client-sdk`, and `packages/runner-core`. See [self-hosting](self-hosting.md). Desktop-only commands below can be invoked with `--workspace @maestrly/desktop` from the repository root.
+`apps/desktop` is the Electron app and `apps/bot-gateway` the bot server. Shared contracts live in `packages/protocol` (bot conversations), `packages/bot-fleet-protocol` and `packages/artifact-host`. Desktop-only commands below can be invoked with `--workspace @maestrly/desktop` from the repository root.
 
 ## Checks
 

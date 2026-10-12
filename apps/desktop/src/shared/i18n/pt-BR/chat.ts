@@ -45,17 +45,6 @@ export default {
     modelRequired: 'Escolha um modelo para salvar memórias das conversas.',
     saveFailed: 'Não foi possível salvar as configurações de memória.',
   },
-  kanban: {
-    board: 'Board',
-    project: 'Projeto Kanban',
-    linked: 'Vinculado a este workspace e seus worktrees',
-    disconnected: 'Reconecte em Configurações → Plataforma',
-    openProject: 'Abrir Kanban: {{project}}',
-    open: 'Abrir Kanban',
-    openFailed: 'Não foi possível abrir o Kanban.',
-    accessTitle: 'Kanban vinculado',
-    accessDescription: 'Acesso ao projeto vinculado a este workspace. Ask e Plan continuam somente leitura.',
-  },
   chatgptWeb: {
     notConfigured: 'O ChatGPT Web ainda não está configurado. Conclua em Configurações › Maestrly Chat.',
     starting: 'Subindo o túnel…',
@@ -298,7 +287,6 @@ export default {
     history: { label: 'Histórico da conversa', desc: 'busca trechos anteriores da conversa' },
     debug: { label: 'Debug', desc: 'breakpoints e passo a passo na aba Código' },
     artifacts: { label: 'Artefatos', desc: 'publica e atualiza páginas web' },
-    board: { label: 'Kanban', desc: 'quadros e cards vinculados ao workspace' },
   },
   plusMenu: {
     add: 'Adicionar',

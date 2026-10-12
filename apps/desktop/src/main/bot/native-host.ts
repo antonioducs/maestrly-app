@@ -8,7 +8,7 @@ import type { BotNativeHost } from './worker'
 import type { BotModelCatalog } from './catalog'
 import type { ChatConversationSlot } from '../chat/service'
 
-/** Adapts the existing native chat runtime; no web-chat projection or Kanban prompt is installed. */
+/** Adapts the existing native chat runtime; no extra projection or prompt is installed. */
 export class NativeBotChatHost implements BotNativeHost {
   /** Slot of the command running in each conversation, held from configure until the turn ends. */
   private readonly slots = new Map<string, ChatConversationSlot>()

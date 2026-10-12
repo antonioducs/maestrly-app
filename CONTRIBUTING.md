@@ -41,13 +41,12 @@ For application changes, add `--full`:
 npm run verify:pr -- --title "fix(desktop): handle failed startup" --full
 ```
 
-This adds dependency auditing, the CI's pinned Gitleaks history scan, desktop E2E, real PostgreSQL integration,
-platform E2E, project chat E2E, and `smoke:platform`. Install the prerequisites
-required by these suites; report unavailable services or environment blockers
-accurately rather than treating skipped or blocked checks as passing. The full
-suite needs Go, Docker running, and Playwright Chromium installed for both web
-and desktop workspaces. Headless Linux also needs Xvfb and Electron system
-libraries, as configured in the CI workflows.
+This adds dependency auditing, the CI's pinned Gitleaks history scan, and desktop E2E.
+Install the prerequisites required by these suites; report unavailable services or
+environment blockers accurately rather than treating skipped or blocked checks as
+passing. The full suite needs Go and Playwright Chromium installed for the desktop
+workspace. Headless Linux also needs Xvfb and Electron system libraries, as
+configured in the CI workflows.
 
 Changes to dependencies or lockfiles require dependency auditing. Changes to
 native modules, runtimes, dependencies, icons, signing, or packaging also require

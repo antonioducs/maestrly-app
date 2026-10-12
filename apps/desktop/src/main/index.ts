@@ -1,7 +1,5 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
-import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import os from 'node:os'
-import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { ensureAppOwnedExcludes } from './git-service'
@@ -192,7 +190,6 @@ import {
 import { cleanupToolOutputs } from './chat/tool-output-store'
 import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
-import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
@@ -218,7 +215,6 @@ import { createConversationFileScope } from './conversation-file-scope'
 import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
-import { embeddedRunnerHost } from './platform/runner-host'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !!process.env.ELECTRON_RENDERER_URL
@@ -561,15 +557,10 @@ function setupApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-// Set once at startup and consumed by the first window; later windows come from explicit reveals.
-let startHiddenAtLogin = false
-
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
-  const startHidden = startHiddenAtLogin
-  startHiddenAtLogin = false
   mainWindow = new BrowserWindow({
-    show: !isHeadlessInstance() && !startHidden,
+    show: !isHeadlessInstance(),
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -685,11 +676,6 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('close', (e) => {
     if (isHeadlessInstance() && !backgroundQuit) {
-      e.preventDefault()
-      mainWindow?.hide()
-      return
-    }
-    if (executorSettings().background && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -854,7 +840,6 @@ function registerIpc(): void {
   registerPerformanceIpc(reg)
   registerSoundIpc(reg)
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
-  registerPlatformIpc(reg)
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
@@ -1013,7 +998,6 @@ app.whenReady().then(async () => {
     console.warn(`[conversation-migration] ${migrationRecoveries.length} incomplete operation(s) recovered.`)
   }
   setupApplicationMenu()
-  startHiddenAtLogin = !isBotMode() && shouldStartHidden(executorSettings(), wasLaunchedAtLogin())
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
@@ -1038,23 +1022,18 @@ app.whenReady().then(async () => {
           .resize({ width: process.platform === 'win32' ? 16 : 22, height: process.platform === 'win32' ? 16 : 22 })
   if (!trayIcon.isEmpty()) {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
-    executorTray = new Tray(trayIcon)
-    executorTray.setToolTip('Maestrly')
+    appTray = new Tray(trayIcon)
+    appTray.setToolTip('Maestrly')
     const reveal = () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show()
         mainWindow.focus()
-        mainWindow.webContents.send('executor:open')
       } else void createWindow()
     }
-    executorTray.on('click', reveal)
-    executorTray.setContextMenu(
+    appTray.on('click', reveal)
+    appTray.setContextMenu(
       Menu.buildFromTemplate([
         { label: 'Maestrly', click: reveal },
-        {
-          label: getLocale().startsWith('pt') ? 'Pausar executor' : 'Pause executor',
-          click: () => void embeddedRunnerHost.stop(),
-        },
         { type: 'separator' },
         { label: getLocale().startsWith('pt') ? 'Sair' : 'Quit', click: () => app.quit() },
       ])
@@ -1130,9 +1109,6 @@ app.whenReady().then(async () => {
       return
     }
   }
-  recoverDesktopExecutions()
-  const executor = executorSettings()
-  if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   void botHost.restore()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1193,10 +1169,10 @@ let shutdownComplete = false
 
 let chatDisposed = false
 let chatDisposing = false
-let platformRunnerStopped = false
-let platformRunnerStopping = false
+let backgroundServicesStopped = false
+let backgroundServicesStopping = false
 
-let executorTray: Tray | null = null
+let appTray: Tray | null = null
 let backgroundQuit = false
 let quitConfirmed = false
 let quitDialogOpen = false
@@ -1253,13 +1229,13 @@ app.on('before-quit', (e) => {
     return
   }
 
-  if (!platformRunnerStopped) {
+  if (!backgroundServicesStopped) {
     e.preventDefault()
-    if (!platformRunnerStopping) {
-      platformRunnerStopping = true
-      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop(), artifactHost?.stop()]).finally(() => {
-        platformRunnerStopped = true
-        platformRunnerStopping = false
+    if (!backgroundServicesStopping) {
+      backgroundServicesStopping = true
+      void Promise.allSettled([botHost.stop(), artifactHost?.stop()]).finally(() => {
+        backgroundServicesStopped = true
+        backgroundServicesStopping = false
         app.quit()
       })
     }

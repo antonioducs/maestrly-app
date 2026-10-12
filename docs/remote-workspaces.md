@@ -51,7 +51,7 @@ feature: use **Update bots** first.
   server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
   [Browser](#browser). **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this
   computer and the server: see [Files](#files).
-- **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
+- **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
 - **Memory of the host.** Chats on the server remember with the server's personal memory, and its workspaces keep their

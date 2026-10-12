@@ -1,4 +1,3 @@
-import { WorkspaceKanbanLink } from '../platform/WorkspaceKanbanLink'
 /** Conversation host for provider streams, queued turns, draft attachments, and paginated history.
  * Bound hidden rendering work while preserving session state and reconciling on visibility changes. */
 import {
@@ -2024,7 +2023,6 @@ export function ChatView({
         >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col">
-              {workspaceId && <WorkspaceKanbanLink workspaceId={workspaceId} />}
               {searchOpen && (
                 <ChatSearchBar
                   query={searchQuery}
