@@ -183,7 +183,8 @@ function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
 function ownerFileRefs(message: ChatMessage): FleetFileRef[] {
   return message.parts
     .flatMap((entry): FleetFileRef[] => {
-      if (entry.type !== 'file') return []
+      // Hidden parts (memory recall, referenced context) are for the model, not attachments of the owner.
+      if (entry.type !== 'file' || entry.hidden) return []
       if (entry.kind === 'pdf' && entry.artifactId && entry.byteSize !== undefined)
         return [
           {
