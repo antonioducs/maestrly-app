@@ -67,7 +67,8 @@ const json = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 })
 
-describe('host file routes of the control server', () => {
+// A workspaces host runs on Linux or macOS, and the host protocol takes POSIX paths only.
+describe.skipIf(process.platform === 'win32')('host file routes of the control server', () => {
   it('stat, read a range, upload, commit and abort through HTTP', async () => {
     const call = await listen(true)
     const file = path.join(base, 'srv', 'a.txt')

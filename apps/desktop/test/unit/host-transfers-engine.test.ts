@@ -133,7 +133,9 @@ function hold() {
 
 const csv = (size: number) => Buffer.from('id,name,amount\n1,alpha,10\n'.repeat(Math.ceil(size / 25))).subarray(0, size)
 
-describe('host transfer engine', () => {
+// The engine runs on every computer, but these tests drive it against a real host, which runs on Linux or macOS and
+// takes POSIX paths only.
+describe.skipIf(process.platform === 'win32')('host transfer engine', () => {
   it('downloads a file in verified ranges, and never replaces a file already there', async () => {
     const bytes = csv(2.5 * MiB)
     writeFileSync(path.join(srv, 'report.csv'), bytes)

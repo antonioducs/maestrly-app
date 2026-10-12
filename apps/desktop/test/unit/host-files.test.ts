@@ -98,7 +98,8 @@ const chunk = (uploadId: string, offset: number, bytes: Uint8Array, options: { z
     body: options.zstd ? zstdCompressSync(bytes) : Buffer.from(bytes),
   })
 
-describe('host files', () => {
+// A workspaces host runs on Linux or macOS, and the host protocol takes POSIX paths only.
+describe.skipIf(process.platform === 'win32')('host files', () => {
   it('reads a range of a file the roots hold, and refuses the rest', async () => {
     const file = path.join(srv, 'a.txt')
     writeFileSync(file, '0123456789')

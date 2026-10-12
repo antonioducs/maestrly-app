@@ -46,7 +46,8 @@ afterAll(() => rmSync(base, { recursive: true, force: true }))
 const names = (listing: { entries: { name: string }[] }) => listing.entries.map((entry) => entry.name)
 const codeOf = async (run: Promise<unknown>) => run.then(() => null).catch((error) => (error as { code?: string }).code)
 
-describe('host folders', () => {
+// A workspaces host runs on Linux or macOS, and the host protocol takes POSIX paths only.
+describe.skipIf(process.platform === 'win32')('host folders', () => {
   it('lists directories, sorted by name, without hidden entries or files', async () => {
     const listing = await listHostDirectory(root, {}, [root])
     expect(listing.path).toBe(root)
@@ -128,7 +129,8 @@ describe('host folder refusals across IPC', () => {
   })
 })
 
-describe('host files of the files panel', () => {
+// A workspaces host runs on Linux or macOS, and the host protocol takes POSIX paths only.
+describe.skipIf(process.platform === 'win32')('host files of the files panel', () => {
   let area: string
   beforeAll(() => {
     area = path.join(base, 'area')
