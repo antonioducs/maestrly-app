@@ -14,6 +14,12 @@ User-visible changes by version. Downloads are on
   your confirmation, and turns the agents start stop after three exchanges
   without you. See
   [talking to other conversations](docs/chat-context.md#talking-to-other-conversations).
+- Edit your last message to a bot with **Edit and resend**, as in desktop chats.
+  The bot's reply and everything after it are removed. The edited text runs as a
+  new turn and keeps the message's attachments. Editing is available while the
+  bot is idle with nothing queued. Update the desktop app, the bot server and the
+  bot environment to use it. See
+  [bot conversation controls](docs/bot-fleet.md#bot-conversation-controls).
 
 ### Changed
 

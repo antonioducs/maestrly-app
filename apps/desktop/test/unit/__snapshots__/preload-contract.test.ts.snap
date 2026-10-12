@@ -247,6 +247,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "fleetDesktopAccessSave",
   "fleetDisconnect",
   "fleetDownloadFile",
+  "fleetEditMessage",
   "fleetEnvironmentAction",
   "fleetEnvironmentRuntimesCheck",
   "fleetEnvironmentSelections",

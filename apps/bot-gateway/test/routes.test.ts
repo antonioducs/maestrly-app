@@ -23,6 +23,7 @@ import { Lifecycle } from '../src/lifecycle.js'
 import { Logger } from '../src/logger.js'
 import { createGatewayServers } from '../src/server.js'
 import { Store } from '../src/store.js'
+import { harness } from './harness.js'
 
 const dirs: string[] = []
 const servers: http.Server[] = []
@@ -399,6 +400,50 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     await gateway.close()
     store.close()
   }
+})
+
+it('refuses to edit a message on a bot that cannot, before reaching it', async () => {
+  const h = await harness(Date.now, { environments: true })
+  const response = await h.request('POST', `/v1/bots/${h.bot.id}/messages/in-1/edit`, {
+    text: 'Edited',
+    idempotencyKey: randomUUID(),
+  })
+  expect(response.status).toBe(426)
+  expect((await response.json()).code).toBe('PROTOCOL_INCOMPATIBLE')
+  expect(h.instance.botRequests.filter((request) => request.path.endsWith('/edit'))).toEqual([])
+})
+
+it("edits the owner's last message once per key, on the bot's own route", async () => {
+  const h = await harness(Date.now, { environments: true, messageEdit: true })
+  const route = `/v1/bots/${h.bot.id}/messages/in-1/edit`
+  const body = { text: 'Edited', idempotencyKey: randomUUID() }
+  const edited = await h.request('POST', route, body)
+  expect(edited.status).toBe(201)
+  const receipt = await edited.json()
+  expect(receipt).toMatchObject({ queued: true, itemId: expect.stringMatching(/^input:/) })
+  expect(h.instance.botRequests.filter((request) => request.path.endsWith('/edit'))).toEqual([
+    { botId: h.bot.id, method: 'POST', path: '/inputs/in-1/edit' },
+  ])
+  expect(h.instance.edits).toEqual([{ inputId: 'in-1', body }])
+  // An owner message: peers wait for the owner again.
+  expect(h.store.pairLastOwner(h.bot.id, h.bot.id)).not.toBeNull()
+
+  // A retry gets the same receipt without a second edit; the key with another edit is a conflict.
+  const again = await h.request('POST', route, body)
+  expect(again.status).toBe(201)
+  expect(await again.json()).toEqual(receipt)
+  expect((await h.request('POST', route, { ...body, text: 'Other' })).status).toBe(409)
+  expect((await h.request('POST', `/v1/bots/${h.bot.id}/messages/in-2/edit`, body)).status).toBe(409)
+  expect(h.instance.edits).toHaveLength(1)
+
+  // The bot's refusal reaches the owner as a conflict, and an edit needs a key.
+  const busy = await h.request('POST', `/v1/bots/${h.bot.id}/messages/busy/edit`, {
+    text: 'Edited',
+    idempotencyKey: randomUUID(),
+  })
+  expect(busy.status).toBe(409)
+  expect((await busy.json()).code).toBe('CONFLICT')
+  expect((await h.request('POST', route, { text: 'Edited' })).status).toBe(400)
 })
 
 it('blocks fleet addresses from the public API, pairing, and screen upgrades', async () => {

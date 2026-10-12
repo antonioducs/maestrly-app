@@ -665,6 +665,15 @@ export default {
     routine: 'Rotina diária · {{title}} · {{time}}',
     queued: 'Na fila',
     removeQueued: 'Remover mensagem da fila',
+    edit: {
+      action: 'Editar e reenviar',
+      hint: 'A resposta do bot a esta mensagem, e tudo o que veio depois, será substituída.',
+      cancel: 'Cancelar',
+      send: 'Enviar',
+      conflict:
+        'O bot está ocupado, ou esta não é mais a última mensagem dele. Tente de novo quando ele estiver ocioso.',
+      unsupported: 'Atualize o servidor e este bot para editar mensagens.',
+    },
     streaming: 'Escrevendo…',
     loadOlder: 'Carregar anteriores',
     retry: 'Tentar novamente',

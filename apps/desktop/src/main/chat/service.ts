@@ -10797,33 +10797,13 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
       if (!operation) return { ok: false, error: 'busy' }
       try {
-        // Preserve original ATTACHMENTS (editing changes text only) — otherwise images/files disappear on resend.
-        // Exclude `hidden` parts (@file mention content): reinject them when reparsing text.
-        // COPY BYTES of images with artifactId here, BEFORE truncation: deleteChatMessagesFrom
-        // below removes the old message's sidecars — reusing artifactId would point the new message to
-        // deleted files. startSend writes NEW artifacts from the copied bytes.
-        const original = getChatMessage(conversationId, fromMessageId)
-        const attachments: ChatAttachmentInput[] = await preserveResendAttachments(
-          conversationId,
-          (original?.parts ?? []).filter(
-            (p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden
-          )
-        )
-        await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
-          preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
-        })
-        if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
+        const cut = await truncateConversationForResend(conversationId, fromMessageId, operation)
+        if (!cut) return { ok: false, error: 'busy' }
         // The EDITOR's `#agent` selection (occurrences with id/range) goes to startSend — SAME host-side
         // validation as chat:send (buildAgentMentionParts). Old agent-mention parts from the original
         // message are NOT automatically preserved: the user may have removed the chip in the editor.
         const agentMentions = Array.isArray(payload?.agentMentions) ? payload.agentMentions : undefined
-        const seq = getMessageSeq(fromMessageId)
-        if (seq != null) {
-          cancelBackgroundJob(conversationId, false)
-          deleteChatMessagesFrom(conversationId, seq)
-          publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
-        }
-        return await startSend(deps, event.sender, conversationId, text, attachments, { operation }, agentMentions)
+        return await startSend(deps, event.sender, conversationId, text, cut.attachments, { operation }, agentMentions)
       } finally {
         releaseConversationOperation(conversationId, operation)
       }
@@ -11203,6 +11183,38 @@ export function waitForChatConversationSlot(conversationId: string): Promise<voi
 
 export function isChatConversationRunning(conversationId: string): boolean {
   return active.has(conversationId) || pendingConversationOperations.has(conversationId)
+}
+
+/**
+ * Cuts a conversation for an edit of one of its messages (edit + resend): keeps that message's attachments (an edit
+ * changes its text only), retires the runtimes' resumable state and removes the message and everything after it.
+ *
+ * Attachments are copied as BYTES before the cut, which deletes the old message's sidecars: reusing an `artifactId`
+ * would point the new message to deleted files, so `startSend` writes new artifacts from the copies. `hidden` parts
+ * (@file mention content) are left out: they come back when the text is parsed again. The caller holds the slot
+ * `operation`; null when the slot was lost meanwhile, before anything was removed.
+ */
+export async function truncateConversationForResend(
+  conversationId: string,
+  fromMessageId: string,
+  operation: PendingConversationOperation
+): Promise<{ attachments: ChatAttachmentInput[] } | null> {
+  const original = getChatMessage(conversationId, fromMessageId)
+  const attachments = await preserveResendAttachments(
+    conversationId,
+    (original?.parts ?? []).filter((p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden)
+  )
+  await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
+    preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
+  })
+  if (!conversationOperationIsCurrent(conversationId, operation)) return null
+  const seq = getMessageSeq(fromMessageId)
+  if (seq != null) {
+    cancelBackgroundJob(conversationId, false)
+    deleteChatMessagesFrom(conversationId, seq)
+    publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
+  }
+  return { attachments }
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */

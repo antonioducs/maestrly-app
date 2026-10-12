@@ -16,6 +16,7 @@ import {
   buildPath,
   fleetInstanceEventSchema,
   type FleetBotMemoryPatchRequest,
+  type FleetEditMessageRequest,
   type FleetInstanceBotInstall,
   type FleetInstanceEnvironmentStatus,
   type FleetInstanceInput,
@@ -567,6 +568,10 @@ export class InstanceClient {
   }
   deleteInput(inputId: string) {
     return this.botCall('inputDelete', 'botInputDelete', { inputId })
+  }
+  /** Capability `message-edit`. The cut retires the runtimes' saved sessions, which may take longer than a call. */
+  editInput(inputId: string, body: FleetEditMessageRequest) {
+    return this.botCall('inputEdit', 'botInputEdit', { inputId }, undefined, body, 30000)
   }
   cancelTurn() {
     return this.botCall('turnCancel', 'botTurnCancel')

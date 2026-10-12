@@ -115,6 +115,14 @@ describe('fleet renderer wiring', () => {
     expect(screen).toContain('giveBackRequest')
     expect(screen).toContain('onReveal')
   })
+  it("edits the owner's last message only where the server and the bot both can", () => {
+    const conversation = source('components/fleet/BotConversation.tsx')
+    expect(conversation).toContain('fleet.state.connection.features.includes(FLEET_MESSAGE_EDIT_FEATURE)')
+    expect(conversation).toContain('bot.capabilities.includes(FLEET_MESSAGE_EDIT_FEATURE)')
+    expect(conversation).toContain("bot.status === 'idle' ? editableMessageId(transcriptItems ?? [])")
+    expect(conversation).toContain('window.api.fleetEditMessage(')
+    expect(conversation).not.toMatch(/<select[\s>]/)
+  })
   it('keeps foreign takeovers in view mode and blocks resume actions', () => {
     const screen = source('components/fleet/BotScreen.tsx')
     const header = source('components/fleet/BotChatHeader.tsx')

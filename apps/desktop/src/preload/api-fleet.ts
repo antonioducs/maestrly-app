@@ -305,6 +305,13 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:prepareMedia', botId, fileId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
+  /** Edits the owner's last message (feature `message-edit`): the conversation is cut there and runs again. */
+  fleetEditMessage: (
+    botId: string,
+    inputId: string,
+    text: string
+  ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
+    ipcRenderer.invoke('fleet:editMessage', botId, inputId, text),
   fleetResolveInteraction: (
     botId: string,
     interactionId: string,

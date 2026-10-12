@@ -31,3 +31,7 @@ export const FLEET_SCREEN_CONFLICT = 'FLEET_SCREEN_CONFLICT'
 export const FLEET_SCREEN_RESTART_REQUIRED = 'FLEET_SCREEN_RESTART_REQUIRED'
 /** Raised when the bot or environment of a screen stopped before the gateway could issue its ticket. */
 export const FLEET_SCREEN_OFFLINE = 'FLEET_SCREEN_OFFLINE'
+/** Raised when the gateway or the bot cannot edit messages yet (`message-edit`). */
+export const FLEET_EDIT_UNSUPPORTED = 'FLEET_EDIT_UNSUPPORTED'
+/** Raised when the bot refuses an edit: it is busy, or the message is no longer its last one. */
+export const FLEET_EDIT_CONFLICT = 'FLEET_EDIT_CONFLICT'

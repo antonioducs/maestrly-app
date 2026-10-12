@@ -1089,9 +1089,10 @@ export class Store {
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db
-        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?)')
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?)')
         .run(
           'botMessageSend:' + id,
+          'botMessageEdit:' + id,
           'routineCreate:' + id,
           'botRoutineCreate:' + id,
           'botOwnerMemorySave:' + id,

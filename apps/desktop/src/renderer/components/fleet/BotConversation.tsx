@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, Loader2, Wrench, X } from 'lucide-react'
-import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { ArrowDown, Loader2, Pencil, Wrench, X } from 'lucide-react'
+import { FLEET_MESSAGE_EDIT_FEATURE, type FleetBot, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
 import { accountsExhaustedNotice, isComputerTool } from '@/lib/fleet/format'
-import { latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
+import { editableMessageId, latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
 import { Button } from '@/components/ui/button'
 import { TodoList } from '@/components/chat/TodoCard'
 import { InteractionCard } from './InteractionCard'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorMessage, isEditConflict, isEditUnsupported } from '@/lib/fleet/errors'
 import { fleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
@@ -61,6 +61,82 @@ function ShowOnComputer({ onClick }: { onClick: () => void }) {
   )
 }
 
+/** The owner's last message, edited in place like a chat's: Escape cancels and Enter sends. */
+function BotMessageEditor({
+  value,
+  allowEmpty,
+  onChange,
+  onCancel,
+  onSubmit,
+}: {
+  value: string
+  /** The message keeps its attachments, so it may lose its text. */
+  allowEmpty: boolean
+  onChange: (value: string) => void
+  onCancel: () => void
+  onSubmit: () => void
+}) {
+  const { t } = useTranslation('fleet')
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    node.focus()
+    node.setSelectionRange(node.value.length, node.value.length)
+  }, [])
+  const sendable = allowEmpty || value.trim().length > 0
+  return (
+    <div className="rounded-xl border border-white/[0.12] bg-white/[0.05] px-3.5 py-2.5">
+      <textarea
+        ref={ref}
+        value={value}
+        aria-label={t('transcript.edit.action')}
+        rows={Math.min(10, Math.max(2, value.split('\n').length))}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            // The conversation's search closes on Escape too: only the editor closes here.
+            event.stopPropagation()
+            onCancel()
+          } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            if (sendable) onSubmit()
+          }
+        }}
+        className="max-h-[240px] w-full resize-none overflow-y-auto bg-transparent text-sm focus-visible:outline-none"
+      />
+      <p className="mt-1 text-xs text-muted-foreground">{t('transcript.edit.hint')}</p>
+      <div className="mt-1.5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-white/10 px-2.5 py-1 text-[12px] text-muted-foreground hover:bg-white/5"
+        >
+          {t('transcript.edit.cancel')}
+        </button>
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={!sendable}
+          className="rounded-md bg-indigo-500 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-indigo-400 disabled:opacity-50"
+        >
+          {t('transcript.edit.send')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Editing the owner's last message: offered on the one message that may be edited. */
+interface RowEdit {
+  editable: boolean
+  draft: string | null
+  onStart: () => void
+  onChange: (value: string) => void
+  onCancel: () => void
+  onSubmit: () => void
+}
+
 function TranscriptRow({
   bot,
   item,
@@ -71,6 +147,7 @@ function TranscriptRow({
   latestTodoId,
   searchQuery,
   currentSearchMatch,
+  edit,
 }: {
   bot: FleetBot
   imageCache: FleetImageCache
@@ -81,6 +158,7 @@ function TranscriptRow({
   latestTodoId: string | null
   searchQuery?: string
   currentSearchMatch?: boolean
+  edit?: RowEdit
 }) {
   const { t, i18n } = useTranslation('fleet')
   const at = new Date(item.at).toLocaleTimeString(i18n.language, {
@@ -127,8 +205,22 @@ function TranscriptRow({
           )}
         </div>
       )
+    if (edit?.draft != null)
+      return (
+        <div className="ml-auto flex w-[85%] flex-col gap-2">
+          <BotMessageEditor
+            value={edit.draft}
+            allowEmpty={item.images.length > 0 || (item.files?.length ?? 0) > 0}
+            onChange={edit.onChange}
+            onCancel={edit.onCancel}
+            onSubmit={edit.onSubmit}
+          />
+          <BotTranscriptImages botId={bot.id} images={item.images} cache={imageCache} />
+          <BotTranscriptFiles botId={bot.id} files={item.files} />
+        </div>
+      )
     return (
-      <div className="ml-auto max-w-[85%] rounded-xl border border-border-strong bg-surface-elevated px-4 py-3 text-sm">
+      <div className="group/message ml-auto max-w-[85%] rounded-xl border border-border-strong bg-surface-elevated px-4 py-3 text-sm">
         {item.source === 'routine' && (
           <span className="mb-2 block text-xs text-primary">
             {t('transcript.routine', {
@@ -153,6 +245,17 @@ function TranscriptRow({
           </p>
         )}
         <span className="mt-1 flex items-center justify-end gap-2 text-xs text-muted-foreground">
+          {edit?.editable && (
+            <button
+              type="button"
+              title={t('transcript.edit.action')}
+              aria-label={t('transcript.edit.action')}
+              onClick={edit.onStart}
+              className="rounded p-0.5 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/message:opacity-100 motion-reduce:transition-none"
+            >
+              <Pencil className="size-3" />
+            </button>
+          )}
           {at}
           {item.queued && (
             <>
@@ -419,12 +522,73 @@ export function BotConversation({
   const compact = useAgentActivityMode() === 'compact'
   const transcriptItems = transcript?.items
   const visibleItems = useMemo(() => visibleTranscriptItems(transcriptItems ?? []), [transcriptItems])
-  const latestTodoId = latestTodoItemId(visibleItems)
+
+  // --- Editing the owner's last message, like a chat's: the bot's conversation runs again from it. ---
+  const editSupported =
+    fleet.state.connection.features.includes(FLEET_MESSAGE_EDIT_FEATURE) &&
+    bot.capabilities.includes(FLEET_MESSAGE_EDIT_FEATURE)
+  const editableId = useMemo(
+    () => (editSupported && bot.status === 'idle' ? editableMessageId(transcriptItems ?? []) : null),
+    [bot.status, editSupported, transcriptItems]
+  )
+  const [editing, setEditing] = useState<{ itemId: string; draft: string } | null>(null)
+  // While an edit is on its way the transcript already shows it: the edited message, and nothing after it.
+  const [sentEdit, setSentEdit] = useState<{ itemId: string; text: string } | null>(null)
+  useEffect(() => {
+    setEditing(null)
+    setSentEdit(null)
+  }, [bot.id])
+  const shownItems = useMemo(() => {
+    const index = sentEdit ? visibleItems.findIndex((item) => item.id === sentEdit.itemId) : -1
+    if (!sentEdit || index < 0) return visibleItems
+    const edited = visibleItems[index]
+    return [...visibleItems.slice(0, index), edited.kind === 'user' ? { ...edited, text: sentEdit.text } : edited]
+  }, [sentEdit, visibleItems])
+  const submitEdit = async () => {
+    if (!editing || sentEdit) return
+    const { itemId, draft } = editing
+    const text = draft.trim()
+    setError(null)
+    setEditing(null)
+    setSentEdit({ itemId, text })
+    try {
+      await window.api.fleetEditMessage(bot.id, itemId.replace(/^input:/, ''), text)
+      await fleet.loadTranscript(bot.id).catch(() => {})
+    } catch (cause) {
+      setEditing({ itemId, draft })
+      setError(
+        isEditConflict(cause)
+          ? t('transcript.edit.conflict')
+          : isEditUnsupported(cause)
+            ? t('transcript.edit.unsupported')
+            : fleetErrorMessage(cause)
+      )
+    } finally {
+      setSentEdit(null)
+    }
+  }
+  const rowEdit = (item: FleetTranscriptItem): RowEdit | undefined => {
+    const draft = editing?.itemId === item.id ? editing.draft : null
+    if (item.kind !== 'user' || (item.id !== editableId && draft === null)) return undefined
+    return {
+      editable: item.id === editableId && !sentEdit,
+      draft,
+      onStart: () => {
+        setError(null)
+        setEditing({ itemId: item.id, draft: item.text })
+      },
+      onChange: (value) => setEditing({ itemId: item.id, draft: value }),
+      onCancel: () => setEditing(null),
+      onSubmit: () => void submitEdit(),
+    }
+  }
+
+  const latestTodoId = latestTodoItemId(shownItems)
   const working = bot.status === 'working' || bot.status === 'waiting'
   const segments = useMemo<FleetActivitySegment[]>(
     () =>
-      compact ? fleetActivitySegments(visibleItems, { working }) : visibleItems.map((item) => ({ kind: 'item', item })),
-    [compact, visibleItems, working]
+      compact ? fleetActivitySegments(shownItems, { working }) : shownItems.map((item) => ({ kind: 'item', item })),
+    [compact, shownItems, working]
   )
   // A live activity line already says what the bot is doing.
   const liveLine = segments.some((segment) => segment.kind === 'activity' && segment.live)
@@ -608,6 +772,7 @@ export function BotConversation({
                       latestTodoId={latestTodoId}
                       searchQuery={query}
                       currentSearchMatch={current}
+                      edit={rowEdit(segment.item)}
                     />
                   )}
                 </div>

@@ -14,6 +14,7 @@ import {
   fleetInstanceBotInstallSchema,
   fleetInstanceProfileSchema,
   fleetInstanceInputSchema,
+  fleetEditMessageRequestSchema,
   fleetInstanceHoldRequestSchema,
   fleetInstanceReleaseRequestSchema,
   fleetConversationCallRequestSchema,
@@ -44,9 +45,10 @@ afterEach(async () => {
  * A synthetic bot instance. With `environments` it hosts several bots like an environment's Maestrly: it installs
  * and uninstalls them and serves each one's routes under `/v1/bots/:botId`, recorded in `botRequests`. With
  * `compaction` it also lists its environment's models, as a Maestrly with environment compaction defaults does. With
- * `runtimes` its statuses report its Claude Code and Codex versions and it accepts runtime checks.
+ * `runtimes` its statuses report its Claude Code and Codex versions and it accepts runtime checks. With `messageEdit`
+ * it edits the owner's last message, recorded in `edits`; it refuses one of input `busy` as a bot that is working.
  */
-async function fake(environments: boolean, compaction = false, runtimes = false) {
+async function fake(environments: boolean, compaction = false, runtimes = false, messageEdit = false) {
   let account: { id: string; label: string } | null = null
   const installed = new Map<string, { slot: number; gatewayToken: string }>()
   const installs: FleetInstanceBotInstall[] = []
@@ -60,6 +62,7 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
     interruptedTurn: boolean
   } = { state: 'none', reason: null, since: null, interruptedTurn: false }
   const inputs: import('@maestrly/bot-fleet-protocol').FleetInstanceInput[] = []
+  const edits: Array<{ inputId: string; body: import('@maestrly/bot-fleet-protocol').FleetEditMessageRequest }> = []
   const receipts = new Map<string, { inputId: string; itemId: string; queued: boolean }>()
   const conversationCalls: unknown[] = []
   const memoryRequests: unknown[] = []
@@ -81,14 +84,17 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
     },
   ]
   const provisioning = {
-    capabilities: environments
-      ? [
-          'provisioning',
-          'environments',
-          ...(compaction ? ['environment-compaction'] : []),
-          ...(runtimes ? ['runtime-updates'] : []),
-        ]
-      : ['provisioning'],
+    capabilities: [
+      ...(environments
+        ? [
+            'provisioning',
+            'environments',
+            ...(compaction ? ['environment-compaction'] : []),
+            ...(runtimes ? ['runtime-updates'] : []),
+          ]
+        : ['provisioning']),
+      ...(messageEdit ? ['message-edit'] : []),
+    ],
     runtimes: runtimes
       ? ([
           {
@@ -372,6 +378,20 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
         receipts.set(input.idempotencyKey, receipt)
         return send(200, receipt)
       }
+      const edited = messageEdit && req.method === 'POST' ? /^\/v1\/inputs\/([^/]+)\/edit$/.exec(url.pathname) : null
+      if (edited) {
+        const inputId = decodeURIComponent(edited[1])
+        const edit = fleetEditMessageRequestSchema.parse(body)
+        edits.push({ inputId, body: edit })
+        if (inputId === 'busy') return send(409, { code: 'CONFLICT', message: 'The bot is busy.' })
+        const receipt = receipts.get(edit.idempotencyKey) ?? {
+          inputId: randomUUID(),
+          itemId: 'input:' + randomUUID(),
+          queued: true,
+        }
+        receipts.set(edit.idempotencyKey, receipt)
+        return send(200, receipt)
+      }
       return send(404, { code: 'NOT_FOUND', message: 'Not found' })
     } catch {
       return send(400, { code: 'INVALID_REQUEST', message: 'Invalid' })
@@ -382,6 +402,7 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
   return {
     origin: 'http://127.0.0.1:' + (server.address() as { port: number }).port,
     inputs,
+    edits,
     conversationCalls,
     receipts,
     memories,
@@ -405,9 +426,14 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
  */
 export async function harness(
   now: () => number = Date.now,
-  options: { environments?: boolean; compaction?: boolean; runtimes?: boolean } = {}
+  options: { environments?: boolean; compaction?: boolean; runtimes?: boolean; messageEdit?: boolean } = {}
 ) {
-  const instance = await fake(options.environments === true, options.compaction === true, options.runtimes === true),
+  const instance = await fake(
+      options.environments === true,
+      options.compaction === true,
+      options.runtimes === true,
+      options.messageEdit === true
+    ),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
   const cfg = loadConfig({
