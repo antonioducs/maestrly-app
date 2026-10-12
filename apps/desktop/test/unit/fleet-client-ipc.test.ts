@@ -350,6 +350,27 @@ describe('fleet IPC validation', () => {
         await expect(open(mode)).resolves.toBe(expected)
       }
   })
+  it('creates a pairing code for a phone only on a gateway that offers it', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: () => {},
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+      on: () => {},
+      mon: () => {},
+    } as unknown as IpcRegistrar)
+    const create = mutations.get('fleet:createPairing')!
+    mocks.hasFeature.mockReturnValue(false)
+    await expect(create({})).rejects.toMatchObject({
+      code: 'PROTOCOL_INCOMPATIBLE',
+      message: 'Update the bot server to pair a phone',
+    })
+    expect(mocks.call).not.toHaveBeenCalled()
+    mocks.hasFeature.mockReturnValue(true)
+    await create({})
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('pairingsCreate', { body: {} })
+    mocks.hasFeature.mockReturnValue(false)
+  })
   it('recognizes the screen refusals by the exact messages the gateway sends', () => {
     const gateway = readFileSync(new URL('../../../bot-gateway/src/screen.ts', import.meta.url), 'utf8')
     expect(gateway).toContain(`export const SCREEN_CONTROLLED = '${GATEWAY_SCREEN_CONTROLLED}'`)

@@ -50,6 +50,13 @@ The complete license and attribution are distributed with the `ws` package in
 `node_modules/ws/LICENSE`, inside the gateway image and inside the packaged
 desktop app.
 
+## uqr
+
+The desktop app includes [uqr](https://github.com/unjs/uqr) 0.1.3 to draw the QR
+code that pairs a phone with the bot server. It is licensed under the MIT
+License, Copyright (c) Project Nayuki and Copyright (c) 2023 Anthony Fu. The
+complete license is distributed with the package in `node_modules/uqr/LICENSE`.
+
 ## ssh2
 
 The desktop app includes [ssh2](https://github.com/mscdex/ssh2) 1.17.0 to install
