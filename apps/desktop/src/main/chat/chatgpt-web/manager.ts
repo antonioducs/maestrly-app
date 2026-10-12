@@ -29,7 +29,7 @@ import {
 } from '../../store'
 import { broadcast } from '../../window-ipc'
 import { clearApiKey, getApiKey, hasApiKey, setApiKey } from '../credentials'
-import { conversationMcpAccounts, listRuntimeMcpServers } from '../mcp'
+import { conversationMcpAccounts, listRuntimeMcpServers, mcpServerReachable } from '../mcp'
 import { CHATGPT_WEB_PROVIDER_ID, isChatGptWebEnabled } from '../catalog'
 import {
   buildCompanionPrompt,
@@ -731,7 +731,10 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       }
       return { ok: true }
     }
-    const mcpServers = listRuntimeMcpServers({ conversationId: input.conversationId })
+    // A server whose every account is out of this conversation's reach is not offered to the session.
+    const mcpServers = listRuntimeMcpServers({ conversationId: input.conversationId }).filter((server) =>
+      mcpServerReachable(server, conversationMcpAccounts(server, input.conversationId))
+    )
     const conversation = getConversation(input.conversationId)
     if (!conversation) throw new Error('invalid-conversation')
     const repositoryScope = await createRepositoryScope(conversation)

@@ -55,7 +55,13 @@ import {
 } from './mcp-catalog'
 import { LazyMcpRuntime, type LazyMcpDiagnostic } from './mcp-lazy-runtime'
 import { isMcpNeedsAuthError, McpNeedsAuthError } from './mcp-auth-errors'
-import { activeMcpOAuthAccounts, forgetMcpOAuth, hostMcpOAuthProvider, markMcpNeedsAuth } from './mcp-oauth'
+import {
+  activeMcpOAuthAccounts,
+  forgetMcpOAuth,
+  hostMcpOAuthProvider,
+  markMcpNeedsAuth,
+  mcpOAuthSummary,
+} from './mcp-oauth'
 import { listPluginMcpServers } from '../plugins/runtime'
 import {
   type ListedMcpTool,
@@ -665,6 +671,15 @@ export function conversationMcpAccounts(
   return activeMcpOAuthAccounts(server, conversationId).filter((account) => !disabled.has(`${server.id}#${account.id}`))
 }
 
+/**
+ * Whether a conversation can reach a server: always, unless the server has signed-in accounts and none of them serves
+ * the conversation (out of its scope, or turned off in it). Such a server is left out rather than reached with an
+ * account the conversation may not use.
+ */
+export function mcpServerReachable(server: McpServer, accounts: readonly McpOAuthAccountDto[]): boolean {
+  return accounts.length > 0 || server.transport === 'stdio' || mcpOAuthSummary(server).accounts.length === 0
+}
+
 /** The parameter a call names its account with, when the server has several. */
 export const MCP_ACCOUNT_PARAMETER = 'mcp_account'
 
@@ -773,9 +788,13 @@ function searchableMcpDeclaration(declaration: ListedMcpTool): Record<string, un
  * Cached declarations provide typed wrappers; mcp_search/mcp_call cover a cold catalog in the same turn.
  */
 export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-  const servers = listRuntimeMcpServers({ conversationId: args.conversationId }).filter(
-    (server) => server.enabled && !server.unavailable && !args.disabledIds?.has(server.id)
-  )
+  const accountsOf = new Map<string, McpOAuthAccountDto[]>()
+  const servers = listRuntimeMcpServers({ conversationId: args.conversationId }).filter((server) => {
+    if (!server.enabled || server.unavailable || args.disabledIds?.has(server.id)) return false
+    const accounts = conversationMcpAccounts(server, args.conversationId)
+    accountsOf.set(server.id, accounts)
+    return mcpServerReachable(server, accounts)
+  })
   if (!servers.length) return { tools: {}, close: async () => {} }
 
   const context: ExternalMcpBuildContext = {
@@ -786,7 +805,6 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
   }
   const tools: ToolSet = {}
   let cachedCount = 0
-  const accountsOf = new Map(servers.map((server) => [server.id, conversationMcpAccounts(server, args.conversationId)]))
   const accountsFor = (server: McpServer) => accountsOf.get(server.id) ?? []
   for (const server of servers) {
     const declarations = readMcpCatalog(server)

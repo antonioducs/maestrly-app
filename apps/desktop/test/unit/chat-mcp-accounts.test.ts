@@ -33,13 +33,19 @@ async function twoAccounts() {
   return { server, alice: alice.accountId, bob: bob.accountId }
 }
 
+async function toolset(conversationId: string | null) {
+  return (
+    await buildMcpTools({
+      conversationId,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
+  ).tools
+}
+
 async function surface(conversationId: string | null) {
-  const { tools } = await buildMcpTools({
-    conversationId,
-    mode: 'agent',
-    gate: async () => {},
-    signal: new AbortController().signal,
-  })
+  const tools = await toolset(conversationId)
   const name = Object.keys(tools).find((key) => key.endsWith('whoami'))
   if (!name) throw new Error('no whoami wrapper')
   return { tools, whoami: tools[name] as Tool & { inputSchema: { jsonSchema: Record<string, any> } } }
@@ -115,5 +121,19 @@ describe('choosing the signed-in account of an MCP call', () => {
     const narrowed = await surface(project.id)
     expect(narrowed.whoami.inputSchema.jsonSchema.properties?.mcp_account).toBeUndefined()
     expect(JSON.stringify(await run(narrowed.whoami, {}))).toContain('token:at-alice')
+  })
+
+  it('never falls back to an account a conversation may not use', async () => {
+    const { server, alice, bob } = await twoAccounts()
+    const w1 = makeWorkspace()
+    const project = makeConversation(w1.id)
+    const standalone = makeStandaloneConversation()
+    for (const account of [alice, bob])
+      patchMcpOAuthAccount(server.id, account, { scope: { kind: 'projects', workspaceIds: [w1.id] } })
+    // Every account serves only the project: a standalone chat gets no tool of the server at all.
+    expect(Object.keys(await toolset(standalone.id))).toEqual([])
+    // Turning every account off in the project chat hides the server there too.
+    fleetChatSetConvTools(project.id, { mcpAccountsDisabled: [`${server.id}#${alice}`, `${server.id}#${bob}`] })
+    expect(Object.keys(await toolset(project.id))).toEqual([])
   })
 })
