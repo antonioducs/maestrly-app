@@ -477,7 +477,9 @@ tab remains available for application interaction and browser sign-ins.
   remove them. Editing replaces only `SKILL.md` and preserves bundled files and
   frontmatter. Skills outside the managed directory or behind unsafe symlinks
   are read-only. Replacing an installed library skill requires confirmation
-  against its current revision.
+  against its current revision. With `environment-plugins-v1`, the skills of
+  the environment's plugins are listed under their plugin: switch them on and
+  off or add them to groups here, and remove them with their plugin.
 - **Tools:** create or edit HTTP and stdio MCP servers, switch transports,
   enable/disable, remove, and test connections inside the environment. Existing
   URL, command, arguments, headers and environment values are protected;

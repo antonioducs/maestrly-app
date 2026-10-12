@@ -117,6 +117,8 @@ Open the environment's settings and choose **Plugins**. The plugin center works 
   cannot match your approval, install the plugin from the environment's sources and review it there.
 - **Sign in** for a server of the environment opens the consent page in this computer's browser. The environment
   keeps the sign-in.
+- The plugins' skills appear in the environment's **Skills** settings under each plugin's name, where you can switch
+  them on and off and add them to groups.
 
 The bot server and the environment must be up to date. See [Configure an environment from the
 app](bot-fleet.md#configure-an-environment-from-the-app).
