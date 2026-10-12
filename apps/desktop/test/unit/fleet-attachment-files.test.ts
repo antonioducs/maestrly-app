@@ -50,6 +50,27 @@ it('downloads original PDF and exact UTF-8 text from this conversation only', as
   expect(await readConversationFile('bot-chat', pdfId, [{ ...message, role: 'assistant' }])).toBeNull()
 })
 
+it('does not download hidden memory parts', async () => {
+  const message: ChatMessage = {
+    id: 'm',
+    conversationId: 'bot-chat',
+    role: 'user',
+    createdAt: Date.now(),
+    parts: [
+      {
+        type: 'file',
+        id: 'recall',
+        name: 'maestrly-memory-recall',
+        mediaType: 'text/markdown',
+        kind: 'text',
+        data: '<maestrly-memory kind="recall"></maestrly-memory>',
+        hidden: true,
+      },
+    ],
+  }
+  expect(await readConversationFile('bot-chat', imageId('a', 'm', 'recall'), [message])).toBeNull()
+})
+
 it('projects complete published metadata before shortening tool output and excludes unsuccessful publications', () => {
   const file = { id: 'f-result', name: 'a'.repeat(196) + '.pdf', mediaType: 'application/pdf', byteSize: 42 }
   const message: ChatMessage = {
