@@ -12,6 +12,7 @@ export function pluginBringPayload(
 ): { ok: true; value: FleetSettingsInput<'bringPlugin'> } | { ok: false; error: PluginOpErrorCode } {
   const record = listInstalled()[key]
   if (!record || record.status !== 'ready') return { ok: false, error: 'unknown-plugin' }
+  if (record.blocked?.length) return { ok: false, error: 'unavailable' }
   const source = getMarketplace(record.marketplaceId)
   if (!source) return { ok: false, error: 'unknown-marketplace' }
   const values = record.inputs?.length ? readPluginSecrets(key) : {}

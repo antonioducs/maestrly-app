@@ -92,6 +92,23 @@ describe('plugin MCP servers at runtime', () => {
     expect(listMcpServers()).toEqual([])
   })
 
+  it('never lists the servers of a plugin marked not compatible as active', async () => {
+    const record = await installFixturePlugin(layout, {
+      name: 'demo',
+      files: stdioPlugin('demo'),
+      stdio: ['local'],
+      inputs: { 'env:local:API_TOKEN': 'synthetic-token' },
+    })
+    expect(listRuntimeMcpServers({ conversationId: undefined }).map((s) => s.id)).toContain(record.servers.local.id)
+    writeInstalled((all) => {
+      all['demo@fixtures'].blocked = [{ code: 'requires-app-connector' }]
+    })
+    expect(listRuntimeMcpServers({ conversationId: undefined })).toEqual([])
+    expect(listRuntimeMcpServers({ includeInactivePlugins: true })).toEqual([
+      expect.objectContaining({ id: record.servers.local.id, enabled: false }),
+    ])
+  })
+
   it('keeps an unconsented stdio server disabled and drops consent when the launch line changes', async () => {
     const conversation = makeStandaloneConversation()
     await installFixturePlugin(layout, { name: 'demo', files: stdioPlugin('demo'), stdio: [] })

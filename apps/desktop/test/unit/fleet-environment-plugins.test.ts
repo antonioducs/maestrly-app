@@ -19,7 +19,7 @@ import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
 import { pluginLayout } from '../../src/main/plugins/layout'
 import * as engine from '../../src/main/plugins/service'
-import { listInstalled } from '../../src/main/plugins/store'
+import { listInstalled, writeInstalled } from '../../src/main/plugins/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { commitFiles, type FixtureFiles, makeGitRepo } from '../helpers/plugin-fixtures'
 
@@ -243,6 +243,11 @@ describe("a bot environment's plugins, served by its own engine", () => {
     })
     if (payload.ok) expect(FLEET_SETTINGS_OPERATIONS.bringPlugin.input.parse(payload.value)).toEqual(payload.value)
     expect(pluginBringPayload('missing@market')).toEqual({ ok: false, error: 'unknown-plugin' })
+    // A plugin that is not compatible any more is never brought anywhere.
+    writeInstalled((all) => {
+      all[installed.value.key].blocked = [{ code: 'requires-app-connector' }]
+    })
+    expect(pluginBringPayload(installed.value.key)).toEqual({ ok: false, error: 'unavailable' })
   })
 })
 

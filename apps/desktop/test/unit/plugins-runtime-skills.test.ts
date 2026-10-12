@@ -16,8 +16,15 @@ import {
 import { renderSkillContext } from '../../src/main/chat/skills'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
 import { pluginLayout } from '../../src/main/plugins/layout'
-import { activePlugins } from '../../src/main/plugins/runtime'
-import { writeInstalled } from '../../src/main/plugins/store'
+import { writeFileSync as writeFile } from 'node:fs'
+import {
+  activePlugins,
+  installedPackageDir,
+  invalidatePluginRuntimeCache,
+  listPluginSkills,
+} from '../../src/main/plugins/runtime'
+import { installedDto, reconcilePluginsOnStartup } from '../../src/main/plugins/service'
+import { listInstalled, writeInstalled } from '../../src/main/plugins/store'
 import { normalizeSkillName, parseSlashInvocation } from '../../src/shared/chat'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeStandaloneConversation, makeWorkspace } from '../helpers/factories'
@@ -137,6 +144,40 @@ describe('plugin skills in conversations', () => {
     forgetSkillNames(['demo:hello'])
     expect(listGloballyDisabledSkills()).toEqual(['keep'])
     expect(listSkillGroups()[0].skills).toEqual(['keep'])
+  })
+
+  it('never applies a plugin marked not compatible', async () => {
+    const { p1 } = await setup()
+    writeInstalled((all) => {
+      all['demo@fixtures'].blocked = [{ code: 'requires-app-connector' }]
+    })
+    expect(names(await listPluginSkills({ conversationId: undefined }))).not.toContain('demo:hello')
+    expect(names(await effectiveSkills(p1.cwd, p1.id, home))).not.toContain('demo:hello')
+    expect((await installedDto(listInstalled()['demo@fixtures'])).compatibility).toEqual({
+      level: 'unavailable',
+      reasons: [{ code: 'requires-app-connector' }],
+    })
+  })
+
+  it('marks installed plugins that stopped being compatible at startup, and clears the mark when they are again', async () => {
+    await setup()
+    const record = listInstalled()['demo@fixtures']
+    const appFile = path.join(installedPackageDir(record), '.app.json')
+    writeFile(appFile, JSON.stringify({ apps: { svc: { id: 'asdk_app_svc' } } }))
+    invalidatePluginRuntimeCache()
+    await reconcilePluginsOnStartup()
+    expect(listInstalled()['demo@fixtures'].blocked).toEqual([
+      { code: 'requires-app-connector' },
+      { code: 'app-connector', component: 'app-connector', subject: 'svc' },
+    ])
+    expect(listInstalled()['scoped@fixtures'].blocked).toBeUndefined()
+    expect(names(await listPluginSkills({ conversationId: undefined }))).not.toContain('demo:hello')
+
+    writeFile(appFile, JSON.stringify({ apps: {} }))
+    invalidatePluginRuntimeCache()
+    await reconcilePluginsOnStartup()
+    expect(listInstalled()['demo@fixtures'].blocked).toBeUndefined()
+    expect(names(await listPluginSkills({ conversationId: undefined }))).toContain('demo:hello')
   })
 })
 

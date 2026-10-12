@@ -4,6 +4,7 @@ import type {
   PluginMarketplaceDto,
   PluginMarketplacePreset,
   PluginPolicyDto,
+  PluginReason,
   PluginScope,
   PluginSourceErrorCode,
 } from '../../shared/plugins'
@@ -71,6 +72,11 @@ export interface InstalledPluginRecord {
   /** Normalized MCP servers and inputs of the installed version (package data, never secret values). */
   mcpServers?: PluginMcpServerSpec[]
   inputs?: PluginInputSpec[]
+  /**
+   * Set when the installed version is not compatible any more (re-checked at startup): its skills, servers and other
+   * parts never apply, and the plugin is listed with these reasons until it is updated or uninstalled.
+   */
+  blocked?: PluginReason[]
 }
 
 export const PRESET_MARKETPLACES: readonly { preset: PluginMarketplacePreset; url: string }[] = [

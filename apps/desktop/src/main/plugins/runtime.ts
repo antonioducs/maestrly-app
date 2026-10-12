@@ -52,7 +52,7 @@ function conversationWorkspaces(conversationId: string | null | undefined): stri
 }
 
 export function pluginAppliesTo(record: InstalledPluginRecord, ctx: PluginRuntimeContext): boolean {
-  if (!record.enabled || record.status !== 'ready') return false
+  if (!record.enabled || record.status !== 'ready' || record.blocked?.length) return false
   if (ctx.conversationId === undefined || record.scope.kind === 'global') return true
   const scoped = record.scope.workspaceIds
   return conversationWorkspaces(ctx.conversationId).some((id) => scoped.includes(id))

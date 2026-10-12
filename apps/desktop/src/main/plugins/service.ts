@@ -10,6 +10,7 @@ import type {
   PluginOpErrorCode,
   PluginOpResult,
   PluginPolicyDto,
+  PluginReason,
   PluginScope,
   PluginsStateDto,
 } from '../../shared/plugins'
@@ -338,12 +339,14 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
   const pkg = await loadInstalledPackage(record)
   const stored = new Set(Object.keys(readPluginSecrets(record.key) ?? {}))
   const inputs = record.inputs ?? []
-  const compatibility = pkg
-    ? classifyPlugin({ ok: true, pkg }, { sourceSupported: true, installation: record.policy?.installation })
-    : {
-        level: 'unavailable' as const,
-        reasons: [{ code: 'manifest-invalid' as const, detail: 'installed files are missing' }],
-      }
+  const compatibility = record.blocked?.length
+    ? { level: 'unavailable' as const, reasons: record.blocked }
+    : pkg
+      ? classifyPlugin({ ok: true, pkg }, { sourceSupported: true, installation: record.policy?.installation })
+      : {
+          level: 'unavailable' as const,
+          reasons: [{ code: 'manifest-invalid' as const, detail: 'installed files are missing' }],
+        }
   const missingInputs = inputs.filter((input) => input.required && !stored.has(input.id) && input.defaultValue === null)
   const stdioNeedingConsent = (record.mcpServers ?? []).filter(
     (server) => server.transport === 'stdio' && record.consent.stdio[server.key] !== launchDigest(server)
@@ -916,10 +919,42 @@ export function uninstall(input: { key: string; deleteData: boolean }): Promise<
 /** Finishes or rolls back operations a previous run left in flight, then drops unreferenced directories. */
 export async function reconcilePluginsOnStartup(): Promise<void> {
   try {
-    await withPluginMutation(() => reconcilePlugins(installerDeps()))
+    await withPluginMutation(async () => {
+      await reconcilePlugins(installerDeps())
+      await reclassifyInstalled()
+    })
   } catch (error) {
     console.warn('[plugins] startup reconciliation failed:', error instanceof Error ? error.message : error)
   }
+}
+
+/**
+ * Checks every installed plugin against the current compatibility rules: one that no longer works the same with every
+ * model is marked `blocked` and stops applying anywhere; one that does again is unmarked. Callers hold the lock.
+ */
+async function reclassifyInstalled(): Promise<void> {
+  const changes = new Map<string, PluginReason[] | undefined>()
+  for (const record of Object.values(listInstalled())) {
+    if (record.status !== 'ready') continue
+    const pkg = await loadInstalledPackage(record)
+    if (!pkg) continue
+    const { level, reasons } = classifyPlugin(
+      { ok: true, pkg },
+      { sourceSupported: true, installation: record.policy?.installation }
+    )
+    const blocked = level === 'unavailable' ? reasons : undefined
+    if (JSON.stringify(blocked) !== JSON.stringify(record.blocked)) changes.set(record.key, blocked)
+  }
+  if (!changes.size) return
+  writeInstalled((all) => {
+    for (const [key, blocked] of changes) {
+      if (!all[key]) continue
+      if (blocked) all[key].blocked = blocked
+      else delete all[key].blocked
+    }
+  })
+  invalidatePluginRuntimeCache()
+  mcpSurfaceChanged()
 }
 
 /** Test seam: forget cached catalogs. */

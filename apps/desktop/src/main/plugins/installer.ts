@@ -247,6 +247,8 @@ export async function installPrepared(
       ...(p.policy ? { policy: p.policy } : {}),
       mcpServers: pkg.mcpServers,
       inputs: pkg.inputs,
+      // The version being placed was checked before it was copied: it is compatible.
+      blocked: undefined,
     }
     writeInstalled((all) => {
       all[p.key] = record
@@ -343,6 +345,8 @@ export async function updatePrepared(
       ...(p.policy ? { policy: p.policy } : {}),
       mcpServers: pkg.mcpServers,
       inputs: pkg.inputs,
+      // The version being placed was checked before it was copied: it is compatible.
+      blocked: undefined,
     }
     writeInstalled((all) => {
       all[key] = next
