@@ -755,6 +755,7 @@ export function installPinned(input: {
     if (!added.ok) return added
     const record = findMarketplace(added.value.id)
     if (!record) return fail('unknown-marketplace')
+    let olderCheckout = false
     try {
       const current = await catalogData(record)
       const listed = current.market.entries.find((entry) => entry.name === input.name)
@@ -763,6 +764,7 @@ export function installPinned(input: {
         found = await entryInspection(record, input.name, { externalSha: input.commit })
       else if (record.commit === input.commit) found = await entryInspection(record, input.name)
       else {
+        olderCheckout = true
         await git().fetch(appPluginLayout().source(record.id), { url: record.url, ref: record.ref, sha: input.commit })
         found = await entryInspection(record, input.name, { data: await catalogAtCommit(record, input.commit) })
       }
@@ -781,6 +783,10 @@ export function installPinned(input: {
       return { ok: true, value: await installedDto(listInstalled()[installed.value.key] ?? installed.value) }
     } catch (error) {
       return failure(error)
+    } finally {
+      // The source's checkout now holds that older commit: the next catalog read checks out the current one again,
+      // so files read from it (logos) belong to the version the catalog lists.
+      if (olderCheckout) catalogs.delete(record.id)
     }
   })
 }

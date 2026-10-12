@@ -36,12 +36,20 @@ vi.mock('../../src/main/secure-store', () => {
 })
 
 /** A synthetic Codex marketplace with one plugin: a skill, and an HTTP server that takes a token setting. */
-const market = (skillText: string, url = 'https://mcp.example.test/mcp'): FixtureFiles => ({
+/** A PNG signature followed by one marker byte: enough for the logo's magic-byte check, and different per version. */
+const logo = (marker: number) => ({ content: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, marker]) })
+const market = (skillText: string, url = 'https://mcp.example.test/mcp', logoMarker = 1): FixtureFiles => ({
   '.agents/plugins/marketplace.json': JSON.stringify({
     name: 'fixture-market',
     plugins: [{ name: 'demo', source: { source: 'local', path: './plugins/demo' } }],
   }),
-  'plugins/demo/.codex-plugin/plugin.json': JSON.stringify({ name: 'demo', version: '1.0.0', license: 'MIT' }),
+  'plugins/demo/.codex-plugin/plugin.json': JSON.stringify({
+    name: 'demo',
+    version: '1.0.0',
+    license: 'MIT',
+    interface: { logo: './assets/logo.png' },
+  }),
+  'plugins/demo/assets/logo.png': logo(logoMarker),
   'plugins/demo/skills/hello/SKILL.md': `---\ndescription: Say hello\n---\n${skillText}`,
   'plugins/demo/.mcp.json': JSON.stringify({
     mcpServers: { remote: { url, bearer_token_env_var: 'DEMO_TOKEN' } },
@@ -83,7 +91,7 @@ describe("a bot environment's plugins, served by its own engine", () => {
     )
     if (!inspected.ok) throw new Error(inspected.error)
     expect(strict('pluginLogo', await pluginSettingsService.pluginLogo({ marketplaceId, name: 'demo' }))).toEqual({
-      dataUrl: null,
+      dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
     })
 
     const installed = strict(
@@ -130,7 +138,7 @@ describe("a bot environment's plugins, served by its own engine", () => {
     if (!v1.ok) throw new Error(v1.error)
     await engine.removeMarketplace({ id: added.value.id, uninstall: false })
     // Version 2 reaches another endpoint: a change the approval covers.
-    const v2 = await commitFiles(repo.dir, market('Hello v2.', 'https://elsewhere.example.test/mcp'))
+    const v2 = await commitFiles(repo.dir, market('Hello v2.', 'https://elsewhere.example.test/mcp', 2))
 
     const consent = { consentFingerprint: v1.value.consentFingerprint, stdio: [], executables: false }
     const brought = strict(
@@ -146,6 +154,9 @@ describe("a bot environment's plugins, served by its own engine", () => {
     )
     if (!brought.ok) throw new Error(`${brought.error} ${brought.detail ?? ''}`)
     expect(brought.value).toMatchObject({ commit: repo.commit, enabled: false, scope: { kind: 'global' } })
+    // The source still lists its current version: its logo is version 2's, not the older commit just installed.
+    const current = await engine.logo({ marketplaceId: brought.value.marketplaceId, name: 'demo' })
+    expect(Buffer.from(current!.split(',')[1], 'base64').at(-1)).toBe(2)
     expect(brought.value.setup.missingInputs).toEqual([])
     engine.resetPluginServiceCachesForTests()
     await engine.setEnabled({ key: brought.value.key, enabled: true })
