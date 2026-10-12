@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type ServerResponse } from 'node:http'
 import {
   FLEET_GATEWAY_ROUTES,
+  FLEET_INSTANCE_ROUTES,
   FLEET_SETTINGS_OPERATIONS,
+  buildPath,
+  fleetSettingsRouteKey,
+  isFleetPluginSettingsOperation,
   fleetBotSchema,
   fleetEnvironmentSchema,
   fleetGatewayEventSchema,
@@ -121,7 +125,11 @@ function initial(research: boolean): State {
   }
 }
 /** An owner-only loopback gateway; all outbound payloads pass the actual protocol schemas. */
-export async function createSettingsGateway() {
+/**
+ * A synthetic gateway for environment settings. With `plugins`, environments support plugins and the gateway forwards
+ * their operations to that real instance (the built app in server mode), as the real gateway does.
+ */
+export async function createSettingsGateway(options: { plugins?: { origin: string; token: string } } = {}) {
   const portServer = createNetServer()
   await new Promise<void>((resolve) => portServer.listen(0, '127.0.0.1', resolve))
   const callbackPort = (portServer.address() as { port: number }).port
@@ -150,6 +158,7 @@ export async function createSettingsGateway() {
     'environment-compaction',
     'context-limit',
     'runtime-updates',
+    ...(options.plugins ? ['environment-plugins-v1'] : []),
   ]
   const botBase = {
     capabilities,
@@ -275,6 +284,22 @@ export async function createSettingsGateway() {
         })
         delete params.eid
         const input = operation.input.parse({ ...params, ...body }) as Record<string, any>
+        if (isFleetPluginSettingsOperation(op)) {
+          if (!options.plugins) return send(409, { code: 'CONFLICT', message: 'Plugins need a newer environment.' })
+          const route = FLEET_INSTANCE_ROUTES[fleetSettingsRouteKey(op)]
+          const forwarded = await fetch(options.plugins.origin + buildPath(route.path, input), {
+            method: route.method,
+            headers: {
+              'X-Maestrly-Fleet-Protocol': '1',
+              Authorization: `Bearer ${options.plugins.token}`,
+              ...(route.method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
+            },
+            body: route.method === 'GET' ? undefined : JSON.stringify(input),
+          })
+          const answer = await forwarded.json()
+          if (!forwarded.ok) return send(forwarded.status, answer)
+          return send(200, FLEET_SETTINGS_OPERATIONS[op].response.parse(answer))
+        }
         const provider = state.models.providers.find((p) => p.providerId === input.providerId)
         const skill = state.skills.find((s) => s.name === input.name)
         const mcp = state.mcp.servers.find((s) => s.id === input.id)
