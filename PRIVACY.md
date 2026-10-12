@@ -18,6 +18,11 @@ Google Antigravity ACP server keeps each Google account's sign-in in a file
 inside the profile, in a directory with owner-only permissions rather than
 operating-system encryption.
 
+The mobile app keeps each paired server's device token in the iOS Keychain or
+the Android Keystore. The list of paired servers, preferences, and messages not
+yet sent stay in the app's storage on the phone. The app talks only to the bot
+servers you paired and has no telemetry. See [Mobile app](docs/mobile.md#data-on-the-phone).
+
 Logs stay local unless deliberately shared. Redaction cannot remove every
 sensitive filename, project name, path, model name, or content excerpt; review
 and sanitize diagnostics before posting them.

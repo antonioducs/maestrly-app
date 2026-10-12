@@ -30,7 +30,7 @@ and tools together as you plan, build, and review.
 
 ![Maestrly desktop with integrated developer tools](docs/images/desktop-chat.png)
 
-The repository is also a modular platform with four independently buildable products:
+The repository is also a modular platform with five independently buildable products:
 
 | Product | Purpose |
 | --- | --- |
@@ -38,6 +38,7 @@ The repository is also a modular platform with four independently buildable prod
 | `apps/web` | Browser board, automations, approvals, executions, runners, and reports |
 | `apps/server` | Versioned API, Better Auth, PostgreSQL persistence, RLS, audit, and durable job claims |
 | `apps/runner` | Headless Node runner with leases, recovery, Codex, and Claude Agent adapters |
+| `apps/mobile` | iOS and Android app for following and directing your bots ([mobile app](docs/mobile.md)) |
 
 Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
 `packages/runner-core`; there is no generic shared package. See
@@ -133,6 +134,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Platform protocol](docs/platform-protocol.md)
 - [Platform security](docs/platform-security.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
+- [Mobile app](docs/mobile.md)
 - [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
 - [Backup and restore](docs/backup-restore.md)
 

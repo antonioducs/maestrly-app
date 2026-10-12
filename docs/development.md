@@ -32,10 +32,20 @@ and build caches. See [Local data](local-data.md) before resetting or moving pro
 | `apps/desktop/test/unit/`, `apps/desktop/test/e2e/`, `tests/policy/` | Unit, Electron, and repository checks |
 | `scripts/` | Development, runtime, packaging, and verification tools |
 | `apps/desktop/runtime-assets/`, `apps/desktop/resources/`, `config/` | Runtime inputs, packaged assets, and configuration |
+| `apps/mobile/` | iOS and Android app (Expo): screens in `src/app/`, gateway client and fleet state in `src/gateway/` and `src/fleet/` |
 
 ## Platform workspaces
 
 `apps/web`, `apps/server`, and `apps/runner` build independently. Use the root `dev:web`, `dev:server`, `dev:runner`, and corresponding `build:*` commands. Contracts live in `packages/protocol`, `packages/client-sdk`, and `packages/runner-core`. See [self-hosting](self-hosting.md). Desktop-only commands below can be invoked with `--workspace @maestrly/desktop` from the repository root.
+
+## Mobile app
+
+`apps/mobile` is an Expo app that talks to the bot gateway. `npm run dev:mobile`
+starts Metro for Expo Go and the web preview, whose development builds offer an
+in-memory demo server; `npm run check:mobile` type checks, tests and bundles both
+platforms, and runs as part of `npm run check`. The app pins the React version
+Expo renders with, which differs from the web and desktop apps; its Metro
+configuration resolves `react` from the app. See [Mobile app](mobile.md#develop).
 
 ## Checks
 
