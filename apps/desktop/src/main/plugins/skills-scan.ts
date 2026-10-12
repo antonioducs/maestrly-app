@@ -93,6 +93,11 @@ async function readSkill(
     issues.push({ code: 'skill-invalid', path: file, detail: 'the skill has no name or no instructions' })
     return null
   }
+  // Bounded like an Agent Skills name, so `<plugin>:<skill>` fits every list that carries skill names.
+  if (name.length > 64) {
+    issues.push({ code: 'skill-invalid', path: file, detail: 'name longer than 64 characters' })
+    return null
+  }
   if (!description) issues.push({ code: 'skill-invalid', path: file, detail: 'description is missing' })
   return { name, dirPath, description, kind: 'skill', hasScripts: hasScripts(tree, dirPath) }
 }
@@ -166,6 +171,11 @@ export async function scanCommands(
     }
     if (!name || !body.trim() || seen.has(name)) {
       issues.push({ code: 'command-invalid', path: file, detail: 'missing or duplicate name, or empty body' })
+      continue
+    }
+    // Bounded like an Agent Skills name, so `<plugin>:<command>` fits every list that carries skill names.
+    if (name.length > 64) {
+      issues.push({ code: 'command-invalid', path: file, detail: 'name longer than 64 characters' })
       continue
     }
     seen.add(name)

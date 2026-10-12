@@ -14,7 +14,7 @@ export const fleetPluginKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}
 export const fleetPluginNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
 export const fleetPluginMarketplaceIdSchema = z.string().regex(/^mkt_[0-9a-f]{16}$/)
 /** A plugin's skill or command, namespaced by its plugin: `<plugin>:<skill>`, normalized as slash commands are. */
-export const fleetPluginSkillNameSchema = z.string().regex(/^[a-z0-9_-]{1,64}:[a-z0-9_-]{1,100}$/)
+export const fleetPluginSkillNameSchema = z.string().regex(/^[a-z0-9_-]{1,64}:[a-z0-9_-]{1,64}$/)
 /** A plugin's MCP server (`plg_…`) or an MCP server of the environment's own settings (`mcp_<uuid>`). */
 export const fleetMcpServerIdSchema = z.string().regex(/^(mcp_[0-9a-f-]{36}|plg_[0-9a-f]{20})$/)
 const commit = z.string().regex(/^[0-9a-f]{40}$/)

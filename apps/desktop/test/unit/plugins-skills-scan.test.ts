@@ -54,6 +54,16 @@ describe('plugin skill discovery', () => {
     expect(skills.map((s) => s.name)).toEqual(['deploy'])
   })
 
+  it('bounds lenient skill names like Agent Skills names', async () => {
+    const root = await writeTree({
+      [`skills/${'s'.repeat(65)}/SKILL.md`]: '---\ndescription: Too long\n---\nSteps.',
+      'skills/ok/SKILL.md': '---\ndescription: Fits\n---\nSteps.',
+    })
+    const { skills, issues } = await scanSkills(await fsPackageTree(root), ['skills'], { strictAgentSkills: false })
+    expect(skills.map((s) => s.name)).toEqual(['ok'])
+    expect(issues).toEqual([expect.objectContaining({ code: 'skill-invalid', detail: expect.stringMatching(/64/) })])
+  })
+
   it('keeps a lenient skill without a description and reports it', async () => {
     const root = await writeTree({ 'skills/plain/SKILL.md': 'Just steps.' })
     const { skills, issues } = await scanSkills(await fsPackageTree(root), ['skills'], { strictAgentSkills: false })
@@ -90,5 +100,22 @@ describe('plugin skill discovery', () => {
       },
     ])
     expect(issues).toEqual([expect.objectContaining({ code: 'command-invalid', path: 'commands/nodesc.md' })])
+  })
+
+  it('bounds command names like Agent Skills names', async () => {
+    const longest = 'c'.repeat(64)
+    const root = await writeTree({
+      [`commands/${longest}.md`]: '---\ndescription: Fits\n---\nRun it.',
+      [`commands/${longest}x.md`]: '---\ndescription: Too long\n---\nRun it.',
+    })
+    const { skills, issues } = await scanCommands(await fsPackageTree(root), ['commands'])
+    expect(skills.map((skill) => skill.name)).toEqual([longest])
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: 'command-invalid',
+        path: `commands/${longest}x.md`,
+        detail: expect.stringMatching(/64/),
+      }),
+    ])
   })
 })

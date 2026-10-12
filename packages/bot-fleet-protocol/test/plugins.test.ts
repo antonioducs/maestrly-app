@@ -95,6 +95,19 @@ describe('environment plugins contract', () => {
     expect(listed.safeParse({ skills: [{ ...skill, dir: '/home/bot/.agents' }] }).success).toBe(false)
   })
 
+  it('lists a group holding the longest plugin skill name the engine produces', () => {
+    const longest = `${'p'.repeat(64)}:${'s'.repeat(64)}`
+    expect(
+      FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.input.safeParse({ name: longest, enabled: true }).success
+    ).toBe(true)
+    expect(
+      FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.input.safeParse({ name: `${longest}s`, enabled: true }).success
+    ).toBe(false)
+    const groups = FLEET_SETTINGS_OPERATIONS.skillGroups.response
+    const group = { id: 'g', name: 'Docs', skills: ['local-skill', longest] }
+    expect(groups.safeParse({ revision: '550e8400-e29b-41d4-a716-446655440000', groups: [group] }).success).toBe(true)
+  })
+
   it('takes a sign-in only with a loopback redirect, and never returns tokens', () => {
     const bundle = {
       url: 'https://mcp.example.test/mcp',

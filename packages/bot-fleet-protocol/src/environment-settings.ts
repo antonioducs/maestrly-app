@@ -139,7 +139,13 @@ export const fleetSettingsSkillDocumentSchema = fleetSettingsSkillSchema.extend(
 })
 export const fleetSettingsSkillsSchema = z.object({ skills: z.array(fleetSettingsSkillSchema).max(2000) }).strict()
 export const fleetSettingsSkillGroupSchema = z
-  .object({ id, name, description: z.string().max(1000).optional(), skills: z.array(name).max(2000) })
+  .object({
+    id,
+    name,
+    description: z.string().max(1000).optional(),
+    // A stored member is listed as it is; a plugin's skill name may be longer than a group name.
+    skills: z.array(z.union([name, fleetPluginSkillNameSchema])).max(2000),
+  })
   .strict()
 export const fleetSettingsSkillGroupsSchema = z
   .object({ revision, groups: z.array(fleetSettingsSkillGroupSchema).max(200) })
