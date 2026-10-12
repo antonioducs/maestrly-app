@@ -1,17 +1,29 @@
+import os from 'node:os'
 import type { FleetEnvironmentSettingsService, FleetPluginSettingsOperation } from '@maestrly/bot-fleet-protocol'
 import type { PluginOpResult } from '../../../../shared/plugins'
 import { forgetMcpOAuthChannel, mcpOAuthDescriptor, mcpOAuthStatuses, storeMcpOAuth } from '../../../chat/mcp-oauth-ipc'
+import { listSkillsState, setSkillEnabledGlobal } from '../../../chat/skill-state'
 import * as plugins from '../../../plugins/service'
 
 /** An operation that returns nothing on success answers `{ ok: true }`, the protocol's strict empty result. */
 const empty = (result: PluginOpResult): { ok: true } | Exclude<PluginOpResult, { ok: true }> =>
   result.ok ? { ok: true } : result
 
+/** The skills and commands of the environment's enabled plugins, as its Skills settings show them. */
+async function pluginSkillsOf(home: string) {
+  return (await listSkillsState(undefined, home)).skills.flatMap((skill) =>
+    skill.scope === 'plugin' && skill.plugin ? [{ ...skill, plugin: skill.plugin }] : []
+  )
+}
+
 /**
  * The environment's plugins and MCP sign-ins, served by its own Maestrly: the same engine as the owner's computer,
- * which fetches from Git, checks and installs here. Every input was validated against the protocol on arrival.
+ * which fetches from Git, checks and installs here. Every input was validated against the protocol on arrival. Home
+ * injection is for synthetic tests only.
  */
-export const pluginSettingsService: Pick<FleetEnvironmentSettingsService, FleetPluginSettingsOperation> = {
+export const createPluginSettingsService = (
+  home = os.homedir()
+): Pick<FleetEnvironmentSettingsService, FleetPluginSettingsOperation> => ({
   plugins: () => plugins.pluginsState(),
   pluginCatalog: ({ marketplaceId }) => plugins.catalog(marketplaceId),
   pluginInspect: (input) => plugins.inspect(input),
@@ -34,8 +46,27 @@ export const pluginSettingsService: Pick<FleetEnvironmentSettingsService, FleetP
             : plugins.setInputs({ key, values: inputs ?? {} }))
     ),
   uninstallPlugin: async (input) => empty(await plugins.uninstall(input)),
+  pluginSkills: async () => ({
+    skills: (await pluginSkillsOf(home)).map((skill) => ({
+      name: skill.name,
+      description: skill.description.slice(0, 4096),
+      kind: skill.plugin.kind,
+      plugin: { key: skill.plugin.key, displayName: skill.plugin.displayName.slice(0, 200) },
+      enabled: skill.enabledGlobally,
+      modelInvocable: skill.modelInvocable,
+      userInvocable: skill.userInvocable,
+      resources: skill.resources,
+    })),
+  }),
+  // A plugin's skill is switched like any skill (the global disable list); other skills have their own operation.
+  setPluginSkillEnabled: async ({ name, enabled }) => {
+    if (!(await pluginSkillsOf(home)).some((skill) => skill.name === name))
+      return { ok: false, error: 'unknown-plugin' }
+    setSkillEnabledGlobal(name, enabled)
+    return { ok: true }
+  },
   mcpOAuthStatuses: async () => ({ servers: mcpOAuthStatuses() }),
   mcpOAuthDescriptor: async ({ id }) => ({ descriptor: mcpOAuthDescriptor(id) }),
   setMcpOAuth: async ({ id, bundle }) => storeMcpOAuth(id, bundle),
   removeMcpOAuth: async ({ id }) => ({ removed: forgetMcpOAuthChannel(id).ok }),
-}
+})

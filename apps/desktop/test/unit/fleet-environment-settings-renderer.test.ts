@@ -154,6 +154,49 @@ describe('environment settings renderer sources', () => {
     })
     expect(await source.chatSkillReveal('synthetic-skill')).toEqual({ ok: false })
   })
+  it('lists plugin skills under their plugin only for environments with plugins, and switches them there', async () => {
+    const pluginSkill = {
+      name: 'release-notes:draft',
+      description: 'Draft release notes',
+      kind: 'skill',
+      plugin: { key: 'release-notes@market', displayName: 'Release notes' },
+      enabled: true,
+      modelInvocable: true,
+      userInvocable: true,
+      resources: { scripts: 0, references: 0, assets: 0 },
+    }
+    const api = {
+      skills: vi.fn().mockResolvedValue({ skills: [] }),
+      skillGroups: vi.fn().mockResolvedValue({
+        revision: 'groups-r1',
+        groups: [{ id: 'group-a', name: 'Docs', skills: ['release-notes:draft'] }],
+      }),
+      pluginSkills: vi.fn().mockResolvedValue({ skills: [pluginSkill] }),
+      setPluginSkillEnabled: vi.fn().mockResolvedValue({ ok: true }),
+      setSkillEnabled: vi.fn(),
+      skill: vi.fn(),
+    } as unknown as FleetEnvironmentSettingsService
+    // An environment without plugins is never asked for them.
+    expect((await createEnvironmentSkillsSource(api).chatSkillsState()).skills).toEqual([])
+    expect(api.pluginSkills).not.toHaveBeenCalled()
+
+    const source = createEnvironmentSkillsSource(api, { plugins: true })
+    const [skill] = (await source.chatSkillsState()).skills
+    expect(skill).toMatchObject({
+      name: 'release-notes:draft',
+      scope: 'plugin',
+      plugin: { key: 'release-notes@market', displayName: 'Release notes', kind: 'skill' },
+      groupIds: ['group-a'],
+      enabledGlobally: true,
+    })
+    await source.chatSkillSetEnabled('release-notes:draft', false)
+    expect(api.setPluginSkillEnabled).toHaveBeenCalledWith({ name: 'release-notes:draft', enabled: false })
+    expect(api.setSkillEnabled).not.toHaveBeenCalled()
+    await expect(source.chatSkillRead('release-notes:draft')).rejects.toThrow('not-found')
+    expect(api.skill).not.toHaveBeenCalled()
+    vi.mocked(api.setPluginSkillEnabled).mockResolvedValue({ ok: false, error: 'unknown-plugin' })
+    await expect(source.chatSkillSetEnabled('release-notes:draft', true)).rejects.toThrow('unknown-plugin')
+  })
   it('does not refresh or retry a conflicting skill write with a newer revision', async () => {
     const skills = vi.fn().mockResolvedValue({
       skills: [

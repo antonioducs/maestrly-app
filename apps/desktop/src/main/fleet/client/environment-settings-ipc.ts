@@ -74,6 +74,8 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
   reg.mhandle('fleet:settings:updatePlugin', forward('updatePlugin'))
   reg.mhandle('fleet:settings:patchPlugin', forward('patchPlugin'))
   reg.mhandle('fleet:settings:uninstallPlugin', forward('uninstallPlugin'))
+  reg.handle('fleet:settings:pluginSkills', forward('pluginSkills'))
+  reg.mhandle('fleet:settings:setPluginSkillEnabled', forward('setPluginSkillEnabled'))
   reg.handle('fleet:settings:mcpOAuthStatuses', forward('mcpOAuthStatuses'))
   reg.handle('fleet:settings:mcpOAuthDescriptor', forward('mcpOAuthDescriptor'))
   reg.mhandle('fleet:settings:removeMcpOAuth', forward('removeMcpOAuth'))

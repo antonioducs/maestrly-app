@@ -584,22 +584,25 @@ export function SkillsSettings({
                   >
                     <Layers3 className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void source
-                        .chatSkillRead(skill.name)
-                        .then((value) => {
-                          if (alive.current) setDetail(value)
-                        })
-                        .catch(reportError)
-                    }
-                    className="text-muted-foreground hover:text-foreground"
-                    title={t('settings.skillView')}
-                    disabled={source.remote && (creating || creatingGroup || !!editingGroup)}
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                  </button>
+                  {/* A bot environment shows a plugin's skills with their plugin, in its Plugins settings. */}
+                  {!(source.remote && skill.plugin) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void source
+                          .chatSkillRead(skill.name)
+                          .then((value) => {
+                            if (alive.current) setDetail(value)
+                          })
+                          .catch(reportError)
+                      }
+                      className="text-muted-foreground hover:text-foreground"
+                      title={t('settings.skillView')}
+                      disabled={source.remote && (creating || creatingGroup || !!editingGroup)}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   {/* Revealing a folder of a server's own desktop shows it to nobody. */}
                   {!source.remote && host.desktopEffects && !skill.plugin && (
                     <button

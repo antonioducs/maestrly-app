@@ -53,6 +53,9 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
   updatePlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:updatePlugin', environmentId, input),
   patchPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:patchPlugin', environmentId, input),
   uninstallPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:uninstallPlugin', environmentId, input),
+  pluginSkills: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginSkills', environmentId, input),
+  setPluginSkillEnabled: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setPluginSkillEnabled', environmentId, input),
   mcpOAuthStatuses: (environmentId, input) =>
     ipcRenderer.invoke('fleet:settings:mcpOAuthStatuses', environmentId, input),
   mcpOAuthDescriptor: (environmentId, input) =>

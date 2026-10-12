@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FLEET_ENVIRONMENT_PLUGINS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SkillsSettings } from '@/components/chat/SkillsSettings'
@@ -36,7 +37,10 @@ export function EnvironmentSkills(props: EnvironmentSettingsSectionProps) {
     []
   )
   const api = useEnvironmentSettingsSource(props.environment.id)
-  const source = useMemo(() => createEnvironmentSkillsSource(api), [api])
+  const plugins =
+    props.fleet.state.connection.features.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE) &&
+    props.environment.capabilities.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE)
+  const source = useMemo(() => createEnvironmentSkillsSource(api, { plugins }), [api, plugins])
   return (
     <SettingsPanel>
       <SkillsSettings

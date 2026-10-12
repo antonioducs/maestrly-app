@@ -13,7 +13,8 @@ import {
 import { effectiveSkills } from '../../src/main/chat/skill-state'
 import { pluginBringPayload } from '../../src/main/fleet/client/environment-plugins'
 import { registerFleetEnvironmentSettingsIpc } from '../../src/main/fleet/client/environment-settings-ipc'
-import { pluginSettingsService } from '../../src/main/fleet/instance/settings/plugins'
+import { createPluginSettingsService } from '../../src/main/fleet/instance/settings/plugins'
+import { createSkillSettingsService } from '../../src/main/fleet/instance/settings/skills'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
 import { pluginLayout } from '../../src/main/plugins/layout'
@@ -61,8 +62,12 @@ const strict = <K extends FleetSettingsOperation>(operation: K, value: unknown):
   FLEET_SETTINGS_OPERATIONS[operation].response.parse(value) as FleetSettingsOutput<K>
 
 let repo: { dir: string; commit: string }
+let home: string
+let pluginSettingsService: ReturnType<typeof createPluginSettingsService>
 beforeEach(async () => {
   freshDb()
+  home = mkdtempSync(path.join(os.tmpdir(), 'env-plugins-home-'))
+  pluginSettingsService = createPluginSettingsService(home)
   setAppPluginLayoutForTests(pluginLayout(mkdtempSync(path.join(os.tmpdir(), 'env-plugins-'))))
   repo = await makeGitRepo(market('Hello v1.'), { name: 'market' })
   vi.stubEnv('AGENTS_E2E', '1')
@@ -110,6 +115,37 @@ describe("a bot environment's plugins, served by its own engine", () => {
     expect(JSON.stringify(state)).not.toContain('synthetic-token')
 
     const key = installed.value.key
+    // Its skill is listed with the plugin, switched like any skill, and can join a skill group.
+    const listed = strict('pluginSkills', await pluginSettingsService.pluginSkills({}))
+    expect(listed.skills).toEqual([
+      expect.objectContaining({
+        name: 'demo:hello',
+        kind: 'skill',
+        plugin: { key, displayName: 'demo' },
+        enabled: true,
+      }),
+    ])
+    expect(
+      strict(
+        'setPluginSkillEnabled',
+        await pluginSettingsService.setPluginSkillEnabled({ name: 'demo:hello', enabled: false })
+      )
+    ).toEqual({ ok: true })
+    expect(strict('pluginSkills', await pluginSettingsService.pluginSkills({})).skills[0].enabled).toBe(false)
+    expect(
+      strict(
+        'setPluginSkillEnabled',
+        await pluginSettingsService.setPluginSkillEnabled({ name: 'demo:other', enabled: false })
+      )
+    ).toEqual({ ok: false, error: 'unknown-plugin' })
+    const skillSettings = createSkillSettingsService(home)
+    const groupInput = FLEET_SETTINGS_OPERATIONS.createSkillGroup.input.parse({
+      expectedRevision: (await skillSettings.skillGroups({})).revision,
+      name: 'Release',
+      skills: ['demo:hello'],
+    })
+    const grouped = strict('createSkillGroup', await skillSettings.createSkillGroup(groupInput))
+    expect(grouped.groups.find((group) => group.name === 'Release')?.skills).toEqual(['demo:hello'])
     expect(strict('patchPlugin', await pluginSettingsService.patchPlugin({ key, enabled: false }))).toEqual({
       ok: true,
     })
@@ -160,7 +196,6 @@ describe("a bot environment's plugins, served by its own engine", () => {
     expect(brought.value.setup.missingInputs).toEqual([])
     engine.resetPluginServiceCachesForTests()
     await engine.setEnabled({ key: brought.value.key, enabled: true })
-    const home = mkdtempSync(path.join(os.tmpdir(), 'env-plugins-home-'))
     const skill = (await effectiveSkills(home, undefined, home)).find((item) => item.name === 'demo:hello')
     expect(skill).toBeDefined()
 
