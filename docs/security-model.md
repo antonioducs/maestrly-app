@@ -587,6 +587,37 @@ permission model to host-mediated calls. It cannot constrain independent side
 effects performed internally by an MCP executable or remote service after the
 connection is authorized.
 
+### Plugins
+
+A plugin is code from its publisher. Before installing, Maestrly shows the
+manifest summary, publisher, source URL and commit, license (or that none is
+declared), declared capabilities, every external endpoint, every stdio command
+line, scripts and executables, and every component with its support status.
+
+- **Consent.** Each stdio MCP server needs explicit consent to its exact launch
+  line, and a plugin with executable files or `scripts/` needs an
+  acknowledgement that agents may run them through the normal `bash`
+  permission gate. An update that changes a launch line or an MCP endpoint, or
+  adds executables, asks again. A stdio server whose launch line no longer
+  matches its consent stays off.
+- **Never run.** Hooks, monitors, LSP servers, `bin/` executables, MCP bundles,
+  OpenAI app connectors and `command` plugin sources never run. Each one is
+  listed with its reason; nothing is dropped silently.
+- **Downloads.** Only HTTPS Git URLs without credentials are accepted. Every
+  `git` invocation ignores user and system configuration, hooks, credential
+  helpers, submodules and every protocol but HTTPS, and never prompts. Symbolic
+  links and submodules are never installed.
+- **Package checks.** Paths must stay inside the plugin root, checked both
+  lexically and with `realpath`. Files are copied with fixed modes. Packages are
+  limited to 4,000 files, 64 MiB in total, 16 MiB per file, paths of 400
+  characters and a depth of 24.
+- **Secrets.** Values the user enters for a plugin (tokens, keys, options) are
+  stored only through secure storage and never returned to the renderer;
+  without secure storage they are refused. Publisher-embedded OAuth clients are
+  never reused.
+- **Hosts.** A plugin's stdio servers run on the host that installed it: this
+  computer, or a remote workspaces host.
+
 Desktop project memory and notes stay in the local profile. Search indexes and
 embeddings are reproducible caches, not authoritative copies. Promoting local memory into a repository is an
 explicit write and then follows that repository's own review and disclosure

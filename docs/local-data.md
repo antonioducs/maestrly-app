@@ -119,6 +119,36 @@ details cannot be read remains listed as needing reconfiguration and never
 connects. Removing a server also removes its secure-store entry. Bot provisioning
 requires secure storage before accepting MCP imports.
 
+## Plugins
+
+Plugin records live in `app_settings`:
+
+- `plugins.marketplaces.v1`: the marketplace sources (URL, ref, sparse paths,
+  last fetched commit and error). The two OpenAI sources are listed once by
+  default (`plugins.presetsSeeded.v1`) and fetched only when opened or refreshed.
+- `plugins.installed.v1`: each installed plugin, with its source, commit,
+  enablement, scope, consent, MCP server ids (`plg_…`), and the normalized MCP
+  configuration and input declarations of the installed version. It never holds
+  input values.
+- `plugins.secrets.<plugin>`: the values entered for a plugin, encrypted through
+  the secure store. A record that cannot be decrypted leaves the plugin's
+  servers that need those values unavailable.
+
+Files live under `<userData>/plugins`:
+
+| Directory | Contents |
+| --- | --- |
+| `sources/<marketplace>/` | Partial Git clone of a marketplace source |
+| `sources/ext/<hash>/` | Partial Git clone of a plugin hosted in another repository |
+| `packages/<plugin>/<version>/` | Installed files of one version, never modified after install |
+| `data/<plugin>/` | `PLUGIN_DATA` of a plugin's MCP servers; kept across updates, deleted only on request |
+| `.staging/` | Temporary copies, removed after 30 minutes |
+
+Startup finishes interrupted removals, rolls back interrupted installs and
+updates, and deletes directories no record references. Uninstalling removes the
+plugin's servers, cached tool catalogs, skill settings, stored values and
+installed files.
+
 ## Configuration brought to an environment
 
 Global skills sent from a computer are installed atomically in
