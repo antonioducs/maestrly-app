@@ -1607,6 +1607,10 @@ export default {
 
   personalMemory: {
     description: 'Memórias compartilhadas entre seus chats neste perfil.',
+    host: {
+      label: 'Memórias de',
+      hint: 'Os chats lembram com a memória do lugar onde rodam: este computador e cada servidor têm a sua.',
+    },
     settings: 'Configurações',
     more: 'Mais opções',
     enable: 'Ativar memória pessoal',

@@ -20,8 +20,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { hostKey } from '../../../shared/host-key'
 import type { HostApi } from '../../../preload'
 import type {
   LocalMemory,
@@ -574,6 +575,7 @@ function LocalMemoryEditor({
 }) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
+  const hostId = useHostId()
   const adapter = useMemo(() => localMemoryAdapter(api, workspaceId, personal), [api, workspaceId, personal])
   const [title, setTitle] = useState(memory?.title ?? '')
   const [content, setContent] = useState(memory?.content ?? '')
@@ -647,13 +649,16 @@ function LocalMemoryEditor({
         {memory?.originConversationId && (
           <button
             className="text-[10px] text-muted-foreground underline"
-            onClick={() =>
+            onClick={() => {
+              const origin = memory.originConversationId
+              if (!origin) return
               window.dispatchEvent(
                 new CustomEvent('maestrly:open-conversation', {
-                  detail: { conversationId: memory.originConversationId },
+                  // A conversation of the workspace's host, as the window keys it.
+                  detail: { conversationId: hostKey(hostId, origin) },
                 })
               )
-            }
+            }}
           >
             {t('projectMemory.fromConversation')}
           </button>

@@ -1594,6 +1594,10 @@ export default {
 
   personalMemory: {
     description: 'Memories shared across your chats in this profile.',
+    host: {
+      label: 'Memories of',
+      hint: 'Chats remember with the memory of where they run: this computer and each server keep their own.',
+    },
     settings: 'Settings',
     more: 'More options',
     enable: 'Enable personal memory',

@@ -322,7 +322,21 @@ export function DesktopApp() {
     (options?: ProjectSetupOptions) => requestProjectOn(LOCAL_HOST_ID, options),
     [requestProjectOn]
   )
-  const nav = useMainPanels({ workspaces, standaloneConversations, setActive, refreshWorkspaces })
+  // Links to a conversation or its memory find it among the conversations of every host, keyed for the window.
+  const everyHostWorkspaces = useMemo(
+    () => [...workspaces, ...Object.values(remote).flatMap((shell) => shell.workspaces)],
+    [workspaces, remote]
+  )
+  const everyHostChats = useMemo(
+    () => [...standaloneConversations, ...Object.values(remote).flatMap((shell) => shell.standaloneConversations)],
+    [standaloneConversations, remote]
+  )
+  const nav = useMainPanels({
+    workspaces: everyHostWorkspaces,
+    standaloneConversations: everyHostChats,
+    setActive,
+    refreshWorkspaces,
+  })
   const fleet = useFleet()
   const botUpdates = useBotUpdates(fleet)
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
@@ -347,6 +361,7 @@ export function DesktopApp() {
     projectNotesWs,
     setProjectNotesWs,
     memoryTarget,
+    showPersonalMemoryOf,
     focusMemoryId,
     focusMemoryRequest,
     setProjectMemoryWs,
@@ -810,7 +825,10 @@ export function DesktopApp() {
   }
   const activeHostId = active ? hostOfKey(active.id) : LOCAL_HOST_ID
   const activeHost = activeRemote ? (hostViews.get(activeHostId) ?? null) : null
-  const allWorkspaces = [...workspaces, ...Object.values(remote).flatMap((shell) => shell.workspaces)]
+  const allWorkspaces = everyHostWorkspaces
+  // The host whose personal memory is shown; this computer's once a server is no longer paired.
+  const personalMemoryHost =
+    memoryTarget?.kind === 'personal' ? (hostViews.get(memoryTarget.hostId) ?? hostViews.get(LOCAL_HOST_ID)) : undefined
   const dialogHostId = dialogWs ? hostOfKey(dialogWs) : LOCAL_HOST_ID
   const branchDialogWorkspace = allWorkspaces.find((w) => w.id === branchDialogWs)
 
@@ -1001,13 +1019,20 @@ export function DesktopApp() {
                   />
                 </HostProvider>
               )}
-              {memoryTarget?.kind === 'personal' && (
-                <PersonalMemoryView
-                  focusMemoryId={focusMemoryId}
-                  focusMemoryRequest={focusMemoryRequest}
-                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                  onClose={() => setProjectMemoryWs(null)}
-                />
+              {personalMemoryHost && (
+                // Mounted again for another host, and for a host that answers again.
+                <HostProvider
+                  key={`${personalMemoryHost.id}:${personalMemoryHost.epoch}`}
+                  hostId={personalMemoryHost.id}
+                >
+                  <PersonalMemoryView
+                    focusMemoryId={focusMemoryId}
+                    focusMemoryRequest={focusMemoryRequest}
+                    onHostChange={showPersonalMemoryOf}
+                    onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                    onClose={() => setProjectMemoryWs(null)}
+                  />
+                </HostProvider>
               )}
               {memoryTarget?.kind === 'workspace' && (
                 <HostProvider hostId={hostOfKey(memoryTarget.workspaceId)}>

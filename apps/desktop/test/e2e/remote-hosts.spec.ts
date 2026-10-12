@@ -560,3 +560,82 @@ test("remote host editor: opened through both proxies, which keep each side's cr
     await rm(root, { recursive: true, force: true })
   }
 })
+
+// The personal memory of the host's chats lives in the host's profile, apart from this computer's: the memory center
+// shows either one, and what is written there stays on its own side.
+test("remote host personal memory: shown, written and kept apart from this computer's", async () => {
+  test.setTimeout(180_000)
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
+  await access(path.join(desktop, 'out/main/index.js'))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-memory-')))
+  let host: ElectronApplication | undefined
+  let client: ElectronApplication | undefined
+  try {
+    const connected = await connect(root)
+    ;({ host, client } = connected)
+    const { page, local, remote, controlPort } = connected
+    const server = `127.0.0.1:${controlPort}`
+    const memory = (title: string) => ({ title, content: `${title}: synthetic content.`, type: 'reference' })
+    await remote('createPersonalMemory', memory('Server synthetic memory'))
+    await local('createPersonalMemory', memory('Local synthetic memory'))
+    const titles = async (api: typeof local) =>
+      ((await api('listPersonalMemories')) as Array<{ title: string }>).map((item) => item.title).sort()
+
+    // From the host's chat settings, Manage opens the memory center on the host's personal memory.
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const settingsHost = page.locator('[data-settings-host]')
+    await settingsHost.getByRole('combobox').click()
+    await page.getByRole('option', { name: server }).click()
+    await expect(settingsHost.getByRole('combobox')).toContainText(server)
+    await page.getByRole('tab', { name: 'Models & agents', exact: true }).click()
+    await page.getByRole('button', { name: 'Manage personal memory', exact: true }).click()
+    const panel = page.getByTestId('personal-memory-panel')
+    const memoryHost = panel.locator('[data-memory-host]').getByRole('combobox', { name: 'Memories of' })
+    await expect(memoryHost).toContainText(server)
+    const rows = panel.getByTestId('personal-memory-row')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('Server synthetic memory')
+
+    // A memory written there is the host's.
+    await panel.getByRole('button', { name: 'New memory', exact: true }).first().click()
+    await page.getByPlaceholder('Title', { exact: true }).fill('Written from this computer')
+    await page.getByPlaceholder('Durable content', { exact: true }).fill('Kept in the server profile.')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect.poll(() => titles(remote)).toEqual(['Server synthetic memory', 'Written from this computer'])
+    expect(await titles(local)).toEqual(['Local synthetic memory'])
+    await page
+      .getByRole('dialog', { name: 'Memory details', exact: true })
+      .getByRole('button', { name: 'Close', exact: true })
+      .last()
+      .click()
+    await expect(rows).toHaveCount(2)
+
+    // A change made on the host by anyone shows here as it happens.
+    await remote('createPersonalMemory', memory('Added by the agent on the server'))
+    await expect(rows).toHaveCount(3)
+
+    // This computer's personal memory is a choice away, and holds only its own.
+    await memoryHost.click()
+    await page.getByRole('option', { name: 'This computer' }).click()
+    await expect(memoryHost).toContainText('This computer')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('Local synthetic memory')
+    await memoryHost.click()
+    await page.getByRole('option', { name: server }).click()
+    await expect(rows).toHaveCount(3)
+
+    // Its settings dialog is the host's too.
+    await panel.getByRole('button', { name: 'Settings', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Personal memory settings' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('checkbox', { name: /Enable personal memory/ }).uncheck()
+    await dialog.getByRole('button', { name: 'Save memory settings', exact: true }).click()
+    await expect.poll(async () => (await remote('getPersonalMemorySettings')).enabled).toBe(false)
+    expect((await local('getPersonalMemorySettings')).enabled).toBe(true)
+    await expect(panel.getByRole('checkbox', { name: 'Enable personal memory' })).not.toBeChecked()
+  } finally {
+    await client?.close().catch(() => undefined)
+    await host?.close().catch(() => undefined)
+    await rm(root, { recursive: true, force: true })
+  }
+})

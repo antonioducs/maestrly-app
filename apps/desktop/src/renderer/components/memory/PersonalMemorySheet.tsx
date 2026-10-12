@@ -9,11 +9,8 @@ import { MEMORY_TYPES, type LocalMemory, type MemoryType } from '../../../shared
 import type { PersonalMemoryCreateInput, PersonalMemoryUpdateInput } from '../../../preload/api-memory'
 import { MemoryConfirmation } from './MemoryConfirmation'
 import { memoryError } from './use-personal-memory'
-import { hostApi } from '@/lib/hosts/host-context'
-import { LOCAL_HOST_ID } from '../../../shared/host-key'
-
-// Personal memory is this computer's: a server's is managed in its own settings.
-const localApi = hostApi(LOCAL_HOST_ID)
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { hostKey } from '../../../shared/host-key'
 
 interface Draft {
   title: string
@@ -46,6 +43,9 @@ export function PersonalMemorySheet({
   onGuardChange: (guard: { dirty: boolean; busy: boolean }) => void
 }) {
   const { t, i18n } = useTranslation('ui')
+  // The personal memory of the host the memory center shows.
+  const api = useHostApi()
+  const hostId = useHostId()
   const [editing, setEditing] = useState(!memory)
   const [changes, setChanges] = useState<Partial<Draft>>({})
   const [busy, setBusy] = useState(false)
@@ -82,9 +82,7 @@ export function PersonalMemorySheet({
     const patch: PersonalMemoryUpdateInput = {}
     for (const field of Object.keys(changes) as (keyof Draft)[]) Object.assign(patch, { [field]: input[field] })
     try {
-      const result = memory
-        ? await localApi.updatePersonalMemory(memory.id, patch)
-        : await localApi.createPersonalMemory(input)
+      const result = memory ? await api.updatePersonalMemory(memory.id, patch) : await api.createPersonalMemory(input)
       setChanges({})
       setEditing(false)
       onGuardChange({ dirty: false, busy: false })
@@ -101,12 +99,12 @@ export function PersonalMemorySheet({
     setError('')
     try {
       if (action === 'forget') {
-        await localApi.forgetPersonalMemory(memory.id, true)
+        await api.forgetPersonalMemory(memory.id, true)
         setForget(false)
         onGuardChange({ dirty: false, busy: false })
         onDeleted()
       } else {
-        await (action === 'archive' ? localApi.archivePersonalMemory : localApi.restorePersonalMemory)(memory.id)
+        await (action === 'archive' ? api.archivePersonalMemory : api.restorePersonalMemory)(memory.id)
         onChanged()
       }
     } catch (reason) {
@@ -310,10 +308,13 @@ export function PersonalMemorySheet({
                 <button
                   className="mt-5 flex items-center gap-1.5 text-[11px] underline underline-offset-4"
                   onClick={() => {
+                    const origin = memory.originConversationId
+                    if (!origin) return
                     onClose()
                     window.dispatchEvent(
                       new CustomEvent('maestrly:open-conversation', {
-                        detail: { conversationId: memory.originConversationId },
+                        // A conversation of the memory's host, as the window keys it.
+                        detail: { conversationId: hostKey(hostId, origin) },
                       })
                     )
                   }}

@@ -6,7 +6,7 @@ import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import type { ChatConfig } from '../../../shared/chat'
 import type { PersonalMemorySettings, MemorySettings as MemorySettingsConfig } from '../../../shared/memory'
 import type { SubagentProfileCandidate } from '../../../shared/subagent-profiles'
-import { LOCAL_HOST_ID } from '../../../shared/host-key'
+import type { OpenMemoryRequest } from '@/lib/memory-target'
 import { CandidateFields } from './subagent-profiles/CandidateFields'
 
 const DEFAULT_SETTINGS: MemorySettingsConfig = {
@@ -59,7 +59,7 @@ export function MemorySettings({
   const [personalSettings, setPersonalSettings] = useState<PersonalMemorySettings | null>(null)
   const [personalEnabled, setPersonalEnabled] = useState(true)
   const api = useHostApi()
-  const localHost = useHostId() === LOCAL_HOST_ID
+  const hostId = useHostId()
   const [autoRecall, setAutoRecall] = useState(persisted.autoRecall)
   const [enabled, setEnabled] = useState(persisted.extraction.enabled)
   const [candidate, setCandidate] = useState(() => candidateFor(persisted.extraction.selection))
@@ -225,13 +225,15 @@ export function MemorySettings({
       >
         {scope === 'personal' && (
           <>
-            {/* The memory center shows this computer's memories, not a server's. */}
-            {presentation === 'settings' && localHost && (
+            {/* The memory center opens on the personal memory of the host these settings are of. */}
+            {presentation === 'settings' && (
               <button
                 type="button"
                 className="self-start text-xs text-primary underline"
                 onClick={() =>
-                  window.dispatchEvent(new CustomEvent('maestrly:open-memory', { detail: { personal: true } }))
+                  window.dispatchEvent(
+                    new CustomEvent<OpenMemoryRequest>('maestrly:open-memory', { detail: { personal: true, hostId } })
+                  )
                 }
               >
                 {t('personalMemorySettings.manage')}
