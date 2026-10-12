@@ -108,6 +108,7 @@ import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
+import { addHookNotice, HOOK_NOTICE_INFO_MS, type HookNoticeItem, HookNotices } from './HookNotices'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { MaestroControl } from './MaestroControl'
 import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
@@ -253,6 +254,8 @@ export function ChatView({
   const [companionStarting, setCompanionStarting] = useState(false)
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
+  const [hookNotices, setHookNotices] = useState<HookNoticeItem[]>([])
+  const hookNoticeIdRef = useRef(0)
   const [chatProviders, setChatProviders] = useState<ChatConfig['providers']>([])
   const [reviewLoop, setReviewLoop] = useState<ReviewLoopInfo | null>(null)
   const reviewLoopActive =
@@ -983,6 +986,11 @@ export function ChatView({
       applyBackgroundCompactionState(conversationId, event.state)
       return
     }
+    if (event.kind === 'hook-notice') {
+      const notice = { id: ++hookNoticeIdRef.current, ...event }
+      setHookNotices((current) => addHookNotice(current, notice))
+      return
+    }
 
     // Hidden standalone views do not render tokens, but must retain the active response before
     // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
@@ -1251,6 +1259,20 @@ export function ChatView({
     const timer = window.setTimeout(() => setFailoverNotice(null), 6_000)
     return () => window.clearTimeout(timer)
   }, [failoverNotice])
+
+  useEffect(() => {
+    setHookNotices([])
+  }, [conversationId])
+
+  useEffect(() => {
+    const info = hookNotices.find((notice) => notice.level === 'info')
+    if (!info) return
+    const timer = window.setTimeout(
+      () => setHookNotices((current) => current.filter((notice) => notice.id !== info.id)),
+      HOOK_NOTICE_INFO_MS
+    )
+    return () => window.clearTimeout(timer)
+  }, [hookNotices])
 
   useEffect(() => {
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
@@ -2183,6 +2205,11 @@ export function ChatView({
             {reviewLoopActive && reviewLoop?.driver === 'maestrly-pair' && (
               <ReviewLoopBanner conversationId={conversationId} loop={reviewLoop} />
             )}
+
+            <HookNotices
+              notices={hookNotices}
+              onDismiss={(id) => setHookNotices((current) => current.filter((notice) => notice.id !== id))}
+            />
 
             {failoverNotice && (
               <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">

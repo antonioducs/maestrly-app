@@ -190,6 +190,11 @@ vi.mock('../../src/main/chat/github-copilot/subagent-runner', () => ({
   runGitHubCopilotSubagent: vi.fn(),
 }))
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: vi.fn() }))
+const pluginHooksH = vi.hoisted(() => ({ list: [] as unknown[] }))
+vi.mock('../../src/main/plugins/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/plugins/runtime')>()),
+  listPluginHooks: () => pluginHooksH.list,
+}))
 vi.mock('../../src/main/chat/generated-images', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/main/chat/generated-images')>()
   return { ...original, saveGeneratedImage: vi.fn(original.saveGeneratedImage) }
@@ -1760,6 +1765,43 @@ describe('Codex subscription runner', () => {
       'features.plugins': false,
       'features.tool_suggest': false,
     })
+  })
+
+  it('routes every tool call through Maestrly when a plugin has tool hooks, even in Agent and Full', async () => {
+    pluginHooksH.list = [
+      {
+        pluginKey: 'guard@market',
+        pluginName: 'Guard',
+        spec: { event: 'PreToolUse', matcher: 'Bash', command: 'true', timeoutSec: 10, source: 'hooks/hooks.json' },
+        command: 'true',
+        env: {},
+      },
+    ]
+    try {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_hooked', 'Work', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_hooked', notifications: [completedNotification('thread_1', 'turn_hooked')] })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = 'agent'
+      args.permMode = 'full'
+
+      await runCodexSubscriptionChat(args)
+
+      const threadStart = client.startThreadCalls[0] as {
+        config: Record<string, unknown>
+        dynamicTools: Array<{ name: string }>
+        environments?: unknown
+      }
+      expect(threadStart.environments).toEqual([])
+      expect(threadStart.config['features.shell_tool']).toBe(false)
+      expect(threadStart.dynamicTools.map((entry) => entry.name)).toEqual(
+        expect.arrayContaining(['bash', 'read', 'write', 'edit', 'grep', 'glob'])
+      )
+    } finally {
+      pluginHooksH.list = []
+    }
   })
 
   it('omits model_context_window when nominal capacity is unknown', async () => {

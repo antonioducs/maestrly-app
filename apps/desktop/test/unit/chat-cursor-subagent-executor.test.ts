@@ -13,6 +13,11 @@ const h = vi.hoisted(() => ({
 vi.mock('../../src/main/chat/cursor-subscription/subagent-runner', () => ({ runCursorSubagent: h.runCursor }))
 vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({ getCursorSubscriptionManager: h.getManager }))
 vi.mock('../../src/main/chat/subagent-runner', () => ({ runSubagent: h.runByok }))
+// No plugin hooks: the child's tools reach its runner unchanged.
+vi.mock('../../src/main/plugins/runtime', async (original) => ({
+  ...(await original<typeof import('../../src/main/plugins/runtime')>()),
+  listPluginHooks: () => [],
+}))
 vi.mock('../../src/main/chat/tools', () => ({
   ALL_TOOL_NAMES: [],
   buildTools: () => ({}),

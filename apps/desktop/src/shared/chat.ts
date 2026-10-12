@@ -1168,6 +1168,8 @@ export type ChatStreamEvent =
       usage?: ChatUsage
     }
   | { kind: 'finish'; messageId: string; finishReason: string; usage?: ChatUsage; responseDurationMs: number }
+  /** A plugin hook's message, or its failure: shown above the composer, never stored. */
+  | { kind: 'hook-notice'; plugin: string; event: string; text: string; level: 'info' | 'error' }
   | { kind: 'aborted'; messageId?: string; usage?: ChatUsage; responseDurationMs?: number }
   | {
       kind: 'error'
@@ -1929,6 +1931,7 @@ function lastPart<T extends MessagePart['type']>(
 export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): ChatMessage[] {
   switch (ev.kind) {
     case 'runtime-capabilities':
+    case 'hook-notice':
       return messages
     case 'steering-accepted':
       return messages.some((message) => message.id === ev.message.id)

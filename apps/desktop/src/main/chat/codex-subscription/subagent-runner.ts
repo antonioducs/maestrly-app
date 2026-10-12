@@ -92,6 +92,8 @@ export interface RunCodexSubagentArgs {
   agentName: string
   task: string
   readOnly: boolean
+  /** The conversation has plugin tool hooks: the child uses Maestrly's tools, never the native shell. */
+  pluginToolHooks?: boolean
   /** Concrete transport tier resolved for this child model on the physical account used by the attempt. */
   serviceTier: string
   approvalPolicy: CodexApprovalPolicy
@@ -483,6 +485,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
               }
             : {}),
           ...(args.readOnly ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
+          ...(args.pluginToolHooks ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
         },
         developerInstructions: [
           args.definition.prompt,
@@ -529,7 +532,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
                 isSubagentToolAllowed(spec.name, args.readOnly, providedDynamicToolNames)
               )
             ),
-            ...(args.readOnly ? { environments: [] } : {}),
+            ...(args.readOnly || args.pluginToolHooks ? { environments: [] } : {}),
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
             dynamicTools: DynamicToolRegistrationSpec[]
             environments?: []

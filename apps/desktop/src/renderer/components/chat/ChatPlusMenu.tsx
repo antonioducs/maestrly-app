@@ -18,7 +18,7 @@ import type { ChatConfig, ChatConvTools, ChatGptWebCapabilitiesInfo, ChatMode } 
 import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../../../shared/app-tool-groups'
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
-import { startChatGptWebCompanion } from '@/lib/chatgpt-web'
+import { companionStartError, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useSettings } from '@/lib/use-settings'
 import { ChatGptWebAccessEditor } from './ChatGptWebAccessEditor'
@@ -261,7 +261,7 @@ export function ChatPlusMenu({
       await startChatGptWebCompanion(conversationId, api)
       setActivePanel(null)
     } catch (cause) {
-      setCompanionError(cause instanceof Error ? cause.message : String(cause))
+      setCompanionError(companionStartError(cause instanceof Error ? cause.message : String(cause), t))
     } finally {
       setCompanionBusy(false)
       onCompanionStarting?.(false)

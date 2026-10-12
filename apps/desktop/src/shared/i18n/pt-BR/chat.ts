@@ -108,6 +108,10 @@ export default {
     accessDescription: 'Acesso ao projeto vinculado a este workspace. Ask e Plan continuam somente leitura.',
   },
   chatgptWeb: {
+    hooksUnsupported_one:
+      '{{plugins}} executa hooks no início da sessão, a cada prompt ou no fim do turno, e o companion não consegue executá-los. Desative o plugin nesta conversa ou use um modelo na Maestrly.',
+    hooksUnsupported_other:
+      '{{plugins}} executam hooks no início da sessão, a cada prompt ou no fim do turno, e o companion não consegue executá-los. Desative esses plugins nesta conversa ou use um modelo na Maestrly.',
     notConfigured: 'O ChatGPT Web ainda não está configurado. Conclua em Configurações › Maestrly Chat.',
     starting: 'Subindo o túnel…',
     waiting: 'Companion pronto. Habilite o Maestrly Bridge no ChatGPT e cole o prompt copiado.',
@@ -446,6 +450,9 @@ export default {
     queueEdit: 'Editar (volta ao campo)',
     queueRemove: 'Remover da fila',
     maestroLiveWaiting: 'aguardando Maestro',
+  },
+  hookNotice: {
+    source: 'Hook de {{plugin}} ({{event}})',
   },
   backgroundCompaction: {
     errors: {

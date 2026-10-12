@@ -89,6 +89,7 @@ import type {
   CursorSubscriptionAccountIdentity,
   CursorSubscriptionManager,
 } from './manager'
+import { runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 export interface RunCursorSubscriptionChatArgs {
   conversationId: string
@@ -669,7 +670,7 @@ async function runCursorSubscriptionChatInScope(
         ...supervisionTools,
       }
       const tools: ToolSet = adaptToolSetForModel({
-        tools: rawTools,
+        tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
         supportsImages: !dropImages,
         describeImage: (image) =>
           describeEphemeralToolImage({

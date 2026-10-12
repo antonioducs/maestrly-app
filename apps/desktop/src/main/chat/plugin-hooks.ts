@@ -1,11 +1,17 @@
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import type { ToolSet } from 'ai'
-import type { ChatPermMode, MessagePart, ToolOutput } from '../../shared/chat'
+import type { ChatPermMode, ChatStreamEvent, MessagePart, ToolOutput } from '../../shared/chat'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import type { ChatBehavior } from '../../shared/conversation-experience'
 import { runHookCommand } from '../plugins/hook-command'
 import { hookMatcherPattern, type PluginHookEvent } from '../plugins/hooks-scan'
 import { type ActivePluginHook, listPluginHooks } from '../plugins/runtime'
+import { getConvUiPrefs } from '../store'
+import { listConversationContextMessages } from './chat-store'
 import { conversationShellEnv } from './conversation-env'
+import { chatDiag } from './diag-log'
 import { claudeToolName, fromClaudeInput, toClaudeInput } from './plugin-hook-tools'
 import { modelOutputToChatToolOutput } from './tool-output'
 
@@ -306,6 +312,9 @@ function appendText(output: unknown, extra: string): ToolOutput {
   return { ...normalized, text: `${normalized.text}\n\n${extra}` }
 }
 
+/** Marks a tool whose execute already runs the hooks, so a ToolSet handed on to a subagent is not wrapped twice. */
+const HOOKED = Symbol('maestrly.pluginHooks')
+
 /**
  * Runs PreToolUse and PostToolUse(Failure) hooks around every tool of a ToolSet, for any runtime that executes it. A
  * denied call fails with the reason (every bridge turns that into a tool error the model reads); text from PostToolUse
@@ -316,11 +325,11 @@ export function wrapToolSetWithHooks(tools: ToolSet, ctx: HookTurnContext): Tool
   const wrapped: ToolSet = {}
   for (const [name, entry] of Object.entries(tools)) {
     const execute = entry.execute
-    if (!execute) {
+    if (!execute || (entry as { [HOOKED]?: true })[HOOKED]) {
       wrapped[name] = entry
       continue
     }
-    wrapped[name] = {
+    const next = {
       ...entry,
       execute: async (input: unknown, options: Parameters<typeof execute>[1]) => {
         const pre = await runPreToolUse(ctx, name, input)
@@ -346,6 +355,67 @@ export function wrapToolSetWithHooks(tools: ToolSet, ctx: HookTurnContext): Tool
         return extra.length ? appendText(output, extra.join('\n\n')) : output
       },
     } as typeof entry
+    Object.defineProperty(next, HOOKED, { value: true })
+    wrapped[name] = next
   }
   return wrapped
+}
+
+const transcriptDir = () => path.join(os.tmpdir(), 'maestrly-hook-transcripts')
+const safeId = (conversationId: string) => conversationId.replace(/[^A-Za-z0-9_-]/g, '_')
+
+/**
+ * Writes the conversation's text as a Claude Code-style JSONL transcript for hooks that read `transcript_path`
+ * (owner-only file, rewritten on each use, removed when the turn ends).
+ */
+export function writeHookTranscript(conversationId: string): string {
+  mkdirSync(transcriptDir(), { recursive: true, mode: 0o700 })
+  const file = path.join(transcriptDir(), `${safeId(conversationId)}.jsonl`)
+  const lines = listConversationContextMessages(conversationId).flatMap((message) => {
+    const text = message.parts
+      .filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n')
+    if (!text || (message.role !== 'user' && message.role !== 'assistant')) return []
+    return [JSON.stringify({ type: message.role, message: { role: message.role, content: [{ type: 'text', text }] } })]
+  })
+  writeFileSync(file, lines.length ? `${lines.join('\n')}\n` : '', { mode: 0o600 })
+  return file
+}
+
+export function removeHookTranscript(conversationId: string): void {
+  rmSync(path.join(transcriptDir(), `${safeId(conversationId)}.jsonl`), { force: true })
+}
+
+/** The hook context of a runner's turn: its mode, its conversation's permission mode, and notices sent to its window. */
+export function runnerHookContext(args: {
+  conversationId: string
+  cwd: string
+  mode: ChatBehavior
+  signal: AbortSignal
+  reviewerRuntime?: unknown
+  emit?: (event: ChatStreamEvent) => void
+}): HookTurnContext {
+  return {
+    conversationId: args.conversationId,
+    cwd: args.cwd,
+    mode: args.mode,
+    // Read when a hook runs: the person may change it mid-turn, and a turn without hooks never reads it.
+    get permMode() {
+      return getConvUiPrefs(args.conversationId).chat?.permMode ?? 'ask'
+    },
+    reviewer: !!args.reviewerRuntime,
+    signal: args.signal,
+    transcriptPath: async () => writeHookTranscript(args.conversationId),
+    notify: (notice) => {
+      chatDiag({
+        kind: 'plugin-hook-notice',
+        conv: args.conversationId,
+        plugin: notice.plugin,
+        event: notice.event,
+        level: notice.level,
+      })
+      args.emit?.({ kind: 'hook-notice', ...notice })
+    },
+  }
 }

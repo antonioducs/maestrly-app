@@ -102,6 +102,10 @@ export default {
     accessDescription: 'Access to the project linked to this workspace. Ask and Plan remain read-only.',
   },
   chatgptWeb: {
+    hooksUnsupported_one:
+      '{{plugins}} runs hooks when a session starts, on each prompt or when a turn ends, and the companion cannot run them. Turn the plugin off for this conversation or use a model in Maestrly.',
+    hooksUnsupported_other:
+      '{{plugins}} run hooks when a session starts, on each prompt or when a turn ends, and the companion cannot run them. Turn these plugins off for this conversation or use a model in Maestrly.',
     notConfigured: "ChatGPT Web isn't set up yet. Finish it in Settings › Maestrly Chat.",
     starting: 'Starting the tunnel…',
     waiting: 'Companion ready. Enable Maestrly Bridge in ChatGPT and paste the copied prompt.',
@@ -438,6 +442,9 @@ export default {
     queueEdit: 'Edit (back to the field)',
     queueRemove: 'Remove from queue',
     maestroLiveWaiting: 'waiting for Maestro',
+  },
+  hookNotice: {
+    source: '{{plugin}} hook ({{event}})',
   },
   backgroundCompaction: {
     errors: {

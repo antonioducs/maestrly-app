@@ -40,7 +40,7 @@ import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
-import { restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
+import { companionStartError, restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from '@/components/chat/ChatGptWebAccessEditor'
 import { ToolPalette } from '@/components/ToolPalette'
 
@@ -287,7 +287,7 @@ export function Drawer({
       setChatGptCapabilities({ ...saved, editable: false })
       setChatGptPromptCopied(result.promptCopied)
     } catch (cause) {
-      setChatGptError(cause instanceof Error ? cause.message : String(cause))
+      setChatGptError(companionStartError(cause instanceof Error ? cause.message : String(cause), t))
     } finally {
       setChatGptStarting(false)
     }
@@ -316,7 +316,7 @@ export function Drawer({
       setChatGptPromptCopied(result.promptCopied)
       setChatGptAccessOpen(false)
     } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : String(cause)
+      const detail = companionStartError(cause instanceof Error ? cause.message : String(cause), t)
       if (previousSessionEnded) {
         try {
           setChatGptCapabilities(await api.chatGptWebCapabilities(convId))

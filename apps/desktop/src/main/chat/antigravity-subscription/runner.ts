@@ -87,6 +87,7 @@ import { createAntigravityTaskRuntime } from './task-runtime'
 import { SubagentCoordinator } from '../subagent-coordinator'
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
+import { runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 export interface AntigravityManagedTaskUpdate {
   output?: string
@@ -482,7 +483,11 @@ export async function runAntigravitySubscriptionChat(
       : {}
     const rawTools: ToolSet = { ...core, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }
     // Antigravity never shows MCP tool images to the model, so tool images are always described instead.
-    const tools = adaptToolSetForModel({ tools: rawTools, supportsImages: false, describeImage })
+    const tools = adaptToolSetForModel({
+      tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
+      supportsImages: false,
+      describeImage,
+    })
     if (!runTask && agents.length) {
       const selectableAgentNames = agents.map((agent) => agent.name)
       runTask = createAntigravityTaskRuntime({

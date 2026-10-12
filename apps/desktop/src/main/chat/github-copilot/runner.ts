@@ -136,6 +136,7 @@ import {
   retireGitHubCopilotSessionBinding,
   type GitHubCopilotSessionBinding,
 } from './session-store'
+import { runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 const SESSION_WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1_000
 const MAX_IN_TURN_COMPACTIONS = 2
@@ -700,7 +701,7 @@ async function prepareRuntime(
     })
     governAutonomousTools(combinedRuntime.tools, args.conversationId)
     const adaptedRuntime = adaptToolSetForModel({
-      tools: combinedRuntime.tools,
+      tools: wrapToolSetWithHooks(combinedRuntime.tools, runnerHookContext(args)),
       supportsImages: !args.dropImages,
       describeImage: (image) =>
         describeEphemeralToolImage({ image, conversationId: args.conversationId, cwd: args.cwd, signal: args.signal }),

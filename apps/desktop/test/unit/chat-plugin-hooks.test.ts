@@ -1,24 +1,37 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { tool, jsonSchema, type ToolSet } from 'ai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActivePluginHook } from '../../src/main/plugins/runtime'
+import type { ChatBehavior } from '../../src/shared/conversation-experience'
 
 const hooks = vi.hoisted(() => ({ list: [] as ActivePluginHook[] }))
 vi.mock('../../src/main/plugins/runtime', async (original) => ({
   ...(await original<typeof import('../../src/main/plugins/runtime')>()),
   listPluginHooks: () => hooks.list,
 }))
+vi.mock('../../src/main/chat/chat-store', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/chat-store')>()),
+  listConversationContextMessages: () => [
+    { role: 'user', parts: [{ type: 'text', text: 'synthetic question' }] },
+    { role: 'assistant', parts: [{ type: 'reasoning', text: 'hidden' }, { type: 'text', text: 'synthetic answer' }] },
+    { role: 'assistant', parts: [{ type: 'tool', toolName: 'bash' }] },
+  ],
+}))
 
 const {
+  hasToolHooks,
   hooksActive,
+  pluginsWithTurnHooks,
+  removeHookTranscript,
   runPostToolUse,
   runPreToolUse,
   runSessionStart,
   runStop,
   runUserPromptSubmit,
   wrapToolSetWithHooks,
+  writeHookTranscript,
 } = await import('../../src/main/chat/plugin-hooks')
 const { claudeToolName, fromClaudeInput, toClaudeInput } = await import('../../src/main/chat/plugin-hook-tools')
 
@@ -41,12 +54,12 @@ function hook(event: ActivePluginHook['spec']['event'], body: string, matcher: s
 }
 
 const notices: unknown[] = []
-const ctx = (mode: 'agent' | 'ask' = 'agent') => ({
+const ctx = (mode: ChatBehavior = 'agent', reviewer = false) => ({
   conversationId: 'conv-1',
   cwd: dir,
   mode,
   permMode: 'full' as const,
-  reviewer: false,
+  reviewer,
   signal: new AbortController().signal,
   transcriptPath: async () => path.join(dir, 'transcript.jsonl'),
   notify: (notice: unknown) => notices.push(notice),
@@ -126,10 +139,36 @@ describe('plugin hooks', () => {
     expect(await runStop(ctx(), true)).toEqual({})
   })
 
-  it('runs only in Agent conversations', async () => {
+  it('runs only in Agent and Design conversations, never for a reviewer', async () => {
     hooks.list = [hook('Stop', `process.exit(0)`)]
     expect(hooksActive(ctx('agent'))).toBe(true)
-    expect(hooksActive(ctx('ask'))).toBe(false)
+    expect(hooksActive(ctx('design'))).toBe(true)
+    for (const mode of ['ask', 'plan', 'maestro'] as const) expect(hooksActive(ctx(mode))).toBe(false)
+    expect(hooksActive(ctx('agent', true))).toBe(false)
+    expect(await runStop(ctx('maestro'), false)).toEqual({})
+  })
+
+  it('tells tool hooks from the hooks only a Maestrly-run turn has', () => {
+    hooks.list = [hook('PostToolUse', `process.exit(0)`)]
+    expect(hasToolHooks('conv-1', 'agent')).toBe(true)
+    expect(hasToolHooks('conv-1', 'plan')).toBe(false)
+    expect(pluginsWithTurnHooks('conv-1')).toEqual([])
+    hooks.list = [hook('SessionStart', `process.exit(0)`), hook('Stop', `process.exit(0)`)]
+    expect(hasToolHooks('conv-1', 'agent')).toBe(false)
+    expect(pluginsWithTurnHooks('conv-1')).toEqual(['Guard'])
+  })
+
+  it('writes an owner-only transcript of the conversation text and removes it', () => {
+    const file = writeHookTranscript('conv/../1')
+    expect(path.basename(file)).toBe('conv____1.jsonl')
+    const lines = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    expect(lines).toEqual([
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'synthetic question' }] } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'synthetic answer' }] } },
+    ])
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600)
+    removeHookTranscript('conv/../1')
+    expect(existsSync(file)).toBe(false)
   })
 
   it('wraps every tool of a ToolSet: a denied call never runs, and PostToolUse text reaches the model', async () => {
@@ -164,5 +203,7 @@ describe('plugin hooks', () => {
     expect(ran).toEqual([])
     expect(await execute({ command: 'ls' }, { toolCallId: 't2', messages: [] })).toBe('output\n\ncheck the output')
     expect(wrapToolSetWithHooks(tools, ctx('ask'))).toBe(tools)
+    // A ToolSet handed on to a subagent keeps one layer of hooks.
+    expect(wrapToolSetWithHooks(wrapped, ctx()).bash).toBe(wrapped.bash)
   })
 })

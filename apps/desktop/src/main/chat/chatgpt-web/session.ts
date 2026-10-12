@@ -45,6 +45,7 @@ export interface SessionOptions {
     | 'fileScope'
     | 'gitReadEnabled'
     | 'browserCapability'
+    | 'toolHooks'
   >
   /** Sanitized summary of this conversation's review-loop state (manager-owned controller). */
   reviewLoopInfo?: () => ChatGptWebReviewLoopInfo | null

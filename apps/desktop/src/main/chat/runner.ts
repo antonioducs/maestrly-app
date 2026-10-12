@@ -167,6 +167,7 @@ import {
   OPENAI_LOCAL_SHELL_TOOL_NAME,
   openAINativeOutputText,
 } from './openai/native-tools'
+import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -1260,6 +1261,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         capabilityMode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeApplyPatch,
     })
   }
+  // Plugin hooks run around every tool, the same way for every provider.
+  allTools = wrapToolSetWithHooks(
+    allTools,
+    runnerHookContext({ conversationId, cwd, mode, signal, reviewerRuntime: args.reviewerRuntime, emit })
+  )
   allTools = adaptToolSetForModel({
     tools: allTools,
     supportsImages: !dropImages,

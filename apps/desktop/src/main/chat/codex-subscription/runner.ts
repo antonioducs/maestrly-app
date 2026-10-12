@@ -218,6 +218,7 @@ import {
   type CodexDynamicToolCheckpoint,
   type CodexSubagentCheckpoint,
 } from './subagent-runner'
+import { hasToolHooks, runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 export type DynamicToolSpec = DynamicToolFunctionSpec
 export { dynamicToolRegistrations } from './dynamic-tools'
@@ -1977,6 +1978,10 @@ async function buildDynamicTools(
     if (!args.reviewerRuntime && hasReadOnlySubagent) {
       for (const name of ['read', 'grep', 'glob', 'webfetch']) bridgeNames.add(name)
     }
+    // Plugin tool hooks see only Maestrly's tools: native shell and apply_patch are off, so Maestrly's take their place.
+    if (!args.reviewerRuntime && capabilityMode === 'agent' && hasToolHooks(args.conversationId, args.mode)) {
+      for (const name of ['bash', 'read', 'write', 'edit', 'grep', 'glob']) bridgeNames.add(name)
+    }
     if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       bridgeNames.add(GENERATE_IMAGE_TOOL_NAME)
     }
@@ -2079,7 +2084,7 @@ async function buildDynamicTools(
       : {}
     const rawTools: ToolSet = { ...hostTools.tools, ...skillTools }
     const adaptedHostTools = adaptToolSetForModel({
-      tools: rawTools,
+      tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
       supportsImages: !args.dropImages,
       describeImage: (image) =>
         describeEphemeralToolImage({ image, conversationId: args.conversationId, cwd: args.cwd, signal: args.signal }),
@@ -2332,6 +2337,8 @@ export async function runCodexSubscriptionChat(
   args: RunCodexSubscriptionChatArgs
 ): Promise<RunCodexSubscriptionChatResult> {
   const capabilityMode = capabilityBehaviorFor(args.mode)
+  // With plugin tool hooks, every tool call goes through Maestrly's tools (no native shell or file patches).
+  const pluginToolHooks = !args.reviewerRuntime && hasToolHooks(args.conversationId, args.mode)
   const settleInitialLeaseAsOther = (): void => {
     if (!args.availabilityLease) return
     getSubscriptionFailoverRouter().confirmAttemptOther(
@@ -2815,6 +2822,8 @@ export async function runCodexSubscriptionChat(
           projectContext,
           nativeCompactionFirst: runtimeProfile.nativeCompactionFirst,
           experimentalContext: runtimeProfile.experimentalContextEnabled,
+          // Switching tool hooks on or off changes which tools exist: a fresh thread with portable continuation.
+          ...(pluginToolHooks ? { pluginToolHooks: true } : {}),
         })
       )
       .digest('hex')
@@ -2894,9 +2903,10 @@ export async function runCodexSubscriptionChat(
       ...nativeSubagentSuppressionConfig(),
       // Plan receives Maestrly readers; controlled Ask/Agent receive no native shell. This avoids
       // the internal `UnlessTrusted` safelist, which would execute `cat`/`rg` without consulting Maestrly's broker.
-      ...(args.reviewerRuntime || capabilityMode !== 'agent' || args.permMode !== 'full'
+      ...(args.reviewerRuntime || capabilityMode !== 'agent' || args.permMode !== 'full' || pluginToolHooks
         ? { 'features.shell_tool': false }
         : {}),
+      ...(pluginToolHooks ? { web_search: 'disabled' } : {}),
       // Native web search never requests approval. Disable it in Ask to avoid bypassing the webfetch gate;
       // MCP/app search tools remain available through Maestrly's broker.
       ...(args.reviewerRuntime || args.mode === 'ask' || args.mode === 'maestro' || args.permMode === 'ask'
@@ -3157,7 +3167,7 @@ export async function runCodexSubscriptionChat(
           ...threadOptions,
           // Empty is the official contract to disable environment access: removes shell/apply_patch/view_image.
           // Plan and Ask continue investigating only through the gated dynamic readers above.
-          ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+          ...(capabilityMode === 'agent' && !args.reviewerRuntime && !pluginToolHooks ? {} : { environments: [] }),
           ephemeral: Boolean(args.ephemeralSession),
           dynamicTools: registrations,
         } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -3687,10 +3697,14 @@ export async function runCodexSubscriptionChat(
                 ([name]) => name !== 'executor_report' && (args.mode !== 'maestro' || name !== 'use_skill')
               )
             ) as ToolSet
-            const childTools: ToolSet = sessionRecorder.instrumentTools({
-              ...inheritedChildTools,
-              ...(maestroWorkerRuntime?.tools ?? {}),
-            })
+            // A child's tool calls run the conversation's plugin hooks too.
+            const childTools: ToolSet = wrapToolSetWithHooks(
+              sessionRecorder.instrumentTools({
+                ...inheritedChildTools,
+                ...(maestroWorkerRuntime?.tools ?? {}),
+              }),
+              runnerHookContext(args)
+            )
             const namespacedChildTools = namespaceSubagentToolSet(childTools, toolCallId)
             const childDeferredToolNames = new Set([
               ...dynamic.deferredToolNames,
@@ -3911,6 +3925,7 @@ export async function runCodexSubscriptionChat(
                         })
                       }
                       const attempt = await runCodexSubagent({
+                        pluginToolHooks: hasToolHooks(args.conversationId, args.mode),
                         conversationScope: args.projectId === null ? 'standalone' : 'project',
                         client: target.client,
                         cwd: args.cwd,
@@ -5469,7 +5484,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' && !args.reviewerRuntime && !pluginToolHooks ? {} : { environments: [] }),
             ephemeral: false,
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -5869,7 +5884,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' && !args.reviewerRuntime && !pluginToolHooks ? {} : { environments: [] }),
             ephemeral: Boolean(args.ephemeralSession),
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
