@@ -1045,6 +1045,18 @@ export const FLEET_GATEWAY_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setPreferences.input,
     response: FLEET_SETTINGS_OPERATIONS.setPreferences.response,
   },
+  settingsFailover: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/failover',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+  },
+  settingsSetFailoverRoute: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/failover/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
+    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+  },
   artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
   artifactHostPatch: {
     method: 'PATCH',
@@ -1734,6 +1746,18 @@ export const FLEET_INSTANCE_ROUTES = {
     path: '/v1/settings/preferences',
     body: FLEET_SETTINGS_OPERATIONS.setPreferences.input,
     response: FLEET_SETTINGS_OPERATIONS.setPreferences.response,
+  },
+  settingsFailover: {
+    method: 'GET',
+    path: '/v1/settings/failover',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+  },
+  settingsSetFailoverRoute: {
+    method: 'PUT',
+    path: '/v1/settings/failover/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
+    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
   },
   memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
   memoryPatch: {

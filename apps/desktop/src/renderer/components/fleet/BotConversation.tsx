@@ -6,7 +6,7 @@ import { MarkdownViewer } from '@/components/MarkdownViewer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
-import { isComputerTool } from '@/lib/fleet/format'
+import { accountsExhaustedNotice, isComputerTool } from '@/lib/fleet/format'
 import { latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
 import { Button } from '@/components/ui/button'
 import { TodoList } from '@/components/chat/TodoCard'
@@ -87,6 +87,18 @@ function TranscriptRow({
     hour: '2-digit',
     minute: '2-digit',
   })
+  const exhaustedText = (text: string): string | null => {
+    const notice = accountsExhaustedNotice(text)
+    if (!notice) return null
+    const sameDay = notice.until?.toDateString() === new Date().toDateString()
+    const time = notice.until?.toLocaleString(
+      i18n.language,
+      sameDay ? { hour: '2-digit', minute: '2-digit' } : { dateStyle: 'short', timeStyle: 'short' }
+    )
+    return `${t(`transcript.accountsExhausted.${notice.kind}`)} ${
+      time ? t('transcript.accountsExhausted.until', { time }) : t('transcript.accountsExhausted.queued')
+    }`
+  }
   if (item.kind === 'user') {
     if (item.source === 'peer')
       return (
@@ -274,7 +286,7 @@ function TranscriptRow({
             ? t('files.unreadablePdf')
             : item.text === 'invalid-attachment'
               ? t('files.invalidAttachment')
-              : item.text}
+              : (exhaustedText(item.text) ?? item.text)}
         </span>
       )}
     </div>

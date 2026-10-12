@@ -2,6 +2,17 @@ import type { FleetActivity, FleetBot, FleetEnvironment, FleetHostInfo } from '@
 import { compareByName } from './selectors'
 import { baseToolName } from '../agent-activity'
 
+/**
+ * A bot's report that every account of its failover list reached its usage limit (`claude-accounts-exhausted`,
+ * optionally followed by ` until=<ISO time>` when its accounts are expected back), or null for any other text.
+ */
+export function accountsExhaustedNotice(text: string | null): { kind: 'claude' | 'codex'; until: Date | null } | null {
+  const match = /^(claude|codex)-accounts-exhausted(?: until=(\S+))?$/.exec(text ?? '')
+  if (!match) return null
+  const until = match[2] ? new Date(match[2]) : null
+  return { kind: match[1] as 'claude' | 'codex', until: until && !Number.isNaN(until.getTime()) ? until : null }
+}
+
 export function formatPairingCode(value: string): string {
   const characters = value
     .toUpperCase()

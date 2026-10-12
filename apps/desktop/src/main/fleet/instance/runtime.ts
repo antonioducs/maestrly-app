@@ -91,6 +91,7 @@ import { setConversationShellEnv, type ConversationShellEnv } from '../../chat/c
 import { setConversationScreen, type ScreenArea } from '../../conversation-screen'
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents, type InstanceFile } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
+import { START_RETRY_MIN_MS, startRetry } from './turn-retry'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } from './transcript'
 import { LiveTranscript } from './live-transcript'
@@ -284,6 +285,9 @@ export class BotRuntime {
   private turnInputId: string | null = null
   private turnSettled: Promise<void> = Promise.resolve()
   private retryAt = 0
+  /** Turns that could not start in a row, and the kind of failure last reported among them. */
+  private startFailures = 0
+  private reportedStartFailure: string | null = null
   private activeTool: { tool: string; target: string | null } | null = null
   private lastSummary: string | null = null
   private lastTurnAt: string | null = null
@@ -1028,6 +1032,8 @@ export class BotRuntime {
     if ((value.source === 'routine' && !value.routine) || (value.source === 'peer' && !value.peer))
       throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Input source metadata is missing.')
     const result = await this.queue.enqueue(value)
+    // The owner writing again is the moment to check at once whether a turn that could not start now can.
+    if (value.source === 'owner') this.retryAt = 0
     const item = this.queue.all().find((candidate) => candidate.id === result.inputId)
     if (item && !item.started)
       this.publish({
@@ -1177,6 +1183,8 @@ export class BotRuntime {
         signal: this.turnAbort.signal,
         slot,
       })
+      this.startFailures = 0
+      this.reportedStartFailure = null
       await this.queue.cleanup(item.id)
       release = null
       try {
@@ -1225,19 +1233,27 @@ export class BotRuntime {
       })
       void this.refreshUsage()
     } catch (error) {
-      this.retryAt = Date.now() + 5_000
+      const cancelled = this.turnAbort?.signal.aborted === true
+      const attachment =
+        !cancelled &&
+        error instanceof Error &&
+        (error.message === 'invalid-attachment' || error.message === 'pdf-unreadable')
+          ? error.message
+          : null
+      // The input stays queued: it starts again later, after its accounts' usage limit or a growing delay.
+      const retry =
+        cancelled || attachment
+          ? null
+          : startRetry(error, ++this.startFailures, () => this.currentSelection()?.providerId ?? null)
+      this.retryAt = retry?.at ?? Date.now() + START_RETRY_MIN_MS
       await this.queue
         .reconcile(this.nativeUsersForQueue())
         .then(async () => {
           // Back in the queue when its native message was never saved: shown queued again, as pages show it.
           const requeued = this.live.queuedItem(item.id)
           if (requeued) this.publish({ type: 'transcript.upsert', item: requeued })
-          if (
-            !this.turnAbort?.signal.aborted &&
-            error instanceof Error &&
-            (error.message === 'invalid-attachment' || error.message === 'pdf-unreadable')
-          ) {
-            await this.queue.failAttachment(item.id, error.message)
+          if (attachment) {
+            await this.queue.failAttachment(item.id, attachment)
             this.retryAt = 0
             this.publish({ type: 'reset' })
           }
@@ -1245,20 +1261,24 @@ export class BotRuntime {
         .catch(() => {
           console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Input recovery failed' }))
         })
-      const cancelled = this.turnAbort?.signal.aborted === true
-      await this.system(
-        cancelled ? 'turn_cancelled' : 'turn_failed',
-        cancelled ? null : error instanceof Error ? error.message.slice(0, 400) : 'Turn failed.',
-        null
-      )
-      this.publish({
-        type: 'turn.finished',
-        inputId: item.id,
-        text: null,
-        source: item.input.source,
-        outcome: cancelled ? 'cancelled' : 'failed',
-        summary: null,
-      })
+      // Each failure alerts the owner's devices: one that repeats the last one reported waits quietly instead.
+      const repeated = retry !== null && retry.key === this.reportedStartFailure
+      if (retry) this.reportedStartFailure = retry.key
+      if (!repeated) {
+        await this.system(
+          cancelled ? 'turn_cancelled' : 'turn_failed',
+          cancelled ? null : (retry?.text ?? (error instanceof Error ? error.message.slice(0, 400) : 'Turn failed.')),
+          null
+        )
+        this.publish({
+          type: 'turn.finished',
+          inputId: item.id,
+          text: null,
+          source: item.input.source,
+          outcome: cancelled ? 'cancelled' : 'failed',
+          summary: null,
+        })
+      }
     } finally {
       release?.()
       this.turning = false

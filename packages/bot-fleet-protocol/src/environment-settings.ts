@@ -199,6 +199,17 @@ export const fleetSettingsRuntimeSchema = z
   .strict()
 export const fleetSettingsRuntimesSchema = z.object({ runtimes: z.array(fleetSettingsRuntimeSchema).max(3) }).strict()
 export const fleetSettingsPreferencesSchema = z.object({ revision, imageGenEnabled: z.boolean() }).strict()
+/** Subscription kinds whose accounts can take over from one another when one reaches its usage limit. */
+export const FLEET_FAILOVER_KINDS = ['claude', 'codex'] as const
+const failoverKind = z.enum(FLEET_FAILOVER_KINDS)
+const fallbacks = z.array(slot).max(50)
+/** A primary account (`slot`, null for the kind's default account) and the accounts tried after it, in order. */
+export const fleetSettingsFailoverRouteSchema = z
+  .object({ kind: failoverKind, slot, enabled: z.boolean(), fallbacks })
+  .strict()
+export const fleetSettingsFailoverSchema = z
+  .object({ revision, routes: z.array(fleetSettingsFailoverRouteSchema).max(200) })
+  .strict()
 
 function operation<I extends z.ZodType, O extends z.ZodType>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT',
@@ -345,6 +356,20 @@ export const FLEET_SETTINGS_OPERATIONS = {
     '/preferences',
     z.object({ ...expected, imageGenEnabled: z.boolean() }).strict(),
     fleetSettingsPreferencesSchema
+  ),
+  /** Needs `FLEET_ACCOUNT_FAILOVER_FEATURE` from both the gateway and the environment. */
+  failover: operation('GET', '/failover', empty, fleetSettingsFailoverSchema),
+  setFailoverRoute: operation(
+    'PUT',
+    '/failover/:kind/:slot',
+    z
+      .object({ kind: failoverKind, slot, ...expected, enabled: z.boolean(), fallbacks })
+      .strict()
+      .refine(
+        (value) => !value.fallbacks.includes(value.slot) && new Set(value.fallbacks).size === value.fallbacks.length,
+        'Each account appears once in a route'
+      ),
+    fleetSettingsFailoverSchema
   ),
 } as const
 export type FleetSettingsOperation = keyof typeof FLEET_SETTINGS_OPERATIONS

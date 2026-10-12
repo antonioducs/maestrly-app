@@ -8,6 +8,7 @@ import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
 import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import { saveHeadlessDownloads } from './headless-downloads'
 import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
 import { startServerHostMode } from './remote-host/server/start'
 import { isSupportedLocale } from '../shared/locale'
@@ -934,6 +935,8 @@ app.on('child-process-gone', (_e, details) => {
 })
 
 app.whenReady().then(async () => {
+  // Before any session exists, so that every session of a headless instance saves its downloads without a dialog.
+  if (isHeadlessInstance()) saveHeadlessDownloads()
   fixPathForGuiApp()
   if (process.env.MAESTRLY_PACKAGED_LOCAL_ML_SMOKE === '1') {
     try {

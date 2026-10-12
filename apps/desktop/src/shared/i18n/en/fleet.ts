@@ -685,6 +685,12 @@ export default {
       turn_failed: 'Turn failed',
       turn_cancelled: 'Turn cancelled',
     },
+    accountsExhausted: {
+      claude: 'Every Claude account in the rotation list reached its usage limit.',
+      codex: 'Every Codex account in the rotation list reached its usage limit.',
+      until: 'The bot tries again at {{time}}; the message stays queued.',
+      queued: 'The bot tries again later; the message stays queued.',
+    },
   },
   interaction: {
     useTool: '{{name}} wants to use {{tool}}',

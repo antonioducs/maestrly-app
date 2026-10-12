@@ -89,4 +89,16 @@ export default {
   imageGenNote: 'Disponibilidade padrão da geração de imagens para bots neste ambiente.',
   appTools: 'Ferramentas de aplicativos',
   appToolsLocked: 'As ferramentas de aplicativos ficam ativadas em ambientes remotos.',
+  failover: {
+    title: 'Troca automática de conta',
+    note: 'Quando uma conta atinge o limite de uso, o turno do bot continua na próxima conta da lista daquela conta.',
+    enable: 'Trocar de conta quando {{name}} atingir o limite',
+    add: 'Adicionar conta reserva',
+    moveUp: 'Subir {{name}}',
+    moveDown: 'Descer {{name}}',
+    remove: 'Tirar {{name}} da lista',
+    disconnected: 'Desconectada — ignorada até você reconectar.',
+    updateServer: 'Atualize o servidor de bots para configurar a troca automática de conta.',
+    restart: 'Reinicie este ambiente para atualizá-lo antes de configurar a troca automática de conta.',
+  },
 }

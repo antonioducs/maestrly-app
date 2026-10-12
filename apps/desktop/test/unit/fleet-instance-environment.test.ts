@@ -483,6 +483,7 @@ describe('bot environment registry', () => {
     expect(aggregate.capabilities).toEqual([
       'files',
       'environment-settings-v1',
+      'account-failover',
       'provisioning',
       'environments',
       'environment-compaction',
@@ -497,6 +498,7 @@ describe('bot environment registry', () => {
       capabilities: [
         'files',
         'environment-settings-v1',
+        'account-failover',
         'provisioning',
         'environments',
         'environment-compaction',
@@ -1259,6 +1261,7 @@ describe('bot environment registry', () => {
         capabilities: [
           'files',
           'environment-settings-v1',
+          'account-failover',
           'provisioning',
           'environments',
           'environment-compaction',
@@ -1273,6 +1276,7 @@ describe('bot environment registry', () => {
         capabilities: [
           'files',
           'environment-settings-v1',
+          'account-failover',
           'provisioning',
           'environments',
           'environment-compaction',
@@ -1291,6 +1295,7 @@ describe('bot environment registry', () => {
         capabilities: [
           'files',
           'environment-settings-v1',
+          'account-failover',
           'provisioning',
           'environments',
           'environment-compaction',

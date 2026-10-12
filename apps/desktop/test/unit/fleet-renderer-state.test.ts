@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { FleetBot, FleetHostInfo, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
-import { activityLabel, formatPairingCode, memorySegments } from '../../src/renderer/lib/fleet/format'
+import {
+  accountsExhaustedNotice,
+  activityLabel,
+  formatPairingCode,
+  memorySegments,
+} from '../../src/renderer/lib/fleet/format'
 import { fleetReducer, initialFleetState, mergeTranscriptItems } from '../../src/renderer/lib/fleet/state'
 
 const user = (id: string, at: string, text = id): FleetTranscriptItem => ({
@@ -190,5 +195,15 @@ describe('fleet pure state', () => {
     })
     expect(activityLabel({ kind: 'queued', count: 2 }, 'paused').key).toBe('activity.queued')
     expect(activityLabel(null, 'setup').key).toBe('status.setup')
+  })
+  it('reads a bot report that its accounts reached their usage limits', () => {
+    expect(accountsExhaustedNotice('claude-accounts-exhausted until=2026-10-12T15:04:00.000Z')).toEqual({
+      kind: 'claude',
+      until: new Date('2026-10-12T15:04:00.000Z'),
+    })
+    expect(accountsExhaustedNotice('codex-accounts-exhausted')).toEqual({ kind: 'codex', until: null })
+    expect(accountsExhaustedNotice('codex-accounts-exhausted until=never')).toEqual({ kind: 'codex', until: null })
+    expect(accountsExhaustedNotice('Turn failed.')).toBeNull()
+    expect(accountsExhaustedNotice(null)).toBeNull()
   })
 })
