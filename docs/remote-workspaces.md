@@ -54,6 +54,10 @@ feature: use **Update bots** first.
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
+- **Memory of the host.** Chats on the server remember with the server's personal memory, and its workspaces keep their
+  own project memory there; nothing is shared with this computer's memory. The personal memory panel has a
+  **Memories of** selector to show the server's or this computer's: open it with **Manage personal memory** in the
+  host's **Maestrly Chat** settings. **Project memory** in a server workspace's menu shows that workspace's memory.
 - **Start, stop, restart, update, and archive.** These are on the environment's page, reached with **Manage** under
   **Workspaces** on the server page, or **Open server page** in the menu of the server's heading. Stopping,
   restarting, or updating at once interrupts the chats that are running on the server. **Update** waits until no chat
