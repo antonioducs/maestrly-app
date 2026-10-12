@@ -248,6 +248,7 @@ export async function installPrepared(
       ...(p.policy ? { policy: p.policy } : {}),
       mcpServers: pkg.mcpServers,
       inputs: pkg.inputs,
+      hooks: pkg.hooks,
       // The version being placed was checked before it was copied: it is compatible.
       blocked: undefined,
     }
@@ -356,6 +357,7 @@ export async function updatePrepared(
       ...(p.policy ? { policy: p.policy } : {}),
       mcpServers: pkg.mcpServers,
       inputs: pkg.inputs,
+      hooks: pkg.hooks,
       // The version being placed was checked before it was copied: it is compatible.
       blocked: undefined,
     }

@@ -16,7 +16,8 @@ import { appPluginLayout } from './app-layout'
 import { loadPluginPackage } from './formats/detect'
 import { type PluginLayout, pluginKeyHash } from './layout'
 import { fsPackageTree } from './package-tree'
-import { launchDigest } from './consent'
+import { hookDigest, launchDigest } from './consent'
+import type { PluginHookSpec } from './hooks-scan'
 import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 import { type InstalledPluginRecord, listInstalled, onInstalledChanged, readPluginSecrets } from './store'
 import type { PluginPackage } from './types'
@@ -176,6 +177,46 @@ export async function listPluginAgents(
   )
   const seen = new Set<string>()
   return lists.flat().filter((agent) => !seen.has(agent.name) && (seen.add(agent.name), true))
+}
+
+/** A hook of an active plugin, ready to run: its command and environment with the plugin's folders filled in. */
+export interface ActivePluginHook {
+  pluginKey: string
+  pluginName: string
+  spec: PluginHookSpec
+  command: string
+  env: Record<string, string>
+}
+
+/**
+ * Hooks of the plugins active in a context whose current hooks the person approved (`consent.hooks` is the digest of
+ * exactly these hooks). Hooks run with the plugin's folders in `PLUGIN_ROOT`/`PLUGIN_DATA` and their Claude Code names.
+ */
+export function listPluginHooks(
+  ctx: PluginRuntimeContext,
+  layout: PluginLayout = appPluginLayout()
+): ActivePluginHook[] {
+  const out: ActivePluginHook[] = []
+  for (const record of activePlugins(ctx)) {
+    const hooks = record.hooks ?? []
+    if (!hooks.length || !record.consent.hooks || record.consent.hooks !== hookDigest(hooks)) continue
+    const root = installedPackageDir(record, layout)
+    const data = layout.data(pluginKeyHash(record.key))
+    const env = { PLUGIN_ROOT: root, PLUGIN_DATA: data, CLAUDE_PLUGIN_ROOT: root, CLAUDE_PLUGIN_DATA: data }
+    const expand = (value: string) =>
+      value.replace(/\$\{(CLAUDE_PLUGIN_ROOT|PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|PLUGIN_DATA)\}/g, (_, name: string) =>
+        name.endsWith('ROOT') ? root : data
+      )
+    for (const spec of hooks)
+      out.push({
+        pluginKey: record.key,
+        pluginName: record.displayName ?? record.name,
+        spec,
+        command: expand(spec.command),
+        env,
+      })
+  }
+  return out
 }
 
 /** Skills and commands of the plugins active in a context, namespaced `<plugin>:<name>`. */

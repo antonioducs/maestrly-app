@@ -8,6 +8,7 @@ import type {
   PluginScope,
   PluginSourceErrorCode,
 } from '../../shared/plugins'
+import type { PluginHookSpec } from './hooks-scan'
 import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 import { isSecureStorageAvailable, secureGet, secureRemove, secureSet } from '../secure-store'
 import { getAppSetting, setAppSetting, transaction } from '../store'
@@ -79,6 +80,8 @@ export interface InstalledPluginRecord {
   /** Normalized MCP servers and inputs of the installed version (package data, never secret values). */
   mcpServers?: PluginMcpServerSpec[]
   inputs?: PluginInputSpec[]
+  /** The hooks of the installed version, read at install so turns never load the package to find them. */
+  hooks?: PluginHookSpec[]
   /**
    * Set when the installed version is not compatible any more (re-checked at startup): its skills, servers and other
    * parts never apply, and the plugin is listed with these reasons until it is updated or uninstalled.
