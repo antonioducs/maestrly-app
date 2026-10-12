@@ -143,13 +143,16 @@ export function InstalledPlugins({
                   {plugin.scope.kind === 'global'
                     ? t('installed.scopeGlobal')
                     : t('installed.scopeProjects', { count: plugin.scope.workspaceIds.length })}{' '}
-                  <button
-                    type="button"
-                    className="text-indigo-300 hover:underline"
-                    onClick={() => setEditing({ key: plugin.key, kind: 'scope', scope: plugin.scope })}
-                  >
-                    {t('installed.change')}
-                  </button>
+                  {/* A bot environment's plugins always serve all of its conversations. */}
+                  {!source.bring && (
+                    <button
+                      type="button"
+                      className="text-indigo-300 hover:underline"
+                      onClick={() => setEditing({ key: plugin.key, kind: 'scope', scope: plugin.scope })}
+                    >
+                      {t('installed.change')}
+                    </button>
+                  )}
                 </div>
                 {plugin.skills.length > 0 && (
                   <div className="truncate text-[11px] text-muted-foreground">
@@ -236,18 +239,22 @@ export function InstalledPlugins({
                     <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
                       {server.endpoint}
                     </span>
-                    {/* Bot environments sign in through their own settings operations (not yet available). */}
-                    {!source.remote && server.id && server.enabled && server.authStatus !== undefined && (
-                      <McpSignIn
-                        serverId={server.id}
-                        auth={server.authStatus === 'none' ? undefined : server.authStatus}
-                        onChanged={() => {
-                          source.notifyChanged()
-                          onChanged()
-                        }}
-                        className="shrink-0"
-                      />
-                    )}
+                    {/* A bot environment keeps its sign-ins; this computer's browser runs them through its source. */}
+                    {(!source.remote || source.mcpSignIn) &&
+                      server.id &&
+                      server.enabled &&
+                      server.authStatus !== undefined && (
+                        <McpSignIn
+                          actions={source.mcpSignIn}
+                          serverId={server.id}
+                          auth={server.authStatus === 'none' ? undefined : server.authStatus}
+                          onChanged={() => {
+                            source.notifyChanged()
+                            onChanged()
+                          }}
+                          className="shrink-0"
+                        />
+                      )}
                   </div>
                 ))}
               </div>

@@ -159,6 +159,7 @@ export default {
     scope: 'Where it applies',
     scopeGlobal: 'All conversations',
     scopeProjects: 'Selected projects',
+    scopeEnvironment: 'All conversations of this environment.',
     noProjects: 'There are no projects here yet.',
     inputs: 'Settings',
     required: 'Required',
@@ -226,6 +227,23 @@ export default {
     'path-unsafe': 'The plugin contains a path outside its folder.',
     'install-failed': 'The plugin could not be installed.',
     'managed-by-plugin': 'This is managed by a plugin. Change it in Plugins.',
+  },
+  bring: {
+    button: 'Bring from this computer',
+    title: 'Bring plugins from this computer',
+    description:
+      'The environment downloads each plugin from its source at the same version, checks it against the approvals given on this computer, and keeps the settings entered here, encrypted. Plugins serve all of the environment’s conversations.',
+    empty: 'This computer has no plugins installed.',
+    action: 'Bring',
+    bringing: 'Bringing…',
+    installedThere: 'In this environment',
+    changed:
+      'The environment could not check this version against your approval. Install it from the environment’s sources instead.',
+    close: 'Close',
+  },
+  environment: {
+    updateServer: 'Update the bot server to manage plugins in its environments.',
+    updateEnvironment: 'Update this environment to manage its plugins.',
   },
   git: {
     unavailable: 'Git is not available on this computer. Install Git to add plugin sources.',

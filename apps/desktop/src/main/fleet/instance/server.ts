@@ -1,6 +1,9 @@
 import {
+  FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_PLUGIN_SETTINGS_OPERATIONS,
   FLEET_SETTINGS_OPERATIONS,
+  fleetSettingsRouteKey,
   parseFleetInstanceEditorPath,
   type FleetEnvironmentSettingsService,
   type FleetHostFileDigestRequest,
@@ -97,6 +100,7 @@ export class InstanceHttpError extends Error {
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -506,6 +510,16 @@ export function createInstanceControlServer(
     settingsPreferences: () => settings().preferences(FLEET_SETTINGS_OPERATIONS.preferences.input.parse({})),
     settingsSetPreferences: ({ input }) =>
       settings().setPreferences(FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(input)),
+    ...Object.fromEntries(
+      FLEET_PLUGIN_SETTINGS_OPERATIONS.map((operation): [RouteKey, Handler] => [
+        fleetSettingsRouteKey(operation),
+        ({ params, input }) => {
+          const { method, input: schema } = FLEET_SETTINGS_OPERATIONS[operation]
+          const call = settings()[operation] as (value: unknown) => Promise<unknown>
+          return call(schema.parse(method === 'GET' ? params : input))
+        },
+      ])
+    ),
     health: () => environment.health(),
     environmentStatus: () => environment.environmentStatus(),
     runtimesCheck: () => {

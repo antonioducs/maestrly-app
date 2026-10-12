@@ -6,6 +6,7 @@ import { createSkillSettingsService } from './skills'
 import { mcpSettingsService } from './mcp'
 import { runtimes, runtimeAction, setRuntimeAutomatic } from './runtimes'
 import { preferences, setPreferences } from './preferences'
+import { pluginSettingsService } from './plugins'
 
 /** Invalidate derived web sessions after a durable write without reporting that write as failed. */
 export function environmentMcpChanged(): void {
@@ -44,5 +45,12 @@ export function createEnvironmentSettingsService(
     setRuntimeAutomatic,
     preferences,
     setPreferences,
+    ...pluginSettingsService,
+    async patchPlugin(input) {
+      const result = await pluginSettingsService.patchPlugin(input)
+      // Plugin servers switch on, off or change with the plugin: web sessions pick up the new MCP surface.
+      environmentMcpChanged()
+      return result
+    },
   }
 }

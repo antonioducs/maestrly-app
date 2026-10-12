@@ -10,6 +10,7 @@ import {
   type McpOAuthBundle,
   McpOAuthBundleSchema,
   type McpOAuthDescriptor,
+  mcpOAuthStatus,
   saveMcpOAuth,
 } from './mcp-oauth'
 import { McpOAuthConnectFailure, runMcpOAuthConnect } from './mcp-oauth-connect'
@@ -48,6 +49,15 @@ export function mcpOAuthDescriptor(id: unknown): McpOAuthDescriptor | null {
   }
 }
 
+/** Sign-in status of this host's remote servers, user and plugin servers alike; those without one are left out. */
+export function mcpOAuthStatuses(): { id: string; status: 'connected' | 'needs-auth' }[] {
+  return listRuntimeMcpServers({ includeInactivePlugins: true }).flatMap((server) => {
+    if (server.unavailable || server.transport === 'stdio') return []
+    const status = mcpOAuthStatus(server, !!server.oauth)
+    return status === 'none' ? [] : [{ id: server.id, status }]
+  })
+}
+
 export type McpOAuthStoreResult = { ok: true } | { ok: false; error: 'invalid-input' | 'server-changed' | 'storage' }
 
 /** Stores a finished sign-in for a server of this host, then reconnects it with the new tokens. */
@@ -80,6 +90,11 @@ export function forgetMcpOAuthChannel(id: unknown): { ok: boolean } {
 }
 
 const inFlight = new Map<string, AbortController>()
+
+/** Cancels an unfinished sign-in of a server; `target` names where it runs (a host id, or a bot environment). */
+export function cancelMcpOAuth(target: string, id: string): void {
+  inFlight.get(`${target}\0${id}`)?.abort()
+}
 
 export interface McpOAuthHostCalls {
   descriptor: (serverId: string) => Promise<McpOAuthDescriptor | null>
@@ -144,7 +159,6 @@ export function registerMcpOAuthIpc(
     return connectMcpOAuth(calls, hostId, id as string)
   })
   reg.mhandle('mcp-oauth:cancel', (_event, hostId: unknown, id: unknown) => {
-    if (typeof hostId !== 'string' || typeof id !== 'string') return
-    inFlight.get(`${hostId}\0${id}`)?.abort()
+    if (typeof hostId === 'string' && typeof id === 'string') cancelMcpOAuth(hostId, id)
   })
 }

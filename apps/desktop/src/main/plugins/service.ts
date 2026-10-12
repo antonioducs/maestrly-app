@@ -194,6 +194,14 @@ async function buildCatalog(record: MarketplaceRecord, fetch: boolean): Promise<
   const dir = appPluginLayout().source(record.id)
   const commit =
     fetch || !record.commit ? await git().fetch(dir, { url: record.url, ref: record.ref, sha: null }) : record.commit
+  const data = await catalogAtCommit(record, commit)
+  catalogs.set(record.id, data)
+  return data
+}
+
+/** The catalog of a source at one commit already fetched into its checkout; nothing is cached or recorded. */
+async function catalogAtCommit(record: MarketplaceRecord, commit: string): Promise<CatalogData> {
+  const dir = appPluginLayout().source(record.id)
   const entries = await git().listTree(dir, commit)
   const roots = record.sparsePaths.length ? record.sparsePaths : ['']
   const catalogPatterns = roots.flatMap(CATALOG_PATTERNS)
@@ -218,9 +226,7 @@ async function buildCatalog(record: MarketplaceRecord, fetch: boolean): Promise<
   }
   for (const entry of market.entries)
     if (entry.source.kind === 'unsupported') inspections.set(entry.name, await inspectTree(tree.sub('\0'), entry))
-  const data = { commit, market, entries, inspections }
-  catalogs.set(record.id, data)
-  return data
+  return { commit, market, entries, inspections }
 }
 
 async function catalogData(record: MarketplaceRecord): Promise<CatalogData> {
@@ -377,7 +383,16 @@ export function addMarketplace(input: {
   ref?: string | null
   sparsePaths?: string[]
 }): Promise<PluginOpResult<PluginMarketplaceDto>> {
-  return withPluginMutation(async () => {
+  return withPluginMutation(() => addMarketplaceUnlocked(input))
+}
+
+/** Adds (or refreshes) a source; callers hold the plugin mutation lock. */
+async function addMarketplaceUnlocked(input: {
+  url: string
+  ref?: string | null
+  sparsePaths?: string[]
+}): Promise<PluginOpResult<PluginMarketplaceDto>> {
+  {
     let url: string
     try {
       url = git().checkUrl(input.url)
@@ -411,7 +426,7 @@ export function addMarketplace(input: {
       await fsp.rm(appPluginLayout().source(id), { recursive: true, force: true }).catch(() => undefined)
     }
     return refreshed
-  })
+  }
 }
 
 async function refreshRecord(record: MarketplaceRecord): Promise<PluginOpResult<PluginMarketplaceDto>> {
@@ -507,7 +522,8 @@ export function catalog(id: string): Promise<PluginOpResult<PluginCatalogEntryDt
 
 async function entryInspection(
   record: MarketplaceRecord,
-  name: string
+  name: string,
+  at?: { data?: CatalogData; externalSha?: string }
 ): Promise<
   | {
       ok: true
@@ -520,9 +536,14 @@ async function entryInspection(
     }
   | { ok: false; error: PluginOpErrorCode; detail?: string }
 > {
-  const data = await catalogData(record)
-  const entry = data.market.entries.find((candidate) => candidate.name === name)
-  if (!entry) return fail('unknown-plugin')
+  const data = at?.data ?? (await catalogData(record))
+  const listed = data.market.entries.find((candidate) => candidate.name === name)
+  if (!listed) return fail('unknown-plugin')
+  // A pinned external plugin is read at that commit of its own repository.
+  const entry: MarketplaceEntry =
+    listed.source.kind === 'git' && at?.externalSha
+      ? { ...listed, source: { ...listed.source, sha: at.externalSha } }
+      : listed
   if (entry.source.kind === 'git') {
     const external = await inspectExternal(entry)
     return {
@@ -643,30 +664,88 @@ async function prepare(
   }
 }
 
-export function install(input: {
-  marketplaceId: string
-  name: string
+interface InstallInput {
   consent: PluginConsentInput
   scope: PluginScope
   inputs?: Record<string, string>
-}): Promise<PluginOpResult<InstalledPluginDto>> {
+}
+
+export function install(
+  input: { marketplaceId: string; name: string } & InstallInput
+): Promise<PluginOpResult<InstalledPluginDto>> {
   return withPluginMutation(async () => {
     const record = findMarketplace(input.marketplaceId)
     if (!record) return fail('unknown-marketplace')
     try {
-      const found = await entryInspection(record, input.name)
-      if (!found.ok) return found
-      if (found.entry.source.kind === 'unsupported' || found.entry.policy.installation === 'NOT_AVAILABLE')
-        return fail('unavailable')
-      const prepared = await prepare(record, found)
-      const result = await installPrepared(
-        prepared,
-        { consent: input.consent, scope: input.scope, inputs: input.inputs },
-        installerDeps()
-      )
-      invalidatePluginRuntimeCache()
-      if (!result.ok) return result
-      return { ok: true, value: await installedDto(result.value) }
+      const result = await installFound(record, await entryInspection(record, input.name), input)
+      return result.ok ? { ok: true, value: await installedDto(result.value) } : result
+    } catch (error) {
+      return failure(error)
+    }
+  })
+}
+
+async function installFound(
+  record: MarketplaceRecord,
+  found: Awaited<ReturnType<typeof entryInspection>>,
+  input: InstallInput
+): Promise<PluginOpResult<InstalledPluginRecord>> {
+  if (!found.ok) return found
+  if (found.entry.source.kind === 'unsupported' || found.entry.policy.installation === 'NOT_AVAILABLE')
+    return fail('unavailable')
+  const prepared = await prepare(record, found)
+  const result = await installPrepared(
+    prepared,
+    { consent: input.consent, scope: input.scope, inputs: input.inputs },
+    installerDeps()
+  )
+  invalidatePluginRuntimeCache()
+  return result
+}
+
+/**
+ * Installs a plugin that another host has, at that host's exact commit and from the same source (a bot environment
+ * bringing a plugin from its owner's computer). The source is added here if needed; the plugin is read at `commit`
+ * (of the source, or of its own repository for an external plugin), so the consent given there for that commit
+ * matches only an identical version. Scope is every conversation: the other host's projects do not exist here.
+ */
+export function installPinned(input: {
+  source: { url: string; ref?: string | null; sparsePaths?: string[] }
+  name: string
+  commit: string
+  consent: PluginConsentInput
+  enabled: boolean
+  inputs?: Record<string, string>
+}): Promise<PluginOpResult<InstalledPluginDto>> {
+  return withPluginMutation(async () => {
+    const added = await addMarketplaceUnlocked(input.source)
+    if (!added.ok) return added
+    const record = findMarketplace(added.value.id)
+    if (!record) return fail('unknown-marketplace')
+    try {
+      const current = await catalogData(record)
+      const listed = current.market.entries.find((entry) => entry.name === input.name)
+      let found: Awaited<ReturnType<typeof entryInspection>>
+      if (listed?.source.kind === 'git')
+        found = await entryInspection(record, input.name, { externalSha: input.commit })
+      else if (record.commit === input.commit) found = await entryInspection(record, input.name)
+      else {
+        await git().fetch(appPluginLayout().source(record.id), { url: record.url, ref: record.ref, sha: input.commit })
+        found = await entryInspection(record, input.name, { data: await catalogAtCommit(record, input.commit) })
+      }
+      const installed = await installFound(record, found, {
+        consent: input.consent,
+        scope: { kind: 'global' },
+        inputs: input.inputs,
+      })
+      if (!installed.ok) return installed
+      if (!input.enabled) {
+        writeInstalled((all) => {
+          if (all[installed.value.key]) all[installed.value.key].enabled = false
+        })
+        invalidatePluginRuntimeCache()
+      }
+      return { ok: true, value: await installedDto(listInstalled()[installed.value.key] ?? installed.value) }
     } catch (error) {
       return failure(error)
     }

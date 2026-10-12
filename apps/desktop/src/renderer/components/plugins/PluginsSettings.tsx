@@ -1,12 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { PluginInspectionDto } from '../../../shared/plugins'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { InstalledPlugins } from './InstalledPlugins'
 import { PluginCatalog } from './PluginCatalog'
 import { PluginDetails } from './PluginDetails'
+import { BringPluginsDialog } from './BringPluginsDialog'
 import { PluginInstallDialog } from './PluginInstallDialog'
 import { PluginSourcesBar } from './PluginSourcesBar'
 import { hostPluginsSource, type PluginsSource } from './plugins-source'
@@ -29,6 +31,7 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
   const [selected, setSelected] = useState<string | null>(null)
   const [details, setDetails] = useState<{ marketplaceId: string; name: string } | null>(null)
   const [installing, setInstalling] = useState<PluginInspectionDto | null>(null)
+  const [bringing, setBringing] = useState(false)
   const [revision, setRevision] = useState(0)
   const [detailsRevision, setDetailsRevision] = useState(0)
   const tabsId = useId()
@@ -85,6 +88,13 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
         />
       ) : (
         <>
+          {state && source.bring && (
+            <div className="flex justify-end">
+              <Button type="button" size="sm" variant="ghost" onClick={() => setBringing(true)}>
+                {t('bring.button')}
+              </Button>
+            </div>
+          )}
           {state && (
             <PluginSourcesBar
               source={source}
@@ -169,6 +179,14 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
         </>
       )}
 
+      {bringing && source.bring && state && (
+        <BringPluginsDialog
+          source={{ ...source, bring: source.bring }}
+          installedThere={new Set(state.installed.map((plugin) => plugin.key))}
+          onClose={() => setBringing(false)}
+          onBrought={changed}
+        />
+      )}
       {installing && (
         <PluginInstallDialog
           source={source}

@@ -159,6 +159,7 @@ export default {
     scope: 'Onde ele vale',
     scopeGlobal: 'Todas as conversas',
     scopeProjects: 'Projetos selecionados',
+    scopeEnvironment: 'Todas as conversas deste ambiente.',
     noProjects: 'Ainda não há projetos aqui.',
     inputs: 'Configurações',
     required: 'Obrigatório',
@@ -227,6 +228,22 @@ export default {
     'path-unsafe': 'O plugin tem um caminho fora da pasta dele.',
     'install-failed': 'Não foi possível instalar o plugin.',
     'managed-by-plugin': 'Isto é gerenciado por um plugin. Altere em Plugins.',
+  },
+  bring: {
+    button: 'Trazer deste computador',
+    title: 'Trazer plugins deste computador',
+    description:
+      'O ambiente baixa cada plugin da fonte dele, na mesma versão, confere com as aprovações dadas neste computador e guarda, criptografadas, as configurações informadas aqui. Os plugins atendem todas as conversas do ambiente.',
+    empty: 'Este computador não tem plugins instalados.',
+    action: 'Trazer',
+    bringing: 'Trazendo…',
+    installedThere: 'Neste ambiente',
+    changed: 'O ambiente não conseguiu conferir esta versão com a sua aprovação. Instale pelas fontes do ambiente.',
+    close: 'Fechar',
+  },
+  environment: {
+    updateServer: 'Atualize o servidor de bots para gerenciar plugins nos ambientes dele.',
+    updateEnvironment: 'Atualize este ambiente para gerenciar os plugins dele.',
   },
   git: {
     unavailable: 'O Git não está disponível neste computador. Instale o Git para adicionar fontes de plugins.',

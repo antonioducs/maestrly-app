@@ -27,7 +27,7 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
-import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
@@ -78,6 +78,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
+  ['fleetEnvironmentPlugins', { fleetEnvironmentPlugins }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['hostsApi', hostsApi],
   ['hostFsApi', hostFsApi],
@@ -326,7 +327,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(583)
+    expect(keys).toHaveLength(584)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -385,7 +386,13 @@ describe('preload API — exposure', () => {
   })
 
   it('exposes a fixed, environment-addressed method for every settings operation', () => {
-    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(Object.keys(FLEET_SETTINGS_OPERATIONS).sort())
+    // Plugin values and sign-in tokens never pass through a renderer: those two operations have no renderer method.
+    const mainOnly = ['bringPlugin', 'setMcpOAuth']
+    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(
+      Object.keys(FLEET_SETTINGS_OPERATIONS)
+        .filter((name) => !mainOnly.includes(name))
+        .sort()
+    )
     expect(api.fleetEnvironmentSettings).toBe(fleetEnvironmentSettings)
     const input = { expectedRevision: 'synthetic-revision' }
     for (const [name, method] of Object.entries(fleetEnvironmentSettings)) {
@@ -393,6 +400,16 @@ describe('preload API — exposure', () => {
       method('synthetic-environment', input as never)
       expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, 'synthetic-environment', input)
     }
+  })
+
+  it('brings plugins and signs in to environment servers through main-process channels', () => {
+    expect(api.fleetEnvironmentPlugins).toBe(fleetEnvironmentPlugins)
+    fleetEnvironmentPlugins.bring('env-1', 'demo@market')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:plugins:bring', 'env-1', 'demo@market')
+    fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1')
+    fleetEnvironmentPlugins.mcpOAuthCancel('env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', 'env-1', 'mcp_1')
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {

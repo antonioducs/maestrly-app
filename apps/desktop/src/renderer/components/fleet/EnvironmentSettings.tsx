@@ -20,6 +20,7 @@ import { EnvironmentAccounts } from './environment-settings/EnvironmentAccounts'
 import { EnvironmentModels } from './environment-settings/EnvironmentModels'
 import { EnvironmentSkills } from './environment-settings/EnvironmentSkills'
 import { EnvironmentMcp } from './environment-settings/EnvironmentMcp'
+import { EnvironmentPlugins } from './environment-settings/EnvironmentPlugins'
 import { EnvironmentComponents } from './environment-settings/EnvironmentComponents'
 import { EnvironmentPreferences } from './environment-settings/EnvironmentPreferences'
 import { SharedSaveBarScope } from './environment-settings/shared'
@@ -36,6 +37,7 @@ const panels = {
   models: EnvironmentModels,
   skills: EnvironmentSkills,
   tools: EnvironmentMcp,
+  plugins: EnvironmentPlugins,
   components: EnvironmentComponents,
   preferences: EnvironmentPreferences,
 }

@@ -3,7 +3,10 @@ import { useTranslation } from 'react-i18next'
 import type { PluginScope } from '../../../shared/plugins'
 import type { PluginsSource } from './plugins-source'
 
-/** All conversations, or the chosen projects of this host. Standalone chats only see global plugins. */
+/**
+ * All conversations, or the chosen projects of this host. Standalone chats only see global plugins. A bot environment
+ * offers only all of its conversations.
+ */
 export function PluginScopePicker({
   source,
   value,
@@ -33,6 +36,14 @@ export function PluginScopePicker({
     }
   }, [source])
   const selected = value.kind === 'projects' ? value.workspaceIds : []
+  // A bot environment's plugins serve all of its conversations: it has none of this computer's projects.
+  if (source.bring)
+    return (
+      <fieldset className="flex flex-col gap-1.5" disabled={disabled}>
+        <legend className="mb-1 text-[12px] font-medium text-foreground">{t('install.scope')}</legend>
+        <p className="text-[12px] text-muted-foreground">{t('install.scopeEnvironment')}</p>
+      </fieldset>
+    )
   return (
     <fieldset className="flex flex-col gap-1.5" disabled={disabled}>
       <legend className="mb-1 text-[12px] font-medium text-foreground">{t('install.scope')}</legend>

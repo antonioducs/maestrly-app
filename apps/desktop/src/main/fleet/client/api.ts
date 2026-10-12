@@ -5,7 +5,10 @@ import {
   type FleetFileRef,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
+  FLEET_PLUGIN_SETTINGS_OPERATIONS,
   buildPath,
+  fleetPluginSettingsTimeoutMs,
+  fleetSettingsRouteKey,
   fleetErrorEnvelopeSchema,
   fleetImageMediaTypeSchema,
   type FleetErrorCode,
@@ -34,6 +37,13 @@ type RouteResponse<K extends RouteKey> = Routes[K]['response'] extends { _output
 const LIFECYCLE_TIMEOUT_MS = 300_000
 /** The gateway waits up to 30 s for sign-in pages and 60 s for a skill installation, for bots and environments. */
 const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
+  // The gateway waits 300 s for plugin operations that reach Git and 30 s for the others.
+  ...Object.fromEntries(
+    FLEET_PLUGIN_SETTINGS_OPERATIONS.map((operation) => [
+      fleetSettingsRouteKey(operation),
+      fleetPluginSettingsTimeoutMs(operation) + 10_000,
+    ])
+  ),
   settingsInstallSkill: 130_000,
   settingsAccounts: 35_000,
   settingsPatchAccount: 35_000,

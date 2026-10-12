@@ -1,10 +1,21 @@
 import {
+  FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   fleetEnvironmentIdSchema,
+  fleetMcpServerIdSchema,
+  fleetPluginKeySchema,
+  fleetSettingsRouteKey,
+  type FleetPluginSettingsOperation,
+  type FleetSettingsMainOnlyOperation,
 } from '@maestrly/bot-fleet-protocol'
+import type { McpOAuthConnectResult } from '../../../shared/chat'
+import type { InstalledPluginDto, PluginOpResult } from '../../../shared/plugins'
+import type { McpOAuthBundle, McpOAuthDescriptor } from '../../chat/mcp-oauth'
+import { cancelMcpOAuth, connectMcpOAuth, type McpOAuthStoreResult } from '../../chat/mcp-oauth-ipc'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import type { FleetApiClient } from './api'
+import { pluginBringPayload } from './environment-plugins'
 
 interface SettingsClient {
   hasFeature(feature: string): boolean
@@ -24,6 +35,86 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
       throw new FleetClientError('CONFLICT', 409, 'Environment does not support settings. Restart it to update.')
     return id
   }
+  /** Plugins need the gateway and the environment to support them; an older one asks to be updated. */
+  function pluginTarget(raw: unknown): string {
+    const eid = target(raw)
+    if (!fleet.hasFeature(FLEET_ENVIRONMENT_PLUGINS_FEATURE))
+      throw new FleetClientError('CONFLICT', 409, 'Gateway does not support plugins. Update the bot server.')
+    const environment = fleet.getSnapshot().environments.find((value) => value.id === eid)
+    if (!environment?.capabilities.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE))
+      throw new FleetClientError('CONFLICT', 409, 'Environment does not support plugins. Update it.')
+    return eid
+  }
+  /** Forwards one plugin operation: path identifiers come from the validated input, reads send no body. */
+  const forward =
+    (operation: Exclude<FleetPluginSettingsOperation, FleetSettingsMainOnlyOperation>) =>
+    async (_event: unknown, rawId: unknown, rawInput: unknown) => {
+      const eid = pluginTarget(rawId)
+      const { method, path, input: schema, response } = FLEET_SETTINGS_OPERATIONS[operation]
+      const input = schema.parse(rawInput ?? {}) as Record<string, unknown>
+      const params = Object.fromEntries(
+        [...path.matchAll(/:([A-Za-z][A-Za-z0-9_]*)/g)].map(([, name]) => [name, String(input[name])])
+      )
+      return response.parse(
+        await fleet.call(fleetSettingsRouteKey(operation), {
+          params: { eid, ...params },
+          ...(method === 'GET' ? {} : { body: input }),
+        })
+      )
+    }
+  // `bringPlugin` and `setMcpOAuth` have no channel: their inputs are built below, in this process.
+  reg.handle('fleet:settings:plugins', forward('plugins'))
+  reg.handle('fleet:settings:pluginCatalog', forward('pluginCatalog'))
+  reg.handle('fleet:settings:pluginInspect', forward('pluginInspect'))
+  reg.handle('fleet:settings:pluginLogo', forward('pluginLogo'))
+  reg.mhandle('fleet:settings:addPluginSource', forward('addPluginSource'))
+  reg.mhandle('fleet:settings:refreshPluginSource', forward('refreshPluginSource'))
+  reg.mhandle('fleet:settings:removePluginSource', forward('removePluginSource'))
+  reg.mhandle('fleet:settings:installPlugin', forward('installPlugin'))
+  reg.mhandle('fleet:settings:updatePlugin', forward('updatePlugin'))
+  reg.mhandle('fleet:settings:patchPlugin', forward('patchPlugin'))
+  reg.mhandle('fleet:settings:uninstallPlugin', forward('uninstallPlugin'))
+  reg.handle('fleet:settings:mcpOAuthStatuses', forward('mcpOAuthStatuses'))
+  reg.handle('fleet:settings:mcpOAuthDescriptor', forward('mcpOAuthDescriptor'))
+  reg.mhandle('fleet:settings:removeMcpOAuth', forward('removeMcpOAuth'))
+  // Bringing a plugin sends the values entered on this computer: the payload is built here, never in a renderer.
+  reg.mhandle(
+    'fleet:plugins:bring',
+    async (_event, rawId: unknown, rawKey: unknown): Promise<PluginOpResult<InstalledPluginDto>> => {
+      const eid = pluginTarget(rawId)
+      const payload = pluginBringPayload(fleetPluginKeySchema.parse(rawKey))
+      if (!payload.ok) return payload
+      return FLEET_SETTINGS_OPERATIONS.bringPlugin.response.parse(
+        await fleet.call('settingsBringPlugin', { params: { eid }, body: payload.value })
+      ) as PluginOpResult<InstalledPluginDto>
+    }
+  )
+  // Signing in to an environment's MCP server: this computer's browser, the environment keeps the result.
+  reg.mhandle(
+    'fleet:mcp-oauth:connect',
+    async (_event, rawId: unknown, rawServerId: unknown): Promise<McpOAuthConnectResult> => {
+      const eid = pluginTarget(rawId)
+      const serverId = fleetMcpServerIdSchema.parse(rawServerId)
+      return connectMcpOAuth(
+        {
+          descriptor: async (id) =>
+            FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.response.parse(
+              await fleet.call('settingsMcpOAuthDescriptor', { params: { eid, id } })
+            ).descriptor as McpOAuthDescriptor | null,
+          store: async (id, bundle: McpOAuthBundle) =>
+            FLEET_SETTINGS_OPERATIONS.setMcpOAuth.response.parse(
+              await fleet.call('settingsSetMcpOAuth', { params: { eid, id }, body: { id, bundle } })
+            ) as McpOAuthStoreResult,
+        },
+        `environment:${eid}`,
+        serverId
+      )
+    }
+  )
+  reg.mhandle('fleet:mcp-oauth:cancel', (_event, rawId: unknown, rawServerId: unknown) => {
+    const eid = fleetEnvironmentIdSchema.parse(rawId)
+    cancelMcpOAuth(`environment:${eid}`, fleetMcpServerIdSchema.parse(rawServerId))
+  })
   reg.handle('fleet:settings:accounts', async (_event, rawId: unknown, rawInput: unknown) => {
     const eid = target(rawId)
     FLEET_SETTINGS_OPERATIONS.accounts.input.parse(rawInput ?? {})

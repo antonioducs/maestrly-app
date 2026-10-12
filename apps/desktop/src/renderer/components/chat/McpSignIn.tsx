@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
+import type { McpSignInActions } from './mcp-sign-in-actions'
+
+export type { McpSignInActions } from './mcp-sign-in-actions'
 
 /**
  * Sign-in of one remote MCP server: its status, and Sign in / Sign out. The browser part runs on this computer; the
@@ -13,15 +16,23 @@ export function McpSignIn({
   auth,
   onChanged,
   className,
+  actions: providedActions,
 }: {
   serverId: string
   auth: 'connected' | 'needs-auth' | undefined
   onChanged: () => void
   className?: string
+  /** The host of the current context by default. */
+  actions?: McpSignInActions
 }) {
   const { t } = useTranslation('chat')
   const hostId = useHostId()
   const api = useHostApi()
+  const actions: McpSignInActions = providedActions ?? {
+    connect: (id) => window.api.chatMcpOAuthConnect(hostId, id),
+    cancel: (id) => window.api.chatMcpOAuthCancel(hostId, id),
+    forget: (id) => api.chatMcpOAuthForget(id),
+  }
   const [waiting, setWaiting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const alive = useRef(true)
@@ -37,7 +48,7 @@ export function McpSignIn({
     setWaiting(true)
     setError(null)
     try {
-      const result = await window.api.chatMcpOAuthConnect(hostId, serverId)
+      const result = await actions.connect(serverId)
       if (!alive.current) return
       if (!result.ok && result.error !== 'cancelled') setError(t(`mcp.auth.error.${result.error}`))
     } catch {
@@ -58,7 +69,7 @@ export function McpSignIn({
             </span>
             <button
               type="button"
-              onClick={() => void window.api.chatMcpOAuthCancel(hostId, serverId)}
+              onClick={() => void actions.cancel(serverId)}
               className="text-muted-foreground underline decoration-white/20 underline-offset-2 hover:text-foreground"
             >
               {t('mcp.auth.cancel')}
@@ -69,7 +80,7 @@ export function McpSignIn({
             <span className="text-emerald-300/80">{t('mcp.auth.signedIn')}</span>
             <button
               type="button"
-              onClick={() => void api.chatMcpOAuthForget(serverId).then(onChanged)}
+              onClick={() => void actions.forget(serverId).then(onChanged)}
               className="text-muted-foreground underline decoration-white/20 underline-offset-2 hover:text-foreground"
             >
               {t('mcp.auth.signOut')}

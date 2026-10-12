@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
+import { FLEET_ENVIRONMENT_PLUGINS_FEATURE, type FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
+import { McpSignIn, type McpSignInActions } from '@/components/chat/McpSignIn'
 import { requestMainNavigation } from '@/lib/main-navigation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -34,6 +35,31 @@ function McpPanel({ environment, fleet, onDirtyChange }: EnvironmentSettingsSect
   const [results, setResults] = useState<Record<string, FleetSettingsOutput<'testMcpServer'>>>({})
   const online = fleet.state.connection.state === 'connected' && environment.lifecycle === 'running'
   const lifetime = useSettingsLifetime()
+  // OAuth sign-in of remote servers: the environment keeps it, this computer's browser runs it.
+  const signInSupported =
+    fleet.state.connection.features.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE) &&
+    environment.capabilities.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE)
+  const [auth, setAuth] = useState<Record<string, 'connected' | 'needs-auth'>>({})
+  const loadAuth = useCallback(async () => {
+    if (!signInSupported) return
+    try {
+      const { servers } = await resource.source.mcpOAuthStatuses({})
+      setAuth(Object.fromEntries(servers.map((server) => [server.id, server.status])))
+    } catch {
+      // Sign-in status is informative; the list itself reports connection problems.
+    }
+  }, [signInSupported, resource.source])
+  useEffect(() => {
+    void loadAuth()
+  }, [loadAuth, resource.data])
+  const signIn = useMemo<McpSignInActions>(
+    () => ({
+      connect: (id) => window.api.fleetEnvironmentPlugins.mcpOAuthConnect(environment.id, id),
+      cancel: (id) => window.api.fleetEnvironmentPlugins.mcpOAuthCancel(environment.id, id),
+      forget: (id) => resource.source.removeMcpOAuth({ id }),
+    }),
+    [environment.id, resource.source]
+  )
   async function act(action: () => Promise<unknown>) {
     if (!online || busy) return
     const epoch = lifetime.current
@@ -107,6 +133,9 @@ function McpPanel({ environment, fleet, onDirtyChange }: EnvironmentSettingsSect
           )}
           {server.unavailable && (
             <p className="text-xs text-muted-foreground">{t('environmentSettings.mcpTest.unavailable')}</p>
+          )}
+          {server.transport === 'http' && auth[server.id] && (
+            <McpSignIn serverId={server.id} auth={auth[server.id]} actions={signIn} onChanged={() => void loadAuth()} />
           )}
         </div>
       ))}

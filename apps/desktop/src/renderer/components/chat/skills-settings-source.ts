@@ -1,4 +1,4 @@
-import type { FleetEnvironmentSettingsService, FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
+import type { FleetEnvironmentSettingsClient, FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
 import type { ChatSkillDetail, ChatSkillInfo } from '../../../shared/chat'
 import type { HostApi } from '../../../preload'
 type Api = HostApi
@@ -54,7 +54,7 @@ export type EnvironmentSkillDetail = ChatSkillDetail & {
   editable: boolean
   editableReason: string | null
 }
-export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsService): SkillsSettingsSource {
+export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsClient): SkillsSettingsSource {
   let skills: FleetSettingsOutput<'skills'>['skills'] = []
   let groups: FleetSettingsOutput<'skillGroups'> | null = null
   let hits: FleetSettingsOutput<'searchSkills'>['results'] = []
