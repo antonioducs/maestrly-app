@@ -18,6 +18,7 @@ import { ptyApi } from '../../src/preload/api-pty'
 import { performanceApi } from '../../src/preload/api-performance'
 import { projectSetupApi } from '../../src/preload/api-project-setup'
 import { runtimeAssetsApi } from '../../src/preload/api-runtime-assets'
+import { pluginsApi } from '../../src/preload/api-plugins'
 import { reviewApi } from '../../src/preload/api-review'
 import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
@@ -71,6 +72,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['chatApi', chatApi],
   ['chatLocalApi', chatLocalApi],
   ['chatWindowApi', chatWindowApi],
+  ['pluginsApi', pluginsApi],
   ['platformApi', platformApi],
   ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
@@ -320,7 +322,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(566)
+    expect(keys).toHaveLength(580)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1417,6 +1419,28 @@ describe('preload API — chat pagination (#559)', () => {
   it('chatSearchMessages(convId,query) -> chat:search (invoke) [#559]', () => {
     api.chatSearchMessages('c1', 'term')
     expect(invokeSpy).toHaveBeenCalledWith('chat:search', 'c1', 'term')
+  })
+
+  it('plugin wrappers preserve channels and pass a single payload', () => {
+    const plugin = { marketplaceId: 'm1', name: 'p1' }
+    const cases: Array<[string, unknown, string]> = [
+      ['pluginsCatalog', 'm1', 'chat:plugins:catalog'],
+      ['pluginsInspect', plugin, 'chat:plugins:inspect'],
+      ['pluginsLogo', plugin, 'chat:plugins:logo'],
+      ['pluginsMarketplaceAdd', { url: 'https://example.invalid/m.git' }, 'chat:plugins:marketplace-add'],
+      ['pluginsMarketplaceRefresh', 'm1', 'chat:plugins:marketplace-refresh'],
+      ['pluginsMarketplaceRemove', { id: 'm1', uninstall: false }, 'chat:plugins:marketplace-remove'],
+      ['pluginsUpdate', { key: 'p1@m1' }, 'chat:plugins:update'],
+      ['pluginsSetEnabled', { key: 'p1@m1', enabled: true }, 'chat:plugins:set-enabled'],
+      ['pluginsSetInputs', { key: 'p1@m1', values: { TOKEN: null } }, 'chat:plugins:set-inputs'],
+      ['pluginsUninstall', { key: 'p1@m1', deleteData: true }, 'chat:plugins:uninstall'],
+    ]
+    for (const [method, payload, channel] of cases) {
+      api[method](payload)
+      expect(invokeSpy).toHaveBeenLastCalledWith(channel, payload)
+    }
+    api.pluginsState()
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:plugins:state')
   })
 
   it('skill groups and selections preserve channels and argument order', () => {
