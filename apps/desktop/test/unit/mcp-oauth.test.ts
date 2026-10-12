@@ -22,6 +22,8 @@ import {
   forgetMcpOAuthChannel,
   localMcpOAuthHostCalls,
   mcpOAuthDescriptor,
+  patchMcpOAuthAccountChannel,
+  setMcpOAuthClientChannel,
   storeMcpOAuth,
 } from '../../src/main/chat/mcp-oauth-ipc'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
@@ -55,13 +57,19 @@ describe('MCP OAuth sign-in', () => {
     expect(descriptor).toEqual({ serverId: added.id, name: 'Protected', url: fake.url })
 
     const opened: string[] = []
-    const result = await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {
-      openExternal: async (url) => {
-        opened.push(url)
-        await browser(url)
-      },
-    })
-    expect(result).toEqual({ ok: true })
+    const result = await connectMcpOAuth(
+      localMcpOAuthHostCalls,
+      'local',
+      added.id,
+      {},
+      {
+        openExternal: async (url) => {
+          opened.push(url)
+          await browser(url)
+        },
+      }
+    )
+    expect(result).toEqual({ ok: true, accountId: expect.stringMatching(/^acc_[0-9a-f]{12}$/) })
     expect(opened).toHaveLength(1)
     expect(new URL(opened[0]).searchParams.get('code_challenge_method')).toBe('S256')
     expect(fake.state.registrations).toBe(1)
@@ -103,7 +111,7 @@ describe('MCP OAuth sign-in', () => {
     fake = await fakeOAuthServer()
     userServer()
     const [server] = listMcpServers()
-    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', server.id, { openExternal: browser })
+    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', server.id, {}, { openExternal: browser })
     fake.state.validTokens.delete('at-1')
     const connection = await connectMcpServer(server)
     const output = await connection.callTool('whoami')
@@ -116,10 +124,10 @@ describe('MCP OAuth sign-in', () => {
   it('drops the sign-in when the server is removed or signed out', async () => {
     fake = await fakeOAuthServer()
     const added = userServer()
-    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, { openExternal: browser })
+    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: browser })
     expect(forgetMcpOAuthChannel(added.id)).toEqual({ ok: true })
     expect(mcpOAuthSummary(listMcpServers()[0])).toEqual({ needsAuth: false, accounts: [], client: null })
-    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, { openExternal: browser })
+    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: browser })
     removeMcpServer(added.id)
     expect(await hostMcpOAuthProvider({ ...added }).tokens()).toBeUndefined()
   })
@@ -206,7 +214,7 @@ describe('MCP OAuth sign-in', () => {
       ok: false,
       error: 'server-changed',
     })
-    expect(storeMcpOAuth(added.id, bundle)).toEqual({ ok: true })
+    expect(storeMcpOAuth(added.id, bundle)).toMatchObject({ ok: true, accountId: expect.any(String) })
     // A sign-in made for another URL is not used once the server points elsewhere.
     expect(saveMcpOAuthAccount({ id: added.id, url: 'https://other.example/mcp' }, bundle, {})).toEqual({
       ok: false,
@@ -223,7 +231,7 @@ describe('MCP OAuth sign-in', () => {
       clientInformation: { client_id: 'c' },
       tokens: { access_token: 'a', token_type: 'Bearer' },
     })
-    expect(storeMcpOAuth(kept.id, bundle(fake.url))).toEqual({ ok: true })
+    expect(storeMcpOAuth(kept.id, bundle(fake.url))).toMatchObject({ ok: true })
     const gone = { id: 'mcp_00000000-0000-0000-0000-000000000001', url: 'https://gone.example/mcp' }
     expect(saveMcpOAuthAccount(gone, bundle(gone.url), {})).toMatchObject({ ok: true })
     expect(sweepOrphanMcpOAuth(new Set([kept.id]))).toBe(1)
@@ -249,8 +257,11 @@ describe('MCP OAuth sign-in', () => {
     })
     expect(mcpOAuthDescriptor(id)).toMatchObject({ serverId: id, url: fake.url, scopes: ['notes.read'] })
 
-    expect(await connectMcpOAuth(localMcpOAuthHostCalls, 'local', id, { openExternal: browser })).toEqual({ ok: true })
-    expect(fake.state.lastScope).toBe('notes.read')
+    expect(await connectMcpOAuth(localMcpOAuthHostCalls, 'local', id, {}, { openExternal: browser })).toMatchObject({
+      ok: true,
+    })
+    // The provider lists OpenID scopes, so the sign-in also asks for the e-mail that labels the account.
+    expect(fake.state.lastScope).toBe('notes.read openid email')
     const after = await installedDto(record)
     expect(after.setup.serversNeedingAuth).toEqual([])
     expect(after.mcpServers.find((server) => server.key === 'remote')?.oauth).toMatchObject({
@@ -397,5 +408,100 @@ describe('several MCP sign-in accounts per server', () => {
     expect(mcpOAuthClient({ id: server.id, url: 'https://other.example/mcp' })).toBeNull()
     expect(setMcpOAuthClient(server, null)).toBe(true)
     expect(mcpOAuthClient(server)).toBeNull()
+  })
+})
+
+describe('signing in with an own client and several accounts', () => {
+  it('stops before opening the browser when the server registers no apps and there is no own client', async () => {
+    fake = await fakeOAuthServer({ registration: false })
+    const added = userServer()
+    const opened: string[] = []
+    const result = await connectMcpOAuth(
+      localMcpOAuthHostCalls,
+      'local',
+      added.id,
+      {},
+      {
+        openExternal: async (url) => {
+          opened.push(url)
+        },
+      }
+    )
+    expect(result).toEqual({
+      ok: false,
+      error: 'registration-unsupported',
+      issuer: expect.stringContaining(fake.issuer),
+    })
+    expect(opened).toEqual([])
+    expect(fake.state.authorizations).toBe(0)
+  })
+
+  it('signs in with the person’s own client without registering one, and keeps its secret off the summary', async () => {
+    fake = await fakeOAuthServer({ registration: false, clients: { 'own-client': 'own-secret' } })
+    const added = userServer()
+    expect(setMcpOAuthClientChannel(added.id, { clientId: 'own-client', clientSecret: 'own-secret' })).toEqual({
+      ok: true,
+    })
+    expect(setMcpOAuthClientChannel(added.id, { clientId: '' })).toEqual({ ok: false })
+    expect(mcpOAuthDescriptor(added.id)?.client).toEqual({ clientId: 'own-client', clientSecret: 'own-secret' })
+    const result = await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: browser })
+    expect(result).toEqual({ ok: true, accountId: expect.stringMatching(/^acc_/) })
+    expect(fake.state.registrations).toBe(0)
+    expect(fake.state.authenticatedClients).toContain('own-client')
+    const [server] = listMcpServers()
+    expect(JSON.stringify(mcpOAuthSummary(server))).not.toContain('own-secret')
+    const connection = await connectMcpServer(server)
+    const output = await connection.callTool('whoami')
+    await connection.close()
+    expect(JSON.stringify(output.content)).toContain('token:at-')
+  })
+
+  it('adds one account per sign-in, labelled by e-mail, and lets each one connect with its own tokens', async () => {
+    fake = await fakeOAuthServer({ users: ['alice', 'bob'] })
+    const added = userServer()
+    const opened: string[] = []
+    const open = async (url: string) => {
+      opened.push(url)
+      await browser(url)
+    }
+    fake.state.nextUser.push('alice', 'bob')
+    const first = await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: open })
+    const second = await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: open })
+    if (!first.ok || !second.ok) throw new Error('sign-in failed')
+    const [server] = listMcpServers()
+    expect(mcpOAuthSummary(server).accounts.map((account) => [account.label, account.email])).toEqual([
+      ['alice@example.test', 'alice@example.test'],
+      ['bob@example.test', 'bob@example.test'],
+    ])
+    // The first sign-in asks for nothing special; adding another account asks for the provider's account chooser.
+    expect(new URL(opened[0]).searchParams.get('prompt')).toBeNull()
+    expect(new URL(opened[1]).searchParams.get('prompt')).toBe('select_account')
+    expect(new URL(opened[1]).searchParams.get('scope')).toBe('openid email')
+
+    // Signing an account in again names it to the provider and keeps the account.
+    expect(
+      await connectMcpOAuth(
+        localMcpOAuthHostCalls,
+        'local',
+        added.id,
+        { accountId: first.accountId },
+        { openExternal: open }
+      )
+    ).toEqual({ ok: true, accountId: first.accountId })
+    expect(new URL(opened[2]).searchParams.get('login_hint')).toBe('alice@example.test')
+    expect(new URL(opened[2]).searchParams.get('prompt')).toBeNull()
+
+    const connection = await connectMcpServer({ ...server, oauthAccountId: second.accountId })
+    const output = await connection.callTool('whoami')
+    await connection.close()
+    expect(JSON.stringify(output.content)).toContain('token:at-bob')
+
+    expect(patchMcpOAuthAccountChannel(added.id, second.accountId, { label: 'Work' })).toEqual({ ok: true })
+    expect(patchMcpOAuthAccountChannel(added.id, second.accountId, { label: 'x'.repeat(41) })).toEqual({
+      ok: false,
+      error: 'invalid-input',
+    })
+    expect(forgetMcpOAuthChannel(added.id, first.accountId)).toEqual({ ok: true })
+    expect(mcpOAuthSummary(server).accounts.map((account) => account.label)).toEqual(['Work'])
   })
 })

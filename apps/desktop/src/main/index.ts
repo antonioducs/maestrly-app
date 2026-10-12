@@ -162,7 +162,12 @@ import { registerWorkspaceIpc } from './workspace-ipc'
 import { registerProjectSetupIpc } from './project-setup/ipc'
 import { registerPluginIpc } from './plugins/ipc'
 import { allRuntimeMcpServerIds } from './chat/mcp'
-import { type McpOAuthBundle, type McpOAuthDescriptor, sweepOrphanMcpOAuth } from './chat/mcp-oauth'
+import {
+  type McpOAuthBundle,
+  type McpOAuthDescriptor,
+  type McpOAuthTarget,
+  sweepOrphanMcpOAuth,
+} from './chat/mcp-oauth'
 import { type McpOAuthStoreResult, registerMcpOAuthIpc } from './chat/mcp-oauth-ipc'
 import { onPluginMcpSurfaceChanged, reconcilePluginsOnStartup } from './plugins/service'
 
@@ -822,10 +827,13 @@ function registerIpc(): void {
       if (!registry || !registry.list().some((host) => host.id === hostId)) return null
       const connection = registry.use(hostId, sender.id, () => originRole(sender))
       return {
-        descriptor: async (id) =>
-          (await connection.invoke(sender.id, 'chat:mcp-oauth:descriptor', [id])) as McpOAuthDescriptor | null,
-        store: async (id: string, bundle: McpOAuthBundle) =>
-          (await connection.invoke(sender.id, 'chat:mcp-oauth:store', [id, bundle])) as McpOAuthStoreResult,
+        descriptor: async (id, accountId) =>
+          (await connection.invoke(sender.id, 'chat:mcp-oauth:descriptor', [
+            id,
+            accountId,
+          ])) as McpOAuthDescriptor | null,
+        store: async (id: string, bundle: McpOAuthBundle, target: McpOAuthTarget) =>
+          (await connection.invoke(sender.id, 'chat:mcp-oauth:store', [id, bundle, target])) as McpOAuthStoreResult,
       }
     },
   })

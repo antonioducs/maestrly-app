@@ -140,8 +140,14 @@ test('MCP OAuth: a server that needs sign-in is signed in from Settings and then
     await expect(page.getByText('Signed in', { exact: true })).toBeVisible({ timeout: 30_000 })
     expect(await openedIn(app)).toHaveLength(1)
     expect(fake.state.registrations).toBe(1)
-    const servers = (await api('chatConfig')).mcpServers as Array<{ name: string; auth?: string }>
-    expect(servers.find((server) => server.name === 'Protected')?.auth).toBe('connected')
+    const servers = (await api('chatConfig')).mcpServers as Array<{
+      name: string
+      oauth?: { needsAuth: boolean; accounts: Array<{ status: string }> }
+    }>
+    expect(servers.find((server) => server.name === 'Protected')?.oauth).toMatchObject({
+      needsAuth: false,
+      accounts: [{ status: 'connected' }],
+    })
 
     // The next turn reaches the server with the token.
     const before = model.requests.length
@@ -154,7 +160,7 @@ test('MCP OAuth: a server that needs sign-in is signed in from Settings and then
     await page.getByRole('tab', { name: 'Tools', exact: true }).click()
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()
     await expect
-      .poll(async () => ((await api('chatConfig')).mcpServers as Array<{ auth?: string }>)[0]?.auth)
+      .poll(async () => ((await api('chatConfig')).mcpServers as Array<{ oauth?: unknown }>)[0]?.oauth)
       .toBeUndefined()
   } finally {
     await app?.close().catch(() => undefined)
@@ -213,11 +219,16 @@ test('MCP OAuth: signing in to a remote host’s server keeps the sign-in on the
 
     // Sign in from this computer to the host's server.
     const result = await local('chatMcpOAuthConnect', HOST_ID, added.id)
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, accountId: expect.stringMatching(/^acc_/) })
     expect(await openedIn(client)).toHaveLength(1)
     expect(await openedIn(host)).toEqual([])
-    const hostServers = (await remote('chatConfig')).mcpServers as Array<{ id: string; auth?: string }>
-    expect(hostServers.find((item) => item.id === added.id)?.auth).toBe('connected')
+    const hostServers = (await remote('chatConfig')).mcpServers as Array<{
+      id: string
+      oauth?: { accounts: Array<{ status: string }> }
+    }>
+    expect(hostServers.find((item) => item.id === added.id)?.oauth?.accounts).toEqual([
+      expect.objectContaining({ status: 'connected' }),
+    ])
     expect((await local('chatConfig')).mcpServers).toEqual([])
 
     // The host's settings show it, through the host selector.

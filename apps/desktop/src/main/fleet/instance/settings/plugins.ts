@@ -67,6 +67,14 @@ export const createPluginSettingsService = (
   },
   mcpOAuthStatuses: async () => ({ servers: mcpOAuthStatuses() }),
   mcpOAuthDescriptor: async ({ id }) => ({ descriptor: mcpOAuthDescriptor(id) }),
-  setMcpOAuth: async ({ id, bundle }) => storeMcpOAuth(id, bundle),
+  setMcpOAuth: async ({ id, bundle }) => {
+    // One sign-in per environment server until the protocol carries accounts.
+    const stored = storeMcpOAuth(id, bundle)
+    if (stored.ok) return { ok: true }
+    return {
+      ok: false,
+      error: stored.error === 'server-changed' || stored.error === 'storage' ? stored.error : 'invalid-input',
+    }
+  },
   removeMcpOAuth: async ({ id }) => ({ removed: forgetMcpOAuthChannel(id).ok }),
 })

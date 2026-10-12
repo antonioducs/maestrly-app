@@ -1761,7 +1761,7 @@ export interface McpOAuthSummaryDto {
 
 /** Outcome of signing in to a remote MCP server from this computer. */
 export type McpOAuthConnectResult =
-  | { ok: true }
+  | { ok: true; accountId: string }
   | {
       ok: false
       error:
@@ -1774,7 +1774,17 @@ export type McpOAuthConnectResult =
         | 'server-changed'
         | 'storage'
         | 'failed'
+        | 'label-taken'
+      /** With `registration-unsupported`: the authorization server, where the person registers their own client. */
+      issuer?: string
     }
+
+/** A new account (optionally labelled and scoped), or with `accountId` an account signed in again. */
+export interface McpOAuthConnectOptions {
+  accountId?: string
+  label?: string
+  scope?: PluginScope
+}
 
 export interface ChatConfig {
   memory?: MemorySettings

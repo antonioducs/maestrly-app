@@ -327,7 +327,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(584)
+    expect(keys).toHaveLength(586)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1444,11 +1444,30 @@ describe('preload API — chat pagination (#559)', () => {
 
   it('MCP sign-in wrappers name the host and the server', () => {
     api.chatMcpOAuthConnect('direct/host', 'mcp_1')
-    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:connect', 'direct/host', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:connect', 'direct/host', 'mcp_1', undefined)
+    api.chatMcpOAuthConnect('local', 'mcp_1', { accountId: 'acc_000000000001', label: 'Work' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:connect', 'local', 'mcp_1', {
+      accountId: 'acc_000000000001',
+      label: 'Work',
+    })
     api.chatMcpOAuthCancel('local', 'plg_1')
     expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:cancel', 'local', 'plg_1')
     api.chatMcpOAuthForget('mcp_1')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:forget', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:forget', 'mcp_1', undefined)
+    api.chatMcpOAuthForget('mcp_1', 'acc_000000000001')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:forget', 'mcp_1', 'acc_000000000001')
+    api.chatMcpOAuthPatchAccount('mcp_1', 'acc_000000000001', { label: 'Work' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:patch-account', 'mcp_1', 'acc_000000000001', {
+      label: 'Work',
+    })
+    // The own client goes to the host; nothing returns the secret.
+    api.chatMcpOAuthSetClient('mcp_1', { clientId: 'own', clientSecret: 'synthetic' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:set-client', 'mcp_1', {
+      clientId: 'own',
+      clientSecret: 'synthetic',
+    })
+    api.chatMcpOAuthSetClient('mcp_1', null)
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:set-client', 'mcp_1', null)
   })
 
   it('plugin wrappers preserve channels and pass a single payload', () => {

@@ -1,7 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { auth, type OAuthClientProvider, type OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js'
+import {
+  auth,
+  discoverOAuthServerInfo,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from '@modelcontextprotocol/sdk/client/auth.js'
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { type McpOAuthBundle, type McpOAuthDescriptor, mcpOAuthClientMetadata } from './mcp-oauth'
@@ -18,7 +23,9 @@ export type McpOAuthConnectError =
 export class McpOAuthConnectFailure extends Error {
   constructor(
     readonly code: McpOAuthConnectError,
-    detail?: string
+    detail?: string,
+    /** The authorization server, for `registration-unsupported`: where the person registers their own client. */
+    readonly issuer?: string
   ) {
     super(detail ? `${code}: ${detail}` : code)
     this.name = 'McpOAuthConnectFailure'
@@ -91,6 +98,35 @@ export function browserSafeUrl(url: URL): boolean {
   return url.protocol === 'http:' && /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/.test(url.hostname)
 }
 
+/** OpenID scopes that let a sign-in name its account by e-mail, when the provider supports them. */
+const IDENTITY_SCOPES = ['openid', 'email']
+
+/** The scopes to ask for: the server's own (declared or advertised), plus OpenID's when the provider lists them. */
+export function signInScope(
+  declared: readonly string[] | undefined,
+  info: Pick<OAuthDiscoveryState, 'resourceMetadata' | 'authorizationServerMetadata'>
+): string | undefined {
+  const base = declared?.length ? [...declared] : [...(info.resourceMetadata?.scopes_supported ?? [])]
+  const offered = info.authorizationServerMetadata?.scopes_supported ?? []
+  const scopes = IDENTITY_SCOPES.every((scope) => offered.includes(scope))
+    ? [...base, ...IDENTITY_SCOPES.filter((scope) => !base.includes(scope))]
+    : base
+  return scopes.length ? scopes.join(' ') : undefined
+}
+
+/** The e-mail an OpenID `id_token` names, for display only: it labels an account and is never trusted for access. */
+export function idTokenEmail(tokens: OAuthTokens): string | undefined {
+  const payload = typeof tokens.id_token === 'string' ? tokens.id_token.split('.')[1] : undefined
+  if (!payload) return undefined
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>
+    const email = typeof claims.email === 'string' ? claims.email.trim() : ''
+    return email && email.length <= 320 && claims.email_verified !== false ? email : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function classify(error: unknown): McpOAuthConnectFailure {
   if (error instanceof McpOAuthConnectFailure) return error
   const message = error instanceof Error ? error.message : String(error)
@@ -101,8 +137,10 @@ function classify(error: unknown): McpOAuthConnectFailure {
 }
 
 /**
- * Signs in to one remote MCP server on this computer: discovery, dynamic client registration and PKCE through the SDK,
- * the browser for consent, and a loopback callback. Returns what the host stores; this computer keeps nothing.
+ * Signs in to one remote MCP server on this computer: discovery, then the person's own client or dynamic client
+ * registration, PKCE through the SDK, the browser for consent, and a loopback callback. Returns what the host stores;
+ * this computer keeps nothing. A server that registers no apps fails before the browser opens unless the descriptor
+ * carries the person's own client.
  */
 export async function runMcpOAuthConnect(opts: {
   descriptor: McpOAuthDescriptor
@@ -113,12 +151,30 @@ export async function runMcpOAuthConnect(opts: {
 }): Promise<McpOAuthBundle> {
   const { descriptor, signal } = opts
   if (signal.aborted) throw new McpOAuthConnectFailure('cancelled')
+  let discoveryState: OAuthDiscoveryState
+  try {
+    discoveryState = await discoverOAuthServerInfo(descriptor.url, opts.fetchFn ? { fetchFn: opts.fetchFn } : {})
+  } catch (error) {
+    throw new McpOAuthConnectFailure('discovery-failed', error instanceof Error ? error.message : String(error))
+  }
+  const metadata = discoveryState.authorizationServerMetadata
+  if (metadata && !metadata.registration_endpoint && !descriptor.client)
+    throw new McpOAuthConnectFailure(
+      'registration-unsupported',
+      'the authorization server does not register apps',
+      discoveryState.authorizationServerUrl
+    )
+  if (signal.aborted) throw new McpOAuthConnectFailure('cancelled')
   const state = randomBytes(24).toString('base64url')
   const callback = await listenForCallback(state)
-  let clientInformation: OAuthClientInformationMixed | undefined
+  let clientInformation: OAuthClientInformationMixed | undefined = descriptor.client
+    ? {
+        client_id: descriptor.client.clientId,
+        ...(descriptor.client.clientSecret ? { client_secret: descriptor.client.clientSecret } : {}),
+      }
+    : undefined
   let tokens: OAuthTokens | undefined
   let verifier: string | undefined
-  let discoveryState: OAuthDiscoveryState | undefined
   const provider: OAuthClientProvider = {
     redirectUrl: callback.redirectUri,
     clientMetadata: mcpOAuthClientMetadata(callback.redirectUri, descriptor.scopes),
@@ -133,6 +189,9 @@ export async function runMcpOAuthConnect(opts: {
     },
     redirectToAuthorization: async (url) => {
       if (!browserSafeUrl(url)) throw new McpOAuthConnectFailure('discovery-failed', 'unsafe authorization URL')
+      // Standard OpenID parameters; an authorization server ignores the ones it does not know (RFC 6749 §3.1).
+      if (descriptor.selectAccount) url.searchParams.set('prompt', 'select_account')
+      if (descriptor.loginHint) url.searchParams.set('login_hint', descriptor.loginHint)
       await opts.openExternal(url.toString())
     },
     saveCodeVerifier: (value) => {
@@ -168,7 +227,7 @@ export async function runMcpOAuthConnect(opts: {
       )
     })
     stopped.catch(() => undefined)
-    const scope = descriptor.scopes?.length ? descriptor.scopes.join(' ') : undefined
+    const scope = signInScope(descriptor.scopes, discoveryState)
     const serverUrl = descriptor.url
     const first = await Promise.race([
       auth(provider, { serverUrl, ...(scope ? { scope } : {}), ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}) }),
@@ -187,13 +246,15 @@ export async function runMcpOAuthConnect(opts: {
       if (second !== 'AUTHORIZED') throw new McpOAuthConnectFailure('failed', 'no tokens')
     }
     if (!clientInformation || !tokens) throw new McpOAuthConnectFailure('failed', 'no tokens')
+    const email = idTokenEmail(tokens)
     return {
       url: descriptor.url,
       redirectUri: callback.redirectUri,
       clientInformation,
       tokens,
-      ...(discoveryState ? { discoveryState } : {}),
-      ...(descriptor.scopes?.length ? { scopes: descriptor.scopes } : {}),
+      discoveryState,
+      ...(scope ? { scopes: scope.split(' ') } : {}),
+      ...(email ? { email } : {}),
     }
   } catch (error) {
     throw classify(error)

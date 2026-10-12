@@ -103,10 +103,13 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
             FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.response.parse(
               await fleet.call('settingsMcpOAuthDescriptor', { params: { eid, id } })
             ).descriptor as McpOAuthDescriptor | null,
-          store: async (id, bundle: McpOAuthBundle) =>
-            FLEET_SETTINGS_OPERATIONS.setMcpOAuth.response.parse(
+          // An environment keeps one sign-in per server until its protocol carries accounts: the e-mail stays here.
+          store: async (id, { email: _email, ...bundle }: McpOAuthBundle) => {
+            const stored = FLEET_SETTINGS_OPERATIONS.setMcpOAuth.response.parse(
               await fleet.call('settingsSetMcpOAuth', { params: { eid, id }, body: { id, bundle } })
-            ) as McpOAuthStoreResult,
+            )
+            return (stored.ok ? { ok: true, accountId: '' } : stored) as McpOAuthStoreResult
+          },
         },
         `environment:${eid}`,
         serverId
