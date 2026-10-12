@@ -47,7 +47,8 @@ function appendTailLimited(current: Buffer<ArrayBufferLike>, chunk: Buffer<Array
   return combined.subarray(Math.max(0, combined.length - MAX_CAPTURE_BYTES))
 }
 
-function terminateTree(child: ChildProcess): Promise<boolean> {
+/** Stops a spawned process and its group; resolves false when descendants may survive. */
+export function terminateTree(child: ChildProcess): Promise<boolean> {
   const pid = child.pid
   if (!pid) return Promise.resolve(true)
 
@@ -395,7 +396,8 @@ function classifyCloneFailure(stderr: string): ProjectSetupErrorCode {
   return 'clone-failed'
 }
 
-async function createAskpassDenyScript(): Promise<{ path: string; cleanup: () => Promise<void> }> {
+/** A credential helper script that always refuses, so Git and SSH never prompt. */
+export async function createAskpassDenyScript(): Promise<{ path: string; cleanup: () => Promise<void> }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestrly-askpass-'))
   const script = path.join(dir, process.platform === 'win32' ? 'deny.cmd' : 'deny.sh')
   await fs.writeFile(script, process.platform === 'win32' ? '@exit /b 1\r\n' : '#!/bin/sh\nexit 1\n', { mode: 0o700 })
