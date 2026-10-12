@@ -3,6 +3,7 @@ import type {
   PluginFormat,
   PluginMarketplaceDto,
   PluginMarketplacePreset,
+  PluginPolicyDto,
   PluginScope,
   PluginSourceErrorCode,
 } from '../../shared/plugins'
@@ -56,6 +57,16 @@ export interface InstalledPluginRecord {
   previous: { dirName: string; commit: string; treeOid: string; digest: string } | null
   installedAt: number
   updatedAt: number
+  /** Namespaced skill names of the installed version, cleaned from skill settings on removal. */
+  skillNames?: string[]
+  /** How to reload the installed package (a Claude marketplace entry may act as its manifest). */
+  loadOptions?: {
+    claudeEntry?: { strict: boolean; fields: Record<string, unknown> }
+    displayOverrides?: { displayName?: string; description?: string; category?: string }
+    rootName?: string
+  }
+  displayName?: string
+  policy?: PluginPolicyDto
 }
 
 export const PRESET_MARKETPLACES: readonly { preset: PluginMarketplacePreset; url: string }[] = [

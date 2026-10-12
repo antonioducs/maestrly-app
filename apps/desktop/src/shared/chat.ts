@@ -823,10 +823,29 @@ export interface ChatSlashCommand {
   argumentHint?: string
 }
 
+/**
+ * Canonical skill name: like a slash-command name (lowercase `[\w-]`), but keeps the FIRST `:` when it separates two
+ * non-empty parts, which namespaces plugin skills as `<plugin>:<skill>`. Later colons are dropped.
+ */
+export function normalizeSkillName(s: string): string {
+  const clean = (part: string) =>
+    part
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^\w-]/g, '')
+      .toLowerCase()
+  const text = (s ?? '').trim().replace(/^\/+/, '')
+  const index = text.indexOf(':')
+  if (index < 0) return clean(text)
+  const namespace = clean(text.slice(0, index))
+  const rest = clean(text.slice(index + 1))
+  return namespace && rest ? `${namespace}:${rest}` : namespace || rest
+}
+
 export function parseSlashInvocation(text: string): { name: string; args: string } | null {
   const m = /^\s*\/([A-Za-z0-9_:-]+)(?:[ \t\r\n]+([\s\S]*))?$/.exec(text ?? '')
   if (!m) return null
-  const name = m[1].replace(/[^\w-]/g, '').toLowerCase()
+  const name = normalizeSkillName(m[1])
   return name ? { name, args: (m[2] ?? '').trim() } : null
 }
 
