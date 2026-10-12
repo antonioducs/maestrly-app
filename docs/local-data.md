@@ -301,6 +301,28 @@ volume; deleting it forever removes the volume and everything in the host's
 profile. Neither touches the files under the server's **Workspaces** folder.
 Back up that folder and the environment's home volume to keep both.
 
+## Drawer browser history
+
+The drawer browser keeps one history for all conversations, like its shared
+session. `browser-history.json` in the application profile (created `0600`)
+holds each visited `http`/`https` page without its fragment: its URL, title,
+visit and typed-visit counts, last visit time, and favicon address. Favicons are
+stored there too, as images of at most 32 KiB, for up to 500 sites. Error pages
+and tabs that delegated agents open are not recorded. The history keeps at most
+5,000 pages, dropping the least used and least recent first, and is written a
+moment after each change and when the app quits.
+
+Remove a page from the address bar suggestions with **Shift+Delete** or the ×
+button; removing a search removes every visit of that query. **Clear browsing
+data** in the browser toolbar deletes the whole history together with the
+browser's cache, cookies, and storage. Exports do not include the history. Reset
+deletes the file. A file that cannot be read is kept
+as `browser-history.json.corrupt` and the history starts empty.
+
+A conversation of a [workspaces environment](remote-workspaces.md) browses on
+the server, so its visits, and the requests for its search suggestions, belong
+to the host's profile rather than this computer's.
+
 ## Temporary tool output
 
 Large built-in chat tool results are saved under `chat-tool-output` so the agent

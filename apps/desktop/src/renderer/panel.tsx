@@ -16,6 +16,7 @@ import { HostProvider, useHostApi } from '@/lib/hosts/host-context'
 import type { PlanReceived } from '../preload'
 import { hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { BROWSER_CHROME_HEIGHT } from '../shared/browser-omnibox'
 import './styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -111,7 +112,7 @@ function PanelRoot() {
     case 'plan':
       return <PlanPanelHost conv={conv} />
     case 'browser':
-      return <BrowserChrome convId={conv} />
+      return <BrowserChrome convId={conv} host="floating" height={BROWSER_CHROME_HEIGHT} />
     case 'terminal':
       return <TerminalPanelHost conv={conv} />
     case 'files':

@@ -320,7 +320,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(566)
+    expect(keys).toHaveLength(572)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -427,6 +427,36 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-status-get')
     api.rebuildPersonalMemoryIndex()
     expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-rebuild')
+  })
+
+  it('drawer address-bar wrappers keep their channels and argument order', () => {
+    api.drawerOmniboxQuery('conv', 'text', { search: true, locale: 'en' })
+    api.drawerOmniboxOverlay('conv', 'prepare')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['drawer:omnibox-query', 'conv', 'text', { search: true, locale: 'en' }],
+      ['drawer:omnibox-overlay', 'conv', 'prepare'],
+    ])
+    api.drawerNavigate('conv', 'example.com', { typed: true })
+    api.drawerRemoveHistoryEntry('https://example.com/')
+    api.drawerBrowserKeyboardFocus(true)
+    expect(sendSpy.mock.calls).toEqual([
+      ['drawer:navigate', 'conv', 'example.com', { typed: true }],
+      ['drawer:history-remove', 'https://example.com/'],
+      ['drawer:browser-keyboard-focus', true],
+    ])
+    for (const [method, channel, payload] of [
+      ['onBrowserFocusUrl', 'drawer:browser-focus-url', { convId: 'conv', placement: 'slot' }],
+      ['onBrowserShortcut', 'drawer:browser-shortcut', 'close-tab'],
+    ] as const) {
+      const callback = vi.fn()
+      const off = api[method](callback) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1] as Fn
+      expect(onSpy).toHaveBeenLastCalledWith(channel, listener)
+      listener({}, payload)
+      expect(callback).toHaveBeenCalledWith(payload)
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, listener)
+    }
   })
 
   it('runtime assets preserve IDs and explicit channels', () => {

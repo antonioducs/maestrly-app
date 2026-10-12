@@ -1,5 +1,6 @@
 import type { BrowserWindow, WebContentsView } from 'electron'
 import type { FloatTab } from '../store'
+import { BROWSER_CHROME_HEIGHT } from '../../shared/browser-omnibox'
 
 /**
  * Single owner of conversation-isolated drawer state: views, active conversation, placement, and
@@ -23,7 +24,7 @@ export interface Bounds {
 
 export const OFFSCREEN: Bounds = { x: -100000, y: 0, width: 1000, height: 800 }
 // Fixed DIP height for floating browser tabs/URL chrome; reparented page content fills the rest.
-export const BROWSER_CHROME_H = 78
+export const BROWSER_CHROME_H = BROWSER_CHROME_HEIGHT
 
 export interface BrowserTab {
   id: string
@@ -35,6 +36,8 @@ export interface BrowserTab {
   lastUsedAt?: number
   /** Runtime-only Maestro delegation owner; never persisted in ui_prefs. */
   ownerScopeId?: string
+  /** Runtime-only: the next committed navigation came from the address bar. */
+  typedNavigation?: boolean
 }
 
 export interface ConvDrawer {
@@ -101,6 +104,23 @@ export const fkey = (convId: string, tab: FloatTab): string => `${convId}:${tab}
 export let suppressed = false
 /** Native renderers hosting their own Dialog remain visible during the suppression they create. */
 export let dialogSuppressionOwnerIds: ReadonlySet<number> = new Set()
+
+/**
+ * Address-bar suggestions drawn over a conversation's browser page. `prepared`: the renderer is painting a frozen
+ * frame of the page and the floating chrome view already covers the page area (under the page). `open`: the active
+ * page is also moved offscreen so the suggestions and the frozen frame show.
+ */
+export const omniboxOverlays = new Map<string, 'prepared' | 'open'>()
+
+/** Whether the address-bar suggestions hide this conversation's active browser page. */
+export function isBrowserPageHiddenByOmnibox(convId: string): boolean {
+  return omniboxOverlays.get(convId) === 'open'
+}
+
+/** Whether the floating browser chrome view extends over the page area for the suggestions. */
+export function isBrowserChromeExpandedByOmnibox(convId: string): boolean {
+  return omniboxOverlays.has(convId)
+}
 
 // Shared-state setters: ESM let exports are live bindings readable by other drawer modules, but assignments
 // must occur in the owning module.

@@ -1,6 +1,15 @@
 import type { WebContentsView } from 'electron'
 import type { FloatTab } from '../store'
-import { OFFSCREEN, drawers, getDrawer, round, win, type Bounds, type PanelTab } from './state'
+import {
+  OFFSCREEN,
+  drawers,
+  getDrawer,
+  isBrowserPageHiddenByOmnibox,
+  round,
+  win,
+  type Bounds,
+  type PanelTab,
+} from './state'
 import { ensureBrowser } from './browser'
 import { ensureVSCodeView } from './vscode'
 import { ensurePanelView } from './panels'
@@ -40,9 +49,10 @@ export function placeViewInMain(convId: string, tab: FloatTab, viewBounds: Bound
     win!.contentView.addChildView(v)
   }
   if (tab === 'browser') {
+    const pageHidden = isBrowserPageHiddenByOmnibox(convId)
     for (const t of d.browserTabs) {
       if (!t.view) continue
-      const on = t.id === d.activeBrowserId
+      const on = t.id === d.activeBrowserId && !pageHidden
       t.view.setBounds(on ? b : OFFSCREEN)
       if (on) toTop(t.view) // raise the active page
     }

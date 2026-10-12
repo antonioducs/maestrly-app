@@ -12,6 +12,16 @@ import type {
   BrowserStreamSource,
   BrowserStreamStarted,
 } from '../shared/browser-stream'
+import type { OmniboxQueryResult } from '../shared/browser-omnibox'
+
+/** Main asks the browser chrome hosted at `placement` to focus and select its address bar. */
+export interface BrowserFocusUrl {
+  convId: string
+  placement: 'slot' | 'floating' | 'popup'
+}
+
+/** A browser tab shortcut the main window caught while the keyboard was in a browser chrome or a streamed page. */
+export type BrowserShortcut = 'new-tab' | 'close-tab'
 
 export interface FloatingBounds {
   x: number
@@ -77,6 +87,16 @@ export const drawerApi = {
   }) => ipcRenderer.send('drawer:layout', payload),
   /** Data URL of the native view docked in the slot, or null when nothing native is visible there. */
   drawerCaptureSlot: (convId: string): Promise<string | null> => ipcRenderer.invoke('drawer:capture-slot', convId),
+  /** Address-bar suggestions over this computer's native page; `prepare` resolves to a frozen frame of the page. */
+  drawerOmniboxOverlay: (convId: string, mode: 'prepare' | 'open' | 'close'): Promise<string | null> =>
+    ipcRenderer.invoke('drawer:omnibox-overlay', convId, mode),
+  /** Whether the keyboard is in a browser chrome or a streamed page of this window: main then catches the tab shortcuts. */
+  drawerBrowserKeyboardFocus: (focused: boolean) => ipcRenderer.send('drawer:browser-keyboard-focus', focused),
+  onBrowserShortcut: (cb: (action: BrowserShortcut) => void): (() => void) => {
+    const listener = (_e: unknown, action: BrowserShortcut) => cb(action)
+    ipcRenderer.on('drawer:browser-shortcut', listener)
+    return () => ipcRenderer.removeListener('drawer:browser-shortcut', listener)
+  },
   drawerLoadVSCode: (convId: string, folder: string): Promise<void> =>
     ipcRenderer.invoke('drawer:load-vscode', convId, folder),
   /** Restarts the editor server: this computer's, or the host's of a remote conversation (`convId`, its host key). */
@@ -134,7 +154,20 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
     drawerSwitchTab: (convId: string, id: string) => ipcRenderer.send('drawer:tab-switch', convId, id),
     drawerReorderTab: (convId: string, from: number, to: number) =>
       ipcRenderer.send('drawer:tab-reorder', convId, from, to),
-    drawerNavigate: (convId: string, url: string) => ipcRenderer.send('drawer:navigate', convId, url),
+    drawerNavigate: (convId: string, url: string, options?: { typed?: boolean }) =>
+      ipcRenderer.send('drawer:navigate', convId, url, options),
+    /** History and open-tab candidates for address-bar text; Google suggestions too when `search` is set. */
+    drawerOmniboxQuery: (
+      convId: string,
+      text: string,
+      options?: { search?: boolean; locale?: string }
+    ): Promise<OmniboxQueryResult> => ipcRenderer.invoke('drawer:omnibox-query', convId, text, options),
+    drawerRemoveHistoryEntry: (url: string) => ipcRenderer.send('drawer:history-remove', url),
+    onBrowserFocusUrl: (cb: (payload: BrowserFocusUrl) => void): (() => void) => {
+      const listener = (_e: unknown, payload: BrowserFocusUrl) => cb(payload)
+      ipcRenderer.on('drawer:browser-focus-url', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-focus-url', listener)
+    },
     drawerBack: (convId: string) => ipcRenderer.send('drawer:back', convId),
     drawerForward: (convId: string) => ipcRenderer.send('drawer:forward', convId),
     drawerReload: (convId: string) => ipcRenderer.send('drawer:reload', convId),

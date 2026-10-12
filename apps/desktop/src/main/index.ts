@@ -55,6 +55,7 @@ import { setMainLocale, tMain } from './i18n'
 import * as floatingManager from './floating-manager'
 import * as popupManager from './popup-manager'
 import { setHotkeyHandler, attachHotkeyCapture } from './hotkeys'
+import { attachMainWindowBrowserHotkeys, setBrowserShortcutHandlers } from './browser-hotkeys'
 import { AgentRegistry } from './agent-registry'
 
 import { initMemoryService, disposeMemory, migrateAllLegacyMemories } from './memory-service'
@@ -90,6 +91,9 @@ import { initPlanBroker, clearPlan } from './plan-broker'
 import {
   initDrawer,
   flushPendingBrowserPersists,
+  flushBrowserHistory,
+  openBrowserTabFromShortcut,
+  closeActiveBrowserTabFromShortcut,
   hardenBrowserSession,
   loadVSCode,
   navigateFocusedBrowser,
@@ -667,6 +671,8 @@ async function createWindow(): Promise<void> {
     },
   })
   attachHotkeyCapture(mainWindow.webContents)
+  setBrowserShortcutHandlers({ newTab: openBrowserTabFromShortcut, closeTab: closeActiveBrowserTabFromShortcut })
+  attachMainWindowBrowserHotkeys(mainWindow.webContents)
   attachWindowNavigation(mainWindow, (direction) => {
     const convId = popupManager.getVisibleConvId()
     return !!convId && (navigateFocusedVSCode(convId, direction) || navigateFocusedBrowser(convId, direction))
@@ -1124,9 +1130,13 @@ app.whenReady().then(async () => {
   })
 })
 
+// History writes are debounced; persist the last visits in every mode, bots included.
+app.on('will-quit', () => flushBrowserHistory())
+
 app.on('window-all-closed', () => {
   if (isHeadlessInstance()) return
   flushPendingBrowserPersists()
+  flushBrowserHistory()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()
   popupManager.disposeAll()

@@ -1579,8 +1579,12 @@ export default {
     loading: 'Carregando…',
     newTab: 'Nova aba',
     urlPlaceholder: 'Pesquisar ou digitar URL',
-    clearCache: 'Limpar dados de navegação (cache, cookies e storage)',
+    clearCache: 'Limpar dados de navegação (histórico, cache, cookies e storage)',
     toggleDevtools: 'Abrir/fechar ferramentas do desenvolvedor (DevTools)',
+    suggestions: 'Sugestões',
+    switchToTab: 'Mudar para esta aba',
+    searchWith: 'Pesquisa Google',
+    removeFromHistory: 'Remover do histórico',
   },
 
   remoteBrowser: {

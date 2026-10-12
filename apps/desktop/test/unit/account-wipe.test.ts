@@ -319,6 +319,13 @@ describe('resetLocalAppData', () => {
     expect(existsSync(path.join(h.userData, 'artifacts'))).toBe(false)
   })
 
+  it('forgets the drawer browser history', async () => {
+    const historyFile = path.join(h.userData, 'browser-history.json')
+    writeFileSync(historyFile, JSON.stringify({ version: 1, entries: [], icons: {} }))
+    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
+    expect(existsSync(historyFile)).toBe(false)
+  })
+
   it('reports database cleanup failures and rolls back owners without removing their files', async () => {
     const workspace = makeWorkspace()
     makeConversation(workspace.id)

@@ -270,6 +270,22 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
   // A new conversation or host starts from a blank surface.
   useEffect(() => clearFrame, [convId, host.id, clearFrame])
 
+  // Main catches Cmd/Ctrl+T and W while the keyboard is here; a surface removed with the focus must not keep them.
+  const keyboardReported = useRef(false)
+  const reportKeyboard = (focused: boolean) => {
+    if (keyboardReported.current === focused) return
+    keyboardReported.current = focused
+    window.api.drawerBrowserKeyboardFocus(focused)
+  }
+  useEffect(
+    () => () => {
+      if (!keyboardReported.current) return
+      keyboardReported.current = false
+      window.api.drawerBrowserKeyboardFocus(false)
+    },
+    []
+  )
+
   // The host's page follows the surface's size; the last frame is redrawn at once meanwhile.
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -576,7 +592,13 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
   })()
 
   return (
-    <div ref={containerRef} className="absolute inset-0 overflow-hidden bg-[#0A0A0B]" data-testid="remote-browser">
+    <div
+      ref={containerRef}
+      className="absolute inset-0 overflow-hidden bg-[#0A0A0B]"
+      data-testid="remote-browser"
+      // The browser chrome of the same conversation runs Cmd/Ctrl+T and W pressed over this page.
+      data-browser-surface={convId}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full touch-none select-none outline-none"
@@ -607,8 +629,12 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
           if (!(event.nativeEvent as InputEvent).isComposing) flushText()
         }}
         onCompositionEnd={flushText}
-        onFocus={() => send({ type: 'focus', focused: true })}
+        onFocus={() => {
+          reportKeyboard(true)
+          send({ type: 'focus', focused: true })
+        }}
         onBlur={() => {
+          reportKeyboard(false)
           releaseKeys()
           send({ type: 'focus', focused: false })
         }}
