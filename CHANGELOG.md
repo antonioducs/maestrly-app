@@ -5,6 +5,41 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-12
+
+### Added
+
+- Experimental: run your chats and workspaces on your bot server. **Set up
+  workspaces on this server** on the server page starts a second Maestrly there
+  for them, in an environment of its own that holds no bots. The sidebar lists
+  the chats and workspaces of this computer and of the server side by side, and
+  conversations on the server keep working while this computer sleeps or is
+  off. In the drawer, **Terminal**, **Plan**, **Review**, and **Notes** run on
+  the server; **Files** browses, previews, uploads, and downloads with a
+  resumable queue; **Browser** shows the agent's browser live and lets you use
+  it; and **Code** opens VS Code running on the server. Chats on the server use
+  the server's own accounts and memory, chosen in **Settings of** and **Memories
+  of**. The server and this app must run the same version, so use **Update
+  bots** after updating the app. Several computers paired with one server see the
+  same chats and workspaces, and workspaces of one server are not isolated from
+  each other. See [Remote workspaces and chats](docs/remote-workspaces.md).
+
+### Changed
+
+- The bot gateway database moves to schema 11 to tell environments that run bots
+  from the one that hosts workspaces. Older gateways cannot open it, so back up
+  the gateway volume before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
+- Update Electron to 44.7.0 and refresh the app's minor and patch dependencies.
+
+### Fixed
+
+- Wait for a bot's new browser tab to be ready before a tool drives it, so the
+  first navigation of a conversation is not replaced by the tab's empty start
+  page.
+- Keep Mermaid diagram labels from being clipped in chats when line spacing or
+  font size changes.
+
 ## [0.15.0] - 2026-10-08
 
 ### Added
@@ -212,14 +247,6 @@ User-visible changes by version. Downloads are on
   plans, subagents, published artifacts, generated images, and tool screenshots
   stay in view.
 
-- Experimental: run your chats and workspaces on your bot server. **Set up
-  workspaces on this server** on the server page starts a Maestrly there for
-  them; the sidebar then lists the chats and workspaces of this computer and of
-  the server side by side, and conversations on the server keep working while
-  this computer is off. Terminal, Plan, Review, and Notes work in the drawer;
-  the agent's browser runs on the server and is not shown yet. See
-  [Remote workspaces and chats](docs/remote-workspaces.md).
-
 ### Fixed
 
 - Share plain-text clipboard contents while controlling a bot or environment
@@ -234,9 +261,6 @@ User-visible changes by version. Downloads are on
   searchable dropdown such as the environment choice when creating a bot.
 - Never move a bot server back to an older version when another computer
   already updated it past this app.
-- Wait for a bot's new browser tab to be ready before a tool drives it, so the
-  first navigation of a conversation is not replaced by the tab's empty start
-  page.
 
 ## [0.11.0] - 2026-09-28
 
