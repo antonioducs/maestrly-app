@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
+import { fakeOAuthServer } from '../helpers/fake-oauth-mcp'
 import { type FixtureFiles, makeGitRepo } from '../helpers/plugin-fixtures'
 import { createSettingsGateway } from './helpers/environment-settings-gateway'
 import { desktop, instanceEnv, launchHost } from './helpers/remote-host'
@@ -143,6 +144,48 @@ test('environment plugins: bring one from this computer, then switch it off and 
       .getByRole('tablist', { name: 'Environment settings sections', exact: true })
       .getByRole('tab', { name: /^Plugins\b/ })
       .click()
+
+    // A remote server of the environment signs in in this computer's browser; the environment keeps the account.
+    const fake = await fakeOAuthServer({ users: ['carol'] })
+    try {
+      const headers = {
+        'X-Maestrly-Fleet-Protocol': '1',
+        Authorization: `Bearer ${instance.token}`,
+        'Content-Type': 'application/json',
+      }
+      const created = (await (
+        await fetch(`http://127.0.0.1:${instance.port}/v1/settings/mcp-servers`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ name: 'Environment protected', transport: 'http', enabled: true, url: fake.url }),
+        })
+      ).json()) as { id: string }
+      await client.evaluate(({ shell }) => {
+        shell.openExternal = async (target: string) => {
+          const consent = await fetch(target, { redirect: 'manual' })
+          const location = consent.headers.get('location')
+          if (location) await fetch(location)
+        }
+      })
+      const signed = await page.evaluate(
+        ({ id }) => (window as any).api.fleetEnvironmentPlugins.mcpOAuthConnect('studio', id),
+        { id: created.id }
+      )
+      expect(signed).toEqual({ ok: true, accountId: expect.stringMatching(/^acc_/) })
+      const statuses = (await (
+        await fetch(`http://127.0.0.1:${instance.port}/v1/settings/mcp-oauth`, { headers })
+      ).json()) as { servers: Array<{ id: string; accounts: Array<{ label: string; status: string }> }> }
+      expect(statuses.servers.find((server) => server.id === created.id)?.accounts).toEqual([
+        expect.objectContaining({ label: 'carol@example.test', status: 'connected', scope: { kind: 'global' } }),
+      ])
+      // The descriptor and the tokens travelled main process to environment; no answer to a window holds a token.
+      expect(JSON.stringify(statuses)).not.toContain('at-carol')
+      expect(gateway.requests.map((request) => request.key)).toEqual(
+        expect.arrayContaining(['settingsMcpOAuthDescriptor', 'settingsSetMcpOAuth'])
+      )
+    } finally {
+      await fake.close()
+    }
 
     // Managed like this computer's own plugins: switched off, then uninstalled.
     await center.getByRole('tab', { name: /^Installed/ }).click()
