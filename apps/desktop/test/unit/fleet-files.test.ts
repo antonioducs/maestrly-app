@@ -83,6 +83,11 @@ describe('private file snapshots', () => {
     ['empty.txt', Buffer.alloc(0), 'text/plain'],
     ['résumé 日本語.txt', Buffer.from('synthetic text'), 'text/plain'],
     ['data.unknown', Buffer.from('data'), 'application/octet-stream'],
+    ['clip.mp4', Buffer.from('synthetic mp4'), 'video/mp4'],
+    ['clip.M4V', Buffer.from('synthetic m4v'), 'video/mp4'],
+    ['clip.webm', Buffer.from('synthetic webm'), 'video/webm'],
+    ['clip.mov', Buffer.from('synthetic mov'), 'video/quicktime'],
+    ['loop.gif', Buffer.from('GIF89a'), 'image/gif'],
   ])('roundtrips %s through restart', async (name, content, mediaType) => {
     const input = await source(name, content)
     const ref = await store.publish(input)

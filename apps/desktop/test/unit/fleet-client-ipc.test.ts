@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   downloadFile: vi.fn(async () => {}),
   revealDownload: vi.fn(),
   getDownload: vi.fn(async () => null),
+  prepareMedia: vi.fn(async () => 'maestrly-media://fleet/bot/f-file/' + '0'.repeat(32)),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
 }))
 vi.mock('../../src/main/fleet/client/service', () => ({
@@ -31,6 +32,7 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     downloadFile: mocks.downloadFile,
     revealDownload: mocks.revealDownload,
     getDownload: mocks.getDownload,
+    prepareMedia: mocks.prepareMedia,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
   },
@@ -69,6 +71,24 @@ describe('fleet IPC validation', () => {
     expect(() => lookup({}, 'bot', '../file')).toThrow()
     await lookup({}, 'bot', 'f-file')
     expect(mocks.getDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+  })
+  it('prepares videos only from trusted windows, by bot and opaque file id, and marks missing files', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    expect(reads.has('fleet:prepareMedia')).toBe(false)
+    const prepare = mutations.get('fleet:prepareMedia')!
+    expect(() => prepare({}, '../bot', 'f-file')).toThrow()
+    expect(() => prepare({}, 'bot', '../../secret')).toThrow()
+    expect(mocks.prepareMedia).not.toHaveBeenCalled()
+    await expect(prepare({}, 'bot', 'f-file')).resolves.toMatch(/^maestrly-media:\/\/fleet\/bot\/f-file\//)
+    expect(mocks.prepareMedia).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    mocks.prepareMedia.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'gone'))
+    await expect(prepare({}, 'bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
   })
   it('validates all login mutations before dispatch', () => {
     process.env.MAESTRLY_BOT_MODE = '1'

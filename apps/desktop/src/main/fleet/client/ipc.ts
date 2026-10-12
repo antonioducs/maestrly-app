@@ -258,6 +258,14 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:revealDownload', (_event, receipt: unknown) =>
     fleet.revealDownload(z.string().uuid().parse(receipt))
   )
+  // Returns a capability URL for `<video>`, so only the app's trusted windows may ask for one.
+  reg.mhandle('fleet:prepareMedia', (_event, botId: unknown, fileId: unknown) =>
+    fleet.prepareMedia(id.parse(botId), fleetFileIdSchema.parse(fileId)).catch((error: unknown) => {
+      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND'))
+        throw new Error('FLEET_FILE_NOT_FOUND')
+      throw error
+    })
+  )
   reg.handle('fleet:getImage', (_event, botId: unknown, rawImageId: unknown) =>
     fleet.getImage(id.parse(botId), imageId.parse(rawImageId)).catch((error: unknown) => {
       // IPC keeps only the message: mark a truly missing image so the UI can tell it from a failed load.

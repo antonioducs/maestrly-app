@@ -165,6 +165,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     'chat-generated-images',
     'chat-attachment-images',
     'chat-tool-output',
+    'fleet-media-cache',
     'artifacts',
   ]) {
     await attempt(() => fsp.rm(path.join(app.getPath('userData'), directory), { recursive: true, force: true }))
