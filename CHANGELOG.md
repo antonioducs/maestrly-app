@@ -5,6 +5,20 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- Ask the agent to start other conversations in your own words, for example
+  "send another agent to review this". When the message does not ask for them
+  in so many words, the chat asks you to confirm with **Start** or **Don't
+  start** instead of refusing; "don't open conversations" is still respected.
+  See [starting conversations by asking the agent](docs/chat-context.md#by-asking-the-agent).
+
+### Fixed
+
+- Show a confirmation the agent needs while a tool runs, such as creating a
+  public GitHub repository, as soon as it is asked in an open conversation
+  instead of only after switching back to it.
+
 ## [0.16.0] - 2026-10-12
 
 ### Added

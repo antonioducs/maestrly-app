@@ -2727,14 +2727,22 @@ export function getChatPermissionBroker(): PermissionBroker {
 export function getChatQuestionBroker(): QuestionBroker {
   if (!questionBroker) {
     questionBroker = new QuestionBroker()
+    // Questions asked from inside a tool other than ask_question have no card of their own: publish the list.
+    const publishPending = (conversationId: string) =>
+      active.get(conversationId)?.send(`chat:delta:${conversationId}`, {
+        kind: 'questions-pending',
+        questions: questionBroker!.pendingQuestionsFor(conversationId),
+      } satisfies ChatStreamEvent)
     questionBroker.on('asked', ({ conversationId }: { conversationId: string }) => {
       if (active.has(conversationId)) savedDeps?.emitStatus(conversationId, 'asking')
+      publishPending(conversationId)
     })
     questionBroker.on('answered', ({ conversationId }: { conversationId: string }) => {
       // Return to 'working' only when NO other question is pending in this conversation.
       if (active.has(conversationId) && questionBroker!.pendingFor(conversationId).length === 0) {
         savedDeps?.emitStatus(conversationId, 'working')
       }
+      publishPending(conversationId)
     })
   }
   return questionBroker

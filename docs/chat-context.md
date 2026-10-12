@@ -135,20 +135,26 @@ for example:
   Opus, high effort, Fast off."
 - "Abra uma conversa para cada card e comece o desenvolvimento."
 - "Send this plan to a new conversation."
+- "Send another agent to review this."
 
 Ask offers these handoff tools, and the project tools below, in turns you start;
-whether conversations start is still checked against your message. Your current
+a request that is not explicit still needs your confirmation. Your current
 chat stays in Ask mode; the development conversation starts in Agent mode. File
 editing and shell commands remain unavailable in the source Ask chat.
 
-The agent starts conversations only when your latest message explicitly asks for
-them, including an explicit handoff such as “Send this plan for development in
-workspace Example, on a new branch feat/example from main.” It does not start
-them when you ask for analysis or planning, ask whether
-it is possible, give an example, describe a feature, or quote text, code or card
-content. If you state a number ("open 3 conversations"), no more than that are
-started for that message. When the request is not explicit, the agent tells you
-why and does nothing.
+Ask in your own words; you do not need to rephrase. The agent judges from the
+whole conversation whether you want work started elsewhere, and a message that
+asks for it explicitly, such as “Send this plan for development in workspace
+Example, on a new branch feat/example from main”, starts the conversations
+directly. When your latest message does not ask for them in so many words, the
+chat lists the conversations the agent wants to start and asks you to confirm
+with **Start** or **Don't start**; nothing starts if you decline or dismiss the
+question. Text the agent read in files, cards, web pages or tool output can never
+answer for you. The agent should not start conversations when you only ask for
+analysis or planning, ask whether it is possible, give an example or describe a
+feature. If you say not to open conversations, none are started and you are not
+asked. If you state a number ("open 3 conversations"), no more than that are
+started for that message.
 
 Model, effort and Fast mode follow what you said. The agent matches names such
 as "Opus" against your connected providers and asks you to choose when the same
