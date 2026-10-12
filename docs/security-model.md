@@ -369,6 +369,13 @@ the server's SSH host key as a SHA-256 fingerprint on first use and stops the
 tunnel if the key changes. A server you manage separately may use private HTTPS,
 such as Tailscale Serve.
 
+Pairing codes come from the gateway's `pair` command or from an already paired
+device (`POST /v1/pairings`), which the desktop app shows as a QR code for a
+phone. Paired devices may have at most five unused codes at once; the command
+line is not limited. This adds no authority: every paired device can already
+control the whole gateway, and the new device gets exactly that authority. Each
+code is one-use, expires after ten minutes, and is stored only as a hash.
+
 VPS setup accepts a password or private key for that job and generates a new
 ed25519 key for later access. This key grants root or passwordless `sudo`
 authority to the VPS: protect it as you would an administrator credential. The

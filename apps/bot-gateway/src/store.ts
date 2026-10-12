@@ -489,6 +489,13 @@ export class Store {
   addPairing(hash: string, expiresAt: string) {
     this.db.prepare('INSERT INTO pairing_codes(code_sha256,expires_at) VALUES(?,?)').run(hash, expiresAt)
   }
+  /** Codes that can still pair a device: not used, not expired, not locked by failed attempts. */
+  activePairings(now = new Date().toISOString()): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM pairing_codes WHERE used_at IS NULL AND expires_at > ? AND attempts < 5')
+      .get(now) as { n: number }
+    return Number(row.n)
+  }
   consumePairing(hash: string, device: Device, tokenHash: string): void {
     this.transaction(() => {
       const row = this.db.prepare('SELECT * FROM pairing_codes WHERE code_sha256=?').get(hash) as Row | undefined

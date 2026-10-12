@@ -87,6 +87,7 @@ describe('environment routes', () => {
       'workspaces-host',
       'host-files',
       'host-editor',
+      'device-pairing',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)

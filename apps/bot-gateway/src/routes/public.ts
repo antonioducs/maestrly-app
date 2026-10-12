@@ -5,6 +5,7 @@ import { once } from 'node:events'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_DEVICE_PAIRING_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -302,6 +303,7 @@ export async function publicRoute(
             FLEET_WORKSPACES_HOST_FEATURE,
             FLEET_HOST_FILES_FEATURE,
             FLEET_HOST_EDITOR_FEATURE,
+            FLEET_DEVICE_PAIRING_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -312,6 +314,8 @@ export async function publicRoute(
       if (!normalized) throw new GatewayError('INVALID_REQUEST', 'Invalid pairing code')
       return { body: ctx.auth.pair(normalized, body.deviceName, res.req?.socket.remoteAddress ?? 'unknown') }
     }
+    case 'pairingsCreate':
+      return { body: ctx.auth.createPairing({ limitActive: true }), status: 201 }
     case 'devicesSelfDelete': {
       const device = ctx.auth.device(res.req?.headers.authorization)
       ctx.store.revokeDevice(device.id)
