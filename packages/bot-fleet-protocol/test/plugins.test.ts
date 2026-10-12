@@ -3,6 +3,7 @@ import {
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_PLUGIN_SETTINGS_OPERATIONS,
   FLEET_SETTINGS_OPERATIONS,
+  fleetInstalledPluginSchema,
   fleetMcpOAuthBundleSchema,
   fleetPluginSettingsTimeoutMs,
   fleetSettingsRouteKey,
@@ -129,5 +130,14 @@ describe('environment plugins contract', () => {
         descriptor: { serverId: 'plg_' + '0'.repeat(20), name: 'x', url: bundle.url, headers: { Authorization: 'x' } },
       }).success
     ).toBe(false)
+  })
+
+  it('has two compatibility levels and the app-connector blocking reason', () => {
+    const level = fleetInstalledPluginSchema.shape.compatibility
+    expect(level.safeParse({ level: 'partial', reasons: [] }).success).toBe(false)
+    expect(level.safeParse({ level: 'unavailable', reasons: [{ code: 'requires-app-connector' }] }).success).toBe(true)
+    expect(level.safeParse({ level: 'portable', reasons: [{ code: 'app-connector', subject: 'x' }] }).success).toBe(
+      true
+    )
   })
 })

@@ -31,7 +31,7 @@ const codexPlugin = (args: string[], description = 'One') => ({
 describe('plugin inspection', () => {
   it('collects endpoints, executables, requirements and the license', async () => {
     const inspection = await inspectTree(await fsPackageTree(path.join(fixtures, 'codex-full')), entry('codex-full'))
-    expect(inspection.compatibility.level).toBe('partial')
+    expect(inspection.compatibility.level).toBe('portable')
     expect(inspection.endpoints).toEqual(
       expect.arrayContaining(['https://mcp.example.com/mcp', 'https://example.com/codex-full'])
     )

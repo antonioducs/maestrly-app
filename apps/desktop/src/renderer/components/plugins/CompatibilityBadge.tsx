@@ -5,7 +5,6 @@ import { reasonText } from './plugin-ui'
 
 const LEVEL_CLASS = {
   portable: 'bg-emerald-500/15 text-emerald-300',
-  partial: 'bg-amber-500/15 text-amber-300',
   unavailable: 'bg-red-500/15 text-red-300',
 } as const
 

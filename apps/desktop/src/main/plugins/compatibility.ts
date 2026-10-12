@@ -7,8 +7,8 @@ export interface ClassifyContext {
   installation?: PluginPolicyDto['installation']
 }
 
-/** Reasons that downgrade a plugin with a usable core to Partial. */
-const PARTIAL_REASONS = new Set<PluginReasonCode>([
+/** Parts a portable plugin leaves out: each is noted, none makes the plugin incompatible. */
+const NOTE_REASONS = new Set<PluginReasonCode>([
   'app-connector',
   'hooks-not-run',
   'agent-not-adapted',
@@ -36,7 +36,7 @@ function componentReasons(pkg: PluginPackage): PluginReason[] {
     reasons.push(reason)
   }
   for (const component of pkg.components) {
-    if (!component.reason || !PARTIAL_REASONS.has(component.reason)) continue
+    if (!component.reason || !NOTE_REASONS.has(component.reason)) continue
     add({ code: component.reason, component: component.kind, subject: component.name })
   }
   for (const server of pkg.mcpServers) {
@@ -49,8 +49,10 @@ function componentReasons(pkg: PluginPackage): PluginReason[] {
 }
 
 /**
- * Portable: only skills and MCP. Partial: a usable core plus anything that needs adaptation or cannot run here.
- * Unavailable: nothing usable remains, or the source, policy or manifest rules it out. OAuth never downgrades a plugin.
+ * Maestrly offers only what works the same with every model. Portable: skills and MCP servers (and parts Maestrly
+ * adapts) remain; anything else is noted as not included. Unavailable: the source, policy or manifest rules it out,
+ * nothing usable remains, or it relies on ChatGPT app connectors without an MCP server for the same service, in which
+ * case its skills would expect tools that only exist inside OpenAI products.
  */
 export function classifyPlugin(result: LoadResult, ctx: ClassifyContext): PluginCompatibility {
   if (!ctx.sourceSupported) return { level: 'unavailable', reasons: [{ code: 'source-unsupported' }] }
@@ -67,8 +69,12 @@ export function classifyPlugin(result: LoadResult, ctx: ClassifyContext): Plugin
       ],
     }
   const pkg = result.pkg
-  const reasons = componentReasons(pkg)
-  const usable = pkg.skills.length > 0 || usableMcpServers(pkg).length > 0
-  if (!usable) return { level: 'unavailable', reasons: [{ code: 'no-usable-components' }, ...reasons] }
-  return { level: reasons.length ? 'partial' : 'portable', reasons }
+  const notes = componentReasons(pkg)
+  const servers = usableMcpServers(pkg)
+  const connectors = pkg.components.some((c) => c.kind === 'app-connector' && c.status === 'unavailable')
+  if (connectors && servers.length === 0)
+    return { level: 'unavailable', reasons: [{ code: 'requires-app-connector' }, ...notes] }
+  if (pkg.skills.length + servers.length === 0)
+    return { level: 'unavailable', reasons: [{ code: 'no-usable-components' }, ...notes] }
+  return { level: 'portable', reasons: notes }
 }

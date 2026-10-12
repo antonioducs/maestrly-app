@@ -129,12 +129,12 @@ export function mcpComponents(state: LoadState, mcp: NormalizedMcp): void {
 export async function appComponents(state: LoadState, path: string): Promise<void> {
   if (!state.tree.entries.has(path)) return
   const json = await readJson(state, path)
-  const apps = isRecord(json) && isRecord(json.apps) ? Object.keys(json.apps) : []
-  if (!apps.length) {
-    component(state, 'app-connector', path, 'unavailable', 'app-connector')
+  if (!isRecord(json) || !isRecord(json.apps)) {
+    component(state, 'app-connector', path, 'invalid', 'entry-invalid')
     return
   }
-  for (const app of apps) component(state, 'app-connector', app, 'unavailable', 'app-connector')
+  // An empty `apps` map declares no connector: the plugin is its skills and servers alone.
+  for (const app of Object.keys(json.apps)) component(state, 'app-connector', app, 'unavailable', 'app-connector')
 }
 
 export function hooksComponent(state: LoadState, name: string): void {

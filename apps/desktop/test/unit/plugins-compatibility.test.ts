@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { PluginComponentDto } from '../../src/shared/plugins'
+import { isBlockingReason, type PluginComponentDto } from '../../src/shared/plugins'
 import { classifyPlugin, usableMcpServers } from '../../src/main/plugins/compatibility'
 import type { PluginMcpAuth, PluginMcpServerSpec } from '../../src/main/plugins/mcp-normalize'
 import type { LoadResult, PluginPackage, PluginSkillSpec } from '../../src/main/plugins/types'
@@ -53,21 +53,23 @@ const comp = (
 ): PluginComponentDto => ({ kind, name: kind, status, ...(reason ? { reason } : {}) })
 
 describe('plugin compatibility', () => {
+  const connector = comp('app-connector', 'unavailable', 'app-connector')
   it.each([
     ['skills only', pkg({ skills: [skill('a')] }), 'portable', []],
     ['oauth http only', pkg({ mcpServers: [http('linear', { kind: 'oauth' })] }), 'portable', []],
     [
-      'apps + skills',
-      pkg({ skills: [skill('a')], components: [comp('app-connector', 'unavailable', 'app-connector')] }),
-      'partial',
+      'apps + MCP for the same service',
+      pkg({ skills: [skill('a')], mcpServers: [http('svc', { kind: 'oauth' })], components: [connector] }),
+      'portable',
       ['app-connector'],
     ],
     [
-      'apps only',
-      pkg({ components: [comp('app-connector', 'unavailable', 'app-connector')] }),
+      'apps + skills, no MCP',
+      pkg({ skills: [skill('a')], components: [connector] }),
       'unavailable',
-      ['no-usable-components', 'app-connector'],
+      ['requires-app-connector', 'app-connector'],
     ],
+    ['apps only', pkg({ components: [connector] }), 'unavailable', ['requires-app-connector', 'app-connector']],
     [
       'placeholder oauth only',
       pkg({ mcpServers: [http('gm', { kind: 'unusable', reason: 'placeholder-client' })] }),
@@ -77,38 +79,69 @@ describe('plugin compatibility', () => {
     [
       'publisher client',
       pkg({ mcpServers: [http('gh', { kind: 'manual', reason: 'publisher-client' })] }),
-      'partial',
+      'portable',
       ['auth-publisher-client'],
     ],
     [
       'hooks',
       pkg({ skills: [skill('a')], components: [comp('hooks', 'not-run', 'hooks-not-run')] }),
-      'partial',
+      'portable',
       ['hooks-not-run'],
     ],
     ['commands adapted', pkg({ skills: [command('review')] }), 'portable', []],
     [
       'agents',
       pkg({ skills: [skill('a')], components: [comp('agent', 'not-run', 'agent-not-adapted')] }),
-      'partial',
+      'portable',
       ['agent-not-adapted'],
     ],
     [
       'invalid MCP entry',
       pkg({ skills: [skill('a')], components: [comp('mcp-server', 'invalid', 'entry-invalid')] }),
-      'partial',
+      'portable',
       ['entry-invalid'],
     ],
     [
       'symlinks',
       pkg({ skills: [skill('a')], components: [comp('symlink', 'not-run', 'symlink-skipped')] }),
-      'partial',
+      'portable',
       ['symlink-skipped'],
+    ],
+    [
+      'language server',
+      pkg({ skills: [skill('a')], components: [comp('lsp', 'not-run', 'component-unsupported')] }),
+      'portable',
+      ['component-unsupported'],
     ],
   ])('%s', (_, result, level, codes) => {
     const c = classifyPlugin(result, { sourceSupported: true })
     expect(c.level).toBe(level)
     expect(c.reasons.map((r) => r.code)).toEqual(codes)
+  })
+
+  it('offers a connector plugin that also ships an MCP server, noting the connector', () => {
+    const named = { ...connector, name: 'svc_app' }
+    expect(
+      classifyPlugin(pkg({ skills: [skill('a')], mcpServers: [http('svc', { kind: 'oauth' })], components: [named] }), {
+        sourceSupported: true,
+      })
+    ).toEqual({
+      level: 'portable',
+      reasons: [{ code: 'app-connector', component: 'app-connector', subject: 'svc_app' }],
+    })
+  })
+
+  it('blocks a plugin whose only integration is an app connector, even with skills', () => {
+    const result = classifyPlugin(pkg({ skills: [skill('a')], components: [connector] }), { sourceSupported: true })
+    expect(result.level).toBe('unavailable')
+    expect(result.reasons[0]).toEqual({ code: 'requires-app-connector' })
+  })
+
+  it('knows which reasons block', () => {
+    expect(isBlockingReason('requires-app-connector')).toBe(true)
+    expect(isBlockingReason('no-usable-components')).toBe(true)
+    expect(isBlockingReason('app-connector')).toBe(false)
+    expect(isBlockingReason('hooks-not-run')).toBe(false)
   })
 
   it('marks unsupported sources and NOT_AVAILABLE policy unavailable', () => {
@@ -136,6 +169,7 @@ describe('plugin compatibility', () => {
     const c = classifyPlugin(
       pkg({
         skills: [skill('a')],
+        mcpServers: [http('svc', { kind: 'oauth' })],
         components: [
           comp('app-connector', 'unavailable', 'app-connector'),
           comp('app-connector', 'unavailable', 'app-connector'),

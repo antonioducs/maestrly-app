@@ -52,6 +52,7 @@ const reasonCode = z.enum([
   'source-unsupported',
   'install-not-available',
   'no-usable-components',
+  'requires-app-connector',
   'app-connector',
   'hooks-not-run',
   'agent-not-adapted',
@@ -99,9 +100,7 @@ const reason = z
     detail: text(2000).optional(),
   })
   .strict()
-const compatibility = z
-  .object({ level: z.enum(['portable', 'partial', 'unavailable']), reasons: list(reason, 500) })
-  .strict()
+const compatibility = z.object({ level: z.enum(['portable', 'unavailable']), reasons: list(reason, 500) }).strict()
 const component = z
   .object({
     kind: componentKind,

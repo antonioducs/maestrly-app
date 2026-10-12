@@ -62,11 +62,10 @@ export default {
     allCategories: 'All categories',
   },
   compat: {
-    level: { portable: 'Portable', partial: 'Partial', unavailable: 'Unavailable' },
+    level: { portable: 'Works with every model', unavailable: 'Not compatible' },
     levelHint: {
-      portable: 'Only skills and MCP: works with every model.',
-      partial: 'Skills and MCP work everywhere; some parts need adaptation or cannot run here.',
-      unavailable: 'Nothing in this plugin can run in Maestrly.',
+      portable: 'Its skills and MCP tools work the same with every model.',
+      unavailable: 'Nothing in this plugin works the same with every model.',
     },
     reason: {
       'manifest-invalid': 'The plugin manifest is invalid.',
@@ -74,7 +73,8 @@ export default {
       'source-unsupported': 'This kind of plugin source is not supported.',
       'install-not-available': 'The marketplace marks this plugin as not available.',
       'no-usable-components': 'No skill or MCP server can run in Maestrly.',
-      'app-connector': 'App connector {{subject}} runs only inside OpenAI products.',
+      'requires-app-connector': 'It depends on ChatGPT app connectors, which only work inside OpenAI products.',
+      'app-connector': 'App connector {{subject}} is not included: it only works inside OpenAI products.',
       'hooks-not-run': 'Hooks {{subject}} never run in Maestrly.',
       'agent-not-adapted': 'Agent {{subject}} is not available as a subagent.',
       'component-unsupported': '{{subject}} is not supported and does not run.',

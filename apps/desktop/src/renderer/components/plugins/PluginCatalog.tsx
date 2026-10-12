@@ -120,7 +120,6 @@ export function PluginCatalog({
         >
           <SelectOption value="all">{t('filters.allLevels')}</SelectOption>
           <SelectOption value="portable">{t('compat.level.portable')}</SelectOption>
-          <SelectOption value="partial">{t('compat.level.partial')}</SelectOption>
           <SelectOption value="unavailable">{t('compat.level.unavailable')}</SelectOption>
         </OptionSelect>
         {categories.length > 0 && (

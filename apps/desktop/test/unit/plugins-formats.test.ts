@@ -112,6 +112,25 @@ describe('Codex format', () => {
     expect(kinds(pkg)).toEqual(['app-connector:unavailable'])
   })
 
+  it('reads app connectors by name, ignores an empty map, and flags an unreadable file', async () => {
+    const base = {
+      '.codex-plugin/plugin.json': JSON.stringify({ name: 'apps' }),
+      'skills/a/SKILL.md': '---\ndescription: A\n---\nA',
+    }
+    const loadTree = async (app: string) => {
+      const result = await loadPluginPackage(await fsPackageTree(await writeTree({ ...base, '.app.json': app })))
+      if (!result.ok) throw new Error(result.detail)
+      return result.pkg.components.filter((c) => c.kind === 'app-connector')
+    }
+    expect(await loadTree(JSON.stringify({ apps: {} }))).toEqual([])
+    expect(await loadTree(JSON.stringify({ apps: { x: { id: 'asdk_app_x' } } }))).toEqual([
+      expect.objectContaining({ name: 'x', status: 'unavailable', reason: 'app-connector' }),
+    ])
+    expect(await loadTree('{ not json')).toEqual([
+      expect.objectContaining({ name: '.app.json', status: 'invalid', reason: 'entry-invalid' }),
+    ])
+  })
+
   it('lists symlinks and submodule-like links without following them', async () => {
     const root = await writeTree({
       '.codex-plugin/plugin.json': JSON.stringify({ name: 'links' }),

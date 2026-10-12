@@ -5,7 +5,12 @@
  */
 
 export type PluginFormat = 'agent-plugins' | 'codex' | 'claude'
-export type PluginCompatibilityLevel = 'portable' | 'partial' | 'unavailable'
+/**
+ * Portable: works the same with every model (its skills, MCP servers and adapted parts). Unavailable: nothing in it
+ * works the same with every model, so it is not offered. There is no in-between: parts that only work in one product
+ * are listed as not included.
+ */
+export type PluginCompatibilityLevel = 'portable' | 'unavailable'
 export type PluginComponentKind =
   | 'skill'
   | 'command'
@@ -32,6 +37,7 @@ export type PluginReasonCode =
   | 'source-unsupported'
   | 'install-not-available'
   | 'no-usable-components'
+  | 'requires-app-connector'
   | 'app-connector'
   | 'hooks-not-run'
   | 'agent-not-adapted'
@@ -49,6 +55,7 @@ export const PLUGIN_REASON_CODES: readonly PluginReasonCode[] = [
   'source-unsupported',
   'install-not-available',
   'no-usable-components',
+  'requires-app-connector',
   'app-connector',
   'hooks-not-run',
   'agent-not-adapted',
@@ -60,6 +67,17 @@ export const PLUGIN_REASON_CODES: readonly PluginReasonCode[] = [
   'symlink-skipped',
   'submodule-skipped',
 ]
+
+/** Reasons that make a plugin not compatible; every other reason only notes a part that is not included. */
+export const BLOCKING_REASON_CODES: readonly PluginReasonCode[] = [
+  'manifest-invalid',
+  'schema-unsupported',
+  'source-unsupported',
+  'install-not-available',
+  'no-usable-components',
+  'requires-app-connector',
+]
+export const isBlockingReason = (code: PluginReasonCode): boolean => BLOCKING_REASON_CODES.includes(code)
 
 export interface PluginReason {
   code: PluginReasonCode
