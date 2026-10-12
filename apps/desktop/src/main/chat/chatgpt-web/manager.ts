@@ -29,7 +29,7 @@ import {
 } from '../../store'
 import { broadcast } from '../../window-ipc'
 import { clearApiKey, getApiKey, hasApiKey, setApiKey } from '../credentials'
-import { listRuntimeMcpServers } from '../mcp'
+import { conversationMcpAccounts, listRuntimeMcpServers } from '../mcp'
 import { CHATGPT_WEB_PROVIDER_ID, isChatGptWebEnabled } from '../catalog'
 import {
   buildCompanionPrompt,
@@ -755,9 +755,16 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       return match ? match.linkName || SINGLE_REPOSITORY_SELECTOR : undefined
     }
     const sessionKey = sessionKeyForConversation(input.conversationId, capabilityInfo.fingerprint)
+    const mcpAccounts = Object.fromEntries(
+      mcpServers.map((server) => [
+        server.id,
+        conversationMcpAccounts(server, input.conversationId).map(({ id, label }) => ({ id, label })),
+      ])
+    )
     const mcpGateway = createChatGptWebMcpGateway({
       servers: mcpServers,
       scopes: capabilityInfo.capabilities.mcp,
+      accounts: mcpAccounts,
     })
     const planReviewController = planReviewControllerFor(input.conversationId)
     const browserSession = createDrawerBrowserSession({ conversationId: input.conversationId })
@@ -1122,7 +1129,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
             conversation: capabilityInfo.capabilities.conversation,
             memory: capabilityInfo.capabilities.memory,
             personalMemory: capabilitiesForConversation(input.conversationId).capabilities.personalMemory ?? 'off',
-            mcpServers: remoteMcpServerCapabilities(capabilityInfo.capabilities, mcpServers),
+            mcpServers: remoteMcpServerCapabilities(capabilityInfo.capabilities, mcpServers, mcpAccounts),
           }),
           searchMcpTools: (args, signal) =>
             mcpGateway.searchTools(
@@ -1142,6 +1149,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
                   args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
                     ? (args.arguments as Record<string, unknown>)
                     : {},
+                ...(typeof args.account === 'string' ? { account: args.account } : {}),
               },
               signal
             ),
@@ -1154,6 +1162,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
                   args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
                     ? (args.arguments as Record<string, unknown>)
                     : {},
+                ...(typeof args.account === 'string' ? { account: args.account } : {}),
               },
               signal
             ),

@@ -10,6 +10,8 @@ export interface ChatGptWebRemoteMcpServerCapability {
   serverId: string
   name: string
   scope: Exclude<ChatGptWebCapabilityScope, 'off'>
+  /** Labels of the signed-in accounts, when there are several: a call names one in `account`. */
+  accounts?: string[]
 }
 
 function validMcpScope(value: unknown): value is ChatGptWebCapabilityScope {
@@ -117,10 +119,13 @@ export function chatGptWebCapabilitiesInfo(
 /** Only capabilities authorized for the remote companion are disclosed; local UI data stays richer. */
 export function remoteMcpServerCapabilities(
   capabilities: ChatGptWebCapabilities,
-  servers: readonly McpServer[]
+  servers: readonly McpServer[],
+  accounts: Readonly<Record<string, readonly { label: string }[]>> = {}
 ): ChatGptWebRemoteMcpServerCapability[] {
   return servers.flatMap((server) => {
     const scope = capabilities.mcp[server.id]
-    return scope === 'read' || scope === 'write' ? [{ serverId: server.id, name: server.name, scope }] : []
+    if (scope !== 'read' && scope !== 'write') return []
+    const labels = (accounts[server.id] ?? []).map((account) => account.label)
+    return [{ serverId: server.id, name: server.name, scope, ...(labels.length > 1 ? { accounts: labels } : {}) }]
   })
 }

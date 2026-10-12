@@ -25,6 +25,8 @@ export interface ChatConvTools {
   imageGen: boolean
   /** Ids of the plugin MCP servers that serve this conversation (its plugins' scope). Absent where unknown (bots). */
   pluginMcpServers?: string[]
+  /** Servers with several signed-in accounts that serve this conversation, each account on or off in it. */
+  mcpAccounts?: { serverId: string; serverName: string; accounts: { id: string; label: string; enabled: boolean }[] }[]
 }
 
 /** Partial update of a conversation's tool overrides; `appGroups` merges per group. */
@@ -32,6 +34,8 @@ export interface ChatConvToolsPatch {
   app?: boolean
   appGroups?: Partial<AppToolGroupState>
   mcpDisabled?: string[]
+  /** Accounts turned off in this conversation, as `<serverId>#<accountId>`. */
+  mcpAccountsDisabled?: string[]
   imageGen?: boolean
 }
 

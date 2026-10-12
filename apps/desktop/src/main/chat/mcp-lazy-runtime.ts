@@ -1,6 +1,13 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { mcpServerFingerprint } from './mcp-catalog'
-import type { ListedMcpTool, McpCallToolResult, McpConnection, McpRequestOptions, McpServer } from './mcp-types'
+import {
+  type ListedMcpTool,
+  type McpCallToolResult,
+  type McpConnection,
+  type McpRequestOptions,
+  type McpServer,
+  mcpConnectionKey,
+} from './mcp-types'
 import { isMcpNeedsAuthError } from './mcp-auth-errors'
 
 export const MCP_STARTUP_TIMEOUT_MS = 5_000
@@ -139,7 +146,7 @@ export class LazyMcpRuntime {
       if (isTransportFailure(error)) {
         // A missing sign-in is not an outage: it clears as soon as someone signs in, without a backoff.
         if (!entry.retired && !isMcpNeedsAuthError(error)) this.recordFailure(server, entry.fingerprint)
-        await this.evictEntry(server.id, entry, 'transport-error')
+        await this.evictEntry(mcpConnectionKey(server), entry, 'transport-error')
       }
       throw error
     } finally {
@@ -147,31 +154,33 @@ export class LazyMcpRuntime {
     }
   }
 
+  /** Drops every connection of a server: the server's own and one per signed-in account. */
   invalidate(serverId: string): void {
-    const entry = this.entries.get(serverId)
-    if (entry) void this.evictEntry(serverId, entry, 'invalidated')
-    this.circuits.delete(serverId)
+    const ofServer = (key: string) => key === serverId || key.startsWith(`${serverId}#`)
+    for (const [key, entry] of [...this.entries]) if (ofServer(key)) void this.evictEntry(key, entry, 'invalidated')
+    for (const key of [...this.circuits.keys()]) if (ofServer(key)) this.circuits.delete(key)
   }
 
   async dispose(): Promise<void> {
-    const entries = [...this.entries.entries(), ...[...this.retired].map((entry) => [entry.server.id, entry] as const)]
+    const entries = [...this.entries.values(), ...this.retired]
     this.entries.clear()
     this.circuits.clear()
-    await Promise.all(entries.map(([serverId, entry]) => this.closeEntry(serverId, entry, 'dispose')))
+    await Promise.all(entries.map((entry) => this.closeEntry(entry, 'dispose')))
   }
 
   private async ensure(server: McpServer, signal?: AbortSignal): Promise<PoolEntry> {
     signal?.throwIfAborted()
     const fingerprint = mcpServerFingerprint(server)
+    const key = mcpConnectionKey(server)
     this.assertCircuit(server, fingerprint)
 
-    const existing = this.entries.get(server.id)
+    const existing = this.entries.get(key)
     if (existing && existing.fingerprint !== fingerprint) {
-      this.circuits.delete(server.id)
-      await this.evictEntry(server.id, existing, 'configuration-changed')
+      this.circuits.delete(key)
+      await this.evictEntry(key, existing, 'configuration-changed')
     }
 
-    let entry = this.entries.get(server.id)
+    let entry = this.entries.get(key)
     if (!entry) {
       entry = {
         fingerprint,
@@ -183,7 +192,7 @@ export class LazyMcpRuntime {
         retired: null,
         idleTimer: null,
       }
-      this.entries.set(server.id, entry)
+      this.entries.set(key, entry)
     } else {
       this.diagnostic({ kind: 'mcp-lazy-pool-reuse', serverId: server.id, transport: server.transport })
       this.clearIdle(entry)
@@ -233,7 +242,7 @@ export class LazyMcpRuntime {
         durationMs: Math.max(0, this.now() - listStartedAt),
         toolCount: tools.length,
       })
-      if (!entry.retired) this.resetCircuit(server.id)
+      if (!entry.retired) this.resetCircuit(server)
     } catch (error) {
       this.diagnostic({
         kind: connection ? 'mcp-lazy-list' : 'mcp-lazy-connect',
@@ -243,7 +252,7 @@ export class LazyMcpRuntime {
         durationMs: Math.max(0, this.now() - connectStartedAt),
       })
       if (!entry.retired && !isMcpNeedsAuthError(error)) this.recordFailure(server, entry.fingerprint)
-      if (this.entries.get(server.id) === entry) this.entries.delete(server.id)
+      if (this.entries.get(mcpConnectionKey(server)) === entry) this.entries.delete(mcpConnectionKey(server))
       entry.connection = null
       if (connection) await connection.close().catch(() => {})
       throw error
@@ -253,10 +262,10 @@ export class LazyMcpRuntime {
   }
 
   private assertCircuit(server: McpServer, fingerprint: string): void {
-    const circuit = this.circuits.get(server.id)
+    const circuit = this.circuits.get(mcpConnectionKey(server))
     if (!circuit) return
     if (circuit.fingerprint !== fingerprint) {
-      this.circuits.delete(server.id)
+      this.circuits.delete(mcpConnectionKey(server))
       return
     }
     if (this.now() >= circuit.openUntil) return
@@ -270,14 +279,14 @@ export class LazyMcpRuntime {
   }
 
   private recordFailure(server: McpServer, fingerprint: string): void {
-    const previous = this.circuits.get(server.id)
+    const previous = this.circuits.get(mcpConnectionKey(server))
     const failures = previous?.fingerprint === fingerprint ? previous.failures + 1 : 1
     const backoffMs = Math.min(
       MCP_CIRCUIT_MAX_BACKOFF_MS,
       MCP_CIRCUIT_INITIAL_BACKOFF_MS * 2 ** Math.max(0, failures - 1)
     )
     const retryAt = this.now() + backoffMs
-    this.circuits.set(server.id, { fingerprint, failures, openUntil: retryAt })
+    this.circuits.set(mcpConnectionKey(server), { fingerprint, failures, openUntil: retryAt })
     this.diagnostic({
       kind: 'mcp-lazy-circuit-open',
       serverId: server.id,
@@ -287,9 +296,9 @@ export class LazyMcpRuntime {
     })
   }
 
-  private resetCircuit(serverId: string): void {
-    if (!this.circuits.delete(serverId)) return
-    this.diagnostic({ kind: 'mcp-lazy-circuit-reset', serverId })
+  private resetCircuit(server: McpServer): void {
+    if (!this.circuits.delete(mcpConnectionKey(server))) return
+    this.diagnostic({ kind: 'mcp-lazy-circuit-reset', serverId: server.id })
   }
 
   private clearIdle(entry: PoolEntry): void {
@@ -302,43 +311,45 @@ export class LazyMcpRuntime {
     this.clearIdle(entry)
     entry.idleTimer = this.schedule(() => {
       entry.idleTimer = null
-      if (entry.activeCalls > 0 || this.entries.get(entry.server.id) !== entry) return
-      void this.evictEntry(entry.server.id, entry, 'idle')
+      const key = mcpConnectionKey(entry.server)
+      if (entry.activeCalls > 0 || this.entries.get(key) !== entry) return
+      void this.evictEntry(key, entry, 'idle')
     }, MCP_IDLE_TTL_MS)
   }
 
   private async evictEntry(
-    serverId: string,
+    key: string,
     entry: PoolEntry,
     reason: NonNullable<LazyMcpDiagnostic['reason']>
   ): Promise<void> {
-    if (this.entries.get(serverId) === entry) this.entries.delete(serverId)
+    if (this.entries.get(key) === entry) this.entries.delete(key)
     this.clearIdle(entry)
     entry.retired ??= reason
     this.retired.add(entry)
-    if (entry.activeCalls === 0) await this.closeEntry(serverId, entry, reason)
+    if (entry.activeCalls === 0) await this.closeEntry(entry, reason)
   }
 
   private async release(entry: PoolEntry): Promise<void> {
     entry.activeCalls = Math.max(0, entry.activeCalls - 1)
     if (entry.retired && entry.activeCalls === 0) {
-      await this.closeEntry(entry.server.id, entry, entry.retired)
-    } else if (this.entries.get(entry.server.id) === entry) {
+      await this.closeEntry(entry, entry.retired)
+    } else if (this.entries.get(mcpConnectionKey(entry.server)) === entry) {
       this.scheduleIdle(entry)
     }
   }
 
-  private async closeEntry(
-    serverId: string,
-    entry: PoolEntry,
-    reason: NonNullable<LazyMcpDiagnostic['reason']>
-  ): Promise<void> {
+  private async closeEntry(entry: PoolEntry, reason: NonNullable<LazyMcpDiagnostic['reason']>): Promise<void> {
     this.retired.delete(entry)
     this.clearIdle(entry)
     const connection = entry.connection
     entry.connection = null
     entry.tools = null
     if (connection) await connection.close().catch(() => {})
-    this.diagnostic({ kind: 'mcp-lazy-pool-evict', serverId, transport: entry.server.transport, reason })
+    this.diagnostic({
+      kind: 'mcp-lazy-pool-evict',
+      serverId: entry.server.id,
+      transport: entry.server.transport,
+      reason,
+    })
   }
 }

@@ -2235,7 +2235,10 @@ export function createChatGptWebBridge(options: BridgeOptions) {
         if (!server || typeof server !== 'object' || Array.isArray(server)) return []
         const item = server as Record<string, unknown>
         if (item.scope !== 'read' && item.scope !== 'write') return []
-        return [{ serverId: item.serverId, name: item.name, scope: item.scope }]
+        const accounts = Array.isArray(item.accounts)
+          ? item.accounts.filter((label): label is string => typeof label === 'string').slice(0, 50)
+          : []
+        return [{ serverId: item.serverId, name: item.name, scope: item.scope, ...(accounts.length ? { accounts } : {}) }]
       }),
     }
   }
@@ -2628,6 +2631,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
             description: 'Exact toolName returned by search_mcp_tools',
           },
           arguments: { type: 'object', additionalProperties: true },
+          account: {
+            type: 'string',
+            minLength: 1,
+            description:
+              'Signed-in account to use when list_external_capabilities.mcpServers[].accounts lists several; ask the person when it is unclear.',
+          },
         },
         required: ['server_id', 'tool_name', 'arguments'],
         additionalProperties: false,
@@ -2653,6 +2662,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
             description: 'Exact toolName returned by search_mcp_tools',
           },
           arguments: { type: 'object', additionalProperties: true },
+          account: {
+            type: 'string',
+            minLength: 1,
+            description:
+              'Signed-in account to use when list_external_capabilities.mcpServers[].accounts lists several; ask the person when it is unclear.',
+          },
         },
         required: ['server_id', 'tool_name', 'arguments'],
         additionalProperties: false,

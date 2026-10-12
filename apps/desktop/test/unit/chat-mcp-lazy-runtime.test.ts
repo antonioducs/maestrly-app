@@ -212,6 +212,33 @@ describe('LazyMcpRuntime', () => {
     expect(diagnostic).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'mcp-lazy-circuit-open' }))
   })
 
+  it('keeps one connection per signed-in account, invalidates them together, and isolates their circuits', async () => {
+    const opened: Array<{ account: string | undefined; connection: ReturnType<typeof connection> }> = []
+    const connect = vi.fn(async (target: McpServer) => {
+      if (target.oauthAccountId === 'acc_bbbbbbbbbbbb' && opened.some((item) => item.account === 'acc_bbbbbbbbbbbb'))
+        throw new Error('offline')
+      const connected = connection()
+      opened.push({ account: target.oauthAccountId, connection: connected })
+      return connected
+    })
+    const runtime = createRuntime(connect)
+    const a = server({ oauthAccountId: 'acc_aaaaaaaaaaaa' })
+    const b = server({ oauthAccountId: 'acc_bbbbbbbbbbbb' })
+    await runtime.listTools(a)
+    await runtime.listTools(b)
+    await runtime.listTools(a)
+    expect(opened.map((item) => item.account)).toEqual(['acc_aaaaaaaaaaaa', 'acc_bbbbbbbbbbbb'])
+
+    runtime.invalidate(server().id)
+    await Promise.resolve()
+    expect(opened.every((item) => item.connection.close.mock.calls.length === 1)).toBe(true)
+
+    // Account B's outage opens only its own circuit; account A keeps working.
+    await expect(runtime.listTools(b)).rejects.toThrow('offline')
+    await expect(runtime.listTools(b)).rejects.toThrow(/temporarily unavailable/i)
+    await expect(runtime.listTools(a)).resolves.toHaveLength(1)
+  })
+
   it('dispose closes every pooled connection and cancels idle timers', async () => {
     const first = connection()
     const second = connection()

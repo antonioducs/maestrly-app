@@ -79,6 +79,8 @@ export interface ConvUiPrefs {
       app?: boolean
       appGroups?: Partial<Record<AppToolGroup, boolean>>
       mcpDisabled?: string[]
+      /** Signed-in MCP accounts turned off in this conversation, as `<serverId>#<accountId>`. */
+      mcpAccountsDisabled?: string[]
       imageGen?: boolean
     }
     /**

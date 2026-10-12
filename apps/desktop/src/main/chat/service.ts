@@ -99,7 +99,7 @@ import {
   type McpServer,
   type UserMcpServer,
 } from './mcp'
-import { mcpOAuthField } from './mcp-oauth'
+import { activeMcpOAuthAccounts, mcpOAuthField } from './mcp-oauth'
 import {
   invalidateProvider,
   resolveLanguageModel,
@@ -2063,11 +2063,20 @@ export function fleetChatGetConvTools(conversationId: string): ChatConvTools {
 export function fleetChatSetConvTools(conversationId: string, patch: ChatConvToolsPatch): { ok: boolean } {
   if (typeof conversationId === 'string') {
     const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
-    const { appGroups, ...rest } = patch ?? {}
+    const { appGroups, mcpAccountsDisabled, ...rest } = patch ?? {}
+    const accountsOff = Array.isArray(mcpAccountsDisabled)
+      ? {
+          mcpAccountsDisabled: [
+            ...new Set(mcpAccountsDisabled.filter((key) => typeof key === 'string' && MCP_ACCOUNT_KEY.test(key))),
+          ].slice(0, 500),
+        }
+      : {}
     // Group overrides merge per group, so pinning one group keeps the others inheriting the global setting.
     const groups =
       appGroups === undefined ? cur.appGroups : { ...cur.appGroups, ...sanitizeAppToolGroupPatch(appGroups) }
-    patchConvChat(conversationId, { tools: { ...cur, ...rest, ...(groups ? { appGroups: groups } : {}) } })
+    patchConvChat(conversationId, {
+      tools: { ...cur, ...rest, ...accountsOff, ...(groups ? { appGroups: groups } : {}) },
+    })
   }
   return { ok: true }
 }
@@ -2731,8 +2740,32 @@ function convToolsFor(conversationId: string): ChatConvTools {
     pluginMcpServers: listRuntimeMcpServers({ conversationId })
       .filter((server) => server.origin)
       .map((server) => server.id),
+    mcpAccounts: conversationAccountChoices(conversationId, t?.mcpAccountsDisabled ?? []),
   }
 }
+
+/** Servers with several accounts in a conversation's scope, for turning accounts on or off in it. */
+function conversationAccountChoices(conversationId: string, disabled: readonly string[]): ChatConvTools['mcpAccounts'] {
+  const off = new Set(disabled)
+  return listRuntimeMcpServers({ conversationId }).flatMap((server) => {
+    if (!server.enabled || server.unavailable || server.transport === 'stdio') return []
+    const accounts = activeMcpOAuthAccounts(server, conversationId)
+    if (accounts.length < 2) return []
+    return [
+      {
+        serverId: server.id,
+        serverName: server.name,
+        accounts: accounts.map((account) => ({
+          id: account.id,
+          label: account.label,
+          enabled: !off.has(`${server.id}#${account.id}`),
+        })),
+      },
+    ]
+  })
+}
+
+const MCP_ACCOUNT_KEY = /^(mcp_[0-9a-f-]{36}|plg_[0-9a-f]{20})#acc_[0-9a-f]{12}$/
 
 function getBroker(): PermissionBroker {
   if (!broker) {
