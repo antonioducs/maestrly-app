@@ -29,6 +29,9 @@ export default {
     commit: 'Commit {{commit}}',
     plugins: '{{count}} plugins',
     preset: 'Sugerida',
+    thirdPartyLabel: 'Terceiros',
+    thirdParty:
+      'A Maestrly não revisa plugins de fontes de terceiros. Instale só plugins de publishers em quem você confia.',
     adding: 'Adicionando…',
     refreshing: 'Atualizando…',
     error: {
@@ -53,12 +56,12 @@ export default {
     installed: 'Instalado',
     updateAvailable: 'Atualização disponível',
     noMatches: 'Nenhum plugin corresponde aos filtros.',
+    incompatible_one: '{{count}} plugin não funciona igual com todos os modelos',
+    incompatible_other: '{{count}} plugins não funcionam igual com todos os modelos',
   },
   filters: {
-    compatibility: 'Compatibilidade',
     category: 'Categoria',
     source: 'Fonte',
-    allLevels: 'Qualquer compatibilidade',
     allCategories: 'Todas as categorias',
   },
   compat: {
@@ -67,13 +70,15 @@ export default {
       portable: 'As skills e ferramentas MCP dele funcionam igual com todos os modelos.',
       unavailable: 'Nada neste plugin funciona igual com todos os modelos.',
     },
+    notIncluded: 'Funciona em todos os modelos. Algumas partes não estão incluídas.',
     reason: {
       'manifest-invalid': 'O manifesto do plugin é inválido.',
       'schema-unsupported': 'Esta versão do Agent Plugins não é suportada.',
       'source-unsupported': 'Este tipo de fonte de plugin não é suportado.',
       'install-not-available': 'O marketplace marca este plugin como indisponível.',
       'no-usable-components': 'Nenhuma skill ou servidor MCP consegue rodar na Maestrly.',
-      'requires-app-connector': 'Depende de conectores de apps do ChatGPT, que só funcionam dentro dos produtos da OpenAI.',
+      'requires-app-connector':
+        'Depende de conectores de apps do ChatGPT, que só funcionam dentro dos produtos da OpenAI.',
       'app-connector': 'O conector {{subject}} não está incluído: só funciona dentro dos produtos da OpenAI.',
       'hooks-not-run': 'Os hooks {{subject}} nunca rodam na Maestrly.',
       'agent-not-adapted': 'O agent {{subject}} não fica disponível como subagente.',
@@ -125,6 +130,14 @@ export default {
     source: 'Fonte',
     openRepository: 'Abrir repositório',
     compatibility: 'Compatibilidade',
+    whyIncompatible: 'Por que não é oferecido',
+    notIncluded:
+      'Não incluído — estas partes só funcionam dentro de um produto, então a Maestrly as deixa de fora para todos os modelos',
+    thirdPartySource: 'De uma fonte de terceiros. A Maestrly não o revisa: instale só se você confia no publisher.',
+    publishedBy: {
+      'openai-plugins': 'Publicado pela OpenAI.',
+      'openai-community-plugins': 'Listado no catálogo da comunidade da OpenAI; cada plugin vem do próprio autor.',
+    },
     skills: 'Skills e comandos',
     command: 'Comando',
     noSkills: 'Nenhuma skill.',

@@ -83,6 +83,7 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
           marketplaceId={details.marketplaceId}
           name={details.name}
           reloadSignal={detailsRevision}
+          marketplaces={marketplaces}
           onBack={() => setDetails(null)}
           onInstall={setInstalling}
         />

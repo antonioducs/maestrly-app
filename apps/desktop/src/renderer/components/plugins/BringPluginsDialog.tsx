@@ -12,10 +12,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { hostApi } from '@/lib/hosts/host-context'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
-import type { InstalledPluginDto } from '../../../shared/plugins'
+import { isBlockingReason, type InstalledPluginDto } from '../../../shared/plugins'
 import { CompatibilityBadge } from './CompatibilityBadge'
 import type { PluginsSource } from './plugins-source'
-import { errorText, shortCommit } from './plugin-ui'
+import { errorText, reasonText, shortCommit } from './plugin-ui'
 
 /**
  * Brings this computer's plugins to a bot environment: the environment downloads each one from its source at the same
@@ -94,6 +94,12 @@ export function BringPluginsDialog({
           <ul className="flex flex-col gap-2">
             {local.map((plugin) => {
               const there = installedThere.has(plugin.key) || brought.has(plugin.key)
+              // Only plugins that work the same with every model are brought anywhere.
+              const blockingReason =
+                plugin.compatibility?.level === 'unavailable'
+                  ? (plugin.compatibility.reasons.find((reason) => isBlockingReason(reason.code)) ??
+                    plugin.compatibility.reasons[0])
+                  : undefined
               return (
                 <li
                   key={plugin.key}
@@ -120,7 +126,7 @@ export function BringPluginsDialog({
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={busy !== null}
+                        disabled={busy !== null || plugin.compatibility?.level === 'unavailable'}
                         aria-label={`${t('bring.action')}: ${plugin.displayName}`}
                         onClick={() => void bring(plugin)}
                       >
@@ -129,6 +135,9 @@ export function BringPluginsDialog({
                       </Button>
                     )}
                   </div>
+                  {blockingReason && !there && (
+                    <p className="text-[11px] text-red-300">{reasonText(t, blockingReason)}</p>
+                  )}
                   {errors[plugin.key] && (
                     <p role="alert" className="text-[11px] text-destructive">
                       {errors[plugin.key]}

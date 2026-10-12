@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import type { PluginCompatibility } from '../../../shared/plugins'
+import { isBlockingReason, type PluginCompatibility } from '../../../shared/plugins'
 import { reasonText } from './plugin-ui'
 
 const LEVEL_CLASS = {
@@ -8,7 +8,10 @@ const LEVEL_CLASS = {
   unavailable: 'bg-red-500/15 text-red-300',
 } as const
 
-/** Compatibility level, with its first reason (or the level's meaning) as the tooltip. */
+/**
+ * Whether a plugin works the same with every model. The tooltip gives why it does not, or notes that some parts are
+ * left out, or the level's meaning.
+ */
 export function CompatibilityBadge({
   compatibility,
   className,
@@ -23,8 +26,13 @@ export function CompatibilityBadge({
         {t('browse.unknownCompatibility')}
       </span>
     )
-  const first = compatibility.reasons[0]
-  const title = first ? reasonText(t, first) : t(`compat.levelHint.${compatibility.level}`)
+  const blocking = compatibility.reasons.find((reason) => isBlockingReason(reason.code))
+  const title =
+    compatibility.level === 'unavailable' && (blocking ?? compatibility.reasons[0])
+      ? reasonText(t, blocking ?? compatibility.reasons[0])
+      : compatibility.reasons.length
+        ? t('compat.notIncluded')
+        : t(`compat.levelHint.${compatibility.level}`)
   return (
     <span
       title={title}

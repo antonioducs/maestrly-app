@@ -109,9 +109,16 @@ export function PluginSourcesBar({
             >
               <div className="flex items-center gap-1.5">
                 <span className="truncate text-[13px] text-foreground">{sourceName(marketplace)}</span>
-                {marketplace.preset && (
+                {marketplace.preset ? (
                   <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
                     {t('sources.preset')}
+                  </span>
+                ) : (
+                  <span
+                    className="rounded bg-amber-500/10 px-1 text-[10px] text-amber-200"
+                    title={t('sources.thirdParty')}
+                  >
+                    {t('sources.thirdPartyLabel')}
                   </span>
                 )}
               </div>

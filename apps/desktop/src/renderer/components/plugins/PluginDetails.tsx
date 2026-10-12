@@ -2,7 +2,12 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronLeft, Download, ExternalLink, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { PluginComponentDto, PluginInspectionDto } from '../../../shared/plugins'
+import {
+  isBlockingReason,
+  type PluginComponentDto,
+  type PluginInspectionDto,
+  type PluginMarketplaceDto,
+} from '../../../shared/plugins'
 import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginLogo } from './PluginCard'
 import type { PluginsSource } from './plugins-source'
@@ -37,6 +42,7 @@ export function PluginDetails({
   onBack,
   onInstall,
   reloadSignal,
+  marketplaces,
 }: {
   source: PluginsSource
   marketplaceId: string
@@ -44,6 +50,8 @@ export function PluginDetails({
   onBack: () => void
   onInstall: (inspection: PluginInspectionDto) => void
   reloadSignal?: number
+  /** Sources of the host, to say whether this plugin comes from a suggested source or from a third party. */
+  marketplaces?: PluginMarketplaceDto[]
 }) {
   const { t } = useTranslation('plugins')
   const [inspection, setInspection] = useState<PluginInspectionDto | null>(null)
@@ -107,6 +115,10 @@ export function PluginDetails({
   }
   const repositoryUrl =
     inspection.links.repository ?? (inspection.source.url.startsWith('https://') ? inspection.source.url : null)
+  const reasons = inspection.compatibility?.reasons ?? []
+  const blocking = reasons.filter((reason) => isBlockingReason(reason.code))
+  const notes = reasons.filter((reason) => !isBlockingReason(reason.code))
+  const marketplace = marketplaces?.find((item) => item.id === marketplaceId)
 
   return (
     <div className="flex flex-col gap-3" data-testid="plugin-details">
@@ -144,6 +156,16 @@ export function PluginDetails({
               </button>
             )}
           </div>
+          {marketplace &&
+            (marketplace.preset ? (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {t(`details.publishedBy.${marketplace.preset}`)}
+              </p>
+            ) : (
+              <p className="mt-0.5 text-[11px] text-amber-300" data-testid="third-party-source">
+                {t('details.thirdPartySource')}
+              </p>
+            ))}
         </div>
         <Button
           type="button"
@@ -163,13 +185,26 @@ export function PluginDetails({
         {inspection.compatibility && (
           <p className="text-[11px] text-muted-foreground">{t(`compat.levelHint.${inspection.compatibility.level}`)}</p>
         )}
-        {inspection.compatibility?.reasons.length ? (
-          <ul className="list-disc pl-4 text-[12px] text-foreground">
-            {inspection.compatibility.reasons.map((reason, index) => (
-              <li key={`${reason.code}-${reason.subject ?? index}`}>{reasonText(t, reason)}</li>
-            ))}
-          </ul>
-        ) : null}
+        {blocking.length > 0 && (
+          <div className="flex flex-col gap-0.5">
+            <p className="text-[11px] font-medium text-foreground">{t('details.whyIncompatible')}</p>
+            <ul className="list-disc pl-4 text-[12px] text-foreground">
+              {blocking.map((reason, index) => (
+                <li key={`${reason.code}-${reason.subject ?? index}`}>{reasonText(t, reason)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {notes.length > 0 && (
+          <div className="flex flex-col gap-0.5">
+            <p className="text-[11px] font-medium text-foreground">{t('details.notIncluded')}</p>
+            <ul className="list-disc pl-4 text-[12px] text-muted-foreground">
+              {notes.map((reason, index) => (
+                <li key={`${reason.code}-${reason.subject ?? index}`}>{reasonText(t, reason)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Section>
 
       <Section title={t('component.heading')}>

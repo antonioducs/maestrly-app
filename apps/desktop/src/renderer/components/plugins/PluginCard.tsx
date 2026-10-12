@@ -59,7 +59,6 @@ export function PluginCard({
   onOpen: () => void
 }) {
   const { t } = useTranslation('plugins')
-  const blocked = entry.policy.installation === 'NOT_AVAILABLE'
   return (
     <button
       type="button"
@@ -84,13 +83,7 @@ export function PluginCard({
           <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{entry.description}</p>
         )}
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
-          {blocked ? (
-            <CompatibilityBadge
-              compatibility={{ level: 'unavailable', reasons: [{ code: 'install-not-available' }] }}
-            />
-          ) : (
-            <CompatibilityBadge compatibility={entry.compatibility} />
-          )}
+          <CompatibilityBadge compatibility={entry.compatibility} />
           {entry.installed && (
             <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-200">
               {t('browse.installed')}

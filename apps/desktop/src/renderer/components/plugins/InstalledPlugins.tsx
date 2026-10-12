@@ -12,14 +12,20 @@ import {
 } from '@/components/ui/dialog'
 import { useHostId } from '@/lib/hosts/host-context'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
-import type { InstalledPluginDto, PluginInspectionDto, PluginMcpServerDto, PluginScope } from '../../../shared/plugins'
+import {
+  isBlockingReason,
+  type InstalledPluginDto,
+  type PluginInspectionDto,
+  type PluginMcpServerDto,
+  type PluginScope,
+} from '../../../shared/plugins'
 import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginInputsForm } from './PluginInputsForm'
 import { PluginInstallDialog } from './PluginInstallDialog'
 import { PluginScopePicker, scopeIsComplete } from './PluginScopePicker'
 import { McpSignIn } from '../chat/McpSignIn'
 import type { PluginsSource } from './plugins-source'
-import { errorText, shortCommit, Toggle } from './plugin-ui'
+import { errorText, reasonText, shortCommit, Toggle } from './plugin-ui'
 
 type Editing =
   | { key: string; kind: 'scope'; scope: PluginScope }
@@ -98,6 +104,12 @@ export function InstalledPlugins({
       {installed.map((plugin) => {
         const rowBusy = busy === plugin.key
         const edit = editing?.key === plugin.key ? editing : null
+        // A plugin that stopped working the same with every model never applies; it can be updated or uninstalled.
+        const incompatible = plugin.compatibility?.level === 'unavailable'
+        const blockingReason = incompatible
+          ? (plugin.compatibility?.reasons.find((reason) => isBlockingReason(reason.code)) ??
+            plugin.compatibility?.reasons[0])
+          : undefined
         return (
           <div
             key={plugin.key}
@@ -106,8 +118,8 @@ export function InstalledPlugins({
           >
             <div className="flex items-start gap-2">
               <Toggle
-                on={plugin.enabled}
-                disabled={rowBusy}
+                on={plugin.enabled && !incompatible}
+                disabled={rowBusy || incompatible}
                 label={`${t('installed.enable')}: ${plugin.displayName}`}
                 onClick={() =>
                   void run(plugin.key, () => source.pluginsSetEnabled({ key: plugin.key, enabled: !plugin.enabled }))
@@ -144,7 +156,7 @@ export function InstalledPlugins({
                     ? t('installed.scopeGlobal')
                     : t('installed.scopeProjects', { count: plugin.scope.workspaceIds.length })}{' '}
                   {/* A bot environment's plugins always serve all of its conversations. */}
-                  {!source.bring && (
+                  {!source.bring && !incompatible && (
                     <button
                       type="button"
                       className="text-indigo-300 hover:underline"
@@ -154,6 +166,11 @@ export function InstalledPlugins({
                     </button>
                   )}
                 </div>
+                {blockingReason && (
+                  <p className="text-[11px] text-red-300" data-testid="installed-incompatible">
+                    {reasonText(t, blockingReason)}
+                  </p>
+                )}
                 {plugin.skills.length > 0 && (
                   <div className="truncate text-[11px] text-muted-foreground">
                     {t('installed.skills', { count: plugin.skills.length })}:{' '}
@@ -219,7 +236,7 @@ export function InstalledPlugins({
                   <div key={server.key} className="flex items-center gap-2 text-[12px]">
                     <Toggle
                       on={server.enabled === true}
-                      disabled={rowBusy || server.auth === 'unusable'}
+                      disabled={rowBusy || incompatible || server.auth === 'unusable'}
                       label={`${server.key}`}
                       onClick={() => {
                         const enabling = server.enabled !== true

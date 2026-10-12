@@ -140,18 +140,21 @@ async function addSourceAndInstall(page: Page, center: ReturnType<Page['getByTes
   await center.getByRole('button', { name: 'Add source', exact: true }).click()
   const add = page.getByRole('dialog', { name: 'Add source' })
   await expect(add).toContainText('Adding a source only lists its plugins.')
+  await expect(add).toContainText('Maestrly does not review plugins from third-party sources.')
   await add.getByLabel('Repository').fill(url)
   await add.getByRole('button', { name: 'Add source', exact: true }).click()
   await expect(add).toHaveCount(0)
 
-  // Both plugins are listed; the one that only has an app connector cannot run here.
-  const hosted = center.locator('[data-plugin="hosted-only"]')
-  await expect(hosted).toContainText('Unavailable')
+  // Only the plugin that works with every model is offered; the one that relies on an app connector is counted, with why.
   const card = center.locator('[data-plugin="release-notes"]')
-  await expect(card).toContainText('Portable')
+  await expect(card).toContainText('Works with every model')
+  await expect(center.locator('[data-plugin="hosted-only"]')).toHaveCount(0)
+  await center.getByRole('button', { name: /^1 plugin doesn’t work the same with every model/ }).click()
+  await expect(center.getByTestId('incompatible-plugins')).toContainText('It depends on ChatGPT app connectors')
   await card.click()
 
   const details = center.getByTestId('plugin-details')
+  await expect(details.getByTestId('third-party-source')).toBeVisible()
   await expect(details).toContainText('Draft release notes from merged changes')
   await expect(details).toContainText('MIT')
   await expect(details).toContainText('notes')

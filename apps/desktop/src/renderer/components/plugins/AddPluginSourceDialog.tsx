@@ -109,6 +109,9 @@ export function AddPluginSourceDialog({
               disabled={busy}
             />
           </div>
+          <p className="text-[12px] text-amber-300" data-testid="third-party-note">
+            {t('sources.thirdParty')}
+          </p>
           {!gitAvailable && <p className="text-[12px] text-amber-300">{t('git.unavailable')}</p>}
           {error && (
             <p role="alert" className="text-[12px] text-destructive">

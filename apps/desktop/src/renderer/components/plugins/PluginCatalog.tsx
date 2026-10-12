@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Search } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Search } from 'lucide-react'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
-import type { PluginCatalogEntryDto, PluginCompatibilityLevel, PluginMarketplaceDto } from '../../../shared/plugins'
+import type { PluginCatalogEntryDto, PluginMarketplaceDto } from '../../../shared/plugins'
+import { partitionCatalog } from './catalog-partition'
 import { PluginCard } from './PluginCard'
 import type { PluginsSource } from './plugins-source'
-import { errorText, inputCls, marketplaceLabel } from './plugin-ui'
-
-type LevelFilter = 'all' | PluginCompatibilityLevel
+import { errorText, inputCls, marketplaceLabel, reasonText } from './plugin-ui'
 
 /**
  * Plugins of one source, or of every source already opened. A source that was never fetched is fetched only when
@@ -34,7 +33,7 @@ export function PluginCatalog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [level, setLevel] = useState<LevelFilter>('all')
+  const [showIncompatible, setShowIncompatible] = useState(false)
   const [category, setCategory] = useState('')
   const request = useRef(0)
 
@@ -70,13 +69,14 @@ export function PluginCatalog({
       })
   }, [source, targetKey, revision])
 
+  // Only plugins that work the same with every model are offered; the rest are counted, with why, below the list.
+  const { offered, incompatible } = useMemo(() => partitionCatalog(entries), [entries])
   const categories = useMemo(
-    () => [...new Set(entries.map((entry) => entry.category).filter((value): value is string => !!value))].sort(),
-    [entries]
+    () => [...new Set(offered.map((entry) => entry.category).filter((value): value is string => !!value))].sort(),
+    [offered]
   )
   const needle = query.trim().toLowerCase()
-  const visible = entries.filter((entry) => {
-    if (level !== 'all' && entry.compatibility?.level !== level) return false
+  const visible = offered.filter((entry) => {
     if (category && entry.category !== category) return false
     if (!needle) return true
     return `${entry.displayName} ${entry.name} ${entry.description ?? ''} ${entry.publisher ?? ''}`
@@ -112,16 +112,6 @@ export function PluginCatalog({
             </SelectOption>
           ))}
         </OptionSelect>
-        <OptionSelect
-          value={level}
-          onValueChange={(value) => setLevel(value as LevelFilter)}
-          className="h-8 w-36 text-xs"
-          aria-label={t('filters.compatibility')}
-        >
-          <SelectOption value="all">{t('filters.allLevels')}</SelectOption>
-          <SelectOption value="portable">{t('compat.level.portable')}</SelectOption>
-          <SelectOption value="unavailable">{t('compat.level.unavailable')}</SelectOption>
-        </OptionSelect>
         {categories.length > 0 && (
           <OptionSelect
             value={category}
@@ -148,10 +138,10 @@ export function PluginCatalog({
           {error}
         </p>
       )}
-      {!loading && !error && entries.length === 0 && (
+      {!loading && !error && offered.length === 0 && (
         <p className="text-[12px] text-muted-foreground">{t('browse.empty')}</p>
       )}
-      {!loading && entries.length > 0 && visible.length === 0 && (
+      {!loading && offered.length > 0 && visible.length === 0 && (
         <p className="text-[12px] text-muted-foreground">{t('browse.noMatches')}</p>
       )}
       <div className="grid grid-cols-1 gap-2 @2xl:grid-cols-2 lg:grid-cols-2">
@@ -164,6 +154,28 @@ export function PluginCatalog({
           />
         ))}
       </div>
+      {incompatible.length > 0 && (
+        <div className="flex flex-col gap-1 border-t border-white/[0.06] pt-2">
+          <button
+            type="button"
+            aria-expanded={showIncompatible}
+            onClick={() => setShowIncompatible((value) => !value)}
+            className="inline-flex w-fit items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground"
+          >
+            {showIncompatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            {t('browse.incompatible', { count: incompatible.length })}
+          </button>
+          {showIncompatible && (
+            <ul className="flex flex-col gap-1 pl-5" data-testid="incompatible-plugins">
+              {incompatible.map(({ entry, reason }) => (
+                <li key={`${entry.marketplaceId}/${entry.name}`} className="text-[12px] text-muted-foreground">
+                  <span className="text-foreground">{entry.displayName}</span> · {reasonText(t, reason)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   )
 }

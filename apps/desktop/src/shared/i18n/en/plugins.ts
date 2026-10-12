@@ -29,6 +29,9 @@ export default {
     commit: 'Commit {{commit}}',
     plugins: '{{count}} plugins',
     preset: 'Suggested',
+    thirdPartyLabel: 'Third party',
+    thirdParty:
+      'Maestrly does not review plugins from third-party sources. Install only plugins from publishers you trust.',
     adding: 'Adding…',
     refreshing: 'Refreshing…',
     error: {
@@ -53,12 +56,12 @@ export default {
     installed: 'Installed',
     updateAvailable: 'Update available',
     noMatches: 'No plugin matches the filters.',
+    incompatible_one: '{{count}} plugin doesn’t work the same with every model',
+    incompatible_other: '{{count}} plugins don’t work the same with every model',
   },
   filters: {
-    compatibility: 'Compatibility',
     category: 'Category',
     source: 'Source',
-    allLevels: 'Any compatibility',
     allCategories: 'All categories',
   },
   compat: {
@@ -67,6 +70,7 @@ export default {
       portable: 'Its skills and MCP tools work the same with every model.',
       unavailable: 'Nothing in this plugin works the same with every model.',
     },
+    notIncluded: 'Works with every model. Some parts are not included.',
     reason: {
       'manifest-invalid': 'The plugin manifest is invalid.',
       'schema-unsupported': 'This Agent Plugins version is not supported.',
@@ -125,6 +129,14 @@ export default {
     source: 'Source',
     openRepository: 'Open repository',
     compatibility: 'Compatibility',
+    whyIncompatible: 'Why it is not offered',
+    notIncluded: 'Not included — these parts only work inside one product, so Maestrly leaves them out for every model',
+    thirdPartySource:
+      'From a third-party source. Maestrly does not review it: install it only if you trust its publisher.',
+    publishedBy: {
+      'openai-plugins': 'Published by OpenAI.',
+      'openai-community-plugins': 'Listed in OpenAI’s community catalog; each plugin comes from its own author.',
+    },
     skills: 'Skills and commands',
     command: 'Command',
     noSkills: 'No skills.',
