@@ -18,6 +18,7 @@ for (const scope of [
   'apps/runner/src',
   'apps/bot-gateway/src',
   'apps/web/src',
+  'apps/mobile/src',
   'packages/protocol/src',
   'packages/bot-fleet-protocol/src',
   'packages/artifact-host/src',
