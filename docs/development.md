@@ -62,6 +62,31 @@ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
 go run github.com/zricethezav/gitleaks/v8@v8.30.1 git . --config .gitleaks.toml --no-banner --redact
 ```
 
+### Electron E2E in Docker
+
+`npm run test:e2e` opens the application's windows on your desktop, where they can
+take the focus. With Docker running, `npm run test:e2e:docker` runs the same suite
+without windows on your computer: in Ubuntu 24.04 under Xvfb, like the CI's Linux job.
+Arguments after `--` go to Playwright:
+
+```sh
+npm run test:e2e:docker
+npm run test:e2e:docker -- detached-chats.spec.ts --grep "focus"
+```
+
+Each run copies the working tree as Git sees it (tracked and untracked files, not
+ignored ones such as `node_modules/`) into a new container, then runs `npm ci`,
+`npm run build`, and the suite there. Edits made during a run do not affect it, and
+the results are copied back to `apps/desktop/test-results/`. The first run builds
+the image, which takes a few minutes. Each run installs and builds again, using the
+downloads cached in the `maestrly-desktop-e2e-cache` volume.
+
+The container uses the host's architecture (arm64 on Apple silicon), while CI uses
+x64, and it does not cover macOS or Windows behavior. Chromium's sandbox needs user
+namespaces, so the container runs without Docker's default seccomp profile. To
+reclaim disk space, run `docker volume rm maestrly-desktop-e2e-cache` and remove the
+images listed by `docker image ls maestrly-desktop-e2e`.
+
 ### Opus 5 harness evaluation
 
 Model-specific harness behavior is declared in profile folders; see
