@@ -4,7 +4,8 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { normalizeSkillName } from '../../shared/chat'
 import type { PluginConsentInput, PluginOpErrorCode, PluginOpResult, PluginScope } from '../../shared/plugins'
-import { type Inspection, launchDigest } from './inspect'
+import { launchDigest } from './consent'
+import type { Inspection } from './inspect'
 import type { PluginLayout } from './layout'
 import { pluginKeyHash } from './layout'
 import { PLUGIN_LIMITS } from './limits'
@@ -242,6 +243,8 @@ export async function installPrepared(
       ...(p.loadOptions ? { loadOptions: p.loadOptions } : {}),
       displayName: pkg.displayName ?? pkg.name,
       ...(p.policy ? { policy: p.policy } : {}),
+      mcpServers: pkg.mcpServers,
+      inputs: pkg.inputs,
     }
     writeInstalled((all) => {
       all[p.key] = record
@@ -336,6 +339,8 @@ export async function updatePrepared(
       ...(p.loadOptions ? { loadOptions: p.loadOptions } : {}),
       displayName: pkg.displayName ?? pkg.name,
       ...(p.policy ? { policy: p.policy } : {}),
+      mcpServers: pkg.mcpServers,
+      inputs: pkg.inputs,
     }
     writeInstalled((all) => {
       all[key] = next

@@ -155,6 +155,7 @@ vi.mock('../../src/main/chat/model-meta', () => ({
 
 vi.mock('../../src/main/chat/mcp', () => ({
   listMcpServers: vi.fn(() => []),
+  listRuntimeMcpServers: vi.fn(() => []),
 }))
 
 vi.mock('../../src/main/chat/runner', () => ({

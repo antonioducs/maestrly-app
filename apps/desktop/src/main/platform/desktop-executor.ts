@@ -12,7 +12,7 @@ import { insertConversation } from '../store'
 import { broadcast } from '../window-ipc'
 import { listChatRunnerCapabilities, startExecutorChatTurn, primeChatTurnSelection } from '../chat/service'
 import { listChatMessages } from '../chat/chat-store'
-import { listMcpServers } from '../chat/mcp'
+import { allRuntimeMcpServerIds } from '../chat/mcp'
 import {
   AUTONOMOUS_INSTRUCTIONS,
   registerAutonomousConversation,
@@ -159,7 +159,7 @@ export class DesktopChatExecutor implements ExecutorAdapter {
           permMode: 'ask' as const,
           tools: {
             app: this.settings.allowAppTools,
-            mcpDisabled: this.settings.allowMcp ? [] : listMcpServers().map((s) => s.id),
+            mcpDisabled: this.settings.allowMcp ? [] : allRuntimeMcpServerIds(),
             imageGen: false,
           },
           skillSelection: { kind: this.settings.skills ? ('all' as const) : ('none' as const) },

@@ -7,6 +7,7 @@ import type {
   PluginScope,
   PluginSourceErrorCode,
 } from '../../shared/plugins'
+import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 import { isSecureStorageAvailable, secureGet, secureRemove, secureSet } from '../secure-store'
 import { getAppSetting, setAppSetting, transaction } from '../store'
 
@@ -67,6 +68,9 @@ export interface InstalledPluginRecord {
   }
   displayName?: string
   policy?: PluginPolicyDto
+  /** Normalized MCP servers and inputs of the installed version (package data, never secret values). */
+  mcpServers?: PluginMcpServerSpec[]
+  inputs?: PluginInputSpec[]
 }
 
 export const PRESET_MARKETPLACES: readonly { preset: PluginMarketplacePreset; url: string }[] = [

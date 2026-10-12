@@ -7,7 +7,11 @@ vi.mock('../../src/main/chat/service', () => ({
   stopBotChatTurn: chat.stopBotChatTurn,
   acquireChatConversationSlot: chat.acquireChatConversationSlot,
 }))
-vi.mock('../../src/main/chat/mcp', () => ({ listMcpServers: () => [] }))
+vi.mock('../../src/main/chat/mcp', () => ({
+  listMcpServers: () => [],
+  listRuntimeMcpServers: () => [],
+  allRuntimeMcpServerIds: () => [],
+}))
 import { NativeBotChatHost } from '../../src/main/bot/native-host'
 import { BotModelCatalog } from '../../src/main/bot/catalog'
 

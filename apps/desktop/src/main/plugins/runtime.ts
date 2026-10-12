@@ -1,3 +1,4 @@
+import { mkdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { normalizeSkillName } from '../../shared/chat'
 import {
@@ -7,12 +8,15 @@ import {
   readSkillDirectory,
   SKILL_BODY_MAX_CHARS,
 } from '../chat/skills'
+import type { McpServer } from '../chat/mcp-types'
 import { getConversation } from '../store'
 import { appPluginLayout } from './app-layout'
 import { loadPluginPackage } from './formats/detect'
 import { type PluginLayout, pluginKeyHash } from './layout'
 import { fsPackageTree } from './package-tree'
-import { type InstalledPluginRecord, listInstalled, onInstalledChanged } from './store'
+import { launchDigest } from './consent'
+import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
+import { type InstalledPluginRecord, listInstalled, onInstalledChanged, readPluginSecrets } from './store'
 import type { PluginPackage } from './types'
 
 /**
@@ -150,4 +154,153 @@ export async function listPluginSkills(
   )
   const seen = new Set<string>()
   return lists.flat().filter((skill) => (seen.has(skill.name) ? false : (seen.add(skill.name), true)))
+}
+
+// ---------------------------------------------------------------- MCP servers
+
+const PLACEHOLDER = /\$\{(PLUGIN_ROOT|PLUGIN_DATA|input:[^}]+)\}/g
+const INPUT_REFERENCE = /\$\{input:([^}]+)\}/g
+
+/** Display name of a plugin MCP server: the plugin's name, or `<plugin>-<server>` when they differ. */
+export function pluginServerName(record: InstalledPluginRecord, serverKey: string): string {
+  return serverKey === record.name ? serverKey : `${record.name}-${serverKey}`
+}
+
+function referencedInputs(spec: PluginMcpServerSpec): Set<string> {
+  const values =
+    spec.transport === 'stdio'
+      ? [...spec.args, ...Object.values(spec.env), spec.cwd]
+      : [spec.url, ...Object.values(spec.headers)]
+  const ids = new Set<string>()
+  for (const value of values) for (const match of value.matchAll(INPUT_REFERENCE)) ids.add(match[1])
+  return ids
+}
+
+/** Inputs that feed one server: its own env/header inputs and the options its configuration references. */
+export function serverInputs(record: InstalledPluginRecord, spec: PluginMcpServerSpec): PluginInputSpec[] {
+  const referenced = referencedInputs(spec)
+  return (record.inputs ?? []).filter((input) =>
+    input.target.kind === 'config'
+      ? referenced.has(input.id)
+      : input.target.serverKey === spec.key || referenced.has(input.id)
+  )
+}
+
+const isInside = (root: string, target: string): boolean => {
+  const rel = path.relative(root, target)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
+function validRemoteUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    if (url.username || url.password || url.hash) return false
+    if (url.protocol === 'https:') return true
+    return url.protocol === 'http:' && /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/.test(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Plugin MCP servers as `McpServer` entries, expanded for this host: `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` become the
+ * installed version and its data directory, `${input:…}` the user's values (once, never recursively). A stdio server
+ * is enabled only while its exact launch line has the user's consent; missing or unreadable required inputs make a
+ * server unavailable, never connected.
+ */
+export function listPluginMcpServers(
+  ctx: PluginRuntimeContext,
+  opts: { includeInactive?: boolean } = {},
+  layout: PluginLayout = appPluginLayout()
+): McpServer[] {
+  const out: McpServer[] = []
+  const records = Object.values(listInstalled())
+    .filter((record) => record.status === 'ready')
+    .sort((a, b) => a.key.localeCompare(b.key))
+  for (const record of records) {
+    const active = pluginAppliesTo(record, ctx)
+    if (!active && !opts.includeInactive) continue
+    const root = installedPackageDir(record, layout)
+    const data = layout.data(pluginKeyHash(record.key))
+    const secrets = (record.inputs ?? []).length ? readPluginSecrets(record.key) : {}
+    for (const spec of record.mcpServers ?? []) {
+      const state = record.servers[spec.key]
+      if (!state) continue
+      const consented = spec.transport !== 'stdio' || record.consent.stdio[spec.key] === launchDigest(spec)
+      const inputs = serverInputs(record, spec)
+      const valueOf = (id: string): string | undefined => {
+        const stored = secrets?.[id]
+        if (stored !== undefined && stored !== '') return stored
+        return inputs.find((input) => input.id === id)?.defaultValue ?? undefined
+      }
+      let unavailable =
+        secrets === null ||
+        spec.auth.kind === 'unusable' ||
+        inputs.some((input) => input.required && !valueOf(input.id))
+      const expand = (value: string): string =>
+        value.replace(PLACEHOLDER, (_, name: string) =>
+          name === 'PLUGIN_ROOT' ? root : name === 'PLUGIN_DATA' ? data : (valueOf(name.slice('input:'.length)) ?? '')
+        )
+      const server: McpServer = {
+        id: state.id,
+        name: pluginServerName(record, spec.key),
+        transport: spec.transport,
+        enabled: state.enabled && active && consented,
+        origin: {
+          kind: 'plugin',
+          pluginKey: record.key,
+          pluginName: record.displayName ?? record.name,
+          serverKey: spec.key,
+        },
+        ...(spec.startupTimeoutMs ? { startupTimeoutMs: spec.startupTimeoutMs } : {}),
+        ...(spec.toolTimeoutMs ? { toolTimeoutMs: spec.toolTimeoutMs } : {}),
+        ...(spec.toolFilter ? { toolFilter: spec.toolFilter } : {}),
+      }
+      if (spec.transport === 'stdio') {
+        try {
+          let command = spec.command
+          if (spec.commandKind === 'plugin-relative') {
+            command = path.join(root, ...spec.command.slice(2).split('/'))
+            const real = realpathSync(command)
+            if (!isInside(realpathSync(root), real) || !statSync(real).isFile()) throw new Error('path-unsafe')
+          }
+          const cwdValue = expand(
+            spec.cwd === './' ? root : spec.cwd.startsWith('./') ? path.join(root, spec.cwd.slice(2)) : spec.cwd
+          )
+          const cwd = path.resolve(cwdValue)
+          if (!isInside(root, cwd) && !isInside(data, cwd)) throw new Error('path-unsafe')
+          if (isInside(data, cwd)) mkdirSync(cwd, { recursive: true })
+          const env: Record<string, string> = {}
+          for (const [name, value] of Object.entries(spec.env)) env[name] = expand(value)
+          for (const input of inputs) {
+            if (input.target.kind !== 'env' || input.target.serverKey !== spec.key) continue
+            const value = valueOf(input.id)
+            if (value !== undefined && value !== '') env[input.target.name] = value
+          }
+          env.PLUGIN_ROOT = root
+          env.PLUGIN_DATA = data
+          if (record.format === 'claude') {
+            env.CLAUDE_PLUGIN_ROOT = root
+            env.CLAUDE_PLUGIN_DATA = data
+          }
+          Object.assign(server, { command, args: spec.args.map(expand), env, cwd })
+        } catch {
+          unavailable = true
+        }
+      } else {
+        const url = expand(spec.url)
+        const headers: Record<string, string> = {}
+        for (const [name, value] of Object.entries(spec.headers)) headers[name] = expand(value)
+        for (const input of inputs) {
+          if (input.target.kind !== 'header' || input.target.serverKey !== spec.key) continue
+          const value = valueOf(input.id)
+          if (value !== undefined && value !== '') headers[input.target.name] = `${input.target.prefix}${value}`
+        }
+        if (!validRemoteUrl(url)) unavailable = true
+        Object.assign(server, { url, headers })
+      }
+      out.push(unavailable ? { ...server, unavailable: true } : server)
+    }
+  }
+  return out
 }

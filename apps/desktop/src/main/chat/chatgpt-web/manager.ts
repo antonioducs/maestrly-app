@@ -29,7 +29,7 @@ import {
 } from '../../store'
 import { broadcast } from '../../window-ipc'
 import { clearApiKey, getApiKey, hasApiKey, setApiKey } from '../credentials'
-import { listMcpServers } from '../mcp'
+import { listRuntimeMcpServers } from '../mcp'
 import { CHATGPT_WEB_PROVIDER_ID, isChatGptWebEnabled } from '../catalog'
 import {
   buildCompanionPrompt,
@@ -629,7 +629,7 @@ export function capabilitiesForConversation(conversationId: string): ChatGptWebC
   const stored = prefs.chatGptWebCapabilities
   const info = chatGptWebCapabilitiesInfo(
     stored && !personalAllowed ? { ...stored, personalMemory: 'off' } : stored,
-    listMcpServers(),
+    listRuntimeMcpServers({ conversationId }),
     sessionForConversation(conversationId) === null,
     conversation?.scope ?? 'project'
   )
@@ -647,7 +647,7 @@ export function setCapabilitiesForConversation(
   input: ChatGptWebCapabilities
 ): ChatGptWebCapabilitiesInfo {
   if (sessionForConversation(conversationId)) throw new Error('companion-session-active')
-  const servers = listMcpServers()
+  const servers = listRuntimeMcpServers({ conversationId })
   const sanitized = resolveChatGptWebCapabilities(input, servers, getConversation(conversationId)?.scope ?? 'project')
   patchConvUiPrefs(conversationId, { chatGptWebCapabilities: sanitized })
   emitChange()
@@ -731,7 +731,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       }
       return { ok: true }
     }
-    const mcpServers = listMcpServers()
+    const mcpServers = listRuntimeMcpServers({ conversationId: input.conversationId })
     const conversation = getConversation(input.conversationId)
     if (!conversation) throw new Error('invalid-conversation')
     const repositoryScope = await createRepositoryScope(conversation)

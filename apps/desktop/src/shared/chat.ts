@@ -1727,10 +1727,12 @@ export interface McpServerInfo {
   unavailable?: boolean
   id: string
   name: string
-  transport: 'http' | 'stdio'
+  transport: 'http' | 'stdio' | 'sse'
   enabled: boolean
   url?: string
   command?: string
+  /** Set for servers an installed plugin provides; they are managed in Settings → Plugins. */
+  plugin?: { key: string; displayName: string }
 }
 
 export interface ChatConfig {

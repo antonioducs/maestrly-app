@@ -792,6 +792,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const mcp = args.reviewerRuntime
     ? { tools: {}, close: async () => {} }
     : await buildMcpTools({
+        conversationId,
         mode,
         signal,
         gate: mcpGate,

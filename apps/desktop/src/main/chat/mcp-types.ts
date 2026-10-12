@@ -1,6 +1,9 @@
 import type { McpToolAnnotations } from './tool-policy'
 
-export type McpTransport = 'http' | 'stdio'
+/** Transports of servers the user adds. */
+export type UserMcpTransport = 'http' | 'stdio'
+/** `sse` (legacy HTTP+SSE) is reachable only through plugins. */
+export type McpTransport = UserMcpTransport | 'sse'
 
 export interface McpServer {
   id: string
@@ -13,7 +16,16 @@ export interface McpServer {
   command?: string
   args?: string[]
   env?: Record<string, string>
+  /** Set for servers an installed plugin provides; they are managed in Settings → Plugins, never edited here. */
+  origin?: { kind: 'plugin'; pluginKey: string; pluginName: string; serverKey: string }
+  cwd?: string
+  startupTimeoutMs?: number
+  toolTimeoutMs?: number
+  toolFilter?: { allow?: string[]; deny?: string[] }
 }
+
+/** A server from the user's own MCP settings (`chat.mcpServers`). */
+export type UserMcpServer = McpServer & { transport: UserMcpTransport }
 
 export interface ListedMcpTool {
   name: string

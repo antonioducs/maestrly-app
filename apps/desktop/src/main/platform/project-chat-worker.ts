@@ -13,7 +13,7 @@ import { getWorkspace, getConversation, patchConvUiPrefs } from '../store'
 import { observeChatHost } from '../chat/host-events'
 import { lastConversationContextMessage } from '../chat/chat-store'
 import { registerRemoteChatPolicy, withRemoteChatPolicy, type RemoteChatPolicy } from '../chat/remote-policy'
-import { listMcpServers } from '../chat/mcp'
+import { allRuntimeMcpServerIds, listRuntimeMcpServers } from '../chat/mcp'
 import { listSkills } from '../chat/skills'
 import { isWorkspaceMemoryEnabled } from '../memory/access'
 import type { PlatformProjectBinding } from '../../shared/platform'
@@ -137,7 +137,7 @@ export class ProjectChatWorker {
           push: this.settings.allowPush,
         },
       },
-      integrations: { skills, memory, mcp: this.settings.allowMcp && listMcpServers().some((s) => s.enabled) },
+      integrations: { skills, memory, mcp: this.settings.allowMcp && listRuntimeMcpServers({ conversationId: null }).some((s) => s.enabled && !s.unavailable) },
     }
   }
   stop() {
@@ -227,7 +227,7 @@ export class ProjectChatWorker {
       chat: projectChatPreferences(
         claim.session,
         this.settings,
-        listMcpServers().map((server) => server.id)
+        allRuntimeMcpServerIds()
       ),
     })
     const { primeChatTurnSelection, publishConvChatSettings } = await import('../chat/service')

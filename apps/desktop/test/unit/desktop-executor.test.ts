@@ -44,7 +44,10 @@ vi.mock('../../src/main/chat/service', () => ({
   primeChatTurnSelection: h.prime,
 }))
 vi.mock('../../src/main/chat/chat-store', () => ({ listChatMessages: () => h.messages }))
-vi.mock('../../src/main/chat/mcp', () => ({ listMcpServers: () => [{ id: 'private-mcp' }] }))
+vi.mock('../../src/main/chat/mcp', () => ({
+  listMcpServers: () => [{ id: 'private-mcp' }],
+  allRuntimeMcpServerIds: () => ['private-mcp'],
+}))
 vi.mock('../../src/main/chat/maestro-config', () => ({
   getGlobalMaestroConfig: () => ({ config: { version: 1, strategy: 'balanced', pool: [] } }),
 }))

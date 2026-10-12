@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { FleetMcpServerImport } from '@maestrly/bot-fleet-protocol'
-import type { McpServer } from '../../../chat/mcp-types'
+import type { UserMcpServer as McpServer } from '../../../chat/mcp-types'
 import type { McpWarning } from '../../../../shared/fleet-provisioning'
 
 const runtimes = new Set('node npx npm pnpm yarn corepack uv uvx python python3 pip pip3 git mise'.split(' '))

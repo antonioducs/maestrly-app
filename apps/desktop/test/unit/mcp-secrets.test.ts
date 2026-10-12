@@ -94,7 +94,14 @@ describe('MCP connection secrets', () => {
     await expect(connectMcpServer(listMcpServers()[0])).rejects.toThrow('unavailable')
     expect(listMcpServers()[0].url).toBeUndefined()
     expect(
-      (await buildMcpTools({ mode: 'agent', gate: async () => {}, signal: new AbortController().signal })).tools
+      (
+        await buildMcpTools({
+          conversationId: null,
+          mode: 'agent',
+          gate: async () => {},
+          signal: new AbortController().signal,
+        })
+      ).tools
     ).toEqual({})
   })
   it('preserves unreadable secrets and never persists the runtime marker', () => {

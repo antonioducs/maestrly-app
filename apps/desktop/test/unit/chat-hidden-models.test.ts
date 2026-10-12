@@ -98,7 +98,10 @@ vi.mock('../../src/main/chat/model-meta', () => ({
   filterChatModels: vi.fn(async (models: string[]) => models),
 }))
 
-vi.mock('../../src/main/chat/mcp', () => ({ listMcpServers: vi.fn(() => []) }))
+vi.mock('../../src/main/chat/mcp', () => ({
+  listMcpServers: vi.fn(() => []),
+  listRuntimeMcpServers: vi.fn(() => []),
+}))
 
 vi.mock('../../src/main/chat/runner', () => ({
   normalizeAiUsage: vi.fn(() => ({ input: 0, output: 0, totalInput: 0, cacheRead: 0, cacheCreate: 0 })),

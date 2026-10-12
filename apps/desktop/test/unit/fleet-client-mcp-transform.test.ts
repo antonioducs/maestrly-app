@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { transformMcpServerForBot } from '../../src/main/fleet/client/provisioning/mcp-transform'
-import type { McpServer } from '../../src/main/chat/mcp-types'
+import type { UserMcpServer as McpServer } from '../../src/main/chat/mcp-types'
 
 const server: McpServer = { id: 'm1', name: 'Tools', transport: 'stdio', enabled: true, command: 'npx' }
 describe('Mac MCP transformation', () => {

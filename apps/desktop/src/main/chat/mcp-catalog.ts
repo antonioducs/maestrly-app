@@ -34,6 +34,8 @@ export function mcpServerFingerprint(server: McpServer): string {
     command: server.command ?? null,
     args: server.args ?? [],
     env: server.env ?? {},
+    // Only plugin servers set a working directory; leaving it out otherwise keeps existing fingerprints.
+    ...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
   })
   return createHash('sha256').update(JSON.stringify(connection)).digest('hex')
 }

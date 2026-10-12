@@ -12,7 +12,7 @@ import {
   removeMcpServer,
   updateMcpServer,
   type McpConnection,
-  type McpServer,
+  type UserMcpServer as McpServer,
 } from '../../../chat/mcp'
 import { InstanceHttpError } from '../server'
 import { settingsRevision, withSettingsRevision } from './revisions'

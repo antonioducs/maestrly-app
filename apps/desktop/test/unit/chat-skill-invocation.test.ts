@@ -109,7 +109,10 @@ vi.mock('../../src/main/chat/provider', () => ({
   resolveLanguageModel: vi.fn(),
 }))
 
-vi.mock('../../src/main/chat/mcp', () => ({ listMcpServers: vi.fn(() => []) }))
+vi.mock('../../src/main/chat/mcp', () => ({
+  listMcpServers: vi.fn(() => []),
+  listRuntimeMcpServers: vi.fn(() => []),
+}))
 
 import { registerChatIpc, startExecutorChatTurn } from '../../src/main/chat/service'
 import { __resetCwdActivityForTests } from '../../src/main/cwd-activity-coordinator'

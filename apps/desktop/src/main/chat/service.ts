@@ -93,10 +93,11 @@ import { limitConversationContextWindow } from './conversation-context-limit'
 import {
   addMcpServer,
   disposeMcpRuntime,
-  listMcpServers,
+  listRuntimeMcpServers,
   removeMcpServer,
   updateMcpServer,
   type McpServer,
+  type UserMcpServer,
 } from './mcp'
 import {
   invalidateProvider,
@@ -2078,6 +2079,16 @@ export function fleetChatConfig(): Pick<ChatConfig, 'mcpServers' | 'appToolsEnab
   }
 }
 
+/** Scheme and host of a URL, without path, query or credentials. */
+function safeUrlHost(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.protocol}//${parsed.host}`
+  } catch {
+    return ''
+  }
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
@@ -2128,14 +2139,16 @@ function buildConfig(): ChatConfig {
       ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
     })),
     presets: PROVIDER_PRESETS,
-    mcpServers: listMcpServers().map((s) => ({
+    mcpServers: listRuntimeMcpServers({ includeInactivePlugins: true }).map((s) => ({
       id: s.id,
       name: s.name,
       transport: s.transport,
       enabled: s.enabled,
       unavailable: s.unavailable === true,
-      url: s.url,
-      command: s.command,
+      // Plugin servers expand local paths and user inputs: show where they go, not their launch details.
+      url: s.origin ? (s.url ? safeUrlHost(s.url) : undefined) : s.url,
+      command: s.origin ? (s.command ? path.basename(s.command) : undefined) : s.command,
+      ...(s.origin ? { plugin: { key: s.origin.pluginKey, displayName: s.origin.pluginName } } : {}),
     })),
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),
@@ -10495,7 +10508,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   )
 
   // MCP servers (their tools enter chat).
-  deps.mhandle('chat:mcp-add', (_e, input: Omit<McpServer, 'id' | 'enabled'> & { enabled?: boolean }) => {
+  deps.mhandle('chat:mcp-add', (_e, input: Omit<UserMcpServer, 'id' | 'enabled'> & { enabled?: boolean }) => {
     try {
       const s = addMcpServer(input)
       return { ok: true, id: s.id }
@@ -10503,13 +10516,21 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
   })
-  deps.mhandle('chat:mcp-update', async (_e, id: string, patch: Partial<McpServer>) => {
-    if (typeof id === 'string') updateMcpServer(id, patch ?? {})
+  deps.mhandle('chat:mcp-update', async (_e, id: string, patch: Partial<UserMcpServer>) => {
+    try {
+      if (typeof id === 'string') updateMcpServer(id, patch ?? {})
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
     await chatGptWeb.invalidateMcpConfiguration()
     return { ok: true }
   })
   deps.mhandle('chat:mcp-remove', async (_e, id: string) => {
-    if (typeof id === 'string') removeMcpServer(id)
+    try {
+      if (typeof id === 'string') removeMcpServer(id)
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
     await chatGptWeb.invalidateMcpConfiguration()
     return { ok: true }
   })

@@ -349,6 +349,7 @@ export async function runAntigravitySubscriptionChat(
     const mcp = args.reviewerRuntime
       ? { tools: {}, close: async () => {} }
       : await buildMcpTools({
+          conversationId: args.conversationId,
           mode: args.mode,
           signal: args.signal,
           gate,

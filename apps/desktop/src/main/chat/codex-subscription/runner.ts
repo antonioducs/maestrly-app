@@ -1914,6 +1914,7 @@ async function buildDynamicTools(
   const mcp =
     !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro')
       ? await buildMcpTools({
+          conversationId: args.conversationId,
           signal: args.signal,
           mode: args.mode,
           gate,

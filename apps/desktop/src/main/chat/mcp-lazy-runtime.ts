@@ -205,7 +205,10 @@ export class LazyMcpRuntime {
     let connection: McpConnection | null = null
     const connectStartedAt = this.now()
     try {
-      connection = await this.dependencies.connect(server, requestOptions(signal, MCP_STARTUP_TIMEOUT_MS))
+      connection = await this.dependencies.connect(
+        server,
+        requestOptions(signal, server.startupTimeoutMs ?? MCP_STARTUP_TIMEOUT_MS)
+      )
       entry.connection = connection
       this.diagnostic({
         kind: 'mcp-lazy-connect',
@@ -216,7 +219,9 @@ export class LazyMcpRuntime {
       })
 
       const listStartedAt = this.now()
-      const tools = await connection.listTools(requestOptions(signal, MCP_STARTUP_TIMEOUT_MS))
+      const tools = await connection.listTools(
+        requestOptions(signal, server.startupTimeoutMs ?? MCP_STARTUP_TIMEOUT_MS)
+      )
       entry.tools = [...tools]
       this.diagnostic({
         kind: 'mcp-lazy-list',
