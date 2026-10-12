@@ -158,7 +158,10 @@ test('MCP OAuth: a server that needs sign-in is signed in from Settings and then
     // Signing out removes it.
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('tab', { name: 'Tools', exact: true }).click()
-    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await page
+      .getByRole('group', { name: 'Account Account 1' })
+      .getByRole('button', { name: 'Remove', exact: true })
+      .click()
     await expect
       .poll(async () => ((await api('chatConfig')).mcpServers as Array<{ oauth?: unknown }>)[0]?.oauth)
       .toBeUndefined()

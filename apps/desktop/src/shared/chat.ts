@@ -27,6 +27,8 @@ export interface ChatConvTools {
   pluginMcpServers?: string[]
   /** Servers with several signed-in accounts that serve this conversation, each account on or off in it. */
   mcpAccounts?: { serverId: string; serverName: string; accounts: { id: string; label: string; enabled: boolean }[] }[]
+  /** Accounts turned off in this conversation, as `<serverId>#<accountId>` (also those not listed right now). */
+  mcpAccountsDisabled?: string[]
 }
 
 /** Partial update of a conversation's tool overrides; `appGroups` merges per group. */

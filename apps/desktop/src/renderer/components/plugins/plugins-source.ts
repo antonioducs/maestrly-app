@@ -1,7 +1,7 @@
 import type { FleetEnvironmentSettingsClient } from '@maestrly/bot-fleet-protocol'
 import type { HostApi } from '../../../preload'
 import type { InstalledPluginDto, PluginOpResult } from '../../../shared/plugins'
-import type { McpSignInActions } from '../chat/mcp-sign-in-actions'
+import type { McpAccountActions } from '../chat/mcp-account-actions'
 
 export const PLUGINS_CHANGED_EVENT = 'maestrly:plugins-changed'
 export const SKILLS_CHANGED_EVENT = 'maestrly:skills-changed'
@@ -32,8 +32,8 @@ export type PluginsSource = Pick<HostApi, PluginMethods> & {
   subscribe(listener: () => void): () => void
   /** Plugins also change the skills and MCP tools that menus and settings show. */
   notifyChanged(): void
-  /** Sign-in of the source's MCP servers; absent for a host, whose own sign-in actions apply. */
-  mcpSignIn?: McpSignInActions
+  /** Sign-in accounts of the source's MCP servers; absent for a host, whose own account actions apply. */
+  mcpAccounts?: McpAccountActions
   /** Installs one of this computer's plugins here, at its exact version (bot environments only). */
   bring?(key: string): Promise<PluginOpResult<InstalledPluginDto>>
 }
@@ -79,7 +79,11 @@ export function hostPluginsSource(api: HostApi): PluginsSource {
 /** This computer's main-process actions on a bot environment's plugins (`window.api.fleetEnvironmentPlugins`). */
 export interface EnvironmentPluginActions {
   bring(environmentId: string, key: string): Promise<PluginOpResult<InstalledPluginDto>>
-  mcpOAuthConnect: (environmentId: string, serverId: string) => ReturnType<McpSignInActions['connect']>
+  mcpOAuthConnect: (
+    environmentId: string,
+    serverId: string,
+    options?: { accountId?: string; label?: string }
+  ) => ReturnType<McpAccountActions['connect']>
   mcpOAuthCancel(environmentId: string, serverId: string): Promise<void>
 }
 
@@ -120,11 +124,30 @@ export function createEnvironmentPluginsSource(
       return () => window.removeEventListener(event, listener)
     },
     notifyChanged: () => window.dispatchEvent(new Event(event)),
-    mcpSignIn: {
-      connect: (serverId) => actions.mcpOAuthConnect(environmentId, serverId),
-      cancel: (serverId) => actions.mcpOAuthCancel(environmentId, serverId),
-      forget: (serverId) => settings.removeMcpOAuth({ id: serverId }),
-    },
+    // An environment's accounts serve all of its conversations: no projects to scope them to.
+    mcpAccounts: environmentMcpAccounts(environmentId, settings, actions),
     bring: (key) => actions.bring(environmentId, key),
+  }
+}
+
+/** Sign-in accounts of a bot environment's MCP servers: the browser part on this computer, the accounts in it. */
+export function environmentMcpAccounts(
+  environmentId: string,
+  settings: Pick<FleetEnvironmentSettingsClient, 'removeMcpOAuth' | 'patchMcpOAuthAccount' | 'setMcpOAuthClient'>,
+  actions: Pick<EnvironmentPluginActions, 'mcpOAuthConnect' | 'mcpOAuthCancel'>
+): McpAccountActions {
+  return {
+    connect: (serverId, options) =>
+      actions.mcpOAuthConnect(environmentId, serverId, {
+        ...(options?.accountId ? { accountId: options.accountId } : {}),
+        ...(options?.label ? { label: options.label } : {}),
+      }),
+    cancel: (serverId) => actions.mcpOAuthCancel(environmentId, serverId),
+    forget: (serverId, accountId) => settings.removeMcpOAuth({ id: serverId, ...(accountId ? { accountId } : {}) }),
+    patchAccount: async (serverId, accountId, patch) =>
+      patch.label === undefined
+        ? { ok: false, error: 'invalid-input' }
+        : settings.patchMcpOAuthAccount({ id: serverId, accountId, label: patch.label }),
+    setClient: (serverId, client) => settings.setMcpOAuthClient({ id: serverId, client }),
   }
 }

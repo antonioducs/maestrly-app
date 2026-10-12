@@ -2741,6 +2741,7 @@ function convToolsFor(conversationId: string): ChatConvTools {
       .filter((server) => server.origin)
       .map((server) => server.id),
     mcpAccounts: conversationAccountChoices(conversationId, t?.mcpAccountsDisabled ?? []),
+    mcpAccountsDisabled: t?.mcpAccountsDisabled ?? [],
   }
 }
 

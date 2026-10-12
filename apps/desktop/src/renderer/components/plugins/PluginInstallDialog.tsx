@@ -165,7 +165,12 @@ export function PluginInstallDialog({
           )}
           {mode.kind === 'install' && (
             <>
-              <PluginScopePicker source={source} value={scope} onChange={setScope} disabled={busy} />
+              <PluginScopePicker
+                listProjects={source.bring ? undefined : source.listProjects}
+                value={scope}
+                onChange={setScope}
+                disabled={busy}
+              />
               <PluginInputsForm inputs={inspection.inputs} values={values} onChange={setValues} disabled={busy} />
             </>
           )}

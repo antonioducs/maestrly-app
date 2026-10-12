@@ -14,7 +14,7 @@ import {
   Puzzle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ChatConfig, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
+import type { ChatConfig, ChatConvTools, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
 import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../../../shared/app-tool-groups'
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
@@ -93,6 +93,8 @@ export function ChatPlusMenu({
   const [imageGen, setImageGen] = useState(true)
   const [mcpDisabled, setMcpDisabled] = useState<string[]>([])
   const [pluginMcpServers, setPluginMcpServers] = useState<string[] | null>(null)
+  const [mcpAccounts, setMcpAccounts] = useState<NonNullable<ChatConvTools['mcpAccounts']>>([])
+  const [mcpAccountsDisabled, setMcpAccountsDisabled] = useState<string[]>([])
   const [subagentProfilesEnabled, setSubagentProfilesEnabled] = useState(true)
   const [subagentsEnabled, setSubagentsEnabled] = useState(true)
   const [companionBusy, setCompanionBusy] = useState(false)
@@ -117,6 +119,8 @@ export function ChatPlusMenu({
       setImageGen(t.imageGen)
       setMcpDisabled(t.mcpDisabled)
       setPluginMcpServers(t.pluginMcpServers ?? null)
+      setMcpAccounts(t.mcpAccounts ?? [])
+      setMcpAccountsDisabled(t.mcpAccountsDisabled ?? [])
     })
     if (!source.bot)
       api.chatGptWebCapabilities(targetConversationId).then((value) => {
@@ -205,6 +209,15 @@ export function ChatPlusMenu({
     const next = mcpDisabled.includes(id) ? mcpDisabled.filter((x) => x !== id) : [...mcpDisabled, id]
     setMcpDisabled(next)
     source.chatSetConvTools({ mcpDisabled: next })
+  }
+  // A bot's accounts serve all of its conversations; only a host's conversations turn accounts on and off.
+  const toggleAccount = (serverId: string, accountId: string) => {
+    const key = `${serverId}#${accountId}`
+    const next = mcpAccountsDisabled.includes(key)
+      ? mcpAccountsDisabled.filter((item) => item !== key)
+      : [...mcpAccountsDisabled, key]
+    setMcpAccountsDisabled(next)
+    void api.chatSetConvTools(conversationId, { mcpAccountsDisabled: next })
   }
   const toggleSubagentProfiles = () => {
     const targetConversationId = conversationId
@@ -503,6 +516,31 @@ export function ChatPlusMenu({
               </div>
             )
           })}
+          {!source.bot &&
+            mcpAccounts
+              .filter((entry) => servers.some((server) => server.id === entry.serverId))
+              .map((entry) => (
+                <div key={entry.serverId} className="flex flex-col" data-mcp-accounts={entry.serverId}>
+                  {entry.accounts.map((account) => {
+                    const on = !mcpAccountsDisabled.includes(`${entry.serverId}#${account.id}`)
+                    return (
+                      <div
+                        key={account.id}
+                        className="flex items-center justify-between gap-2 rounded-md py-1 pl-6 pr-2.5"
+                      >
+                        <div className="min-w-0 truncate text-[12px] text-muted-foreground">
+                          {entry.serverName} · <span className="text-foreground">{account.label}</span>
+                        </div>
+                        <Toggle
+                          on={on}
+                          onClick={() => toggleAccount(entry.serverId, account.id)}
+                          label={t('plusMenu.mcpAccountLabel', { server: entry.serverName, label: account.label })}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
           {source.bot ? (
             <button
               type="button"

@@ -23,7 +23,7 @@ import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginInputsForm } from './PluginInputsForm'
 import { PluginInstallDialog } from './PluginInstallDialog'
 import { PluginScopePicker, scopeIsComplete } from './PluginScopePicker'
-import { McpSignIn, signInStatus } from '../chat/McpSignIn'
+import { McpAccounts } from '../chat/McpAccounts'
 import type { PluginsSource } from './plugins-source'
 import { errorText, reasonText, shortCommit, Toggle } from './plugin-ui'
 
@@ -233,43 +233,45 @@ export function InstalledPlugins({
                   {t('installed.servers')}
                 </div>
                 {plugin.mcpServers.map((server) => (
-                  <div key={server.key} className="flex items-center gap-2 text-[12px]">
-                    <Toggle
-                      on={server.enabled === true}
-                      disabled={rowBusy || incompatible}
-                      label={`${server.key}`}
-                      onClick={() => {
-                        const enabling = server.enabled !== true
-                        if (enabling && server.transport === 'stdio' && !server.consented) {
-                          setStdioConsent({ plugin, server })
-                          return
-                        }
-                        void run(plugin.key, () =>
-                          source.pluginsSetServer({ key: plugin.key, serverKey: server.key, enabled: enabling })
-                        )
-                      }}
-                    />
-                    <span className="text-foreground">{server.key}</span>
-                    <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                      {server.transport}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
-                      {server.endpoint}
-                    </span>
-                    {/* A bot environment keeps its sign-ins; this computer's browser runs them through its source. */}
-                    {(!source.remote || source.mcpSignIn) &&
+                  <div key={server.key} className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 text-[12px]">
+                      <Toggle
+                        on={server.enabled === true}
+                        disabled={rowBusy || incompatible}
+                        label={`${server.key}`}
+                        onClick={() => {
+                          const enabling = server.enabled !== true
+                          if (enabling && server.transport === 'stdio' && !server.consented) {
+                            setStdioConsent({ plugin, server })
+                            return
+                          }
+                          void run(plugin.key, () =>
+                            source.pluginsSetServer({ key: plugin.key, serverKey: server.key, enabled: enabling })
+                          )
+                        }}
+                      />
+                      <span className="text-foreground">{server.key}</span>
+                      <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
+                        {server.transport}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                        {server.endpoint}
+                      </span>
+                    </div>
+                    {/* A bot environment keeps its accounts; this computer's browser signs them in through its source. */}
+                    {(!source.remote || source.mcpAccounts) &&
                       server.id &&
                       server.enabled &&
                       server.oauth !== undefined && (
-                        <McpSignIn
-                          actions={source.mcpSignIn}
+                        <McpAccounts
+                          actions={source.mcpAccounts}
                           serverId={server.id}
-                          auth={signInStatus(server.oauth)}
+                          oauth={server.oauth}
                           onChanged={() => {
                             source.notifyChanged()
                             onChanged()
                           }}
-                          className="shrink-0"
+                          className="pl-9"
                         />
                       )}
                   </div>
@@ -280,7 +282,7 @@ export function InstalledPlugins({
             {edit?.kind === 'scope' && (
               <div className="flex flex-col gap-2 border-t border-border/60 pt-2">
                 <PluginScopePicker
-                  source={source}
+                  listProjects={source.bring ? undefined : source.listProjects}
                   value={edit.scope}
                   onChange={(scope) => setEditing({ key: plugin.key, kind: 'scope', scope })}
                   disabled={rowBusy}

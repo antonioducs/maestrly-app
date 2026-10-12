@@ -59,7 +59,7 @@ import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../shared/runtime-a
 import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
 import { SubagentProfilesSettings } from './subagent-profiles/SubagentProfilesSettings'
 import { SkillsSettings } from './SkillsSettings'
-import { McpSignIn, signInStatus } from './McpSignIn'
+import { McpAccounts } from './McpAccounts'
 import { PluginsSettings } from '../plugins/PluginsSettings'
 import { PLUGINS_CHANGED_EVENT } from '../plugins/plugins-source'
 import { ChatGptWebSettings } from './ChatGptWebSettings'
@@ -2388,67 +2388,72 @@ function McpSettings({
       {servers.map((s) => (
         <div
           key={s.id}
-          className="flex items-center gap-2 rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-[13px]"
+          className="flex flex-col gap-2 rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-[13px]"
         >
-          {s.plugin ? (
-            // A plugin's servers switch on and off with the plugin, in Settings → Plugins.
-            <span
-              className={cn('h-2 w-2 shrink-0 rounded-full', s.enabled ? 'bg-emerald-500/70' : 'bg-white/20')}
-              title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => api.chatMcpUpdate(s.id, { enabled: !s.enabled }).then(onChanged)}
-              className={cn(
-                'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
-                s.enabled ? 'bg-emerald-500/70' : 'bg-white/10'
-              )}
-              title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
-            >
+          <div className="flex items-center gap-2">
+            {s.plugin ? (
+              // A plugin's servers switch on and off with the plugin, in Settings → Plugins.
               <span
-                className={cn('block h-3 w-3 rounded-full bg-white transition-transform', s.enabled && 'translate-x-3')}
+                className={cn('h-2 w-2 shrink-0 rounded-full', s.enabled ? 'bg-emerald-500/70' : 'bg-white/20')}
+                title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
               />
-            </button>
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate text-foreground">{s.name}</span>
-              {s.plugin && (
-                <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200">
-                  {tp('managedBy', { name: s.plugin.displayName })}
-                </span>
-              )}
-            </div>
-            <div className="truncate text-[11px] text-muted-foreground">
-              {s.transport === 'stdio' ? s.command : s.url}
-            </div>
-            {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
-          </div>
-          <McpSignIn serverId={s.id} auth={signInStatus(s.oauth)} onChanged={onChanged} className="shrink-0" />
-          <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {s.transport}
-          </span>
-          {s.plugin ? (
-            onManagePlugins && (
+            ) : (
               <button
                 type="button"
-                onClick={onManagePlugins}
-                className="shrink-0 text-[11px] text-muted-foreground underline decoration-white/20 underline-offset-2 hover:text-foreground"
+                onClick={() => api.chatMcpUpdate(s.id, { enabled: !s.enabled }).then(onChanged)}
+                className={cn(
+                  'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
+                  s.enabled ? 'bg-emerald-500/70' : 'bg-white/10'
+                )}
+                title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
               >
-                {tp('managePlugins')}
+                <span
+                  className={cn(
+                    'block h-3 w-3 rounded-full bg-white transition-transform',
+                    s.enabled && 'translate-x-3'
+                  )}
+                />
               </button>
-            )
-          ) : (
-            <button
-              type="button"
-              onClick={() => api.chatMcpRemove(s.id).then(onChanged)}
-              className="shrink-0 text-muted-foreground hover:text-destructive"
-              title={t('settings.remove')}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-foreground">{s.name}</span>
+                {s.plugin && (
+                  <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200">
+                    {tp('managedBy', { name: s.plugin.displayName })}
+                  </span>
+                )}
+              </div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {s.transport === 'stdio' ? s.command : s.url}
+              </div>
+              {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
+            </div>
+            <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {s.transport}
+            </span>
+            {s.plugin ? (
+              onManagePlugins && (
+                <button
+                  type="button"
+                  onClick={onManagePlugins}
+                  className="shrink-0 text-[11px] text-muted-foreground underline decoration-white/20 underline-offset-2 hover:text-foreground"
+                >
+                  {tp('managePlugins')}
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={() => api.chatMcpRemove(s.id).then(onChanged)}
+                className="shrink-0 text-muted-foreground hover:text-destructive"
+                title={t('settings.remove')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          {s.oauth && !s.unavailable && <McpAccounts serverId={s.id} oauth={s.oauth} onChanged={onChanged} />}
         </div>
       ))}
       {adding ? (

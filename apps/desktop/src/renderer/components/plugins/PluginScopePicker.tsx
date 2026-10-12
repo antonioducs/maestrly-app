@@ -1,19 +1,18 @@
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PluginScope } from '../../../shared/plugins'
-import type { PluginsSource } from './plugins-source'
 
 /**
- * All conversations, or the chosen projects of this host. Standalone chats only see global plugins. A bot environment
- * offers only all of its conversations.
+ * All conversations, or the chosen projects of this host, for a plugin or a signed-in account. Standalone chats only
+ * see what applies everywhere. Without `listProjects` (a bot environment) it offers only all conversations.
  */
 export function PluginScopePicker({
-  source,
+  listProjects,
   value,
   onChange,
   disabled,
 }: {
-  source: PluginsSource
+  listProjects?: () => Promise<{ id: string; name: string }[]>
   value: PluginScope
   onChange: (scope: PluginScope) => void
   disabled?: boolean
@@ -22,9 +21,9 @@ export function PluginScopePicker({
   const id = useId()
   const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null)
   useEffect(() => {
+    if (!listProjects) return
     let alive = true
-    void source
-      .listProjects()
+    void listProjects()
       .then((list) => {
         if (alive) setProjects(list)
       })
@@ -34,10 +33,10 @@ export function PluginScopePicker({
     return () => {
       alive = false
     }
-  }, [source])
+  }, [listProjects])
   const selected = value.kind === 'projects' ? value.workspaceIds : []
-  // A bot environment's plugins serve all of its conversations: it has none of this computer's projects.
-  if (source.bring)
+  // A bot environment serves all of its conversations: it has none of this computer's projects.
+  if (!listProjects)
     return (
       <fieldset className="flex flex-col gap-1.5" disabled={disabled}>
         <legend className="mb-1 text-[12px] font-medium text-foreground">{t('install.scope')}</legend>
