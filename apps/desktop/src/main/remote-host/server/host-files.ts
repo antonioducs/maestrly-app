@@ -306,7 +306,17 @@ export class HostFiles {
   }
   private async save(record: UploadRecord): Promise<void> {
     await mkdir(this.deps.uploadsDir, { recursive: true, mode: 0o700 })
-    await writeFile(this.manifest(record.uploadId), JSON.stringify(record), { mode: 0o600 })
+    // The chunks of one upload land in parallel, each recording the session again. Writing in place truncates the
+    // manifest first, and a chunk that read it then found no session: the record is replaced whole instead.
+    const manifest = this.manifest(record.uploadId)
+    const temporary = `${manifest}.${randomBytes(6).toString('hex')}.tmp`
+    try {
+      await writeFile(temporary, JSON.stringify(record), { mode: 0o600 })
+      await rename(temporary, manifest)
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
+    }
   }
   private async record(uploadId: string): Promise<UploadRecord> {
     if (!fleetHostFileUploadIdSchema.safeParse(uploadId).success) throw refuse('unknown-upload')

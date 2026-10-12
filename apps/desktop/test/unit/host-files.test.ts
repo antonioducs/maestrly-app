@@ -186,6 +186,35 @@ describe('host files', () => {
     expect(readdirSync(uploads)).toEqual([])
   })
 
+  it('takes the chunks of one upload in parallel without losing its session', async () => {
+    // Each chunk records the session again when it lands: one landing never hides the session from another.
+    // Several senders at once, each sending its next chunk as soon as one lands, as the transfer engine does.
+    const size = 256
+    const count = 240
+    const senders = 8
+    const bytes = randomBytes(size * count)
+    const session = await files.beginUpload({
+      directory: srv,
+      name: 'parallel.bin',
+      size: bytes.length,
+      overwrite: false,
+    })
+    const refused: string[] = []
+    let next = 0
+    await Promise.all(
+      Array.from({ length: senders }, async () => {
+        for (let index = next++; index < count; index = next++) {
+          const answer = await chunk(session.uploadId, index * size, bytes.subarray(index * size, (index + 1) * size))
+          if (answer.status !== 204) refused.push(`${index}: ${answer.status} ${await answer.text()}`)
+        }
+      })
+    )
+    expect(refused).toEqual([])
+    await files.commitUpload(session.uploadId, { sha256: sha(bytes) })
+    expect(readFileSync(path.join(srv, 'parallel.bin')).equals(bytes)).toBe(true)
+    expect(readdirSync(uploads)).toEqual([])
+  })
+
   it('drops an upload whose whole file does not match', async () => {
     const session = await files.beginUpload({ directory: srv, name: 'x.bin', size: 4, overwrite: false })
     await chunk(session.uploadId, 0, Buffer.from('abcd'))
