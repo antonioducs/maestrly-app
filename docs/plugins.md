@@ -95,8 +95,39 @@ A plugin's MCP servers appear in the **+** menu and in **Settings → Maestrly C
 on, in **Plugins**.
 
 A server that uses OAuth shows **Needs sign-in**. Choose **Sign in** next to it, in **Installed** or under **Tools**,
-and finish in your browser. The sign-in is kept on the host that runs the server, which renews it as needed; choose
-**Sign out** to remove it. Servers that take a token instead ask for it as a setting.
+and finish in your browser. The sign-in is kept on the host that runs the server, which renews it as needed. Servers
+that take a token instead ask for it as a setting.
+
+### Several accounts
+
+One server can have several signed-in accounts, for example a personal and a work e-mail. Choose **Add account** under
+the server and pick the other account in your provider's account chooser. Each account is named by its e-mail when the
+provider shares it, or **Account 1**, **Account 2**, and so on; choose **Rename** to change the name. For each account
+you can:
+
+- choose **Change** to set where it applies: all conversations, or selected projects;
+- choose **Sign in again** when it shows **Needs sign-in**, for example after its sign-in expired;
+- choose **Remove** to sign it out.
+
+When a conversation can use several accounts of a server, every model names the account in each call, and asks you
+when it is not clear which one you mean. You can switch an account off for one conversation in the **+** menu. With a
+single account, nothing changes: calls use it.
+
+### Own OAuth client
+
+Some servers do not register apps automatically, such as Google's. Signing in to one shows a form for your own OAuth
+client: create a client with the server's provider, of the desktop or native-app type, with a loopback redirect, and
+enter its client ID and, if it has one, its secret. The secret is kept encrypted on the host that runs the server and
+is never shown again; **Own OAuth client** under the server lets you change or remove the client.
+
+With Google:
+
+1. In Google Cloud Console, open **APIs & Services → Credentials → Create OAuth client ID** and choose **Desktop app**.
+2. Enable the service's API in the same project, for example the Gmail MCP API.
+3. On the OAuth consent screen, add your accounts as test users. While the app is in **Testing** mode, Google ends
+   each sign-in after 7 days, so you sign in again weekly.
+
+A plugin whose server declares only a client its publisher fills in signs in this way too.
 
 ## Manage installed plugins
 
@@ -130,7 +161,8 @@ Open the environment's settings and choose **Plugins**. The plugin center works 
   the settings you entered here, encrypted. Plugin files are never copied from this computer. If the environment
   cannot match your approval, install the plugin from the environment's sources and review it there.
 - **Sign in** for a server of the environment opens the consent page in this computer's browser. The environment
-  keeps the sign-in.
+  keeps the sign-in. Its accounts serve all of its conversations, and the bot's model names the account in each call
+  when there are several.
 - The plugins' skills appear in the environment's **Skills** settings under each plugin's name, where you can switch
   them on and off and add them to groups.
 

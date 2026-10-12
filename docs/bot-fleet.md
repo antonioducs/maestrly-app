@@ -489,8 +489,11 @@ tab remains available for application interaction and browser sign-ins.
   tested concurrently. Configuration changes let active tool calls finish
   before retiring their old connection. A remote server that needs an OAuth
   sign-in shows **Needs sign-in**: **Sign in** opens the consent page in this
-  computer's browser, and the environment keeps the sign-in and renews it. This
-  needs `environment-plugins-v1`.
+  computer's browser, and the environment keeps the sign-in and renews it. A
+  server can keep several accounts (**Add account**, **Rename**, **Sign in
+  again**, **Remove**), all serving every conversation of the environment, and
+  an own OAuth client for servers that do not register apps; its secret is
+  never shown again. This needs `environment-plugins-v1`.
 - **Plugins:** the same plugin center as this computer's, for the environment:
   add Git sources, browse their plugins with compatibility, install with
   approval, switch plugins and their servers on and off, update, edit settings,

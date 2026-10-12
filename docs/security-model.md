@@ -593,25 +593,47 @@ A remote MCP server (Streamable HTTP or legacy SSE) can require an OAuth sign-in
 Signing in always starts from Settings, and its interactive part runs on your
 computer, whichever host runs the server:
 
-- Your computer asks the server's host for a descriptor: the server's name, URL,
-  and any scopes or resource indicator a plugin declares. The descriptor never
-  carries headers, tokens, or commands.
+- Your computer's main process asks the server's host for a descriptor: the
+  server's name, URL, any scopes or resource indicator a plugin declares, and
+  the person's own OAuth client when one is set. The descriptor never carries
+  headers, tokens, or commands, and no window can ask for it: on this computer
+  and remote hosts it has no preload method, and for a bot environment it is a
+  main-process-only operation.
+- It discovers the authorization server (RFC 9728 and RFC 8414) before anything
+  else. Without dynamic client registration and without an own client, it stops
+  before the browser opens and asks for an own client.
 - It listens for the authorization response on `127.0.0.1` with a random port and
-  accepts only the request that carries the expected `state`. It discovers the
-  authorization server (RFC 9728 and RFC 8414), registers a public client
-  dynamically, and uses PKCE (S256). The consent page opens in your browser,
-  and only when its URL is HTTPS, or HTTP on this computer's loopback: an
-  authorization endpoint with any other scheme or host is refused.
+  accepts only the request that carries the expected `state`. It registers a
+  public client dynamically, or uses the own client, and uses PKCE (S256). The
+  consent page opens in your browser, and only when its URL is HTTPS, or HTTP on
+  this computer's loopback: an authorization endpoint with any other scheme or
+  host is refused. It may add the standard `prompt=select_account` (another
+  account) and `login_hint` (signing an account in again) parameters, and asks
+  for `openid email` when the provider lists them, to name the account.
 - It exchanges the code for tokens and hands the client registration, tokens,
-  and discovery results to the host, which encrypts them through the secure store.
-  Your computer keeps no copy of a remote host's or a bot environment's sign-in.
+  discovery results and the account's e-mail to the host, which encrypts them
+  through the secure store. Your computer keeps no copy of a remote host's or a
+  bot environment's sign-in. The e-mail comes from the unverified `id_token`
+  payload and only labels the account; it never grants access.
 
 The host refreshes tokens itself. Chat turns never open a browser and never
-register a client: when a server needs a new sign-in, its tools fail with a
-message that says to connect it in Settings. A sign-in is bound to the server's
-URL, and is deleted on sign-out, when the server is removed, and when a plugin
-update removes the server. An authorization server without dynamic client
-registration is reported; use an access token header for such a server instead.
+register a client: when an account needs a new sign-in, its tools fail with a
+message that names the account and says to connect it in Settings; the other
+accounts keep working. A server's accounts and own client are bound to its URL,
+and are deleted on sign-out, when the server is removed, and when a plugin
+update removes the server.
+
+**Accounts.** A server can keep several accounts, each scoped to all
+conversations or to selected projects. A conversation reaches only the accounts
+in its scope and not switched off in it; a server whose accounts all fall
+outside is left out of the conversation rather than reached with another
+account. With several accounts, every call names one; a call without a valid
+name fails.
+
+**Own OAuth client.** Its secret travels only from the window where the person
+types it to the host that runs the server, and from that host to this
+computer's main process during a sign-in. No channel, settings answer or status
+returns it; summaries carry only the client ID.
 
 ### Plugins
 

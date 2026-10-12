@@ -112,6 +112,13 @@ person's computer and hands the result to that host through
 one fails with a "connect it in Settings" error and shows **Needs sign-in**. See
 [MCP OAuth sign-in](security-model.md#mcp-oauth-sign-in).
 
+A server can keep several signed-in accounts. `buildMcpTools` resolves the
+accounts that serve the conversation (scope and per-conversation toggles); with
+several, each cached wrapper gets a required `mcp_account` parameter and
+`mcp_call` an `account`, and the call runs on a per-account connection
+(`McpServer.oauthAccountId`, pooled by `mcpConnectionKey`). The ChatGPT-web
+gateway routes `account` the same way, so the choice works with every model.
+
 Skills are local packages installed from an explicit source. Project memory and
 notes are local data, with indexes treated as reproducible caches. Promotion to
 shared repository knowledge is an explicit filesystem write rather than an
@@ -148,9 +155,10 @@ A bot environment serves the same engine through environment-settings
 operations behind the `environment-plugins-v1` feature (gateway) and capability
 (instance). The protocol lists the plugin operations explicitly
 (`FLEET_PLUGIN_SETTINGS_OPERATIONS`) with strict schemas; the gateway checks the
-capability and forwards them. `bringPlugin` and `setMcpOAuth` carry plugin values
-and OAuth tokens, so they have no renderer channel: this computer's main process
-builds them (`fleet:plugins:bring`, `fleet:mcp-oauth:connect`).
+capability and forwards them. `bringPlugin`, `setMcpOAuth` and
+`mcpOAuthDescriptor` carry plugin values, OAuth tokens and the own OAuth client's
+secret, so they have no renderer channel: this computer's main process calls them
+(`fleet:plugins:bring`, `fleet:mcp-oauth:connect`).
 
 ## Browser and loopback services
 

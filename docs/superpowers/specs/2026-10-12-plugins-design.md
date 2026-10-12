@@ -499,6 +499,39 @@ Connect flow:
 An authorization server without dynamic registration fails with a clear message, and the user can paste a token as a
 header instead.
 
+### MCP sign-in for every server (Phase 7)
+
+Phase 7 extends the Phase 3 flow so that every remote MCP server can sign in, with one or more accounts, for every
+model.
+
+- **Placeholder clients.** A plugin server whose OAuth `client_id` is a placeholder (`<GMAIL_PUBLIC_CLIENT_ID>`) is a
+  normal OAuth server (`{ kind: 'oauth', placeholderClient: true }`), noted with `auth-placeholder-client`. The
+  `unusable` auth kind no longer exists. Measured on 2026-10-12, Airtable's authorization server registers clients
+  dynamically; Shopify offers only client ID metadata documents (left out of this phase); Zoom and Google (Gmail,
+  Calendar, Drive) offer neither, so they need the person's own client.
+- **Pre-discovery.** The connect flow discovers the authorization server first. Without `registration_endpoint` and
+  without an own client, it returns `registration-unsupported` with the issuer before any browser opens.
+- **Own OAuth client.** One per server, set from the renderer (`chat:mcp-oauth:set-client`, `setMcpOAuthClient`) and
+  read only by the host's descriptor, which only this computer's main process asks for. Summaries carry the client ID,
+  never the secret.
+- **Record v2.** `chat.mcpOAuth.<serverId>` = `{ v: 2, url, client, accounts[] }`; each account has an id
+  (`acc_<12 hex>`), a unique label (1–40 characters), an e-mail from the `id_token` when the provider lists
+  `openid email`, a scope (global or projects), its client registration, tokens and discovery state. A v1 record is
+  read as one account. A rejected account is marked to sign in again and keeps its name and scope; signing in with an
+  e-mail that matches an account updates that account.
+- **Account chooser.** A new account adds `prompt=select_account` when the server already has one; signing an
+  account in again adds `login_hint=<e-mail>`.
+- **Routing.** `conversationMcpAccounts(server, conversationId)` gives the accounts in the conversation's scope minus
+  those switched off in it (`chat.tools.mcpAccountsDisabled`, `<serverId>#<accountId>`). With several, cached wrappers
+  require `mcp_account` (an enum of labels) and `mcp_call` takes `account`; with one, calls use it; a server whose
+  accounts all fall outside the conversation is left out. Connections are pooled per account
+  (`mcpConnectionKey`), so circuits and needs-auth marks are per account. The ChatGPT-web gateway lists `accounts` in
+  `list_external_capabilities` and routes `account` the same way.
+- **Bot environments.** `mcpOAuthStatuses` returns summaries; `mcpOAuthDescriptor` became a main-only POST;
+  `setMcpOAuth` takes a target; `removeMcpOAuth` takes an optional account; `patchMcpOAuthAccount` renames and
+  `setMcpOAuthClient` sets the own client. An environment's accounts are always global and have no per-conversation
+  toggles.
+
 ### Adaptations
 
 - **Commands (Phase 1)** become user-invocable skills named `<plugin>:<command>`. They are not model-invocable. The
