@@ -20,6 +20,14 @@ export default {
     siblingSourceNotFound: 'Conversa de origem não encontrada.',
     siblingSourceInvalid: 'Uma conversa-irmã exige uma conversa de origem ativa e de um único repositório.',
   },
+  conversationDispatch: {
+    confirmHeader: 'Novas conversas',
+    confirmQuestion: 'Iniciar {{count}} conversa(s) nova(s)?\n{{list}}',
+    confirmItem: '• {{title}} ({{workspace}})',
+    confirmThisProject: 'este projeto',
+    confirmStart: 'Iniciar',
+    confirmCancel: 'Não iniciar',
+  },
   debug: {
     extTimeout:
       'timeout: a extensão não respondeu. Abra a aba “Código” desta conversa (o VS Code precisa estar carregado para controlar o debug).',
