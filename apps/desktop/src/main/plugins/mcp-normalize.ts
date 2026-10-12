@@ -9,11 +9,14 @@ import { parsePluginRelativePath } from './paths'
  * issue; the others still load.
  */
 
+/**
+ * `placeholderClient`: the plugin names an OAuth client only its publisher fills in (`<GMAIL_PUBLIC_CLIENT_ID>`). The
+ * server still signs in like any other: by dynamic registration when it offers it, otherwise with the person's own client.
+ */
 export type PluginMcpAuth =
   | { kind: 'none' }
-  | { kind: 'oauth'; resource?: string; scopes?: string[] }
+  | { kind: 'oauth'; resource?: string; scopes?: string[]; placeholderClient?: true }
   | { kind: 'manual'; reason: 'publisher-client' }
-  | { kind: 'unusable'; reason: 'placeholder-client' }
 interface Common {
   key: string
   startupTimeoutMs?: number
@@ -324,13 +327,14 @@ export function normalizeAgentPluginsMcp(json: unknown, manifestSchema: string):
 function codexAuth(raw: Record<string, unknown>): PluginMcpAuth {
   const oauth = isRecord(raw.oauth) ? raw.oauth : null
   const clientId = typeof oauth?.client_id === 'string' ? oauth.client_id.trim() : ''
-  if (clientId && PLACEHOLDER_CLIENT.test(clientId)) return { kind: 'unusable', reason: 'placeholder-client' }
-  if (clientId || (oauth && typeof oauth.client_secret === 'string'))
-    return { kind: 'manual', reason: 'publisher-client' }
   const resource = typeof raw.oauth_resource === 'string' ? raw.oauth_resource : undefined
   const scopes = Array.isArray(raw.scopes) ? raw.scopes.filter((s): s is string => typeof s === 'string') : undefined
-  if (resource || scopes?.length || oauth)
-    return { kind: 'oauth', ...(resource ? { resource } : {}), ...(scopes?.length ? { scopes } : {}) }
+  const hints = { ...(resource ? { resource } : {}), ...(scopes?.length ? { scopes } : {}) }
+  // A placeholder is never sent anywhere, and neither is its secret.
+  if (clientId && PLACEHOLDER_CLIENT.test(clientId)) return { kind: 'oauth', ...hints, placeholderClient: true }
+  if (clientId || (oauth && typeof oauth.client_secret === 'string'))
+    return { kind: 'manual', reason: 'publisher-client' }
+  if (resource || scopes?.length || oauth) return { kind: 'oauth', ...hints }
   return { kind: 'none' }
 }
 

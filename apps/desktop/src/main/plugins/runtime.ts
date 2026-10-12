@@ -234,10 +234,7 @@ export function listPluginMcpServers(
         if (stored !== undefined && stored !== '') return stored
         return inputs.find((input) => input.id === id)?.defaultValue ?? undefined
       }
-      let unavailable =
-        secrets === null ||
-        spec.auth.kind === 'unusable' ||
-        inputs.some((input) => input.required && !inputValue(input.id))
+      let unavailable = secrets === null || inputs.some((input) => input.required && !inputValue(input.id))
       const expand = (value: string): string =>
         value.replace(PLACEHOLDER, (_, name: string) =>
           name === 'PLUGIN_ROOT'

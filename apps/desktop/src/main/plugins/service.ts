@@ -870,7 +870,6 @@ export function setServer(input: {
       const state = record.servers[input.serverKey]
       const spec = (record.mcpServers ?? []).find((server) => server.key === input.serverKey)
       if (!state || !spec) return fail('unknown-plugin', input.serverKey)
-      if (spec.auth.kind === 'unusable' && input.enabled) return fail('unavailable')
       if (spec.transport === 'stdio' && input.enabled) {
         const digest = launchDigest(spec)
         if (record.consent.stdio[spec.key] !== digest) {

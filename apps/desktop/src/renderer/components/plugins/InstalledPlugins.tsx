@@ -236,7 +236,7 @@ export function InstalledPlugins({
                   <div key={server.key} className="flex items-center gap-2 text-[12px]">
                     <Toggle
                       on={server.enabled === true}
-                      disabled={rowBusy || incompatible || server.auth === 'unusable'}
+                      disabled={rowBusy || incompatible}
                       label={`${server.key}`}
                       onClick={() => {
                         const enabling = server.enabled !== true

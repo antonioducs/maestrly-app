@@ -72,9 +72,15 @@ describe('plugin compatibility', () => {
     ['apps only', pkg({ components: [connector] }), 'unavailable', ['requires-app-connector', 'app-connector']],
     [
       'placeholder oauth only',
-      pkg({ mcpServers: [http('gm', { kind: 'unusable', reason: 'placeholder-client' })] }),
-      'unavailable',
-      ['no-usable-components', 'auth-placeholder-client'],
+      pkg({ mcpServers: [http('gm', { kind: 'oauth', placeholderClient: true })] }),
+      'portable',
+      ['auth-placeholder-client'],
+    ],
+    [
+      'apps + placeholder oauth for the same service',
+      pkg({ mcpServers: [http('gm', { kind: 'oauth', placeholderClient: true })], components: [connector] }),
+      'portable',
+      ['app-connector', 'auth-placeholder-client'],
     ],
     [
       'publisher client',
@@ -180,11 +186,14 @@ describe('plugin compatibility', () => {
     expect(c.reasons).toHaveLength(1)
   })
 
-  it('treats servers with unusable credentials as not usable', () => {
+  it('counts a server with a placeholder OAuth client as usable, noting it', () => {
     const p = {
       ...basePackage,
-      mcpServers: [http('a', { kind: 'unusable', reason: 'placeholder-client' }), http('b', { kind: 'none' })],
+      mcpServers: [http('a', { kind: 'oauth', placeholderClient: true }), http('b', { kind: 'none' })],
     }
-    expect(usableMcpServers(p).map((s) => s.key)).toEqual(['b'])
+    expect(usableMcpServers(p).map((s) => s.key)).toEqual(['a', 'b'])
+    expect(classifyPlugin({ ok: true, pkg: p }, { sourceSupported: true }).reasons).toEqual([
+      { code: 'auth-placeholder-client', component: 'mcp-server', subject: 'a' },
+    ])
   })
 })

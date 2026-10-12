@@ -136,7 +136,7 @@ const mcpServer = z
     transport: z.enum(['stdio', 'http', 'sse']),
     endpoint: text(8192),
     launch: optionalText(8192),
-    auth: z.enum(['none', 'oauth', 'manual', 'unusable']),
+    auth: z.enum(['none', 'oauth', 'manual']),
     status: componentStatus,
     enabled: z.boolean().optional(),
     consented: z.boolean().optional(),

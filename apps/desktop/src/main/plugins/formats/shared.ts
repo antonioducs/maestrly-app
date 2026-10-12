@@ -110,8 +110,8 @@ export function findLicenseFile(tree: PackageTree): string | null {
 /** Components for normalized MCP servers and the entries that were skipped. */
 export function mcpComponents(state: LoadState, mcp: NormalizedMcp): void {
   for (const server of mcp.servers) {
-    if (server.auth.kind === 'unusable')
-      component(state, 'mcp-server', server.key, 'unavailable', 'auth-placeholder-client')
+    if (server.auth.kind === 'oauth' && server.auth.placeholderClient)
+      component(state, 'mcp-server', server.key, 'supported', 'auth-placeholder-client')
     else if (server.auth.kind === 'manual')
       component(state, 'mcp-server', server.key, 'supported', 'auth-publisher-client')
     else component(state, 'mcp-server', server.key, 'supported')

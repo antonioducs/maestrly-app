@@ -21,9 +21,9 @@ const NOTE_REASONS = new Set<PluginReasonCode>([
   'submodule-skipped',
 ])
 
-/** MCP servers Maestrly can connect to. Servers with a placeholder OAuth client cannot be. */
+/** MCP servers Maestrly can connect to: every normalized server (one with a placeholder OAuth client signs in too). */
 export function usableMcpServers(pkg: PluginPackage): PluginMcpServerSpec[] {
-  return pkg.mcpServers.filter((server) => server.auth.kind !== 'unusable')
+  return pkg.mcpServers
 }
 
 function componentReasons(pkg: PluginPackage): PluginReason[] {
@@ -42,7 +42,7 @@ function componentReasons(pkg: PluginPackage): PluginReason[] {
   for (const server of pkg.mcpServers) {
     if (server.auth.kind === 'manual')
       add({ code: 'auth-publisher-client', component: 'mcp-server', subject: server.key })
-    if (server.auth.kind === 'unusable')
+    if (server.auth.kind === 'oauth' && server.auth.placeholderClient)
       add({ code: 'auth-placeholder-client', component: 'mcp-server', subject: server.key })
   }
   return reasons

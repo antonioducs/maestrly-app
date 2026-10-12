@@ -86,7 +86,7 @@ export default {
       'transport-unsupported': 'MCP server {{subject}} uses a transport Maestrly does not support.',
       'auth-publisher-client':
         'MCP server {{subject}} signs in with the publisher’s own client; enter a token instead.',
-      'auth-placeholder-client': 'MCP server {{subject}} needs a sign-in client only OpenAI provides.',
+      'auth-placeholder-client': 'MCP server {{subject}} may need your own OAuth client to sign in.',
       'symlink-skipped': 'Link {{subject}} is not installed.',
       'submodule-skipped': 'Submodule {{subject}} is not installed.',
     },
@@ -142,7 +142,7 @@ export default {
     noSkills: 'No skills.',
     mcpServers: 'MCP servers',
     noMcpServers: 'No MCP servers.',
-    auth: { none: 'No sign-in', oauth: 'OAuth sign-in', manual: 'Token required', unusable: 'Unavailable' },
+    auth: { none: 'No sign-in', oauth: 'OAuth sign-in', manual: 'Token required' },
     capabilities: 'Capabilities',
     endpoints: 'External endpoints',
     executables: 'Scripts and executables',

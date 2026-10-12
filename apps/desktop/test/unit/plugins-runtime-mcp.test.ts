@@ -92,6 +92,27 @@ describe('plugin MCP servers at runtime', () => {
     expect(listMcpServers()).toEqual([])
   })
 
+  it('lists a server whose plugin ships a placeholder OAuth client as a normal OAuth server', async () => {
+    const record = await installFixturePlugin(layout, {
+      name: 'mail',
+      files: codexDemoPlugin(
+        'mail',
+        {},
+        {
+          gm: {
+            type: 'http',
+            url: 'https://mail.example.com/mcp',
+            scopes: ['a'],
+            oauth: { client_id: '<MAIL_PUBLIC_CLIENT_ID>' },
+          },
+        }
+      ),
+    })
+    const [server] = listRuntimeMcpServers({ conversationId: undefined })
+    expect(server).toMatchObject({ id: record.servers.gm.id, enabled: true, oauth: { scopes: ['a'] } })
+    expect(server.unavailable).toBeUndefined()
+  })
+
   it('never lists the servers of a plugin marked not compatible as active', async () => {
     const record = await installFixturePlugin(layout, {
       name: 'demo',

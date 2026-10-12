@@ -22,7 +22,12 @@ describe('Codex MCP normalization', () => {
           url: 'https://api.example.com/mcp/',
           oauth: { client_id: 'Iv23synthetic', client_secret: 'synthetic' },
         },
-        gm: { type: 'http', url: 'https://mail.example.com/mcp', oauth: { client_id: '<GMAIL_PUBLIC_CLIENT_ID>' } },
+        gm: {
+          type: 'http',
+          url: 'https://mail.example.com/mcp',
+          scopes: ['a'],
+          oauth: { client_id: '<GMAIL_PUBLIC_CLIENT_ID>', client_secret: '<GMAIL_CLIENT_SECRET>' },
+        },
         tok: { type: 'http', url: 'https://api.example.com/mcp', bearer_token_env_var: 'EXAMPLE_TOKEN' },
       },
     })
@@ -38,7 +43,12 @@ describe('Codex MCP normalization', () => {
       resource: 'https://mcp.linear.app/mcp',
     })
     expect(r.servers.find((s) => s.key === 'gh')?.auth).toEqual({ kind: 'manual', reason: 'publisher-client' })
-    expect(r.servers.find((s) => s.key === 'gm')?.auth).toEqual({ kind: 'unusable', reason: 'placeholder-client' })
+    // A placeholder client is OpenAI's to fill in: Maestrly signs in with discovery or the person's own client instead.
+    expect(r.servers.find((s) => s.key === 'gm')?.auth).toEqual({
+      kind: 'oauth',
+      scopes: ['a'],
+      placeholderClient: true,
+    })
     expect(r.inputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: 'env:local:API_TOKEN', required: false, sensitive: true }),

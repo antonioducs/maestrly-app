@@ -181,10 +181,9 @@ function serverRecords(
   const out: InstalledPluginRecord['servers'] = {}
   for (const server of pkg.mcpServers) {
     const consented = server.transport !== 'stdio' || consent[server.key] === launchDigest(server)
-    const usable = server.auth.kind !== 'unusable'
     const enabled = previous[server.key]
-      ? previous[server.key].enabled && consented && usable
-      : server.enabledByDefault && consented && usable
+      ? previous[server.key].enabled && consented
+      : server.enabledByDefault && consented
     out[server.key] = { id: pluginServerId(key, server.key), enabled }
   }
   return out

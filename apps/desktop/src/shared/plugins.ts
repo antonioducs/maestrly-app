@@ -122,7 +122,7 @@ export interface PluginMcpServerDto {
   endpoint: string
   /** Full launch line of a stdio server (command + arguments), shown for consent. */
   launch: string | null
-  auth: 'none' | 'oauth' | 'manual' | 'unusable'
+  auth: 'none' | 'oauth' | 'manual'
   status: PluginComponentStatus
   enabled?: boolean
   consented?: boolean
