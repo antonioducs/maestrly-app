@@ -91,6 +91,20 @@ export const nativeImage = {
   }),
 }
 
+// System notifications are unsupported by default; tests mock `electron` to observe one.
+export class Notification {
+  static isSupported(): boolean {
+    return false
+  }
+  on(): this {
+    return this
+  }
+  once(): this {
+    return this
+  }
+  show(): void {}
+}
+
 export const nativeTheme = { themeSource: 'dark' as string }
 export const shell = { openExternal: (): Promise<void> => Promise.resolve() }
 
@@ -144,6 +158,7 @@ export default {
   BrowserWindow,
   dialog,
   nativeImage,
+  Notification,
   nativeTheme,
   shell,
   safeStorage,

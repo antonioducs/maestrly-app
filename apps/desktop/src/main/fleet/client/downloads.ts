@@ -9,6 +9,8 @@ import type { FleetApiClient } from './api'
 export interface FleetDownloadOptions {
   signal?: AbortSignal
   downloadsPath?: () => string | Promise<string>
+  /** Bytes on disk against the announced size: first once the gateway answers, then after every written chunk. */
+  onProgress?: (progress: { name: string; receivedBytes: number; totalBytes: number }) => void
 }
 
 export function sanitizeFleetFilename(name: string): string {
@@ -52,6 +54,7 @@ export async function saveFleetFile(
     options.signal?.throwIfAborted()
     handle = await open(partial, 'wx', 0o600)
     let size = 0
+    options.onProgress?.({ name: ref.name, receivedBytes: 0, totalBytes: ref.byteSize })
     for (;;) {
       options.signal?.throwIfAborted()
       const next = await reader.read()
@@ -65,6 +68,7 @@ export async function saveFleetFile(
         if (!bytesWritten) throw new Error('File write failed')
         offset += bytesWritten
       }
+      options.onProgress?.({ name: ref.name, receivedBytes: size, totalBytes: ref.byteSize })
     }
     if (size !== ref.byteSize) throw new Error('Incomplete file')
     await handle.sync()

@@ -237,6 +237,75 @@ describe('fleet client service', () => {
     }
   })
 
+  it('runs one transfer per file, reports its progress to every window, and names the bot in its notice', async () => {
+    const service = new FleetClientService()
+    const settled = vi.fn()
+    service.onDownloadSettled = settled
+    Object.assign(service, {
+      api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+      connection: { features: ['files'], deviceId: 'device-1' },
+      snapshot: { bots: [{ id: 'bot', name: 'Scout' }] },
+    })
+    let finish!: (path: string) => void
+    state.download.mockImplementation(
+      (_api, _botId, _fileId, options: { onProgress: (progress: unknown) => void }) =>
+        new Promise((resolve) => {
+          options.onProgress({ name: 'big.zip', receivedBytes: 0, totalBytes: 2048 })
+          finish = resolve
+        })
+    )
+    const first = service.downloadFile('bot', 'f-file')
+    // Leaving the chat and coming back asks again: it joins the running transfer.
+    const second = service.downloadFile('bot', 'f-file')
+    await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
+    expect(service.getActiveDownload('bot', 'f-file')).toMatchObject({ receivedBytes: 0, totalBytes: 2048 })
+    const progress = state.broadcasts.filter((event) => event.channel === 'fleet:download')
+    expect(progress.at(-1)?.payload).toMatchObject({
+      type: 'progress',
+      botId: 'bot',
+      fileId: 'f-file',
+      totalBytes: 2048,
+    })
+    finish('/downloads/big.zip')
+    const receipt = await first
+    expect(await second).toBe(receipt)
+    expect(service.getActiveDownload('bot', 'f-file')).toBeNull()
+    expect(state.broadcasts.at(-1)).toEqual({
+      channel: 'fleet:download',
+      payload: { type: 'saved', botId: 'bot', fileId: 'f-file', receipt },
+    })
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ outcome: 'saved', name: 'big.zip', path: '/downloads/big.zip', receipt }),
+      'Scout'
+    )
+  })
+
+  it('cancels one transfer on request and marks a file the gateway no longer has', async () => {
+    const service = new FleetClientService()
+    const settled = vi.fn()
+    service.onDownloadSettled = settled
+    Object.assign(service, {
+      api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+      connection: { features: ['files'], deviceId: 'device-1' },
+    })
+    state.download.mockImplementation(
+      (_api, _botId, _fileId, { signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    )
+    const saving = service.downloadFile('bot', 'f-file')
+    await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
+    service.cancelDownload('bot', 'f-file')
+    await expect(saving).rejects.toThrow('FLEET_DOWNLOAD_CANCELED')
+    expect(state.broadcasts.at(-1)?.payload).toEqual({ type: 'canceled', botId: 'bot', fileId: 'f-file' })
+    expect(settled).not.toHaveBeenCalled()
+    state.download.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'File expired'))
+    await expect(service.downloadFile('bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ outcome: 'failed', error: 'FLEET_FILE_NOT_FOUND' }),
+      null
+    )
+  })
+
   it('never starts saving a file if the connection changed during metadata checks', async () => {
     const service = new FleetClientService()
     let finish!: (value: { capabilities: string[] }) => void

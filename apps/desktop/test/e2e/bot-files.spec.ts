@@ -27,7 +27,7 @@ const code = Buffer.from('export const greeting = "Olá, bot"\n', 'utf8')
  * server and the bot can edit it when `edit` is true: an edit cuts the transcript there and queues the new text.
  */
 async function withBot(
-  options: { files?: boolean; permission?: boolean; video?: boolean; edit?: boolean },
+  options: { files?: boolean; permission?: boolean; video?: boolean; edit?: boolean; slow?: boolean },
   run: (fixture: {
     page: Page
     downloads: string
@@ -37,6 +37,9 @@ async function withBot(
     expireFile: () => void
     revealedPaths: () => Promise<string[]>
     video: Buffer
+    /** With `slow`, file bodies stop halfway until this runs; later bodies flow at once. */
+    releaseFile: () => void
+    notices: () => Promise<{ title: string; body: string }[]>
   }) => Promise<void>
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-bot-files-'))
@@ -90,6 +93,8 @@ async function withBot(
   const failures: string[] = []
   const streams = new Set<ServerResponse>()
   let missing = false
+  let held = options.slow === true
+  const waiting = new Set<() => void>()
   let app: ElectronApplication | undefined
   const permission: Extract<FleetTranscriptItem, { kind: 'permission' }> = {
     kind: 'permission',
@@ -272,7 +277,19 @@ async function withBot(
             break
           }
           response.writeHead(200, { 'Content-Type': file.mediaType, 'Content-Length': file.byteSize })
-          response.end(isClip ? video : pdf)
+          const body = isClip ? video : pdf
+          if (held) {
+            const half = Math.floor(body.length / 2)
+            response.write(body.subarray(0, half))
+            // A canceled transfer closes the response; it must not wait for the release.
+            await new Promise<void>((resolve) => {
+              waiting.add(resolve)
+              response.once('close', resolve)
+            })
+            if (!response.destroyed) response.end(body.subarray(half))
+            return
+          }
+          response.end(body)
           return
         }
         default:
@@ -301,11 +318,20 @@ async function withBot(
       },
     })
     await app.evaluate(({ app }, dest) => app.setPath('downloads', dest), downloads)
-    await app.evaluate(({ shell }) => {
-      const state = globalThis as typeof globalThis & { fleetRevealedPaths: string[] }
+    await app.evaluate(({ shell, Notification }) => {
+      const state = globalThis as typeof globalThis & {
+        fleetRevealedPaths: string[]
+        fleetNotices: { title: string; body: string }[]
+      }
       state.fleetRevealedPaths = []
+      state.fleetNotices = []
       shell.showItemInFolder = (file) => {
         state.fleetRevealedPaths.push(file)
+      }
+      // Recorded instead of shown on the test machine.
+      Notification.isSupported = () => true
+      Notification.prototype.show = function (this: Electron.Notification) {
+        state.fleetNotices.push({ title: this.title, body: this.body })
       }
     })
     const page = await app.firstWindow()
@@ -336,6 +362,15 @@ async function withBot(
         missing = true
       },
       video,
+      releaseFile: () => {
+        held = false
+        for (const resolve of waiting) resolve()
+        waiting.clear()
+      },
+      notices: () =>
+        app!.evaluate(
+          () => (globalThis as typeof globalThis & { fleetNotices: { title: string; body: string }[] }).fleetNotices
+        ),
     })
     expect(failures).toEqual([])
   } finally {
@@ -548,6 +583,62 @@ test('a shared video plays in place with seeking, speed and keyboard controls, a
       '/v1/bots/file-bot/files/f-clip',
       '/v1/bots/file-bot/files/f-clip/content',
     ])
+  })
+})
+
+test('a slow file shows its progress, keeps saving while the chat is closed, can be canceled, and announces its end', async () => {
+  await withBot({ slow: true }, async ({ page, downloads, fileRequests, releaseFile, notices }) => {
+    const download = page.getByRole('button', { name: 'Download Relatório.pdf', exact: true })
+    const cancel = page.getByRole('button', { name: 'Cancel downloading Relatório.pdf', exact: true })
+    const bar = page.getByRole('progressbar', { name: 'Downloading Relatório.pdf', exact: true })
+    const halfBytes = Math.floor(pdf.length / 2)
+    const half = String(Math.round((halfBytes / pdf.length) * 100))
+    const openBot = async () => {
+      await page.getByRole('tab', { name: /^Bots/ }).click()
+      await page
+        .getByRole('button', { name: /File Bot/ })
+        .first()
+        .click()
+    }
+    const contentRequests = () => fileRequests.filter((request) => request.endsWith('/content')).length
+    await download.click()
+    await expect(bar).toHaveAttribute('aria-valuenow', half)
+    await expect(bar).toHaveAttribute('aria-valuetext', new RegExp(`^${halfBytes} byte of ${pdf.length} byte`))
+    await expect(cancel).toBeVisible()
+    await expect(download).toHaveCount(0)
+    // A new renderer, as after leaving the chat: the card follows the same transfer instead of offering a new one.
+    await page.reload()
+    await openBot()
+    await expect(bar).toHaveAttribute('aria-valuenow', half)
+    await expect(download).toHaveCount(0)
+    expect(contentRequests()).toBe(1)
+    await cancel.click()
+    await expect(download).toBeEnabled()
+    await expect(bar).toHaveCount(0)
+    await expect(page.getByText('Saved to Downloads.', { exact: true })).toHaveCount(0)
+    await expect.poll(() => readdir(downloads)).toEqual([])
+    // Started, then left: it finishes away from the chat and says so.
+    await download.click()
+    await expect(bar).toHaveAttribute('aria-valuenow', half)
+    await page.reload()
+    await expect(page.getByRole('tab', { name: /^Bots/ })).toBeVisible()
+    // No card of the file is on screen, so its end is news whatever window has focus.
+    await expect(page.getByRole('button', { name: /^Download / })).toHaveCount(0)
+    await expect(bar).toHaveCount(0)
+    expect(contentRequests()).toBe(2)
+    releaseFile()
+    await expect
+      .poll(() =>
+        readFile(path.join(downloads, 'Relatório.pdf'))
+          .then((bytes) => bytes.toString('base64'))
+          .catch(() => null)
+      )
+      .toBe(pdf.toString('base64'))
+    await expect.poll(notices).toEqual([{ title: 'Download complete', body: 'Relatório.pdf from File Bot' }])
+    await openBot()
+    await expect(page.getByText('Saved to Downloads.', { exact: true })).toBeVisible()
+    await expect(download).toBeEnabled()
+    expect((await readdir(downloads)).sort()).toEqual(['Relatório.pdf'])
   })
 })
 

@@ -33,7 +33,9 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { isHeadlessInstance } from '../../remote-host/server/config'
+import { FLEET_ATTENDED_FILES_MAX } from '../../../shared/fleet-downloads'
 import { FleetClientError } from './api'
+import { setAttendedFleetFiles } from './download-notices'
 import { fleetClientService as fleet } from './service'
 import { FLEET_EDIT_CONFLICT, FLEET_EDIT_UNSUPPORTED } from '../../../shared/fleet-targets'
 import {
@@ -67,6 +69,8 @@ const outgoingAttachments = z
   )
   .refine((items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax)
 const imageId = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/)
+/** The files a window shows; each send replaces that window's whole list. */
+const attendedFiles = z.array(z.object({ botId: id, fileId: fleetFileIdSchema }).strict()).max(FLEET_ATTENDED_FILES_MAX)
 const connectInput = z
   .object({
     url: z.string().min(1).max(2048),
@@ -248,12 +252,18 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     }
     return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
   })
+  // A missing file rejects with FLEET_FILE_NOT_FOUND, a canceled one with FLEET_DOWNLOAD_CANCELED.
   reg.mhandle('fleet:downloadFile', (_event, botId: unknown, fileId: unknown) =>
-    fleet.downloadFile(id.parse(botId), fleetFileIdSchema.parse(fileId)).catch((error: unknown) => {
-      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND'))
-        throw new Error('FLEET_FILE_NOT_FOUND')
-      throw error
-    })
+    fleet.downloadFile(id.parse(botId), fleetFileIdSchema.parse(fileId))
+  )
+  reg.mhandle('fleet:cancelDownload', (_event, botId: unknown, fileId: unknown) =>
+    fleet.cancelDownload(id.parse(botId), fleetFileIdSchema.parse(fileId))
+  )
+  reg.handle('fleet:getActiveDownload', (_event, botId: unknown, fileId: unknown) =>
+    fleet.getActiveDownload(id.parse(botId), fleetFileIdSchema.parse(fileId))
+  )
+  reg.mhandle('fleet:attendDownloads', (event, files: unknown) =>
+    setAttendedFleetFiles(event.sender, attendedFiles.parse(files))
   )
   reg.handle('fleet:getDownload', (_event, botId: unknown, fileId: unknown) =>
     fleet.getDownload(id.parse(botId), fleetFileIdSchema.parse(fileId))

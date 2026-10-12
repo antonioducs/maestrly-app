@@ -58,6 +58,16 @@ shows a message, and **Download** still saves the file. Bots on versions before
 video support publish videos without a video type; the app recognizes them by
 their extension.
 
+While a file downloads, its card shows a progress bar with the amount received,
+the speed, and the estimated time left; it shows **Waiting for data…** when the
+bot stops sending. The transfer continues if you open another conversation or
+reload the window, and the card resumes showing it when you come back. Clicking
+**Download** again while a file is downloading does not start a second copy.
+**Cancel** stops the transfer and removes the incomplete file. When a download
+finishes or fails, a system notification appears unless a focused window already
+shows the file's card; clicking the notification for a saved file reveals it in
+its folder. Cancelling or disconnecting does not show a notification.
+
 Transfers use the paired gateway connection: the same flow works with Docker on
 this computer and with the SSH tunnel to a VPS. No public link or artifact-hosting
 setting is required. The bot's environment must be running and reachable.

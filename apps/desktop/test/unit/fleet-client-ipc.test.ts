@@ -12,11 +12,15 @@ const mocks = vi.hoisted(() => ({
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   downloadFile: vi.fn(async () => {}),
+  cancelDownload: vi.fn(),
+  getActiveDownload: vi.fn(() => null),
+  attend: vi.fn(),
   revealDownload: vi.fn(),
   getDownload: vi.fn(async () => null),
   prepareMedia: vi.fn(async () => 'maestrly-media://fleet/bot/f-file/' + '0'.repeat(32)),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
 }))
+vi.mock('../../src/main/fleet/client/download-notices', () => ({ setAttendedFleetFiles: mocks.attend }))
 vi.mock('../../src/main/fleet/client/service', () => ({
   fleetClientService: {
     start: vi.fn(),
@@ -30,6 +34,8 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     hasFeature: mocks.hasFeature,
     getImage: mocks.getImage,
     downloadFile: mocks.downloadFile,
+    cancelDownload: mocks.cancelDownload,
+    getActiveDownload: mocks.getActiveDownload,
     revealDownload: mocks.revealDownload,
     getDownload: mocks.getDownload,
     prepareMedia: mocks.prepareMedia,
@@ -89,6 +95,36 @@ describe('fleet IPC validation', () => {
     expect(mocks.prepareMedia).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
     mocks.prepareMedia.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'gone'))
     await expect(prepare({}, 'bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
+  })
+  it('validates file ids to follow and cancel a transfer, and takes only valid lists of shown files', () => {
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    // Canceling changes main's state, so it is guarded; following a transfer only reads it.
+    const cancel = mutations.get('fleet:cancelDownload')!
+    const active = reads.get('fleet:getActiveDownload')!
+    expect(reads.has('fleet:cancelDownload')).toBe(false)
+    expect(() => cancel({}, '../bot', 'f-file')).toThrow()
+    expect(() => active({}, 'bot', '../file')).toThrow()
+    cancel({}, 'bot', 'f-file')
+    active({}, 'bot', 'f-file')
+    expect(mocks.cancelDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    expect(mocks.getActiveDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    const attend = mutations.get('fleet:attendDownloads')!
+    const sender = {}
+    for (const invalid of [
+      null,
+      [{ botId: '../bot', fileId: 'f-file' }],
+      [{ botId: 'bot', fileId: 'f-file', path: '/tmp' }],
+      Array.from({ length: 1_001 }, () => ({ botId: 'bot', fileId: 'f-file' })),
+    ])
+      expect(() => attend({ sender }, invalid)).toThrow()
+    expect(mocks.attend).not.toHaveBeenCalled()
+    attend({ sender }, [{ botId: 'bot', fileId: 'f-file' }])
+    expect(mocks.attend).toHaveBeenCalledExactlyOnceWith(sender, [{ botId: 'bot', fileId: 'f-file' }])
   })
   it('validates all login mutations before dispatch', () => {
     process.env.MAESTRLY_BOT_MODE = '1'

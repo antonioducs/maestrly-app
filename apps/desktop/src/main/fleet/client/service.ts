@@ -34,6 +34,8 @@ import { saveFleetFile } from './downloads'
 import { findFleetDownload, fleetDownloadPath, rememberFleetDownload } from './download-history'
 import { FleetMediaCache, type FleetMediaEntry } from './media-cache'
 import { FleetMediaUrls, type FleetMediaRequest } from './media-protocol'
+import { FleetActiveDownloads, type FleetSettledDownload } from './active-downloads'
+import type { FleetDownloadProgress } from '../../../shared/fleet-downloads'
 
 export type FleetConnectionView = {
   features: string[]
@@ -75,9 +77,16 @@ export class FleetClientService {
     root: () => path.join(app.getPath('userData'), 'fleet-media-cache'),
     onProgress: (progress) => broadcast('fleet:mediaProgress', progress),
   })
+  private readonly transfers = new FleetActiveDownloads({
+    emit: (event) => broadcast('fleet:download', event),
+    settled: (download) =>
+      this.onDownloadSettled?.(download, this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null),
+  })
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
+  /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
+  onDownloadSettled: ((download: FleetSettledDownload, botName: string | null) => void) | null = null
   private readonly listeners = new Set<() => void>()
 
   /** Calls back after the connection or what is known of the server changed; returns the function that stops it. */
@@ -170,17 +179,27 @@ export class FleetClientService {
     return this.requireApi().getImage(botId, imageId)
   }
 
-  async downloadFile(botId: string, fileId: string): Promise<string> {
-    const api = this.requireApi()
-    const deviceId = this.connection.deviceId
-    if (!deviceId) throw new Error('Fleet is not paired')
-    const signal = this.downloads.signal
-    if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-    const bot = await api.call('botGet', { params: { id: botId }, signal })
-    signal.throwIfAborted()
-    if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-    const destination = await saveFleetFile(api, botId, fileId, { signal })
-    return rememberFleetDownload(deviceId, botId, fileId, destination)
+  /** Saves a bot file to Downloads and resolves with its receipt; joins the transfer already running for it. */
+  downloadFile(botId: string, fileId: string): Promise<string> {
+    return this.transfers.run(botId, fileId, this.downloads.signal, async ({ signal, onProgress }) => {
+      const api = this.requireApi()
+      const deviceId = this.connection.deviceId
+      if (!deviceId) throw new Error('Fleet is not paired')
+      if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+      const bot = await api.call('botGet', { params: { id: botId }, signal })
+      signal.throwIfAborted()
+      if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+      const destination = await saveFleetFile(api, botId, fileId, { signal, onProgress })
+      return { path: destination, receipt: rememberFleetDownload(deviceId, botId, fileId, destination) }
+    })
+  }
+
+  getActiveDownload(botId: string, fileId: string): FleetDownloadProgress | null {
+    return this.transfers.get(botId, fileId)
+  }
+
+  cancelDownload(botId: string, fileId: string): void {
+    this.transfers.cancel(botId, fileId)
   }
 
   private mediaFile(deviceId: string, botId: string, fileId: string): Promise<FleetMediaEntry> {
