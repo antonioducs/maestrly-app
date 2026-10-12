@@ -6,3 +6,4 @@ export * from './host-files.js'
 export * from './host-editor.js'
 
 export * from './environment-settings.js'
+export * from './plugins.js'

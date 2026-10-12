@@ -251,6 +251,11 @@ export const FLEET_ENVIRONMENT_DISPLAY = { columns: 3, rows: 3, width: 3840, hei
 
 /** Typed, revision-aware environment configuration, independent of any bot. */
 export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: an environment installs and manages plugins (from Git, on its
+ * own) and keeps the OAuth sign-ins of its remote MCP servers, which the owner's computer runs in its browser.
+ */
+export const FLEET_ENVIRONMENT_PLUGINS_FEATURE = 'environment-plugins-v1'
 
 /**
  * Gateway feature (`/v1/meta`) and instance capability: a bot reaches the workspaces of the Macs that gave it access,
