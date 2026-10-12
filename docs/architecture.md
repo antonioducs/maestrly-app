@@ -131,10 +131,11 @@ such as hooks, commands, agents or app connectors. The main process
 (`main/plugins/`) reads three formats: Agent Plugins 1.0 (`plugin.json`),
 Codex (`.codex-plugin/plugin.json`) and Claude Code
 (`.claude-plugin/plugin.json`, or a marketplace entry acting as the manifest).
-All three are normalized into one model of skills, MCP servers, inputs and a
-component inventory. Each component carries a support status (`supported`,
-`adapted`, `not-run`, `unavailable` or `invalid`), and the plugin gets a
-compatibility level (portable, partial or unavailable) with explicit reasons.
+All three are normalized into one model of skills, agents, MCP servers, inputs
+and a component inventory. Each component carries a support status
+(`supported`, `adapted`, `not-run`, `unavailable` or `invalid`), and the plugin
+is either portable (it works the same with every model) or not compatible, with
+explicit reasons; only portable plugins are offered.
 
 Sources are Git repositories. The system `git` downloads them as depth-one,
 blob-less partial clones with sparse checkouts, so only the files Maestrly
@@ -143,8 +144,10 @@ reads are materialized. Installed versions are immutable copies under
 globally or for selected projects.
 
 No provider-native plugin feature is used. Plugin skills (`<plugin>:<skill>`)
-join the skill catalog and `use_skill`, and plugin commands become
-user-invocable skills. Plugin MCP servers join the proxied MCP surface through
+join the skill catalog and `use_skill`, plugin commands become
+user-invocable skills, and plugin agents join the subagent catalog
+(`listPluginAgents`, merged in `listEffectiveAgents`) as `<plugin>-<agent>`
+with Claude tool names mapped to Maestrly's and no model of their own. Plugin MCP servers join the proxied MCP surface through
 `listRuntimeMcpServers`, so every provider (API keys, Claude, Codex, GitHub
 Copilot, Cursor, Google AI and ChatGPT web) receives them through the mechanism
 it already uses for skills and MCP. Contexts that switch MCP off by id cover

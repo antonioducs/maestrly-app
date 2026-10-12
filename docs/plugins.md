@@ -59,9 +59,10 @@ the same with every model** opens the plugins left out, each with its reason. A 
 - it has no skill and no MCP server Maestrly can run;
 - its manifest is invalid, or its source or marketplace rules it out.
 
-Maestrly adapts what it can. A plugin's commands become skills you start yourself with `/<plugin>:<command>`. Parts
-that only work inside one product, such as app connectors, hooks, agents, and language servers, are never enabled for
-any model. They appear in the plugin's details under **Not included**, each with its reason; none is dropped silently.
+Maestrly adapts what it can. A plugin's commands become skills you start yourself with `/<plugin>:<command>`, and its
+agents become subagents (see [Agents](#agents)). Parts that only work inside one product, such as app connectors,
+hooks, and language servers, are never enabled for any model. They appear in the plugin's details under **Not
+included**, each with its reason; none is dropped silently.
 
 An installed plugin that stops being compatible, for example after its files change, stops applying to every
 conversation. It stays in **Installed** with its reason, where you can update or uninstall it.
@@ -89,6 +90,20 @@ installs.
 A plugin's skills are named `<plugin>:<skill>`. They appear in the composer's skills menu and in **Settings →
 Maestrly Chat → Skills**, under the plugin's name. You can switch them on and off, add them to skill groups, and
 override them in a conversation, like your own skills. They are removed only with the plugin.
+
+### Agents
+
+A plugin's agents (`agents/*.md` in Claude Code and Codex plugins) become subagents named `<plugin>-<agent>`, which any
+model can delegate to with `task` or a `#<plugin>-<agent>` mention, like your own agents. The plugin's details list them.
+
+- **Tools.** The tools an agent names map to Maestrly's: `Read`, `Grep`, `Glob`, `LS`, `Bash`, `Edit`, `MultiEdit`,
+  `Write` and `WebFetch` keep their meaning, and any `mcp__…` tool becomes access to the enabled MCP servers through
+  `mcp_search` and `mcp_call`. Tools with no equivalent every model can use, such as `WebSearch`, `Task` or
+  `TodoWrite`, are left out and listed under **Not included**. An agent that names no tools gets the read-only set.
+- **Model.** An agent's `model` is ignored: it runs on the conversation's model, unless a subagent rule in
+  **Settings → Maestrly Chat → Subagents** chooses another, so it behaves the same with every provider.
+- **Names.** An agent file of the project (`.claude/agents`, `.agents/agents`) or of your home with the same name wins
+  over the plugin's.
 
 A plugin's MCP servers appear in the **+** menu and in **Settings → Maestrly Chat → Tools**, marked **From
 &lt;plugin&gt;**. You can switch a server off in one conversation from the **+** menu. Switch it off everywhere, or back

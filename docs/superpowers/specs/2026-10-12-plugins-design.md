@@ -537,8 +537,12 @@ model.
 - **Commands (Phase 1)** become user-invocable skills named `<plugin>:<command>`. They are not model-invocable. The
   skill renderer already replaces `$ARGUMENTS` and `$1`–`$9` (`applySkillArguments`), so the command body is used
   as is.
-- **Agents (Phase 5)** become subagents through the existing `.md` agent loader. Claude tool names map to Maestrly
-  tools; unknown tools and model aliases are dropped with a diagnostic.
+- **Agents (Phase 5, delivered as Phase 8)** become subagents named `<plugin>-<agent>` (`plugins/agents-scan.ts`,
+  `listPluginAgents`, joined in `listEffectiveAgents` and the Settings catalog). Claude tool names map to Maestrly tools
+  (`Read`→`read`, `LS`→`glob`, `MultiEdit`→`edit`, `mcp__*`→`mcp_search`+`mcp_call`); `WebSearch`, `Task`, `Agent`,
+  `TodoWrite` and `NotebookEdit` are dropped and noted per agent. `model` is ignored, so the agent inherits the parent's
+  profile. An agent without a description or a body is an invalid entry. A project or home agent with the same name
+  wins. Agents count as a portable part, so an agents-only plugin is offered.
 - Adapted components are marked `adapted`.
 - **Catalog value:** before Phase 6, adapting commands alone moved three plugins to Portable (build-macos-apps,
   cloudflare, expo). Under the two-state rule, figma and vercel are offered (their connectors are noted), and zoom
@@ -553,7 +557,7 @@ model.
 3. **MCP OAuth:** local and remote-host sign-in, token storage, and refresh.
 4. **Bots:** protocol, gateway, instance, environment section, "Bring from this computer", bot OAuth, and container
    e2e.
-5. **Agent adaptation:** plugin agents become subagents. Delivered as Phase 8.
+5. **Agent adaptation:** plugin agents become subagents. Done, as Phase 8.
 6. **Only what works with every model:** two compatibility states, incompatible plugins counted outside the catalog,
    installed plugins reclassified at startup, third-party sources marked, and native Codex apps and plugins off.
 7. **MCP sign-in for every server:** placeholder clients, an own OAuth client per server, and several accounts.
