@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agent-basic",
+  "version": "1.0.0",
+  "description": "Synthetic Agent Plugins fixture",
+  "author": {
+    "name": "Fixture Author"
+  },
+  "license": "MIT",
+  "extensions": {
+    "com.example.client": {
+      "setting": true
+    }
+  }
+}

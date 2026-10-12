@@ -1,0 +1,59 @@
+{
+  "name": "claude-full",
+  "displayName": "Claude Full",
+  "version": "1.2.0",
+  "description": "Synthetic Claude fixture",
+  "author": {
+    "name": "Fixture Author"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "Token for the synthetic API",
+      "sensitive": true,
+      "required": true
+    },
+    "region": {
+      "type": "string",
+      "title": "Region",
+      "description": "Region name",
+      "default": "eu"
+    }
+  },
+  "commands": {
+    "status": {
+      "source": "./extra/status.md",
+      "description": "Show the status"
+    },
+    "about": {
+      "content": "Explain what this plugin provides.",
+      "description": "Describe the plugin"
+    }
+  },
+  "agents": [
+    "./agents/reviewer.md"
+  ],
+  "hooks": "./config/hooks.json",
+  "mcpServers": {
+    "api": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/server",
+      "args": [
+        "--cfg",
+        "${CLAUDE_PLUGIN_ROOT}/config.json"
+      ],
+      "env": {
+        "TOKEN": "${user_config.api_token}"
+      }
+    }
+  },
+  "lspServers": {
+    "go": {
+      "command": "gopls",
+      "extensionToLanguage": {
+        ".go": "go"
+      }
+    }
+  }
+}

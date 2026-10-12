@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agent-openai",
+  "description": "Fixture with an OpenAI extension",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Agent OpenAI",
+        "developerName": "Fixture Labs",
+        "capabilities": [
+          "Read"
+        ]
+      },
+      "apps": "./.app.json",
+      "hooks": "./hooks.json"
+    }
+  }
+}

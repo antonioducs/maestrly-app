@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "local": {
+      "command": "node",
+      "args": [
+        "./mcp/server.mjs"
+      ],
+      "cwd": "."
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "oauth_resource": "https://mcp.example.com/mcp"
+    }
+  }
+}
