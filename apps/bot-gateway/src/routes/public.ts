@@ -220,6 +220,7 @@ export async function publicRoute(
         'settingsPluginCatalog',
         'settingsPluginInspect',
         'settingsPluginLogo',
+        'settingsPluginSkills',
         'settingsMcpOAuthStatuses',
         'settingsMcpOAuthDescriptor',
       ].includes(key)
@@ -231,7 +232,8 @@ export async function publicRoute(
         models: key.includes('Model') ? 1 : 0,
         runtimes: key.includes('Runtime') ? 1 : 0,
         preferences: key === 'settingsSetPreferences' ? 1 : 0,
-        plugins: key.includes('Plugin') ? 1 : 0,
+        // Switching a plugin's skill is a skill setting; the plugin itself is unchanged.
+        plugins: key.includes('Plugin') && !key.includes('PluginSkill') ? 1 : 0,
       })
     return result
   }
