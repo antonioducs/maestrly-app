@@ -8,7 +8,9 @@ import { expect, test, _electron as electron, type ElectronApplication, type Pag
 import {
   FLEET_GATEWAY_ROUTES,
   fleetBotSchema,
+  fleetEditMessageRequestSchema,
   fleetSendMessageRequestSchema,
+  type FleetEditMessageRequest,
   type FleetSendMessageRequest,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
@@ -20,12 +22,17 @@ const desktop = fileURLToPath(new URL('../..', import.meta.url))
 const pdf = makeTextPdf(['Synthetic bot file: original PDF bytes'])
 const code = Buffer.from('export const greeting = "Olá, bot"\n', 'utf8')
 
+/**
+ * A bot that answered a report. With `edit` set, the owner's message it answered comes first in its transcript, and the
+ * server and the bot can edit it when `edit` is true: an edit cuts the transcript there and queues the new text.
+ */
 async function withBot(
-  options: { files?: boolean; permission?: boolean; video?: boolean },
+  options: { files?: boolean; permission?: boolean; video?: boolean; edit?: boolean },
   run: (fixture: {
     page: Page
     downloads: string
     received: FleetSendMessageRequest[]
+    edits: Array<{ path: string; body: FleetEditMessageRequest }>
     fileRequests: string[]
     expireFile: () => void
     revealedPaths: () => Promise<string[]>
@@ -36,7 +43,7 @@ async function withBot(
   const downloads = path.join(root, 'downloads')
   await mkdir(downloads)
   const at = new Date().toISOString()
-  const features = options.files === false ? [] : ['files']
+  const features = [...(options.files === false ? [] : ['files']), ...(options.edit ? ['message-edit'] : [])]
   const bot = fleetBotSchema.parse({
     id: 'file-bot',
     name: 'File Bot',
@@ -66,6 +73,19 @@ async function withBot(
   let video: Buffer = Buffer.alloc(0)
   const clip = () => ({ id: 'f-clip', name: 'clip.webm', mediaType: 'video/webm', byteSize: video.length })
   const received: FleetSendMessageRequest[] = []
+  const edits: Array<{ path: string; body: FleetEditMessageRequest }> = []
+  const owner = (id: string, text: string, queued: boolean): FleetTranscriptItem => ({
+    kind: 'user',
+    id: 'input:' + id,
+    at: new Date(Date.parse(at) - 60_000).toISOString(),
+    text,
+    source: 'owner',
+    queued,
+    memories: [],
+    images: [],
+  })
+  // Replaced by an edit: the owner's message, edited and queued, and nothing after it.
+  let edited: FleetTranscriptItem | null = null
   const fileRequests: string[] = []
   const failures: string[] = []
   const streams = new Set<ServerResponse>()
@@ -163,8 +183,13 @@ async function withBot(
           value = { memories: [] }
           break
         case 'botTranscript':
+          if (edited) {
+            value = { items: [edited], before: null }
+            break
+          }
           value = {
             items: [
+              ...(options.edit !== undefined ? [owner('owner-1', 'Summarize the report', false)] : []),
               ...(options.permission ? [permission] : []),
               {
                 kind: 'tool',
@@ -207,6 +232,13 @@ async function withBot(
           received.push(fleetSendMessageRequestSchema.parse(body))
           value = { inputId: randomUUID(), itemId: randomUUID(), queued: false }
           break
+        case 'botMessageEdit': {
+          const edit = fleetEditMessageRequestSchema.parse(body)
+          edits.push({ path: url.pathname, body: edit })
+          edited = owner('owner-2', edit.text, true)
+          value = { inputId: 'owner-2', itemId: 'input:owner-2', queued: true }
+          break
+        }
         case 'botConversationCall': {
           const results: Record<string, unknown> = {
             chatConfig: { mcpServers: [], appToolsEnabled: true, imageGenEnabled: true },
@@ -296,6 +328,7 @@ async function withBot(
       page,
       downloads,
       received,
+      edits,
       fileRequests,
       revealedPaths: () =>
         app!.evaluate(() => (globalThis as typeof globalThis & { fleetRevealedPaths: string[] }).fleetRevealedPaths),
@@ -537,6 +570,50 @@ for (const action of ['Approve once', 'Deny']) {
     })
   })
 }
+
+test("the owner's last message is edited in place, and the bot's answer gives way to the edit", async () => {
+  await withBot({ edit: true }, async ({ page, edits }) => {
+    const message = page.getByText('Summarize the report', { exact: true })
+    await expect(page.getByText('Your report is ready.', { exact: true })).toBeVisible()
+    const pencil = page.getByRole('button', { name: 'Edit and resend', exact: true })
+    const editor = page.getByRole('textbox', { name: 'Edit and resend', exact: true })
+    await message.hover()
+    await pencil.click()
+    await expect(editor).toHaveValue('Summarize the report')
+    await expect(
+      page.getByText("The bot's reply to this message, and everything after it, will be replaced.")
+    ).toBeVisible()
+    // Escape leaves the message as it was.
+    await editor.press('Escape')
+    await expect(editor).toHaveCount(0)
+    await expect(message).toBeVisible()
+    expect(edits).toEqual([])
+
+    await message.hover()
+    await pencil.click()
+    await editor.fill('Summarize the report in Portuguese')
+    await editor.press('Enter')
+    await expect.poll(() => edits.length).toBe(1)
+    expect(edits[0]).toEqual({
+      path: '/v1/bots/file-bot/messages/owner-1/edit',
+      body: { text: 'Summarize the report in Portuguese', idempotencyKey: expect.any(String) },
+    })
+    await expect(page.getByText('Summarize the report in Portuguese', { exact: true })).toBeVisible()
+    await expect(page.getByText('Your report is ready.', { exact: true })).toHaveCount(0)
+    // The edit waits in the queue: nothing is offered for editing until the bot took it.
+    await expect(pencil).toHaveCount(0)
+  })
+})
+
+test('a server or bot without message edits offers none', async () => {
+  await withBot({ edit: false }, async ({ page, edits }) => {
+    const message = page.getByText('Summarize the report', { exact: true })
+    await expect(message).toBeVisible()
+    await message.hover()
+    await expect(page.getByRole('button', { name: 'Edit and resend', exact: true })).toHaveCount(0)
+    expect(edits).toEqual([])
+  })
+})
 
 test('a gateway without files support rejects PDF attachments with an update hint', async () => {
   await withBot({ files: false }, async ({ page, received }) => {

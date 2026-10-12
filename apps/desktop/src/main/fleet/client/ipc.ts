@@ -24,8 +24,10 @@ import {
   fleetTakeoverReleaseRequestSchema,
   fleetUiOpenRequestSchema,
   fleetSendMessageRequestSchema,
+  fleetEditMessageRequestSchema,
   FLEET_FILES_FEATURE,
   FLEET_FILE_LIMITS,
+  FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_REASONING_QUERY,
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
@@ -33,6 +35,7 @@ import type { IpcRegistrar } from '../../ipc-registrar'
 import { isHeadlessInstance } from '../../remote-host/server/config'
 import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
+import { FLEET_EDIT_CONFLICT, FLEET_EDIT_UNSUPPORTED } from '../../../shared/fleet-targets'
 import {
   provisioningRoute,
   requireEnvironmentUpdates,
@@ -277,6 +280,24 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:removeQueuedMessage', (_event, botId: unknown, inputId: unknown) =>
     fleet.call('botMessageDelete', { params: { id: id.parse(botId), inputId: opaqueId.parse(inputId) } })
   )
+  // The owner's last message, edited: the bot's conversation is cut from it and the new text runs as a new turn. The
+  // message keeps its attachments.
+  reg.mhandle('fleet:editMessage', async (_event, botId: unknown, inputId: unknown, text: unknown) => {
+    const params = { id: id.parse(botId), inputId: opaqueId.parse(inputId) }
+    const body = fleetEditMessageRequestSchema.parse({
+      text: z.string().max(16_000).parse(text),
+      idempotencyKey: fleet.idempotencyKey(),
+    })
+    if (!fleet.hasFeature(FLEET_MESSAGE_EDIT_FEATURE)) throw new Error(FLEET_EDIT_UNSUPPORTED)
+    const bot = await fleet.call('botGet', { params: { id: params.id } })
+    if (!bot.capabilities.includes(FLEET_MESSAGE_EDIT_FEATURE)) throw new Error(FLEET_EDIT_UNSUPPORTED)
+    try {
+      return await fleet.call('botMessageEdit', { params, body })
+    } catch (error) {
+      if (error instanceof FleetClientError && error.status === 409) throw new Error(FLEET_EDIT_CONFLICT)
+      throw error
+    }
+  })
   reg.mhandle('fleet:resolveInteraction', (_event, botId: unknown, interactionId: unknown, resolution: unknown) =>
     fleet.call('botInteractionResolve', {
       params: { id: id.parse(botId), interactionId: opaqueId.parse(interactionId) },

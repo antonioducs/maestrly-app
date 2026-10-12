@@ -9,6 +9,20 @@ export function visibleTranscriptItems(items: FleetTranscriptItem[]): FleetTrans
   )
 }
 
+/**
+ * The owner's message that may be edited, from the whole transcript: the last message the bot received, when the
+ * owner sent it and nothing waits in the queue. A routine, a peer or a continuation after it leaves none.
+ */
+export function editableMessageId(items: FleetTranscriptItem[]): string | null {
+  let last: Extract<FleetTranscriptItem, { kind: 'user' }> | null = null
+  for (const item of items) {
+    if (item.kind !== 'user') continue
+    if (item.queued) return null
+    last = item
+  }
+  return last?.source === 'owner' && last.id.startsWith('input:') && !last.attachmentError ? last.id : null
+}
+
 /** Like desktop chats, a bot conversation shows only its latest to-do list, where it was last written. */
 export function latestTodoItemId(items: FleetTranscriptItem[]): string | null {
   for (let index = items.length - 1; index >= 0; index--) {

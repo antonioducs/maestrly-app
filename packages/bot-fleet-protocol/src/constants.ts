@@ -192,6 +192,11 @@ export const FLEET_TRANSCRIPT_REASONING_FEATURE = 'transcript-reasoning'
 /** The query parameter a reader of transcripts and events sets to `1` to receive `reasoning` items. */
 export const FLEET_REASONING_QUERY = 'reasoning'
 /**
+ * Gateway feature (`/v1/meta`) and instance capability: the owner may edit their last message to an idle bot. The
+ * bot's conversation is cut from that message and the edited text runs as a new turn.
+ */
+export const FLEET_MESSAGE_EDIT_FEATURE = 'message-edit'
+/**
  * Gateway feature (`/v1/meta`) and instance capability: an environment reports the versions of its Claude Code and
  * Codex runtimes and can be asked to check for newer releases.
  */

@@ -203,7 +203,7 @@ export function createGatewayServers(ctx: GatewayContext) {
                 ? FLEET_ARTIFACT_BODY_MAX
                 : !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
                   ? FLEET_SKILL_BODY_MAX
-                  : !internal && match.key === 'botMessageSend'
+                  : !internal && (match.key === 'botMessageSend' || match.key === 'botMessageEdit')
                     ? FLEET_MESSAGE_BODY_MAX
                     : !internal && match.key === 'desktopCallResult'
                       ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax

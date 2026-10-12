@@ -491,6 +491,7 @@ describe('bot environment registry', () => {
       'transcript-reasoning',
       'runtime-updates',
       'desktop-bridge',
+      'message-edit',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -506,6 +507,7 @@ describe('bot environment registry', () => {
         'transcript-reasoning',
         'runtime-updates',
         'desktop-bridge',
+        'message-edit',
       ],
     })
   })
@@ -1269,6 +1271,7 @@ describe('bot environment registry', () => {
           'transcript-reasoning',
           'runtime-updates',
           'desktop-bridge',
+          'message-edit',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1284,6 +1287,7 @@ describe('bot environment registry', () => {
           'transcript-reasoning',
           'runtime-updates',
           'desktop-bridge',
+          'message-edit',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1303,6 +1307,7 @@ describe('bot environment registry', () => {
           'transcript-reasoning',
           'runtime-updates',
           'desktop-bridge',
+          'message-edit',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

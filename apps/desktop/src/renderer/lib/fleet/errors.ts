@@ -6,6 +6,8 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_EDIT_CONFLICT,
+  FLEET_EDIT_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
 
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
@@ -56,6 +58,16 @@ export function isScreenRestartRequired(cause: unknown): boolean {
 /** The screen's bot or environment stopped before the gateway issued its ticket. */
 export function isScreenOffline(cause: unknown): boolean {
   return fleetErrorMessage(cause).includes(FLEET_SCREEN_OFFLINE)
+}
+
+/** The bot refused an edit: it is busy, or the message is no longer its last one. */
+export function isEditConflict(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_EDIT_CONFLICT)
+}
+
+/** The server or the bot predates message edits. */
+export function isEditUnsupported(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_EDIT_UNSUPPORTED)
 }
 
 export function isOwnerMemoryFull(cause: unknown): boolean {

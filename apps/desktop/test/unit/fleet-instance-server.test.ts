@@ -15,6 +15,7 @@ import {
   type FleetInstanceEvent,
   type FleetInstanceHold,
   type FleetInstanceInput,
+  type FleetEditMessageRequest,
   type FleetInstanceReleaseRequest,
   type FleetInstanceStatus,
   type FleetInteractionResolution,
@@ -145,6 +146,11 @@ function fakeBot(botId: string, slot: number) {
       queued: true,
     })),
     deleteInput: vi.fn(async (_id: string) => {}),
+    editInput: vi.fn(async (_id: string, _value: FleetEditMessageRequest) => ({
+      inputId: `edit-${botId}`,
+      itemId: `input:edit-${botId}`,
+      queued: true,
+    })),
     cancel: vi.fn(async () => {}),
     resolve: vi.fn(async (_id: string, _value: FleetInteractionResolution) => {}),
     hold: vi.fn(async (reason: 'takeover' | 'paused') => {
@@ -436,6 +442,7 @@ describe('instance control HTTP', () => {
       'transcript-reasoning',
       'runtime-updates',
       'desktop-bridge',
+      'message-edit',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
@@ -694,6 +701,7 @@ describe('instance control HTTP', () => {
 })
 
 describe('bot routes', () => {
+  const editKey = randomUUID()
   const routes: Array<{
     method: string
     path: string
@@ -742,6 +750,14 @@ describe('bot routes', () => {
       status: 200,
     },
     { method: 'DELETE', path: 'inputs/in-1', call: 'deleteInput', args: ['in-1'], status: 204 },
+    {
+      method: 'POST',
+      path: 'inputs/in-1/edit',
+      body: { idempotencyKey: editKey, text: 'Edited' },
+      call: 'editInput',
+      args: ['in-1', { idempotencyKey: editKey, text: 'Edited' }],
+      status: 200,
+    },
     { method: 'POST', path: 'turn/cancel', call: 'cancel', args: [], status: 204 },
     {
       method: 'POST',
@@ -780,6 +796,7 @@ describe('bot routes', () => {
     ['GET', '/v1/images/img-1'],
     ['POST', '/v1/inputs', ownerInput()],
     ['DELETE', '/v1/inputs/in-1'],
+    ['POST', '/v1/inputs/in-1/edit', { idempotencyKey: randomUUID(), text: 'Edited' }],
     ['POST', '/v1/turn/cancel'],
     ['POST', '/v1/interactions/i-1/resolve', { kind: 'help', note: null }],
     ['POST', '/v1/hold', { reason: 'takeover' }],

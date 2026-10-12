@@ -28,6 +28,9 @@ import {
   type FleetConversationCallRequest,
   type FleetCompactionState,
   type FleetFileRef,
+  type FleetEditMessageRequest,
+  type FleetAttachmentInput,
+  fleetAttachmentInputSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { LocalMemory } from '../../../shared/memory'
 import type { BackgroundCompactionConfig } from '../../../shared/background-compaction'
@@ -43,7 +46,12 @@ import {
   forgetLocalMemory,
 } from '../../memory/local-memory-service'
 import { OwnerMemoryClient } from './owner-memory'
-import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
+import {
+  estimatedCostOfUsage,
+  usageMetaForModel,
+  type ChatAttachmentInput,
+  type ChatStreamEvent,
+} from '../../../shared/chat'
 import { sameContextModel, selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
@@ -70,6 +78,8 @@ import {
   resumeConversationBackgroundCompaction,
   retryBackgroundCompaction,
   startManualCompaction,
+  truncateConversationForResend,
+  type ChatConversationSlot,
 } from '../../chat/service'
 import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
 import {
@@ -80,7 +90,9 @@ import {
 import {
   chatHistoryStats,
   getChatMessage,
+  getChatMessagesWithSeq,
   latestMeasuredContextSnapshot,
+  listChatMessagesAfter,
   listChatMessagesPage,
 } from '../../chat/chat-store'
 import { listProviders } from '../../chat/catalog'
@@ -101,6 +113,7 @@ import type { GatewayConfig } from './gateway-client'
 import { FleetImageStore } from './images'
 import { FleetFileStore } from './files'
 import { readConversationFile } from './attachment-files'
+import { validateAttachmentBytes } from './incoming-attachments'
 import { botToolsPatchRefusal, validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
 import {
   botPaths,
@@ -200,6 +213,32 @@ function assistantText(conversationId: string, messageId: string | null): string
     .map((part) => part.text)
     .join('\n')
     .slice(0, FLEET_ROUTINE_RUN_LIMITS.finalTextMax)
+}
+
+/**
+ * An attachment an edited message keeps, as the queue takes it again: null when its bytes are gone or no longer valid,
+ * as an edit in a local chat drops the ones it cannot read.
+ */
+export function queuedAttachment(attachment: ChatAttachmentInput): FleetAttachmentInput | null {
+  const bytes = attachment.bytes
+    ? Buffer.from(attachment.bytes)
+    : attachment.kind === 'text' && attachment.data !== undefined
+      ? Buffer.from(attachment.data, 'utf8')
+      : null
+  if (!bytes) return null
+  const parsed = fleetAttachmentInputSchema.safeParse({
+    kind: attachment.kind,
+    name: attachment.name,
+    mediaType: attachment.mediaType,
+    dataBase64: bytes.toString('base64'),
+  })
+  if (!parsed.success) return null
+  try {
+    validateAttachmentBytes(parsed.data, bytes)
+  } catch {
+    return null
+  }
+  return parsed.data
 }
 
 function toFleetBotMemory(memory: LocalMemory): FleetBotMemory {
@@ -315,6 +354,8 @@ export class BotRuntime {
   /** Set by an install: the conversation resumes (an uninstall suspended it) once the bot's own settings apply. */
   private resumePending = false
   private manualCompacting = false
+  /** An edit of the owner's last message is cutting the conversation: no turn starts until it is done. */
+  private editing = false
   private disposed = false
   /** The conversation whose hooks (memory, identity, gate, screen) this runtime registered. */
   private registeredConversation: { id: string; cwd: string | null } | null = null
@@ -1063,6 +1104,89 @@ export class BotRuntime {
     this.publish({ type: 'reset' })
     this.changed()
   }
+  /**
+   * The owner edits their last message: the conversation is cut from it, with everything after it (the bot's answer,
+   * its notes and interactions), and the edited text runs as a new turn. Only while the bot is idle and nothing waits,
+   * so no turn or other input ever sees a conversation half cut.
+   */
+  async editInput(inputId: string, value: FleetEditMessageRequest): Promise<FleetInputReceipt> {
+    if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+    // A retried edit gets the receipt of the input it made: the message it edited is gone by now.
+    const prior = this.queue.receipt(value.idempotencyKey)
+    if (prior) return prior
+    const conversationId = this.primaryConversationId
+    const record = this.queue.all().find((item) => item.id === inputId)
+    if (!conversationId || !record) throw new InstanceHttpError(404, 'NOT_FOUND', 'Input not found.')
+    if (record.input.source !== 'owner')
+      throw new InstanceHttpError(409, 'CONFLICT', 'Only a message of the owner can be edited.')
+    if (
+      this.editing ||
+      this.turning ||
+      this.manualCompacting ||
+      this.holdManager.state.state !== 'none' ||
+      this.queue.list().length > 0 ||
+      this.queue.transcriptInputs().unmapped.length > 0 ||
+      this.pending().length > 0
+    )
+      throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+    const native = record.nativeMessageId
+      ? getChatMessagesWithSeq(conversationId, [record.nativeMessageId])[0]
+      : undefined
+    if (!native) throw new InstanceHttpError(409, 'CONFLICT', 'The message is no longer in the conversation.')
+    if (
+      listChatMessagesAfter(conversationId, native.seq).some(
+        (row) => row.message.role === 'user' && !row.message.internal
+      )
+    )
+      throw new InstanceHttpError(409, 'CONFLICT', 'Only the last message can be edited.')
+    const keepsFiles = native.message.parts.some((part) => part.type === 'file' && !part.hidden)
+    if (!value.text.trim() && !(value.attachments ? value.attachments.length > 0 : keepsFiles))
+      throw new InstanceHttpError(400, 'INVALID_REQUEST', 'A message needs text or an attachment.')
+    this.editing = true
+    let slot: ChatConversationSlot | null = null
+    let truncated = false
+    let receipt: FleetInputReceipt
+    try {
+      slot = await acquireChatConversationSlot(conversationId, new AbortController().signal, 0).catch(() => null)
+      if (!slot || this.disposed) throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+      const removed = new Set([
+        native.message.id,
+        ...listChatMessagesAfter(conversationId, native.seq).map((row) => row.message.id),
+      ])
+      const cut = await truncateConversationForResend(conversationId, native.message.id, slot.operation)
+      if (!cut) throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+      truncated = true
+      // What the cut removed leaves the transcript too, before any new turn can add to it.
+      await this.extras.pruneFrom(native.message.createdAt, removed)
+      await this.queue.forget([record.id])
+      // Seqs are given again after a cut: the transcript reads from the conversation as it is now.
+      this.live.anchor()
+      receipt = await this.queue.enqueue({
+        source: 'owner',
+        text: value.text,
+        idempotencyKey: value.idempotencyKey,
+        attachments:
+          value.attachments ??
+          cut.attachments.flatMap((attachment) => {
+            const kept = queuedAttachment(attachment)
+            return kept ? [kept] : []
+          }),
+      })
+    } finally {
+      this.editing = false
+      slot?.release()
+      // Readers load the transcript again, even when the edited message could not be queued after the cut.
+      if (truncated) {
+        this.publish({ type: 'reset' })
+        this.changed()
+        void this.refreshUsage()
+      }
+    }
+    // The owner writing again, as a new message does: the edited turn does not wait out an earlier failure's delay.
+    this.retryAt = 0
+    void this.tick()
+    return receipt
+  }
   async transcript(before: string | null, limit: number, reasoning = false) {
     return this.live.page(before, limit, reasoning)
   }
@@ -1135,7 +1259,7 @@ export class BotRuntime {
       !canDispatch(
         this.ready,
         this.accountOptions.length > 0,
-        this.turning || this.manualCompacting,
+        this.turning || this.manualCompacting || this.editing,
         this.holdManager.state.state,
         this.compactionProblem === null
       )
@@ -1402,7 +1526,7 @@ export class BotRuntime {
         break
       case 'chatCompact':
         if (this.compactionProblem !== null) result = { ok: false, error: 'not-configured' }
-        else if (this.turning || this.manualCompacting) result = { ok: false, error: 'busy' }
+        else if (this.turning || this.manualCompacting || this.editing) result = { ok: false, error: 'busy' }
         else {
           const started = startManualCompaction(id, () => {
             this.manualCompacting = false

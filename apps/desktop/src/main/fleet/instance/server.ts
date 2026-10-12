@@ -23,6 +23,7 @@ import {
   FLEET_INSTANCE_BRIDGE_PATH,
   FLEET_INSTANCE_ROUTES,
   FLEET_MESSAGE_BODY_MAX,
+  FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
@@ -48,6 +49,7 @@ import {
   type FleetBotMemoryPatchRequest,
   type FleetBotSkills,
   type FleetConversationCallRequest,
+  type FleetEditMessageRequest,
   type FleetFileRef,
   type FleetImportResults,
   type FleetInputReceipt,
@@ -92,8 +94,8 @@ export class InstanceHttpError extends Error {
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
  * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
- * newer ones, and gives its bots the desktop_* tools that reach the Macs that linked them. Its health and every status
- * advertise them.
+ * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, and lets the owner edit their
+ * last message. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -106,6 +108,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_DESKTOP_BRIDGE_FEATURE,
+  FLEET_MESSAGE_EDIT_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -132,6 +135,8 @@ export interface InstanceBot {
   file(fileId: string): Promise<InstanceFile>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
+  /** Edits the owner's last message: the conversation is cut from it and the new text queued (`message-edit`). */
+  editInput(id: string, value: FleetEditMessageRequest): Promise<FleetInputReceipt>
   cancel(): Promise<void>
   resolve(id: string, value: FleetInteractionResolution): Promise<void>
   hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold>
@@ -264,6 +269,7 @@ type RouteKey = keyof typeof FLEET_INSTANCE_ROUTES
 const BODY_LIMITS: Partial<Record<RouteKey, number>> = {
   skillInstall: FLEET_SKILL_BODY_MAX,
   botInputSend: FLEET_MESSAGE_BODY_MAX,
+  botInputEdit: FLEET_MESSAGE_BODY_MAX,
 }
 /** Screen routes answer only an upgrade to the screen protocol. */
 const SCREEN_ROUTES: ReadonlySet<RouteKey> = new Set<RouteKey>([
@@ -580,6 +586,7 @@ export function createInstanceControlServer(
     botFile: ({ params }) => bot(params).file(fileIdOf(params.fileId)),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
+    botInputEdit: ({ params, input }) => bot(params).editInput(params.inputId, input as FleetEditMessageRequest),
     botTurnCancel: ({ params }) => bot(params).cancel(),
     botInteractionResolve: ({ params, input }) => bot(params).resolve(params.id, input as FleetInteractionResolution),
     botHold: async ({ params, input }) => {
