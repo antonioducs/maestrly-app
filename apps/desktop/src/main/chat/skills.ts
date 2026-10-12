@@ -82,6 +82,10 @@ type Frontmatter = { fields: Record<string, string>; body: string }
 
 /** SIMPLE YAML frontmatter: top-level scalars + block scalars (`|`/`>`, common for long descriptions).
  * Nested maps (e.g. `metadata:`) remain ignored. */
+export function parseSkillFrontmatter(text: string): Frontmatter {
+  return parseFrontmatter(text)
+}
+
 function parseFrontmatter(text: string): Frontmatter {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text)
   if (!m) return { fields: {}, body: text }
@@ -109,6 +113,10 @@ function parseFrontmatter(text: string): Frontmatter {
     fields[key] = value.replace(/^["']|["']$/g, '')
   }
   return { fields, body: text.slice(m[0].length) }
+}
+
+export function skillBoolField(value: string | undefined, fallback: boolean): boolean {
+  return boolField(value, fallback)
 }
 
 function boolField(value: string | undefined, fallback: boolean): boolean {
@@ -173,6 +181,21 @@ async function readSkillFileCapped(file: string): Promise<{ text: string; clippe
   } finally {
     await handle.close().catch(() => undefined)
   }
+}
+
+/** Capped `SKILL.md`-style read, shared with plugin skills and commands. */
+export const readCappedSkillText = readSkillFileCapped
+/** Bundled-file inventory of a skill folder, shared with plugin skills. */
+export const listSkillResources = listResources
+
+/** One skill folder (`<dir>/<folder>/SKILL.md`), or null when unreadable or empty. */
+export function readSkillDirectory(
+  dir: string,
+  folder: string,
+  label: string,
+  scope: ChatSkillScope
+): Promise<ChatSkill | null> {
+  return readSkillFolder(dir, folder, label, scope)
 }
 
 async function readSkillFolder(
