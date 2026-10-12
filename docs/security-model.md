@@ -628,7 +628,14 @@ line, scripts and executables, and every component with its support status.
   matches its consent stays off.
 - **Never run.** Hooks, monitors, LSP servers, `bin/` executables, MCP bundles,
   OpenAI app connectors and `command` plugin sources never run. Each one is
-  listed with its reason; nothing is dropped silently.
+  listed with its reason; nothing is dropped silently. Native Codex apps,
+  plugins, and tool suggestions are disabled on every Codex thread, so a
+  conversation never gains a capability that exists for only one model.
+- **Third-party sources.** Any source can be added, as in Codex and Claude
+  Code. Maestrly does not review the plugins of a source other than the two
+  suggested ones and marks them as third party. A skill is instructions, so a
+  malicious one can steer the agent; its actions still go through the
+  permission gate, which does not ask in Full mode.
 - **Downloads.** Only HTTPS Git URLs without credentials are accepted. Every
   `git` invocation ignores user and system configuration, hooks, credential
   helpers, submodules and every protocol but HTTPS, and never prompts. Symbolic

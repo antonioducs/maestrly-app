@@ -34,23 +34,37 @@ To add a source:
 Adding a source only lists its plugins. Nothing is installed or run until you install a plugin and approve what it
 needs. Sources need Git on the host. Repositories that need a sign-in are not supported.
 
+Maestrly does not review plugins from third-party sources: any source other than the two suggested ones is marked
+**Third party**, and so are the details of its plugins. Install only plugins from publishers you trust.
+
 **Refresh** fetches the source again, and installed plugins with a newer version show **Update available**.
 **Remove** stops listing the source's plugins. If plugins from the source are installed, you can uninstall them at the
 same time, or keep the source.
 
 ## Compatibility
 
-Each plugin shows how much of it runs in Maestrly, with the reasons:
+Maestrly offers only what works the same with every model, so switching models never changes what a plugin does. Each
+plugin is in one of two states:
 
-| Level | Meaning |
+| State | Meaning |
 | --- | --- |
-| **Portable** | Only skills and MCP servers. Works with every model. |
-| **Partial** | Skills and MCP servers work everywhere. Some parts need adaptation or cannot run here, such as hooks, agents, or app connectors. |
-| **Unavailable** | Nothing in the plugin can run in Maestrly. It cannot be installed. |
+| **Works with every model** | Its skills and MCP servers, and the parts Maestrly adapts, work the same whichever provider runs the conversation. |
+| **Not compatible** | Nothing in it works the same with every model. It is not offered and cannot be installed. |
 
-Maestrly adapts what it can. A plugin's commands become skills you start yourself with `/<plugin>:<command>`. Hooks
-never run. App connectors (`.app.json`) run only inside OpenAI products. Every part that does not run is listed with
-its reason; none is dropped silently.
+The catalog lists only plugins that work with every model. Below the list, a counter such as **3 plugins don’t work
+the same with every model** opens the plugins left out, each with its reason. A plugin is not compatible when:
+
+- it relies on ChatGPT app connectors (`.app.json`) and ships no MCP server for the same service, so its skills would
+  expect tools that only exist inside OpenAI products;
+- it has no skill and no MCP server Maestrly can run;
+- its manifest is invalid, or its source or marketplace rules it out.
+
+Maestrly adapts what it can. A plugin's commands become skills you start yourself with `/<plugin>:<command>`. Parts
+that only work inside one product, such as app connectors, hooks, agents, and language servers, are never enabled for
+any model. They appear in the plugin's details under **Not included**, each with its reason; none is dropped silently.
+
+An installed plugin that stops being compatible, for example after its files change, stops applying to every
+conversation. It stays in **Installed** with its reason, where you can update or uninstall it.
 
 ## Install a plugin
 

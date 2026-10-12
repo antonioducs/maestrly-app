@@ -9,11 +9,26 @@ standalone chats, project chats (local and remote), and bot conversations. A plu
 downloads, validates, authenticates, and configures it. Each provider integration then receives the plugin's skills
 and MCP tools in the form it accepts. There is no per-model version of a plugin.
 
+## Premise: only what works with every provider
+
+Added on 2026-10-12, after comparing with [Orca](https://github.com/stablyai/orca) (`9fcbb2ce`) and
+[T3 Code](https://github.com/pingdotgg/t3code) (`0e7346cc`). Neither converts plugins for other models. Orca's
+plugins extend the app itself (panels, commands, locales), and it leaves Codex and Claude Code plugins to the CLI that
+owns them. T3 Code has no plugin system: it shares `~/.codex/plugins` with the Codex runtime. In both, a ChatGPT
+connector works only while Codex runs the conversation.
+
+Maestrly does the opposite: it offers only what works the same with every model, so switching models never changes
+what a plugin does. Nothing runtime-specific is enabled anywhere: ChatGPT app connectors, native Codex apps and
+plugins, native Claude Code plugins, LSP servers, and hook events Maestrly does not emulate. The portable core is
+skills and MCP servers, plus what Maestrly adapts for every model (commands as skills, agents as subagents, hooks on
+the events Maestrly controls). Plugins with nothing portable, or whose skills depend on a connector, are not offered.
+The parts left out are still listed with their reasons.
+
 ## Decisions
 
 | Topic | Decision |
 | --- | --- |
-| Portable core | Skills and MCP servers. Hooks, commands, agents, app connectors, and other runtime-specific parts are adapted or listed with an explicit compatibility reason. Nothing is dropped silently. |
+| Portable core | Skills and MCP servers. Hooks, commands, agents, app connectors, and other runtime-specific parts are adapted for every model or listed as not included, with an explicit reason. Nothing is dropped silently. |
 | Formats | Agent Plugins 1.0.0 (`plugin.json` + `skills/` + `mcp.json`), Codex (`.codex-plugin/plugin.json`), and Claude Code (`.claude-plugin/plugin.json` or a marketplace entry acting as the manifest). All three are normalized into one internal model. |
 | Sources | Marketplaces are Git repositories, added with an optional ref and optional sparse paths, as in `codex plugin marketplace add`. Adding a source only lists its plugins. Install, enable, and sign-in happen per plugin. |
 | Presets | `https://github.com/openai/plugins` and `https://github.com/openai/community-plugins` are listed by default and fetched from GitHub only when the user opens or refreshes them. Maestrly never bundles or redistributes their files. |
@@ -78,6 +93,16 @@ uses `cwd: "."` and Codex `env_vars`. The largest is 9.9 MiB.
 
 **Conclusion:** 58 of the 65 `openai/plugins` entries are usable for their skills or MCP servers. Most of the value
 of connector plugins depends on MCP OAuth.
+
+**Under the premise (Phase 6).** The same commit, classified by the engine with the two-state rule, offers 49 of the 62
+local plugins. 36 of the 62 declare app connectors (ChatCut's `.app.json` declares none, so it is no longer counted).
+22 of those ship an MCP server for the same service, so they are offered with the connector noted as not included.
+13 are not compatible:
+
+- 7 depend on app connectors with nothing to replace them: adobe and public-equity-investing (their skills call
+  connector tools), lovable, outlook-calendar, outlook-email, sharepoint, and teams.
+- 6 ship an MCP server whose OAuth client is a placeholder: airtable, gmail, google-calendar, google-drive, shopify,
+  and zoom. They stay not compatible until Phase 7 lets those servers sign in.
 
 ## Provider matrix
 
@@ -215,26 +240,28 @@ Rules:
 
 ### Compatibility
 
-`classifyPlugin(pkg, source)` returns `{ level: 'portable' | 'partial' | 'unavailable', reasons: Reason[] }`.
+`classifyPlugin(pkg, source)` returns `{ level: 'portable' | 'unavailable', reasons: Reason[] }`. There is no partial
+level (Phase 6): a plugin either works the same with every model or is not offered.
 
-- **Unavailable** when any of these holds:
-  - the manifest is invalid;
-  - the source type is unsupported;
-  - the marketplace policy is `NOT_AVAILABLE`;
-  - nothing usable remains, meaning no valid skill (adapted commands count as skills) and no usable MCP server. A server
-    with `unusable` auth is not usable.
-- **Partial** when a usable core exists and at least one of these is present:
-  - an app connector;
-  - hooks;
-  - a non-adapted command or agent;
-  - another unsupported component;
-  - an invalid or skipped entry;
-  - an unsupported transport;
-  - a `manual` or `unusable` auth server.
-- **Portable** otherwise.
+| State | UI label | When |
+| --- | --- | --- |
+| `unavailable` | Not compatible | The manifest is invalid; the source type is unsupported; the marketplace policy is `NOT_AVAILABLE`; the plugin declares app connectors and has no usable MCP server (`requires-app-connector`); or nothing usable remains, meaning no valid skill (adapted commands count as skills) and no usable MCP server (`no-usable-components`). |
+| `portable` | Works with every model | Otherwise. |
+
+The blocking codes are `BLOCKING_REASON_CODES`; the blocking reason comes first. Every other reason is a note on a part
+that is not included (an app connector, hooks, a non-adapted agent, an unsupported component, an invalid or skipped
+entry, an unsupported transport, a publisher or placeholder OAuth client). The catalog lists only portable plugins and
+counts the rest with their first blocking reason; the details list blocking reasons and notes separately.
+
+An installed plugin is reclassified at startup. One that is no longer compatible gets `blocked` reasons in its record
+and never applies to any conversation, is never brought to a bot environment, and stays listed until it is updated or
+uninstalled.
 
 OAuth itself does not downgrade a plugin: the server becomes usable after sign-in. Each reason has a stable `code`, the
 component it concerns, and parameters for the localized explanation shown in the catalog and the details.
+
+Codex threads always start with `features.apps`, `features.plugins`, and `features.tool_suggest` off, so a ChatGPT
+account's apps never reach a Codex conversation while being missing from every other model.
 
 ### Marketplaces
 
@@ -479,10 +506,10 @@ header instead.
   as is.
 - **Agents (Phase 5)** become subagents through the existing `.md` agent loader. Claude tool names map to Maestrly
   tools; unknown tools and model aliases are dropped with a diagnostic.
-- Adapted components are marked `adapted` and no longer downgrade the classification.
-- **Catalog value:** adapting commands alone moves three plugins to Portable (build-macos-apps, cloudflare, expo), for
-  29 / 29 / 7. The three plugins with agents (figma, vercel, zoom) stay Partial because of their app connectors, so
-  Phase 5 does not change the `openai/plugins` numbers.
+- Adapted components are marked `adapted`.
+- **Catalog value:** before Phase 6, adapting commands alone moved three plugins to Portable (build-macos-apps,
+  cloudflare, expo). Under the two-state rule, figma and vercel are offered (their connectors are noted), and zoom
+  waits for Phase 7.
 
 ## Phases
 
@@ -493,7 +520,12 @@ header instead.
 3. **MCP OAuth:** local and remote-host sign-in, token storage, and refresh.
 4. **Bots:** protocol, gateway, instance, environment section, "Bring from this computer", bot OAuth, and container
    e2e.
-5. **Agent adaptation:** plugin agents become subagents. This phase is optional, because its catalog value is low.
+5. **Agent adaptation:** plugin agents become subagents. Delivered as Phase 8.
+6. **Only what works with every model:** two compatibility states, incompatible plugins counted outside the catalog,
+   installed plugins reclassified at startup, third-party sources marked, and native Codex apps and plugins off.
+7. **MCP sign-in for every server:** placeholder clients, an own OAuth client per server, and several accounts.
+8. **Plugin agents as subagents** for every model.
+9. **Plugin hooks emulated by Maestrly** for every model.
 
 Each phase is one PR, validated with `npm run verify:pr -- --title "<title>" --full`.
 
