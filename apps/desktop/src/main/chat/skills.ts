@@ -16,12 +16,16 @@ import fsp from 'node:fs/promises'
 import { assertSafeSkillPath, withSkillMutation } from './skill-document'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeSkillName } from '../../shared/chat'
 import { normalizeCommandName } from './commands'
 
-export type ChatSkillScope = 'project' | 'global'
+export type ChatSkillScope = 'project' | 'global' | 'plugin'
 
-/** Canonical skill-name normalization (same rules as slash commands). */
-export const normalizedSkillName = normalizeCommandName
+/**
+ * Canonical skill-name normalization (slash-command rules, plus one `:` for plugin skills). Folders on disk keep
+ * `normalizeCommandName`, which drops `:`, so a local skill can never claim a plugin's namespace.
+ */
+export const normalizedSkillName = normalizeSkillName
 
 export interface ChatSkill {
   name: string
@@ -43,6 +47,8 @@ export interface ChatSkill {
   resources: string[]
   /** Body truncated at safety cap. */
   truncated?: boolean
+  /** Set for skills and commands provided by an installed plugin. */
+  plugin?: { key: string; displayName: string; kind: 'skill' | 'command' }
 }
 
 /** Body safety cap. Spec recommends <5k words; this only guards against huge files. */

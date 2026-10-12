@@ -27,6 +27,28 @@ const skill = (overrides: Partial<ChatSkill> = {}): ChatSkill => ({
 })
 
 describe('model skill runtime', () => {
+  it('loads a namespaced plugin skill through use_skill', async () => {
+    const plugin = skill({
+      name: 'demo:hello',
+      description: 'Say hello from demo',
+      body: 'Hello from demo.',
+      scope: 'plugin',
+      dir: '/data/plugins/packages/abc/def/skills/hello',
+      plugin: { key: 'demo@fixtures', displayName: 'Demo', kind: 'skill' },
+    })
+    h.effectiveSkills.mockResolvedValue([plugin])
+    h.findEffectiveSkill.mockResolvedValue(plugin)
+    const runtime = await buildModelSkillRuntime({ cwd: '/repo', conversationId: 'conv-1' })
+    expect(runtime.catalog).toContain('- demo:hello: Say hello from demo')
+    const loader = runtime.tools.use_skill as unknown as {
+      execute: (input: { name: string }, options: { toolCallId: string }) => Promise<string>
+    }
+    const loaded = await loader.execute({ name: 'Demo:Hello' }, { toolCallId: 'skill-plugin' })
+    expect(loaded).toContain('Skill "demo:hello" loaded.')
+    expect(loaded).toContain('/data/plugins/packages/abc/def/skills/hello')
+    expect(h.findEffectiveSkill).toHaveBeenCalledWith('/repo', 'conv-1', 'Demo:Hello')
+  })
+
   it('announces only model-invocable skills and loads their full instructions on demand', async () => {
     const frontend = skill()
     h.effectiveSkills.mockResolvedValue([
