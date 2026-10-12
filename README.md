@@ -62,6 +62,8 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
   [voice dictation](docs/chat-context.md#voice-dictation).
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
+- **Plugins:** install Codex, Claude Code, and Agent Plugins plugins from Git;
+  their skills and MCP tools work with every model. See [Plugins](docs/plugins.md).
 
 ## Download
 
@@ -123,6 +125,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Local data and recovery](docs/local-data.md)
 - [Artifacts](docs/artifacts.md)
 - [Context usage and compaction](docs/chat-context.md)
+- [Plugins](docs/plugins.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
 - [Changelog](CHANGELOG.md)
 

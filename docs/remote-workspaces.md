@@ -14,7 +14,7 @@ its own, for your chats and workspaces. That container is called a **workspaces 
 | --- | --- |
 | Conversations, their messages, and the agent's turns, including Maestro, subagents, plans, and reviews | The window: sidebar, chat view, drawer, and settings |
 | Workspaces, their Git repositories and worktrees, and terminals | Sound, keyboard shortcuts, window layout, and updates of this app |
-| Model accounts, skills, MCP servers, prompts, and memory of the host's profile | This computer's own chats, workspaces, accounts, and settings, unchanged |
+| Model accounts, skills, [plugins](plugins.md), MCP servers, prompts, and memory of the host's profile | This computer's own chats, workspaces, accounts, and settings, unchanged |
 | The agent's browser, with its cookies and site logins | The microphone and voice transcription |
 | VS Code (the **Code** tab), with its extensions and debug sessions | The editor's settings, applied to the server's editor |
 
@@ -30,7 +30,7 @@ When you come back, the conversation shows what happened meanwhile.
    another server to keep work apart.
 3. On the environment's page, add the model accounts the host will use: an API key, a subscription sign-in, or accounts
    brought from this computer, as for a [bot environment](bot-fleet.md#bring-from-your-computer). The host has its own
-   accounts, skills, and MCP servers; nothing is copied from this computer unless you ask.
+   accounts, skills, plugins, and MCP servers; nothing is copied from this computer unless you ask.
 
 Once the environment runs, the **Chats** and **Workspaces** tabs show two sections: **This computer** and the server's
 name. With no server that hosts workspaces, the sidebar has no headings and looks as it always did.
@@ -53,7 +53,7 @@ feature: use **Update bots** first.
   computer and the server: see [Files](#files).
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
-  accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
+  accounts, models, skills, plugins, and defaults. The other sections are this computer's and have no selector.
 - **Memory of the host.** Chats on the server remember with the server's personal memory, and its workspaces keep their
   own project memory there; nothing is shared with this computer's memory. The personal memory panel has a
   **Memories of** selector to show the server's or this computer's: open it with **Manage personal memory** in the
