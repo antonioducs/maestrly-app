@@ -9,6 +9,7 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetInstallerStatus } from '../shared/fleet-installer'
 import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
+import type { FleetDownloadEvent, FleetDownloadFileKey, FleetDownloadProgress } from '../shared/fleet-downloads'
 import { ipcRenderer } from 'electron'
 import type {
   FleetOwnerMemory,
@@ -295,8 +296,17 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
   fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
     ipcRenderer.invoke('fleet:getImage', botId, imageId),
+  /** Resolves with a receipt; joins the transfer already running for the file instead of starting another. */
   fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
     ipcRenderer.invoke('fleet:downloadFile', botId, fileId),
+  fleetCancelDownload: (botId: string, fileId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:cancelDownload', botId, fileId),
+  fleetGetActiveDownload: (botId: string, fileId: string): Promise<FleetDownloadProgress | null> =>
+    ipcRenderer.invoke('fleet:getActiveDownload', botId, fileId),
+  /** The bot files this window shows, replacing its previous list: they finish without a system notification. */
+  fleetAttendDownloads: (files: FleetDownloadFileKey[]): Promise<void> =>
+    ipcRenderer.invoke('fleet:attendDownloads', files),
+  onFleetDownload: (cb: (event: FleetDownloadEvent) => void): (() => void) => subscribe('fleet:download', cb),
   fleetRevealDownload: (receipt: string): Promise<void> => ipcRenderer.invoke('fleet:revealDownload', receipt),
   fleetGetDownload: (botId: string, fileId: string): Promise<string | null> =>
     ipcRenderer.invoke('fleet:getDownload', botId, fileId),

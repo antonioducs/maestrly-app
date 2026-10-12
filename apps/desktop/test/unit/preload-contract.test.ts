@@ -317,7 +317,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(555)
+    expect(keys).toHaveLength(559)
     expect(keys.sort()).toMatchSnapshot()
   })
 

@@ -201,6 +201,7 @@ import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
 import { handleFleetMediaProtocol, registerFleetMediaScheme } from './fleet/client/media-scheme'
+import { noticeFleetDownload } from './fleet/client/download-notices'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
 import { playSound } from './platform'
@@ -843,6 +844,7 @@ function registerIpc(): void {
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
+  fleetClientService.onDownloadSettled = noticeFleetDownload
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(reg, fleetClientService)

@@ -1,34 +1,55 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, FileText, Film, FolderOpen, Loader2 } from 'lucide-react'
+import { Check, Download, FileText, Film, FolderOpen, X } from 'lucide-react'
 import type { FleetFileRef } from '@maestrly/bot-fleet-protocol'
+import { FLEET_DOWNLOAD_CANCELED, type FleetDownloadProgress } from '../../../shared/fleet-downloads'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { attendFleetFile, downloadStatusLabel, fileSizeLabel } from '@/lib/fleet/downloads'
 import { isFleetVideo } from '../../../shared/fleet-media'
 import { VideoPreview } from './BotTranscriptVideo'
 
-function sizeLabel(bytes: number, locale: string): string {
-  const unit = bytes >= 1024 * 1024 ? 'megabyte' : bytes >= 1024 ? 'kilobyte' : 'byte'
-  const divisor = unit === 'megabyte' ? 1024 * 1024 : unit === 'kilobyte' ? 1024 : 1
-  return new Intl.NumberFormat(locale, { style: 'unit', unit, maximumFractionDigits: 1 }).format(bytes / divisor)
-}
-
 export type FleetFileTransfer = {
   state: 'idle' | 'downloading' | 'saved' | 'missing' | 'error' | 'unsupported'
+  /** The running transfer's bytes and speed; null before main reports them. */
+  progress: FleetDownloadProgress | null
   receipt: string | null
   revealError: boolean
   download: () => Promise<void>
+  cancel: () => void
   reveal: () => Promise<void>
+}
+type Outcome = { type: 'saved'; receipt: string } | { type: 'failed'; error: string } | { type: 'canceled' }
+
+function failureState(message: string): FleetFileTransfer['state'] {
+  return message.includes('FLEET_FILE_NOT_FOUND')
+    ? 'missing'
+    : message.includes('FLEET_FILES_UNSUPPORTED')
+      ? 'unsupported'
+      : 'error'
 }
 
 /** Saving a shared file to Downloads; a video's card and its player share one, so both show the same state. */
 function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer {
   const [state, setState] = useState<FleetFileTransfer['state']>('idle')
+  const [progress, setProgress] = useState<FleetDownloadProgress | null>(null)
   const [receipt, setReceipt] = useState<string | null>(null)
   const [revealError, setRevealError] = useState(false)
   const revision = useRef(0)
+  /** A transfer of this file is running in main, started here or before this card mounted. */
   const downloading = useRef(false)
+  /** Bumped whenever a transfer ends, so a reply that arrives after its event changes nothing. */
+  const attempt = useRef(0)
+  const finish = useRef((_outcome: Outcome) => {})
+  useEffect(() => attendFleetFile(botId, fileId), [botId, fileId])
   useEffect(() => {
     let disposed = false
+    let settled = false
+    const follow = (snapshot: FleetDownloadProgress) => {
+      downloading.current = true
+      revision.current++
+      setState('downloading')
+      setProgress(snapshot)
+    }
     const refresh = async () => {
       if (downloading.current) return
       const current = ++revision.current
@@ -41,34 +62,64 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
         // A status lookup must not prevent a new download.
       }
     }
+    finish.current = (outcome) => {
+      attempt.current++
+      downloading.current = false
+      setProgress(null)
+      if (outcome.type === 'saved') {
+        revision.current++
+        setReceipt(outcome.receipt)
+        setRevealError(false)
+        setState('saved')
+      } else if (outcome.type === 'failed') setState(failureState(outcome.error))
+      else {
+        // A copy saved before stays available.
+        setState('idle')
+        void refresh()
+      }
+    }
+    // Another card, or this chat before it was left, may have started the transfer: follow it to its end.
+    const off = window.api.onFleetDownload((event) => {
+      if (event.botId !== botId || event.fileId !== fileId) return
+      if (event.type === 'progress') follow(event)
+      else {
+        settled = true
+        finish.current(event)
+      }
+    })
+    void window.api.fleetGetActiveDownload(botId, fileId).then(
+      (snapshot) => {
+        if (snapshot && !disposed && !settled && !downloading.current) follow(snapshot)
+      },
+      () => undefined
+    )
     void refresh()
     window.addEventListener('focus', refresh)
     return () => {
       disposed = true
+      off()
       window.removeEventListener('focus', refresh)
     }
   }, [botId, fileId])
   const download = async () => {
     if (downloading.current) return
+    const mine = ++attempt.current
     downloading.current = true
     revision.current++
     setState('downloading')
+    setProgress(null)
+    let outcome: Outcome
     try {
-      setReceipt(await window.api.fleetDownloadFile(botId, fileId))
-      setRevealError(false)
-      setState('saved')
+      outcome = { type: 'saved', receipt: await window.api.fleetDownloadFile(botId, fileId) }
     } catch (error) {
       const message = fleetErrorMessage(error)
-      setState(
-        message.includes('FLEET_FILE_NOT_FOUND')
-          ? 'missing'
-          : message.includes('FLEET_FILES_UNSUPPORTED')
-            ? 'unsupported'
-            : 'error'
-      )
-    } finally {
-      downloading.current = false
+      outcome = message.includes(FLEET_DOWNLOAD_CANCELED) ? { type: 'canceled' } : { type: 'failed', error: message }
     }
+    // The transfer's own event normally ended this attempt first; the reply covers an event that never came.
+    if (attempt.current === mine) finish.current(outcome)
+  }
+  const cancel = () => {
+    void window.api.fleetCancelDownload(botId, fileId).catch(() => undefined)
   }
   const reveal = async () => {
     if (!receipt) return
@@ -83,7 +134,7 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
       setRevealError(true)
     }
   }
-  return { state, receipt, revealError, download, reveal }
+  return { state, progress, receipt, revealError, download, cancel, reveal }
 }
 
 function FileCard({
@@ -99,7 +150,18 @@ function FileCard({
   preview?: ReactNode
 }) {
   const { t, i18n } = useTranslation('fleet')
-  const { state, receipt, revealError, download, reveal } = transfer
+  const { state, progress, receipt, revealError, download, cancel, reveal } = transfer
+  const totalBytes = progress?.totalBytes || file.byteSize
+  const receivedBytes = Math.min(progress?.receivedBytes ?? 0, totalBytes)
+  const percent = totalBytes > 0 ? Math.round((receivedBytes / totalBytes) * 100) : 0
+  const status =
+    state === 'downloading'
+      ? downloadStatusLabel(
+          { receivedBytes, totalBytes, bytesPerSecond: progress?.bytesPerSecond ?? null },
+          i18n.language,
+          t
+        )
+      : null
   return (
     <div
       className={
@@ -116,26 +178,56 @@ function FileCard({
             <p className="truncate font-medium text-foreground" title={file.name}>
               {file.name}
             </p>
-            <p className="text-xs text-muted-foreground">{sizeLabel(file.byteSize, i18n.language)}</p>
+            <p className="text-xs text-muted-foreground">{fileSizeLabel(file.byteSize, i18n.language)}</p>
           </div>
-          <button
-            type="button"
-            disabled={state === 'downloading'}
-            aria-label={t('files.downloadName', { name: file.name })}
-            onClick={() => void download()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-primary hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-wait disabled:opacity-60"
-          >
-            {state === 'downloading' ? (
-              <Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
-            ) : state === 'saved' ? (
-              <Check aria-hidden="true" className="size-4" />
-            ) : (
-              <Download aria-hidden="true" className="size-4" />
-            )}
-            {t(state === 'downloading' ? 'files.downloading' : 'files.download')}
-          </button>
+          {state === 'downloading' ? (
+            <button
+              type="button"
+              aria-label={t('files.cancelName', { name: file.name })}
+              onClick={cancel}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-white/[0.06] hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              <X aria-hidden="true" className="size-4" />
+              {t('files.cancel')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label={t('files.downloadName', { name: file.name })}
+              onClick={() => void download()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-primary hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              {state === 'saved' ? (
+                <Check aria-hidden="true" className="size-4" />
+              ) : (
+                <Download aria-hidden="true" className="size-4" />
+              )}
+              {t('files.download')}
+            </button>
+          )}
         </div>
-        {receipt && (
+        {status !== null && (
+          <div className="mt-2 flex flex-col gap-1">
+            <div
+              className="h-1 overflow-hidden rounded-full bg-white/[0.08]"
+              role="progressbar"
+              aria-label={t('files.progressName', { name: file.name })}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+              aria-valuetext={status}
+            >
+              <i
+                className="block h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+                style={{ width: `${Math.max(1.5, percent)}%` }}
+              />
+            </div>
+            <p className="truncate text-xs tabular-nums text-muted-foreground" title={status}>
+              {status}
+            </p>
+          </div>
+        )}
+        {receipt && state !== 'downloading' && (
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <p role="status" className="text-muted-foreground">
               {t('files.saved')}
