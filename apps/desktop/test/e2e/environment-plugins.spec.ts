@@ -122,6 +122,28 @@ test('environment plugins: bring one from this computer, then switch it off and 
     await bring.getByRole('button', { name: 'Close', exact: true }).first().click()
     await expect(bring).toBeHidden()
 
+    // Its skill shows in the environment's Skills settings, under the plugin, and switches there.
+    const pluginSkills = async () => {
+      const response = await fetch(`http://127.0.0.1:${instance.port}/v1/settings/plugin-skills`, {
+        headers: { 'X-Maestrly-Fleet-Protocol': '1', Authorization: `Bearer ${instance.token}` },
+      })
+      return ((await response.json()) as { skills: Array<{ name: string; enabled: boolean }> }).skills
+    }
+    await sheet
+      .getByRole('tablist', { name: 'Environment settings sections', exact: true })
+      .getByRole('tab', { name: /^Skills\b/ })
+      .click()
+    const skillRow = sheet.locator('div.rounded-lg').filter({ hasText: '/release-notes:draft' }).last()
+    await expect(skillRow).toBeVisible()
+    await skillRow.getByRole('switch').click()
+    await expect
+      .poll(async () => (await pluginSkills()).find((skill) => skill.name === 'release-notes:draft')?.enabled)
+      .toBe(false)
+    await sheet
+      .getByRole('tablist', { name: 'Environment settings sections', exact: true })
+      .getByRole('tab', { name: /^Plugins\b/ })
+      .click()
+
     // Managed like this computer's own plugins: switched off, then uninstalled.
     await center.getByRole('tab', { name: /^Installed/ }).click()
     await center.getByRole('switch', { name: /^Enabled: / }).click()
