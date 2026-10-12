@@ -299,6 +299,8 @@ export class BotRuntime {
   private readonly presentOnCompletion = new Map<string, PresentationRequest>()
   private permissionAt = new Map<string, string>()
   private questionAt = new Map<string, string>()
+  /** The transcript item id of each question asked, by tool call. */
+  private questionItems = new Map<string, string>()
   /** The tool of each pending permission request, once its call was found: it never changes. */
   private permissionTools = new Map<string, ReturnType<typeof permissionTool>>()
   private usage: FleetUsage | null = null
@@ -815,7 +817,7 @@ export class BotRuntime {
         id: entry.toolCallId,
         at: this.questionAt.get(entry.toolCallId) ?? new Date().toISOString(),
         questions: fleetQuestions(entry.questions),
-        itemId: 'question:' + entry.toolCallId,
+        itemId: this.questionItems.get(entry.toolCallId) ?? 'question:' + entry.toolCallId,
       }))
     return [...permissions, ...questions, ...this.help.pending()]
   }
@@ -1471,17 +1473,32 @@ export class BotRuntime {
     if (!pending) return
     const at = new Date().toISOString()
     this.questionAt.set(event.toolCallId, at)
+    // In the place of its tool call, as the native question would be: with the time it was asked, the item sorted after
+    // every item of its message, below whatever the turn wrote after the answer.
+    const anchor = this.questionAnchor(event.toolCallId) ?? { id: 'question:' + event.toolCallId, at }
+    this.questionItems.set(event.toolCallId, anchor.id)
+    for (const oldest of this.questionItems.keys()) {
+      if (this.questionItems.size <= 200) break
+      this.questionItems.delete(oldest)
+    }
     void this.extras
       .upsert({
         kind: 'question',
-        id: 'question:' + event.toolCallId,
-        at,
+        id: anchor.id,
+        at: anchor.at,
         toolCallId: event.toolCallId,
         questions: fleetQuestions(pending.questions),
         state: 'pending',
         answers: null,
       })
       .then(() => this.changed())
+  }
+  /** The id and time `projectMessages` gives the question's tool part, once its message holds it. */
+  private questionAnchor(toolCallId: string): { id: string; at: string } | null {
+    const message = this.live.messageWithToolCall(toolCallId)
+    if (message?.role !== 'assistant') return null
+    const index = message.parts.findIndex((part) => part.type === 'tool' && part.toolCallId === toolCallId)
+    return index < 0 ? null : { id: `${message.id}:${index}`, at: new Date(message.createdAt).toISOString() }
   }
   questionAnswered(event: { conversationId: string; toolCallId: string }): void {
     if (this.disposed || event.conversationId !== this.primaryConversationId) return

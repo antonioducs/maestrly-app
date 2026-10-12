@@ -1257,3 +1257,72 @@ it('projects at most ten local recall sources on native user messages', () => {
     { kind: 'user', memories: sources.slice(1, 11).map(({ id, title }) => ({ id, title })) },
   ])
 })
+
+describe('fleet question items', () => {
+  it('keeps an answered question where the bot asked it, above what the turn wrote after', async () => {
+    const { getChatQuestionBroker } = await import('../../src/main/chat/service')
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-question-'))
+    const conversationId = 'question-conversation-' + key()
+    const toolCallId = 'ask-' + key()
+    const createdAt = Date.parse('2026-10-12T10:00:00.000Z')
+    const message: ChatMessage = {
+      id: 'assistant-' + key(),
+      conversationId,
+      role: 'assistant',
+      createdAt,
+      parts: [
+        { type: 'text', id: 'before', text: 'Before the question' },
+        {
+          type: 'tool',
+          toolCallId,
+          toolName: 'ask_question',
+          input: { questions: [{ header: 'Color', question: 'Which color?', options: [{ label: 'Blue' }] }] },
+          state: { status: 'running' },
+        } as MessagePart,
+        { type: 'text', id: 'after', text: 'After the answer' },
+      ],
+    }
+    const pending = getChatQuestionBroker().ask({
+      conversationId,
+      messageId: message.id,
+      toolCallId,
+      questions: [{ header: 'Color', question: 'Which color?', options: [{ label: 'Blue' }] }],
+    })
+    try {
+      const extras = new InstanceTranscriptExtras(path.join(dir, 'extras.json'), () => {})
+      await extras.load()
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
+      Object.assign(runtime, {
+        disposed: false,
+        stored: { primaryConversationId: conversationId },
+        questionAt: new Map(),
+        questionItems: new Map(),
+        permissionAt: new Map(),
+        permissionTools: new Map(),
+        extras,
+        live: { messageWithToolCall: (id: string) => (id === toolCallId ? message : null) },
+        help: { pending: () => [] },
+        changed: vi.fn(),
+      })
+      runtime.questionAsked({ conversationId, toolCallId })
+      await extras.idle()
+      const anchored = `${message.id}:1`
+      expect(extras.list()).toMatchObject([{ kind: 'question', id: anchored, at: new Date(createdAt).toISOString() }])
+      expect((runtime as unknown as { pending(): Array<{ itemId: string }> }).pending()).toMatchObject([
+        { kind: 'question', id: toolCallId, itemId: anchored },
+      ])
+      await runtime.resolve(toolCallId, { kind: 'question', answers: [['Blue']] })
+      await expect(pending).resolves.toEqual([['Blue']])
+      const native = projectChatMessages([message]).filter((item) => item.kind !== 'question')
+      expect(transcriptPage([...native, ...extras.list()]).items.map((item) => item.id)).toEqual([
+        `${message.id}:0`,
+        anchored,
+        `${message.id}:2`,
+      ])
+      expect(extras.list()).toMatchObject([{ id: anchored, state: 'answered', answers: [['Blue']] }])
+    } finally {
+      getChatQuestionBroker().rejectConversation(conversationId)
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
