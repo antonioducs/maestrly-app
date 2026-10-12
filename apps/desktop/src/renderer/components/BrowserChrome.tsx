@@ -44,6 +44,12 @@ export function BrowserChrome({
   const remote = useHostInfo().remote
   const [bstate, setBstate] = useState<BrowserState>(EMPTY_BROWSER)
   const [urlInput, setUrlInput] = useState('')
+  // What the person types stays until they submit it or leave the field: the page's own events (a load finishing, a
+  // remote host's state arriving late) do not replace it.
+  const editing = useRef(false)
+  const showUrl = (url: string): void => {
+    if (!editing.current) setUrlInput(url)
+  }
   const activeTab = bstate.tabs.find((t) => t.id === bstate.activeId)
   const browserReorder = useReorder((f, t) => convId && api.drawerReorderTab(convId, f, t))
 
@@ -66,7 +72,7 @@ export function BrowserChrome({
       if (!alive || s.convId !== convId) return
       setBstate(s)
       const act = s.tabs.find((t) => t.id === s.activeId)
-      setUrlInput(act?.url ?? '')
+      showUrl(act?.url ?? '')
     })
     return () => {
       alive = false
@@ -78,17 +84,19 @@ export function BrowserChrome({
       if (s.convId !== convId) return
       setBstate(s)
       const act = s.tabs.find((t) => t.id === s.activeId)
-      if (act) setUrlInput(act.url)
+      if (act) showUrl(act.url)
     })
   }, [convId, api])
 
   useEffect(() => {
     setBstate(EMPTY_BROWSER)
+    editing.current = false
     setUrlInput('')
   }, [convId])
 
   const submitUrl = (e: React.FormEvent) => {
     e.preventDefault()
+    editing.current = false
     if (convId) {
       api.drawerNavigate(convId, urlInput)
     }
@@ -154,7 +162,13 @@ export function BrowserChrome({
           <input
             ref={addressRef}
             value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
+            onChange={(e) => {
+              editing.current = true
+              setUrlInput(e.target.value)
+            }}
+            onBlur={() => {
+              editing.current = false
+            }}
             placeholder={tr('browserChrome.urlPlaceholder')}
             className="h-7 w-full rounded-md border border-input bg-transparent px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
           />

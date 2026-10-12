@@ -399,6 +399,10 @@ test('remote host browser: streamed live, typed into and copied from', async () 
     // The address bar drives the host's browser.
     const address = page.getByPlaceholder('Search or type a URL')
     await address.fill(pageUrl)
+    // The page's own events while the person types (here the start page reloading on the host) leave the typed text.
+    await remote('drawerReload', chat.id)
+    await page.waitForTimeout(1_500)
+    await expect(address).toHaveValue(pageUrl)
     await address.press('Enter')
     await expect
       .poll(async () => (await remote('getBrowserState', chat.id)).tabs[0]?.url, { timeout: 30_000 })
