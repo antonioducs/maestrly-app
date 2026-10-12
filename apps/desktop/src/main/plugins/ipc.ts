@@ -25,6 +25,7 @@ const consent = z
     consentFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
     stdio: z.array(z.string().min(1).max(64)).max(100),
     executables: z.boolean(),
+    hooks: z.boolean().optional(),
   })
   .strict()
 const inputValue = z.string().max(16 * 1024)
@@ -79,6 +80,7 @@ export const PLUGIN_IPC_SCHEMAS = {
       .strict()
       .refine((value) => Object.keys(value.values).length <= 100),
   ]),
+  setHooks: z.tuple([z.object({ key, enabled: z.boolean(), consent: z.boolean().optional() }).strict()]),
   uninstall: z.tuple([z.object({ key, deleteData: z.boolean() }).strict()]),
 } as const
 
@@ -112,6 +114,7 @@ export const PLUGIN_MUTATION_CHANNELS = [
   'chat:plugins:set-scope',
   'chat:plugins:set-server',
   'chat:plugins:set-inputs',
+  'chat:plugins:set-hooks',
   'chat:plugins:uninstall',
 ] as const
 
@@ -169,6 +172,10 @@ export function registerPluginIpc(reg: IpcRegistrar): void {
   reg.mhandle(
     'chat:plugins:set-inputs',
     guarded(s.setInputs, (input) => service.setInputs(input), invalid)
+  )
+  reg.mhandle(
+    'chat:plugins:set-hooks',
+    guarded(s.setHooks, (input) => service.setHooks(input), invalid)
   )
   reg.mhandle(
     'chat:plugins:uninstall',

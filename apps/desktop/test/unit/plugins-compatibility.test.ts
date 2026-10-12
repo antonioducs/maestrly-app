@@ -19,6 +19,7 @@ const basePackage: PluginPackage = {
   logoPath: null,
   skills: [],
   agents: [],
+  hooks: [],
   mcpServers: [],
   inputs: [],
   components: [],
@@ -90,10 +91,19 @@ describe('plugin compatibility', () => {
       ['auth-publisher-client'],
     ],
     [
-      'hooks',
-      pkg({ skills: [skill('a')], components: [comp('hooks', 'not-run', 'hooks-not-run')] }),
+      'hooks of events Maestrly does not run',
+      pkg({ skills: [skill('a')], components: [comp('hooks', 'not-run', 'hook-unsupported')] }),
       'portable',
-      ['hooks-not-run'],
+      ['hook-unsupported'],
+    ],
+    [
+      'hooks only',
+      pkg({
+        hooks: [{ event: 'Stop', matcher: null, command: 'echo done', timeoutSec: 60, source: 'hooks/hooks.json' }],
+        components: [comp('hooks', 'adapted')],
+      }),
+      'portable',
+      [],
     ],
     ['commands adapted', pkg({ skills: [command('review')] }), 'portable', []],
     [
@@ -151,7 +161,7 @@ describe('plugin compatibility', () => {
     expect(isBlockingReason('requires-app-connector')).toBe(true)
     expect(isBlockingReason('no-usable-components')).toBe(true)
     expect(isBlockingReason('app-connector')).toBe(false)
-    expect(isBlockingReason('hooks-not-run')).toBe(false)
+    expect(isBlockingReason('hook-unsupported')).toBe(false)
   })
 
   it('marks unsupported sources and NOT_AVAILABLE policy unavailable', () => {

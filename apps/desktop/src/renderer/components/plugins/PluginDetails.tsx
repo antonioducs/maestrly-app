@@ -12,7 +12,7 @@ import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginLogo } from './PluginCard'
 import type { PluginsSource } from './plugins-source'
 import { normalizeSubagentProfileKey } from '../../../shared/subagent-profiles'
-import { errorText, reasonText, SectionTitle, shortCommit } from './plugin-ui'
+import { errorText, HookList, reasonText, SectionTitle, shortCommit } from './plugin-ui'
 
 const STATUS_CLASS: Record<PluginComponentDto['status'], string> = {
   supported: 'text-emerald-300',
@@ -273,6 +273,13 @@ export function PluginDetails({
               </li>
             ))}
           </ul>
+        </Section>
+      )}
+
+      {inspection.hooks.length > 0 && (
+        <Section title={t('details.hooks')}>
+          <p className="text-[11px] text-muted-foreground">{t('details.hooksHint')}</p>
+          <HookList hooks={inspection.hooks} />
         </Section>
       )}
 

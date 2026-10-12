@@ -42,7 +42,8 @@ export const createPluginSettingsService = (
   installPlugin: (input) => plugins.install(input),
   bringPlugin: (input) => plugins.installPinned(input),
   updatePlugin: (input) => plugins.update(input),
-  patchPlugin: async ({ key, enabled, scope, server, inputs }) =>
+  // Switching hooks on comes from a window of the owner's computer that showed them and asked for consent.
+  patchPlugin: async ({ key, enabled, scope, server, inputs, hooks }) =>
     empty(
       await (enabled !== undefined
         ? plugins.setEnabled({ key, enabled })
@@ -50,7 +51,9 @@ export const createPluginSettingsService = (
           ? plugins.setScope({ key, scope })
           : server
             ? plugins.setServer({ key, ...server })
-            : plugins.setInputs({ key, values: inputs ?? {} }))
+            : hooks !== undefined
+              ? plugins.setHooks({ key, enabled: hooks, consent: hooks })
+              : plugins.setInputs({ key, values: inputs ?? {} }))
     ),
   uninstallPlugin: async (input) => empty(await plugins.uninstall(input)),
   pluginSkills: async () => ({

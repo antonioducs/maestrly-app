@@ -41,7 +41,7 @@ export type PluginReasonCode =
   | 'no-usable-components'
   | 'requires-app-connector'
   | 'app-connector'
-  | 'hooks-not-run'
+  | 'hook-unsupported'
   | 'component-unsupported'
   | 'entry-invalid'
   | 'transport-unsupported'
@@ -58,7 +58,7 @@ export const PLUGIN_REASON_CODES: readonly PluginReasonCode[] = [
   'no-usable-components',
   'requires-app-connector',
   'app-connector',
-  'hooks-not-run',
+  'hook-unsupported',
   'component-unsupported',
   'entry-invalid',
   'transport-unsupported',
@@ -218,6 +218,13 @@ export interface PluginCatalogEntryDto {
   hasLogo: boolean
   policy: PluginPolicyDto
 }
+/** A command hook of a plugin, run by Maestrly on an event it emulates, for every model. */
+export interface PluginHookDto {
+  event: 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Stop'
+  matcher: string | null
+  command: string
+}
+
 /** A plugin agent, run as a subagent by every model. */
 export interface PluginAgentDto {
   name: string
@@ -235,6 +242,7 @@ export interface PluginInspectionDto extends PluginCatalogEntryDto {
   capabilities: string[]
   skills: PluginSkillDto[]
   agents: PluginAgentDto[]
+  hooks: PluginHookDto[]
   mcpServers: PluginMcpServerDto[]
   components: PluginComponentDto[]
   endpoints: string[]
@@ -259,6 +267,9 @@ export interface InstalledPluginDto {
   setup: { missingInputs: string[]; stdioNeedingConsent: string[]; serversNeedingAuth: string[] }
   skills: PluginSkillDto[]
   agents: PluginAgentDto[]
+  hooks: PluginHookDto[]
+  /** The person approved the current hooks: they run automatically in Agent conversations. */
+  hooksEnabled: boolean
   mcpServers: PluginMcpServerDto[]
   inputs: PluginInputDto[]
   policy: PluginPolicyDto
@@ -275,6 +286,8 @@ export interface PluginConsentInput {
   consentFingerprint: string
   stdio: string[]
   executables: boolean
+  /** Run the plugin's hooks automatically. Without it, a plugin with hooks installs with them off. */
+  hooks?: boolean
 }
 
 /** Origin of a plugin-managed skill or MCP server, as the renderer sees it. */

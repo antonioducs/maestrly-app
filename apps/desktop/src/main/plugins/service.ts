@@ -22,7 +22,7 @@ import { forgetSkillNames } from '../chat/skill-state'
 import { isSecureStorageAvailable } from '../secure-store'
 import { appPluginLayout } from './app-layout'
 import { classifyPlugin } from './compatibility'
-import { launchDigest } from './consent'
+import { hookDigest, launchDigest } from './consent'
 import { PluginGitError, PluginGitSource, sparsePattern } from './git-source'
 import {
   CATALOG_PATTERNS,
@@ -33,6 +33,7 @@ import {
   inspectTree,
   manifestReferencedPatterns,
   agentDtos,
+  hookDtos,
   mcpServerDtos,
   skillDtos,
   toCatalogEntryDto,
@@ -387,6 +388,8 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
     },
     skills: pkg ? skillDtos(pkg) : [],
     agents: pkg ? agentDtos(pkg) : [],
+    hooks: pkg ? hookDtos(pkg) : [],
+    hooksEnabled: !!pkg?.hooks.length && record.consent.hooks === hookDigest(pkg.hooks),
     mcpServers: pkg
       ? mcpServerDtos(pkg, record, (server) => {
           const summary = server.transport === 'stdio' ? undefined : oauth(server.key)
@@ -851,6 +854,25 @@ export function setEnabled(input: { key: string; enabled: boolean }): Promise<Pl
     })
     const record = listInstalled()[input.key]
     if (record) invalidateServers(record)
+    return result
+  })
+}
+
+/**
+ * Switches a plugin's hooks on (only with the person's consent to the current hooks) or off. Hooks are commands that
+ * run automatically during Agent conversations, so approval is recorded as a digest of exactly what was shown.
+ */
+export async function setHooks(input: { key: string; enabled: boolean; consent?: boolean }): Promise<PluginOpResult> {
+  if (input.enabled && input.consent !== true) return fail('consent-required')
+  return withPluginMutation(async () => {
+    const record = listInstalled()[input.key]
+    if (!record || record.status !== 'ready') return fail('unknown-plugin')
+    const pkg = input.enabled ? await loadInstalledPackage(record) : null
+    if (input.enabled && !pkg?.hooks.length) return fail('unavailable')
+    const result = updateRecord(input.key, (draft) => {
+      draft.consent.hooks = input.enabled && pkg ? hookDigest(pkg.hooks) : null
+    })
+    invalidatePluginRuntimeCache(input.key)
     return result
   })
 }

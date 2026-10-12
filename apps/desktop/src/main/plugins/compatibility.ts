@@ -10,7 +10,7 @@ export interface ClassifyContext {
 /** Parts a portable plugin leaves out: each is noted, none makes the plugin incompatible. */
 const NOTE_REASONS = new Set<PluginReasonCode>([
   'app-connector',
-  'hooks-not-run',
+  'hook-unsupported',
   'component-unsupported',
   'entry-invalid',
   'transport-unsupported',
@@ -73,7 +73,7 @@ export function classifyPlugin(result: LoadResult, ctx: ClassifyContext): Plugin
   const connectors = pkg.components.some((c) => c.kind === 'app-connector' && c.status === 'unavailable')
   if (connectors && servers.length === 0)
     return { level: 'unavailable', reasons: [{ code: 'requires-app-connector' }, ...notes] }
-  if (pkg.skills.length + pkg.agents.length + servers.length === 0)
+  if (pkg.skills.length + pkg.agents.length + pkg.hooks.length + servers.length === 0)
     return { level: 'unavailable', reasons: [{ code: 'no-usable-components' }, ...notes] }
   return { level: 'portable', reasons: notes }
 }

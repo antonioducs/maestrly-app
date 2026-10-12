@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import type { PluginMarketplaceDto, PluginOpErrorCode, PluginReason } from '../../../shared/plugins'
+import type { PluginHookDto, PluginMarketplaceDto, PluginOpErrorCode, PluginReason } from '../../../shared/plugins'
 
 export const inputCls =
   'w-full rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-indigo-500/60'
@@ -69,5 +69,19 @@ export function marketplaceLabel(marketplace: Pick<PluginMarketplaceDto, 'displa
     marketplace.displayName ??
     marketplace.name ??
     marketplace.url.replace(/^https:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '')
+  )
+}
+
+/** A plugin's hooks as the person approves them: event, matcher and the exact command. */
+export function HookList({ hooks }: { hooks: readonly PluginHookDto[] }) {
+  return (
+    <ul className="mt-1 flex flex-col gap-0.5">
+      {hooks.map((hook, index) => (
+        <li key={`${hook.event}-${index}`} className="font-mono text-[11px] text-muted-foreground">
+          {hook.event}
+          {hook.matcher ? ` · ${hook.matcher}` : ''} · {hook.command}
+        </li>
+      ))}
+    </ul>
   )
 }

@@ -54,7 +54,7 @@ const reasonCode = z.enum([
   'no-usable-components',
   'requires-app-connector',
   'app-connector',
-  'hooks-not-run',
+  'hook-unsupported',
   'component-unsupported',
   'entry-invalid',
   'transport-unsupported',
@@ -127,6 +127,13 @@ const input = z
   .strict()
 const skill = z
   .object({ name: text(200), description: text(4096), kind: z.enum(['skill', 'command']), hasScripts: z.boolean() })
+  .strict()
+const hook = z
+  .object({
+    event: z.enum(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop']),
+    matcher: optionalText(1000),
+    command: text(4096),
+  })
   .strict()
 const agent = z
   .object({
@@ -234,6 +241,7 @@ export const fleetPluginInspectionSchema = z
     capabilities: list(text(200), 100),
     skills: list(skill, 2000),
     agents: list(agent, 500),
+    hooks: list(hook, 200),
     mcpServers: list(mcpServer, 100),
     components: list(component, 2000),
     endpoints: list(text(2048), 500),
@@ -266,6 +274,8 @@ export const fleetInstalledPluginSchema = z
       .strict(),
     skills: list(skill, 2000),
     agents: list(agent, 500),
+    hooks: list(hook, 200),
+    hooksEnabled: z.boolean(),
     mcpServers: list(mcpServer, 100),
     inputs: list(input, 200),
     policy,
@@ -309,6 +319,8 @@ export const fleetPluginConsentSchema = z
     consentFingerprint: z.string().regex(/^[0-9a-f]{64}$/),
     stdio: list(z.string().min(1).max(64), 100),
     executables: z.boolean(),
+    /** Run the plugin's hooks automatically; a plugin with hooks installs with them off otherwise. */
+    hooks: z.boolean(),
   })
   .strict()
 const inputValues = z
@@ -357,11 +369,14 @@ export const fleetPluginPatchSchema = z
       .record(z.string().min(1).max(300), z.string().max(16384).nullable())
       .refine((value) => Object.keys(value).length <= 100, 'Too many inputs')
       .optional(),
+    /** Switches the plugin's hooks on (the person approved them in this computer's window) or off. */
+    hooks: z.boolean().optional(),
   })
   .strict()
   .refine(
     (value) =>
-      [value.enabled, value.scope, value.server, value.inputs].filter((field) => field !== undefined).length === 1,
+      [value.enabled, value.scope, value.server, value.inputs, value.hooks].filter((field) => field !== undefined)
+        .length === 1,
     'Change one thing at a time'
   )
 

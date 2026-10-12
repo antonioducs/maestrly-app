@@ -10,7 +10,7 @@ import {
   isFleetPluginSettingsOperation,
 } from '../src/index.js'
 
-const consent = { consentFingerprint: 'a'.repeat(64), stdio: ['local'], executables: false }
+const consent = { consentFingerprint: 'a'.repeat(64), stdio: ['local'], executables: false, hooks: false }
 const bring = {
   source: { url: 'https://github.com/example/plugins.git', ref: 'main' },
   name: 'release-notes',
@@ -186,5 +186,26 @@ describe('environment plugins contract', () => {
     expect(FLEET_PLUGIN_SETTINGS_OPERATIONS).toEqual(
       expect.arrayContaining(['patchMcpOAuthAccount', 'setMcpOAuthClient'])
     )
+  })
+
+  it('needs an explicit answer about hooks when installing or bringing a plugin', () => {
+    const bring = {
+      source: { url: 'https://example.test/market.git' },
+      name: 'demo',
+      commit: 'a'.repeat(40),
+      consent: { consentFingerprint: 'a'.repeat(64), stdio: [], executables: false },
+      enabled: true,
+    }
+    expect(FLEET_SETTINGS_OPERATIONS.bringPlugin.input.safeParse(bring).success).toBe(false)
+    expect(
+      FLEET_SETTINGS_OPERATIONS.bringPlugin.input.safeParse({ ...bring, consent: { ...bring.consent, hooks: true } })
+        .success
+    ).toBe(true)
+    expect(FLEET_SETTINGS_OPERATIONS.patchPlugin.input.safeParse({ key: 'demo@market', hooks: true }).success).toBe(
+      true
+    )
+    expect(
+      FLEET_SETTINGS_OPERATIONS.patchPlugin.input.safeParse({ key: 'demo@market', hooks: true, enabled: true }).success
+    ).toBe(false)
   })
 })

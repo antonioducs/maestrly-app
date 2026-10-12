@@ -1,9 +1,11 @@
 import type { PluginComponentDto, PluginFormat } from '../../shared/plugins'
 import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 import type { PluginAgentSpec } from './agents-scan'
+import type { PluginHookSpec } from './hooks-scan'
 import type { PluginSkillSpec } from './skills-scan'
 
 export type { PluginAgentSpec } from './agents-scan'
+export type { PluginHookEvent, PluginHookSpec } from './hooks-scan'
 export type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 export type { PluginSkillSpec } from './skills-scan'
 
@@ -30,6 +32,8 @@ export interface PluginPackage {
   skills: PluginSkillSpec[]
   /** Markdown agents adapted to subagents. */
   agents: PluginAgentSpec[]
+  /** Command hooks of the events Maestrly emulates. */
+  hooks: PluginHookSpec[]
   mcpServers: PluginMcpServerSpec[]
   inputs: PluginInputSpec[]
   /** Every component found, with its support status. */

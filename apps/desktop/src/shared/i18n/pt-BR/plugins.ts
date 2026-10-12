@@ -80,7 +80,7 @@ export default {
       'requires-app-connector':
         'Depende de conectores de apps do ChatGPT, que só funcionam dentro dos produtos da OpenAI.',
       'app-connector': 'O conector {{subject}} não está incluído: só funciona dentro dos produtos da OpenAI.',
-      'hooks-not-run': 'Os hooks {{subject}} nunca rodam na Maestrly.',
+      'hook-unsupported': 'O hook {{subject}} não está incluído: a Maestrly só roda hooks de comando dos eventos que ela controla.',
       'component-unsupported': '{{subject}} não é suportado e não roda.',
       'entry-invalid': '{{subject}} é inválido e foi ignorado.',
       'transport-unsupported': 'O servidor MCP {{subject}} usa um transporte que a Maestrly não suporta.',
@@ -147,6 +147,8 @@ export default {
     agentTools: 'Ferramentas: {{tools}}',
     agentDefaultTools: 'Ferramentas somente leitura',
     agentDropped: 'Não incluído: {{tools}}',
+    hooks: 'Hooks',
+    hooksHint: 'Comandos que rodam automaticamente, com a sua aprovação, em conversas no modo Agent com todos os modelos.',
     auth: { none: 'Sem login', oauth: 'Login OAuth', manual: 'Token necessário' },
     capabilities: 'Capacidades',
     endpoints: 'Endpoints externos',
@@ -186,6 +188,9 @@ export default {
     installing: 'Instalando…',
     sourceChanged: 'A fonte mudou desde que você abriu. Revise o plugin de novo antes de instalar.',
     connectNow: 'Entrar em {{server}} agora',
+    consentHooks: 'Rodar estes comandos de hook automaticamente em conversas no modo Agent',
+    consentHooksHint:
+      'Hooks são comandos do publisher que rodam neste host, sem perguntar, quando uma conversa começa, um prompt é enviado, uma ferramenta roda ou um turno termina. Rodam com todos os modelos, só no modo Agent.',
   },
   installed: {
     empty: 'Nenhum plugin instalado ainda.',
@@ -203,6 +208,10 @@ export default {
     details: 'Detalhes',
     servers: 'Servidores MCP',
     skills: '{{count}} skills',
+    hooks: 'Hooks',
+    hooksCount_one: '{{count}} hook',
+    hooksCount_other: '{{count}} hooks',
+    hooksTitle: 'Rodar os hooks de {{name}}?',
     agents_one: '{{count}} agent',
     agents_other: '{{count}} agents',
     save: 'Salvar',

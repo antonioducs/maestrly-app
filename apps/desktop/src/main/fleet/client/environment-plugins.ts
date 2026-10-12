@@ -31,6 +31,8 @@ export function pluginBringPayload(
         consentFingerprint: record.consent.fingerprint,
         stdio: Object.keys(record.consent.stdio),
         executables: record.consent.executables,
+        // The hooks approved here; the environment checks them against its own copy through the fingerprint.
+        hooks: !!record.consent.hooks,
       },
       enabled: record.enabled,
       ...(Object.keys(values).length ? { inputs: values } : {}),

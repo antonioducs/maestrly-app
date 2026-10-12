@@ -3,6 +3,7 @@ import { parseSkillFrontmatter } from '../../chat/skills'
 import { type ClaudeUserConfigOption, type PluginInputSpec, normalizeClaudeMcp } from '../mcp-normalize'
 import type { PackageTree } from '../package-tree'
 import { parsePluginRelativePath } from '../paths'
+import type { HookSource } from '../hooks-scan'
 import { type PluginSkillSpec, scanCommands, scanSkills } from '../skills-scan'
 import type { LoadResult } from '../types'
 import { pluginNameOrNull } from './codex'
@@ -13,7 +14,7 @@ import {
   findLicenseFile,
   hasDir,
   hasFile,
-  hooksComponent,
+  hookComponents,
   httpsUrl,
   isRecord,
   type LoadState,
@@ -226,13 +227,15 @@ export async function loadClaudePlugin(
     })
   }
 
-  // Hooks merge with `hooks/hooks.json`; none of them runs here.
-  if (tree.entries.has('hooks/hooks.json')) hooksComponent(state, 'hooks/hooks.json')
+  // Hooks merge with `hooks/hooks.json`.
+  const hookSources: HookSource[] = tree.entries.has('hooks/hooks.json') ? [{ path: 'hooks/hooks.json' }] : []
   for (const item of asList(m.hooks)) {
     if (typeof item === 'string') {
-      for (const path of manifestPaths(state, item, 'hooks')) hooksComponent(state, path)
-    } else hooksComponent(state, 'plugin.json#hooks')
+      for (const path of manifestPaths(state, item, 'hooks'))
+        if (!hookSources.some((source) => 'path' in source && source.path === path)) hookSources.push({ path })
+    } else hookSources.push({ inline: item, label: 'plugin.json#hooks' })
   }
+  const hooks = await hookComponents(state, hookSources)
 
   const agents = await agentComponents(
     state,
@@ -277,6 +280,7 @@ export async function loadClaudePlugin(
       logoPath: null,
       skills: [...skills, ...commands],
       agents,
+      hooks,
       mcpServers: mcp.servers,
       inputs,
       components: state.components,

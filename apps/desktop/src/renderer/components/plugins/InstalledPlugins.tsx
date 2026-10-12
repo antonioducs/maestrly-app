@@ -25,7 +25,7 @@ import { PluginInstallDialog } from './PluginInstallDialog'
 import { PluginScopePicker, scopeIsComplete } from './PluginScopePicker'
 import { McpAccounts } from '../chat/McpAccounts'
 import type { PluginsSource } from './plugins-source'
-import { errorText, reasonText, shortCommit, Toggle } from './plugin-ui'
+import { errorText, HookList, reasonText, shortCommit, Toggle } from './plugin-ui'
 
 type Editing =
   | { key: string; kind: 'scope'; scope: PluginScope }
@@ -48,6 +48,7 @@ export function InstalledPlugins({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<{ key: string; message: string } | null>(null)
   const [editing, setEditing] = useState<Editing | null>(null)
+  const [hooksConsent, setHooksConsent] = useState<InstalledPluginDto | null>(null)
   const [stdioConsent, setStdioConsent] = useState<{ plugin: InstalledPluginDto; server: PluginMcpServerDto } | null>(
     null
   )
@@ -233,6 +234,25 @@ export function InstalledPlugins({
               </div>
             </div>
 
+            {plugin.hooks.length > 0 && (
+              <div className="flex items-center gap-2 border-t border-border/60 pt-1.5 text-[12px]">
+                <Toggle
+                  on={plugin.hooksEnabled}
+                  disabled={rowBusy || incompatible}
+                  label={`${t('installed.hooks')}: ${plugin.displayName}`}
+                  onClick={() => {
+                    if (plugin.hooksEnabled)
+                      void run(plugin.key, () => source.pluginsSetHooks({ key: plugin.key, enabled: false }))
+                    else setHooksConsent(plugin)
+                  }}
+                />
+                <span className="text-foreground">{t('installed.hooks')}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {t('installed.hooksCount', { count: plugin.hooks.length })}
+                </span>
+              </div>
+            )}
+
             {plugin.mcpServers.length > 0 && (
               <div className="flex flex-col gap-1 border-t border-border/60 pt-1.5">
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -352,6 +372,34 @@ export function InstalledPlugins({
           </div>
         )
       })}
+
+      {hooksConsent && (
+        <Dialog open onOpenChange={(open) => !open && setHooksConsent(null)}>
+          <DialogContent className="max-w-lg" data-testid="hooks-consent">
+            <DialogHeader>
+              <DialogTitle>{t('installed.hooksTitle', { name: hooksConsent.displayName })}</DialogTitle>
+              <DialogDescription>{t('install.consentHooksHint')}</DialogDescription>
+            </DialogHeader>
+            <HookList hooks={hooksConsent.hooks} />
+            <DialogFooter>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setHooksConsent(null)}>
+                {t('installed.cancel')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  const plugin = hooksConsent
+                  setHooksConsent(null)
+                  void run(plugin.key, () => source.pluginsSetHooks({ key: plugin.key, enabled: true, consent: true }))
+                }}
+              >
+                {t('install.consentHooks')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {stdioConsent && (
         <Dialog open onOpenChange={(open) => !open && setStdioConsent(null)}>

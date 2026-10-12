@@ -1,5 +1,6 @@
 import { type NormalizedMcp, normalizeCodexMcp } from '../mcp-normalize'
 import type { PackageTree } from '../package-tree'
+import type { HookSource } from '../hooks-scan'
 import { scanCommands, scanSkills } from '../skills-scan'
 import type { LoadResult } from '../types'
 import {
@@ -8,7 +9,7 @@ import {
   authorName,
   component,
   findLicenseFile,
-  hooksComponent,
+  hookComponents,
   httpsUrl,
   isRecord,
   type LoadState,
@@ -76,14 +77,16 @@ export async function loadCodexPlugin(
   const [appsPath] = manifest.apps === undefined ? ['.app.json'] : manifestPaths(state, manifest.apps, 'apps')
   if (appsPath !== undefined) await appComponents(state, appsPath)
 
+  const hookSources: HookSource[] = []
   if (manifest.hooks !== undefined) {
     const hookPaths = typeof manifest.hooks === 'string' || Array.isArray(manifest.hooks) ? manifest.hooks : null
-    const paths = hookPaths ? manifestPaths(state, hookPaths, 'hooks').filter((p) => tree.entries.has(p)) : []
-    if (paths.length) for (const path of paths) hooksComponent(state, path)
-    else hooksComponent(state, 'plugin.json#hooks')
-  } else if (tree.entries.has('hooks/hooks.json')) hooksComponent(state, 'hooks/hooks.json')
-  // Codex does not load a root `hooks.json`, but it ships hook code that never runs here: list it too.
-  if (tree.entries.has('hooks.json')) hooksComponent(state, 'hooks.json')
+    if (hookPaths) for (const path of manifestPaths(state, hookPaths, 'hooks')) hookSources.push({ path })
+    else hookSources.push({ inline: manifest.hooks, label: 'plugin.json#hooks' })
+  } else if (tree.entries.has('hooks/hooks.json')) hookSources.push({ path: 'hooks/hooks.json' })
+  const hooks = await hookComponents(state, hookSources)
+  // Codex does not load a root `hooks.json`; neither does Maestrly: list it as not included.
+  if (tree.entries.has('hooks.json'))
+    component(state, 'hooks', 'hooks.json', 'not-run', 'component-unsupported', 'Codex does not load a root hooks.json')
 
   const agents = await agentComponents(state, ['agents'])
   linkComponents(state)
@@ -111,6 +114,7 @@ export async function loadCodexPlugin(
       logoPath: display.logoPath,
       skills: [...skills, ...adapted],
       agents,
+      hooks,
       mcpServers: mcp.servers,
       inputs: mcp.inputs,
       components: state.components,

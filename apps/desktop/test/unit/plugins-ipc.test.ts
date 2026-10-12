@@ -128,6 +128,21 @@ describe('plugin IPC', () => {
     })
   })
 
+  it('switches hooks on only with consent', async () => {
+    expect(await call('chat:plugins:set-hooks', { key: 'demo@market', enabled: true })).toEqual({
+      ok: false,
+      error: 'consent-required',
+    })
+    expect(await call('chat:plugins:set-hooks', { key: 'demo@market', enabled: true, consent: true })).toEqual({
+      ok: false,
+      error: 'unknown-plugin',
+    })
+    expect(await call('chat:plugins:set-hooks', { key: 'demo@market', enabled: 'yes' })).toEqual({
+      ok: false,
+      error: 'invalid-input',
+    })
+  })
+
   it('adds a source, lists, inspects, installs, updates and uninstalls a plugin', async () => {
     const added = await call<PluginOpResult<PluginMarketplaceDto>>('chat:plugins:marketplace-add', {
       url: pathToFileURL(repo.dir).href,

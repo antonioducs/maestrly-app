@@ -14,7 +14,7 @@ import {
   findLicenseFile,
   hasDir,
   hasFile,
-  hooksComponent,
+  hookComponents,
   httpsUrl,
   isRecord,
   type LoadState,
@@ -103,7 +103,15 @@ export async function loadAgentPlugin(tree: PackageTree, manifest: Record<string
   // OpenAI's namespace: interface metadata plus app connectors and hooks that never run here.
   const display = parseCodexInterface(state, openai.interface)
   for (const path of manifestPaths(state, openai.apps, 'extensions.com.openai.apps')) await appComponents(state, path)
-  if (openai.hooks !== undefined) hooksComponent(state, 'extensions.com.openai.hooks')
+  const hooks =
+    openai.hooks === undefined
+      ? []
+      : await hookComponents(
+          state,
+          typeof openai.hooks === 'string' || Array.isArray(openai.hooks)
+            ? manifestPaths(state, openai.hooks, 'extensions.com.openai.hooks').map((path) => ({ path }))
+            : [{ inline: openai.hooks, label: 'extensions.com.openai.hooks' }]
+        )
 
   // Client extension directories (§8.2) of any namespace are not implemented by Maestrly.
   const topDirs = new Set<string>()
@@ -138,6 +146,7 @@ export async function loadAgentPlugin(tree: PackageTree, manifest: Record<string
       logoPath: display.logoPath,
       skills,
       agents: [],
+      hooks,
       mcpServers: mcp.servers,
       inputs: mcp.inputs,
       components: state.components,

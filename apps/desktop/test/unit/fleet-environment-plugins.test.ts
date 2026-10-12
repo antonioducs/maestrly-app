@@ -105,7 +105,12 @@ describe("a bot environment's plugins, served by its own engine", () => {
       await pluginSettingsService.installPlugin({
         marketplaceId,
         name: 'demo',
-        consent: { consentFingerprint: inspected.value.consentFingerprint, stdio: [], executables: false },
+        consent: {
+          consentFingerprint: inspected.value.consentFingerprint,
+          stdio: [],
+          executables: false,
+          hooks: false,
+        },
         scope: { kind: 'global' },
         inputs: { [inspected.value.inputs[0].id]: 'synthetic-token' },
       })
@@ -242,7 +247,7 @@ describe("a bot environment's plugins, served by its own engine", () => {
     // Version 2 reaches another endpoint: a change the approval covers.
     const v2 = await commitFiles(repo.dir, market('Hello v2.', 'https://elsewhere.example.test/mcp', 2))
 
-    const consent = { consentFingerprint: v1.value.consentFingerprint, stdio: [], executables: false }
+    const consent = { consentFingerprint: v1.value.consentFingerprint, stdio: [], executables: false, hooks: false }
     const brought = strict(
       'bringPlugin',
       await pluginSettingsService.bringPlugin({
@@ -290,7 +295,7 @@ describe("a bot environment's plugins, served by its own engine", () => {
     const installed = await engine.install({
       marketplaceId: added.value.id,
       name: 'demo',
-      consent: { consentFingerprint: inspected.value.consentFingerprint, stdio: [], executables: false },
+      consent: { consentFingerprint: inspected.value.consentFingerprint, stdio: [], executables: false, hooks: false },
       scope: { kind: 'global' },
       inputs: { [inputId]: 'synthetic-token' },
     })
@@ -302,7 +307,12 @@ describe("a bot environment's plugins, served by its own engine", () => {
         source: { url, ref: null },
         name: 'demo',
         commit: repo.commit,
-        consent: { consentFingerprint: inspected.value.consentFingerprint, stdio: [], executables: false },
+        consent: {
+          consentFingerprint: inspected.value.consentFingerprint,
+          stdio: [],
+          executables: false,
+          hooks: false,
+        },
         enabled: true,
         inputs: { [inputId]: 'synthetic-token' },
       },

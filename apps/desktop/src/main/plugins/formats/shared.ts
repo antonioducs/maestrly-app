@@ -4,6 +4,7 @@ import type { NormalizedMcp } from '../mcp-normalize'
 import type { PackageTree } from '../package-tree'
 import { parsePluginRelativePath } from '../paths'
 import { type PluginAgentSpec, scanAgents } from '../agents-scan'
+import { type HookSource, type PluginHookSpec, scanHooks } from '../hooks-scan'
 import type { PluginIssue } from '../types'
 
 /** Mutable accumulator a format loader fills while it walks one plugin. */
@@ -138,8 +139,17 @@ export async function appComponents(state: LoadState, path: string): Promise<voi
   for (const app of Object.keys(json.apps)) component(state, 'app-connector', app, 'unavailable', 'app-connector')
 }
 
-export function hooksComponent(state: LoadState, name: string): void {
-  component(state, 'hooks', name, 'not-run', 'hooks-not-run')
+/**
+ * Hooks of a plugin, run by Maestrly for every model on the events it emulates (with the person's consent). Each source
+ * with supported hooks is listed as adapted; hooks of other events or types as not included.
+ */
+export async function hookComponents(state: LoadState, sources: readonly HookSource[]): Promise<PluginHookSpec[]> {
+  const result = await scanHooks(state.tree, sources)
+  for (const source of result.adapted) component(state, 'hooks', source, 'adapted')
+  for (const subject of result.unsupported) component(state, 'hooks', subject, 'not-run', 'hook-unsupported')
+  for (const { source, detail } of result.invalid) component(state, 'hooks', source, 'invalid', 'entry-invalid', detail)
+  for (const issue of result.issues) state.issues.push(issue)
+  return result.hooks
 }
 
 /**

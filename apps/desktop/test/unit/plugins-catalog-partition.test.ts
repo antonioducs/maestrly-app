@@ -43,10 +43,10 @@ describe('plugin catalog partition', () => {
 
   it('falls back to the first reason when none blocks', () => {
     const result = partitionCatalog([
-      entry('e', { level: 'unavailable', reasons: [{ code: 'hooks-not-run', subject: 'h' }] }),
+      entry('e', { level: 'unavailable', reasons: [{ code: 'hook-unsupported', subject: 'h' }] }),
     ])
     expect(result.incompatible).toEqual([
-      { entry: expect.objectContaining({ name: 'e' }), reason: { code: 'hooks-not-run', subject: 'h' } },
+      { entry: expect.objectContaining({ name: 'e' }), reason: { code: 'hook-unsupported', subject: 'h' } },
     ])
   })
 })

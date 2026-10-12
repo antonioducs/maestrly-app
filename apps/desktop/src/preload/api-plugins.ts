@@ -53,6 +53,9 @@ export function makePluginsApi(ipcRenderer: IpcTransport) {
     }): Promise<PluginOpResult> => ipcRenderer.invoke('chat:plugins:set-server', input),
     pluginsSetInputs: (input: { key: string; values: Record<string, string | null> }): Promise<PluginOpResult> =>
       ipcRenderer.invoke('chat:plugins:set-inputs', input),
+    /** Switches a plugin's hooks on (with consent to the hooks shown) or off. */
+    pluginsSetHooks: (input: { key: string; enabled: boolean; consent?: boolean }): Promise<PluginOpResult> =>
+      ipcRenderer.invoke('chat:plugins:set-hooks', input),
     pluginsUninstall: (input: { key: string; deleteData: boolean }): Promise<PluginOpResult> =>
       ipcRenderer.invoke('chat:plugins:uninstall', input),
   }

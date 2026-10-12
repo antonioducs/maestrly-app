@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { hookDigest } from '../../src/main/plugins/consent'
 import { PluginGitSource } from '../../src/main/plugins/git-source'
 import { inspectTree } from '../../src/main/plugins/inspect'
 import {
@@ -276,6 +277,34 @@ describe('plugin installer', () => {
     const v2 = await prepare(await writeTree(demo(undefined, { 'README.txt': 'docs' })))
     const result = await updatePrepared('demo@market', v2, undefined, deps)
     expect(result.ok && result.value.servers.local.enabled).toBe(true)
+  })
+
+  it('installs hooks off unless approved, and asks again when a hook changes', async () => {
+    const hooks = (command: string): FixtureFiles => ({
+      'hooks/hooks.json': JSON.stringify({
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command }] }] },
+      }),
+    })
+    const v1 = await prepare(await writeTree(demo(undefined, hooks('./guard.sh'))))
+    const installed = await installPrepared(v1, { consent: consentFor(v1), scope: { kind: 'global' } }, deps)
+    expect(installed.ok && installed.value.consent.hooks).toBeNull()
+
+    const v2 = await prepare(await writeTree(demo(undefined, hooks('./guard.sh --strict'))))
+    v2.commit = 'c'.repeat(40)
+    expect(await updatePrepared('demo@market', v2, undefined, deps)).toMatchObject({
+      ok: false,
+      error: 'consent-required',
+    })
+    const approved = await updatePrepared('demo@market', v2, { ...consentFor(v2), hooks: true }, deps)
+    expect(approved.ok && approved.value.consent.hooks).toBe(hookDigest(v2.inspection.pkg!.hooks))
+
+    // A version whose hooks did not change keeps them on without asking.
+    const v3 = await prepare(
+      await writeTree(demo(undefined, { ...hooks('./guard.sh --strict'), 'README.txt': 'docs' }))
+    )
+    v3.commit = 'd'.repeat(40)
+    const kept = await updatePrepared('demo@market', v3, undefined, deps)
+    expect(kept.ok && kept.value.consent.hooks).toBe(hookDigest(v3.inspection.pkg!.hooks))
   })
 
   it('uninstalls servers, skills, inputs and files, keeping data unless asked', async () => {

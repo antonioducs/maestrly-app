@@ -1,6 +1,6 @@
 import type { FleetEnvironmentSettingsClient } from '@maestrly/bot-fleet-protocol'
 import type { HostApi } from '../../../preload'
-import type { InstalledPluginDto, PluginOpResult } from '../../../shared/plugins'
+import type { InstalledPluginDto, PluginConsentInput, PluginOpResult } from '../../../shared/plugins'
 import type { McpAccountActions } from '../chat/mcp-account-actions'
 
 export const PLUGINS_CHANGED_EVENT = 'maestrly:plugins-changed'
@@ -20,6 +20,7 @@ type PluginMethods =
   | 'pluginsSetScope'
   | 'pluginsSetServer'
   | 'pluginsSetInputs'
+  | 'pluginsSetHooks'
   | 'pluginsUninstall'
 
 /**
@@ -59,6 +60,7 @@ export function hostPluginsSource(api: HostApi): PluginsSource {
       pluginsSetScope: (...args) => api.pluginsSetScope(...args),
       pluginsSetServer: (...args) => api.pluginsSetServer(...args),
       pluginsSetInputs: (...args) => api.pluginsSetInputs(...args),
+      pluginsSetHooks: (...args) => api.pluginsSetHooks(...args),
       pluginsUninstall: (...args) => api.pluginsUninstall(...args),
       listProjects: async () =>
         (await api.listWorkspaces()).map((workspace) => ({ id: workspace.id, name: workspace.name })),
@@ -87,6 +89,8 @@ export interface EnvironmentPluginActions {
   mcpOAuthCancel(environmentId: string, serverId: string): Promise<void>
 }
 
+const withHooks = (consent: PluginConsentInput) => ({ ...consent, hooks: consent.hooks ?? false })
+
 /** An operation that returns nothing answers `{ ok: true }` over the protocol; the plugin center expects a value. */
 const emptyResult = (result: { ok: true } | { ok: false; error: string; detail?: string }): PluginOpResult =>
   result.ok ? { ok: true, value: undefined } : (result as PluginOpResult)
@@ -111,12 +115,16 @@ export function createEnvironmentPluginsSource(
     pluginsMarketplaceRefresh: (marketplaceId) => settings.refreshPluginSource({ marketplaceId }),
     pluginsMarketplaceRemove: async ({ id, uninstall }) =>
       emptyResult(await settings.removePluginSource({ marketplaceId: id, uninstall })),
-    pluginsInstall: (input) => settings.installPlugin(input),
-    pluginsUpdate: (input) => settings.updatePlugin(input),
+    // The environment needs an explicit answer about hooks: none means they stay off.
+    pluginsInstall: (input) => settings.installPlugin({ ...input, consent: withHooks(input.consent) }),
+    pluginsUpdate: ({ key, consent }) =>
+      settings.updatePlugin({ key, ...(consent ? { consent: withHooks(consent) } : {}) }),
     pluginsSetEnabled: async ({ key, enabled }) => emptyResult(await settings.patchPlugin({ key, enabled })),
     pluginsSetScope: async ({ key, scope }) => emptyResult(await settings.patchPlugin({ key, scope })),
     pluginsSetServer: async ({ key, ...server }) => emptyResult(await settings.patchPlugin({ key, server })),
     pluginsSetInputs: async ({ key, values }) => emptyResult(await settings.patchPlugin({ key, inputs: values })),
+    // The window showed the hooks and asked for consent before switching them on.
+    pluginsSetHooks: async ({ key, enabled }) => emptyResult(await settings.patchPlugin({ key, hooks: enabled })),
     pluginsUninstall: async (input) => emptyResult(await settings.uninstallPlugin(input)),
     listProjects: async () => [],
     subscribe: (listener) => {

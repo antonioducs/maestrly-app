@@ -38,9 +38,7 @@ describe('Agent Plugins format', () => {
   it('reads OpenAI interface metadata, apps and hooks from the extension', async () => {
     const pkg = await load('agent-with-openai-ext')
     expect(pkg).toMatchObject({ displayName: 'Agent OpenAI', publisher: 'Fixture Labs', capabilities: ['Read'] })
-    expect(kinds(pkg)).toEqual(
-      expect.arrayContaining(['app-connector:unavailable', 'hooks:not-run', 'skill:supported'])
-    )
+    expect(kinds(pkg)).toEqual(expect.arrayContaining(['app-connector:unavailable', 'skill:supported']))
   })
 
   it('rejects unsupported schema versions', async () => {
@@ -74,12 +72,16 @@ describe('Codex format', () => {
     expect(kinds(pkg)).toEqual(
       expect.arrayContaining(['app-connector:unavailable', 'command:adapted', 'agent:adapted', 'skill:supported'])
     )
+    // Its hooks of the events Maestrly runs are adapted; others, and the root hooks.json Codex ignores, are not.
     expect(
       pkg.components
         .filter((c) => c.kind === 'hooks')
-        .map((c) => c.name)
+        .map((c) => `${c.name}:${c.status}`)
         .sort()
-    ).toEqual(['hooks.json', 'hooks/hooks.json'])
+    ).toEqual(['Notification:not-run', 'hooks.json:not-run', 'hooks/hooks.json:adapted'])
+    expect(pkg.hooks).toEqual([
+      expect.objectContaining({ event: 'PreToolUse', matcher: 'Bash', command: './hooks/guard.sh' }),
+    ])
     expect(pkg.components.filter((c) => c.kind === 'agent').map((c) => c.name)).toEqual(['agents/reviewer.md'])
     expect(pkg).toMatchObject({
       displayName: 'Codex Full',
@@ -150,7 +152,7 @@ describe('Claude format', () => {
     expect(pkg).toMatchObject({ name: 'claude-full', format: 'claude', displayName: 'Claude Full', version: '1.2.0' })
     expect(pkg.inputs.map((i) => i.id).sort()).toEqual(['config:api_token', 'config:region'])
     expect(kinds(pkg)).toEqual(
-      expect.arrayContaining(['lsp:not-run', 'bin:not-run', 'output-style:not-run', 'hooks:not-run', 'agent:adapted'])
+      expect.arrayContaining(['lsp:not-run', 'bin:not-run', 'output-style:not-run', 'agent:adapted'])
     )
     const commands = pkg.skills.filter((s) => s.kind === 'command')
     expect(commands).toEqual([

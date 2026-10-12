@@ -15,6 +15,7 @@ import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import type { InstalledPluginDto, PluginInspectionDto, PluginScope } from '../../../shared/plugins'
 import { PluginInputsForm } from './PluginInputsForm'
 import { PluginScopePicker, scopeIsComplete } from './PluginScopePicker'
+import { HookList } from './plugin-ui'
 import type { PluginsSource } from './plugins-source'
 import { errorText } from './plugin-ui'
 
@@ -46,6 +47,7 @@ export function PluginInstallDialog({
     () => new Set(stdio.filter((server) => server.consented).map((server) => server.key))
   )
   const [executables, setExecutables] = useState(false)
+  const [hooks, setHooks] = useState(false)
   const [scope, setScope] = useState<PluginScope>({ kind: 'global' })
   const [values, setValues] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -62,6 +64,7 @@ export function PluginInstallDialog({
       consentFingerprint: inspection.consentFingerprint,
       stdio: [...approved],
       executables: needsExecutables ? executables : false,
+      hooks: inspection.hooks.length > 0 && hooks,
     }
     try {
       const inputs = Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()))
@@ -160,6 +163,22 @@ export function PluginInstallDialog({
                   {inspection.executables.slice(0, 5).join(', ')}
                   {inspection.executables.length > 5 || inspection.executablesTruncated ? ' …' : ''}
                 </span>
+              </span>
+            </label>
+          )}
+          {inspection.hooks.length > 0 && (
+            <label className="flex items-start gap-2 text-[12px] text-foreground" data-testid="consent-hooks">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={hooks}
+                disabled={busy}
+                onChange={(event) => setHooks(event.target.checked)}
+              />
+              <span>
+                {t('install.consentHooks')}
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">{t('install.consentHooksHint')}</span>
+                <HookList hooks={inspection.hooks} />
               </span>
             </label>
           )}

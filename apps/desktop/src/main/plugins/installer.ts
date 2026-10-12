@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { normalizeSkillName } from '../../shared/chat'
 import type { PluginConsentInput, PluginOpErrorCode, PluginOpResult, PluginScope } from '../../shared/plugins'
-import { launchDigest } from './consent'
+import { hookDigest, launchDigest } from './consent'
 import type { Inspection } from './inspect'
 import type { PluginLayout } from './layout'
 import { pluginKeyHash } from './layout'
@@ -233,6 +233,8 @@ export async function installPrepared(
         executables: inspection.executables.length ? req.consent.executables : false,
         fingerprint: inspection.consentFingerprint,
         acceptedAt: now,
+        // Hooks run automatically only with the person's approval; otherwise the plugin installs with them off.
+        hooks: req.consent.hooks && pkg.hooks.length ? hookDigest(pkg.hooks) : null,
       },
       servers: serverRecords(p.key, pkg, consent),
       available: null,
@@ -332,6 +334,16 @@ export async function updatePrepared(
         executables: inspection.executables.length ? executables : false,
         fingerprint: inspection.consentFingerprint,
         acceptedAt: consent ? now : record.consent.acceptedAt,
+        // A new approval decides; without one (nothing that needs consent changed) approved hooks stay on.
+        hooks: !pkg.hooks.length
+          ? null
+          : consent
+            ? consent.hooks
+              ? hookDigest(pkg.hooks)
+              : null
+            : record.consent.hooks === hookDigest(pkg.hooks)
+              ? record.consent.hooks
+              : null,
       },
       servers,
       available: null,

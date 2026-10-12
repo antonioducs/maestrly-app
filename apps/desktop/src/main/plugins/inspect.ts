@@ -13,7 +13,7 @@ import { isRecord } from './formats/shared'
 import { sparsePattern } from './git-source'
 import { PLUGIN_LIMITS } from './limits'
 import type { MarketplaceEntry } from './marketplace'
-import { consentFingerprint, launchDigest, launchLine } from './consent'
+import { consentFingerprint, hookDigest, launchDigest, launchLine } from './consent'
 import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 import type { PackageTree } from './package-tree'
 import { parsePluginRelativePath } from './paths'
@@ -176,6 +176,7 @@ export async function inspectTree(tree: PackageTree, entry: MarketplaceEntry): P
       launch: launchDigests,
       endpoints: mcpEndpoints,
       executables: executables.list,
+      ...(pkg?.hooks.length ? { hooks: hookDigest(pkg.hooks) } : {}),
     }),
     launchDigests,
     endpoints,
@@ -236,6 +237,10 @@ export function inputDtos(inputs: readonly PluginInputSpec[], setIds: ReadonlySe
     target: input.target.kind,
     serverKey: input.target.kind === 'config' ? null : input.target.serverKey,
   }))
+}
+
+export function hookDtos(pkg: PluginPackage): PluginInspectionDto['hooks'] {
+  return pkg.hooks.map(({ event, matcher, command }) => ({ event, matcher, command }))
 }
 
 export function agentDtos(pkg: PluginPackage): PluginInspectionDto['agents'] {
@@ -312,6 +317,7 @@ export function toInspectionDto(input: {
     capabilities: pkg?.capabilities ?? [],
     skills: pkg ? skillDtos(pkg) : [],
     agents: pkg ? agentDtos(pkg) : [],
+    hooks: pkg ? hookDtos(pkg) : [],
     mcpServers: pkg ? mcpServerDtos(pkg, input.installed) : [],
     components: pkg?.components ?? [],
     endpoints: inspection.endpoints,

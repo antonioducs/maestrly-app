@@ -327,7 +327,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(586)
+    expect(keys).toHaveLength(587)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1487,6 +1487,7 @@ describe('preload API — chat pagination (#559)', () => {
       ['pluginsUpdate', { key: 'p1@m1' }, 'chat:plugins:update'],
       ['pluginsSetEnabled', { key: 'p1@m1', enabled: true }, 'chat:plugins:set-enabled'],
       ['pluginsSetInputs', { key: 'p1@m1', values: { TOKEN: null } }, 'chat:plugins:set-inputs'],
+      ['pluginsSetHooks', { key: 'p1@m1', enabled: true, consent: true }, 'chat:plugins:set-hooks'],
       ['pluginsUninstall', { key: 'p1@m1', deleteData: true }, 'chat:plugins:uninstall'],
     ]
     for (const [method, payload, channel] of cases) {

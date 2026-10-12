@@ -52,7 +52,14 @@ export interface InstalledPluginRecord {
   enabled: boolean
   scope: PluginScope
   /** stdio: serverKey → launch digest the user approved; fingerprint of everything shown at consent. */
-  consent: { stdio: Record<string, string>; executables: boolean; fingerprint: string; acceptedAt: number }
+  /** `hooks`: digest of the hooks the person approved to run; null (or absent) = hooks off. */
+  consent: {
+    stdio: Record<string, string>
+    executables: boolean
+    fingerprint: string
+    acceptedAt: number
+    hooks?: string | null
+  }
   servers: Record<string, { id: string; enabled: boolean }>
   available: { commit: string; treeOid: string; checkedAt: number } | null
   status: 'ready' | 'installing' | 'updating' | 'removing'
