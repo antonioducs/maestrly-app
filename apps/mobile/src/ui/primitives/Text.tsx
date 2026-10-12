@@ -1,4 +1,4 @@
-import { Text as NativeText, type TextProps } from 'react-native'
+import { Text as NativeText, StyleSheet, type TextProps, type TextStyle } from 'react-native'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts, type Palette } from '../../theme/tokens'
 
@@ -20,6 +20,20 @@ export type TextTone = 'ink' | 'muted' | 'faint' | 'brass' | 'cue' | 'brick' | '
 const toneColor = (palette: Palette, tone: TextTone) =>
   tone === 'cue' ? palette.cueInk : tone === 'inverse' ? palette.canvas : palette[tone]
 
+const BODY_FAMILIES: string[] = [fonts.body, fonts.bodyMedium, fonts.bodySemi]
+
+/**
+ * Each loaded font file has one weight, so a weight alone would not change it: a body text that asks for a heavier
+ * weight gets the matching file instead.
+ */
+function weighted(style: TextStyle): TextStyle {
+  const family = style.fontFamily
+  if (!family || !BODY_FAMILIES.includes(family) || !style.fontWeight) return style
+  const weight = String(style.fontWeight)
+  const heavy = weight === 'bold' || Number(weight) >= 600
+  return { ...style, fontFamily: heavy ? fonts.bodySemi : weight === '500' ? fonts.bodyMedium : fonts.body, fontWeight: undefined }
+}
+
 /** Text in the app's type scale; system font scaling stays on. */
 export function AppText({
   variant = 'body',
@@ -28,5 +42,10 @@ export function AppText({
   ...props
 }: TextProps & { variant?: TextVariant; tone?: TextTone }) {
   const { palette } = useTheme()
-  return <NativeText {...props} style={[VARIANTS[variant], { color: toneColor(palette, tone) }, style]} />
+  return (
+    <NativeText
+      {...props}
+      style={weighted(StyleSheet.flatten([VARIANTS[variant], { color: toneColor(palette, tone) }, style]))}
+    />
+  )
 }

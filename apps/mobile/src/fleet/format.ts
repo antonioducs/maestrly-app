@@ -5,6 +5,12 @@ import type { Locale, MessageKey, Text } from '../i18n/translate'
 export const formatTokens = (n: number): string =>
   n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
+const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+
+/** A reasoning effort as people read it; levels this app does not know keep the server's name. */
+export const effortLabel = (effort: string, t: Text['t']): string =>
+  EFFORTS.has(effort) ? t(`effort.${effort}` as MessageKey) : effort.slice(0, 1).toUpperCase() + effort.slice(1)
+
 export const formatCost = (usd: number): string =>
   usd >= 1 ? `$${usd.toFixed(2)}` : usd >= 0.01 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(4)}`
 

@@ -498,6 +498,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       }
     },
     imageSource: () => ({ uri: PLACEHOLDER_IMAGE }),
-    readAttachment: async () => '',
+    // The demo keeps nothing it is sent: any file reads as the placeholder image, which every kind accepts.
+    readAttachment: async () => PLACEHOLDER_IMAGE.slice(PLACEHOLDER_IMAGE.indexOf(',') + 1),
   }
 }

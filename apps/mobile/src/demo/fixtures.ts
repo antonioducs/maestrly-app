@@ -326,6 +326,8 @@ export function demoWorld(now: number): DemoWorld {
     ],
     scout: [],
   }
+  // Every demo bot takes PDFs and text files, as current bot images do.
+  for (const bot of bots) bot.capabilities = ['files']
   return { environments, bots, transcripts, routines }
 }
 

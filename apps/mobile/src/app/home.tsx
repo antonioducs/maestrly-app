@@ -1,22 +1,27 @@
+import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { Redirect } from 'expo-router'
-import { useCallback, useState } from 'react'
-import { View } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { KeyboardAvoidingView, Platform, type TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useFleet } from '../fleet/react'
-import { botStatusLine, statusLineText } from '../fleet/selectors'
+import { useFleet, useFleetController } from '../fleet/react'
+import { isComposerLocked } from '../fleet/selectors'
 import type { FleetState } from '../fleet/state'
 import { useI18n } from '../i18n'
 import { useServers } from '../servers/ServersProvider'
 import { useTheme } from '../theme/ThemeProvider'
-import { fonts } from '../theme/tokens'
+import { Composer } from '../ui/composer/Composer'
+import { LockedNotice } from '../ui/composer/LockedNotice'
 import { ConnectionBanner } from '../ui/ConnectionBanner'
+import { ConversationHeader } from '../ui/conversation/ConversationHeader'
+import { ConversationContext } from '../ui/conversation/CueCard'
+import { Transcript } from '../ui/conversation/Transcript'
 import { Drawer } from '../ui/drawer/Drawer'
 import { DrawerPanel } from '../ui/drawer/DrawerPanel'
 import { Icon } from '../ui/icons'
-import { IconButton } from '../ui/primitives/IconButton'
 import { AppText } from '../ui/primitives/Text'
 
 const selectWaitingCount = (state: FleetState) => new Set(state.inbox.map((item) => item.botId)).size
+const selectOnline = (state: FleetState) => state.connection === 'open'
 
 function EmptyState() {
   const { palette } = useTheme()
@@ -36,10 +41,27 @@ function EmptyState() {
   )
 }
 
+function Conversation({ bot }: { bot: FleetBot }) {
+  const controller = useFleetController()
+  const online = useFleet(selectOnline)
+  const input = useRef<TextInput>(null)
+  const focusComposer = useCallback(() => input.current?.focus(), [])
+  const context = useMemo(() => ({ bot, online, focusComposer }), [bot, online, focusComposer])
+
+  useEffect(() => {
+    void controller.openBot(bot.id)
+    return () => controller.closeBot()
+  }, [controller, bot.id])
+
+  return (
+    <ConversationContext.Provider value={context}>
+      <Transcript bot={bot} />
+      {isComposerLocked(bot) ? <LockedNotice bot={bot} /> : <Composer key={bot.id} bot={bot} inputRef={input} />}
+    </ConversationContext.Provider>
+  )
+}
+
 function HomeScreen() {
-  const { palette } = useTheme()
-  const text = useI18n()
-  const { t } = text
   const insets = useSafeAreaInsets()
   const { currentBotId, setCurrentBotId } = useServers()
   const [open, setOpen] = useState(!currentBotId)
@@ -52,44 +74,14 @@ function HomeScreen() {
     },
     [setCurrentBotId]
   )
-  const line = bot ? botStatusLine(bot, text) : null
 
   return (
     <Drawer open={open} onOpenChange={setOpen} panel={<DrawerPanel open={open} currentBotId={currentBotId} onOpenBot={openBot} />}>
-      <View style={{ flex: 1, paddingTop: insets.top }}>
-        <View style={{ height: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 }}>
-          <IconButton
-            icon="menu"
-            label={waiting ? t('home.openMenuWaiting', { count: waiting }) : t('home.openMenu')}
-            onPress={() => setOpen(true)}
-            badge={
-              waiting ? (
-                <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: palette.cue, borderWidth: 2, borderColor: palette.canvas }} />
-              ) : null
-            }
-          />
-          <View style={{ flex: 1, alignItems: 'center', minWidth: 0 }} accessible={!!bot} accessibilityRole="header">
-            {bot && line ? (
-              <>
-                <AppText numberOfLines={1} style={{ fontFamily: fonts.display, fontSize: 17, lineHeight: 22 }}>
-                  {bot.name}
-                </AppText>
-                <AppText
-                  numberOfLines={1}
-                  variant={line.tone === 'mono' ? 'mono' : 'small'}
-                  tone={line.tone === 'cue' ? 'cue' : 'muted'}
-                  style={line.tone === 'cue' ? { fontFamily: fonts.bodySemi } : undefined}
-                >
-                  {statusLineText(bot, line)}
-                </AppText>
-              </>
-            ) : null}
-          </View>
-          <IconButton icon="compose" label={t('home.newChatSoon')} onPress={() => {}} disabled />
-        </View>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, paddingTop: insets.top }}>
+        <ConversationHeader bot={bot} waiting={waiting} onOpenMenu={() => setOpen(true)} />
         <ConnectionBanner />
-        {bot ? <View style={{ flex: 1 }} /> : <EmptyState />}
-      </View>
+        {bot ? <Conversation bot={bot} /> : <EmptyState />}
+      </KeyboardAvoidingView>
     </Drawer>
   )
 }
