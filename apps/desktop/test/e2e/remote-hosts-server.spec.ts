@@ -13,7 +13,15 @@ import {
   fleetHostInfoSchema,
   type FleetEnvironment,
 } from '@maestrly/bot-fleet-protocol'
-import { desktop, instanceEnv, launchHost, type LaunchedHost, listen, portOf } from './helpers/remote-host'
+import {
+  desktop,
+  fixtureModel,
+  instanceEnv,
+  launchHost,
+  type LaunchedHost,
+  listen,
+  portOf,
+} from './helpers/remote-host'
 
 const GB = 1024 ** 3
 const now = () => new Date().toISOString()
@@ -261,10 +269,12 @@ test('server page sets up workspaces, and the sidebar follows the host through t
   let client: ElectronApplication | undefined
   let page!: Page
   const gateway = fakeGateway(() => host)
+  const model = fixtureModel()
   const local = (name: string, ...args: unknown[]) =>
     page.evaluate(({ name, args }) => (window as any).api[name](...args), { name, args })
   try {
     await listen(gateway.server)
+    await listen(model.server)
     host = await launchHost(path.join(root, 'host-profile'), workspacesRoot)
     client = await electron.launch({
       args: [path.join(desktop, 'out/main/index.js')],
@@ -333,6 +343,19 @@ test('server page sets up workspaces, and the sidebar follows the host through t
       environment: { id: 'workspaces', lifecycle: 'running' },
     })
 
+    // The host's own model: a new chat's composer takes text only with a connected model, and a host has none of the
+    // accounts of the machine it runs on.
+    const onHost = (name: string, ...args: unknown[]) =>
+      page.evaluate(({ id, name, args }) => (window as any).api.hostApi(id)[name](...args), { id: hostId, name, args })
+    const provider = await onHost('chatAddProvider', {
+      name: 'Remote fixture',
+      kind: 'openai',
+      key: 'fixture-key',
+      baseURL: `http://127.0.0.1:${portOf(model.server)}/v1`,
+    })
+    expect(provider.ok).toBe(true)
+    await onHost('chatSetDefault', { providerId: provider.id, modelId: 'remote-fixture' })
+
     await page.getByRole('tab', { name: 'Chats' }).click()
     const chats = page.locator('#sidebar-panel-chats')
     const remoteHeader = chats.locator(`[data-host-section-header="${hostId}"]`)
@@ -381,6 +404,8 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     await host?.app.close().catch(() => undefined)
     gateway.server.closeAllConnections()
     await new Promise((resolve) => gateway.server.close(resolve))
+    model.server.closeAllConnections()
+    await new Promise((resolve) => model.server.close(resolve))
     await rm(root, { recursive: true, force: true })
   }
 })
