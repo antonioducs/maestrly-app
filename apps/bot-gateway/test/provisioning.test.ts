@@ -44,6 +44,7 @@ it('discovers provisioning on the gateway and the live bot', async () => {
   expect((await (await h.request('GET', '/v1/meta')).json()).features).toEqual([
     'files',
     'environment-settings-v1',
+    'environment-plugins-v1',
     'artifacts',
     'artifacts-gateway-viewer',
     'artifacts-transfer',

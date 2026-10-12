@@ -1,7 +1,9 @@
 import {
   FLEET_SETTINGS_OPERATIONS,
+  FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   fleetEnvironmentIdSchema,
+  isFleetPluginSettingsOperation,
 } from '@maestrly/bot-fleet-protocol'
 import type { GatewayContext } from '../context.js'
 import { GatewayError } from '../errors.js'
@@ -26,6 +28,17 @@ export async function environmentSettingsRoute(
     }
   }
   const client = ctx.lifecycle.environmentInstance(eid)
+  const pluginOperation = key.startsWith('settings') ? key[8].toLowerCase() + key.slice(9) : ''
+  if (isFleetPluginSettingsOperation(pluginOperation)) {
+    if (!environment.capabilities.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE))
+      throw new GatewayError('CONFLICT', 'Plugins need a newer environment. Update it to manage its plugins.')
+    const operation = FLEET_SETTINGS_OPERATIONS[pluginOperation]
+    const { eid: _environment, ...pathInput } = params
+    const input = operation.input.parse(operation.method === 'GET' ? pathInput : body)
+    return {
+      body: operation.response.parse(await client.settingsPluginOperation(pluginOperation, input as never)),
+    }
+  }
   switch (key) {
     case 'settingsAccounts':
       return {

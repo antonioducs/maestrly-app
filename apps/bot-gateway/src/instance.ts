@@ -1,7 +1,10 @@
 import {
   FLEET_SETTINGS_OPERATIONS,
+  type FleetPluginSettingsOperation,
   type FleetSettingsInput,
   type FleetSettingsOutput,
+  fleetPluginSettingsTimeoutMs,
+  fleetSettingsRouteKey,
 } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_INSTANCE_ROUTES,
@@ -358,6 +361,26 @@ export class InstanceClient {
     return FLEET_SETTINGS_OPERATIONS.setPreferences.response.parse(
       await this.call('settingsSetPreferences', {}, undefined, input, 30000)
     )
+  }
+  /** One plugin operation of the environment: path identifiers come from the validated input, reads send no body. */
+  async settingsPluginOperation<K extends FleetPluginSettingsOperation>(
+    operation: K,
+    input: FleetSettingsInput<K>
+  ): Promise<FleetSettingsOutput<K>> {
+    const { method, path, input: inputSchema, response } = FLEET_SETTINGS_OPERATIONS[operation]
+    const valid = inputSchema.parse(input) as Record<string, unknown>
+    const params = Object.fromEntries(
+      [...path.matchAll(/:([A-Za-z][A-Za-z0-9_]*)/g)].map(([, name]) => [name, String(valid[name])])
+    )
+    return response.parse(
+      await this.call(
+        fleetSettingsRouteKey(operation),
+        params,
+        undefined,
+        method === 'GET' ? undefined : valid,
+        fleetPluginSettingsTimeoutMs(operation)
+      )
+    ) as FleetSettingsOutput<K>
   }
   // instance.ts
   memoriesList(status: 'active' | 'archived' | 'superseded' | 'all' = 'active') {

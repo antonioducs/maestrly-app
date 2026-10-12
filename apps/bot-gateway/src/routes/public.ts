@@ -1,5 +1,5 @@
 import { environmentSettingsRoute } from './environment-settings.js'
-import { FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { FLEET_ENVIRONMENT_PLUGINS_FEATURE, FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
@@ -109,7 +109,7 @@ function recordConfiguration(
   environmentId: string,
   res: ServerResponse,
   counts: Partial<
-    Record<'accounts' | 'skills' | 'mcpServers' | 'removed' | 'models' | 'runtimes' | 'preferences', number>
+    Record<'accounts' | 'skills' | 'mcpServers' | 'removed' | 'models' | 'runtimes' | 'preferences' | 'plugins', number>
   >
 ) {
   if (!Object.values(counts).some((count) => count > 0)) return
@@ -216,6 +216,12 @@ export async function publicRoute(
         'settingsTestMcpServer',
         'settingsRuntimes',
         'settingsPreferences',
+        'settingsPlugins',
+        'settingsPluginCatalog',
+        'settingsPluginInspect',
+        'settingsPluginLogo',
+        'settingsMcpOAuthStatuses',
+        'settingsMcpOAuthDescriptor',
       ].includes(key)
     )
       recordConfiguration(ctx, eid, res, {
@@ -225,6 +231,7 @@ export async function publicRoute(
         models: key.includes('Model') ? 1 : 0,
         runtimes: key.includes('Runtime') ? 1 : 0,
         preferences: key === 'settingsSetPreferences' ? 1 : 0,
+        plugins: key.includes('Plugin') ? 1 : 0,
       })
     return result
   }
@@ -288,6 +295,7 @@ export async function publicRoute(
           features: [
             FLEET_FILES_FEATURE,
             FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+            FLEET_ENVIRONMENT_PLUGINS_FEATURE,
             FLEET_ARTIFACTS_FEATURE,
             FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
             FLEET_ARTIFACTS_TRANSFER_FEATURE,
