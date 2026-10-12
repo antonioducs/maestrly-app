@@ -122,6 +122,21 @@ describe('Codex subagent quota classification', () => {
     )
   })
 
+  it('never enables Codex-only apps, plugins or tool suggestions for a worker child', async () => {
+    const { client, args } = harness()
+    await runCodexSubagent(args).catch(() => undefined)
+    expect(client.startThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          'features.apps': false,
+          'features.plugins': false,
+          'features.tool_suggest': false,
+        }),
+      }),
+      expect.anything()
+    )
+  })
+
   it.each([
     { label: 'enveloped', response: { rateLimits: { primary: { usedPercent: 100 } } } },
     { label: 'direct', response: { primary: { usedPercent: 100 } } },

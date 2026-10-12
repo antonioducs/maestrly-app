@@ -171,6 +171,7 @@ import {
   type DynamicToolFunctionSpec,
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
+import { CODEX_NATIVE_INTEGRATIONS_OFF } from './app-server-contract'
 import {
   CODEX_HOST_MCP_SERVER_NAME,
   CODEX_HOST_MCP_TOOL_NAMES,
@@ -2862,11 +2863,9 @@ export async function runCodexSubscriptionChat(
     // Default modes used by Agent/Ask without duplicating it as a dynamic tool.
     config: {
       ...DEFAULT_MODE_REQUEST_USER_INPUT_CONFIG,
+      ...CODEX_NATIVE_INTEGRATIONS_OFF,
       ...(remoteChatPolicy(args.conversationId)
         ? {
-            'features.apps': false,
-            'features.plugins': false,
-            'features.tool_suggest': false,
             'features.shell_tool': false,
             web_search: 'disabled',
           }
@@ -2874,9 +2873,6 @@ export async function runCodexSubscriptionChat(
       ...(autonomousPolicy(args.conversationId)
         ? {
             'features.default_mode_request_user_input': false,
-            'features.apps': false,
-            'features.plugins': false,
-            'features.tool_suggest': false,
           }
         : {}),
       ...(runtimeProfile.nativeCompactionFirst ? {} : ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG),
@@ -2912,13 +2908,6 @@ export async function runCodexSubscriptionChat(
       'features.skill_search': false,
       'features.skill_mcp_dependency_install': false,
       'skills.include_instructions': false,
-      ...(args.reviewerRuntime || args.mode === 'ask' || args.mode === 'maestro'
-        ? {
-            'features.apps': false,
-            'features.plugins': false,
-            'features.tool_suggest': false,
-          }
-        : {}),
       // Native imagegen stays disabled to avoid a second contract without `outputPath`. In Agent, the host-managed
       // dynamic `generate_image` tool uses an ephemeral Codex thread with exactly the same behavior as other
       // providers. The explicit flag also protects Plan/Ask against runtime defaults.

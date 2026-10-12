@@ -16,6 +16,7 @@ import {
   type DynamicToolFunctionSpec,
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
+import { CODEX_NATIVE_INTEGRATIONS_OFF } from './app-server-contract'
 import { codexShellEnvironmentConfig } from './host-mcp'
 import { nativeSubagentSuppressionConfig } from './model-catalog-override'
 import {
@@ -455,6 +456,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
           // Sent on start AND resume, like the parent thread's. Only the screen keys pass, and they come first so
           // no host policy flag below can be replaced.
           ...codexShellEnvironmentConfig(allowedConversationShellEnv(args.shellEnvironment)),
+          ...CODEX_NATIVE_INTEGRATIONS_OFF,
           ...(args.conversationScope === 'standalone'
             ? {
                 project_doc_max_bytes: 0,
@@ -476,8 +478,6 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
                 'features.shell_tool': false,
                 web_search: 'disabled',
                 'features.default_mode_request_user_input': false,
-                'features.apps': false,
-                'features.plugins': false,
                 'skills.include_instructions': false,
                 'features.skill_mcp_dependency_install': false,
               }

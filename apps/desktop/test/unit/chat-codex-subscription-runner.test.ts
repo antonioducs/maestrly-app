@@ -1737,6 +1737,31 @@ describe('Codex subscription runner', () => {
     }).toEqual(ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG)
   })
 
+  it.each([
+    { mode: 'agent' as const, permMode: 'full' as const },
+    { mode: 'plan' as const, permMode: 'auto' as const },
+  ])('never enables Codex-only apps, plugins or tool suggestions ($mode, $permMode)', async ({ mode, permMode }) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, `user_native_integrations_${mode}`, 'Work', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({
+      turnId: `turn_native_integrations_${mode}`,
+      notifications: [completedNotification('thread_1', `turn_native_integrations_${mode}`)],
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.mode = mode
+    args.permMode = permMode
+
+    await runCodexSubscriptionChat(args)
+
+    expect((client.startThreadCalls[0] as { config: Record<string, unknown> }).config).toMatchObject({
+      'features.apps': false,
+      'features.plugins': false,
+      'features.tool_suggest': false,
+    })
+  })
+
   it('omits model_context_window when nominal capacity is unknown', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
