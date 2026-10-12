@@ -2245,6 +2245,27 @@ export function newestChatSeq(conversationId: string): number | null {
   return row?.seq == null ? null : Number(row.seq)
 }
 
+/** Up to `limit` messages before `beforeSeq` (or the newest), oldest first, and whether older ones exist. */
+export function listSequencedChatMessagesBefore(
+  conversationId: string,
+  beforeSeq: number | undefined,
+  limit: number
+): { messages: SequencedChatMessage[]; hasMore: boolean } {
+  const db = getDb()
+  const rows = (
+    typeof beforeSeq === 'number'
+      ? db
+          .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?')
+          .all(conversationId, beforeSeq, limit)
+      : db.prepare('SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT ?').all(conversationId, limit)
+  ) as any[]
+  rows.reverse()
+  const hasMore =
+    rows.length > 0 &&
+    !!db.prepare('SELECT 1 FROM chat_messages WHERE conversation_id = ? AND seq < ? LIMIT 1').get(conversationId, rows[0].seq)
+  return { messages: sequenced(rows), hasMore }
+}
+
 /** The messages with seq above `afterSeq`, oldest first. */
 export function listChatMessagesAfter(conversationId: string, afterSeq: number): SequencedChatMessage[] {
   return sequenced(

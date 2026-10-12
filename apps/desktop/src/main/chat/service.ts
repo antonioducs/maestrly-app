@@ -11115,6 +11115,19 @@ export async function startConversationDispatchTurn(input: {
             hiddenParts: [
               conversationLinkFramingPart(tFor(getLocale(), 'prompts')('conversationLink.seedReportBack')),
             ],
+            // Lazy: the link service depends on this module.
+            onOutcome: (outcome: InternalTurnOutcome) =>
+              void import('../conversation-link-service')
+                .then(({ getConversationLinkService }) => getConversationLinkService())
+                .then((service) =>
+                  service.relayDispatchResult({
+                    dispatchId: input.dispatchId,
+                    sourceConversationId: input.sourceConversationId,
+                    conversationId: input.conversationId,
+                    outcome,
+                  })
+                )
+                .catch(() => undefined),
           }
         : {}),
       dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId, reportBack },

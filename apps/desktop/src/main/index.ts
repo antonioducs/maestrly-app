@@ -814,6 +814,11 @@ function registerIpc(): void {
   void getConversationDispatchService()
     .then((service) => service.reconcile())
     .catch((error) => console.warn('[conversation-dispatch] reconciliation failed:', error))
+  // Messages queued for busy conversations are delivered again; results lost with the previous run are not.
+  void import('./conversation-link-service')
+    .then(({ getConversationLinkService }) => getConversationLinkService())
+    .then((service) => service.reconcile())
+    .catch((error) => console.warn('[conversation-link] reconciliation failed:', error))
 
   registerUsageIpc({ mhandle })
   registerMemoryIpc(reg)
