@@ -2719,6 +2719,9 @@ function convToolsFor(conversationId: string): ChatConvTools {
     appGroups: appAccess.groups,
     mcpDisabled: t?.mcpDisabled ?? [],
     imageGen: imageGenEnabledFor(conversationId),
+    pluginMcpServers: listRuntimeMcpServers({ conversationId })
+      .filter((server) => server.origin)
+      .map((server) => server.id),
   }
 }
 

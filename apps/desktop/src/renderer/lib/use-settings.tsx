@@ -1,19 +1,29 @@
 import { createContext, useContext, useMemo, type ReactNode, type SyntheticEvent } from 'react'
 import type { SettingsSection } from '@/components/settings/nav'
+import type { ChatSettingsTab } from '@/components/chat/chat-settings-tabs'
+import type { HostId } from '../../shared/host-key'
+
+/** Where Settings opens inside the chat section: a tab, on a host's profile (this computer by default). */
+export interface OpenSettingsOptions {
+  chatTab?: ChatSettingsTab
+  hostId?: HostId
+}
+
+/** One request to show Settings at a place; `seq` changes on every request, so repeating one still applies. */
+export interface SettingsRequest extends OpenSettingsOptions {
+  section: SettingsSection
+  seq: number
+}
+
+export type OpenSettings = (sectionOrEvent?: SettingsSection | SyntheticEvent, options?: OpenSettingsOptions) => void
 
 interface SettingsContextValue {
-  openSettings: (sectionOrEvent?: SettingsSection | SyntheticEvent) => void
+  openSettings: OpenSettings
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null)
 
-export function SettingsProvider({
-  openSettings,
-  children,
-}: {
-  openSettings: (sectionOrEvent?: SettingsSection | SyntheticEvent) => void
-  children: ReactNode
-}) {
+export function SettingsProvider({ openSettings, children }: { openSettings: OpenSettings; children: ReactNode }) {
   const value = useMemo(() => ({ openSettings }), [openSettings])
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>
 }

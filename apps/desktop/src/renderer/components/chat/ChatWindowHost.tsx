@@ -60,8 +60,8 @@ export function ChatWindowHost({
   const key = chatWindowKey(target)
   const settings = useSettings()
   const openSettings = useCallback<ReturnType<typeof useSettings>['openSettings']>(
-    (section) => {
-      settings.openSettings(section)
+    (section, options) => {
+      settings.openSettings(section, options)
       void window.api.chatWindowShowSource(key)
     },
     [key, settings]

@@ -1,4 +1,12 @@
-export type ChatSettingsTab = 'accounts' | 'models' | 'maestro' | 'tools' | 'skills' | 'prompts' | 'components'
+export type ChatSettingsTab =
+  | 'accounts'
+  | 'models'
+  | 'maestro'
+  | 'tools'
+  | 'skills'
+  | 'plugins'
+  | 'prompts'
+  | 'components'
 
 export const CHAT_SETTINGS_TABS: ReadonlyArray<{ id: ChatSettingsTab; labelKey: string }> = [
   { id: 'accounts', labelKey: 'settings.tabAccounts' },
@@ -6,6 +14,7 @@ export const CHAT_SETTINGS_TABS: ReadonlyArray<{ id: ChatSettingsTab; labelKey: 
   { id: 'maestro', labelKey: 'settings.tabMaestro' },
   { id: 'tools', labelKey: 'settings.tabTools' },
   { id: 'skills', labelKey: 'settings.tabSkills' },
+  { id: 'plugins', labelKey: 'settings.tabPlugins' },
   { id: 'prompts', labelKey: 'settings.tabPrompts' },
   { id: 'components', labelKey: 'settings.tabComponents' },
 ]

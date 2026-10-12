@@ -22,6 +22,8 @@ export interface ChatConvTools {
   mcpDisabled: string[]
 
   imageGen: boolean
+  /** Ids of the plugin MCP servers that serve this conversation (its plugins' scope). Absent where unknown (bots). */
+  pluginMcpServers?: string[]
 }
 
 /** Partial update of a conversation's tool overrides; `appGroups` merges per group. */

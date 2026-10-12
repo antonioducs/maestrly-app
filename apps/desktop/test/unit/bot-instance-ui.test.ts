@@ -83,7 +83,9 @@ describe("a bot's own Maestrly window", () => {
     const settings = source('renderer/components/SettingsView.tsx')
     expect(settings).toContain('const showNav = navItems.length > 1')
     expect(settings).toMatch(/\{showNav && \(\s*<nav/)
-    expect(settings).toContain('<MaestrlyChatSection t={t} chat={chat} />')
+    expect(settings).toContain('<MaestrlyChatSection t={t} chat={chatOptions} />')
+    // A request for a chat tab adds to the bot's chosen options; it never replaces them.
+    expect(settings).toContain('? { ...chat, requestedTab: { tab: request.chatTab, seq: request.seq } }')
     const chat = source('renderer/components/chat/ApiKeySettings.tsx')
     expect(chat).toMatch(
       /export function ApiKeySettings\(\{[\s\S]*appToolsLocked = false,[\s\S]*backgroundCompactionLocked = false/

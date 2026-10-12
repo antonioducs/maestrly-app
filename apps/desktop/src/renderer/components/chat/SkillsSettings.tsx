@@ -1,5 +1,5 @@
 import { hostSkillsSettingsSource, type SkillsSettingsSource } from './skills-settings-source'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronDown,
@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import type { ChatSkillDetail, ChatSkillGroup, ChatSkillSearchHit, ChatSkillsState } from '../../../shared/chat'
+import { groupSkillsByPlugin } from '../plugins/plugin-skill-groups'
 
 const inputCls =
   'rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-indigo-500/60'
@@ -92,13 +93,17 @@ export function SkillsSettings({
   renderDetail,
   onDirtyChange,
   confirmAction = async (message) => confirm(message),
+  onManagePlugins,
 }: {
   source?: SkillsSettingsSource
   renderDetail?: (detail: ChatSkillDetail, onClose: () => void) => ReactNode
   onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>, discard: () => void) => void
   confirmAction?: (message: string, kind?: 'remove' | 'replace') => Promise<boolean>
+  /** Opens Settings → Plugins, where plugin skills are installed and removed. */
+  onManagePlugins?: () => void
 } = {}) {
   const { t } = useTranslation('chat')
+  const { t: tp } = useTranslation('plugins')
   const hostApi = useHostApi()
   const host = useHostInfo()
   const source = providedSource ?? hostSkillsSettingsSource(hostApi)
@@ -500,129 +505,160 @@ export function SkillsSettings({
             placeholder={t('settings.skillGroupSearchSkills')}
           />
         )}
-        {state.skills
-          .filter(
+        {groupSkillsByPlugin(
+          state.skills.filter(
             (skill) =>
               !source.remote ||
               `${skill.name} ${skill.description}`.toLowerCase().includes(installedQuery.toLowerCase())
           )
-          .map((skill) => (
-            <div key={skill.name} className="rounded-lg border border-border bg-white/[0.02] px-2.5 py-1.5">
-              <div className="flex items-center gap-2">
-                <Toggle
-                  on={skill.enabledGlobally}
-                  onClick={() =>
-                    void source
-                      .chatSkillSetEnabled(skill.name, !skill.enabledGlobally)
-                      .then(finishMutation)
-                      .catch(reportError)
-                  }
-                  label={skill.enabledGlobally ? t('settings.toggleOn') : t('settings.toggleOff')}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-mono text-[12px] text-foreground">/{skill.name}</span>
-                    <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                      {source.remote
-                        ? t('environmentSettings.environmentScope', { ns: 'fleet' })
-                        : t('settings.skillScopeGlobal')}
-                    </span>
-                    {!skill.userInvocable && (
-                      <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                        {t('settings.skillModelOnly')}
-                      </span>
-                    )}
-                    {!skill.modelInvocable && (
-                      <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
-                        {t('settings.skillUserOnly')}
-                      </span>
-                    )}
-                  </div>
-                  <div className="truncate text-[11px] text-muted-foreground">{skill.description || skill.source}</div>
-                  <div className="text-[10px] text-muted-foreground/70">
-                    {t('skillsMenu.resources', skill.resources)}
-                    {skill.groupIds.length ? ` · ${t('settings.skillInGroups', { count: skill.groupIds.length })}` : ''}
-                    {skill.installedFrom ? ` · ${t('settings.skillInstalledFrom', { slug: skill.installedFrom })}` : ''}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSkillGroupPicker(skillGroupPicker === skill.name ? null : skill.name)}
-                  className="text-muted-foreground hover:text-violet-300"
-                  title={t('settings.skillGroupsAction')}
-                >
-                  <Layers3 className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void source
-                      .chatSkillRead(skill.name)
-                      .then((value) => {
-                        if (alive.current) setDetail(value)
-                      })
-                      .catch(reportError)
-                  }
-                  className="text-muted-foreground hover:text-foreground"
-                  title={t('settings.skillView')}
-                  disabled={source.remote && (creating || creatingGroup || !!editingGroup)}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                </button>
-                {/* Revealing a folder of a server's own desktop shows it to nobody. */}
-                {!source.remote && host.desktopEffects && (
+        ).map((section) => (
+          <Fragment key={section.plugin?.key ?? ''}>
+            {section.plugin && (
+              <div className="mt-1 flex items-center gap-2 px-0.5 text-[11px] text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground/80">
+                  {section.plugin.displayName}
+                </span>
+                {onManagePlugins && (
                   <button
                     type="button"
-                    onClick={() => void source.chatSkillReveal(skill.name)}
-                    className="text-muted-foreground hover:text-foreground"
-                    title={t('settings.skillOpenFolder')}
+                    onClick={onManagePlugins}
+                    className="shrink-0 underline decoration-white/20 underline-offset-2 hover:text-foreground"
                   >
-                    <FolderOpen className="h-3.5 w-3.5" />
+                    {tp('managePlugins')}
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (
-                      await confirmAction(
-                        source.remote
-                          ? t('environmentSettings.removeSkill', { ns: 'fleet', name: skill.name })
-                          : t('settings.skillConfirmRemove', { name: skill.name, dir: skill.dir })
-                      )
-                    )
-                      void source.chatSkillRemove(skill.name).then(finishMutation).catch(reportError)
-                  }}
-                  className="text-muted-foreground hover:text-destructive"
-                  title={t('settings.skillRemove')}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
               </div>
-              {skillGroupPicker === skill.name && (
-                <div className="mt-2 border-t border-border/60 pt-2">
-                  <div className="mb-1 text-[11px] text-muted-foreground">{t('settings.skillGroupsAction')}</div>
-                  {state.groups.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground">{t('settings.skillGroupsEmpty')}</p>
-                  ) : (
-                    state.groups.map((group) => (
-                      <label
-                        key={group.id}
-                        className="flex cursor-pointer items-center gap-2 py-0.5 text-[12px] text-foreground"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={group.skills.includes(skill.name)}
-                          disabled={busyGroups.has(group.id)}
-                          onChange={() => toggleMembership(group, skill.name)}
-                        />
-                        {group.name}
-                      </label>
-                    ))
+            )}
+            {section.skills.map((skill) => (
+              <div key={skill.name} className="rounded-lg border border-border bg-white/[0.02] px-2.5 py-1.5">
+                <div className="flex items-center gap-2">
+                  <Toggle
+                    on={skill.enabledGlobally}
+                    onClick={() =>
+                      void source
+                        .chatSkillSetEnabled(skill.name, !skill.enabledGlobally)
+                        .then(finishMutation)
+                        .catch(reportError)
+                    }
+                    label={skill.enabledGlobally ? t('settings.toggleOn') : t('settings.toggleOff')}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[12px] text-foreground">/{skill.name}</span>
+                      {!skill.plugin && (
+                        <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
+                          {source.remote
+                            ? t('environmentSettings.environmentScope', { ns: 'fleet' })
+                            : t('settings.skillScopeGlobal')}
+                        </span>
+                      )}
+                      {!skill.userInvocable && (
+                        <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
+                          {t('settings.skillModelOnly')}
+                        </span>
+                      )}
+                      {!skill.modelInvocable && (
+                        <span className="rounded bg-white/[0.06] px-1 text-[10px] text-muted-foreground">
+                          {t('settings.skillUserOnly')}
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate text-[11px] text-muted-foreground">
+                      {skill.description || skill.source}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground/70">
+                      {t('skillsMenu.resources', skill.resources)}
+                      {skill.groupIds.length
+                        ? ` · ${t('settings.skillInGroups', { count: skill.groupIds.length })}`
+                        : ''}
+                      {skill.installedFrom
+                        ? ` · ${t('settings.skillInstalledFrom', { slug: skill.installedFrom })}`
+                        : ''}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSkillGroupPicker(skillGroupPicker === skill.name ? null : skill.name)}
+                    className="text-muted-foreground hover:text-violet-300"
+                    title={t('settings.skillGroupsAction')}
+                  >
+                    <Layers3 className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void source
+                        .chatSkillRead(skill.name)
+                        .then((value) => {
+                          if (alive.current) setDetail(value)
+                        })
+                        .catch(reportError)
+                    }
+                    className="text-muted-foreground hover:text-foreground"
+                    title={t('settings.skillView')}
+                    disabled={source.remote && (creating || creatingGroup || !!editingGroup)}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </button>
+                  {/* Revealing a folder of a server's own desktop shows it to nobody. */}
+                  {!source.remote && host.desktopEffects && !skill.plugin && (
+                    <button
+                      type="button"
+                      onClick={() => void source.chatSkillReveal(skill.name)}
+                      className="text-muted-foreground hover:text-foreground"
+                      title={t('settings.skillOpenFolder')}
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {/* A plugin's skills leave with the plugin, from Settings → Plugins. */}
+                  {!skill.plugin && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (
+                          await confirmAction(
+                            source.remote
+                              ? t('environmentSettings.removeSkill', { ns: 'fleet', name: skill.name })
+                              : t('settings.skillConfirmRemove', { name: skill.name, dir: skill.dir })
+                          )
+                        )
+                          void source.chatSkillRemove(skill.name).then(finishMutation).catch(reportError)
+                      }}
+                      className="text-muted-foreground hover:text-destructive"
+                      title={t('settings.skillRemove')}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
-          ))}
+                {skillGroupPicker === skill.name && (
+                  <div className="mt-2 border-t border-border/60 pt-2">
+                    <div className="mb-1 text-[11px] text-muted-foreground">{t('settings.skillGroupsAction')}</div>
+                    {state.groups.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">{t('settings.skillGroupsEmpty')}</p>
+                    ) : (
+                      state.groups.map((group) => (
+                        <label
+                          key={group.id}
+                          className="flex cursor-pointer items-center gap-2 py-0.5 text-[12px] text-foreground"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={group.skills.includes(skill.name)}
+                            disabled={busyGroups.has(group.id)}
+                            onChange={() => toggleMembership(group, skill.name)}
+                          />
+                          {group.name}
+                        </label>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </Fragment>
+        ))}
         {detail &&
           (renderDetail ? (
             renderDetail(detail, () => setDetail(null))

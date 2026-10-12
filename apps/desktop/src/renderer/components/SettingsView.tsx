@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
 import type { ChatSettingsOptions } from '@/components/chat/chat-settings-tabs'
+import type { SettingsRequest } from '@/lib/use-settings'
 import { AgentActivitySection, LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
 import { TabOrderSection } from '@/components/settings/TabOrderSection'
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
@@ -58,12 +59,22 @@ interface Props {
   sections?: readonly SettingsSection[]
   /** Chat settings subset (a bot's own Maestrly). */
   chat?: ChatSettingsOptions
+  /** A place to show, such as Chat → Plugins on the host of the conversation that asked. */
+  request?: SettingsRequest | null
 
   onShowSidebar?: () => void
   onClose: () => void
 }
 
-export function SettingsView({ fleet, initialSection = 'chat', sections, chat, onShowSidebar, onClose }: Props) {
+export function SettingsView({
+  fleet,
+  initialSection = 'chat',
+  sections,
+  chat,
+  request,
+  onShowSidebar,
+  onClose,
+}: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
   // Sections about a Maestrly profile (its chat, bots, platform, usage and execution settings) show the profile of
@@ -112,6 +123,14 @@ export function SettingsView({ fleet, initialSection = 'chat', sections, chat, o
     setSection(initialSection)
     if (initialSection === 'chat') headingRef.current?.focus()
   }, [initialSection])
+  useEffect(() => {
+    if (!request) return
+    setSection(request.section)
+    if (request.hostId && profileHosts.some((host) => host.id === request.hostId)) setProfileHostId(request.hostId)
+  }, [request?.seq])
+  const chatOptions: ChatSettingsOptions | undefined = request?.chatTab
+    ? { ...chat, requestedTab: { tab: request.chatTab, seq: request.seq } }
+    : chat
 
   useEffect(() => {
     profileApi
@@ -416,7 +435,7 @@ export function SettingsView({ fleet, initialSection = 'chat', sections, chat, o
               />
             )}
 
-            {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chat} />)}
+            {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chatOptions} />)}
 
             {section === 'platform' && inProfile(<PlatformSection />)}
             {section === 'artifacts' && (

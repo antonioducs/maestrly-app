@@ -890,6 +890,7 @@ export default {
     tabMaestro: 'Maestro',
     tabTools: 'Tools',
     tabSkills: 'Skills',
+    tabPlugins: 'Plugins',
     tabPrompts: 'Prompts',
     tabComponents: 'Components',
     componentsDescription: 'Managed runtimes and storage',

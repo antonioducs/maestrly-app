@@ -7,9 +7,12 @@ import { CHAT_SETTINGS_TABS, type ChatSettingsTab } from '../components/chat/cha
  */
 export const BOT_INSTANCE_SETTINGS_SECTIONS: readonly SettingsSection[] = ['chat']
 
-/** Maestro is left out: a bot always runs in agent mode. */
+/**
+ * Maestro is left out: a bot always runs in agent mode. Plugins are left out too: a bot environment's plugins are
+ * managed from the owner's computer through its environment settings.
+ */
 export const BOT_INSTANCE_CHAT_TABS: readonly ChatSettingsTab[] = CHAT_SETTINGS_TABS.map((tab) => tab.id).filter(
-  (id) => id !== 'maestro'
+  (id) => id !== 'maestro' && id !== 'plugins'
 )
 
 /** The chat settings tab for a place the owner's Mac asks the bot to show. */

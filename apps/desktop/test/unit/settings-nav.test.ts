@@ -45,11 +45,15 @@ describe('settings navigation', () => {
     const settingsContextSource = source('../../src/renderer/lib/use-settings.tsx')
     const appSource = source('../../src/renderer/DesktopApp.tsx')
 
-    expect(settingsContextSource).toContain('openSettings: (sectionOrEvent?: SettingsSection | SyntheticEvent) => void')
+    expect(settingsContextSource).toContain(
+      'export type OpenSettings = (sectionOrEvent?: SettingsSection | SyntheticEvent, options?: OpenSettingsOptions) => void'
+    )
     expect(panelsSource).toContain(
-      "const openSettings = useCallback((sectionOrEvent: SettingsSection | SyntheticEvent = 'chat')"
+      "(sectionOrEvent: SettingsSection | SyntheticEvent = 'chat', options?: OpenSettingsOptions) => {"
     )
     expect(appSource).toContain('initialSection={settingsSection}')
+    // A chat tab and a host (Chat → Plugins of a remote conversation's host) travel as a request.
+    expect(appSource).toContain('request={settingsRequest}')
     expect(settingsViewSource).toContain('useState<SettingsSection>(initialSection)')
     expect(chatMessageListSource).toContain("message.errorCode === 'claude-authentication-required'")
     expect(chatMessageListSource).toContain("openSettings('chat')")

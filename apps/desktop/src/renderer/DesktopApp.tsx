@@ -370,6 +370,7 @@ export function DesktopApp() {
     artifactsOpen,
     setArtifactsOpen,
     settingsSection,
+    settingsRequest,
     onboardingOpen,
     setOnboardingOpen,
     onboardingChecked,
@@ -1050,6 +1051,7 @@ export function DesktopApp() {
                 <SettingsView
                   fleet={fleet}
                   initialSection={settingsSection}
+                  request={settingsRequest}
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onClose={() => setSettingsOpen(false)}
                 />

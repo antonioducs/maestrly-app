@@ -11,6 +11,7 @@ import {
   Shield,
   SlidersHorizontal,
   ChevronRight,
+  Puzzle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
@@ -18,7 +19,8 @@ import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../.
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { startChatGptWebCompanion } from '@/lib/chatgpt-web'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useSettings } from '@/lib/use-settings'
 import { ChatGptWebAccessEditor } from './ChatGptWebAccessEditor'
 import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 
@@ -75,7 +77,10 @@ export function ChatPlusMenu({
 }) {
   const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
+  const { t: tp } = useTranslation('plugins')
   const api = useHostApi()
+  const hostId = useHostId()
+  const { openSettings } = useSettings()
   const source = providedSource ?? localChatComposerSource(api, conversationId)
   const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | 'companion' | null>(null)
   const [config, setConfig] = useState<Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> | null>(
@@ -87,6 +92,7 @@ export function ChatPlusMenu({
   const appGroupsId = useId()
   const [imageGen, setImageGen] = useState(true)
   const [mcpDisabled, setMcpDisabled] = useState<string[]>([])
+  const [pluginMcpServers, setPluginMcpServers] = useState<string[] | null>(null)
   const [subagentProfilesEnabled, setSubagentProfilesEnabled] = useState(true)
   const [subagentsEnabled, setSubagentsEnabled] = useState(true)
   const [companionBusy, setCompanionBusy] = useState(false)
@@ -110,6 +116,7 @@ export function ChatPlusMenu({
       setAppGroups(t.appGroups ?? null)
       setImageGen(t.imageGen)
       setMcpDisabled(t.mcpDisabled)
+      setPluginMcpServers(t.pluginMcpServers ?? null)
     })
     if (!source.bot)
       api.chatGptWebCapabilities(targetConversationId).then((value) => {
@@ -261,7 +268,10 @@ export function ChatPlusMenu({
     }
   }
 
-  const servers = config?.mcpServers ?? []
+  // A plugin's servers appear only in the conversations the plugin serves (its scope).
+  const servers = (config?.mcpServers ?? []).filter(
+    (server) => !server.plugin || !pluginMcpServers || pluginMcpServers.includes(server.id)
+  )
 
   return (
     <div className="relative" ref={ref}>
@@ -482,6 +492,11 @@ export function ChatPlusMenu({
               <div key={s.id} className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
                 <div className="min-w-0">
                   <div className="truncate text-[13px] text-foreground">{s.name}</div>
+                  {s.plugin && (
+                    <div className="truncate text-[11px] text-muted-foreground">
+                      {tp('managedBy', { name: s.plugin.displayName })}
+                    </div>
+                  )}
                   {!s.enabled && <div className="text-[11px] text-amber-400/80">{t('plusMenu.disabledGlobally')}</div>}
                 </div>
                 <Toggle on={on} onClick={() => s.enabled && toggleMcp(s.id)} label={s.name} />
@@ -497,8 +512,19 @@ export function ChatPlusMenu({
               {manageMcpLabel ?? t('plusMenu.settingsHint')}
             </button>
           ) : (
-            <div className="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
-              {t('plusMenu.settingsHint')}
+            <div className="mt-1 flex items-center gap-2 border-t border-white/[0.06] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+              <span className="min-w-0 flex-1">{t('plusMenu.settingsHint')}</span>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActivePanel(null)
+                  openSettings('chat', { chatTab: 'plugins', hostId })
+                }}
+                className="inline-flex shrink-0 items-center gap-1 hover:text-foreground"
+              >
+                <Puzzle className="h-3.5 w-3.5" /> {tp('browsePlugins')}
+              </button>
             </div>
           )}
         </div>
