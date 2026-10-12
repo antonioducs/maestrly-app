@@ -4,7 +4,7 @@ import { prefs } from '../prefs'
 import { detectLocale, translator, type Locale, type Pluralize, type Translate } from './translate'
 
 export { detectLocale, translate, pluralize, translator } from './translate'
-export type { Locale, MessageKey, PluralKey, Pluralize, Translate } from './translate'
+export type { Locale, MessageKey, PluralKey, Pluralize, Text, Translate } from './translate'
 
 export type LocalePreference = 'system' | Locale
 type I18n = {

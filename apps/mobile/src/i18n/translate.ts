@@ -7,6 +7,8 @@ export type PluralKey = { [K in MessageKey]: K extends `${infer Base}.other` ? B
 export type Values = Record<string, string | number>
 export type Translate = (key: MessageKey, values?: Values) => string
 export type Pluralize = (key: PluralKey, count: number, values?: Values) => string
+/** What pure modules need to produce user-facing text. */
+export type Text = { t: Translate; plural: Pluralize }
 
 /** A saved choice wins; otherwise the first supported system language, and English for anything else. */
 export function detectLocale(saved: string | null, languages: readonly string[]): Locale {
@@ -32,7 +34,7 @@ export function pluralize(key: PluralKey, count: number, locale: Locale, values:
   return translate(chosen, locale, { count, ...values })
 }
 
-export function translator(locale: Locale): { t: Translate; plural: Pluralize } {
+export function translator(locale: Locale): Text {
   return {
     t: (key, values) => translate(key, locale, values),
     plural: (key, count, values) => pluralize(key, count, locale, values),
