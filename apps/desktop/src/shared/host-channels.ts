@@ -28,6 +28,10 @@ const LOCAL_ONLY_CHANNELS = new Set([
   'drawer:suppress-views',
   'drawer:layout',
   'drawer:capture-slot',
+  // The address-bar overlay moves this computer's native page; a remote host's page is streamed into the DOM.
+  'drawer:omnibox-overlay',
+  // Which renderer of this computer catches the browser tab shortcuts.
+  'drawer:browser-keyboard-focus',
   'drawer:load-vscode',
   'drawer:restart-vscode',
   'drawer:dispose-conversation',

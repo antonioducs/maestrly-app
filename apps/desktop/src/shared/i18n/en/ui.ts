@@ -1566,8 +1566,12 @@ export default {
     loading: 'Loading…',
     newTab: 'New tab',
     urlPlaceholder: 'Search or type a URL',
-    clearCache: 'Clear browsing data (cache, cookies and storage)',
+    clearCache: 'Clear browsing data (history, cache, cookies and storage)',
     toggleDevtools: 'Open/close developer tools (DevTools)',
+    suggestions: 'Suggestions',
+    switchToTab: 'Switch to this tab',
+    searchWith: 'Google Search',
+    removeFromHistory: 'Remove from history',
   },
 
   remoteBrowser: {

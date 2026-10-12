@@ -11,6 +11,7 @@ import {
   type ShortcutOs,
 } from '../../shared/shortcuts'
 import { BrowserChrome } from '@/components/BrowserChrome'
+import { cn } from '@/lib/utils'
 
 const TAB_TITLE_KEY: Record<FloatTab, string> = {
   browser: 'drawer.tabBrowser',
@@ -111,6 +112,7 @@ function PopupFrame({
   detachKey: string
 }) {
   const { t } = useTranslation('ui')
+  const [chromeOverlay, setChromeOverlay] = useState(false)
   const { frame, chromeTop, browserChromeH, tab } = slot
   const titleH = Math.max(0, chromeTop - browserChromeH)
   return (
@@ -147,8 +149,9 @@ function PopupFrame({
       </div>
 
       {tab === 'browser' && (
-        <div className="shrink-0 overflow-hidden" style={{ height: browserChromeH }}>
-          <BrowserChrome convId={convId} />
+        // The address-bar suggestions extend below the toolbar, over the page area, while they are open.
+        <div className={cn('shrink-0', !chromeOverlay && 'overflow-hidden')} style={{ height: browserChromeH }}>
+          <BrowserChrome convId={convId} host="popup" height={browserChromeH} onOverlayChange={setChromeOverlay} />
         </div>
       )}
 

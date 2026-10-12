@@ -56,10 +56,13 @@ vi.mock('../../src/main/drawer-manager', () => ({
   isTabVisibleInSlot: vi.fn(() => false),
   applyLayout: vi.fn(),
   navigateBrowser: vi.fn(),
+  queryOmnibox: vi.fn(async () => ({ history: [], tabs: [], searchSuggestions: [] })),
+  removeBrowserHistoryEntry: vi.fn(),
   reorderBrowserTab: vi.fn(),
   reloadAllVSCode: vi.fn(),
   setLayout: vi.fn(),
   setDialogSuppressionOwners: vi.fn(),
+  setOmniboxOverlay: vi.fn(async () => null),
   setViewsSuppressed: vi.fn(),
   showVSCodeLoadingAll: vi.fn(),
   switchBrowserTab: vi.fn(),
@@ -102,10 +105,15 @@ import {
   applyLayout,
   ensurePanelTab,
   isTabVisibleInSlot,
+  navigateBrowser,
+  queryOmnibox,
+  removeBrowserHistoryEntry,
   setDialogSuppressionOwners,
   setLayout,
+  setOmniboxOverlay,
   showVSCodeLoadingAll,
 } from '../../src/main/drawer-manager'
+import { hasBrowserKeyboardFocus } from '../../src/main/browser-hotkeys'
 import { setRemoteEditorHosts } from '../../src/main/drawer-scope'
 import { waitForEditorReady } from '../../src/main/vscode/vscode-server'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
@@ -183,6 +191,8 @@ describe('registerDrawerIpc', () => {
       'drawer:browser-stream-start',
       'drawer:clear-cache',
       'drawer:load-vscode',
+      'drawer:omnibox-overlay',
+      'drawer:omnibox-query',
       'drawer:restart-vscode',
       'popup:state-get',
     ])
@@ -190,6 +200,7 @@ describe('registerDrawerIpc', () => {
     expect([...mons.keys()].sort()).toEqual([
       'drawer:back',
       'drawer:browser-input',
+      'drawer:browser-keyboard-focus',
       'drawer:browser-paste',
       'drawer:browser-popup-close',
       'drawer:browser-select-choose',
@@ -205,6 +216,7 @@ describe('registerDrawerIpc', () => {
       'drawer:ensure-panel',
       'drawer:focus-terminal',
       'drawer:forward',
+      'drawer:history-remove',
       'drawer:layout',
       'drawer:navigate',
       'drawer:reattach',
@@ -394,5 +406,88 @@ describe('registerDrawerIpc', () => {
     vi.mocked(floatingManager.isChatGptVisible).mockReturnValue(true)
 
     expect(handles.get('drawer:chatgpt-visible')!({} as never, 'background-conv')).toBe(true)
+  })
+
+  it('forwards address-bar navigation as typed only when the renderer says so', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const navigate = mons.get('drawer:navigate')!
+
+    navigate({} as never, 'c1', 'example.com')
+    navigate({} as never, 'c1', 'example.com', { typed: true })
+    navigate({} as never, 'c1', 'example.com', { typed: 'yes' })
+
+    expect(vi.mocked(navigateBrowser).mock.calls).toEqual([
+      ['c1', 'example.com', { typed: false }],
+      ['c1', 'example.com', { typed: true }],
+      ['c1', 'example.com', { typed: false }],
+    ])
+  })
+
+  it('validates omnibox queries and keys suggestion cancellation by the asking renderer', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const query = mhandles.get('drawer:omnibox-query')!
+
+    expect(await query({ sender: { id: 7 } } as never, 42, 'text')).toEqual({
+      history: [],
+      tabs: [],
+      searchSuggestions: [],
+    })
+    expect(queryOmnibox).not.toHaveBeenCalled()
+
+    await query({ sender: { id: 7 } } as never, 'c1', 'olivia', { search: true, locale: 'pt-BR', extra: 1 })
+    await query({ sender: { id: 8 } } as never, 'c1', 'oli', { search: 'yes', locale: 3 })
+    expect(vi.mocked(queryOmnibox).mock.calls).toEqual([
+      ['c1', 'olivia', { search: true, locale: 'pt-BR' }, 7],
+      ['c1', 'oli', { search: false }, 8],
+    ])
+  })
+
+  it('accepts only known overlay modes and passes the owning renderer', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const overlay = mhandles.get('drawer:omnibox-overlay')!
+    const sender = { id: 3 }
+
+    expect(await overlay({ sender } as never, 'c1', 'hide-everything')).toBeNull()
+    expect(await overlay({ sender } as never, null, 'open')).toBeNull()
+    expect(setOmniboxOverlay).not.toHaveBeenCalled()
+
+    await overlay({ sender } as never, 'c1', 'prepare')
+    await overlay({ sender } as never, 'c1', 'open')
+    await overlay({ sender } as never, 'c1', 'close')
+    expect(vi.mocked(setOmniboxOverlay).mock.calls).toEqual([
+      ['c1', 'prepare', sender],
+      ['c1', 'open', sender],
+      ['c1', 'close', sender],
+    ])
+  })
+
+  it('removes history entries only for string URLs', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const remove = mons.get('drawer:history-remove')!
+
+    remove({} as never, { url: 'https://example.com/' })
+    remove({} as never, 'https://example.com/')
+
+    expect(vi.mocked(removeBrowserHistoryEntry).mock.calls).toEqual([['https://example.com/']])
+  })
+
+  it('tracks browser keyboard focus per reporting renderer', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const focus = mons.get('drawer:browser-keyboard-focus')!
+
+    focus({ sender: { id: 51 } } as never, true)
+    focus({ sender: { id: 52 } } as never, true)
+    expect(hasBrowserKeyboardFocus(51)).toBe(true)
+    expect(hasBrowserKeyboardFocus(52)).toBe(true)
+
+    focus({ sender: { id: 51 } } as never, false)
+    focus({ sender: { id: 52 } } as never, 'yes')
+    expect(hasBrowserKeyboardFocus(51)).toBe(false)
+    expect(hasBrowserKeyboardFocus(52)).toBe(false)
   })
 })

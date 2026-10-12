@@ -9,6 +9,8 @@ import {
   fkey,
   floatWinByKey,
   getDrawer,
+  isBrowserChromeExpandedByOmnibox,
+  isBrowserPageHiddenByOmnibox,
   isTabFloating,
   win,
   type ConvDrawer,
@@ -148,11 +150,15 @@ export function layoutFloatingTab(convId: string, tab: FloatTab, floatWin: Brows
   const presented = tab === 'browser' && isBotMode() && presentedBrowserSize(convId) !== null
   const top = Math.min(floatingStripHeight(presented, FLOAT_CHROME_H), h)
   if (tab === 'browser') {
-    const chromeH = d.browserChromeView ? Math.min(BROWSER_CHROME_H, Math.max(0, h - top)) : 0
-    if (d.browserChromeView) d.browserChromeView.setBounds({ x: 0, y: top, width: w, height: chromeH })
+    const below = Math.max(0, h - top)
+    const chromeH = d.browserChromeView ? Math.min(BROWSER_CHROME_H, below) : 0
+    // Address-bar suggestions draw inside the chrome view, so it then covers the page area as well.
+    const chromeViewH = isBrowserChromeExpandedByOmnibox(convId) ? below : chromeH
+    if (d.browserChromeView) d.browserChromeView.setBounds({ x: 0, y: top, width: w, height: chromeViewH })
+    const pageHidden = isBrowserPageHiddenByOmnibox(convId)
     for (const t of d.browserTabs) {
       if (!t.view) continue
-      const on = t.id === d.activeBrowserId
+      const on = t.id === d.activeBrowserId && !pageHidden
       t.view.setBounds(on ? { x: 0, y: top + chromeH, width: w, height: Math.max(0, h - top - chromeH) } : OFFSCREEN)
     }
     return

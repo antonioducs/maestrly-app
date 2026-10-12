@@ -13,6 +13,7 @@ import { registerReclaimable, scheduleMemoryReclaim, unregisterReclaimable } fro
 import { BROWSER_TAB_COLD_TTL_MS, MEMORY_RECLAIM_RETRY_MS } from '../performance/policy'
 import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
+import { attachBrowserHotkeyCapture } from '../browser-hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { conversationScreen, presentedBrowserSize } from '../conversation-screen'
@@ -31,6 +32,7 @@ import {
   isBrowserStreamed,
   isTabFloating,
   isTabOutOfSlot,
+  omniboxOverlays,
   placedSlot,
   streamWinByConv,
   suppressed,
@@ -46,6 +48,20 @@ import { layoutStreamBrowser } from './stream-window'
 import { focusViewInMain } from './popup'
 import { setDrawerPlacementPerformance } from './performance'
 import { refreshUnthrottledBrowserRendering } from './browser-rendering'
+import {
+  browserHistoryIconFor,
+  clearBrowserHistory,
+  noteBrowserHistoryFavicon,
+  queryBrowserHistory,
+  recordBrowserVisit,
+  updateBrowserHistoryTitle,
+} from './browser-history'
+import { requestSearchSuggestions } from './search-suggest'
+import {
+  browserHistoryKey,
+  normalizeBrowserInput as normalizeUrl,
+  type OmniboxQueryResult,
+} from '../../shared/browser-omnibox'
 
 type WindowOpenHandler = Parameters<WebContents['setWindowOpenHandler']>[0]
 
@@ -541,6 +557,8 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     )
   }
   attachHotkeyCapture(wc) // #328: capture shortcuts while browser content has focus
+  // Delegated worker tabs are never shown, so the tab shortcuts stay with user-facing pages.
+  attachBrowserHotkeyCapture(wc, () => (tab.ownerScopeId === undefined ? convId : null))
   attachMacMouseNavigation(wc, (direction) => {
     if (direction === 'back') browserBack(convId)
     else browserForward(convId)
@@ -644,7 +662,45 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   wc.on('did-start-loading', emit)
   wc.on('did-stop-loading', emit)
   wc.on('page-title-updated', emit)
+  attachBrowserHistoryRecording(wc, tab)
   return v
+}
+
+/** Loads a favicon through the browser session, so it sees the same cookies and cache as the page. */
+function loadBrowserFavicon(url: string, signal: AbortSignal): Promise<Response> {
+  return session.fromPartition(BROWSER_PARTITION).fetch(url, { signal })
+}
+
+/**
+ * Feeds the global history from a user-facing tab: committed main-frame visits (error pages excluded), their
+ * titles, and their favicons. Delegated worker tabs record nothing.
+ */
+function attachBrowserHistoryRecording(wc: WebContents, tab: BrowserTab): void {
+  if (tab.ownerScopeId !== undefined) return
+  let lastKey: string | null = null
+  const record = (url: string, inPage: boolean) => {
+    const key = browserHistoryKey(url)
+    // Fragment-only changes keep the same key; counting each one would inflate the visit count.
+    if (!key || (inPage && key === lastKey)) return
+    lastKey = key
+    const typed = tab.typedNavigation === true
+    tab.typedNavigation = false
+    recordBrowserVisit(url, { typed })
+  }
+  wc.on('did-navigate', (_event, url, httpResponseCode) => {
+    if (httpResponseCode > 0) record(url, false)
+    else tab.typedNavigation = false
+  })
+  wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+    if (isMainFrame) record(url, true)
+  })
+  wc.on('page-title-updated', (_event, title) => {
+    updateBrowserHistoryTitle(wc.getURL(), title)
+  })
+  wc.on('page-favicon-updated', (_event, favicons) => {
+    const favicon = favicons.find((candidate) => typeof candidate === 'string' && candidate.length > 0)
+    if (favicon) noteBrowserHistoryFavicon(wc.getURL(), favicon, loadBrowserFavicon)
+  })
 }
 
 /**
@@ -934,25 +990,95 @@ export function switchBrowserTab(convId: string, id: string): void {
   }
 }
 
-export function navigateBrowser(convId: string, input: string): void {
+export interface NavigateBrowserOptions {
+  /** Typed or picked in the address bar: counts as a typed visit and moves keyboard focus to the page. */
+  typed?: boolean
+}
+
+export function navigateBrowser(convId: string, input: string, options: NavigateBrowserOptions = {}): void {
   const d = getDrawer(convId)
   const active = d.browserTabs.find((tab) => tab.id === d.activeBrowserId)
   if (!active) {
-    createBrowserTab(convId, input)
+    const id = createBrowserTab(convId, input)
+    const created = d.browserTabs.find((tab) => tab.id === id)
+    if (created && options.typed) {
+      created.typedNavigation = true
+      focusTypedNavigation(convId, created)
+    }
     return
   }
+  if (options.typed) active.typedNavigation = true
   if (!active.view || active.view.webContents.isDestroyed()) {
     active.url = normalizeUrl(input)
     materializeBrowserTab(convId, active)
     afterBrowserMutation(convId)
     emitBrowserState(convId)
     if (active.ownerScopeId === undefined) persistBrowserTabs(convId)
+    if (options.typed) focusTypedNavigation(convId, active)
     return
   }
   touchBrowserTab(active)
   scheduleColdBrowserEviction()
   const wc = active.view.webContents
   loadBrowserUrl(wc, normalizeUrl(input))
+  if (options.typed) focusTypedNavigation(convId, active)
+}
+
+/**
+ * As in a regular browser, Enter in the address bar hands the keyboard to the page being opened. A streamed browser
+ * gets its keyboard from the computer watching it; focusing its page here would also focus this host's stream window.
+ */
+function focusTypedNavigation(convId: string, tab: BrowserTab): void {
+  const wc = tab.view?.webContents
+  if (wc && !wc.isDestroyed() && browserSurfaceIsShown(convId) && !isBrowserStreamed(convId)) wc.focus()
+}
+
+/**
+ * The address bar of the conversation's browser gets keyboard focus: the window hosting its chrome is focused,
+ * then that chrome focuses and selects its input.
+ */
+export function focusBrowserAddressBar(convId: string): void {
+  const placement = getPlacement(convId, 'browser')
+  const chrome = drawers.get(convId)?.browserChromeView?.webContents
+  try {
+    if (placement === 'floating') {
+      if (chrome && !chrome.isDestroyed()) chrome.focus()
+    } else if (win && !win.isDestroyed()) win.webContents.focus()
+  } catch {
+    /* the host may be closing */
+  }
+  const payload = { convId, placement }
+  if (typeof windowIpc.sendToConversation === 'function') {
+    windowIpc.sendToConversation(convId, 'drawer:browser-focus-url', payload, { panel: 'browser' })
+  } else {
+    windowIpc.broadcast('drawer:browser-focus-url', payload)
+  }
+}
+
+/** Cmd/Ctrl+T: a new tab whose address bar is ready for typing. */
+export function openBrowserTabFromShortcut(convId: string): void {
+  createBrowserTab(convId)
+  focusBrowserAddressBar(convId)
+}
+
+/**
+ * Cmd/Ctrl+W: closes the active user-facing tab. The next tab's page keeps the keyboard when the closed page had
+ * it; after the last tab the empty browser's address bar takes it, so typing opens a new tab.
+ */
+export function closeActiveBrowserTabFromShortcut(convId: string): void {
+  const d = drawers.get(convId)
+  const active = d?.browserTabs.find((tab) => tab.id === d.activeBrowserId && tab.ownerScopeId === undefined)
+  if (!d || !active) return
+  const activeWc = active.view?.webContents
+  const pageHadFocus = !!activeWc && !activeWc.isDestroyed() && activeWc.isFocused()
+  closeBrowserTab(convId, active.id)
+  const next = d.browserTabs.find((tab) => tab.id === d.activeBrowserId && tab.ownerScopeId === undefined)
+  if (!next) {
+    focusBrowserAddressBar(convId)
+    return
+  }
+  const nextWc = next.view?.webContents
+  if (pageHadFocus && nextWc && !nextWc.isDestroyed()) nextWc.focus()
 }
 export function browserBack(convId: string): void {
   const d = getDrawer(convId)
@@ -983,15 +1109,16 @@ export function browserReload(convId: string): void {
 }
 
 /**
- * Clear all shared embedded-browser HTTP cache, storage, and cookies globally across conversations
+ * Clear all shared embedded-browser history, HTTP cache, storage, and cookies globally across conversations
  * (#314), signing out sites. Reload the current conversation's live tabs so in-memory storage state
- * reflects removal.
+ * reflects removal. Rejects when the history file cannot be deleted, so the UI never confirms a partial clear.
  */
 export async function browserClearCache(convId?: string): Promise<void> {
   const ses = session.fromPartition(BROWSER_PARTITION)
   await ses.clearCache()
   // No options clears every supported storage type, including cookies and service workers.
   await ses.clearStorageData()
+  clearBrowserHistory()
   if (convId) for (const tab of drawers.get(convId)?.browserTabs ?? []) tab.view?.webContents.reload()
 }
 
@@ -1206,9 +1333,107 @@ export function toggleBrowserDevTools(convId: string): void {
   emitBrowserState(convId)
 }
 
-function normalizeUrl(input: string): string {
-  const s = input.trim()
-  if (/^(https?|about|data|file):/i.test(s)) return s
-  if (/^[^\s]+\.[^\s]+$/.test(s)) return `https://${s}`
-  return `https://www.google.com/search?q=${encodeURIComponent(s)}`
+// ---------------- Address bar ----------------
+
+const OMNIBOX_INPUT_MAX = 2048
+
+/**
+ * History candidates and open tabs for address-bar text, plus Google suggestions when `search` is set. `requestKey`
+ * identifies the asking address bar so its newer request cancels the previous suggestion fetch.
+ */
+export async function queryOmnibox(
+  convId: string,
+  text: string,
+  options: { search?: boolean; locale?: string },
+  requestKey: number
+): Promise<OmniboxQueryResult> {
+  const input = text.slice(0, OMNIBOX_INPUT_MAX)
+  const d = drawers.get(convId)
+  const tabs = (d?.browserTabs ?? [])
+    .filter((tab) => tab.ownerScopeId === undefined)
+    .map((tab) => {
+      const wc = tab.view && !tab.view.webContents.isDestroyed() ? tab.view.webContents : null
+      const url = wc?.getURL() || tab.url
+      const icon = browserHistoryIconFor(url)
+      return { id: tab.id, url, title: wc?.getTitle() || tab.title, ...(icon ? { icon } : {}) }
+    })
+  const history = queryBrowserHistory(input)
+  const searchSuggestions = options.search ? await requestSearchSuggestions(requestKey, input, options.locale) : []
+  return { history, tabs, searchSuggestions }
+}
+
+export type OmniboxOverlayMode = 'prepare' | 'open' | 'close'
+
+const omniboxOverlayGeneration = new Map<string, number>()
+const omniboxOverlayOwners = new WeakMap<WebContents, Set<string>>()
+
+function releaseOmniboxOverlay(convId: string): void {
+  omniboxOverlayGeneration.set(convId, (omniboxOverlayGeneration.get(convId) ?? 0) + 1)
+  if (omniboxOverlays.delete(convId) && drawers.has(convId)) afterBrowserMutation(convId)
+}
+
+/** A renderer that crashes, reloads, or closes while its suggestions are open must not leave the page hidden. */
+function trackOmniboxOverlayOwner(owner: WebContents, convId: string): void {
+  let convs = omniboxOverlayOwners.get(owner)
+  if (!convs) {
+    const owned = new Set<string>()
+    convs = owned
+    omniboxOverlayOwners.set(owner, owned)
+    const release = () => {
+      for (const id of [...owned]) releaseOmniboxOverlay(id)
+      owned.clear()
+    }
+    owner.once('destroyed', release)
+    owner.on('render-process-gone', release)
+    owner.on('did-navigate', release)
+  }
+  convs.add(convId)
+}
+
+/** Frozen frame of the active page while it is on screen, as a data URL. */
+async function captureActiveBrowserPage(convId: string): Promise<string | null> {
+  const d = drawers.get(convId)
+  const view = d?.browserTabs.find((tab) => tab.id === d.activeBrowserId)?.view
+  if (!view || view.webContents.isDestroyed()) return null
+  if (!viewIsPresented(browserViewOwner(convId), view.getBounds())) return null
+  try {
+    const image = await view.webContents.capturePage()
+    return image.isEmpty() ? null : image.toDataURL()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Address-bar suggestions over the native page, which paints above any DOM. `prepare` captures the page (the
+ * renderer paints that frame under the page) and, when floating, extends the chrome view over the page area;
+ * `open` then moves the page offscreen; `close` restores the page and the chrome. A `close` issued while a
+ * `prepare` is capturing wins.
+ */
+export async function setOmniboxOverlay(
+  convId: string,
+  mode: OmniboxOverlayMode,
+  owner?: WebContents
+): Promise<string | null> {
+  if (mode === 'close') {
+    releaseOmniboxOverlay(convId)
+    return null
+  }
+  if (!drawers.has(convId)) return null
+  if (mode === 'open') {
+    if (omniboxOverlays.get(convId) !== 'prepared') return null
+    omniboxOverlays.set(convId, 'open')
+    afterBrowserMutation(convId)
+    return null
+  }
+  const generation = (omniboxOverlayGeneration.get(convId) ?? 0) + 1
+  omniboxOverlayGeneration.set(convId, generation)
+  const snapshot = await captureActiveBrowserPage(convId)
+  if (omniboxOverlayGeneration.get(convId) !== generation || !drawers.has(convId)) return null
+  if (owner) trackOmniboxOverlayOwner(owner, convId)
+  if (!omniboxOverlays.has(convId)) {
+    omniboxOverlays.set(convId, 'prepared')
+    afterBrowserMutation(convId)
+  }
+  return snapshot
 }

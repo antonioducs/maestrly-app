@@ -7,6 +7,7 @@ import {
   activeConvId,
   convHasPopup,
   drawers,
+  isBrowserPageHiddenByOmnibox,
   isTabOutOfSlot,
   isViewAllowedDuringDialogSuppression,
   placedSlot,
@@ -50,7 +51,8 @@ export function applyLayout(): void {
       const slotLive = !!placed && !convHasPopup(convId)
       const isActiveConv = convId === activeConvId && slotLive
       const browserOutOfSlot = isTabOutOfSlot(convId, 'browser')
-      const showBrowser = isActiveConv && visibleKind === 'browser' && !browserOutOfSlot
+      const showBrowser =
+        isActiveConv && visibleKind === 'browser' && !browserOutOfSlot && !isBrowserPageHiddenByOmnibox(convId)
 
       for (const tab of d.browserTabs) {
         if (browserOutOfSlot || !tab.view) continue // cold or out-of-slot tab has no view to position here
