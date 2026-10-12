@@ -1,7 +1,9 @@
 import type { PluginComponentDto, PluginFormat } from '../../shared/plugins'
 import type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
+import type { PluginAgentSpec } from './agents-scan'
 import type { PluginSkillSpec } from './skills-scan'
 
+export type { PluginAgentSpec } from './agents-scan'
 export type { PluginInputSpec, PluginMcpServerSpec } from './mcp-normalize'
 export type { PluginSkillSpec } from './skills-scan'
 
@@ -26,6 +28,8 @@ export interface PluginPackage {
   logoPath: string | null
   /** Skills and adapted commands (kind `skill` | `command`). */
   skills: PluginSkillSpec[]
+  /** Markdown agents adapted to subagents. */
+  agents: PluginAgentSpec[]
   mcpServers: PluginMcpServerSpec[]
   inputs: PluginInputSpec[]
   /** Every component found, with its support status. */

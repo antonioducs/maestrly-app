@@ -42,7 +42,6 @@ export type PluginReasonCode =
   | 'requires-app-connector'
   | 'app-connector'
   | 'hooks-not-run'
-  | 'agent-not-adapted'
   | 'component-unsupported'
   | 'entry-invalid'
   | 'transport-unsupported'
@@ -60,7 +59,6 @@ export const PLUGIN_REASON_CODES: readonly PluginReasonCode[] = [
   'requires-app-connector',
   'app-connector',
   'hooks-not-run',
-  'agent-not-adapted',
   'component-unsupported',
   'entry-invalid',
   'transport-unsupported',
@@ -220,6 +218,15 @@ export interface PluginCatalogEntryDto {
   hasLogo: boolean
   policy: PluginPolicyDto
 }
+/** A plugin agent, run as a subagent by every model. */
+export interface PluginAgentDto {
+  name: string
+  description: string
+  /** Maestrly tools it may use; null = the default subagent set (read-only). */
+  tools: string[] | null
+  /** Tools it names that no model has here; it runs without them. */
+  droppedTools: string[]
+}
 export interface PluginInspectionDto extends PluginCatalogEntryDto {
   source: { url: string; path: string | null; commit: string }
   license: { spdx: string | null; text: string | null; truncated: boolean }
@@ -227,6 +234,7 @@ export interface PluginInspectionDto extends PluginCatalogEntryDto {
   links: { privacy?: string; terms?: string; support?: string; repository?: string }
   capabilities: string[]
   skills: PluginSkillDto[]
+  agents: PluginAgentDto[]
   mcpServers: PluginMcpServerDto[]
   components: PluginComponentDto[]
   endpoints: string[]
@@ -250,6 +258,7 @@ export interface InstalledPluginDto {
   updateAvailable: boolean
   setup: { missingInputs: string[]; stdioNeedingConsent: string[]; serversNeedingAuth: string[] }
   skills: PluginSkillDto[]
+  agents: PluginAgentDto[]
   mcpServers: PluginMcpServerDto[]
   inputs: PluginInputDto[]
   policy: PluginPolicyDto

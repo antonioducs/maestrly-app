@@ -18,6 +18,7 @@ const basePackage: PluginPackage = {
   category: null,
   logoPath: null,
   skills: [],
+  agents: [],
   mcpServers: [],
   inputs: [],
   components: [],
@@ -96,10 +97,13 @@ describe('plugin compatibility', () => {
     ],
     ['commands adapted', pkg({ skills: [command('review')] }), 'portable', []],
     [
-      'agents',
-      pkg({ skills: [skill('a')], components: [comp('agent', 'not-run', 'agent-not-adapted')] }),
+      'agents only',
+      pkg({
+        agents: [{ name: 'reviewer', filePath: 'agents/reviewer.md', description: 'x', tools: null, droppedTools: [] }],
+        components: [comp('agent', 'adapted')],
+      }),
       'portable',
-      ['agent-not-adapted'],
+      [],
     ],
     [
       'invalid MCP entry',

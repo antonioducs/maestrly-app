@@ -234,7 +234,10 @@ export async function loadClaudePlugin(
     } else hooksComponent(state, 'plugin.json#hooks')
   }
 
-  agentComponents(state, m.agents === undefined ? ['agents'] : manifestPaths(state, m.agents, 'agents'))
+  const agents = await agentComponents(
+    state,
+    m.agents === undefined ? ['agents'] : manifestPaths(state, m.agents, 'agents')
+  )
 
   // Components outside the portable core: listed, never run.
   if (m.lspServers !== undefined || tree.entries.has('.lsp.json'))
@@ -273,6 +276,7 @@ export async function loadClaudePlugin(
       category: str(m.category),
       logoPath: null,
       skills: [...skills, ...commands],
+      agents,
       mcpServers: mcp.servers,
       inputs,
       components: state.components,

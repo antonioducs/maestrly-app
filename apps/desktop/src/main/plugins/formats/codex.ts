@@ -85,7 +85,7 @@ export async function loadCodexPlugin(
   // Codex does not load a root `hooks.json`, but it ships hook code that never runs here: list it too.
   if (tree.entries.has('hooks.json')) hooksComponent(state, 'hooks.json')
 
-  agentComponents(state, ['agents'])
+  const agents = await agentComponents(state, ['agents'])
   linkComponents(state)
 
   const display = parseCodexInterface(state, manifest.interface)
@@ -110,6 +110,7 @@ export async function loadCodexPlugin(
       category: display.category,
       logoPath: display.logoPath,
       skills: [...skills, ...adapted],
+      agents,
       mcpServers: mcp.servers,
       inputs: mcp.inputs,
       components: state.components,

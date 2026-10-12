@@ -80,7 +80,6 @@ export default {
       'requires-app-connector': 'It depends on ChatGPT app connectors, which only work inside OpenAI products.',
       'app-connector': 'App connector {{subject}} is not included: it only works inside OpenAI products.',
       'hooks-not-run': 'Hooks {{subject}} never run in Maestrly.',
-      'agent-not-adapted': 'Agent {{subject}} is not available as a subagent.',
       'component-unsupported': '{{subject}} is not supported and does not run.',
       'entry-invalid': '{{subject}} is invalid and was skipped.',
       'transport-unsupported': 'MCP server {{subject}} uses a transport Maestrly does not support.',

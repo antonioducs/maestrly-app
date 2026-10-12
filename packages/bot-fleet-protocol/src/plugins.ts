@@ -55,7 +55,6 @@ const reasonCode = z.enum([
   'requires-app-connector',
   'app-connector',
   'hooks-not-run',
-  'agent-not-adapted',
   'component-unsupported',
   'entry-invalid',
   'transport-unsupported',
@@ -128,6 +127,14 @@ const input = z
   .strict()
 const skill = z
   .object({ name: text(200), description: text(4096), kind: z.enum(['skill', 'command']), hasScripts: z.boolean() })
+  .strict()
+const agent = z
+  .object({
+    name: text(64),
+    description: text(4096),
+    tools: list(text(64), 50).nullable(),
+    droppedTools: list(text(200), 50),
+  })
   .strict()
 export const fleetMcpOAuthAccountIdSchema = z.string().regex(/^acc_[0-9a-f]{12}$/)
 /** A name people and models use for an account; unique per server (checked by the environment). */
@@ -226,6 +233,7 @@ export const fleetPluginInspectionSchema = z
       .strict(),
     capabilities: list(text(200), 100),
     skills: list(skill, 2000),
+    agents: list(agent, 500),
     mcpServers: list(mcpServer, 100),
     components: list(component, 2000),
     endpoints: list(text(2048), 500),
@@ -257,6 +265,7 @@ export const fleetInstalledPluginSchema = z
       })
       .strict(),
     skills: list(skill, 2000),
+    agents: list(agent, 500),
     mcpServers: list(mcpServer, 100),
     inputs: list(input, 200),
     policy,

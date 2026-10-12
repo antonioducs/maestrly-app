@@ -32,6 +32,7 @@ import {
   inputDtos,
   inspectTree,
   manifestReferencedPatterns,
+  agentDtos,
   mcpServerDtos,
   skillDtos,
   toCatalogEntryDto,
@@ -385,6 +386,7 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
       serversNeedingAuth: serversNeedingAuth.map((server) => server.key),
     },
     skills: pkg ? skillDtos(pkg) : [],
+    agents: pkg ? agentDtos(pkg) : [],
     mcpServers: pkg
       ? mcpServerDtos(pkg, record, (server) => {
           const summary = server.transport === 'stdio' ? undefined : oauth(server.key)

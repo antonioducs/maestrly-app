@@ -72,7 +72,7 @@ describe('Codex format', () => {
     const pkg = await load('codex-full')
     expect(pkg.format).toBe('codex')
     expect(kinds(pkg)).toEqual(
-      expect.arrayContaining(['app-connector:unavailable', 'command:adapted', 'agent:not-run', 'skill:supported'])
+      expect.arrayContaining(['app-connector:unavailable', 'command:adapted', 'agent:adapted', 'skill:supported'])
     )
     expect(
       pkg.components
@@ -150,7 +150,7 @@ describe('Claude format', () => {
     expect(pkg).toMatchObject({ name: 'claude-full', format: 'claude', displayName: 'Claude Full', version: '1.2.0' })
     expect(pkg.inputs.map((i) => i.id).sort()).toEqual(['config:api_token', 'config:region'])
     expect(kinds(pkg)).toEqual(
-      expect.arrayContaining(['lsp:not-run', 'bin:not-run', 'output-style:not-run', 'hooks:not-run', 'agent:not-run'])
+      expect.arrayContaining(['lsp:not-run', 'bin:not-run', 'output-style:not-run', 'hooks:not-run', 'agent:adapted'])
     )
     const commands = pkg.skills.filter((s) => s.kind === 'command')
     expect(commands).toEqual([

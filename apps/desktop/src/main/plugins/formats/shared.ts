@@ -3,6 +3,7 @@ import { PLUGIN_LIMITS } from '../limits'
 import type { NormalizedMcp } from '../mcp-normalize'
 import type { PackageTree } from '../package-tree'
 import { parsePluginRelativePath } from '../paths'
+import { type PluginAgentSpec, scanAgents } from '../agents-scan'
 import type { PluginIssue } from '../types'
 
 /** Mutable accumulator a format loader fills while it walks one plugin. */
@@ -141,22 +142,19 @@ export function hooksComponent(state: LoadState, name: string): void {
   component(state, 'hooks', name, 'not-run', 'hooks-not-run')
 }
 
-/** Markdown agents in a directory (immediate `*.md` children) or listed files; none run until adapted. */
-export function agentComponents(state: LoadState, sources: readonly string[]): void {
-  const files = new Set<string>()
-  for (const source of sources) {
-    if (/\.md$/i.test(source)) {
-      if (hasFile(state.tree, source)) files.add(source)
-      continue
-    }
-    const prefix = source ? `${source}/` : ''
-    for (const key of state.tree.entries.keys()) {
-      const rel = key.slice(prefix.length)
-      if (key.startsWith(prefix) && !rel.includes('/') && /\.md$/i.test(rel) && !/\.md\.tmpl$/i.test(rel))
-        files.add(key)
-    }
+/**
+ * Markdown agents in a directory (immediate `*.md` children) or listed files, adapted to subagents every model runs.
+ * Each tool an agent names without a portable equivalent is listed as not included.
+ */
+export async function agentComponents(state: LoadState, sources: readonly string[]): Promise<PluginAgentSpec[]> {
+  const { agents, issues } = await scanAgents(state.tree, sources)
+  for (const agent of agents) {
+    component(state, 'agent', agent.filePath, 'adapted')
+    for (const tool of agent.droppedTools)
+      component(state, 'agent', `${agent.name}: ${tool}`, 'not-run', 'component-unsupported')
   }
-  for (const file of [...files].sort()) component(state, 'agent', file, 'not-run', 'agent-not-adapted')
+  for (const issue of issues) component(state, 'agent', issue.path, 'invalid', 'entry-invalid', issue.detail)
+  return agents
 }
 
 export interface DisplayInterface {

@@ -238,6 +238,10 @@ export function inputDtos(inputs: readonly PluginInputSpec[], setIds: ReadonlySe
   }))
 }
 
+export function agentDtos(pkg: PluginPackage): PluginInspectionDto['agents'] {
+  return pkg.agents.map(({ name, description, tools, droppedTools }) => ({ name, description, tools, droppedTools }))
+}
+
 export function skillDtos(pkg: PluginPackage): PluginInspectionDto['skills'] {
   return pkg.skills.map((skill) => ({
     name: skill.name,
@@ -307,6 +311,7 @@ export function toInspectionDto(input: {
     links: pkg?.links ?? {},
     capabilities: pkg?.capabilities ?? [],
     skills: pkg ? skillDtos(pkg) : [],
+    agents: pkg ? agentDtos(pkg) : [],
     mcpServers: pkg ? mcpServerDtos(pkg, input.installed) : [],
     components: pkg?.components ?? [],
     endpoints: inspection.endpoints,

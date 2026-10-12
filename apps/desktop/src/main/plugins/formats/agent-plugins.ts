@@ -137,6 +137,7 @@ export async function loadAgentPlugin(tree: PackageTree, manifest: Record<string
       category: display.category,
       logoPath: display.logoPath,
       skills,
+      agents: [],
       mcpServers: mcp.servers,
       inputs: mcp.inputs,
       components: state.components,
