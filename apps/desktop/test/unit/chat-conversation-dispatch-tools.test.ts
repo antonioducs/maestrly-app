@@ -605,10 +605,10 @@ describe('conversation dispatch wiring across runtimes', () => {
     'cursor-subscription/subagent-runner.ts',
     'maestro-worker-tools.ts',
   ])('%s never forwards the tools to children', (file) => {
-    expect(read(file)).toContain('...CONVERSATION_DISPATCH_TOOL_NAMES')
+    expect(read(file)).toContain('...PARENT_ONLY_CONVERSATION_TOOL_NAMES')
   })
 
   it('Codex child tool runtimes exclude the tools by name', () => {
-    expect(read('codex-subscription/runner.ts').match(/!isConversationDispatchToolName\(/g)).toHaveLength(3)
+    expect(read('codex-subscription/runner.ts').match(/!isParentOnlyConversationToolName\(/g)).toHaveLength(3)
   })
 })

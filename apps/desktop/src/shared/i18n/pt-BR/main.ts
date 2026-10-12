@@ -28,6 +28,12 @@ export default {
     confirmStart: 'Iniciar',
     confirmCancel: 'Não iniciar',
   },
+  conversationLink: {
+    sendHeader: 'Mensagem para outra conversa',
+    sendQuestion: 'Enviar esta mensagem para “{{name}}”{{workspace}}?\n\n{{preview}}',
+    sendConfirm: 'Enviar',
+    sendCancel: 'Não enviar',
+  },
   debug: {
     extTimeout:
       'timeout: a extensão não respondeu. Abra a aba “Código” desta conversa (o VS Code precisa estar carregado para controlar o debug).',

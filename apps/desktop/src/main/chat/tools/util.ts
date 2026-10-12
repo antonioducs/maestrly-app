@@ -80,6 +80,11 @@ export interface ToolContext {
    * reviewer, restricted-mode and host-generated turns, where the tools refuse to run.
    */
   conversationDispatch?: import('./conversation-dispatch').ConversationDispatchToolRuntime
+  /**
+   * Main-turn-only runtime for the tools that read and message other conversations, bound to the admitted turn (one
+   * the person typed, or one started by another conversation). Absent in child/subagent, reviewer and restricted turns.
+   */
+  conversationLink?: import('./conversation-link').ConversationLinkToolRuntime
 }
 
 /** Artifact already written to the store (`generated-images.ts`) — only the opaque handle travels, never bytes. */

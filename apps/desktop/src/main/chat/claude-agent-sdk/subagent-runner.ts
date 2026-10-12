@@ -33,7 +33,7 @@ import { harnessSubagentPrompt } from '../harness/host-contracts'
 import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import type { ResolvedHarness } from '../harness/types'
 import { chatDiag } from '../diag-log'
-import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { conversationShellEnv, type ConversationShellEnv } from '../conversation-env'
 
 const FORBIDDEN_CHILD_TOOLS = new Set<string>([
@@ -47,7 +47,7 @@ const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'list_delegations',
   'inspect_subagent',
   'cancel_delegation',
-  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 ])
 
 export interface RunClaudeSubagentArgs {
