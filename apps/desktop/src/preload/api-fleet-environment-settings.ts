@@ -58,9 +58,11 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
     ipcRenderer.invoke('fleet:settings:setPluginSkillEnabled', environmentId, input),
   mcpOAuthStatuses: (environmentId, input) =>
     ipcRenderer.invoke('fleet:settings:mcpOAuthStatuses', environmentId, input),
-  mcpOAuthDescriptor: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:mcpOAuthDescriptor', environmentId, input),
   removeMcpOAuth: (environmentId, input) => ipcRenderer.invoke('fleet:settings:removeMcpOAuth', environmentId, input),
+  patchMcpOAuthAccount: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:patchMcpOAuthAccount', environmentId, input),
+  setMcpOAuthClient: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setMcpOAuthClient', environmentId, input),
 }
 
 /**
@@ -70,8 +72,11 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
 export const fleetEnvironmentPlugins = {
   bring: (environmentId: string, key: string): Promise<PluginOpResult<InstalledPluginDto>> =>
     ipcRenderer.invoke('fleet:plugins:bring', environmentId, key),
-  mcpOAuthConnect: (environmentId: string, serverId: string): Promise<McpOAuthConnectResult> =>
-    ipcRenderer.invoke('fleet:mcp-oauth:connect', environmentId, serverId),
+  mcpOAuthConnect: (
+    environmentId: string,
+    serverId: string,
+    options?: { accountId?: string; label?: string }
+  ): Promise<McpOAuthConnectResult> => ipcRenderer.invoke('fleet:mcp-oauth:connect', environmentId, serverId, options),
   mcpOAuthCancel: (environmentId: string, serverId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:mcp-oauth:cancel', environmentId, serverId),
 }

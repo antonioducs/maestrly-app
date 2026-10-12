@@ -1,7 +1,7 @@
 import { shell, type WebContents } from 'electron'
 import { z } from 'zod'
 import { isValidHostId, LOCAL_HOST_ID } from '../../shared/host-key'
-import type { McpOAuthConnectOptions, McpOAuthConnectResult } from '../../shared/chat'
+import type { McpOAuthConnectOptions, McpOAuthConnectResult, McpOAuthSummaryDto } from '../../shared/chat'
 import type { IpcRegistrar } from '../ipc-registrar'
 import { invalidateMcpRuntime, listRuntimeMcpServers } from './mcp'
 import {
@@ -89,14 +89,11 @@ export function mcpOAuthDescriptor(id: unknown, account?: unknown): McpOAuthDesc
   }
 }
 
-/** Sign-in status of this host's remote servers, user and plugin servers alike; those without one are left out. */
-export function mcpOAuthStatuses(): { id: string; status: 'connected' | 'needs-auth' }[] {
+/** Sign-in of this host's remote servers, user and plugin servers alike; those with nothing to show are left out. */
+export function mcpOAuthStatuses(): ({ id: string } & McpOAuthSummaryDto)[] {
   return listRuntimeMcpServers({ includeInactivePlugins: true }).flatMap((server) => {
     const summary = mcpOAuthField(server)
-    if (!summary) return []
-    const needs = summary.needsAuth || summary.accounts.some((account) => account.status === 'needs-auth')
-    if (!needs && !summary.accounts.length) return []
-    return [{ id: server.id, status: needs ? ('needs-auth' as const) : ('connected' as const) }]
+    return summary ? [{ id: server.id, ...summary }] : []
   })
 }
 

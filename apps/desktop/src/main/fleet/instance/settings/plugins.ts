@@ -1,7 +1,14 @@
 import os from 'node:os'
 import type { FleetEnvironmentSettingsService, FleetPluginSettingsOperation } from '@maestrly/bot-fleet-protocol'
 import type { PluginOpResult } from '../../../../shared/plugins'
-import { forgetMcpOAuthChannel, mcpOAuthDescriptor, mcpOAuthStatuses, storeMcpOAuth } from '../../../chat/mcp-oauth-ipc'
+import {
+  forgetMcpOAuthChannel,
+  mcpOAuthDescriptor,
+  mcpOAuthStatuses,
+  patchMcpOAuthAccountChannel,
+  setMcpOAuthClientChannel,
+  storeMcpOAuth,
+} from '../../../chat/mcp-oauth-ipc'
 import { listSkillsState, setSkillEnabledGlobal } from '../../../chat/skill-state'
 import * as plugins from '../../../plugins/service'
 
@@ -66,15 +73,11 @@ export const createPluginSettingsService = (
     return { ok: true }
   },
   mcpOAuthStatuses: async () => ({ servers: mcpOAuthStatuses() }),
-  mcpOAuthDescriptor: async ({ id }) => ({ descriptor: mcpOAuthDescriptor(id) }),
-  setMcpOAuth: async ({ id, bundle }) => {
-    // One sign-in per environment server until the protocol carries accounts.
-    const stored = storeMcpOAuth(id, bundle)
-    if (stored.ok) return { ok: true }
-    return {
-      ok: false,
-      error: stored.error === 'server-changed' || stored.error === 'storage' ? stored.error : 'invalid-input',
-    }
-  },
-  removeMcpOAuth: async ({ id }) => ({ removed: forgetMcpOAuthChannel(id).ok }),
+  mcpOAuthDescriptor: async ({ id, accountId }) => ({ descriptor: mcpOAuthDescriptor(id, accountId) }),
+  // An environment's accounts serve all of its conversations: no project scope.
+  setMcpOAuth: async ({ id, bundle, target }) => storeMcpOAuth(id, bundle, target),
+  removeMcpOAuth: async ({ id, accountId }) => ({ removed: forgetMcpOAuthChannel(id, accountId).ok }),
+  patchMcpOAuthAccount: async ({ id, accountId, label }) => patchMcpOAuthAccountChannel(id, accountId, { label }),
+  setMcpOAuthClient: async ({ id, client }) =>
+    setMcpOAuthClientChannel(id, client).ok ? { ok: true } : { ok: false, error: 'storage' },
 })

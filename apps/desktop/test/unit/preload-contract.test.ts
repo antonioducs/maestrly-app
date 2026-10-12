@@ -386,8 +386,9 @@ describe('preload API — exposure', () => {
   })
 
   it('exposes a fixed, environment-addressed method for every settings operation', () => {
-    // Plugin values and sign-in tokens never pass through a renderer: those two operations have no renderer method.
-    const mainOnly = ['bringPlugin', 'setMcpOAuth']
+    // Plugin values, sign-in tokens and the own OAuth client's secret never pass through a renderer: those operations
+    // have no renderer method.
+    const mainOnly = ['bringPlugin', 'setMcpOAuth', 'mcpOAuthDescriptor']
     expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(
       Object.keys(FLEET_SETTINGS_OPERATIONS)
         .filter((name) => !mainOnly.includes(name))
@@ -407,7 +408,11 @@ describe('preload API — exposure', () => {
     fleetEnvironmentPlugins.bring('env-1', 'demo@market')
     expect(invokeSpy).toHaveBeenLastCalledWith('fleet:plugins:bring', 'env-1', 'demo@market')
     fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1')
-    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1', undefined)
+    fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1', { accountId: 'acc_000000000001' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1', {
+      accountId: 'acc_000000000001',
+    })
     fleetEnvironmentPlugins.mcpOAuthCancel('env-1', 'mcp_1')
     expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', 'env-1', 'mcp_1')
   })

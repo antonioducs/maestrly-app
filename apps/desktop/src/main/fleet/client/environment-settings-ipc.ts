@@ -3,6 +3,7 @@ import {
   FLEET_SETTINGS_OPERATIONS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   fleetEnvironmentIdSchema,
+  fleetMcpOAuthTargetSchema,
   fleetMcpServerIdSchema,
   fleetPluginKeySchema,
   fleetSettingsRouteKey,
@@ -62,7 +63,8 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
         })
       )
     }
-  // `bringPlugin` and `setMcpOAuth` have no channel: their inputs are built below, in this process.
+  // `bringPlugin`, `setMcpOAuth` and `mcpOAuthDescriptor` have no channel: their inputs or outputs (plugin values,
+  // tokens, the own OAuth client's secret) stay in this process.
   reg.handle('fleet:settings:plugins', forward('plugins'))
   reg.handle('fleet:settings:pluginCatalog', forward('pluginCatalog'))
   reg.handle('fleet:settings:pluginInspect', forward('pluginInspect'))
@@ -77,8 +79,9 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
   reg.handle('fleet:settings:pluginSkills', forward('pluginSkills'))
   reg.mhandle('fleet:settings:setPluginSkillEnabled', forward('setPluginSkillEnabled'))
   reg.handle('fleet:settings:mcpOAuthStatuses', forward('mcpOAuthStatuses'))
-  reg.handle('fleet:settings:mcpOAuthDescriptor', forward('mcpOAuthDescriptor'))
   reg.mhandle('fleet:settings:removeMcpOAuth', forward('removeMcpOAuth'))
+  reg.mhandle('fleet:settings:patchMcpOAuthAccount', forward('patchMcpOAuthAccount'))
+  reg.mhandle('fleet:settings:setMcpOAuthClient', forward('setMcpOAuthClient'))
   // Bringing a plugin sends the values entered on this computer: the payload is built here, never in a renderer.
   reg.mhandle(
     'fleet:plugins:bring',
@@ -94,25 +97,38 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
   // Signing in to an environment's MCP server: this computer's browser, the environment keeps the result.
   reg.mhandle(
     'fleet:mcp-oauth:connect',
-    async (_event, rawId: unknown, rawServerId: unknown): Promise<McpOAuthConnectResult> => {
+    async (_event, rawId: unknown, rawServerId: unknown, rawOptions?: unknown): Promise<McpOAuthConnectResult> => {
       const eid = pluginTarget(rawId)
       const serverId = fleetMcpServerIdSchema.parse(rawServerId)
+      // An environment's accounts serve all of its conversations: an account to sign in again, or a label.
+      const options = fleetMcpOAuthTargetSchema.parse(rawOptions ?? {})
       return connectMcpOAuth(
         {
-          descriptor: async (id) =>
+          descriptor: async (id, accountId) =>
             FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.response.parse(
-              await fleet.call('settingsMcpOAuthDescriptor', { params: { eid, id } })
+              await fleet.call('settingsMcpOAuthDescriptor', {
+                params: { eid, id },
+                body: { id, ...(accountId ? { accountId } : {}) },
+              })
             ).descriptor as McpOAuthDescriptor | null,
-          // An environment keeps one sign-in per server until its protocol carries accounts: the e-mail stays here.
-          store: async (id, { email: _email, ...bundle }: McpOAuthBundle) => {
-            const stored = FLEET_SETTINGS_OPERATIONS.setMcpOAuth.response.parse(
-              await fleet.call('settingsSetMcpOAuth', { params: { eid, id }, body: { id, bundle } })
-            )
-            return (stored.ok ? { ok: true, accountId: '' } : stored) as McpOAuthStoreResult
-          },
+          store: async (id, bundle: McpOAuthBundle, target) =>
+            FLEET_SETTINGS_OPERATIONS.setMcpOAuth.response.parse(
+              await fleet.call('settingsSetMcpOAuth', {
+                params: { eid, id },
+                body: {
+                  id,
+                  bundle,
+                  target: {
+                    ...(target.accountId ? { accountId: target.accountId } : {}),
+                    ...(target.label ? { label: target.label } : {}),
+                  },
+                },
+              })
+            ) as McpOAuthStoreResult,
         },
         `environment:${eid}`,
-        serverId
+        serverId,
+        options
       )
     }
   )

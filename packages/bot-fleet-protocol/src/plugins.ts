@@ -129,10 +129,18 @@ const input = z
 const skill = z
   .object({ name: text(200), description: text(4096), kind: z.enum(['skill', 'command']), hasScripts: z.boolean() })
   .strict()
+export const fleetMcpOAuthAccountIdSchema = z.string().regex(/^acc_[0-9a-f]{12}$/)
+/** A name people and models use for an account; unique per server (checked by the environment). */
+export const fleetMcpOAuthAccountLabelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .regex(/^[\p{L}\p{N} ._@+-]+$/u)
 /** One signed-in account of a remote MCP server; never a token. */
 export const fleetMcpOAuthAccountSchema = z
   .object({
-    id: z.string().regex(/^acc_[0-9a-f]{12}$/),
+    id: fleetMcpOAuthAccountIdSchema,
     label: text(40),
     email: optionalText(320),
     scope: fleetPluginScopeSchema,
@@ -369,13 +377,18 @@ export const fleetPluginSkillSchema = z
   .strict()
 export const fleetPluginSkillsSchema = z.object({ skills: list(fleetPluginSkillSchema, 4000) }).strict()
 
-/** Sign-in status of the environment's remote MCP servers, user and plugin servers alike. */
+/** Sign-in of the environment's remote MCP servers, user and plugin servers alike: accounts, never tokens or secrets. */
 export const fleetMcpOAuthStatusesSchema = z
-  .object({
-    servers: list(z.object({ id: fleetMcpServerIdSchema, status: z.enum(['connected', 'needs-auth']) }).strict(), 600),
-  })
+  .object({ servers: list(fleetMcpOAuthSummarySchema.extend({ id: fleetMcpServerIdSchema }).strict(), 600) })
   .strict()
-/** Credential-free description of a server, for the owner's computer to run the sign-in. */
+/** The person's own OAuth client of a server, as they enter it; its secret is never sent back. */
+export const fleetMcpOAuthClientSchema = z
+  .object({ clientId: z.string().trim().min(1).max(4096), clientSecret: z.string().min(1).max(4096).optional() })
+  .strict()
+/**
+ * What the owner's computer needs to sign in to a server of the environment: no header, token or command. It carries
+ * the own client, if any, so only the owner's computer's main process asks for it.
+ */
 export const fleetMcpOAuthDescriptorSchema = z
   .object({
     serverId: fleetMcpServerIdSchema,
@@ -383,6 +396,9 @@ export const fleetMcpOAuthDescriptorSchema = z
     url: text(8192),
     scopes: list(text(200), 50).optional(),
     resource: text(2048).optional(),
+    client: fleetMcpOAuthClientSchema.optional(),
+    loginHint: text(320).optional(),
+    selectAccount: z.boolean().optional(),
   })
   .strict()
 const jsonObject = z.record(z.string(), z.unknown())
@@ -398,9 +414,32 @@ export const fleetMcpOAuthBundleSchema = z
     tokens: jsonObject.and(z.object({ access_token: z.string().min(1).max(65536), token_type: z.string().max(64) })),
     discoveryState: jsonObject.optional(),
     scopes: list(z.string().min(1).max(200), 50).optional(),
+    email: z.string().min(1).max(320).optional(),
   })
   .strict()
+/** Where a finished sign-in goes: an account signed in again, or a new one (an environment's accounts serve it all). */
+export const fleetMcpOAuthTargetSchema = z
+  .object({ accountId: fleetMcpOAuthAccountIdSchema.optional(), label: fleetMcpOAuthAccountLabelSchema.optional() })
+  .strict()
 export const fleetMcpOAuthStoreResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), accountId: fleetMcpOAuthAccountIdSchema }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z.enum(['invalid-input', 'server-changed', 'storage', 'label-taken', 'unknown-account']),
+    })
+    .strict(),
+])
+export const fleetMcpOAuthPatchResultSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true) }).strict(),
-  z.object({ ok: z.literal(false), error: z.enum(['invalid-input', 'server-changed', 'storage']) }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      error: z.enum(['unknown-account', 'label-taken', 'invalid-label', 'storage', 'invalid-input']),
+    })
+    .strict(),
+])
+export const fleetMcpOAuthClientResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }).strict(),
+  z.object({ ok: z.literal(false), error: z.enum(['storage', 'invalid-input']) }).strict(),
 ])

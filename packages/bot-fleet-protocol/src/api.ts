@@ -1136,9 +1136,9 @@ export const FLEET_GATEWAY_ROUTES = {
     response: FLEET_SETTINGS_OPERATIONS.mcpOAuthStatuses.response,
   },
   settingsMcpOAuthDescriptor: {
-    method: 'GET',
-    path: '/v1/environments/:eid/settings/mcp-oauth/:id',
-    body: null,
+    method: 'POST',
+    path: '/v1/environments/:eid/settings/mcp-oauth/:id/descriptor',
+    body: FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.input,
     response: FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.response,
   },
   settingsSetMcpOAuth: {
@@ -1152,6 +1152,18 @@ export const FLEET_GATEWAY_ROUTES = {
     path: '/v1/environments/:eid/settings/mcp-oauth/:id',
     body: FLEET_SETTINGS_OPERATIONS.removeMcpOAuth.input,
     response: FLEET_SETTINGS_OPERATIONS.removeMcpOAuth.response,
+  },
+  settingsPatchMcpOAuthAccount: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid/settings/mcp-oauth/:id/accounts/:accountId',
+    body: FLEET_SETTINGS_OPERATIONS.patchMcpOAuthAccount.input,
+    response: FLEET_SETTINGS_OPERATIONS.patchMcpOAuthAccount.response,
+  },
+  settingsSetMcpOAuthClient: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/mcp-oauth/:id/client',
+    body: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.input,
+    response: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.response,
   },
   artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
   artifactHostPatch: {
@@ -1934,9 +1946,9 @@ export const FLEET_INSTANCE_ROUTES = {
     response: FLEET_SETTINGS_OPERATIONS.mcpOAuthStatuses.response,
   },
   settingsMcpOAuthDescriptor: {
-    method: 'GET',
-    path: '/v1/settings/mcp-oauth/:id',
-    body: null,
+    method: 'POST',
+    path: '/v1/settings/mcp-oauth/:id/descriptor',
+    body: FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.input,
     response: FLEET_SETTINGS_OPERATIONS.mcpOAuthDescriptor.response,
   },
   settingsSetMcpOAuth: {
@@ -1950,6 +1962,18 @@ export const FLEET_INSTANCE_ROUTES = {
     path: '/v1/settings/mcp-oauth/:id',
     body: FLEET_SETTINGS_OPERATIONS.removeMcpOAuth.input,
     response: FLEET_SETTINGS_OPERATIONS.removeMcpOAuth.response,
+  },
+  settingsPatchMcpOAuthAccount: {
+    method: 'PATCH',
+    path: '/v1/settings/mcp-oauth/:id/accounts/:accountId',
+    body: FLEET_SETTINGS_OPERATIONS.patchMcpOAuthAccount.input,
+    response: FLEET_SETTINGS_OPERATIONS.patchMcpOAuthAccount.response,
+  },
+  settingsSetMcpOAuthClient: {
+    method: 'PUT',
+    path: '/v1/settings/mcp-oauth/:id/client',
+    body: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.input,
+    response: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.response,
   },
   memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
   memoryPatch: {

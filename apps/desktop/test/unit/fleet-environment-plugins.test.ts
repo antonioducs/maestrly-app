@@ -13,6 +13,7 @@ import {
 import { effectiveSkills } from '../../src/main/chat/skill-state'
 import { pluginBringPayload } from '../../src/main/fleet/client/environment-plugins'
 import { registerFleetEnvironmentSettingsIpc } from '../../src/main/fleet/client/environment-settings-ipc'
+import { addMcpServer } from '../../src/main/chat/mcp'
 import { createPluginSettingsService } from '../../src/main/fleet/instance/settings/plugins'
 import { createSkillSettingsService } from '../../src/main/fleet/instance/settings/skills'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
@@ -165,6 +166,71 @@ describe("a bot environment's plugins, served by its own engine", () => {
     ).toEqual({ ok: true })
   })
 
+  it('keeps several sign-in accounts and an own client per server, and never answers with a secret', async () => {
+    const server = addMcpServer({ name: 'Mail', transport: 'http', url: 'https://mail.example.test/mcp' })
+    const bundle = (token: string, email: string) => ({
+      url: 'https://mail.example.test/mcp',
+      redirectUri: 'http://127.0.0.1:4567/callback',
+      clientInformation: { client_id: 'own', client_secret: 'synthetic-secret' },
+      tokens: { access_token: token, token_type: 'Bearer' },
+      email,
+    })
+    const first = strict(
+      'setMcpOAuth',
+      await pluginSettingsService.setMcpOAuth({ id: server.id, bundle: bundle('a', 'alice@example.test'), target: {} })
+    )
+    const second = strict(
+      'setMcpOAuth',
+      await pluginSettingsService.setMcpOAuth({ id: server.id, bundle: bundle('b', 'bob@example.test'), target: {} })
+    )
+    if (!first.ok || !second.ok) throw new Error('sign-in not stored')
+    expect(
+      strict(
+        'patchMcpOAuthAccount',
+        await pluginSettingsService.patchMcpOAuthAccount({ id: server.id, accountId: second.accountId, label: 'Work' })
+      )
+    ).toEqual({ ok: true })
+    expect(
+      strict(
+        'setMcpOAuthClient',
+        await pluginSettingsService.setMcpOAuthClient({
+          id: server.id,
+          client: { clientId: 'own', clientSecret: 'synthetic-secret' },
+        })
+      )
+    ).toEqual({ ok: true })
+    const statuses = strict('mcpOAuthStatuses', await pluginSettingsService.mcpOAuthStatuses({}))
+    expect(statuses.servers).toEqual([
+      {
+        id: server.id,
+        needsAuth: false,
+        client: { clientId: 'own' },
+        accounts: [
+          expect.objectContaining({ id: first.accountId, label: 'alice@example.test', scope: { kind: 'global' } }),
+          expect.objectContaining({ id: second.accountId, label: 'Work', email: 'bob@example.test' }),
+        ],
+      },
+    ])
+    expect(JSON.stringify(statuses)).not.toContain('synthetic-secret')
+    // Signing an account in again names it to the provider.
+    const descriptor = strict(
+      'mcpOAuthDescriptor',
+      await pluginSettingsService.mcpOAuthDescriptor({ id: server.id, accountId: first.accountId })
+    ).descriptor
+    expect(descriptor).toMatchObject({ loginHint: 'alice@example.test', client: { clientId: 'own' } })
+    expect(
+      strict(
+        'removeMcpOAuth',
+        await pluginSettingsService.removeMcpOAuth({ id: server.id, accountId: first.accountId })
+      )
+    ).toEqual({ removed: true })
+    expect(
+      strict('mcpOAuthStatuses', await pluginSettingsService.mcpOAuthStatuses({})).servers[0].accounts.map(
+        (account) => account.label
+      )
+    ).toEqual(['Work'])
+  })
+
   it('brings a plugin at the exact commit it was approved at, even after its source moved on', async () => {
     const url = pathToFileURL(repo.dir).href
     // The owner's computer approved version 1: its fingerprint travels with the bring.
@@ -280,7 +346,9 @@ describe('environment plugin IPC on this computer', () => {
     const { handlers, mutations } = setup()
     for (const operation of FLEET_PLUGIN_SETTINGS_OPERATIONS) {
       const channel = `fleet:settings:${operation}`
-      if (operation === 'bringPlugin' || operation === 'setMcpOAuth') expect(handlers.has(channel)).toBe(false)
+      // Main-only: plugin values, tokens, and the descriptor that carries the own OAuth client's secret.
+      if (operation === 'bringPlugin' || operation === 'setMcpOAuth' || operation === 'mcpOAuthDescriptor')
+        expect(handlers.has(channel)).toBe(false)
       else expect(mutations.has(channel)).toBe(FLEET_SETTINGS_OPERATIONS[operation].method !== 'GET')
     }
     expect(mutations.has('fleet:plugins:bring')).toBe(true)

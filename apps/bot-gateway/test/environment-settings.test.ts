@@ -102,6 +102,36 @@ describe('environment settings routes', () => {
     expect(invalid.status).not.toBe(200)
     expect(await invalid.text()).not.toContain('should-not-cross')
   })
+  it('forwards an own OAuth client and account changes, and records them as MCP settings', async () => {
+    const { h, eid, path } = await setup([FLEET_ENVIRONMENT_SETTINGS_FEATURE, FLEET_ENVIRONMENT_PLUGINS_FEATURE])
+    vi.spyOn(h.store, 'botsOfEnvironment').mockReturnValue([])
+    const activity = vi.spyOn(h.lifecycle, 'recordEnvironmentActivity')
+    const forward = vi
+      .spyOn(InstanceClient.prototype, 'settingsPluginOperation')
+      .mockResolvedValue({ ok: true } as never)
+    const id = 'plg_' + '0'.repeat(20)
+    const client = { clientId: 'own', clientSecret: 'synthetic' }
+    const set = await h.request('PUT', `${path}/mcp-oauth/${id}/client`, { id, client })
+    expect(set.status).toBe(200)
+    expect(await set.json()).toEqual({ ok: true })
+    expect(forward).toHaveBeenLastCalledWith('setMcpOAuthClient', { id, client })
+    const accountId = 'acc_0123456789ab'
+    const renamed = await h.request('PATCH', `${path}/mcp-oauth/${id}/accounts/${accountId}`, {
+      id,
+      accountId,
+      label: 'Work',
+    })
+    expect(renamed.status).toBe(200)
+    expect(forward).toHaveBeenLastCalledWith('patchMcpOAuthAccount', { id, accountId, label: 'Work' })
+    expect(activity).toHaveBeenCalledWith(
+      eid,
+      'bot_configured',
+      expect.objectContaining({ mcpServers: 1 }),
+      expect.anything()
+    )
+    expect(activity.mock.calls.every(([, , counts]) => (counts as { plugins?: number }).plugins !== 1)).toBe(true)
+  })
+
   it('calls the instance with path identifiers, a body for writes and none for reads', async () => {
     const seen: string[] = []
     const server = http.createServer(async (req, res) => {

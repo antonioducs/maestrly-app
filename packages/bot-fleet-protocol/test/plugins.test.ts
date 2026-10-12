@@ -120,9 +120,16 @@ describe('environment plugins contract', () => {
     expect(
       fleetMcpOAuthBundleSchema.safeParse({ ...bundle, redirectUri: 'https://evil.example/callback' }).success
     ).toBe(false)
+    const server = { id: 'plg_' + '0'.repeat(20), needsAuth: false, accounts: [], client: null }
+    expect(FLEET_SETTINGS_OPERATIONS.mcpOAuthStatuses.response.safeParse({ servers: [server] }).success).toBe(true)
     expect(
       FLEET_SETTINGS_OPERATIONS.mcpOAuthStatuses.response.safeParse({
-        servers: [{ id: 'plg_' + '0'.repeat(20), status: 'connected', tokens: bundle.tokens }],
+        servers: [{ ...server, tokens: bundle.tokens }],
+      }).success
+    ).toBe(false)
+    expect(
+      FLEET_SETTINGS_OPERATIONS.mcpOAuthStatuses.response.safeParse({
+        servers: [{ ...server, client: { clientId: 'own', clientSecret: 'synthetic' } }],
       }).success
     ).toBe(false)
     expect(
@@ -138,6 +145,46 @@ describe('environment plugins contract', () => {
     expect(level.safeParse({ level: 'unavailable', reasons: [{ code: 'requires-app-connector' }] }).success).toBe(true)
     expect(level.safeParse({ level: 'portable', reasons: [{ code: 'app-connector', subject: 'x' }] }).success).toBe(
       true
+    )
+  })
+
+  it('keeps several accounts per server and an own client, whose secret goes only one way', () => {
+    const id = 'plg_' + '0'.repeat(20)
+    const accountId = 'acc_0123456789ab'
+    const ops = FLEET_SETTINGS_OPERATIONS
+    expect(ops.setMcpOAuthClient.input.safeParse({ id, client: null }).success).toBe(true)
+    expect(ops.setMcpOAuthClient.input.safeParse({ id, client: { clientId: 'own', clientSecret: 's' } }).success).toBe(
+      true
+    )
+    expect(ops.setMcpOAuthClient.input.safeParse({ id, client: { clientId: 'x'.repeat(4097) } }).success).toBe(false)
+    expect(ops.patchMcpOAuthAccount.input.safeParse({ id, accountId, label: 'Work' }).success).toBe(true)
+    expect(ops.patchMcpOAuthAccount.input.safeParse({ id, accountId, label: 'bad/label' }).success).toBe(false)
+    expect(ops.patchMcpOAuthAccount.input.safeParse({ id, accountId, label: 'x'.repeat(41) }).success).toBe(false)
+    expect(ops.removeMcpOAuth.input.safeParse({ id, accountId }).success).toBe(true)
+    expect(ops.mcpOAuthDescriptor.input.safeParse({ id, accountId }).success).toBe(true)
+    expect(
+      ops.setMcpOAuth.input.safeParse({
+        id,
+        bundle: {
+          url: 'https://mcp.example.test/mcp',
+          redirectUri: 'http://127.0.0.1:4567/callback',
+          clientInformation: { client_id: 'c' },
+          tokens: { access_token: 'a', token_type: 'Bearer' },
+          email: 'alice@example.test',
+        },
+        target: { accountId },
+      }).success
+    ).toBe(true)
+    expect(ops.setMcpOAuth.response.safeParse({ ok: true, accountId }).success).toBe(true)
+    expect(ops.setMcpOAuth.response.safeParse({ ok: false, error: 'label-taken' }).success).toBe(true)
+    // The descriptor carries the own client to the owner's computer only: no renderer reaches it.
+    expect(
+      ops.mcpOAuthDescriptor.response.safeParse({
+        descriptor: { serverId: id, name: 'x', url: 'https://mcp.example.test/mcp', client: { clientId: 'own' } },
+      }).success
+    ).toBe(true)
+    expect(FLEET_PLUGIN_SETTINGS_OPERATIONS).toEqual(
+      expect.arrayContaining(['patchMcpOAuthAccount', 'setMcpOAuthClient'])
     )
   })
 })

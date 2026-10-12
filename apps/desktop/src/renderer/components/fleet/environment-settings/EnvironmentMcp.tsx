@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FLEET_ENVIRONMENT_PLUGINS_FEATURE, type FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
-import { McpSignIn, type McpSignInActions } from '@/components/chat/McpSignIn'
+import { McpSignIn, type McpSignInActions, signInStatus } from '@/components/chat/McpSignIn'
 import { requestMainNavigation } from '@/lib/main-navigation'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -44,7 +44,14 @@ function McpPanel({ environment, fleet, onDirtyChange }: EnvironmentSettingsSect
     if (!signInSupported) return
     try {
       const { servers } = await resource.source.mcpOAuthStatuses({})
-      setAuth(Object.fromEntries(servers.map((server) => [server.id, server.status])))
+      setAuth(
+        Object.fromEntries(
+          servers.flatMap((server) => {
+            const status = signInStatus(server)
+            return status ? [[server.id, status]] : []
+          })
+        )
+      )
     } catch {
       // Sign-in status is informative; the list itself reports connection problems.
     }

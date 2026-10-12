@@ -1,10 +1,16 @@
 import { z } from 'zod'
 import {
   fleetInstalledPluginSchema,
+  fleetMcpOAuthAccountIdSchema,
+  fleetMcpOAuthAccountLabelSchema,
   fleetMcpOAuthBundleSchema,
+  fleetMcpOAuthClientResultSchema,
+  fleetMcpOAuthClientSchema,
   fleetMcpOAuthDescriptorSchema,
+  fleetMcpOAuthPatchResultSchema,
   fleetMcpOAuthStatusesSchema,
   fleetMcpOAuthStoreResultSchema,
+  fleetMcpOAuthTargetSchema,
   fleetMcpServerIdSchema,
   fleetPluginBringInputSchema,
   fleetPluginCatalogEntrySchema,
@@ -464,18 +470,43 @@ export const FLEET_SETTINGS_OPERATIONS = {
   ),
   mcpOAuthStatuses: operation('GET', '/mcp-oauth', empty, fleetMcpOAuthStatusesSchema),
   mcpOAuthDescriptor: operation(
-    'GET',
-    '/mcp-oauth/:id',
-    z.object({ id: fleetMcpServerIdSchema }).strict(),
+    'POST',
+    '/mcp-oauth/:id/descriptor',
+    z.object({ id: fleetMcpServerIdSchema, accountId: fleetMcpOAuthAccountIdSchema.optional() }).strict(),
     z.object({ descriptor: fleetMcpOAuthDescriptorSchema.nullable() }).strict()
   ),
   setMcpOAuth: operation(
     'PUT',
     '/mcp-oauth/:id',
-    z.object({ id: fleetMcpServerIdSchema, bundle: fleetMcpOAuthBundleSchema }).strict(),
+    z
+      .object({ id: fleetMcpServerIdSchema, bundle: fleetMcpOAuthBundleSchema, target: fleetMcpOAuthTargetSchema })
+      .strict(),
     fleetMcpOAuthStoreResultSchema
   ),
-  removeMcpOAuth: operation('DELETE', '/mcp-oauth/:id', z.object({ id: fleetMcpServerIdSchema }).strict(), removed),
+  removeMcpOAuth: operation(
+    'DELETE',
+    '/mcp-oauth/:id',
+    z.object({ id: fleetMcpServerIdSchema, accountId: fleetMcpOAuthAccountIdSchema.optional() }).strict(),
+    removed
+  ),
+  patchMcpOAuthAccount: operation(
+    'PATCH',
+    '/mcp-oauth/:id/accounts/:accountId',
+    z
+      .object({
+        id: fleetMcpServerIdSchema,
+        accountId: fleetMcpOAuthAccountIdSchema,
+        label: fleetMcpOAuthAccountLabelSchema,
+      })
+      .strict(),
+    fleetMcpOAuthPatchResultSchema
+  ),
+  setMcpOAuthClient: operation(
+    'PUT',
+    '/mcp-oauth/:id/client',
+    z.object({ id: fleetMcpServerIdSchema, client: fleetMcpOAuthClientSchema.nullable() }).strict(),
+    fleetMcpOAuthClientResultSchema
+  ),
 } as const
 export type FleetSettingsOperation = keyof typeof FLEET_SETTINGS_OPERATIONS
 /** Operations an environment serves only with `FLEET_ENVIRONMENT_PLUGINS_FEATURE`. */
@@ -498,6 +529,8 @@ export const FLEET_PLUGIN_SETTINGS_OPERATIONS = [
   'mcpOAuthDescriptor',
   'setMcpOAuth',
   'removeMcpOAuth',
+  'patchMcpOAuthAccount',
+  'setMcpOAuthClient',
 ] as const satisfies readonly FleetSettingsOperation[]
 export type FleetPluginSettingsOperation = (typeof FLEET_PLUGIN_SETTINGS_OPERATIONS)[number]
 export const isFleetPluginSettingsOperation = (value: string): value is FleetPluginSettingsOperation =>
@@ -531,9 +564,9 @@ export type FleetEnvironmentSettingsService = {
 }
 /**
  * Operations only the owner's computer's main process calls: their inputs carry a plugin's saved values or OAuth tokens,
- * which never pass through a renderer.
+ * and the sign-in descriptor carries the own OAuth client's secret; none of them passes through a renderer.
  */
-export type FleetSettingsMainOnlyOperation = 'bringPlugin' | 'setMcpOAuth'
+export type FleetSettingsMainOnlyOperation = 'bringPlugin' | 'setMcpOAuth' | 'mcpOAuthDescriptor'
 export type FleetSettingsRendererOperation = Exclude<FleetSettingsOperation, FleetSettingsMainOnlyOperation>
 /** What a renderer reaches of one environment's settings. */
 export type FleetEnvironmentSettingsClient = Pick<FleetEnvironmentSettingsService, FleetSettingsRendererOperation>
