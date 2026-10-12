@@ -28,7 +28,7 @@ export function TabBar({ tabs, value, onChange }: { tabs: Tab[]; value: string; 
           <Pressable
             key={tab.id}
             accessibilityRole="tab"
-            accessibilityState={{ selected }}
+            aria-selected={selected}
             accessibilityLabel={tab.badge ? `${tab.label}, ${tab.badgeLabel ?? tab.badge}` : tab.label}
             onPress={() => onChange(tab.id)}
             style={{

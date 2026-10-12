@@ -16,7 +16,7 @@ export function ReasoningBlock({ item }: { item: Extract<FleetTranscriptItem, { 
     <View>
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
+        aria-expanded={open}
         accessibilityLabel={label}
         onPress={() => setOpen((value) => !value)}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 30 }}

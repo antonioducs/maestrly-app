@@ -118,7 +118,7 @@ export function Composer({ bot, inputRef }: { bot: FleetBot; inputRef?: Ref<Text
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={stoppable ? t('composer.stop', { name: bot.name }) : t('composer.send')}
-            accessibilityState={{ disabled: empty && !stoppable }}
+            aria-disabled={empty && !stoppable}
             disabled={empty && !stoppable}
             onPress={() => (stoppable ? void controller.action(bot.id, 'cancel') : void send())}
             hitSlop={4}

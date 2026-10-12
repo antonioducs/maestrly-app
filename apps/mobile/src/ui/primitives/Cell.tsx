@@ -92,7 +92,8 @@ export function Cell({
     <Pressable
       accessibilityRole={role ?? 'button'}
       accessibilityLabel={accessibilityLabel ?? [label, sub, value].filter(Boolean).join(', ')}
-      accessibilityState={{ disabled: !!disabled, ...(role === 'radio' ? { checked: !!checked } : {}) }}
+      aria-disabled={!!disabled}
+      aria-checked={role === 'radio' || role === 'checkbox' ? !!checked : undefined}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [style, { backgroundColor: pressed ? palette.surface : 'transparent', opacity: disabled ? 0.45 : 1 }]}

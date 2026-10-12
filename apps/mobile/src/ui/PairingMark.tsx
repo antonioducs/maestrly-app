@@ -23,8 +23,7 @@ export function PairingMark({ state }: { state: 'idle' | 'pairing' | 'done' }) {
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
   return (
     <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      aria-hidden
       style={{ width: 132, height: 132, alignItems: 'center', justifyContent: 'center', marginBottom: 28, alignSelf: 'center' }}
     >
       <BrandMark size={84} radius={21} />

@@ -16,8 +16,7 @@ const M_PATH =
 export function BrandMark({ size, radius }: { size: number; radius?: number }) {
   return (
     <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      aria-hidden
       style={{
         width: size,
         height: size,

@@ -20,7 +20,7 @@ export const Icon = memo(function Icon({
   const xml = `<svg viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[name].replaceAll('currentColor', color)}</svg>`
   // On the web the SVG becomes a DOM element, so the accessibility props go on a native view around it.
   return (
-    <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ width: size, height: size }}>
+    <View aria-hidden style={{ width: size, height: size }}>
       <SvgXml xml={xml} width={size} height={size} />
     </View>
   )

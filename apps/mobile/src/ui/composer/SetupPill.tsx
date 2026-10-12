@@ -1,7 +1,7 @@
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
 import { Pressable } from 'react-native'
-import { effortLabel } from '../../fleet/format'
+import { setupSummary } from '../../fleet/setup'
 import { useBotSelections } from '../../fleet/use-selections'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -15,9 +15,7 @@ export function SetupPill({ bot }: { bot: FleetBot }) {
   const { t } = useI18n()
   const { option } = useBotSelections(bot)
   const full = bot.ceiling === 'full'
-  const model = bot.selection ? (option?.modelLabel ?? bot.selection.modelId) : t('setup.botDefault')
-  const effort = bot.selection?.reasoning ? effortLabel(bot.selection.reasoning, t) : null
-  const summary = [model, effort].filter(Boolean).join(' · ')
+  const summary = setupSummary(bot, option, t)
   const spoken = [summary, bot.selection?.fastMode ? t('setup.fast') : null, full ? t('composer.fullAccess') : null]
     .filter(Boolean)
     .join(', ')

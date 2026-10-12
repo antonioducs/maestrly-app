@@ -27,7 +27,7 @@ const BotRow = memo(function BotRow({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`${bot.name}, ${statusLineText(bot, line)}`}
-      accessibilityState={{ selected: current }}
+      aria-selected={current}
       onPress={onPress}
       onLayout={(event) => onLayoutY(event.nativeEvent.layout.y)}
       style={({ pressed }) => ({

@@ -75,8 +75,7 @@ export default function Scan() {
         }
       >
         <View
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
+          aria-hidden
           style={{ width: FRAME, height: FRAME, alignSelf: 'center', marginTop: 56, marginBottom: 28 }}
         >
           {(['tl', 'tr', 'bl', 'br'] as const).map((position) => (

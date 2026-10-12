@@ -50,7 +50,7 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
     <View>
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
+        aria-expanded={open}
         accessibilityLabel={t('tool.toggle', {
           summary: headline ? `${headline.verb} ${headline.target ?? ''}`.trim() : [summary, ...extras].join(', '),
         })}

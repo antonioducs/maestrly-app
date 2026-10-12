@@ -80,8 +80,7 @@ export function Drawer({
   return (
     <View style={{ flex: 1, overflow: 'hidden', backgroundColor: palette.drawer }} {...responder.panHandlers}>
       <Animated.View
-        accessibilityElementsHidden={!open}
-        importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
+        aria-hidden={!open}
         pointerEvents={open ? 'auto' : 'none'}
         style={{
           position: 'absolute',
@@ -111,8 +110,7 @@ export function Drawer({
       >
         <View
           style={{ flex: 1 }}
-          accessibilityElementsHidden={open}
-          importantForAccessibility={open ? 'no-hide-descendants' : 'auto'}
+          aria-hidden={open}
         >
           {children}
         </View>

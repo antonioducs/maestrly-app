@@ -25,7 +25,8 @@ export function Pills<T extends string | null>({
           <Pressable
             key={String(option.value)}
             accessibilityRole="radio"
-            accessibilityState={{ checked: selected, disabled: !!disabled }}
+            aria-checked={selected}
+            aria-disabled={!!disabled}
             accessibilityLabel={option.label}
             disabled={disabled}
             onPress={() => onChange(option.value)}

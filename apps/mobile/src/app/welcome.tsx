@@ -43,8 +43,7 @@ export default function Welcome() {
     >
       <BrandMark size={60} radius={15} />
       <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
+        aria-hidden
         style={{
           marginTop: 28,
           marginBottom: 32,

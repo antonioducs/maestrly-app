@@ -71,8 +71,7 @@ export const Avatar = memo(function Avatar({
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
   return (
     <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
+      aria-hidden
       style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
     >
       <View

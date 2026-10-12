@@ -57,7 +57,8 @@ export function QuestionCard({ item }: { item: Extract<FleetTranscriptItem, { ki
             <Pressable
               key={option.label}
               accessibilityRole={question.multiSelect ? 'checkbox' : 'radio'}
-              accessibilityState={{ checked: selected, disabled }}
+              aria-checked={selected}
+              aria-disabled={disabled}
               accessibilityLabel={option.description ? `${option.label}, ${option.description}` : option.label}
               disabled={disabled}
               onPress={() => toggle(option.label)}
