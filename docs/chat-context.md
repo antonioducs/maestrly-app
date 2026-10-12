@@ -192,7 +192,13 @@ Repeating the same request does not create duplicates: the existing
 conversations are reported again, and one whose first turn failed is retried.
 A conversation you delete is not recreated. New conversations cannot start
 further conversations on their own. They can do so later only if you ask for
-it in that conversation.
+it in that conversation. They can answer the conversation that started them,
+as described in [talking to other conversations](#talking-to-other-conversations).
+
+To have the result brought back, say so ("open another agent to review this and
+bring me the result"). When the new conversation's first turn ends, its final
+answer arrives in this conversation as a new message marked **Result from …**,
+and the agent here continues with it.
 
 ### Creating or cloning the project first
 
@@ -233,6 +239,44 @@ clone progress and a link to the workspace.
   for a conversation: one conversation can start in each new project. Other
   conversations follow the rules above, and "don't open conversations" is
   respected.
+
+### Talking to other conversations
+
+The agent can also read and message conversations that already exist, in any
+project or standalone chat. Ask in your own words:
+
+- "What did the review conversation conclude?"
+- "Pede pra ela corrigir o item 2."
+- "Tell the Atlas conversation that the API changed, and bring me its answer."
+
+The agent finds conversations by name, reads their latest answer and recent
+messages (tool activity is left out), and can wait for one to finish its current
+turn. A message it sends starts a turn in the other conversation, shown as a
+bubble marked **Message from …** with a link back. The receiving agent keeps its
+own mode, permissions and model, so a message from an Ask chat cannot edit files
+anywhere it could not already. A conversation that is busy receives the message
+when its current turn ends; messages wait in order and are kept across restarts.
+
+- **Confirmation.** The first message to a conversation that has no link with
+  this one asks you to confirm with **Send** or **Don't send**. Conversations
+  started from this one, the one that started it, and ones that already
+  exchanged messages with it are linked and need no confirmation.
+- **Bring the result back.** Only when you ask for it, the other conversation's
+  final answer to the message comes back as a new turn here, marked **Result
+  from …**. Otherwise the answer stays there and the agent can read it later.
+- **Reports.** A conversation that was given work can report back to the
+  conversation that gave it, marked **Report from …**, for example when the work
+  is done or blocked.
+- **Turns the agents start.** Turns started by another conversation can only
+  read and message linked conversations, can never start new conversations or
+  create projects, and stop after three agent-to-agent turns since you last typed
+  a message. The agent then tells you instead of continuing.
+
+These tools are available in Agent, Design and Ask modes. They are unavailable in
+Plan and Maestro modes, bot conversations, Kanban web chats, automations and
+subagents. Messages between conversations are stored in the local database and
+removed by a local data reset. A result whose turn was interrupted because the
+app closed is not delivered; ask again to continue.
 
 ### Limits
 
