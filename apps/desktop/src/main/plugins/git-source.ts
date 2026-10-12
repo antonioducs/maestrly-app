@@ -200,8 +200,9 @@ export class PluginGitSource {
   private readonly spawnGit: SpawnGit
 
   constructor(opts: GitSourceOptions = {}) {
-    const root =
-      opts.allowFileRoot === undefined ? process.env.MAESTRLY_E2E_PLUGIN_GIT_ROOT?.trim() || null : opts.allowFileRoot
+    // Local `file:` sources exist only for end-to-end tests: the variable is ignored outside AGENTS_E2E=1.
+    const e2eRoot = process.env.AGENTS_E2E === '1' ? process.env.MAESTRLY_E2E_PLUGIN_GIT_ROOT?.trim() || null : null
+    const root = opts.allowFileRoot === undefined ? e2eRoot : opts.allowFileRoot
     this.allowFileRoot = root ? path.resolve(root) : null
     this.timeoutMs = opts.timeoutMs ?? PLUGIN_LIMITS.gitTimeoutMs
     this.spawnGit = opts.spawnGit ?? spawnHardenedGit

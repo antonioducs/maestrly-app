@@ -76,12 +76,13 @@ beforeEach(async () => {
   registerPluginIpc(reg)
   setAppPluginLayoutForTests(pluginLayout(mkdtempSync(path.join(os.tmpdir(), 'plg-ipc-layout-'))))
   repo = await makeGitRepo(marketplaceFiles(), { name: 'market' })
-  process.env.MAESTRLY_E2E_PLUGIN_GIT_ROOT = path.dirname(repo.dir)
+  vi.stubEnv('AGENTS_E2E', '1')
+  vi.stubEnv('MAESTRLY_E2E_PLUGIN_GIT_ROOT', path.dirname(repo.dir))
   setPluginGitSourceForTests(null)
   resetPluginServiceCachesForTests()
 })
 afterEach(() => {
-  delete process.env.MAESTRLY_E2E_PLUGIN_GIT_ROOT
+  vi.unstubAllEnvs()
   setPluginGitSourceForTests(null)
   setAppPluginLayoutForTests(null)
   closeDb()

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   PluginGitSource,
   type SpawnGitOptions,
@@ -82,6 +82,20 @@ describe('plugin Git source', () => {
     expect(new PluginGitSource({ allowFileRoot: root }).checkUrl(pathToFileURL(path.join(root, 'x')).href)).toBe(
       pathToFileURL(path.join(root, 'x')).href
     )
+  })
+
+  it('takes the file root from the environment only in end-to-end mode', () => {
+    const root = work()
+    const local = pathToFileURL(path.join(root, 'x')).href
+    try {
+      vi.stubEnv('MAESTRLY_E2E_PLUGIN_GIT_ROOT', root)
+      vi.stubEnv('AGENTS_E2E', '')
+      expect(() => new PluginGitSource().checkUrl(local)).toThrow(expect.objectContaining({ code: 'invalid-url' }))
+      vi.stubEnv('AGENTS_E2E', '1')
+      expect(new PluginGitSource().checkUrl(local)).toBe(local)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('rejects refs that look like options', async () => {

@@ -272,7 +272,7 @@ manifest.
 
 URLs must be `https://` without user information. `owner/repo` is shorthand for `https://github.com/owner/repo.git`.
 Tests and e2e may allow `file://` URLs under one directory, through a constructor option or the
-`MAESTRLY_E2E_PLUGIN_GIT_ROOT` variable.
+`MAESTRLY_E2E_PLUGIN_GIT_ROOT` variable, which is honored only with `AGENTS_E2E=1`.
 
 Flow:
 
