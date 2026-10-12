@@ -162,7 +162,6 @@ const acceptUrl = (url: string): string | null => {
   }
 }
 
-const join = (root: string, rel: string): string => [root, rel].filter(Boolean).join('/')
 const rebase = (entries: readonly TreeEntry[], prefix: string): TreeEntry[] =>
   prefix
     ? entries

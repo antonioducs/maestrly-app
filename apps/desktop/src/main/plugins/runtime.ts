@@ -152,8 +152,9 @@ export async function listPluginSkills(
       return pending
     })
   )
-  const seen = new Set<string>()
-  return lists.flat().filter((skill) => (seen.has(skill.name) ? false : (seen.add(skill.name), true)))
+  const byName = new Map<string, ChatSkill>()
+  for (const skill of lists.flat()) if (!byName.has(skill.name)) byName.set(skill.name, skill)
+  return [...byName.values()]
 }
 
 // ---------------------------------------------------------------- MCP servers
@@ -228,7 +229,7 @@ export function listPluginMcpServers(
       if (!state) continue
       const consented = spec.transport !== 'stdio' || record.consent.stdio[spec.key] === launchDigest(spec)
       const inputs = serverInputs(record, spec)
-      const valueOf = (id: string): string | undefined => {
+      const inputValue = (id: string): string | undefined => {
         const stored = secrets?.[id]
         if (stored !== undefined && stored !== '') return stored
         return inputs.find((input) => input.id === id)?.defaultValue ?? undefined
@@ -236,10 +237,10 @@ export function listPluginMcpServers(
       let unavailable =
         secrets === null ||
         spec.auth.kind === 'unusable' ||
-        inputs.some((input) => input.required && !valueOf(input.id))
+        inputs.some((input) => input.required && !inputValue(input.id))
       const expand = (value: string): string =>
         value.replace(PLACEHOLDER, (_, name: string) =>
-          name === 'PLUGIN_ROOT' ? root : name === 'PLUGIN_DATA' ? data : (valueOf(name.slice('input:'.length)) ?? '')
+          name === 'PLUGIN_ROOT' ? root : name === 'PLUGIN_DATA' ? data : (inputValue(name.slice('input:'.length)) ?? '')
         )
       const server: McpServer = {
         id: state.id,
@@ -274,7 +275,7 @@ export function listPluginMcpServers(
           for (const [name, value] of Object.entries(spec.env)) env[name] = expand(value)
           for (const input of inputs) {
             if (input.target.kind !== 'env' || input.target.serverKey !== spec.key) continue
-            const value = valueOf(input.id)
+            const value = inputValue(input.id)
             if (value !== undefined && value !== '') env[input.target.name] = value
           }
           env.PLUGIN_ROOT = root
@@ -293,7 +294,7 @@ export function listPluginMcpServers(
         for (const [name, value] of Object.entries(spec.headers)) headers[name] = expand(value)
         for (const input of inputs) {
           if (input.target.kind !== 'header' || input.target.serverKey !== spec.key) continue
-          const value = valueOf(input.id)
+          const value = inputValue(input.id)
           if (value !== undefined && value !== '') headers[input.target.name] = `${input.target.prefix}${value}`
         }
         if (!validRemoteUrl(url)) unavailable = true

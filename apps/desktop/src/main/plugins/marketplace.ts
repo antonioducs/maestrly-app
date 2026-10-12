@@ -223,9 +223,11 @@ function claudeEntry(
     const type = typeof sourceValue.source === 'string' ? sourceValue.source : 'unknown'
     if (type === 'github') {
       const repo = typeof sourceValue.repo === 'string' && OWNER_REPO.test(sourceValue.repo) ? sourceValue.repo : null
-      source = repo
-        ? gitSource(sourceValue, normalizeGitUrl(repo) ?? '', undefined, accept, issues, name)
-        : (issues.push({ code: 'entry-invalid', detail: `${name}: invalid GitHub repository` }), null)
+      if (repo) source = gitSource(sourceValue, normalizeGitUrl(repo) ?? '', undefined, accept, issues, name)
+      else {
+        issues.push({ code: 'entry-invalid', detail: `${name}: invalid GitHub repository` })
+        source = null
+      }
     } else if (type === 'url') source = gitSource(sourceValue, sourceValue.url, undefined, accept, issues, name)
     else if (type === 'git-subdir') {
       const url =
