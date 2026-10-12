@@ -88,6 +88,7 @@ interface MetaJson {
   model?: ChatModelRef
   providerFingerprint?: string
   source?: ChatMessage['source']
+  peer?: ChatMessage['peer']
   botName?: string
   finishReason?: string
   usage?: StoredChatUsage
@@ -384,6 +385,19 @@ function addHistoryUsage(byModel: Map<string, ChatPerModelUsage>, usage: StoredC
   }
 }
 
+function parsePeerOrigin(raw: unknown): ChatMessage['peer'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const text = (key: string, max: number) =>
+    typeof value[key] === 'string' && value[key] ? (value[key] as string).slice(0, max) : null
+  const messageId = text('messageId', 200)
+  const fromConversationId = text('fromConversationId', 300)
+  const kind = value.kind
+  if (!messageId || !fromConversationId || (kind !== 'message' && kind !== 'report' && kind !== 'result'))
+    return undefined
+  return { messageId, fromConversationId, fromConversationName: text('fromConversationName', 200) ?? '', kind }
+}
+
 function rowToMessage(r: any): StoredChatMessage {
   let meta: MetaJson = {}
   try {
@@ -398,9 +412,11 @@ function rowToMessage(r: any): StoredChatMessage {
     meta.source === 'chatgpt-web' ||
     meta.source === 'chatgpt-web-review-loop' ||
     meta.source === 'maestrly-review-loop' ||
-    meta.source === 'conversation-dispatch'
+    meta.source === 'conversation-dispatch' ||
+    meta.source === 'conversation-message'
       ? meta.source
       : undefined
+  const peer = source === 'conversation-message' ? parsePeerOrigin(meta.peer) : undefined
   return {
     id: r.id,
     conversationId: r.conversation_id,
@@ -412,6 +428,7 @@ function rowToMessage(r: any): StoredChatMessage {
       ? { providerFingerprint: meta.providerFingerprint }
       : {}),
     ...(source ? { source } : {}),
+    ...(peer ? { peer } : {}),
     ...(typeof meta.botName === 'string' && meta.botName ? { botName: meta.botName.slice(0, 160) } : {}),
     finishReason: meta.finishReason,
     usage: parseStoredUsage(meta.usage),
@@ -438,6 +455,7 @@ function metaOf(m: StoredChatMessage): string {
     meta.providerFingerprint = m.providerFingerprint
   }
   if (m.source) meta.source = m.source
+  if (m.peer) meta.peer = m.peer
   if (m.botName) meta.botName = m.botName.slice(0, 160)
   if (m.finishReason) meta.finishReason = m.finishReason
   if (m.usage) meta.usage = m.usage

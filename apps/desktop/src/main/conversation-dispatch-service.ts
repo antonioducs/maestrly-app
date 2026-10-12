@@ -71,6 +71,8 @@ export interface ConversationDispatchServiceDeps {
     dispatchId: string
     sourceConversationId: string
     visible: boolean
+    /** Deliver the first turn's final answer back to the source. */
+    reportBack: boolean
   }): Promise<{ ok: true } | { ok: false; error: string }>
   /** A seeded turn persists its first message at admission; used to reconcile an uncertain start. */
   hasPersistedMessages(conversationId: string): boolean
@@ -131,6 +133,8 @@ export interface PrepareDispatchInput {
   resolved?: { settings: ConversationDispatchSettings; inherited: string[] }
   /** Pinned base revision for isolated placement, shared by a batch. */
   baseRevision?: string
+  /** Deliver the first turn's final answer back to the source (fingerprinted). */
+  reportBack?: boolean
   signal?: AbortSignal
   /** Rechecked right before each mutation (e.g. the authorizing turn is still live). */
   assertCurrent?: () => void
@@ -159,6 +163,7 @@ function fingerprintOf(input: PrepareDispatchInput): string {
         settings: input.settings,
         source: input.sourceRef,
         target: input.target,
+        reportBack: input.reportBack,
       })
     )
     .update(`\0${input.kind}`)
@@ -385,6 +390,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
           prompt: input.prompt,
           placement: input.placement,
           sourceRef: input.sourceRef ?? null,
+          reportBack: input.reportBack ?? false,
           ...next,
         })
         if (!reserved.created) return prepareOnce(input)
@@ -531,6 +537,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
         dispatchId,
         sourceConversationId: record.sourceConversationId,
         visible: record.kind === 'task',
+        reportBack: record.reportBack,
       })
     } catch (error) {
       result = { ok: false, error: errorText(error) }
@@ -660,6 +667,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       placement: task.placement ?? defaultPlacement,
       settings: { ...(batch.defaults ?? {}), ...(task.settings ?? {}) },
       target: { ...batch.target, ...task.target },
+      reportBack: task.reportBack ?? batch.reportBack ?? false,
     }))
     try {
       for (const task of tasks) assertSource(sourceId, task.placement, task.target)
@@ -792,6 +800,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
           ...(task.source ? { sourceRef: task.source } : {}),
           ...(resolved.has(task.requestKey) ? { resolved: resolved.get(task.requestKey) } : {}),
           target: task.target,
+          reportBack: task.reportBack,
           destination: destinations.get(task.requestKey),
           signal: input.signal,
           assertCurrent: input.assertCurrent,

@@ -37,13 +37,14 @@ export interface TurnAdmissionShape {
   runnerAdmission?: unknown
   runnerSignal?: unknown
   dispatchSeed?: unknown
+  peerMessage?: unknown
   hiddenParts?: readonly unknown[]
 }
 
 /**
  * Only text a person typed into this conversation (chat:send / edit-and-resend) is a human origin. Every host path
- * (plans, review loops, bots, remote/web, unattended executors, dispatch seeds, guard continuations) passes
- * options that exclude it.
+ * (plans, review loops, bots, remote/web, unattended executors, dispatch seeds, messages from other conversations,
+ * guard continuations) passes options that exclude it.
  */
 export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): boolean {
   return (
@@ -54,6 +55,7 @@ export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): bool
     !opts?.runnerAdmission &&
     !opts?.runnerSignal &&
     !opts?.dispatchSeed &&
+    !opts?.peerMessage &&
     !opts?.hiddenParts?.length
   )
 }

@@ -931,12 +931,25 @@ export interface ChatReviewLoopMeta {
   reviewerConversationId?: string
 }
 
-/** `conversation-dispatch`: first message of a conversation started from another conversation (host-generated). */
+/**
+ * `conversation-dispatch`: first message of a conversation started from another conversation (host-generated).
+ * `conversation-message`: a message, report or result sent by the agent of another conversation (see `peer`).
+ */
 export type ChatMessageSource =
   | 'chatgpt-web'
   | 'chatgpt-web-review-loop'
   | 'maestrly-review-loop'
   | 'conversation-dispatch'
+  | 'conversation-message'
+
+/** Sender of a message that came from another conversation; the name is captured when it was delivered. */
+export interface ChatMessagePeerOrigin {
+  /** Journal id of the delivered message. */
+  messageId: string
+  fromConversationId: string
+  fromConversationName: string
+  kind: import('./conversation-link').ConversationPeerMessageKind
+}
 
 /** Last observed occupancy of this message's runtime, independent of billing and next-request estimates. */
 export interface ChatContextSnapshot {
@@ -975,6 +988,8 @@ export interface ChatMessage {
   model?: ChatModelRef
 
   source?: ChatMessageSource
+  /** Present with source `conversation-message`. */
+  peer?: ChatMessagePeerOrigin
   /** Trusted bot identity captured when this particular message was admitted by main. */
   botName?: string
   createdAt: number
