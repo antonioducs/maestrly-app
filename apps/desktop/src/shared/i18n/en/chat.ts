@@ -452,6 +452,11 @@ export default {
     claudeAccountsExhaustedError: 'All Claude accounts in the rotation list are out of usage. Try again later.',
     skillFolder: 'Skill loaded from {{dir}}',
   },
+  link: {
+    messageFrom: 'Message from {{name}}',
+    reportFrom: 'Report from {{name}}',
+    resultFrom: 'Result from {{name}}',
+  },
   dispatch: {
     startedFrom: 'Started from another conversation',
     startFailedTitle: 'This conversation has not started yet',

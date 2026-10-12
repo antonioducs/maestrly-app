@@ -459,6 +459,11 @@ export default {
       'Todas as contas Claude da lista de rotação esgotaram o uso. Tente de novo mais tarde.',
     skillFolder: 'Skill carregada de {{dir}}',
   },
+  link: {
+    messageFrom: 'Mensagem de {{name}}',
+    reportFrom: 'Relato de {{name}}',
+    resultFrom: 'Resultado de {{name}}',
+  },
   dispatch: {
     startedFrom: 'Iniciada a partir de outra conversa',
     startFailedTitle: 'Esta conversa ainda não começou',
