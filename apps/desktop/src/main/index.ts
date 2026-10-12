@@ -159,6 +159,8 @@ import type { IpcRegistrar } from './ipc-registrar'
 import { registerSettingsIpc, reloadShortcuts } from './settings-ipc'
 import { registerWorkspaceIpc } from './workspace-ipc'
 import { registerProjectSetupIpc } from './project-setup/ipc'
+import { registerPluginIpc } from './plugins/ipc'
+import { reconcilePluginsOnStartup } from './plugins/service'
 
 import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
@@ -804,6 +806,9 @@ function registerIpc(): void {
       sendToWindow('chat:chatgpt-web:turn-completed', { conversationId })
     },
   })
+  registerPluginIpc(reg)
+  // Finish or roll back plugin installs, updates and removals a previous run left in flight.
+  void reconcilePluginsOnStartup()
   // Nothing in flight survives a restart: settle dispatches left mid-allocation/start from durable state.
   void getConversationDispatchService()
     .then((service) => service.reconcile())
