@@ -53,7 +53,7 @@ These numbers come from `openai/plugins` at commit `0722921d` (2026-10-08) and `
 
 Classification under the rules in [Compatibility](#compatibility):
 
-| Level | Without adaptations | With commands → skills and agents → subagents |
+| Level | Without adaptations | With commands → skills (Phase 1) |
 | --- | --- | --- |
 | Portable | 26 | 29 |
 | Partial | 32 | 29 |
@@ -472,24 +472,28 @@ Connect flow:
 An authorization server without dynamic registration fails with a clear message, and the user can paste a token as a
 header instead.
 
-### Adaptations (Phase 5)
+### Adaptations
 
-- **Commands** become user-invocable skills (`<plugin>:<command>`, not model-invocable), with `$ARGUMENTS` replaced by
-  the invocation arguments.
-- **Agents** become subagents through the existing `.md` agent loader. Claude tool names map to Maestrly tools; unknown
-  tools and model aliases are dropped with a diagnostic.
-- Both are marked `adapted`, so they no longer downgrade the classification.
+- **Commands (Phase 1)** become user-invocable skills named `<plugin>:<command>`. They are not model-invocable. The
+  skill renderer already replaces `$ARGUMENTS` and `$1`–`$9` (`applySkillArguments`), so the command body is used
+  as is.
+- **Agents (Phase 5)** become subagents through the existing `.md` agent loader. Claude tool names map to Maestrly
+  tools; unknown tools and model aliases are dropped with a diagnostic.
+- Adapted components are marked `adapted` and no longer downgrade the classification.
+- **Catalog value:** adapting commands alone moves three plugins to Portable (build-macos-apps, cloudflare, expo), for
+  29 / 29 / 7. The three plugins with agents (figma, vercel, zoom) stay Partial because of their app connectors, so
+  Phase 5 does not change the `openai/plugins` numbers.
 
 ## Phases
 
 1. **Engine and provider exposure** (no UI): formats, compatibility, marketplaces, Git download, storage, installer,
-   runtime exposure, IPC, and tests.
+   runtime exposure including commands as skills, IPC, and tests.
 2. **Plugin center and remote workspaces:** the Plugins tab, composer integration, local and remote-host e2e, and user
    documentation.
 3. **MCP OAuth:** local and remote-host sign-in, token storage, and refresh.
 4. **Bots:** protocol, gateway, instance, environment section, "Bring from this computer", bot OAuth, and container
    e2e.
-5. **Adaptations:** commands to skills and agents to subagents.
+5. **Agent adaptation:** plugin agents become subagents. This phase is optional, because its catalog value is low.
 
 Each phase is one PR, validated with `npm run verify:pr -- --title "<title>" --full`.
 
