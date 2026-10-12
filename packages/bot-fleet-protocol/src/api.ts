@@ -1117,6 +1117,18 @@ export const FLEET_GATEWAY_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.uninstallPlugin.input,
     response: FLEET_SETTINGS_OPERATIONS.uninstallPlugin.response,
   },
+  settingsPluginSkills: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/plugin-skills',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.pluginSkills.response,
+  },
+  settingsSetPluginSkillEnabled: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid/settings/plugin-skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.input,
+    response: FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.response,
+  },
   settingsMcpOAuthStatuses: {
     method: 'GET',
     path: '/v1/environments/:eid/settings/mcp-oauth',
@@ -1902,6 +1914,18 @@ export const FLEET_INSTANCE_ROUTES = {
     path: '/v1/settings/plugins/:key',
     body: FLEET_SETTINGS_OPERATIONS.uninstallPlugin.input,
     response: FLEET_SETTINGS_OPERATIONS.uninstallPlugin.response,
+  },
+  settingsPluginSkills: {
+    method: 'GET',
+    path: '/v1/settings/plugin-skills',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.pluginSkills.response,
+  },
+  settingsSetPluginSkillEnabled: {
+    method: 'PATCH',
+    path: '/v1/settings/plugin-skills/:name',
+    body: FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.input,
+    response: FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.response,
   },
   settingsMcpOAuthStatuses: {
     method: 'GET',

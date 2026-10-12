@@ -13,6 +13,8 @@ const list = <T extends z.ZodType>(item: T, max: number) => z.array(item).max(ma
 export const fleetPluginKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
 export const fleetPluginNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
 export const fleetPluginMarketplaceIdSchema = z.string().regex(/^mkt_[0-9a-f]{16}$/)
+/** A plugin's skill or command, namespaced by its plugin: `<plugin>:<skill>`, normalized as slash commands are. */
+export const fleetPluginSkillNameSchema = z.string().regex(/^[a-z0-9_-]{1,64}:[a-z0-9_-]{1,100}$/)
 /** A plugin's MCP server (`plg_…`) or an MCP server of the environment's own settings (`mcp_<uuid>`). */
 export const fleetMcpServerIdSchema = z.string().regex(/^(mcp_[0-9a-f-]{36}|plg_[0-9a-f]{20})$/)
 const commit = z.string().regex(/^[0-9a-f]{40}$/)
@@ -325,6 +327,27 @@ export const fleetPluginPatchSchema = z
       [value.enabled, value.scope, value.server, value.inputs].filter((field) => field !== undefined).length === 1,
     'Change one thing at a time'
   )
+
+/** The skills and commands of the environment's plugins, as its Skills settings list them. */
+export const fleetPluginSkillSchema = z
+  .object({
+    name: fleetPluginSkillNameSchema,
+    description: text(4096),
+    kind: z.enum(['skill', 'command']),
+    plugin: z.object({ key: fleetPluginKeySchema, displayName: text(200) }).strict(),
+    enabled: z.boolean(),
+    modelInvocable: z.boolean(),
+    userInvocable: z.boolean(),
+    resources: z
+      .object({
+        scripts: z.number().int().nonnegative(),
+        references: z.number().int().nonnegative(),
+        assets: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict()
+export const fleetPluginSkillsSchema = z.object({ skills: list(fleetPluginSkillSchema, 4000) }).strict()
 
 /** Sign-in status of the environment's remote MCP servers, user and plugin servers alike. */
 export const fleetMcpOAuthStatusesSchema = z

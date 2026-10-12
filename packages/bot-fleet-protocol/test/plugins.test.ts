@@ -62,6 +62,39 @@ describe('environment plugins contract', () => {
     expect(logo.safeParse({ dataUrl: 'data:image/svg+xml;base64,AAAA' }).success).toBe(false)
   })
 
+  it('names plugin skills by their plugin, and lets skill groups hold them', () => {
+    const toggle = FLEET_SETTINGS_OPERATIONS.setPluginSkillEnabled.input
+    expect(toggle.safeParse({ name: 'release-notes:draft', enabled: false }).success).toBe(true)
+    for (const name of ['draft', 'release-notes:', ':draft', 'Release:Draft', 'a:b:c', '../x:y'])
+      expect(toggle.safeParse({ name, enabled: false }).success).toBe(false)
+    const revision = '550e8400-e29b-41d4-a716-446655440000'
+    const group = FLEET_SETTINGS_OPERATIONS.updateSkillGroup.input
+    expect(
+      group.safeParse({
+        id: 'g',
+        expectedRevision: revision,
+        name: 'Docs',
+        skills: ['local-skill', 'release-notes:draft'],
+      }).success
+    ).toBe(true)
+    expect(group.safeParse({ id: 'g', expectedRevision: revision, name: 'Docs', skills: ['a:b:c'] }).success).toBe(
+      false
+    )
+    const listed = FLEET_SETTINGS_OPERATIONS.pluginSkills.response
+    const skill = {
+      name: 'release-notes:draft',
+      description: 'Draft release notes',
+      kind: 'skill',
+      plugin: { key: 'release-notes@e2e-market', displayName: 'Release notes' },
+      enabled: true,
+      modelInvocable: true,
+      userInvocable: true,
+      resources: { scripts: 0, references: 0, assets: 0 },
+    }
+    expect(listed.safeParse({ skills: [skill] }).success).toBe(true)
+    expect(listed.safeParse({ skills: [{ ...skill, dir: '/home/bot/.agents' }] }).success).toBe(false)
+  })
+
   it('takes a sign-in only with a loopback redirect, and never returns tokens', () => {
     const bundle = {
       url: 'https://mcp.example.test/mcp',

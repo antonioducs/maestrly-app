@@ -19,6 +19,8 @@ import {
   fleetPluginNameSchema,
   fleetPluginPatchSchema,
   fleetPluginResultSchema,
+  fleetPluginSkillNameSchema,
+  fleetPluginSkillsSchema,
   fleetPluginSourceInputSchema,
   fleetPluginsStateSchema,
 } from './plugins.js'
@@ -29,6 +31,11 @@ export const fleetSettingsRevisionSchema = z.uuid()
 const id = z.string().min(1).max(200)
 const name = z.string().trim().min(1).max(100)
 const skillName = z.string().regex(/^[a-z0-9_][a-z0-9_-]{0,99}$/)
+/**
+ * A member of a skill group: a skill of the environment, or a plugin's skill. Only a computer and an environment that
+ * both support `environment-plugins-v1` ever send a plugin's skill.
+ */
+const groupMember = z.union([skillName, fleetPluginSkillNameSchema])
 const revision = fleetSettingsRevisionSchema
 const expected = { expectedRevision: revision }
 const empty = z.object({}).strict()
@@ -319,7 +326,12 @@ export const FLEET_SETTINGS_OPERATIONS = {
     'POST',
     '/skill-groups',
     z
-      .object({ ...expected, name, description: z.string().max(1000).optional(), skills: z.array(skillName).max(2000) })
+      .object({
+        ...expected,
+        name,
+        description: z.string().max(1000).optional(),
+        skills: z.array(groupMember).max(2000),
+      })
       .strict(),
     fleetSettingsSkillGroupsSchema
   ),
@@ -332,7 +344,7 @@ export const FLEET_SETTINGS_OPERATIONS = {
         ...expected,
         name,
         description: z.string().max(1000).optional(),
-        skills: z.array(skillName).max(2000),
+        skills: z.array(groupMember).max(2000),
       })
       .strict(),
     fleetSettingsSkillGroupsSchema
@@ -437,6 +449,13 @@ export const FLEET_SETTINGS_OPERATIONS = {
     z.object({ key: fleetPluginKeySchema, deleteData: z.boolean() }).strict(),
     fleetPluginEmptyResultSchema
   ),
+  pluginSkills: operation('GET', '/plugin-skills', empty, fleetPluginSkillsSchema),
+  setPluginSkillEnabled: operation(
+    'PATCH',
+    '/plugin-skills/:name',
+    z.object({ name: fleetPluginSkillNameSchema, enabled: z.boolean() }).strict(),
+    fleetPluginEmptyResultSchema
+  ),
   mcpOAuthStatuses: operation('GET', '/mcp-oauth', empty, fleetMcpOAuthStatusesSchema),
   mcpOAuthDescriptor: operation(
     'GET',
@@ -467,6 +486,8 @@ export const FLEET_PLUGIN_SETTINGS_OPERATIONS = [
   'updatePlugin',
   'patchPlugin',
   'uninstallPlugin',
+  'pluginSkills',
+  'setPluginSkillEnabled',
   'mcpOAuthStatuses',
   'mcpOAuthDescriptor',
   'setMcpOAuth',
