@@ -317,6 +317,67 @@ describe('SubscriptionFailoverRouter', () => {
     router.confirmAttemptOther(PRIMARY, readmission.lease)
   })
 
+  function halfOpenProbe(router = getSubscriptionFailoverRouter(), now = Date.now()) {
+    router.markExhausted(PRIMARY, { reason: 'quota', source: 'structured-error', resetsAt: now - 1, now: now - 2 })
+    const admit = router.tryAdmit(PRIMARY, now)
+    if (!admit.ok || !admit.lease) throw new Error('expected half-open lease')
+    return admit.lease
+  }
+
+  it('confirmServing closes a half-open probe before its turn settles', () => {
+    const router = getSubscriptionFailoverRouter()
+    const lease = halfOpenProbe(router)
+
+    router.confirmServing(PRIMARY)
+
+    expect(router.getHealth(PRIMARY).state).toBe('available')
+    expect(router.isAdmissible(PRIMARY)).toBe(true)
+    // The probe owner settles later; success and other are now no-ops.
+    router.confirmAttemptSuccess(PRIMARY, lease)
+    expect(router.getHealth(PRIMARY).state).toBe('available')
+    router.confirmAttemptOther(PRIMARY, lease)
+    expect(router.getHealth(PRIMARY).state).toBe('available')
+  })
+
+  it('a quota after confirmServing still reopens the circuit', () => {
+    const router = getSubscriptionFailoverRouter()
+    const lease = halfOpenProbe(router)
+    router.confirmServing(PRIMARY)
+
+    router.confirmAttemptQuota(PRIMARY, lease, { reason: 'late quota', source: 'structured-error' })
+
+    expect(router.getHealth(PRIMARY)).toMatchObject({ state: 'exhausted', exhaustion: { reason: 'late quota' } })
+  })
+
+  it('confirmServing ignores circuits that are not probing', () => {
+    const router = getSubscriptionFailoverRouter()
+    const now = Date.now()
+    router.markExhausted(PRIMARY, { reason: 'quota', source: 'structured-error', resetsAt: now + 60_000, now })
+
+    router.confirmServing(PRIMARY)
+    router.confirmServing(FALLBACK)
+
+    expect(router.getHealth(PRIMARY).state).toBe('exhausted')
+    expect(router.getHealth(FALLBACK).state).toBe('unknown')
+  })
+
+  it('waitForProbeSettlement wakes when the probe settles, and times out or aborts otherwise', async () => {
+    const router = getSubscriptionFailoverRouter()
+    await expect(router.waitForProbeSettlement([PRIMARY], 1_000)).resolves.toBe(true)
+
+    halfOpenProbe(router)
+    const settled = router.waitForProbeSettlement([PRIMARY, FALLBACK], 60_000)
+    router.confirmServing(PRIMARY)
+    await expect(settled).resolves.toBe(true)
+
+    halfOpenProbe(router)
+    await expect(router.waitForProbeSettlement([PRIMARY], 5)).resolves.toBe(false)
+    const controller = new AbortController()
+    const aborted = router.waitForProbeSettlement([PRIMARY], 60_000, controller.signal)
+    controller.abort()
+    await expect(aborted).resolves.toBe(false)
+  })
+
   it('selectNextProviderId walks the chain skipping attempted and non-admissible', async () => {
     const router = getSubscriptionFailoverRouter()
     const now = 40_000
@@ -1016,5 +1077,111 @@ describe('resolveCodexRuntimeTarget', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('expected ok')
     expect(result.target.reasoningEffort).toBe('ultra')
+  })
+})
+
+describe('resolveCodexRuntimeTarget while another caller probes a recovered account', () => {
+  function probingPrimaryWithExhaustedFallback() {
+    const router = getSubscriptionFailoverRouter()
+    const now = Date.now()
+    router.markExhausted(FALLBACK, {
+      reason: 'fallback quota',
+      source: 'structured-error',
+      resetsAt: now + 3_600_000,
+      now,
+    })
+    router.markExhausted(PRIMARY, {
+      reason: 'primary quota',
+      source: 'structured-error',
+      resetsAt: now - 1,
+      now: now - 2,
+    })
+    const probe = router.tryAdmit(PRIMARY, now)
+    if (!probe.ok || !probe.lease) throw new Error('expected another caller to hold the probe')
+    const primaryManager = makeManager()
+    const fallbackManager = makeManager()
+    h.getCodexSubscriptionManager.mockImplementation((accountId: string | null) =>
+      accountId ? fallbackManager : primaryManager
+    )
+    return { router, lease: probe.lease }
+  }
+
+  it('waits for the probe and returns to the primary once it serves', async () => {
+    const { router } = probingPrimaryWithExhaustedFallback()
+    let settled = false
+    const resolving = resolveCodexRuntimeTarget({
+      logicalProviderId: PRIMARY,
+      modelId: 'gpt-5.4',
+      chain: [PRIMARY, FALLBACK],
+      attemptedProviderIds: new Set(),
+    }).finally(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(settled).toBe(false)
+
+    router.confirmServing(PRIMARY)
+
+    await expect(resolving).resolves.toMatchObject({ ok: true, target: { providerId: PRIMARY } })
+  })
+
+  it('reports the chain exhausted when the probe hits quota again', async () => {
+    const { router, lease } = probingPrimaryWithExhaustedFallback()
+    const resolving = resolveCodexRuntimeTarget({
+      logicalProviderId: PRIMARY,
+      modelId: 'gpt-5.4',
+      chain: [PRIMARY, FALLBACK],
+      attemptedProviderIds: new Set(),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    router.confirmAttemptQuota(PRIMARY, lease, {
+      reason: 'still exhausted',
+      source: 'structured-error',
+      resetsAt: Date.now() + 60_000,
+    })
+
+    await expect(resolving).resolves.toMatchObject({ ok: false, reason: 'quota-exhausted' })
+  })
+
+  it('bounds the wait and honors abort', async () => {
+    probingPrimaryWithExhaustedFallback()
+    const args = {
+      logicalProviderId: PRIMARY,
+      modelId: 'gpt-5.4',
+      chain: [PRIMARY, FALLBACK],
+      attemptedProviderIds: new Set<string>(),
+    }
+    await expect(resolveCodexRuntimeTarget({ ...args, probeWaitMs: 10 })).resolves.toMatchObject({
+      ok: false,
+      reason: 'quota-exhausted',
+    })
+    const controller = new AbortController()
+    const aborted = resolveCodexRuntimeTarget({ ...args, signal: controller.signal })
+    controller.abort()
+    await expect(aborted).resolves.toMatchObject({ ok: false, error: 'aborted' })
+  })
+
+  it('does not wait when the fallback can serve', async () => {
+    const router = getSubscriptionFailoverRouter()
+    const now = Date.now()
+    router.markExhausted(PRIMARY, {
+      reason: 'primary quota',
+      source: 'structured-error',
+      resetsAt: now - 1,
+      now: now - 2,
+    })
+    expect(router.tryAdmit(PRIMARY, now).ok).toBe(true)
+    h.getCodexSubscriptionManager.mockReturnValue(makeManager())
+
+    await expect(
+      resolveCodexRuntimeTarget({
+        logicalProviderId: PRIMARY,
+        modelId: 'gpt-5.4',
+        chain: [PRIMARY, FALLBACK],
+        attemptedProviderIds: new Set(),
+        probeWaitMs: 60_000,
+      })
+    ).resolves.toMatchObject({ ok: true, target: { providerId: FALLBACK } })
   })
 })

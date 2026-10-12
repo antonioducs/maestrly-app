@@ -6,8 +6,11 @@ import {
   type ClaudeSubscriptionAccountIdentity,
   type ClaudeSubscriptionManager,
 } from '../claude-agent-sdk/manager'
+import { failoverDiag } from './diag'
 import {
   getSubscriptionFailoverRouter,
+  HALF_OPEN_PROBE_WAIT_MS,
+  probingCandidates,
   type AvailabilityLease,
   type MarkExhaustedInfo,
   type SubscriptionFailoverRouter,
@@ -38,6 +41,8 @@ export interface ResolveClaudeTargetArgs {
   admit?: boolean
   signal: AbortSignal
   now?: number
+  /** Upper bound for waiting on another caller's half-open probe; defaults to HALF_OPEN_PROBE_WAIT_MS. */
+  probeWaitMs?: number
 }
 
 type FailureReason = 'quota-exhausted' | 'not-authenticated' | 'incompatible' | 'unavailable'
@@ -105,7 +110,30 @@ export function settleClaudeAttempt(
   else router.confirmAttemptOther(target.providerId, target.availabilityLease)
 }
 
+/**
+ * When nothing else is usable but an account is in another caller's half-open probe (the first request after a
+ * reset), wait for that probe instead of reporting the chain exhausted: callers that arrive together after a
+ * reset then all return to the recovered primary.
+ */
 export async function resolveClaudeRuntimeTarget(args: ResolveClaudeTargetArgs): Promise<ResolveClaudeTargetResult> {
+  const router = getSubscriptionFailoverRouter()
+  const deadline = Date.now() + (args.probeWaitMs ?? HALF_OPEN_PROBE_WAIT_MS)
+  let attempt = args
+  while (true) {
+    const result = await resolveClaudeRuntimeTargetOnce(attempt)
+    if (result.ok || result.error === 'aborted') return result
+    const probing = probingCandidates(router, args.chain, args.attemptedProviderIds)
+    const remaining = deadline - Date.now()
+    if (probing.length === 0 || remaining <= 0) return result
+    failoverDiag('claude-wait-half-open', { logicalProviderId: args.logicalProviderId, providerIds: probing })
+    await router.waitForProbeSettlement(probing, remaining, args.signal)
+    if (args.signal.aborted) return { ok: false, error: 'aborted', message: 'Claude failover resolution was aborted' }
+    // A fixed `now` only describes the first walk; the retry must see the probe's outcome.
+    attempt = { ...args, now: undefined }
+  }
+}
+
+async function resolveClaudeRuntimeTargetOnce(args: ResolveClaudeTargetArgs): Promise<ResolveClaudeTargetResult> {
   const router = getSubscriptionFailoverRouter()
   const reasons = new Set<FailureReason>()
   let resetsAt: number | undefined

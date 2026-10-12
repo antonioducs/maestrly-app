@@ -702,6 +702,39 @@ describe('Claude subscription manager', () => {
     expect(authenticationRequired).not.toHaveBeenCalled()
   })
 
+  it('closes a half-open failover probe on the first model output of any query', async () => {
+    const { getSubscriptionFailoverRouter, resetSubscriptionFailoverRouterForTests } = await import(
+      '../../src/main/chat/subscription-failover/router'
+    )
+    resetSubscriptionFailoverRouterForTests()
+    const router = getSubscriptionFailoverRouter()
+    const providerId = 'builtin_claude_subscription@acc_slot'
+    const observed: string[] = []
+    const queryFactory = vi.fn(() => ({
+      close: vi.fn(),
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'system', subtype: 'init' }
+        observed.push(router.getHealth(providerId).state)
+        yield { type: 'assistant', error: 'rate_limit', message: { content: [] } }
+        observed.push(router.getHealth(providerId).state)
+        yield { type: 'stream_event', event: { type: 'message_start' } }
+        observed.push(router.getHealth(providerId).state)
+      },
+    }))
+    const { manager } = fixture({ queryFactory: queryFactory as never, accountId: 'acc_slot' })
+    const now = Date.now()
+    router.markExhausted(providerId, { reason: 'quota', source: 'structured-error', resetsAt: now - 1, now: now - 2 })
+    expect(router.tryAdmit(providerId, now).ok).toBe(true)
+
+    const types: string[] = []
+    for await (const message of manager.createQuery({ prompt: '' })) types.push(message.type)
+
+    expect(types).toEqual(['system', 'assistant', 'stream_event'])
+    expect(observed).toEqual(['half-open', 'half-open', 'available'])
+    expect(router.getHealth('builtin_claude_subscription').state).toBe('unknown')
+    resetSubscriptionFailoverRouterForTests()
+  })
+
   it('merges only the allowed conversation shell variables over the runtime environment of one query', () => {
     const queryFactory = vi.fn((_params: { options?: { env?: Record<string, string> } }) => ({ close: vi.fn() }))
     const { manager } = fixture({ queryFactory: queryFactory as never })

@@ -3648,6 +3648,47 @@ describe('Claude account rotation', () => {
     expect(assistant.usage).toMatchObject({ input: 240, output: 16, runtimeEstimatedCostUsd: 0.0246 })
   })
 
+  it('rotates an ephemeral review-loop round with a frozen model and deletes each account session', async () => {
+    const run = await setupRotation(quotaAfterTool)
+    for (const manager of [run.a.manager, run.b.manager])
+      Object.assign(manager, { resolveModelId: vi.fn(async () => 'claude-sonnet') })
+    const messageMeta = {
+      source: 'chatgpt-web-review-loop' as const,
+      internal: true as const,
+      executionScope: {
+        kind: 'review-loop' as const,
+        executionId: 'exec-rotation',
+        loopId: 'loop-rotation',
+        iteration: 1,
+        maxIterations: 3,
+      },
+    }
+    upsertChatMessage({
+      id: 'rotation-loop-user',
+      conversationId: run.conversation.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'rotation-loop-prompt', text: 'Apply the review findings.' }],
+      createdAt: 2,
+      ...messageMeta,
+    })
+
+    await runClaudeChat({
+      ...run.args,
+      ephemeralSession: true,
+      frozenResolvedModelId: 'claude-sonnet',
+      messageMeta,
+    })
+
+    expect(run.resolve).toHaveBeenCalled()
+    expect(run.b.manager.createQuery).toHaveBeenCalledOnce()
+    expect(run.b.received[0]).toContain('Apply the review findings.')
+    expect(run.events.at(-1)?.kind).toBe('finish')
+    expect(run.router.getHealth(run.targetA.providerId).state).toBe('exhausted')
+    expect(run.a.manager.deleteManagedSession).toHaveBeenCalledWith('session-a', '/repo')
+    expect(run.b.manager.deleteManagedSession).toHaveBeenCalledWith('session-b', '/repo')
+    expect(getClaudeSessionBinding(run.conversation.id)).toBeNull()
+  })
+
   it('does not rotate generic transport failures', async () => {
     const run = await setupRotation(async function* () {
       yield errorResultMessage(['HTTP 429 request throttled'], 'session-a')

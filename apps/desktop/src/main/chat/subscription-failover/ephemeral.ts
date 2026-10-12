@@ -212,7 +212,8 @@ export function anyCodexFailoverAccountConnected(logicalProviderId: string, now 
   if (chain.length === 0) return false
   const router = getSubscriptionFailoverRouter()
   for (const providerId of chain) {
-    if (!router.isAdmissible(providerId, now)) continue
+    // A half-open account is being probed after its reset; execution waits for that probe instead of failing.
+    if (router.getHealth(providerId).state !== 'half-open' && !router.isAdmissible(providerId, now)) continue
     const accountId = subscriptionAccountId(providerId)
     try {
       if (getCodexSubscriptionManager(accountId).getStatusSnapshot()?.authenticated === true) return true

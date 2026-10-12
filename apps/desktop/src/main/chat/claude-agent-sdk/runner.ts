@@ -919,11 +919,9 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     maestrlyUltra: currentTarget.maestrlyUltra,
   }
   const attemptedProviderIds = new Set([currentTarget.providerId])
-  const failoverEnabled =
-    !args.ephemeralSession &&
-    !args.frozenResolvedModelId &&
-    (args.failoverChain?.length ?? 0) > 1 &&
-    !!args.resolveNextTarget
+  // The host passes a multi-account chain with a resolver only where switching is allowed: a frozen loop round only
+  // within the route frozen at its start, where the resolver pins `frozenResolvedModelId` on every account.
+  const failoverEnabled = (args.failoverChain?.length ?? 0) > 1 && !!args.resolveNextTarget
   let accountAttemptSettled = false
   const settleAccountAttempt = (outcome: 'success' | 'quota' | 'other', info?: MarkExhaustedInfo): void => {
     if (accountAttemptSettled) return

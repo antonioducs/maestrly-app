@@ -1135,6 +1135,55 @@ describe('CodexSubscriptionManager', () => {
     expect(manager.getRateLimitsSnapshot()).toBeNull()
   })
 
+  it('closes a half-open failover probe on the first model output of its account', async () => {
+    const { getSubscriptionFailoverRouter, resetSubscriptionFailoverRouterForTests } = await import(
+      '../../src/main/chat/subscription-failover/router'
+    )
+    resetSubscriptionFailoverRouterForTests()
+    const router = getSubscriptionFailoverRouter()
+    const providerId = 'builtin_codex_subscription@acc_slot'
+    const notificationListeners = new Set<(notification: CodexNotification) => void>()
+    const emit = (notification: CodexNotification) => {
+      for (const listener of notificationListeners) listener(notification)
+    }
+    const fakeClient = {
+      state: 'ready' as const,
+      failure: null,
+      onNotification: (listener: (notification: CodexNotification) => void) => {
+        notificationListeners.add(listener)
+        return () => notificationListeners.delete(listener)
+      },
+      waitForExit: () => new Promise(() => {}),
+      request: async (method: string) => {
+        throw new CodexAppServerRpcError(`Unexpected method ${method}`, -32601, method, 1)
+      },
+      close: async () => {},
+      abort: () => {},
+    }
+    await manager?.dispose()
+    manager = new CodexSubscriptionManager({
+      accountId: 'acc_slot',
+      resolveRuntime: () => runtime(process.execPath),
+      connectClient: async () => fakeClient as unknown as CodexAppServerClient,
+      getUserDataPath: () => userDataPath,
+      getAppVersion: () => '9.8.7-test',
+    })
+    await manager.getClient()
+    const now = Date.now()
+    router.markExhausted(providerId, { reason: 'quota', source: 'structured-error', resetsAt: now - 1, now: now - 2 })
+    expect(router.tryAdmit(providerId, now).ok).toBe(true)
+
+    emit({ method: 'item/started', params: { threadId: 't', turnId: 'u', item: { type: 'userMessage', id: 'm' } } })
+    emit({ method: 'thread/tokenUsage/updated', params: { tokenUsage: { last: { outputTokens: 0 } } } })
+    emit({ method: 'error', params: { error: { message: 'usage limit' } } })
+    expect(router.getHealth(providerId).state).toBe('half-open')
+
+    emit({ method: 'item/started', params: { threadId: 't', turnId: 'u', item: { type: 'reasoning', id: 'r' } } })
+    expect(router.getHealth(providerId).state).toBe('available')
+    expect(router.getHealth('builtin_codex_subscription').state).toBe('unknown')
+    resetSubscriptionFailoverRouterForTests()
+  })
+
   it('isolates rate caches by account', async () => {
     const connectA = vi.fn(async (options: CodexAppServerConnectOptions) => {
       return CodexAppServerClient.connect({ ...options, binaryArgs: [fixturePath] })

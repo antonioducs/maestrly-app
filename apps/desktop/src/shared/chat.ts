@@ -1378,6 +1378,19 @@ export interface FrozenChatSelection {
   identityEpoch?: number
 
   providerFingerprint?: string
+
+  /**
+   * Physical accounts the frozen execution may use, in failover order, each with the identity it had at freeze.
+   * Present only for a Claude/Codex account whose fallback route was enabled; the first entry is `providerId`.
+   * Accounts switch only on quota or unavailability; one re-logged as another identity ends the execution.
+   */
+  failoverRoute?: ReadonlyArray<FrozenFailoverAccount>
+}
+
+export interface FrozenFailoverAccount {
+  providerId: string
+  identityFingerprint?: string
+  identityEpoch?: number
 }
 
 export type FrozenChatExecutionProfile = FrozenChatSelection
