@@ -2,7 +2,6 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { standardPlanHandoffSchema, type StandardPlanHandoff } from '../shared/conversation-dispatch'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
-import { isWebManagedConversation } from './chat/remote-policy'
 import { constants as fsConstants, promises as fsp } from 'node:fs'
 import * as floatingManager from './floating-manager'
 import { excludeFromGitInfo } from './git-service'
@@ -74,7 +73,6 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
   /** One Standard handoff per source at a time: a concurrent retry must not discard the winner's destination. */
   const standardHandoffsInFlight = new Set<string>()
   reg.mhandle('plan:decide', async (_e, agentId: string, decision: PlanDecision) => {
-    if (isWebManagedConversation(agentId)) return { ok: false, error: 'Decide this plan in the Kanban web chat.' }
     if (
       decision.implementationTarget !== undefined &&
       decision.implementationTarget !== 'source' &&

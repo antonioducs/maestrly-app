@@ -94,7 +94,6 @@ function harness(overrides: Partial<ConversationDispatchServiceDeps> = {}) {
     reportStartFailure: vi.fn(),
     isReserved: vi.fn(() => false),
     isMigrating: vi.fn(() => false),
-    isWebManaged: vi.fn(() => false),
     text: (key, params) => `${key}:${JSON.stringify(params ?? {})}`,
     ...overrides,
   }
@@ -566,13 +565,6 @@ describe('conversation dispatch service', () => {
   })
 
   it('honours source restrictions before creating anything', async () => {
-    const { deps, service } = harness({ isWebManaged: vi.fn(() => true) })
-    const result = await service.dispatchBatch({
-      grant: grant(),
-      batch: { tasks: [task('A')] },
-      assertCurrent: () => undefined,
-    })
-    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/Kanban web chat/) })
     const reserved = harness({ isReserved: vi.fn(() => true) })
     const shared = await reserved.service.dispatchBatch({
       grant: grant(),
@@ -580,7 +572,7 @@ describe('conversation dispatch service', () => {
       assertCurrent: () => undefined,
     })
     expect(shared).toMatchObject({ ok: false, error: expect.stringMatching(/review loop/) })
-    expect(deps.createIsolated).not.toHaveBeenCalled()
+    expect(reserved.deps.createIsolated).not.toHaveBeenCalled()
   })
 
   it('prepares, discards and re-prepares a plan handoff without starting it', async () => {

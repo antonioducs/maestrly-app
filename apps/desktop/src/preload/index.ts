@@ -10,7 +10,6 @@ import { performanceApi } from './api-performance'
 import { settingsApi } from './api-settings'
 import { soundApi } from './api-sound'
 import { updateApi } from './api-update'
-import { platformLocalApi } from './api-platform'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { hostsApi } from './api-hosts'
@@ -125,7 +124,6 @@ export type * from './api-settings'
 export type * from './api-sound'
 export type * from './api-update'
 export type * from './api-workspace'
-export type * from './api-platform'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
 export type * from './api-hosts'
@@ -144,7 +142,6 @@ const localApi = {
   ...updateApi,
   ...chatLocalApi,
   ...chatWindowApi,
-  ...platformLocalApi,
   ...fleetApi,
   fleetEnvironmentSettings,
   ...fleetInstallerApi,

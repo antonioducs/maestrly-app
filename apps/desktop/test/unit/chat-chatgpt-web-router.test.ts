@@ -151,8 +151,6 @@ describe('multi-session companion router', () => {
       expect(list.result.tools.some((tool) => tool.name === name)).toBe(true)
     }
     expect(list.result.tools.some((tool) => tool.name === 'read_file')).toBe(true)
-    expect(list.result.tools.some((tool) => tool.name === 'board_create_card')).toBe(true)
-    expect(list.result.tools.some((tool) => tool.name === 'get_linked_kanban')).toBe(true)
     expect(router.size()).toBe(0)
   })
 

@@ -5,7 +5,7 @@
 Use **Chats → New chat** for a general conversation, explanations, or work with
 attachments. A project is not required. Projects keep their existing repository,
 branch and worktree workflows; standalone chats do not join a project or inherit
-its instructions, memory, Kanban links or saved permissions.
+its instructions, memory or saved permissions.
 
 New standalone chats start in Standard with Ask mode and Ask permissions. Saved
 “always allow” decisions belong to that chat alone. Agent, Plan and Design can
@@ -239,7 +239,7 @@ clone progress and a link to the workspace.
 Up to 20 conversations can be started per request; ask again for more.
 Starting conversations is available in Agent/Design mode in local standalone
 and project chats. It is unavailable in Plan and Maestro modes,
-bot conversations, Kanban web chats, archived
+bot conversations, archived
 conversations, conversations with an unfinished migration and multi-repository
 conversations, and the app gives the reason. A review loop blocks only the
 **Same checkout** option. Missing or unknown workspace IDs, invalid or existing
@@ -349,7 +349,7 @@ processing every old chat.
 Maestrly tools are enabled by default. Existing explicit global or conversation
 choices remain unchanged. **Settings → Chat → Tools** keeps the master switch
 and lets you enable or disable Terminal, Browser, Notes, Memory, Conversation
-history, Debugger, Artifacts and Kanban separately. Expand **Maestrly tools** in
+history, Debugger and Artifacts separately. Expand **Maestrly tools** in
 the conversation's **+** menu to change its groups. Changing one group pins only
 that group's choice; the others continue to inherit the global settings.
 

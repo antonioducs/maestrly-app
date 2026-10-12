@@ -79,7 +79,6 @@ export interface ConversationDispatchServiceDeps {
   reportStartFailure(conversationId: string, error: string): void
   isReserved(conversationId: string): boolean
   isMigrating(conversationId: string): boolean
-  isWebManaged(conversationId: string): boolean
   text(key: string, params?: Record<string, string>): string
 }
 
@@ -88,7 +87,6 @@ export type ConversationDispatchErrorCode =
   | 'source-not-found'
   | 'project-required'
   | 'bot-conversation'
-  | 'web-managed'
   | 'source-archived'
   | 'conversation-migrating'
   | 'unsupported-layout'
@@ -197,8 +195,6 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
         'bot-conversation',
         'Bot conversations own their worktree exclusively and cannot start other conversations.'
       )
-    if (deps.isWebManaged(sourceConversationId))
-      throw new ConversationDispatchError('web-managed', 'This conversation is managed in the Kanban web chat.')
     if (source.archived === 1)
       throw new ConversationDispatchError(
         'source-archived',
@@ -892,7 +888,7 @@ export async function listConversationDispatchWorkspaces(): Promise<Conversation
 }
 
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
-  const [store, chat, workspace, git, windowIpc, i18n, migration, reviewLoop, remote, settings, dispatchStore] =
+  const [store, chat, workspace, git, windowIpc, i18n, migration, reviewLoop, settings, dispatchStore] =
     await Promise.all([
       import('./store'),
       import('./chat/service'),
@@ -902,7 +898,6 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
       import('./i18n'),
       import('./conversation-migration/store'),
       import('./chat/review-loop/registry'),
-      import('./chat/remote-policy'),
       import('./conversation-dispatch-settings'),
       import('./conversation-dispatch-store'),
     ])
@@ -983,7 +978,6 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     reportStartFailure: chat.reportConversationDispatchStartFailure,
     isReserved: (conversationId) => !!reviewLoop.lookupReviewLoopByConversation(conversationId),
     isMigrating: (conversationId) => !!migration.incompleteMigrationForConversation(conversationId),
-    isWebManaged: remote.isWebManagedConversation,
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
   })
 }

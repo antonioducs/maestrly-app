@@ -47,7 +47,6 @@ import { getOriginUrl, getRepositoryTopLevel } from './project-setup/git-runner'
 
 export interface WorkspaceCreationServiceDeps {
   getConversation(id: string): Conversation | undefined
-  isWebManaged(conversationId: string): boolean
   getProjectsDirectory(): string | null
   getWorkspace(id: string): Workspace | undefined
   getWorkspaceByPath(path: string): Workspace | undefined
@@ -261,8 +260,6 @@ export function createWorkspaceCreationService(deps: WorkspaceCreationServiceDep
     if (!source) return failure('source-unsupported', 'The source conversation no longer exists.', request.requestKey)
     if (source.botOrigin)
       return failure('source-unsupported', 'Bot conversations cannot create projects.', request.requestKey)
-    if (deps.isWebManaged(sourceId))
-      return failure('source-unsupported', 'This conversation is managed in the Kanban web chat.', request.requestKey)
     const github = requestedGithubRepository(request.source)
 
     const fingerprint = fingerprintOf(request)
@@ -454,9 +451,8 @@ export async function readRepositoryOrigin(dir: string, signal: AbortSignal): Pr
 }
 
 async function buildDefaultWorkspaceCreationService(): Promise<WorkspaceCreationService> {
-  const [store, remotePolicy, setup, projects, github, windowIpc] = await Promise.all([
+  const [store, setup, projects, github, windowIpc] = await Promise.all([
     import('./store'),
-    import('./chat/remote-policy'),
     import('./project-setup/service'),
     import('./projects-directory'),
     import('./github-repositories'),
@@ -465,7 +461,6 @@ async function buildDefaultWorkspaceCreationService(): Promise<WorkspaceCreation
   const repositories = github.createGithubRepositories()
   return createWorkspaceCreationService({
     getConversation: (id) => store.getConversation(id),
-    isWebManaged: remotePolicy.isWebManagedConversation,
     getProjectsDirectory: projects.getProjectsDirectory,
     getWorkspace: store.getWorkspace,
     getWorkspaceByPath: store.getWorkspaceByPath,

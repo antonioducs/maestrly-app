@@ -12,11 +12,6 @@
  */
 import { cancelMemoryExtraction } from '../../memory/extraction/scheduler'
 import { createHash, randomBytes } from 'node:crypto'
-import {
-  createLinkedBoardAccess,
-  linkedConversationBinding,
-  linkedBoardScopeIdentity,
-} from '../../platform/linked-board'
 import { app, net } from 'electron'
 import { acquireRuntimeAssetLease } from '../../runtime-assets/app-service'
 import {
@@ -633,11 +628,6 @@ export function capabilitiesForConversation(conversationId: string): ChatGptWebC
     sessionForConversation(conversationId) === null,
     conversation?.scope ?? 'project'
   )
-  const binding = linkedConversationBinding(conversationId)
-  if (binding && info.capabilities.kanban !== 'off')
-    info.fingerprint = createHash('sha256')
-      .update(JSON.stringify([info.fingerprint, linkedBoardScopeIdentity(conversationId)]))
-      .digest('hex')
   return info
 }
 
@@ -957,14 +947,6 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         }
       },
       bridge: {
-        ...(capabilityInfo.capabilities.kanban !== 'off' && linkedConversationBinding(input.conversationId)
-          ? {
-              kanban: createLinkedBoardAccess(
-                input.conversationId,
-                capabilityInfo.capabilities.kanban === 'write' ? 'write' : 'read'
-              ),
-            }
-          : {}),
         deliver: async (delivery) => {
           if (!hooks) throw new Error('delivery-unavailable')
           if (delivery.destination === 'plan') {

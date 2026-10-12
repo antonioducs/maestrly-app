@@ -252,7 +252,7 @@ describe('OpenAI harness kill switch', () => {
       }
 
     expect((await config()).appToolsEnabled).toBe(true)
-    expect(Object.values((await config()).appToolGroups)).toEqual(Array(8).fill(true))
+    expect(Object.values((await config()).appToolGroups)).toEqual(Array(7).fill(true))
 
     expect(handlers.get('chat:set-app-tool-group')?.(undefined as never, 'browser', false)).toEqual({ ok: true })
     expect(h.setAppFlag).toHaveBeenCalledWith('chat.appTools.group.browser', false)

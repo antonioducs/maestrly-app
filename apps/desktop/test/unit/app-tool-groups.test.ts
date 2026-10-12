@@ -18,7 +18,6 @@ describe('app-tool groups', () => {
     const used = new Set(Object.keys(APP_TOOL_POLICY).map(appToolGroupOf).filter(Boolean))
     expect([...used].sort()).toEqual([...APP_TOOL_GROUPS].sort())
     expect(appToolGroupOf('project_notes_read_page')).toBe('notes')
-    expect(appToolGroupOf('get_linked_kanban')).toBe('board')
     expect(appToolGroupOf('owner_memory_save')).toBeNull()
   })
 

@@ -36,14 +36,10 @@ test('baseline preserves all workspace checks; full adds CI suites and platform-
     )
   )
   assert.ok(steps.some((step) => step.command === 'go' && step.args.includes('--log-opts=HEAD')))
-  assert.ok(steps.some((step) => step.args.includes('test:integration')))
-  assert.ok(steps.some((step) => step.args.includes('test:e2e:platform')))
-  assert.ok(steps.some((step) => step.args.includes('smoke:platform')))
   assert.deepEqual(
     steps.filter((step) => step.command === 'xvfb-run').map((step) => step.args.at(-1)),
     [
       'test:e2e',
-      'scripts/test-project-chat-e2e.mjs',
       'package:linux',
       'smoke:packaged-desktop',
       'smoke:packaged-local-ml-runtime',

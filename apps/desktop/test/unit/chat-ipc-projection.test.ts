@@ -122,7 +122,7 @@ describe('Maestrly app-tool groups', () => {
     const stored = () => getConvUiPrefs(conversation.id).chat?.tools?.appGroups
 
     expect(tools().app).toBe(true)
-    expect(Object.values(tools().appGroups!)).toEqual(Array(8).fill(true))
+    expect(Object.values(tools().appGroups!)).toEqual(Array(7).fill(true))
 
     await handlers.get('chat:set-conv-tools')!({}, conversation.id, { appGroups: { debug: false, computer: false } })
     await handlers.get('chat:set-conv-tools')!({}, conversation.id, { appGroups: { browser: false } })
