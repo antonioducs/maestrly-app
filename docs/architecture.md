@@ -104,6 +104,14 @@ local process; an HTTP server is an external network service. Tool schemas are
 validated, calls remain permission-gated, and transports are disposed on
 conversation/provider lifecycle changes.
 
+Remote servers that require OAuth use the SDK's `authProvider` on their
+transports (`chat/mcp-oauth.ts`). The host that runs a server keeps its sign-in
+and refreshes it; the interactive sign-in (`chat/mcp-oauth-connect.ts`) runs on the
+person's computer and hands the result to that host through
+`chat:mcp-oauth:store`. Background turns never start a sign-in: a server without
+one fails with a "connect it in Settings" error and shows **Needs sign-in**. See
+[MCP OAuth sign-in](security-model.md#mcp-oauth-sign-in).
+
 Skills are local packages installed from an explicit source. Project memory and
 notes are local data, with indexes treated as reproducible caches. Promotion to
 shared repository knowledge is an explicit filesystem write rather than an

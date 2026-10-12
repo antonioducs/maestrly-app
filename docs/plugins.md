@@ -80,7 +80,9 @@ A plugin's MCP servers appear in the **+** menu and in **Settings → Maestrly C
 &lt;plugin&gt;**. You can switch a server off in one conversation from the **+** menu. Switch it off everywhere, or back
 on, in **Plugins**.
 
-Signing in to MCP servers that use OAuth is not available yet. Servers that take a token ask for it as a setting.
+A server that uses OAuth shows **Needs sign-in**. Choose **Sign in** next to it, in **Installed** or under **Tools**,
+and finish in your browser. The sign-in is kept on the host that runs the server, which renews it as needed; choose
+**Sign out** to remove it. Servers that take a token instead ask for it as a setting.
 
 ## Manage installed plugins
 

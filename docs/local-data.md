@@ -119,6 +119,12 @@ details cannot be read remains listed as needing reconfiguration and never
 connects. Removing a server also removes its secure-store entry. Bot provisioning
 requires secure storage before accepting MCP imports.
 
+The OAuth sign-in of a remote MCP server (client registration, tokens, and
+discovery results) is stored apart from its connection details, encrypted under
+`chat.mcpOAuth.<id>` on the host that runs the server, so that a token refresh
+never rewrites the details. It is written only through secure storage, is left out
+of data exports, and is removed on sign-out and when the server is removed.
+
 ## Plugins
 
 Plugin records live in `app_settings`:

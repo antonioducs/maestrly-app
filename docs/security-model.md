@@ -587,6 +587,32 @@ permission model to host-mediated calls. It cannot constrain independent side
 effects performed internally by an MCP executable or remote service after the
 connection is authorized.
 
+### MCP OAuth sign-in
+
+A remote MCP server (Streamable HTTP or legacy SSE) can require an OAuth sign-in.
+Signing in always starts from Settings, and its interactive part runs on your
+computer, whichever host runs the server:
+
+- Your computer asks the server's host for a descriptor: the server's name, URL,
+  and any scopes or resource indicator a plugin declares. The descriptor never
+  carries headers, tokens, or commands.
+- It listens for the authorization response on `127.0.0.1` with a random port and
+  accepts only the request that carries the expected `state`. It discovers the
+  authorization server (RFC 9728 and RFC 8414), registers a public client
+  dynamically, and uses PKCE (S256). The consent page opens in your browser,
+  and only when its URL is HTTPS, or HTTP on this computer's loopback: an
+  authorization endpoint with any other scheme or host is refused.
+- It exchanges the code for tokens and hands the client registration, tokens,
+  and discovery results to the host, which encrypts them through the secure store.
+  Your computer keeps no copy of a remote host's sign-in.
+
+The host refreshes tokens itself. Chat turns never open a browser and never
+register a client: when a server needs a new sign-in, its tools fail with a
+message that says to connect it in Settings. A sign-in is bound to the server's
+URL, and is deleted on sign-out, when the server is removed, and when a plugin
+update removes the server. An authorization server without dynamic client
+registration is reported; use an access token header for such a server instead.
+
 ### Plugins
 
 A plugin is code from its publisher. Before installing, Maestrly shows the
@@ -614,7 +640,8 @@ line, scripts and executables, and every component with its support status.
 - **Secrets.** Values the user enters for a plugin (tokens, keys, options) are
   stored only through secure storage and never returned to the renderer;
   without secure storage they are refused. Publisher-embedded OAuth clients are
-  never reused.
+  never reused: plugin servers sign in like any other server (see
+  [MCP OAuth sign-in](#mcp-oauth-sign-in)).
 - **Hosts.** A plugin's stdio servers run on the host that installed it: this
   computer, or a remote workspaces host.
 
