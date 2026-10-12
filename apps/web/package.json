@@ -21,7 +21,7 @@
     "@maestrly/protocol": "0.1.0",
     "@milkdown/crepe": "^7.22.2",
     "diff": "^9.0.0",
-    "lucide-react": "1.49.0",
+    "lucide-react": "1.54.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
@@ -29,13 +29,13 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0",
+    "@playwright/test": "1.64.0",
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "typescript": "7.0.2",
-    "vite": "8.3.1",
+    "vite": "7.3.7",
     "vitest": "5.0.3"
   }
 }
