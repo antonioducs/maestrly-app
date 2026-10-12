@@ -464,6 +464,28 @@ describe('conversation dispatch service', () => {
     expect(deps.createIsolated).toHaveBeenCalledTimes(1)
   })
 
+  it('asks the first turn to report its result back only when requested', async () => {
+    const { deps, service } = harness()
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { reportBack: true, tasks: [task('BACK'), task('QUIET', { reportBack: false })] },
+      assertCurrent: () => undefined,
+    })
+    expect(result.items.map((item) => item.status)).toEqual(['started', 'started'])
+    const starts = vi.mocked(deps.startTurn).mock.calls.map(([input]) => input)
+    expect(starts.map((input) => input.reportBack)).toEqual([true, false])
+    await service.dispatchBatch({ grant: grant(), batch: { tasks: [task('PLAIN')] }, assertCurrent: () => undefined })
+    expect(vi.mocked(deps.startTurn).mock.calls.at(-1)![0].reportBack).toBe(false)
+
+    // Asking for the result later under the same key is different content.
+    const changed = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('PLAIN', { reportBack: true })] },
+      assertCurrent: () => undefined,
+    })
+    expect(changed.items[0]).toMatchObject({ status: 'failed', error: expect.stringMatching(/different content/) })
+  })
+
   it('enforces the stated count and validates every item before allocating', async () => {
     const { deps, service } = harness()
     const tooMany = await service.dispatchBatch({

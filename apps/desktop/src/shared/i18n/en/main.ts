@@ -27,6 +27,12 @@ export default {
     confirmStart: 'Start',
     confirmCancel: "Don't start",
   },
+  conversationLink: {
+    sendHeader: 'Message another conversation',
+    sendQuestion: 'Send this message to “{{name}}”{{workspace}}?\n\n{{preview}}',
+    sendConfirm: 'Send',
+    sendCancel: "Don't send",
+  },
   debug: {
     extTimeout:
       'timeout: the extension did not respond. Open the “Code” tab of this conversation (VS Code must be loaded to control debugging).',

@@ -1070,6 +1070,35 @@ function initializeSchema(): void {
       WHERE conversation_id=OLD.id AND phase <> 'discarded';
     END;
   `)
+  const dispatchCols = db.prepare('PRAGMA table_info(conversation_dispatches)').all() as Array<{ name: string }>
+  if (!dispatchCols.some((column) => column.name === 'report_back')) {
+    // The source asked for the destination's first final answer to be delivered back to it.
+    db.exec('ALTER TABLE conversation_dispatches ADD COLUMN report_back INTEGER NOT NULL DEFAULT 0;')
+  }
+  // Messages between conversations: sent by an agent, reported back to the conversation that gave the work, or a
+  // final answer brought back on request. The journal makes a repeated send replay instead of delivering twice, keeps
+  // queued deliveries across restarts, and links the two conversations for later turns.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_peer_messages (
+      message_id TEXT PRIMARY KEY,
+      from_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      to_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      origin_key TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('message','report','result')),
+      body TEXT NOT NULL,
+      hop INTEGER NOT NULL,
+      report_back INTEGER NOT NULL DEFAULT 0,
+      result_status TEXT CHECK(result_status IN ('success','error','cancelled')),
+      phase TEXT NOT NULL CHECK(phase IN ('queued','delivered','reported','failed')),
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(from_conversation_id, origin_key, dedupe_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_peer_messages_to ON conversation_peer_messages(to_conversation_id, phase, created_at);
+    CREATE INDEX IF NOT EXISTS idx_peer_messages_from ON conversation_peer_messages(from_conversation_id, to_conversation_id);
+  `)
   // Projects created or cloned from a chat turn. Keyed like conversation dispatches so a repeated call replays the
   // registered workspace instead of cloning again; a failed attempt can be retried with the same key.
   db.exec(`

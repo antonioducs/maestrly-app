@@ -1,4 +1,4 @@
-import { useChatOwnerWindow } from '@/lib/chat-window-context'
+import { useChatOwnerWindow, useChatSourceFocus } from '@/lib/chat-window-context'
 import { subscriptionExhaustionMessageKey } from './subscription-failover-route'
 import {
   Fragment,
@@ -23,7 +23,7 @@ import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
 import { SharedToolImages, ToolCallCard } from './ToolCallCard'
-import { ConversationDispatchCard } from './ConversationDispatchCard'
+import { ConversationDispatchCard, openConversationById } from './ConversationDispatchCard'
 import { WorkspaceCreationCard } from './WorkspaceCreationCard'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { SubagentCard } from './SubagentCard'
@@ -73,6 +73,29 @@ function CopyButton({ text }: { text: string }) {
       className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
     >
       {done ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+/** Which conversation sent a message, report or result; its name opens that conversation. */
+function PeerMessageOrigin({ peer }: { peer: NonNullable<ChatMessage['peer']> }) {
+  const { t } = useTranslation('chat')
+  const focusSource = useChatSourceFocus()
+  const key = peer.kind === 'report' ? 'link.reportFrom' : peer.kind === 'result' ? 'link.resultFrom' : 'link.messageFrom'
+  const label = t(key, { name: peer.fromConversationName })
+  return (
+    <button
+      type="button"
+      data-testid="conversation-message-origin"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        openConversationById(peer.fromConversationId)
+        focusSource()
+      }}
+      className="w-fit rounded border border-violet-400/25 bg-violet-400/[0.08] px-2 py-0.5 text-left text-[10px] text-violet-200 hover:bg-violet-400/[0.16]"
+    >
+      {label}
     </button>
   )
 }
@@ -689,6 +712,9 @@ const Bubble = memo(function Bubble({
           >
             {t('dispatch.startedFrom')}
           </span>
+        )}
+        {message.source === 'conversation-message' && message.peer && (
+          <PeerMessageOrigin peer={message.peer} />
         )}
         {message.botName && (
           <span

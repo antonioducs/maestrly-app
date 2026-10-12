@@ -138,7 +138,8 @@ import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
 import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
-import { enableConversationDispatchTools, isConversationDispatchToolName } from '../tools/conversation-dispatch'
+import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools, isParentOnlyConversationToolName } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import { reviewPlanTool } from '../tools/review-plan'
 import { createDeltaCoalescer } from '../delta-coalescer'
@@ -1982,6 +1983,10 @@ async function buildDynamicTools(
     const conversationDispatch = args.reviewerRuntime
       ? undefined
       : enableConversationDispatchTools(bridgeNames, args.conversationId, args.mode)
+    // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+    const conversationLink = args.reviewerRuntime
+      ? undefined
+      : enableConversationLinkTools(bridgeNames, args.conversationId, args.mode)
     const bridgeTools = bridgeNames.size
       ? buildTools({
           executorReport: true,
@@ -2025,6 +2030,7 @@ async function buildDynamicTools(
             generateImage: (prompt, generationSignal, onUsage) =>
               state.generateImage(prompt, generationSignal, onUsage),
             ...(conversationDispatch ? { conversationDispatch } : {}),
+            ...(conversationLink ? { conversationLink } : {}),
             ...(args.reviewerRuntime
               ? {
                   reviewer: {
@@ -2728,7 +2734,7 @@ export async function runCodexSubscriptionChat(
             runtime.spec.name !== 'task' &&
             runtime.spec.name !== 'delegate' &&
             runtime.spec.name !== 'review_plan' &&
-            !isConversationDispatchToolName(runtime.spec.name)
+            !isParentOnlyConversationToolName(runtime.spec.name)
         )
         .map((runtime) => [
           runtime.spec.name,
@@ -3808,7 +3814,7 @@ export async function runCodexSubscriptionChat(
                       spec.name !== 'task' &&
                       spec.name !== 'delegate' &&
                       spec.name !== 'review_plan' &&
-                      !isConversationDispatchToolName(spec.name) &&
+                      !isParentOnlyConversationToolName(spec.name) &&
                       childToolNames.has(spec.name)
                   )
                   const childRuntimes = allChildRuntimes.filter(
@@ -3816,7 +3822,7 @@ export async function runCodexSubscriptionChat(
                       runtime.spec.name !== 'task' &&
                       runtime.spec.name !== 'delegate' &&
                       runtime.spec.name !== 'review_plan' &&
-                      !isConversationDispatchToolName(runtime.spec.name) &&
+                      !isParentOnlyConversationToolName(runtime.spec.name) &&
                       childToolNames.has(runtime.spec.name)
                   )
                   const classifySubagentQuota = async (error: unknown, physicalProviderId: string) => {

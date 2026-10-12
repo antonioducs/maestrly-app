@@ -125,6 +125,7 @@ export const conversationDispatchTaskSchema = z
       .optional()
       .describe('Per-task overrides of the batch defaults.'),
     placement: conversationDispatchPlacementSchema.optional().describe('Overrides the batch placement.'),
+    reportBack: z.boolean().optional().describe('Overrides the batch reportBack.'),
   })
   .strict()
 
@@ -147,6 +148,12 @@ export const conversationDispatchBatchSchema = z
       .optional()
       .describe(
         '"worktree" (default): own branch from the target base, or the current commit without a target. "shared": this checkout, without a target.'
+      ),
+    reportBack: z
+      .boolean()
+      .optional()
+      .describe(
+        'Only when the person wants the result brought back: deliver each new conversation\'s final answer to its first task here.'
       ),
   })
   .strict()
@@ -242,6 +249,7 @@ export function conversationDispatchFingerprintInput(input: {
   settings: ConversationDispatchSettingsRequest | ConversationDispatchSettings
   source?: ConversationDispatchSourceRef
   target?: ConversationDispatchTarget
+  reportBack?: boolean
 }): string {
   const settings = input.settings
   return JSON.stringify([
@@ -257,6 +265,8 @@ export function conversationDispatchFingerprintInput(input: {
     ...(input.target && Object.values(input.target).some((field) => field !== undefined)
       ? [input.target.workspaceId ?? null, input.target.branch ?? null, input.target.baseBranch ?? null]
       : []),
+    // Only when set, so fingerprints recorded before the option existed stay valid.
+    ...(input.reportBack ? [{ reportBack: true }] : []),
   ])
 }
 

@@ -65,6 +65,24 @@ describe('conversation dispatch journal', () => {
     expect(reserveConversationDispatch(entry({ dispatchId: 'dispatch-3', originKey: 'message:m2', conversationId: 'destination-3' })).created).toBe(true)
   })
 
+  it('records whether the source wants the first result back, false by default', () => {
+    expect(reserveConversationDispatch(entry()).record.reportBack).toBe(false)
+    const wanted = reserveConversationDispatch(
+      entry({ dispatchId: 'dispatch-2', requestKey: 'PROJ-2', conversationId: 'destination-2', reportBack: true })
+    )
+    expect(wanted.record.reportBack).toBe(true)
+    restartDb()
+    expect(getConversationDispatch('dispatch-2')?.reportBack).toBe(true)
+    expect(getConversationDispatch('dispatch-1')?.reportBack).toBe(false)
+  })
+
+  it('adds the reportBack column to a journal created before it existed', () => {
+    reserveConversationDispatch(entry())
+    getDb().exec('ALTER TABLE conversation_dispatches DROP COLUMN report_back')
+    restartDb()
+    expect(getConversationDispatch('dispatch-1')).toMatchObject({ dispatchId: 'dispatch-1', reportBack: false })
+  })
+
   it('transitions only from the expected phases', () => {
     reserveConversationDispatch(entry())
     expect(transitionConversationDispatch('dispatch-1', ['prepared'], 'starting')).toBe(false)

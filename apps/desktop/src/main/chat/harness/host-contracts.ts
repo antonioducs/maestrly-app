@@ -49,9 +49,49 @@ export const HOST_CONVERSATION_DISPATCH_GUIDANCE =
   'baseBranch resolves in the target repository. Without a target, a project conversation starts from its current ' +
   'commit. Uncommitted changes are not included. Placement "shared" reuses the source checkout only without a target. ' +
   'Use a stable requestKey per task (e.g. the card key); calling again ' +
-  'with the same keys replays or retries the same conversations instead of creating duplicates. If the tool refuses, ' +
+  'with the same keys replays or retries the same conversations instead of creating duplicates. Set reportBack only ' +
+  "when the person wants the result brought back here: each new conversation's final answer to its first task is " +
+  'then delivered to this conversation when that turn ends, starting a new turn here. If the tool refuses, ' +
   'relay the reason and do not work around it. Report each result with its ' +
   'conversation name and status.'
+
+/** Contracts of the tools that read and message other conversations, carried in their tool descriptions. */
+export const HOST_LIST_CONVERSATIONS_GUIDANCE =
+  'List existing Maestrly conversations (project and standalone chats) with conversationId, name, workspace, ' +
+  'branch, status, whether a turn is running, and how each relates to this one (source: it started this ' +
+  'conversation; child: started from here; linked: messages were exchanged). Filter with query. Turns not started ' +
+  'by the person only see linked conversations.'
+
+export const HOST_READ_CONVERSATION_GUIDANCE =
+  'Read another conversation: status, whether a turn is running, its latest answer and the most recent messages ' +
+  '(text only, tool activity omitted). Page older messages with beforeSeq. Read-only.'
+
+export const HOST_WAIT_CONVERSATION_GUIDANCE =
+  'Wait until another conversation finishes its current turn and the messages this conversation queued for it, ' +
+  'then return what read_conversation returns. Use it when the person wants the result within this turn. Returns ' +
+  'status "timeout" after timeoutSeconds (default 300, max 900); call again to keep waiting.'
+
+export const HOST_SEND_TO_CONVERSATION_GUIDANCE =
+  'Send a message to another existing Maestrly conversation; it starts a turn there, marked as coming from this ' +
+  'conversation. Use it when the person wants another conversation or agent told, asked or given follow-up work, ' +
+  'in whatever words. Find the conversationId with list_conversations or in start_conversations results. The ' +
+  'receiving agent works under its own mode and permissions, so this is available in Ask mode too; this ' +
+  'conversation keeps its own restrictions. The first message to a conversation that is not linked to this one ' +
+  "needs the person's confirmation in the chat. Turns not started by the person (messages and results from other " +
+  'conversations) can only message linked conversations, and at most 3 agent-to-agent turns follow each message ' +
+  'the person typed. A busy target receives the message when its current turn ends. Set reportBack only when the ' +
+  "person wants the result brought back: the target's final answer to this message is then delivered here, " +
+  'starting a new turn in this conversation. Use wait_conversation instead when the person wants the result in ' +
+  'this same turn; do not combine both for one message. Sending the same message again in this turn reports the ' +
+  'existing delivery. Relay refusals; do not work around them.'
+
+export const HOST_REPORT_TO_SOURCE_GUIDANCE =
+  'Send a message back to the conversation that gave you this work: the one whose message started this turn, ' +
+  'otherwise the one that started this conversation, otherwise the last one that messaged it. It starts a turn ' +
+  'there, marked as a report from this conversation. Use it when the requested work is done or blocked and the ' +
+  'sender should know, or when the person asks. When the sender asked for the result to be brought back, your ' +
+  'final answer is delivered automatically at the end of this turn and this tool only acknowledges. Make the ' +
+  'report self-contained: what was done, results, open questions.'
 
 /** Contract of `create_workspace`, carried in its tool description. */
 export const HOST_WORKSPACE_CREATION_GUIDANCE =

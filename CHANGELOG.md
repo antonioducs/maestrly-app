@@ -5,6 +5,16 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Let the agents of different conversations read, wait for and message each
+  other. Ask a conversation to open another agent and bring its result back, send
+  a follow-up to a conversation it started, or let a conversation report back to
+  the one that gave it work. The first message to an unrelated conversation needs
+  your confirmation, and turns the agents start stop after three exchanges
+  without you. See
+  [talking to other conversations](docs/chat-context.md#talking-to-other-conversations).
+
 ### Changed
 
 - Ask the agent to start other conversations in your own words, for example

@@ -266,3 +266,24 @@ export const CONVERSATION_DISPATCH_TOOL_NAMES = [
 export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
   return mode === 'ask' || (mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent')
 }
+
+/**
+ * Built-in, parent-only tools for reading and messaging other existing conversations. Sending starts turns elsewhere,
+ * so like the dispatch tools they stay out of Plan, Maestro, subagents and workers. Runners add them for a turn the
+ * person typed or one started by another conversation (see conversation-link-authorization).
+ */
+export const CONVERSATION_LINK_TOOL_NAMES = [
+  'list_conversations',
+  'read_conversation',
+  'wait_conversation',
+  'send_to_conversation',
+  'report_to_source',
+] as const
+
+/** Every tool that starts, reads or messages other conversations; children never receive them. */
+export const PARENT_ONLY_CONVERSATION_TOOL_NAMES = [
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...CONVERSATION_LINK_TOOL_NAMES,
+] as const
+
+export const conversationLinkToolsAllowed = conversationDispatchToolsAllowed

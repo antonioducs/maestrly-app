@@ -146,6 +146,7 @@ describe('isHumanTurnAdmission', () => {
     ['Kanban web chat', { remoteAdmission: true }],
     ['unattended executor', { runnerAdmission: () => undefined, runnerSignal: new AbortController().signal }],
     ['seeded child conversation', { dispatchSeed: { dispatchId: 'd', sourceConversationId: 's' } }],
+    ['message from another conversation', { peerMessage: {} }],
     ['host-attached findings', { hiddenParts: [{ type: 'text' }] }],
   ])('never treats a %s turn as human', (_label, opts) => {
     expect(isHumanTurnAdmission(opts)).toBe(false)

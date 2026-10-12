@@ -55,6 +55,7 @@ import { renderSkillContext } from '../skills'
 import { adaptToolSetForModel } from '../tool-capabilities'
 import { buildTools, builtinToolNamesForMode, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import {
   AntigravityModelUnavailableError,
@@ -317,6 +318,7 @@ export async function runAntigravitySubscriptionChat(
       emitGeneratedImage: (image: GeneratedImageEmission) => emitGeneratedImage(toolCallId, image),
       onGeneratedImageUsage,
       ...(conversationDispatch ? { conversationDispatch } : {}),
+      ...(conversationLink ? { conversationLink } : {}),
     })
 
     const enabledBuiltins = args.reviewerRuntime
@@ -325,6 +327,10 @@ export async function runAntigravitySubscriptionChat(
     const conversationDispatch = args.reviewerRuntime
       ? undefined
       : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+    // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+    const conversationLink = args.reviewerRuntime
+      ? undefined
+      : enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
     if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }

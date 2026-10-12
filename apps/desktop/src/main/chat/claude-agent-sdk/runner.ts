@@ -63,6 +63,7 @@ import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 import { builtinToolNamesForMode, buildTools, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -577,6 +578,7 @@ async function prepareRuntime(
       : {}),
     ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
     ...(conversationDispatch ? { conversationDispatch } : {}),
+    ...(conversationLink ? { conversationLink } : {}),
   })
   const enabledBuiltins = args.reviewerRuntime
     ? new Set(REVIEWER_READONLY_TOOL_NAMES)
@@ -585,6 +587,10 @@ async function prepareRuntime(
   const conversationDispatch = args.reviewerRuntime
     ? undefined
     : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+  // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+  const conversationLink = args.reviewerRuntime
+    ? undefined
+    : enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even here, in a conversation running on Claude).
   if (

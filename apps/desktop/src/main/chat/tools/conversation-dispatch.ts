@@ -216,10 +216,6 @@ export function conversationDispatchRuntimeFor(
   }
 }
 
-export function isConversationDispatchToolName(name: string): boolean {
-  return (CONVERSATION_DISPATCH_TOOL_NAMES as readonly string[]).includes(name)
-}
-
 /**
  * Runner helper: when this turn may start conversations, add the tool names to the enabled built-ins and return the
  * runtime to place ONLY in the main tool context.

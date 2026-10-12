@@ -54,9 +54,12 @@ export function governAutonomousTools(tools:ToolSet,conversationId:string):void 
     if(execute)tools[name]={...entry,execute:(...args)=>withAutonomousPolicy(policy,()=>execute(...args))}
   }
 }
-/** Tools that need a person present; starting conversations or creating projects also needs their explicit request. */
+/**
+ * Tools that need a person present; starting conversations or creating projects also needs their explicit request,
+ * and talking to other conversations a person-started chain.
+ */
 export function interactiveTool(name: string): boolean {
-  return /(?:^|__)(?:review_plan|ask_question|request_user_input|request_user_input_async|wait_plan_review|AskUserQuestion|ExitPlanMode|start_conversations|list_conversation_models|list_conversation_workspaces|find_github_repositories|create_workspace)(?:$|_)/.test(
+  return /(?:^|__)(?:review_plan|ask_question|request_user_input|request_user_input_async|wait_plan_review|AskUserQuestion|ExitPlanMode|start_conversations|list_conversation_models|list_conversation_workspaces|find_github_repositories|create_workspace|list_conversations|read_conversation|wait_conversation|send_to_conversation|report_to_source)(?:$|_)/.test(
     name
   )
 }

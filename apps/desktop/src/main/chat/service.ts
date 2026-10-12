@@ -22,7 +22,9 @@ import {
   isHumanTurnAdmission,
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
+import { clearLinkedTurnOrigin, recordLinkedTurnOrigin } from './conversation-link-authorization'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
+import type { ConversationPeerMessageKind, ConversationTurnResultStatus } from '../../shared/conversation-link'
 import {
   assertBotTurnAdmission,
   botBlocksManualSend,
@@ -3642,7 +3644,21 @@ interface StartSendOpts {
   /** Review-turn callback; releases the reservation if no v2 is accepted. */
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
-  dispatchSeed?: { dispatchId: string; sourceConversationId: string }
+  dispatchSeed?: { dispatchId: string; sourceConversationId: string; reportBack?: boolean }
+  /**
+   * Message, report or result sent by the agent of another conversation: a visible, attributed bubble that starts a
+   * linked (never human) turn. Framing for the model travels in hiddenParts.
+   */
+  peerMessage?: {
+    messageId: string
+    fromConversationId: string
+    fromConversationName: string
+    kind: ConversationPeerMessageKind
+    hop: number
+    reportBack: boolean
+  }
+  /** Structured outcome of this admitted turn, on every terminal path. Not called when admission fails. */
+  onOutcome?: (outcome: InternalTurnOutcome) => void
 }
 
 async function startSend(
@@ -4159,7 +4175,12 @@ async function startSend(
       if (companionPersonalMemory !== 'off' || !isMemoryContextPart(part)) parts.push(part)
     }
     const turnMemory =
-      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory || companionPersonalMemory === 'off'
+      opts?.internal ||
+      internalLoop ||
+      opts?.dispatchSeed ||
+      opts?.peerMessage ||
+      opts?.skipMemory ||
+      companionPersonalMemory === 'off'
         ? null
         : await prepareTurnMemory({
             conversationId,
@@ -4614,6 +4635,19 @@ async function startSend(
     }
     internalLoop?.onAdmitted(run)
     opts?.runnerAdmission?.(run)
+    if (opts?.onOutcome) {
+      const onOutcome = opts.onOutcome
+      void run.outcome.then(
+        (outcome) => {
+          try {
+            onOutcome(outcome)
+          } catch {
+            // Observers never alter the turn.
+          }
+        },
+        () => undefined
+      )
+    }
     // The BYOK runner received a preallocated response ID from main; signal early so compaction
     // and mention reads count toward duration too. The Codex adapter still governs its own message.
     if (!useOfficialSubscription) {
@@ -4639,6 +4673,17 @@ async function startSend(
       ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
+      ...(opts?.peerMessage
+        ? {
+            source: 'conversation-message' as const,
+            peer: {
+              messageId: opts.peerMessage.messageId,
+              fromConversationId: opts.peerMessage.fromConversationId,
+              fromConversationName: opts.peerMessage.fromConversationName,
+              kind: opts.peerMessage.kind,
+            },
+          }
+        : {}),
       ...(reviewLoopMessageMeta ?? {}),
       ...(turnMemory?.memoryContext ? { memoryContext: turnMemory.memoryContext } : {}),
       createdAt: Date.now(),
@@ -4656,10 +4701,22 @@ async function startSend(
         text: typeof text === 'string' ? text : '',
         signal: controller.signal,
       })
+    } else if (opts?.peerMessage || opts?.dispatchSeed) {
+      // Started by another conversation: it may answer and follow up with linked conversations, within the hop limit.
+      recordLinkedTurnOrigin({
+        token: run,
+        conversationId,
+        messageId: userMessageId,
+        peerConversationId: opts.peerMessage?.fromConversationId ?? opts.dispatchSeed!.sourceConversationId,
+        hop: opts.peerMessage?.hop ?? 1,
+        reportBack: opts.peerMessage?.reportBack ?? opts.dispatchSeed?.reportBack ?? false,
+        signal: controller.signal,
+      })
     }
     if (
       conv.scope === 'standalone' &&
       !opts?.internal &&
+      !opts?.peerMessage &&
       !reviewLoopMessageMeta &&
       nameStandaloneConversationFromText(conversationId, text)
     ) {
@@ -5747,6 +5804,7 @@ async function startSend(
         }
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
+        clearLinkedTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
         if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {
           scheduleMemoryExtraction(conversationId)
@@ -5797,6 +5855,7 @@ async function startSend(
   } catch (error) {
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
     if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
+    if (admittedRun) clearLinkedTurnOrigin(conversationId, admittedRun)
     releaseCwdActivityOnce()
     if (admittedRun) {
       admittedRun.maestroLive?.finish(admittedRun.controller.signal.aborted ? 'aborted' : 'error')
@@ -11041,19 +11100,120 @@ export async function startConversationDispatchTurn(input: {
   dispatchId: string
   sourceConversationId: string
   visible: boolean
+  /** Deliver this first turn's final answer back to the source when it ends. */
+  reportBack?: boolean
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
   const wc = getMainWebContents()
   if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  const reportBack = input.reportBack === true
   try {
     const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
       ...(input.visible ? {} : { internal: true }),
-      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId },
+      ...(reportBack
+        ? {
+            hiddenParts: [
+              conversationLinkFramingPart(tFor(getLocale(), 'prompts')('conversationLink.seedReportBack')),
+            ],
+            // Lazy: the link service depends on this module.
+            onOutcome: (outcome: InternalTurnOutcome) =>
+              void import('../conversation-link-service')
+                .then(({ getConversationLinkService }) => getConversationLinkService())
+                .then((service) =>
+                  service.relayDispatchResult({
+                    dispatchId: input.dispatchId,
+                    sourceConversationId: input.sourceConversationId,
+                    conversationId: input.conversationId,
+                    outcome,
+                  })
+                )
+                .catch(() => undefined),
+          }
+        : {}),
+      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId, reportBack },
     })
     return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+}
+
+/** Model-only framing for a turn started by another conversation; the bubble shows only what the agent wrote. */
+function conversationLinkFramingPart(text: string): MessagePart {
+  return {
+    type: 'file',
+    id: randomUUID(),
+    name: 'conversation-message.md',
+    mediaType: 'text/markdown',
+    kind: 'text',
+    data: text,
+    hidden: true,
+  }
+}
+
+export interface ConversationPeerTurnInput {
+  conversationId: string
+  /** Journal id of the message being delivered. */
+  messageId: string
+  fromConversationId: string
+  fromConversationName: string
+  kind: ConversationPeerMessageKind
+  body: string
+  hop: number
+  /** The sender wants this turn's final answer (messages only). */
+  reportBack: boolean
+  resultStatus?: ConversationTurnResultStatus
+  onOutcome?: (outcome: InternalTurnOutcome) => void
+}
+
+/**
+ * Deliver a message from another conversation as a turn here. It is a visible user bubble attributed to the sender,
+ * not `internal`, so every guard of a manual send still applies (bot chats, Kanban web chats, executors, busy). The
+ * turn is linked, never human: it cannot start conversations and talks only to linked conversations.
+ */
+export async function startConversationPeerTurn(
+  input: ConversationPeerTurnInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
+  const wc = getMainWebContents()
+  if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  const t = tFor(getLocale(), 'prompts')
+  const params = { from: input.fromConversationName, fromId: input.fromConversationId }
+  const framing =
+    input.kind === 'message'
+      ? t('conversationLink.message', {
+          ...params,
+          reply: t(input.reportBack ? 'conversationLink.replyAutomatic' : 'conversationLink.replyManual'),
+        })
+      : input.kind === 'report'
+        ? t('conversationLink.report', params)
+        : t('conversationLink.result', { ...params, status: input.resultStatus ?? 'success' })
+  try {
+    const result = await startSend(savedDeps, wc, input.conversationId, input.body, undefined, {
+      hiddenParts: [conversationLinkFramingPart(framing)],
+      peerMessage: {
+        messageId: input.messageId,
+        fromConversationId: input.fromConversationId,
+        fromConversationName: input.fromConversationName,
+        kind: input.kind,
+        hop: input.hop,
+        reportBack: input.kind === 'message' && input.reportBack,
+      },
+      ...(input.onOutcome ? { onOutcome: input.onOutcome } : {}),
+    })
+    return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** Resolves once the conversation's current turn and pending operation (if any) have settled. */
+export function waitForChatConversationSlot(conversationId: string): Promise<void> {
+  return waitForConversationSlot(conversationId)
+}
+
+export function isChatConversationRunning(conversationId: string): boolean {
+  return active.has(conversationId) || pendingConversationOperations.has(conversationId)
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */

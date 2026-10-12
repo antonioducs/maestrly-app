@@ -143,6 +143,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
         'bot_command_receipts',
         'bot_question_bindings',
         'bot_conversation_allocations',
+        'conversation_peer_messages',
         'conversation_dispatches',
         'workspace_creations',
         'chat_usage_ledger',

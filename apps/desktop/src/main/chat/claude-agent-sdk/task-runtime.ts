@@ -23,7 +23,7 @@ import {
 } from '../subagent-selection-guard'
 import { namespaceSubagentToolSet } from '../subagent-runner'
 import { isSubagentReadOnly, isSubagentToolAllowed, READ_ONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
-import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from '../image-interpreter'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
@@ -103,7 +103,7 @@ export function selectedSubagentToolNames(
     'ask_question',
     'todo_write',
     'use_skill',
-    ...CONVERSATION_DISPATCH_TOOL_NAMES,
+    ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
   ]) {
     selected.delete(forbidden)
   }
