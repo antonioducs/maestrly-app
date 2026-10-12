@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label'
 import { SearchSelect } from '@/components/ui/search-select'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 interface Props {
   executor: Conversation | null
@@ -35,6 +36,7 @@ interface Props {
 
 export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted, onReviewerCreated }: Props) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const generationRef = useRef(0)
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const [providerId, setProviderId] = useState('')
@@ -66,7 +68,7 @@ export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted
     setFastMode(false)
     setLoadingModels(true)
     try {
-      const nextModels = await window.api.chatModels(nextProviderId)
+      const nextModels = await api.chatModels(nextProviderId)
       if (generationRef.current !== generation) return
       setModels(nextModels)
       setModelId(preferredModelId && nextModels.includes(preferredModelId) ? preferredModelId : (nextModels[0] ?? ''))
@@ -97,7 +99,7 @@ export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted
     setError(null)
     setLoadingConfig(true)
     let alive = true
-    void window.api
+    void api
       .chatConfig()
       .then(async (nextConfig) => {
         if (!alive) return
@@ -116,7 +118,7 @@ export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted
       alive = false
       generationRef.current++
     }
-  }, [executor, open])
+  }, [api, executor, open])
 
   useEffect(() => {
     if (!providerId || !modelId) {
@@ -126,7 +128,7 @@ export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted
     }
     let alive = true
     setLoadingMeta(true)
-    void window.api
+    void api
       .chatModelMeta(modelId, providerId)
       .then((meta) => {
         if (!alive) return
@@ -138,7 +140,7 @@ export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted
     return () => {
       alive = false
     }
-  }, [modelId, providerId])
+  }, [api, modelId, providerId])
 
   const supportedEfforts = useMemo(
     () =>
@@ -171,27 +173,27 @@ export function ReviewLoopPickerDialog({ executor, open, onOpenChange, onStarted
     try {
       let target = reviewer
       if (!target) {
-        target = await window.api.createSiblingConversation({ sourceConversationId: executor.id })
+        target = await api.createSiblingConversation({ sourceConversationId: executor.id })
         setReviewer(target)
       }
       const name = reviewerName.trim() || `${executor.name} · Reviewer`
       if (target.name !== name) {
-        await window.api.renameConversation(target.id, name)
+        await api.renameConversation(target.id, name)
         target = { ...target, name }
         setReviewer(target)
       }
       await onReviewerCreated(target)
 
-      const selected = await window.api.chatSetSelection(target.id, { providerId, modelId })
+      const selected = await api.chatSetSelection(target.id, { providerId, modelId })
       if (!selected.ok) throw new Error(selected.error || 'reviewer-model-unavailable')
-      const effortSaved = await window.api.chatSetReasoning(target.id, reasoning)
+      const effortSaved = await api.chatSetReasoning(target.id, reasoning)
       if (!effortSaved.ok) throw new Error('reviewer-reasoning-unavailable')
-      const fastSaved = await window.api.chatSetFastMode(target.id, modelMeta?.fastModeCapability === true && fastMode)
+      const fastSaved = await api.chatSetFastMode(target.id, modelMeta?.fastModeCapability === true && fastMode)
       if (!fastSaved.ok) throw new Error('reviewer-fast-mode-unavailable')
-      const modeSaved = await window.api.chatSetMode(target.id, 'agent')
+      const modeSaved = await api.chatSetMode(target.id, 'agent')
       if (!modeSaved.ok) throw new Error('reviewer-mode-unavailable')
 
-      const result = await window.api.chatReviewLoopStart({
+      const result = await api.chatReviewLoopStart({
         executorConversationId: executor.id,
         reviewerConversationId: target.id,
         maxIterations,

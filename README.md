@@ -133,6 +133,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Platform protocol](docs/platform-protocol.md)
 - [Platform security](docs/platform-security.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
+- [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
 - [Backup and restore](docs/backup-restore.md)
 
 ## License

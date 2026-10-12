@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import type { BackgroundCompactionConfig } from '../../../shared/background-compaction'
 import type { ChatConfig } from '../../../shared/chat'
@@ -41,6 +42,7 @@ export function BackgroundCompactionSettings({
   locked?: boolean
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const persisted = savedConfig(config)
   const persistedProviderId = persisted.selection?.providerId ?? ''
   const persistedModelId = persisted.selection?.modelId ?? ''
@@ -97,7 +99,7 @@ export function BackgroundCompactionSettings({
         : null,
     }
     try {
-      const result = await window.api.chatSetBackgroundCompaction(next)
+      const result = await api.chatSetBackgroundCompaction(next)
       if (!result.ok) {
         setNote({ kind: 'error', text: result.error || t('settings.backgroundCompactionSaveFailed') })
         return

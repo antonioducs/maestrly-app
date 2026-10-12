@@ -1,10 +1,14 @@
 /** Desktop preferences and provider integrations. Local performance diagnostics remain available
  * without uploading telemetry or coupling settings to a Maestrly account. */
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings, X, PanelLeft } from 'lucide-react'
 import type { ChatPermMode, ShortcutOpenMode } from '../../preload'
 import { UsagePanel } from '@/components/UsagePanel'
+import { hostApi, HostProvider, useHostApi } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import { OptionSelect, SelectOption } from '@/components/ui/option-select'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 import { useLocale } from '@/lib/i18n'
 import type { FloatTab } from '../../shared/tool-tabs'
 import {
@@ -44,6 +48,9 @@ import { FleetSettings } from '@/components/settings/FleetSettings'
 import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
+/** The sections about a Maestrly profile, which a host has; the others are this computer's window and app. */
+const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'platform', 'usage', 'execution'])
+
 interface Props {
   fleet?: FleetController
   initialSection?: SettingsSection
@@ -56,15 +63,22 @@ interface Props {
   onClose: () => void
 }
 
-export function SettingsView({
-  fleet,
-  initialSection = 'chat',
-  sections,
-  chat,
-  onShowSidebar,
-  onClose,
-}: Props) {
+export function SettingsView({ fleet, initialSection = 'chat', sections, chat, onShowSidebar, onClose }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
+  // Sections about a Maestrly profile (its chat, bots, platform, usage and execution settings) show the profile of
+  // the chosen host; the others are this computer's window and app, whichever host is chosen.
+  const hosts = useHosts()
+  const profileHosts = hosts.filter((host) => !host.remote || host.state === 'online')
+  const [profileHostId, setProfileHostId] = useState<HostId>(LOCAL_HOST_ID)
+  const profileHost = profileHosts.find((host) => host.id === profileHostId) ?? profileHosts[0]
+  const profileApi = hostApi(profileHost.id)
+  const inProfile = (node: ReactNode) => (
+    // Mounted again for another host, and for a host that answers again.
+    <HostProvider key={`${profileHost.id}:${profileHost.epoch}`} hostId={profileHost.id}>
+      {node}
+    </HostProvider>
+  )
   const navItems = sections ? SETTINGS_NAV.filter((item) => sections.includes(item.id)) : SETTINGS_NAV
   const showNav = navItems.length > 1
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -100,12 +114,15 @@ export function SettingsView({
   }, [initialSection])
 
   useEffect(() => {
-    window.api
+    profileApi
       .getDefaultPermissionMode()
       .then(setDefaultPermissionMode)
       .catch(() => {})
+  }, [profileApi])
+
+  useEffect(() => {
     if (isWin) {
-      window.api
+      api
         .getFreeTerminalShell()
         .then((v) => {
           const known = WIN_SHELL_IDS.includes(v) && v !== 'custom'
@@ -127,7 +144,7 @@ export function SettingsView({
       .catch(() => {})
 
     return () => {}
-  }, [isWin])
+  }, [isWin, api])
 
   useEffect(() => {
     window.api
@@ -156,16 +173,16 @@ export function SettingsView({
       setChatGptWebEnabled(status.enabled)
       if (!status.enabled) setRecording((current) => (current === 'chatgpt' ? null : current))
     }
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptWebEnabled(false))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [api])
 
   const persistShortcuts = (next: EffectiveShortcuts) => {
     setShortcutsState(next)
@@ -218,18 +235,18 @@ export function SettingsView({
 
   const updateDefaultPermissionMode = (mode: ChatPermMode) => {
     setDefaultPermissionMode(mode)
-    window.api.setDefaultPermissionMode(mode)
+    profileApi.setDefaultPermissionMode(mode)
   }
 
   const selectShell = (id: string) => {
     setFreeShell(id)
     setShellTest(null)
-    if (id !== 'custom') window.api.setFreeTerminalShell(id)
-    else if (customShell.trim()) window.api.setFreeTerminalShell(customShell.trim())
+    if (id !== 'custom') api.setFreeTerminalShell(id)
+    else if (customShell.trim()) api.setFreeTerminalShell(customShell.trim())
   }
 
   const commitCustomShell = () => {
-    if (freeShell === 'custom' && customShell.trim()) window.api.setFreeTerminalShell(customShell.trim())
+    if (freeShell === 'custom' && customShell.trim()) api.setFreeTerminalShell(customShell.trim())
   }
 
   const testShell = async () => {
@@ -238,7 +255,7 @@ export function SettingsView({
     setShellTesting(true)
     setShellTest(null)
     try {
-      setShellTest(await window.api.testFreeTerminalShell(value))
+      setShellTest(await api.testFreeTerminalShell(value))
     } catch (e) {
       setShellTest({ ok: false, error: String((e as Error)?.message ?? e) })
     } finally {
@@ -363,7 +380,28 @@ export function SettingsView({
               section === 'chat' ? 'max-w-6xl' : 'max-w-2xl'
             )}
           >
-            {section === 'usage' && <UsagePanel />}
+            {PROFILE_SECTIONS.has(section) && profileHosts.length > 1 && (
+              <div data-settings-host className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span id="settings-host-label" className="text-[13px] font-medium">
+                  {t('settings.host.label')}
+                </span>
+                <OptionSelect
+                  value={profileHost.id}
+                  onValueChange={setProfileHostId}
+                  aria-labelledby="settings-host-label"
+                  className="h-8 w-60"
+                >
+                  {profileHosts.map((host) => (
+                    <SelectOption key={host.id} value={host.id}>
+                      {host.remote ? host.label || t('sidebar.hostUnnamed') : t('sidebar.hostThisComputer')}
+                    </SelectOption>
+                  ))}
+                </OptionSelect>
+                <p className="basis-full text-xs text-muted-foreground">{t('settings.host.hint')}</p>
+              </div>
+            )}
+
+            {section === 'usage' && inProfile(<UsagePanel />)}
 
             {section === 'appearance' && <LanguageSection t={t} locale={locale} setLocale={setLocale} />}
             {section === 'appearance' && <AgentActivitySection t={t} />}
@@ -378,9 +416,9 @@ export function SettingsView({
               />
             )}
 
-            {section === 'chat' && <MaestrlyChatSection t={t} chat={chat} />}
+            {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chat} />)}
 
-            {section === 'platform' && <PlatformSection />}
+            {section === 'platform' && inProfile(<PlatformSection />)}
             {section === 'artifacts' && (
               <ArtifactsSettings
                 onOpenFleet={() => selectSection('fleet')}
@@ -400,7 +438,9 @@ export function SettingsView({
             {section === 'execution' && (
               <DefaultPermissionSection t={t} mode={defaultPermissionMode} onChange={updateDefaultPermissionMode} />
             )}
-            {section === 'execution' && !window.api.platformInfo.botMode && <ProjectsDirectorySection t={t} />}
+            {section === 'execution' &&
+              !window.api.platformInfo.botMode &&
+              inProfile(<ProjectsDirectorySection t={t} />)}
 
             {section === 'appearance' && (
               <SoundSection

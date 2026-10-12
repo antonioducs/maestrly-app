@@ -81,7 +81,7 @@ describe('ChatGPT Web companion lifecycle contract', () => {
   it('hides entries when the global feature is disabled and offers start in the fallback', () => {
     expect(drawer).toContain('chatGptWebEnabled')
     expect(drawer).toContain("t('drawer.chatgptStart')")
-    expect(drawer).toContain('startChatGptWebCompanion(convId)')
+    expect(drawer).toContain('startChatGptWebCompanion(convId, api)')
     expect(drawer).toContain("t('drawer.chatgptPairingInstruction'")
     expect(drawer).toContain('chatGptWebCompanionCopyPrompt(convId)')
     expect(drawer).not.toContain('navigator.clipboard')
@@ -236,7 +236,7 @@ describe('ChatGPT Web companion lifecycle contract', () => {
 
   it('saves drafts before start and preserves live capabilities in place', () => {
     const drawerSave = drawer.indexOf('chatGptWebSetCapabilities(convId, chatGptCapabilities.capabilities)')
-    const drawerStart = drawer.indexOf('startChatGptWebCompanion(convId)', drawerSave)
+    const drawerStart = drawer.indexOf('startChatGptWebCompanion(convId, api)', drawerSave)
     expect(drawerSave).toBeGreaterThanOrEqual(0)
     expect(drawerStart).toBeGreaterThan(drawerSave)
     expect(manager).toContain("if (sessionForConversation(conversationId)) throw new Error('companion-session-active')")

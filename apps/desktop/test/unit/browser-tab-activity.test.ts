@@ -7,10 +7,12 @@ const h = vi.hoisted(() => ({
   closeBrowserTab: vi.fn(),
   switchBrowserTab: vi.fn(),
   touchActiveBrowserActivity: vi.fn(),
+  browserControlReady: vi.fn(async () => {}),
+  navigate: vi.fn(async () => ({ url: 'https://page.test/' })),
 }))
 
 vi.mock('../../src/main/drawer-manager', () => h)
-vi.mock('../../src/main/browser-control', () => ({}))
+vi.mock('../../src/main/browser-control', () => ({ navigate: h.navigate }))
 
 import { registerBrowserTools } from '../../src/main/mcp/tools/browser'
 
@@ -60,5 +62,24 @@ describe('browser tab management activity lease', () => {
     await handlers.browser_new_tab({ url: 'https://new.test' })
     expect(h.createBrowserTab).toHaveBeenCalledWith('conv-1', 'https://new.test')
     expect(h.touchActiveBrowserActivity).toHaveBeenCalledWith('conv-1')
+  })
+
+  it('drives a view only once it is ready: a headless view created by the call still loads its first page', async () => {
+    const webContents = { id: 7 }
+    const release = vi.fn()
+    h.acquireBrowserForControl.mockReturnValue({ webContents, captureFrame: vi.fn(), release })
+    let ready!: () => void
+    h.browserControlReady.mockReturnValueOnce(new Promise<void>((resolve) => (ready = resolve)))
+
+    const navigated = handlers.browser_navigate({ url: 'https://page.test' })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(h.browserControlReady).toHaveBeenCalledWith(webContents)
+    // A navigation sent now would be replaced by the view's own first page.
+    expect(h.navigate).not.toHaveBeenCalled()
+
+    ready()
+    await navigated
+    expect(h.navigate).toHaveBeenCalledWith(webContents, 'https://page.test')
+    expect(release).toHaveBeenCalledTimes(1)
   })
 })

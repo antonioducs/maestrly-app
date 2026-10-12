@@ -572,6 +572,11 @@ export type ChatOpenAttachmentResult =
   | { ok: true }
   | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' | 'open-failed' }
 
+/** Where a host keeps the read-only copy of a PDF attachment, for a computer to download and open. */
+export type ChatAttachmentPdfFileResult =
+  | { ok: true; path: string }
+  | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' }
+
 export type ChatAttachmentKind = 'image' | 'text' | 'pdf'
 
 export interface ChatAttachmentInput {

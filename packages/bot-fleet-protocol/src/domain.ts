@@ -355,6 +355,10 @@ export const fleetEnvironmentUpdateSchema = z.object({
 })
 export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema>
 
+/** What an environment runs: bots, or the owner's chats and workspaces driven from their computers. */
+export const fleetEnvironmentKindSchema = z.enum(['bots', 'workspaces'])
+export type FleetEnvironmentKind = z.infer<typeof fleetEnvironmentKindSchema>
+
 /** One runtime of an environment (Claude Code or Codex): the version in use and its release channel. */
 export const fleetRuntimeInfoSchema = z.object({
   id: z.enum(FLEET_RUNTIME_IDS),
@@ -387,6 +391,8 @@ export const fleetRuntimesSchema = z.array(fleetRuntimeInfoSchema).max(4)
 export const fleetEnvironmentSchema = z.object({
   id: fleetEnvironmentIdSchema,
   name: fleetNameSchema,
+  /** `bots` from gateways that predate workspaces environments. */
+  kind: fleetEnvironmentKindSchema.default('bots'),
   lifecycle: fleetLifecycleSchema,
   setup: fleetEnvironmentSetupSchema,
   resources: fleetResourcesSchema,

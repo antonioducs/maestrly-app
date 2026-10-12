@@ -20,6 +20,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { hostKey } from '../../../shared/host-key'
+import type { HostApi } from '../../../preload'
 import type {
   LocalMemory,
   LocalMemoryCreateInput,
@@ -35,25 +39,21 @@ type LocalMemoryDraft = Pick<
   'title' | 'content' | 'type' | 'scope' | 'tags' | 'pinned' | 'importance'
 >
 
-function localMemoryAdapter(workspaceId: string, personal: boolean) {
+/** Memories of the host the panel is rendered for: a workspace's on any host, or this computer's personal ones. */
+function localMemoryAdapter(api: HostApi, workspaceId: string, personal: boolean) {
   return {
     list: (offset: number): Promise<LocalMemory[]> =>
       personal
-        ? window.api.listPersonalMemories({ limit: 500, offset })
-        : window.api.listMemories(workspaceId, { limit: 500, offset }),
+        ? api.listPersonalMemories({ limit: 500, offset })
+        : api.listMemories(workspaceId, { limit: 500, offset }),
     create: (input: LocalMemoryDraft) =>
-      personal
-        ? window.api.createPersonalMemory(input)
-        : window.api.createMemory({ ...input, workspaceId, source: 'user' }),
+      personal ? api.createPersonalMemory(input) : api.createMemory({ ...input, workspaceId, source: 'user' }),
     update: (id: string, patch: LocalMemoryUpdateInput) =>
-      personal ? window.api.updatePersonalMemory(id, patch) : window.api.updateMemory(workspaceId, id, patch),
-    archive: (id: string) =>
-      personal ? window.api.archivePersonalMemory(id) : window.api.archiveMemory(workspaceId, id),
-    restore: (id: string) =>
-      personal ? window.api.restorePersonalMemory(id) : window.api.restoreMemory(workspaceId, id),
-    forget: (id: string) =>
-      personal ? window.api.forgetPersonalMemory(id, true) : window.api.forgetMemory(workspaceId, id, true),
-    export: () => (personal ? window.api.exportPersonalMemories() : window.api.exportMemories(workspaceId)),
+      personal ? api.updatePersonalMemory(id, patch) : api.updateMemory(workspaceId, id, patch),
+    archive: (id: string) => (personal ? api.archivePersonalMemory(id) : api.archiveMemory(workspaceId, id)),
+    restore: (id: string) => (personal ? api.restorePersonalMemory(id) : api.restoreMemory(workspaceId, id)),
+    forget: (id: string) => (personal ? api.forgetPersonalMemory(id, true) : api.forgetMemory(workspaceId, id, true)),
+    export: () => (personal ? api.exportPersonalMemories() : api.exportMemories(workspaceId)),
   }
 }
 
@@ -101,7 +101,8 @@ export function LocalMemoryPanel({
   onClose,
 }: LocalMemoryPanelProps) {
   const { t, i18n } = useTranslation('ui')
-  const adapter = useMemo(() => localMemoryAdapter(workspaceId, personal), [workspaceId, personal])
+  const api = useHostApi()
+  const adapter = useMemo(() => localMemoryAdapter(api, workspaceId, personal), [api, workspaceId, personal])
   const appliedFocus = useRef<string | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [section, setSection] = useState<Section>('all')
@@ -124,13 +125,11 @@ export function LocalMemoryPanel({
     setError('')
     try {
       const [isEnabled, localRows, sharedResult, indexStatus, legacyBackups] = await Promise.all([
-        personal
-          ? window.api.getPersonalMemorySettings().then((value) => value.enabled)
-          : window.api.getMemoryEnabled(workspaceId),
-        loadAllMemories(workspaceId, personal),
-        personal ? Promise.resolve({ documents: [], warnings: [] }) : window.api.listSharedMemories(workspaceId),
-        personal ? window.api.getPersonalMemoryIndexStatus() : window.api.getMemoryIndexStatus(workspaceId),
-        personal ? Promise.resolve([]) : window.api.listLegacyMemoryBackups(workspaceId),
+        personal ? api.getPersonalMemorySettings().then((value) => value.enabled) : api.getMemoryEnabled(workspaceId),
+        loadAllMemories(api, workspaceId, personal),
+        personal ? Promise.resolve({ documents: [], warnings: [] }) : api.listSharedMemories(workspaceId),
+        personal ? api.getPersonalMemoryIndexStatus() : api.getMemoryIndexStatus(workspaceId),
+        personal ? Promise.resolve([]) : api.listLegacyMemoryBackups(workspaceId),
       ])
       setEnabled(isEnabled)
       setLocal(localRows as LocalMemory[])
@@ -143,7 +142,7 @@ export function LocalMemoryPanel({
     } finally {
       setLoading(false)
     }
-  }, [workspaceId, personal])
+  }, [api, workspaceId, personal])
 
   useEffect(() => {
     const request = `${workspaceId}:${focusMemoryRequest}:${focusMemoryId}`
@@ -156,23 +155,22 @@ export function LocalMemoryPanel({
 
   useEffect(() => void reload(), [reload])
   useEffect(
-    () =>
-      personal ? window.api.onPersonalMemorySettingsChanged((settings) => setEnabled(settings.enabled)) : undefined,
-    [personal]
+    () => (personal ? api.onPersonalMemorySettingsChanged((settings) => setEnabled(settings.enabled)) : undefined),
+    [api, personal]
   )
   useEffect(
     () =>
-      window.api.onMemoryChanged((event) => {
+      api.onMemoryChanged((event) => {
         if (event.workspaceId === workspaceId) void reload()
       }),
-    [reload, workspaceId]
+    [api, reload, workspaceId]
   )
   useEffect(
     () =>
-      window.api.onMemoryIndexStatus((next) => {
+      api.onMemoryIndexStatus((next) => {
         if (next.workspaceId === workspaceId) setStatus(next)
       }),
-    [workspaceId]
+    [api, workspaceId]
   )
 
   const localVisible = useMemo(() => {
@@ -215,14 +213,14 @@ export function LocalMemoryPanel({
     const next = !enabled
     setEnabled(next)
     if (personal) {
-      void window.api
+      void api
         .getPersonalMemorySettings()
-        .then((settings) => window.api.setPersonalMemorySettings({ ...settings, enabled: next }))
+        .then((settings) => api.setPersonalMemorySettings({ ...settings, enabled: next }))
         .catch((reason) => {
           setEnabled(enabled)
           setError(reason instanceof Error ? reason.message : String(reason))
         })
-    } else window.api.setMemoryEnabled(workspaceId, next)
+    } else api.setMemoryEnabled(workspaceId, next)
   }
 
   const runAction = async (action: () => Promise<void>) => {
@@ -246,8 +244,8 @@ export function LocalMemoryPanel({
 
   const rebuild = () =>
     runAction(async () => {
-      if (personal) await window.api.rebuildPersonalMemoryIndex()
-      else await window.api.rebuildMemoryIndex(workspaceId)
+      if (personal) await api.rebuildPersonalMemoryIndex()
+      else await api.rebuildMemoryIndex(workspaceId)
       await reload()
     })
 
@@ -373,7 +371,7 @@ export function LocalMemoryPanel({
                     onClick={() =>
                       runAction(async () => {
                         if (!window.confirm(t('projectMemory.removeBackupConfirm'))) return
-                        await window.api.removeLegacyMemoryBackup(workspaceId, backup.path, true)
+                        await api.removeLegacyMemoryBackup(workspaceId, backup.path, true)
                         await reload()
                       })
                     }
@@ -576,7 +574,9 @@ function LocalMemoryEditor({
   onDeleted?: () => void | Promise<void>
 }) {
   const { t } = useTranslation('ui')
-  const adapter = useMemo(() => localMemoryAdapter(workspaceId, personal), [workspaceId, personal])
+  const api = useHostApi()
+  const hostId = useHostId()
+  const adapter = useMemo(() => localMemoryAdapter(api, workspaceId, personal), [api, workspaceId, personal])
   const [title, setTitle] = useState(memory?.title ?? '')
   const [content, setContent] = useState(memory?.content ?? '')
   const [type, setType] = useState<MemoryType>(memory?.type ?? 'reference')
@@ -649,13 +649,16 @@ function LocalMemoryEditor({
         {memory?.originConversationId && (
           <button
             className="text-[10px] text-muted-foreground underline"
-            onClick={() =>
+            onClick={() => {
+              const origin = memory.originConversationId
+              if (!origin) return
               window.dispatchEvent(
                 new CustomEvent('maestrly:open-conversation', {
-                  detail: { conversationId: memory.originConversationId },
+                  // A conversation of the workspace's host, as the window keys it.
+                  detail: { conversationId: hostKey(hostId, origin) },
                 })
               )
-            }
+            }}
           >
             {t('projectMemory.fromConversation')}
           </button>
@@ -768,7 +771,7 @@ function LocalMemoryEditor({
             variant="outline"
             onClick={() =>
               mutate(async () => {
-                setPromotion(await window.api.previewMemoryPromotion({ workspaceId, memoryId: memory.id }))
+                setPromotion(await api.previewMemoryPromotion({ workspaceId, memoryId: memory.id }))
               })
             }
           >
@@ -812,7 +815,7 @@ function LocalMemoryEditor({
               size="sm"
               onClick={() =>
                 mutate(async () => {
-                  const result = await window.api.promoteMemory({ workspaceId, memoryId: memory.id })
+                  const result = await api.promoteMemory({ workspaceId, memoryId: memory.id })
                   setPromotion(null)
                   if (result.gitIgnored) window.alert(t('projectMemory.gitIgnoredWarning'))
                   await onSaved(memory)
@@ -833,6 +836,8 @@ function LocalMemoryEditor({
 
 function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memory: SharedKnowledgeDocument }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
+  const host = useHostInfo()
   return (
     <article className="mx-auto max-w-3xl">
       <div className="flex items-start gap-2 hairline-b pb-3">
@@ -843,14 +848,13 @@ function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memo
           </div>
           {memory.scope && <div className="mt-1 text-[10px] text-muted-foreground">scope: {memory.scope}</div>}
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => window.api.openSharedMemory(workspaceId, memory.relativePath)}
-        >
-          <ExternalLink className="mr-1 size-3.5" />
-          {t('projectMemory.openSource')}
-        </Button>
+        {/* Opening the file shows it on the host's own desktop: a server has nobody there to see it. */}
+        {host.desktopEffects && (
+          <Button size="sm" variant="outline" onClick={() => api.openSharedMemory(workspaceId, memory.relativePath)}>
+            <ExternalLink className="mr-1 size-3.5" />
+            {t('projectMemory.openSource')}
+          </Button>
+        )}
       </div>
       {memory.warnings.length > 0 && (
         <div className="my-3 rounded bg-amber-500/[0.08] p-2 text-xs text-amber-100">{memory.warnings.join('\n')}</div>
@@ -862,9 +866,9 @@ function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memo
   )
 }
 
-async function loadAllMemories(workspaceId: string, personal: boolean): Promise<LocalMemory[]> {
+async function loadAllMemories(api: HostApi, workspaceId: string, personal: boolean): Promise<LocalMemory[]> {
   const rows: LocalMemory[] = []
-  const adapter = localMemoryAdapter(workspaceId, personal)
+  const adapter = localMemoryAdapter(api, workspaceId, personal)
   for (;;) {
     const page = await adapter.list(rows.length)
     rows.push(...page)

@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebContentsView } from 'electron'
+import { panelSearch } from '../drawer-scope'
 import { preparePanelMemoryEviction, registerPanelTarget, sendToPanel, unregisterPanelTarget } from '../window-ipc'
 import { resolvePreload } from '../resolve-preload'
 import { attachHotkeyCapture } from '../hotkeys'
@@ -31,7 +32,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /** Cold eviction is deliberately conservative: safe panel renderers get ten minutes of warm state. */
 export { PANEL_COLD_TTL_MS }
 export const PANEL_COLD_RETRY_MS = MEMORY_RECLAIM_RETRY_MS
-const RECLAIMABLE_PANEL_TABS: readonly PanelTab[] = ['terminal', 'review', 'notes', 'plan']
+const RECLAIMABLE_PANEL_TABS: readonly PanelTab[] = ['terminal', 'files', 'review', 'notes', 'plan']
 
 function panelReclaimKey(convId: string, tab: PanelTab): string {
   return `panel:${convId}:${tab}`
@@ -39,7 +40,7 @@ function panelReclaimKey(convId: string, tab: PanelTab): string {
 
 /** Development URL or production file for panel.html with panel/conversation query parameters. */
 function loadPanel(view: WebContentsView, tab: string, convId: string): void {
-  const search = `?panel=${tab}&conv=${encodeURIComponent(convId)}`
+  const search = panelSearch(tab, convId)
   if (process.env.ELECTRON_RENDERER_URL) {
     void view.webContents.loadURL(`${process.env.ELECTRON_RENDERER_URL}/panel.html${search}`)
   } else {

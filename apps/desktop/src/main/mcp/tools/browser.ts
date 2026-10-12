@@ -11,6 +11,7 @@ import {
   listBrowserTabIdsOwnedByScope,
   closeBrowserWindowsOwnedByScope,
   touchActiveBrowserActivity,
+  browserControlReady,
 } from '../../drawer-manager'
 import * as bc from '../../browser-control'
 import type { McpToolContext } from './context'
@@ -81,6 +82,8 @@ export function registerBrowserTools(ctx: McpToolContext): void {
     if (!workerScope) {
       const lease = acquireBrowserForControl(convId)
       try {
+        // The view may have been created by this very call: see browserControlReady.
+        await browserControlReady(lease.webContents)
         return await operation(lease)
       } finally {
         lease.release()
@@ -94,6 +97,7 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       }
       const lease = acquireBrowserTabForControl(convId, tabId)
       try {
+        await browserControlReady(lease.webContents)
         return await operation(lease)
       } finally {
         lease.release()

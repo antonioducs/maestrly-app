@@ -5,7 +5,7 @@
  */
 
 export type ResourceKind = 'browser' | 'chatgpt' | 'vscode' | 'panel'
-export type WakeReason = 'visible' | 'agent' | 'floating' | 'popup'
+export type WakeReason = 'visible' | 'agent' | 'floating' | 'popup' | 'stream'
 
 export type ResourceState = {
   reasons: Set<WakeReason>
@@ -78,11 +78,13 @@ export function resourceNeedsFullSpeed(
   return record.reasons.size > 0 || hasActiveLease(record, now)
 }
 
-/** True only while the renderer is actually presented in a slot, popup or floating window.
- * Agent leases are deliberately excluded so memory lifecycle can distinguish work from visibility. */
+/** True only while the renderer is actually presented in a slot, popup or floating window, or streamed to a remote
+ * viewer. Agent leases are deliberately excluded so memory lifecycle can distinguish work from visibility. */
 export function resourceHasVisibleSurface(kind: ResourceKind, convId: string, resourceId?: string): boolean {
   const reasons = resources.get(keyFor(kind, convId, resourceId))?.reasons
-  return !!reasons && (reasons.has('visible') || reasons.has('popup') || reasons.has('floating'))
+  return (
+    !!reasons && (reasons.has('visible') || reasons.has('popup') || reasons.has('floating') || reasons.has('stream'))
+  )
 }
 
 function safelyApply(record: ResourceRecord, throttled: boolean): void {
@@ -220,7 +222,7 @@ export function setResourcePlacementActive(
   kind: ResourceKind,
   convId: string,
   resourceId: string | undefined,
-  reason: 'floating' | 'popup',
+  reason: 'floating' | 'popup' | 'stream',
   active: boolean
 ): void {
   setReason(kind, convId, resourceId, reason, active)

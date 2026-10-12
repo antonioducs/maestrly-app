@@ -5,20 +5,26 @@ import {
   type MemoryIndexStatus,
   type PersonalMemorySettings,
 } from '../../../shared/memory'
+import { useHostApi } from '@/lib/hosts/host-context'
+import type { HostApi } from '../../../preload'
 
 export const memoryError = (reason: unknown) => (reason instanceof Error ? reason.message : String(reason))
 
-async function loadMemories(): Promise<LocalMemory[]> {
+async function loadMemories(api: HostApi): Promise<LocalMemory[]> {
   const rows: LocalMemory[] = []
   for (;;) {
-    const page = await window.api.listPersonalMemories({ limit: 500, offset: rows.length })
+    const page = await api.listPersonalMemories({ limit: 500, offset: rows.length })
     rows.push(...page)
     if (page.length < 500) return rows
   }
 }
 
-/** Refresh the collection without unmounting open drafts or accepting older reads over newer events. */
+/**
+ * The personal memory of the host the component renders in (this computer, or a server's), refreshed without
+ * unmounting open drafts or accepting older reads over newer events.
+ */
 export function usePersonalMemory() {
+  const api = useHostApi()
   const [memories, setMemories] = useState<LocalMemory[]>([])
   const [settings, setSettings] = useState<PersonalMemorySettings | null>(null)
   const [index, setIndex] = useState<MemoryIndexStatus | null>(null)
@@ -34,9 +40,9 @@ export function usePersonalMemory() {
     const indexVersion = indexRevision.current
     try {
       const [rows, nextSettings, nextIndex] = await Promise.all([
-        loadMemories(),
-        window.api.getPersonalMemorySettings(),
-        window.api.getPersonalMemoryIndexStatus(),
+        loadMemories(api),
+        api.getPersonalMemorySettings(),
+        api.getPersonalMemoryIndexStatus(),
       ])
       if (request !== generation.current) return
       setMemories(rows)
@@ -48,17 +54,17 @@ export function usePersonalMemory() {
     } finally {
       if (request === generation.current) setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
-    const offMemory = window.api.onMemoryChanged((event) => {
+    const offMemory = api.onMemoryChanged((event) => {
       if (event.workspaceId === PERSONAL_MEMORY_SPACE_ID) void reload()
     })
-    const offSettings = window.api.onPersonalMemorySettingsChanged((next) => {
+    const offSettings = api.onPersonalMemorySettingsChanged((next) => {
       settingsRevision.current += 1
       setSettings(next)
     })
-    const offIndex = window.api.onMemoryIndexStatus((next) => {
+    const offIndex = api.onMemoryIndexStatus((next) => {
       if (next.workspaceId !== PERSONAL_MEMORY_SPACE_ID) return
       indexRevision.current += 1
       setIndex(next)
@@ -70,7 +76,7 @@ export function usePersonalMemory() {
       offSettings()
       offIndex()
     }
-  }, [reload])
+  }, [api, reload])
 
   const accept = (memory: LocalMemory) => {
     generation.current += 1

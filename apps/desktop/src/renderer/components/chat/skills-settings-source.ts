@@ -1,6 +1,7 @@
 import type { FleetEnvironmentSettingsService, FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
 import type { ChatSkillDetail, ChatSkillInfo } from '../../../shared/chat'
-type Api = typeof window.api
+import type { HostApi } from '../../../preload'
+type Api = HostApi
 export type SkillsSettingsSource = Pick<
   Api,
   | 'chatSkillsState'
@@ -19,24 +20,34 @@ export type SkillsSettingsSource = Pick<
   subscribe: (listener: () => void) => () => void
   notifyChanged: () => void
 }
-export const localSkillsSettingsSource: SkillsSettingsSource = {
-  remote: false,
-  chatSkillsState: (...args) => window.api.chatSkillsState(...args),
-  chatSkillRead: (...args) => window.api.chatSkillRead(...args),
-  chatSkillSetEnabled: (...args) => window.api.chatSkillSetEnabled(...args),
-  chatSkillCreate: (...args) => window.api.chatSkillCreate(...args),
-  chatSkillRemove: (...args) => window.api.chatSkillRemove(...args),
-  chatSkillReveal: (...args) => window.api.chatSkillReveal(...args),
-  chatSkillSearch: (...args) => window.api.chatSkillSearch(...args),
-  chatSkillInstall: (...args) => window.api.chatSkillInstall(...args),
-  chatSkillGroupCreate: (...args) => window.api.chatSkillGroupCreate(...args),
-  chatSkillGroupUpdate: (...args) => window.api.chatSkillGroupUpdate(...args),
-  chatSkillGroupRemove: (...args) => window.api.chatSkillGroupRemove(...args),
-  subscribe: (listener) => {
-    window.addEventListener('maestrly:skills-changed', listener)
-    return () => window.removeEventListener('maestrly:skills-changed', listener)
-  },
-  notifyChanged: () => window.dispatchEvent(new Event('maestrly:skills-changed')),
+const hostSources = new WeakMap<HostApi, SkillsSettingsSource>()
+
+/** The skills of a host's own profile, through that host's API: one source per host, the same on every call. */
+export function hostSkillsSettingsSource(api: HostApi): SkillsSettingsSource {
+  let source = hostSources.get(api)
+  if (!source) {
+    source = {
+      remote: false,
+      chatSkillsState: (...args) => api.chatSkillsState(...args),
+      chatSkillRead: (...args) => api.chatSkillRead(...args),
+      chatSkillSetEnabled: (...args) => api.chatSkillSetEnabled(...args),
+      chatSkillCreate: (...args) => api.chatSkillCreate(...args),
+      chatSkillRemove: (...args) => api.chatSkillRemove(...args),
+      chatSkillReveal: (...args) => api.chatSkillReveal(...args),
+      chatSkillSearch: (...args) => api.chatSkillSearch(...args),
+      chatSkillInstall: (...args) => api.chatSkillInstall(...args),
+      chatSkillGroupCreate: (...args) => api.chatSkillGroupCreate(...args),
+      chatSkillGroupUpdate: (...args) => api.chatSkillGroupUpdate(...args),
+      chatSkillGroupRemove: (...args) => api.chatSkillGroupRemove(...args),
+      subscribe: (listener) => {
+        window.addEventListener('maestrly:skills-changed', listener)
+        return () => window.removeEventListener('maestrly:skills-changed', listener)
+      },
+      notifyChanged: () => window.dispatchEvent(new Event('maestrly:skills-changed')),
+    }
+    hostSources.set(api, source)
+  }
+  return source
 }
 export type EnvironmentSkillDetail = ChatSkillDetail & {
   revision: string

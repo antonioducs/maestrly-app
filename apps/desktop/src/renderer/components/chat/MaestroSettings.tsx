@@ -18,6 +18,7 @@ import type {
   MaestroStrategyProfileCatalog,
 } from '../../../shared/maestro'
 import { GLOBAL_MAESTRO_STRATEGY_PROFILE_ID, cloneMaestroConfig } from '../../../shared/maestro'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { notifyMaestroConfigChanged } from '@/lib/maestro-config-events'
 import { cn } from '@/lib/utils'
 import { createMaestroResource, MaestroConfigEditor, maestroConfigIdIssues } from './MaestroControl'
@@ -40,6 +41,7 @@ function OrchestratorProfileEditor({
   onChange(value: MaestroOrchestratorProfileV1): void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [meta, setMeta] = useState<ChatModelMeta | null>(null)
   const [error, setError] = useState<string | null>(null)
   const selection: ChatModelRef | null = value ? { providerId: value.providerId, modelId: value.modelId } : null
@@ -49,8 +51,8 @@ function OrchestratorProfileEditor({
     setMeta(null)
     if (!selection) return
     void Promise.all([
-      window.api.chatModelMeta(selection.modelId, selection.providerId).catch(() => null),
-      window.api.chatSubagentProfilesModelMeta(selection.providerId, selection.modelId).catch(() => ({
+      api.chatModelMeta(selection.modelId, selection.providerId).catch(() => null),
+      api.chatSubagentProfilesModelMeta(selection.providerId, selection.modelId).catch(() => ({
         status: 'unavailable' as const,
         meta: null,
       })),
@@ -63,13 +65,13 @@ function OrchestratorProfileEditor({
     return () => {
       alive = false
     }
-  }, [selection?.modelId, selection?.providerId])
+  }, [selection?.modelId, selection?.providerId, api])
 
   const efforts = meta?.reasoningEfforts?.length ? meta.reasoningEfforts : [...DEFAULT_REASONING_EFFORTS]
 
   const commit = async (next: MaestroOrchestratorProfileV1) => {
     if (persistGlobal) {
-      const result = await window.api.chatSetDefault(next)
+      const result = await api.chatSetDefault(next)
       if (!result.ok) {
         setError(t('maestro.errors.orchestratorProfile'))
         return false
@@ -119,6 +121,7 @@ function OrchestratorProfileEditor({
 export function MaestroSettings({ config }: { config: ChatConfig }) {
   const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [payload, setPayload] = useState<MaestroConfigPayload | null>(null)
   const [draft, setDraft] = useState<MaestroConfigV1 | null>(null)
   const [profileCatalog, setProfileCatalog] = useState<MaestroStrategyProfileCatalog | null>(null)
@@ -135,10 +138,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = async () => {
-    const [next, strategies] = await Promise.all([
-      window.api.chatMaestroGetGlobal(),
-      window.api.chatMaestroStrategyProfilesList(),
-    ])
+    const [next, strategies] = await Promise.all([api.chatMaestroGetGlobal(), api.chatMaestroStrategyProfilesList()])
     setPayload(next)
     setProfileCatalog(strategies)
     const selected = strategies.items.find((item) => item.id === selectedProfileId) ?? strategies.items[0]
@@ -157,10 +157,10 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
   }, [])
   useEffect(() => {
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
-      window.api.onChatSubscriptionStatus(provider, () => setCatalogRevision((revision) => revision + 1))
+      api.onChatSubscriptionStatus(provider, () => setCatalogRevision((revision) => revision + 1))
     )
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [])
+  }, [api])
 
   const selectedProfile = profileCatalog?.items.find((item) => item.id === selectedProfileId) ?? null
   const profileOptions = useMemo(
@@ -181,7 +181,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
 
   const importAgents = async () => {
     if (!draft) return
-    const catalog = await window.api.chatSubagentProfilesCatalog()
+    const catalog = await api.chatSubagentProfilesCatalog()
     const ids = new Set(draft.pool.map((resource) => resource.id))
     const imported = catalog.agents
       .filter((agent) => !ids.has(agent.name))
@@ -215,7 +215,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
     setError(null)
     setSaved(false)
     try {
-      const result = await window.api.chatMaestroSetGlobal(draft)
+      const result = await api.chatMaestroSetGlobal(draft)
       if (!result.ok || !result.value) {
         throw new Error(result.errors?.map((item) => item.message).join(' ') || t('maestro.errors.invalidConfig'))
       }
@@ -225,7 +225,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
       setSavedRevision((revision) => revision + 1)
       setTimeout(() => setSaved(false), 1500)
       notifyMaestroConfigChanged()
-      const strategies = await window.api.chatMaestroStrategyProfilesList()
+      const strategies = await api.chatMaestroStrategyProfilesList()
       setProfileCatalog(strategies)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -239,7 +239,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.chatMaestroStrategyProfilesCreate({
+      const result = await api.chatMaestroStrategyProfilesCreate({
         name: profileName,
         config: draft,
         orchestrator: orchestratorDraft,
@@ -265,7 +265,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.chatMaestroStrategyProfilesUpdate(selectedProfile.id, {
+      const result = await api.chatMaestroStrategyProfilesUpdate(selectedProfile.id, {
         name: profileName,
         config: draft,
         orchestrator: orchestratorDraft,
@@ -290,7 +290,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
     if (!ownerWindow.confirm(t('maestro.strategyProfiles.confirmDelete', { name: selectedProfile.name }))) return
     setBusy(true)
     try {
-      const result = await window.api.chatMaestroStrategyProfilesDelete(selectedProfile.id)
+      const result = await api.chatMaestroStrategyProfilesDelete(selectedProfile.id)
       if (!result.ok) throw new Error('maestro-strategy-profile-not-found')
       setProfileCatalog(result.catalog)
       const global = result.catalog.items.find((item) => item.id === GLOBAL_MAESTRO_STRATEGY_PROFILE_ID)

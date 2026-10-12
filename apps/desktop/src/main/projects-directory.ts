@@ -5,9 +5,19 @@ import { getAppSetting, setAppSetting } from './store'
 /** Folder where chats create and clone projects, and the project setup dialog's default parent folder. */
 export const PROJECTS_DIRECTORY_KEY = 'projects.directory'
 
+let fallbackDirectory: string | null = null
+
+/**
+ * The folder used while the owner has chosen none. Server mode sets the server's workspaces folder: nobody can answer
+ * a folder picker there, and projects created in it outlive the container.
+ */
+export function setProjectsDirectoryFallback(value: string | null): void {
+  fallbackDirectory = value
+}
+
 export function getProjectsDirectory(): string | null {
   const value = getAppSetting(PROJECTS_DIRECTORY_KEY)?.trim()
-  return value ? value : null
+  return value ? value : fallbackDirectory
 }
 
 /** Persist an existing absolute directory, resolved through symlinks; null clears the setting. */

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import type { ChatConfig } from '../../../shared/chat'
 import type { PersonalMemorySettings, MemorySettings as MemorySettingsConfig } from '../../../shared/memory'
 import type { SubagentProfileCandidate } from '../../../shared/subagent-profiles'
+import type { OpenMemoryRequest } from '@/lib/memory-target'
 import { CandidateFields } from './subagent-profiles/CandidateFields'
 
 const DEFAULT_SETTINGS: MemorySettingsConfig = {
@@ -56,6 +58,8 @@ export function MemorySettings({
   const persisted = scope === 'personal' ? DEFAULT_SETTINGS : (config.memory ?? DEFAULT_SETTINGS)
   const [personalSettings, setPersonalSettings] = useState<PersonalMemorySettings | null>(null)
   const [personalEnabled, setPersonalEnabled] = useState(true)
+  const api = useHostApi()
+  const hostId = useHostId()
   const [autoRecall, setAutoRecall] = useState(persisted.autoRecall)
   const [enabled, setEnabled] = useState(persisted.extraction.enabled)
   const [candidate, setCandidate] = useState(() => candidateFor(persisted.extraction.selection))
@@ -93,11 +97,11 @@ export function MemorySettings({
       setCandidate(nextCandidate)
       setLoadError(false)
     }
-    const unsubscribe = window.api.onPersonalMemorySettingsChanged((settings) => {
+    const unsubscribe = api.onPersonalMemorySettingsChanged((settings) => {
       receivedEvent = true
       apply(settings)
     })
-    void window.api
+    void api
       .getPersonalMemorySettings()
       .then((settings) => {
         if (!receivedEvent) apply(settings)
@@ -109,7 +113,7 @@ export function MemorySettings({
       active = false
       unsubscribe()
     }
-  }, [scope, loadAttempt])
+  }, [api, scope, loadAttempt])
 
   useEffect(() => {
     if (scope === 'personal' || dirtyRef.current || savingRef.current) return
@@ -153,10 +157,10 @@ export function MemorySettings({
       }
       const result =
         scope === 'personal'
-          ? await window.api
+          ? await api
               .setPersonalMemorySettings({ ...settings, enabled: personalEnabled })
               .then(() => ({ ok: true, error: undefined }))
-          : await window.api.chatSetMemorySettings(settings)
+          : await api.chatSetMemorySettings(settings)
       if (!result.ok) {
         setNote({
           error: true,
@@ -221,12 +225,15 @@ export function MemorySettings({
       >
         {scope === 'personal' && (
           <>
+            {/* The memory center opens on the personal memory of the host these settings are of. */}
             {presentation === 'settings' && (
               <button
                 type="button"
                 className="self-start text-xs text-primary underline"
                 onClick={() =>
-                  window.dispatchEvent(new CustomEvent('maestrly:open-memory', { detail: { personal: true } }))
+                  window.dispatchEvent(
+                    new CustomEvent<OpenMemoryRequest>('maestrly:open-memory', { detail: { personal: true, hostId } })
+                  )
                 }
               >
                 {t('personalMemorySettings.manage')}

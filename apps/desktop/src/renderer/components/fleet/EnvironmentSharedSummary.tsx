@@ -5,6 +5,7 @@ import type { FleetBot, FleetEnvironment, FleetSettingsOutput } from '@maestrly/
 import { compactionSourceOf } from '@/lib/fleet/compaction'
 import { formatNames } from '@/lib/fleet/environments'
 import { useEnvironmentSettingsResource } from '@/lib/fleet/environment-settings'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { EnvironmentSettingsSection } from './environment-settings/sections'
 
@@ -27,6 +28,7 @@ export function EnvironmentSharedSummary({
   onOpenScreen: () => void
 }) {
   const { t } = useTranslation('fleet')
+  const workspaces = isWorkspacesEnvironment(environment)
   const connected = fleet.state.connection.state === 'connected'
   const running = environment.lifecycle === 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
@@ -41,7 +43,7 @@ export function EnvironmentSharedSummary({
     <section aria-labelledby="fleet-environment-shared">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 id="fleet-environment-shared" className="text-[15px] font-semibold">
-          {t('environment.sharedTitle')}
+          {t(workspaces ? 'workspaces.sharedTitle' : 'environment.sharedTitle')}
         </h2>
         <button
           type="button"
@@ -64,7 +66,7 @@ export function EnvironmentSharedSummary({
         <ReadTiles environment={environment} bots={bots} onOpenSettings={onOpenSettings} onOpenScreen={onOpenScreen} />
       )}
       <p className="mt-2.5 text-[12.5px] leading-relaxed text-muted-foreground">
-        {reason ?? t('environment.sharedSetupNote')}
+        {reason ?? t(workspaces ? 'workspaces.sharedConfig' : 'environment.sharedSetupNote')}
       </p>
     </section>
   )
@@ -140,6 +142,8 @@ function Tiles({
     return provider ? `${provider.name} · ${model?.name ?? compaction.modelId}` : compaction.modelId
   }
   const users = bots.filter((bot) => compactionSourceOf(bot) === 'environment').map((bot) => bot.name)
+  // A workspaces environment has no bots to compact for and no screen to log in to sites on.
+  const botTiles = !isWorkspacesEnvironment(environment)
   return (
     <div className="grid grid-cols-1 gap-2 @sm:grid-cols-2 @2xl:grid-cols-3">
       <Tile
@@ -196,26 +200,30 @@ function Tiles({
         })}
         onClick={() => onOpenSettings('tools')}
       />
-      <Tile
-        icon={FoldVertical}
-        label={t('environment.tiles.compaction')}
-        value={unavailable && !compaction ? '—' : compactionLabel()}
-        sub={
-          !compaction
-            ? ''
-            : users.length
-              ? t('environment.tiles.compactionUsedBy', { bots: list(users) })
-              : t('environment.compaction.usedByNone')
-        }
-        onClick={() => onOpenSettings('preferences')}
-      />
-      <Tile
-        icon={Globe}
-        label={t('environment.tiles.siteLogins')}
-        value={t('environment.tiles.siteLoginsValue')}
-        sub={t('environment.tiles.siteLoginsNote')}
-        onClick={onOpenScreen}
-      />
+      {botTiles && (
+        <Tile
+          icon={FoldVertical}
+          label={t('environment.tiles.compaction')}
+          value={unavailable && !compaction ? '—' : compactionLabel()}
+          sub={
+            !compaction
+              ? ''
+              : users.length
+                ? t('environment.tiles.compactionUsedBy', { bots: list(users) })
+                : t('environment.compaction.usedByNone')
+          }
+          onClick={() => onOpenSettings('preferences')}
+        />
+      )}
+      {botTiles && (
+        <Tile
+          icon={Globe}
+          label={t('environment.tiles.siteLogins')}
+          value={t('environment.tiles.siteLoginsValue')}
+          sub={t('environment.tiles.siteLoginsNote')}
+          onClick={onOpenScreen}
+        />
+      )}
     </div>
   )
 }

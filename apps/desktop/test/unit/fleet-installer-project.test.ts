@@ -11,6 +11,7 @@ import {
   composeArgs,
   displayNameFor,
   imageVersion,
+  BOT_SERVER_WORKSPACES_ROOT,
   parseBotServerEnv,
   renderBotServerEnv,
   splitImageRef,
@@ -91,12 +92,23 @@ describe('bot server project files', () => {
         "MAESTRLY_GATEWAY_DISPLAY_NAME='Estação de Trabalho'",
         'MAESTRLY_GATEWAY_BOT_EGRESS=public',
         'MAESTRLY_GATEWAY_NETWORK=maestrly-bots',
+        'MAESTRLY_GATEWAY_WORKSPACES_ROOT=',
         'TZ=America/Sao_Paulo',
         '',
       ].join('\n')
     )
     expect(() => renderBotServerEnv({ ...values, port: 0 })).toThrow()
     expect(() => renderBotServerEnv({ ...values, botImage: 'maestrly/bot instance:1' })).toThrow()
+  })
+
+  it('names the host directory a server mounts for workspaces, only as a plain absolute path', () => {
+    expect(renderBotServerEnv({ ...values, workspacesRoot: '/srv/maestrly' })).toContain(
+      '\nMAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly\n'
+    )
+    expect(renderBotServerEnv({ ...values, workspacesRoot: null })).toContain('\nMAESTRLY_GATEWAY_WORKSPACES_ROOT=\n')
+    for (const workspacesRoot of ['srv/maestrly', "/srv/mae'strly", '/srv/my files', '/srv/$HOME', '/srv/../etc', '/'])
+      expect(() => renderBotServerEnv({ ...values, workspacesRoot }), workspacesRoot).toThrow()
+    expect(BOT_SERVER_WORKSPACES_ROOT).toBe('/srv/maestrly')
   })
 
   it('only sets variables the packaged Compose file reads', () => {
@@ -113,6 +125,7 @@ describe('bot server project files', () => {
       botImage: values.botImage,
       egress: 'public',
       port: 7443,
+      workspacesRoot: null,
       artifactsPort: 4010,
     })
     expect(parseBotServerEnv('# comment\nMAESTRLY_GATEWAY_BOT_EGRESS=closed\nMAESTRLY_GATEWAY_PORT=abc\n')).toEqual({
@@ -120,8 +133,14 @@ describe('bot server project files', () => {
       botImage: null,
       egress: null,
       port: null,
+      // Not mentioned at all, which an update tells from a root the server's owner left empty.
+      workspacesRoot: undefined,
       artifactsPort: null,
     })
+    expect(parseBotServerEnv(renderBotServerEnv({ ...values, workspacesRoot: '/srv/maestrly' })).workspacesRoot).toBe(
+      '/srv/maestrly'
+    )
+    expect(parseBotServerEnv('MAESTRLY_GATEWAY_WORKSPACES_ROOT=relative\n').workspacesRoot).toBeNull()
     expect(parseBotServerEnv('MAESTRLY_GATEWAY_IMAGE="maestrly/bot-gateway:0.9.1"\n').gatewayImage).toBe(
       'maestrly/bot-gateway:0.9.1'
     )
@@ -138,6 +157,10 @@ describe('bot server project files', () => {
     )
     expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
     expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_IMAGE: 'a b' })).toThrow()
+    expect(withEnvValues('TZ=UTC', { MAESTRLY_GATEWAY_WORKSPACES_ROOT: '/srv/maestrly' })).toBe(
+      'TZ=UTC\nMAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly\n'
+    )
+    expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_WORKSPACES_ROOT: 'srv' })).toThrow()
   })
 
   it('patches and validates the artifact port without changing unrelated settings', () => {

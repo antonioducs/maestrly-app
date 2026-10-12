@@ -1,11 +1,16 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
+import os from 'node:os'
 import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
+import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
+import { startServerHostMode } from './remote-host/server/start'
+import { isSupportedLocale } from '../shared/locale'
 import { environmentScreenBounds } from './fleet/instance/window-bounds'
 import { fileURLToPath } from 'node:url'
 import {
@@ -34,6 +39,15 @@ import {
   setTerminalPopupFocuser,
 } from './terminal-manager'
 import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
+import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
+import { ipcHandlerTable } from './remote-host/ipc-handler-table'
+import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
+import { hostRegistry, registerHostsIpc } from './remote-host/client/ipc'
+import { RemoteEditors } from './remote-host/client/editor'
+import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
+import { setRemoteVSCodeHandlers } from './drawer/vscode'
+import { registerHostTransfersIpc } from './host-transfers/ipc'
+import { conversationTabAllowed, isRemoteConversation, setRemoteEditorHosts } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -102,6 +116,9 @@ import {
   stopVSCodeServer,
   isVSCodeServerRunning,
 } from './vscode/vscode-server'
+import { registerHostEditorIpc } from './remote-host/server/host-editor-ipc'
+import { requestVSCodeNavigation } from './vscode/vscode-navigation'
+import { hasVSCodeBridgeInFlight, requestVSCodeMemorySnapshot } from './vscode/vscode-memory'
 import { isVSCodeCliReady, hasStagedCliUpdate } from './vscode/vscode-cli-download'
 import {
   initStore,
@@ -112,6 +129,7 @@ import {
   getSoundSettings,
   getShortcutOpenMode,
   getLocale,
+  setLocaleSetting,
   initLocaleOnFirstRun,
   initOnboardingFlag,
   type ConversationStatus,
@@ -123,6 +141,7 @@ import {
   status as getChatGptWebStatus,
 } from './chat/chatgpt-web/manager'
 import {
+  activeChatRunCount,
   disposeChat,
   getGlobalMaestroOrchestratorProfile,
   primeChatTurnSelection,
@@ -221,7 +240,11 @@ let chatWindowManager: ChatWindowManager | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 
-const sendToWindow = (channel: string, payload?: unknown): void => safeWindowSend(mainWindow, channel, payload)
+/** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
+const sendToWindow = (channel: string, payload?: unknown): void => {
+  safeWindowSend(mainWindow, channel, payload)
+  sendToRemoteMains(channel, payload)
+}
 
 /** Stop live resources before a local reset without deleting repositories or conversation data. */
 async function stopConversationLive(convId: string): Promise<void> {
@@ -339,7 +362,9 @@ function cleanupFailedChatGptShortcutRestore(convId: string): void {
 }
 
 function openPopupGuarded(convId: string, tab: FloatTab): boolean {
-  if (popupManager.isSuppressed()) return false
+  // The tools of a remote host's conversation stay docked in the drawer; a shortcut never opens a tool the
+  // conversation does not have.
+  if (popupManager.isSuppressed() || isRemoteConversation(convId) || !conversationTabAllowed(convId, tab)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -366,7 +391,7 @@ function openPopupGuarded(convId: string, tab: FloatTab): boolean {
 }
 
 function openFloatingGuarded(convId: string, tab: FloatTab): boolean {
-  if (popupManager.isSuppressed()) return false
+  if (popupManager.isSuppressed() || isRemoteConversation(convId) || !conversationTabAllowed(convId, tab)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -405,7 +430,16 @@ function detachByShortcut(convId: string, tab: FloatTab): boolean {
 }
 
 // Resolve the conversation directory when opening a cold editor popup.
+// The editors of remote hosts' conversations, shown in this window's drawer (drawer/remote-vscode).
+let remoteEditors: RemoteEditors | null = null
+const remoteVSCodeDeps = () => ({ editors: remoteEditors!, settingsJson: getMergedSettingsJson })
+
 async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
+  // A remote host's conversation opens the host's editor in its own folder there; the renderer's folder is ignored.
+  if (isRemoteConversation(convId)) {
+    if (remoteEditors && conversationTabAllowed(convId, 'vscode')) await loadRemoteVSCode(convId, remoteVSCodeDeps())
+    return
+  }
   const conversation = getConversation(convId)
   if (conversation?.scope === 'standalone') {
     const managed = await validateStandaloneConversationDirectory(conversation)
@@ -527,7 +561,7 @@ async function createWindow(): Promise<void> {
   const startHidden = startHiddenAtLogin
   startHiddenAtLogin = false
   mainWindow = new BrowserWindow({
-    show: !isBotMode() && !startHidden,
+    show: !isHeadlessInstance() && !startHidden,
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -549,8 +583,9 @@ async function createWindow(): Promise<void> {
       sandbox: false,
     },
   })
-  // A bot's window only offers its settings; the app menu's Quit would restart the bot's app mid-turn.
-  if (isBotMode()) mainWindow.removeMenu()
+  // A bot's window only offers its settings; the app menu's Quit would restart the bot's app mid-turn. A workspaces
+  // host's window is never shown.
+  if (isHeadlessInstance()) mainWindow.removeMenu()
 
   const wc = mainWindow.webContents
   wc.on('console-message', (_e, level, message, line, sourceId) => {
@@ -602,7 +637,7 @@ async function createWindow(): Promise<void> {
   setTerminalPopupFocuser(popupManager.bringTabToTopIfPopup)
   setBroadcastMainWindow(mainWindow)
   // The updater starts only once broadcasts can reach the window, so the first state lands in the UI.
-  if (!isBotMode()) configureUpdateService()
+  if (!isHeadlessInstance()) configureUpdateService()
   registerPerformanceWebContents(wc, { kind: 'app' })
   soundService.setTarget(wc)
   wc.on('did-start-loading', () => soundService.invalidateRenderer(wc))
@@ -639,7 +674,7 @@ async function createWindow(): Promise<void> {
   initTerminalManager(mainWindow)
 
   mainWindow.on('close', (e) => {
-    if (isBotMode() && !backgroundQuit) {
+    if (isHeadlessInstance() && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -659,7 +694,7 @@ async function createWindow(): Promise<void> {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-    if (!isBotMode()) wc.openDevTools({ mode: 'detach' })
+    if (!isHeadlessInstance()) wc.openDevTools({ mode: 'detach' })
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
@@ -667,18 +702,27 @@ async function createWindow(): Promise<void> {
 
 function registerIpc(): void {
   registerChatWindowIpc(ipcMain, () => chatWindowManager)
+  // Every handler is also recorded, unguarded: on a host, the bridge runs it for another computer's renderer.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mhandle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
+    ipcHandlerTable.record(channel, 'invoke', fn)
     ipcMain.handle(channel, guardHandle(fn))
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mon = (channel: string, fn: (event: IpcMainEvent, ...args: any[]) => void): void => {
+    ipcHandlerTable.record(channel, 'send', fn)
     ipcMain.on(channel, guardOn(fn))
   }
   const reg: IpcRegistrar = {
-    handle: (channel, fn) => ipcMain.handle(channel, fn),
+    handle: (channel, fn) => {
+      ipcHandlerTable.record(channel, 'invoke', fn)
+      ipcMain.handle(channel, fn)
+    },
     mhandle,
-    on: (channel, fn) => void ipcMain.on(channel, fn),
+    on: (channel, fn) => {
+      ipcHandlerTable.record(channel, 'send', fn)
+      ipcMain.on(channel, fn)
+    },
     mon,
   }
 
@@ -780,6 +824,8 @@ function registerIpc(): void {
       focusMainWindow()
       safeWindowSend(mainWindow, 'conversation:open', { conversation, focus: true })
     },
+    restartRemoteVSCode: (convId) =>
+      remoteEditors ? restartRemoteVSCode(convId, remoteVSCodeDeps()) : Promise.resolve(),
   })
 
   registerReviewIpc(reg)
@@ -803,6 +849,42 @@ function registerIpc(): void {
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
   registerArtifactsIpc(reg, { service: getArtifactsService })
+
+  registerHostFsIpc(reg, { roots: hostFsRoots, conversationFolder: (id) => getConversation(id)?.cwd ?? null })
+  // Another computer opens this host's editor (VS Code's serve-web) in its drawer: see remote-host/server/host-editor.
+  registerHostEditorIpc(reg, {
+    isRemoteViewer: (sender) => isServerMode() && isRemoteUiTarget(sender),
+    conversation: (id) => getConversation(id) ?? null,
+    standaloneFolder: validateStandaloneConversationDirectory,
+    ignoreSidecars: ensureAppOwnedExcludes,
+    watch: watchConversation,
+    start: startVSCodeServer,
+    running: isVSCodeServerRunning,
+    cliReady: isVSCodeCliReady,
+    probe: probeVSCode,
+    restart: restartVSCodeServer,
+    waitReady: () => waitForEditorReady(),
+    navigate: requestVSCodeNavigation,
+    snapshot: (folder) => requestVSCodeMemorySnapshot(folder),
+    bridgeInFlight: hasVSCodeBridgeInFlight,
+  })
+  registerHostsIpc(reg)
+  remoteEditors = new RemoteEditors({
+    registry: hostRegistry,
+    fleet: fleetClientService,
+    portsFile: path.join(app.getPath('userData'), 'remote-editor-ports.json'),
+    origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
+  })
+  setRemoteVSCodeHandlers(remoteVSCodeHandlers({ editors: remoteEditors }))
+  // A remote host's conversation shows a Code tab once the host says it serves its editor.
+  setRemoteEditorHosts(
+    (hostId) =>
+      hostRegistry()
+        ?.list()
+        .some((host) => host.id === hostId && host.editor) ?? false
+  )
+  app.once('before-quit', () => remoteEditors?.close())
+  registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -988,6 +1070,48 @@ app.whenReady().then(async () => {
       return
     }
   }
+  if (isServerMode() && mainWindow) {
+    const hub = new RemoteUiHub({
+      table: ipcHandlerTable,
+      appVersion: app.getVersion(),
+      hostInfo: () => ({
+        os: 'linux',
+        hostName: os.hostname(),
+        homeDir: os.homedir(),
+        roots: hostFsRoots().map((root) => root.path),
+        // Nobody sees this host's desktop. Its browser is streamed to the computer that shows it (drawer/browser-stream),
+        // and that computer opens its editor through the control server (remote-host/server/host-editor).
+        desktopEffects: false,
+        editor: true,
+        browser: true,
+      }),
+      // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
+      // language of the computer that connected last.
+      applyLocale: (locale) => {
+        if (!isSupportedLocale(locale) || locale === getLocale()) return
+        setMainLocale(setLocaleSetting(locale))
+      },
+      log: (level, message) => console.error(JSON.stringify({ component: 'remote-host', level, message })),
+    })
+    try {
+      await startServerHostMode(mainWindow, {
+        hub,
+        busy: () => activeChatRunCount() > 0,
+        closeConversation: (id) => stopConversationLive(id),
+        purgeConversation: (id) => deleteConversation(id),
+      })
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          component: 'remote-host',
+          level: 'error',
+          message: error instanceof Error ? error.message : 'Startup failed',
+        })
+      )
+      app.exit(1)
+      return
+    }
+  }
   recoverDesktopExecutions()
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
@@ -1001,7 +1125,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (isBotMode()) return
+  if (isHeadlessInstance()) return
   flushPendingBrowserPersists()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock, Unlock } from 'lucide-react'
 import type { Conversation } from '../../../shared/conversation'
+import { useHostApi } from '../../lib/hosts/host-context'
 import { Button } from '../ui/button'
 import { ConfirmDialog } from '../ui/confirm-dialog'
 
@@ -14,6 +15,7 @@ import { ConfirmDialog } from '../ui/confirm-dialog'
  */
 export function BotManualChatControl({ conversation }: { conversation: Conversation }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -26,7 +28,7 @@ export function BotManualChatControl({ conversation }: { conversation: Conversat
     setError('')
     try {
       // The composer follows the conversation this writes, never this click.
-      await window.api.botSetManualChatEnabled(conversation.id, enabled)
+      await api.botSetManualChatEnabled(conversation.id, enabled)
       setConfirming(false)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('bots.releaseFailed'))

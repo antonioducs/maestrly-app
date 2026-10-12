@@ -3,6 +3,11 @@ import { tMain, getMainLocale } from '../i18n'
 import { attachHotkeyCapture } from '../hotkeys'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { requestVSCodeNavigation } from '../vscode/vscode-navigation'
+import type { NavigationDirection } from '../mouse-navigation'
+import { isRemoteConversation } from '../drawer-scope'
+import { remoteEditorPartition } from '../remote-host/client/editor'
+import { parseHostKey } from '../../shared/host-key'
+import type { VSCodeMemorySnapshot } from '../../shared/memory-eviction'
 import {
   OFFSCREEN,
   activeConvId,
@@ -43,6 +48,33 @@ function vscodeReclaimKey(convId: string): string {
   return `vscode:${convId}`
 }
 
+/**
+ * What a remote host's editor view needs from this computer's main process (drawer/remote-vscode): history navigation
+ * and what closing the view would lose, both asked of the host.
+ */
+export interface RemoteVSCodeHandlers {
+  navigate(convId: string, direction: NavigationDirection): Promise<void>
+  snapshot(convId: string): Promise<VSCodeMemorySnapshot | null>
+}
+let remoteHandlers: RemoteVSCodeHandlers | null = null
+export function setRemoteVSCodeHandlers(handlers: RemoteVSCodeHandlers | null): void {
+  remoteHandlers = handlers
+}
+
+/** Workbench back/forward: through the bridge extension here, or through the host for a remote host's editor. */
+function navigateVSCode(convId: string, direction: NavigationDirection): Promise<void> {
+  if (!isRemoteConversation(convId)) return requestVSCodeNavigation(convId, direction)
+  return remoteHandlers?.navigate(convId, direction) ?? Promise.resolve()
+}
+
+/** A remote host's editor views live in a session of their host; this computer's share one of their own. */
+function vscodePartition(convId: string): string {
+  return isRemoteConversation(convId) ? remoteEditorPartition(parseHostKey(convId).hostId) : VSCODE_PARTITION
+}
+
+/** Views of this computer's editor, whose server this computer runs: not a remote host's. */
+const isLocalEditor = (convId: string): boolean => !isRemoteConversation(convId)
+
 function vscodeSurfaceIsShown(convId: string): boolean {
   return (
     (activeConvId === convId && visibleKind === 'vscode' && getPlacement(convId, 'vscode') === 'slot') ||
@@ -62,9 +94,11 @@ export function noteVSCodeSurfaceVisibility(convId: string): void {
   scheduleMemoryReclaim()
 }
 
+/** Open views of this computer's editor server: a remote host's editor views do not keep it running. */
 function materializedVSCodeCount(): number {
-  return [...drawers.values()].filter((drawer) => drawer.vscodeView && !drawer.vscodeView.webContents.isDestroyed())
-    .length
+  return [...drawers].filter(
+    ([convId, drawer]) => isLocalEditor(convId) && drawer.vscodeView && !drawer.vscodeView.webContents.isDestroyed()
+  ).length
 }
 
 export function closeVSCodeView(convId: string): void {
@@ -107,14 +141,16 @@ function registerVSCodeReclaimable(convId: string, generation: number): void {
       if (viewGeneration.get(convId) !== generation) reasons.push('stale-owner')
       if (vscodeSurfaceIsShown(convId)) reasons.push('visible')
       if (resourceNeedsFullSpeed('vscode', convId)) reasons.push('full-speed')
-      const cwd = getConversation(convId)?.cwd
+      const remote = isRemoteConversation(convId)
+      const cwd = remote ? undefined : getConversation(convId)?.cwd
       if (cwd && hasVSCodeBridgeInFlight(cwd)) reasons.push('bridge-in-flight')
       // Cheap eviction blockers avoid waking the extension or polling sidecars. Request snapshots only for
       // hidden eligible views with known ownership/cwd.
       if (reasons.length > 0) return { protected: true, reasons }
-      if (!cwd) return { protected: true, reasons: ['unknown'] }
+      if (!remote && !cwd) return { protected: true, reasons: ['unknown'] }
 
-      const snapshot = await requestVSCodeMemorySnapshot(cwd)
+      // A remote host's editor answers through its host; one that cannot be asked is kept.
+      const snapshot = cwd ? await requestVSCodeMemorySnapshot(cwd) : ((await remoteHandlers?.snapshot(convId)) ?? null)
       if (!snapshot) return { protected: true, reasons: ['unknown'] }
       if (snapshot.dirtyDocuments > 0) reasons.push('dirty')
       if (snapshot.debugActive) reasons.push('debug')
@@ -135,8 +171,20 @@ function registerVSCodeReclaimable(convId: string, generation: number): void {
   })
 }
 
+// Editor connections other computers hold through this host's control server (remote-host/server/host-editor).
+let remoteEditorSockets = 0
+
+/**
+ * Another computer used this host's editor and holds `openSockets` connections to it now. While any is open the
+ * editor server stays up; without one, its idle period starts again from now.
+ */
+export function noteRemoteEditorActivity(openSockets: number): void {
+  remoteEditorSockets = openSockets
+  scheduleVSCodeServerIdle()
+}
+
 function scheduleVSCodeServerIdle(): void {
-  if (materializedVSCodeCount() > 0 || hasVSCodeBridgeInFlight()) {
+  if (materializedVSCodeCount() > 0 || remoteEditorSockets > 0 || hasVSCodeBridgeInFlight()) {
     unregisterReclaimable(SERVER_IDLE_KEY)
     return
   }
@@ -153,12 +201,15 @@ function scheduleVSCodeServerIdle(): void {
     priority: 80,
     protection: () => {
       if (materializedVSCodeCount() > 0) return { protected: true, reasons: ['views'] }
+      if (remoteEditorSockets > 0) return { protected: true, reasons: ['remote-editor'] }
       if (hasVSCodeBridgeInFlight()) return { protected: true, reasons: ['bridge-in-flight'] }
       return { protected: false, reasons: [] }
     },
-    prepare: async () => ({ ok: materializedVSCodeCount() === 0 && !hasVSCodeBridgeInFlight() }),
+    prepare: async () => ({
+      ok: materializedVSCodeCount() === 0 && remoteEditorSockets === 0 && !hasVSCodeBridgeInFlight(),
+    }),
     evict: () => {
-      if (materializedVSCodeCount() > 0 || hasVSCodeBridgeInFlight()) return
+      if (materializedVSCodeCount() > 0 || remoteEditorSockets > 0 || hasVSCodeBridgeInFlight()) return
       stopVSCodeServer()
       unregisterReclaimable(SERVER_IDLE_KEY)
     },
@@ -218,14 +269,14 @@ export function ensureVSCodeView(d: ConvDrawer, convId: string): WebContentsView
     }
     d.vscodeView = null
     d.vscodeRequestedUrl = '' // newly materialized views must always load their requested URL
-    d.vscodeView = new WebContentsView({ webPreferences: { partition: VSCODE_PARTITION } })
+    d.vscodeView = new WebContentsView({ webPreferences: { partition: vscodePartition(convId) } })
     d.vscodeView.setBackgroundColor('#0A0A0B') // match slot/loading background to avoid a white flash
     d.vscodeView.setBounds(OFFSCREEN)
     win!.contentView.addChildView(d.vscodeView)
     attachThemeInjector(d.vscodeView)
     attachHotkeyCapture(d.vscodeView.webContents) // #328: capture shortcuts while web editor content has focus
     attachMacMouseNavigation(d.vscodeView.webContents, (direction) => {
-      void requestVSCodeNavigation(convId, direction)
+      void navigateVSCode(convId, direction)
     })
     const wc = d.vscodeView.webContents
     const generation = (viewGeneration.get(convId) ?? 0) + 1
@@ -254,13 +305,32 @@ export function ensureVSCodeView(d: ConvDrawer, convId: string): WebContentsView
 export function navigateFocusedVSCode(convId: string, direction: 'back' | 'forward'): boolean {
   const view = drawers.get(convId)?.vscodeView
   if (!view?.webContents.isFocused()) return false
-  void requestVSCodeNavigation(convId, direction)
+  void navigateVSCode(convId, direction)
   return true
 }
 
 // #318: Render a themed loading page inside the native view while serve-web downloads/starts; React
-// overlays cannot cover it. Replace it with the real editor URL when readiness checks complete.
-type VSCodeLoadPhase = 'downloading' | 'starting' | 'restarting' | 'error'
+// overlays cannot cover it. Replace it with the real editor URL when readiness checks complete. A remote host's
+// editor has phases of its own: it downloads and starts on the host, and can be unreachable for several reasons.
+export type VSCodeLoadPhase =
+  | 'downloading'
+  | 'starting'
+  | 'restarting'
+  | 'error'
+  | 'remoteDownloading'
+  | 'remoteStarting'
+  | 'remoteOffline'
+  | 'remoteUnauthorized'
+  | 'remoteGatewayUpdate'
+  | 'remoteHostUpdate'
+  | 'remoteFailed'
+const WAITING_PHASES: ReadonlySet<VSCodeLoadPhase> = new Set([
+  'downloading',
+  'starting',
+  'restarting',
+  'remoteDownloading',
+  'remoteStarting',
+])
 
 function vscodeLoadingHtml(phase: VSCodeLoadPhase): string {
   const t = tMain('main')
@@ -281,10 +351,29 @@ function vscodeLoadingHtml(phase: VSCodeLoadPhase): string {
       title: t('drawerLoading.errorTitle'),
       sub: t('drawerLoading.errorSub'),
     },
+    remoteDownloading: {
+      title: t('drawerLoading.remoteDownloadingTitle'),
+      sub: t('drawerLoading.remoteDownloadingSub'),
+    },
+    remoteStarting: { title: t('drawerLoading.remoteStartingTitle'), sub: t('drawerLoading.remoteStartingSub') },
+    remoteOffline: { title: t('drawerLoading.remoteOfflineTitle'), sub: t('drawerLoading.remoteOfflineSub') },
+    remoteUnauthorized: {
+      title: t('drawerLoading.remoteUnauthorizedTitle'),
+      sub: t('drawerLoading.remoteUnauthorizedSub'),
+    },
+    remoteGatewayUpdate: {
+      title: t('drawerLoading.remoteGatewayUpdateTitle'),
+      sub: t('drawerLoading.remoteGatewayUpdateSub'),
+    },
+    remoteHostUpdate: {
+      title: t('drawerLoading.remoteHostUpdateTitle'),
+      sub: t('drawerLoading.remoteHostUpdateSub'),
+    },
+    remoteFailed: { title: t('drawerLoading.remoteFailedTitle'), sub: t('drawerLoading.remoteFailedSub') },
   }
   const { title, sub } = copy[phase]
   // Errors are final states without a spinner; reopening Code retries.
-  const indicator = phase === 'error' ? `<div class="warn">!</div>` : `<div class="ring"></div>`
+  const indicator = WAITING_PHASES.has(phase) ? `<div class="ring"></div>` : `<div class="warn">!</div>`
   // Self-contained offline HTML using slot background, platinum accent, and app font.
   return `<!doctype html><html lang="${getMainLocale()}"><head><meta charset="utf-8">
 <style>
@@ -327,11 +416,17 @@ export function showVSCodeLoading(convId: string, targetUrl: string, phase: VSCo
   applyLayout()
 }
 
-/** Apply the loading page to every open editor view during a global server restart. */
-export function showVSCodeLoadingAll(phase: VSCodeLoadPhase = 'restarting'): void {
+/**
+ * Apply the loading page to the open editor views of one server during its restart: this computer's by default, or
+ * those `which` selects (a remote host's).
+ */
+export function showVSCodeLoadingAll(
+  phase: VSCodeLoadPhase = 'restarting',
+  which: (convId: string) => boolean = isLocalEditor
+): void {
   const u = vscodeLoadingDataUrl(phase)
-  for (const d of drawers.values()) {
-    if (!d.vscodeView) continue
+  for (const [convId, d] of drawers) {
+    if (!d.vscodeView || !which(convId)) continue
     d.vscodeView.webContents.loadURL(u)
   }
 }
@@ -340,12 +435,12 @@ export function showVSCodeLoadingAll(phase: VSCodeLoadPhase = 'restarting'): voi
  * Show a spinner-free error after CLI download/server startup failure. Clear guards so reopening Code
  * retries.
  */
-export function showVSCodeError(convId: string): void {
+export function showVSCodeError(convId: string, phase: VSCodeLoadPhase = 'error'): void {
   const d = getDrawer(convId)
   const v = ensureVSCodeView(d, convId)
   d.vscodePendingUrl = null
   d.vscodeRequestedUrl = '' // clear loaded URL so the next editor request retries
-  v.webContents.loadURL(vscodeLoadingDataUrl('error'))
+  v.webContents.loadURL(vscodeLoadingDataUrl(phase))
   applyLayout()
 }
 
@@ -383,10 +478,14 @@ export function loadVSCode(convId: string, url: string, settingsJson?: string): 
  * new server URL/port. Force reload even if the port is unchanged because content belonged to the
  * terminated server.
  */
-export function reloadAllVSCode(buildUrl: (folder: string) => string, settingsJson?: string): void {
+export function reloadAllVSCode(
+  buildUrl: (folder: string) => string,
+  settingsJson?: string,
+  which: (convId: string) => boolean = isLocalEditor
+): void {
   if (settingsJson) vscodeSettingsJson = settingsJson
-  for (const d of drawers.values()) {
-    if (!d.vscodeView) continue
+  for (const [convId, d] of drawers) {
+    if (!d.vscodeView || !which(convId)) continue
     let folder = ''
     try {
       folder = new URL(d.vscodeRequestedUrl).searchParams.get('folder') ?? ''

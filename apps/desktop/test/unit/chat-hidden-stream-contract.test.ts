@@ -11,7 +11,7 @@ describe('ChatView streams for hidden conversations', () => {
   const permissionHandler = chatView.slice(
     chatView.indexOf('permissionEventRef.current = (ev) => {'),
     chatView.indexOf(
-      '  useEffect(() => {\n    Promise.all([window.api.chatGetSelection',
+      '  useEffect(() => {\n    Promise.all([api.chatGetSelection',
       chatView.indexOf('permissionEventRef.current = (ev) => {')
     )
   )
@@ -81,20 +81,20 @@ describe('ChatView streams for hidden conversations', () => {
     // because an unrelated callback changed identity drops whatever arrives in between, including
     // the terminal event that releases the composer.
     const subscription = chatView.slice(
-      chatView.indexOf('const offStream = window.api.onChatStream'),
+      chatView.indexOf('const offStream = api.onChatStream'),
       chatView.indexOf(
         '  useEffect(() => {\n    if (!visible) return',
-        chatView.indexOf('const offStream = window.api.onChatStream')
+        chatView.indexOf('const offStream = api.onChatStream')
       )
     )
 
     expect(subscription).toContain(
-      'const offStream = window.api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))'
+      'const offStream = api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))'
     )
     expect(subscription).toContain(
-      'const offPerm = window.api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))'
+      'const offPerm = api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))'
     )
-    expect(subscription).toContain('}, [conversationId, needsLiveSubscription])')
+    expect(subscription).toContain('}, [api, conversationId, needsLiveSubscription])')
     expect(chatView).toContain('streamEventRef.current = (ev) => {')
     expect(chatView).toContain('permissionEventRef.current = (ev) => {')
   })
@@ -105,10 +105,10 @@ describe('ChatView streams for hidden conversations', () => {
     const reload = chatView.slice(reloadStart, reloadEnd)
     const visibleStart = chatView.indexOf(
       '  useEffect(() => {\n    if (!visible) return',
-      chatView.indexOf('const offStream = window.api.onChatStream')
+      chatView.indexOf('const offStream = api.onChatStream')
     )
     const visibleEnd = chatView.indexOf(
-      '  useEffect(() => {\n    Promise.all([window.api.chatGetSelection',
+      '  useEffect(() => {\n    Promise.all([api.chatGetSelection',
       visibleStart
     )
     expect(reloadStart).toBeGreaterThan(-1)

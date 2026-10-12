@@ -97,6 +97,7 @@ function environmentRecord(id: string, overrides: Partial<StoredEnvironment> = {
   return {
     id,
     name: 'Environment ' + id,
+    kind: 'bots',
     lifecycle: 'running',
     setup: setup('ready'),
     containerName: 'maestrly-env-' + id,
@@ -224,9 +225,9 @@ function seedSchema5(db: DatabaseSync) {
 }
 
 describe('schema 6 migration', () => {
-  it('creates schema 10 with environments and desktop links in an empty data directory', () => {
+  it('creates the current schema with environments, their kinds and desktop links in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -245,6 +246,7 @@ describe('schema 6 migration', () => {
       ['archived_at', 0],
       ['compaction_json', 0],
       ['update_requested_at', 0],
+      ['kind', 1],
     ])
     expect(columns('environment_secrets')).toEqual([
       ['environment_id', 0],
@@ -318,7 +320,7 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     expect(snapshot(store.db)).toEqual(before)
     expect(meta(store.db)).toEqual(metaBefore)
 
@@ -326,6 +328,7 @@ describe('schema 6 migration', () => {
       {
         id: 'alpha',
         name: 'Alpha',
+        kind: 'bots',
         lifecycle: 'running',
         setup: setup('ready'),
         containerName: 'maestrly-bot-alpha',
@@ -342,6 +345,7 @@ describe('schema 6 migration', () => {
       {
         id: 'beta',
         name: 'Beta',
+        kind: 'bots',
         lifecycle: 'archived',
         setup: setup('ready'),
         containerName: 'maestrly-bot-beta',
@@ -424,7 +428,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('10')
+    expect(version(reopened.db)).toBe('11')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -500,7 +504,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -508,14 +512,14 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('11')
+    expect(version(after)).toBe('12')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
@@ -634,7 +638,7 @@ describe('schema 7 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     checked(store.db)
     expect(untouched(store.db)).toEqual(before)
     expect(
@@ -668,7 +672,7 @@ describe('schema 7 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('10')
+    expect(version(reopened.db)).toBe('11')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -695,7 +699,7 @@ describe('schema 7 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
   })
 
@@ -761,10 +765,11 @@ describe('schema 8 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     checked(store.db)
     expect(store.db.prepare('SELECT * FROM environments ORDER BY id').all()).toEqual(
-      before.map((row) => ({ ...row, update_requested_at: null }))
+      // The later schema 11 step adds the kind; every environment from before it runs bots.
+      before.map((row) => ({ ...row, update_requested_at: null, kind: 'bots' }))
     )
     expect(store.getEnvironment('alpha')).toEqual(
       environmentRecord('alpha', {
@@ -782,17 +787,17 @@ describe('schema 8 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('10')
+    expect(version(reopened.db)).toBe('11')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
   })
 
-  it('migrates a schema 6 database through schema 7 to schema 10', () => {
+  it('migrates a schema 6 database through schema 7 to the current one', () => {
     const dir = temp()
     createSchema6Database(dir).close()
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     checked(store.db)
     store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
@@ -812,6 +817,57 @@ describe('schema 8 migration', () => {
     store.insertEnvironment(environmentRecord('home', { updateRequestedAt: at(21) }), environmentSecrets('home'))
     expect(store.getEnvironment('home')?.updateRequestedAt).toBe(at(21))
     checked(store.db)
+  })
+})
+
+describe('schema 11 migration', () => {
+  it('gives every environment of a schema 10 database the bots kind', () => {
+    const dir = temp()
+    const old = new Store(dir)
+    old.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
+    old.db.exec('ALTER TABLE environments DROP COLUMN kind')
+    old.db.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
+    old.close()
+    const store = open(dir)
+    expect(version(store.db)).toBe('11')
+    expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
+  })
+
+  it('keeps the kind of an environment, which no change touches', () => {
+    const dir = temp()
+    const store = open(dir)
+    store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
+    store.insertEnvironment(environmentRecord('host', { kind: 'workspaces' }), environmentSecrets('host'))
+    expect(store.getEnvironment('work')?.kind).toBe('bots')
+    expect(store.getEnvironment('host')).toEqual(environmentRecord('host', { kind: 'workspaces' }))
+    expect(store.updateEnvironment('host', { name: 'Renamed', lifecycle: 'stopped' }, at(21)).kind).toBe('workspaces')
+    store.archiveEnvironment('host', at(22))
+    expect(store.archivedEnvironments().map((environment) => environment.kind)).toEqual(['workspaces'])
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+
+    const reopened = open(dir)
+    expect(version(reopened.db)).toBe('11')
+    expect(reopened.getEnvironment('host')?.kind).toBe('workspaces')
+    expect(reopened.listEnvironments().map((environment) => [environment.id, environment.kind])).toEqual([
+      ['work', 'bots'],
+    ])
+  })
+
+  it('accepts only the two kinds', () => {
+    const store = open()
+    store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
+    expect(() => store.db.prepare("UPDATE environments SET kind='desktops' WHERE id='work'").run()).toThrow(/CHECK/)
+  })
+
+  it('refuses a bot in a workspaces environment', () => {
+    const store = open()
+    store.insertEnvironment(environmentRecord('host', { kind: 'workspaces' }), environmentSecrets('host'))
+    expect(codeOf(() => store.insertBot(botRecord('dev'), gatewaySecrets('dev'), { environmentId: 'host' }))).toBe(
+      'CONFLICT'
+    )
+    expect(store.getBot('dev')).toBeNull()
+    expect(store.botsOfEnvironment('host', true)).toEqual([])
   })
 })
 
@@ -838,6 +894,7 @@ describe('environments and their bots', () => {
     expect(updated).toEqual({
       ...home,
       name: 'Home office',
+      kind: 'bots',
       lifecycle: 'restarting',
       setup: setup('desktop'),
       memoryLimitBytes: null,
@@ -1140,6 +1197,7 @@ describe('environments and their bots', () => {
     expect(store.getEnvironment('legacy')).toEqual({
       id: 'legacy',
       name: 'Bot legacy',
+      kind: 'bots',
       lifecycle: 'creating',
       setup: setup('container'),
       containerName: 'maestrly-bot-legacy',
@@ -1195,7 +1253,9 @@ describe('schema 9 migration', () => {
     const old = new Store(dir)
     const bot = botRecord('legacy')
     old.insertBot(bot, { ...environmentSecrets('legacy'), ...gatewaySecrets('legacy') })
-    old.db.exec('DROP TABLE desktop_links; ALTER TABLE bots DROP COLUMN publish_artifacts')
+    old.db.exec(
+      'DROP TABLE desktop_links; ALTER TABLE bots DROP COLUMN publish_artifacts; ALTER TABLE environments DROP COLUMN kind'
+    )
     old.db.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
@@ -1217,11 +1277,11 @@ describe('schema 10 migration', () => {
     const dir = temp()
     const old = new Store(dir)
     old.insertBot(botRecord('legacy'), { ...environmentSecrets('legacy'), ...gatewaySecrets('legacy') })
-    old.db.exec('DROP TABLE desktop_links')
+    old.db.exec('DROP TABLE desktop_links; ALTER TABLE environments DROP COLUMN kind')
     old.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('10')
+    expect(version(store.db)).toBe('11')
     expect(store.getBot('legacy')?.name).toBe('Bot legacy')
     expect(store.desktopLinks('legacy')).toEqual([])
   })

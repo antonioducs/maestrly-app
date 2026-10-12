@@ -386,6 +386,14 @@ including chats with different native providers. Projects, bot-originated chats
 and fleet bots keep their existing memory scopes. Personal memory does not sync
 between devices or with the fleet gateway.
 
+Chats on a [server's workspaces environment](remote-workspaces.md) use the
+personal memory of the server's profile, apart from this computer's. When a
+server runs chats, the panel has a **Memories of** selector to show either one;
+**Manage personal memory** in settings opens the panel on the profile chosen in
+**Settings of**, and a memory indicator opens it on the memory of the
+conversation's host. Every computer paired with the server sees the same server
+memory.
+
 Create or edit an entry in the central view, or ask an assistant in Agent or
 Design mode to save it. Personal memory tools remain available when the general
 app-tools switch is off, unless the Memory group is also disabled. Ask and Plan

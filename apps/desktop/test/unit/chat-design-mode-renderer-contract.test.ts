@@ -46,7 +46,7 @@ describe('Design mode renderer contract', () => {
   })
 
   it('confirms persistence before changing UI and guards stale conversation responses', () => {
-    expect(view).toContain('await window.api.chatSetMode(conversationId, m)')
+    expect(view).toContain('await api.chatSetMode(conversationId, m)')
     expect(view).toContain('if (result.ok) setMode(m)')
     expect(view).toContain('convIdRef.current !== conversationId')
     expect(picker).toContain('disabled={transitioning}')

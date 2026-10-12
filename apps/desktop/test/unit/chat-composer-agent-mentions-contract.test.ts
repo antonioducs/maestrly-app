@@ -213,7 +213,7 @@ describe('structured draft and queue occurrence contract', () => {
     expect(chatViewSource).toContain(
       "parts.push({ type: 'agent-mention', id: m.id, name: m.name, start: m.start, end: m.end })"
     )
-    expect(chatViewSource).toMatch(/window\.api\s*\.chatSend\(/)
+    expect(chatViewSource).toMatch(/\bapi\s*\.chatSend\(/)
     expect(chatViewSource).not.toContain('dedupeAgentMentionNames')
   })
 
@@ -230,7 +230,7 @@ describe('structured draft and queue occurrence contract', () => {
     )
     // chatSend still receives complete occurrences.
     expect(doSendSrc).toContain('agentMentions')
-    expect(doSendSrc).toMatch(/window\.api\s*\.chatSend\(/)
+    expect(doSendSrc).toMatch(/\bapi\s*\.chatSend\(/)
   })
 
   it('reconciles saved mentions through shouldReloadOnUserSaved', () => {
@@ -266,7 +266,7 @@ describe('structured draft and queue occurrence contract', () => {
     expect(chatViewSource).toContain(
       'async (id: string, payload: { text: string; agentMentions: StructuredAgentMentionDraft[] })'
     )
-    expect(chatViewSource).toContain('window.api.chatResend(conversationId, id, text, agentMentions)')
+    expect(chatViewSource).toContain('api.chatResend(conversationId, id, text, agentMentions)')
     // Preserves attachments and agent-mention parts with ranges in the optimistic bubble.
     expect(chatViewSource).toContain(
       "(p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden"
@@ -290,10 +290,10 @@ describe('structured draft and queue occurrence contract', () => {
     expect(editSrc).toContain('agentMentionsSentRef.current = agentMentions.length > 0')
     // Flags armed BEFORE chatResend.
     expect(editSrc.indexOf('agentMentionsSentRef.current = agentMentions.length > 0')).toBeLessThan(
-      editSrc.indexOf('window.api.chatResend(')
+      editSrc.indexOf('api.chatResend(')
     )
     expect(editSrc.indexOf('slashSentRef.current = invocation != null')).toBeLessThan(
-      editSrc.indexOf('window.api.chatResend(')
+      editSrc.indexOf('api.chatResend(')
     )
   })
 

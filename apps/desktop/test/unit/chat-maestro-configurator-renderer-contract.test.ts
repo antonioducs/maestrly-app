@@ -41,7 +41,7 @@ describe('Maestro configurator renderer contract', () => {
     expect(assistant).not.toContain('<CandidateFields')
     // The global surface controls the model; this chip never persists a conversation setting.
     expect(modelChip).toContain('conversationId?: string')
-    expect(modelChip).toContain('if (conversationId) window.api.chatGetSelection(conversationId)')
+    expect(modelChip).toContain('if (conversationId) api.chatGetSelection(conversationId)')
     expect(assistant).toContain('chatMaestroConfiguratorSetProfile(next)')
     // This surface has no delegation, so the synthetic Ultra mode is unavailable.
     expect(assistant).toContain('allowUltra={false}')

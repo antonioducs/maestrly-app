@@ -221,10 +221,12 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
     expect(vps.scripts(server.commands)).toEqual([
       'probe',
       'install-docker',
+      'workspaces-root',
       'write-file',
       'write-file',
       'authorize-key',
     ])
+    expect(vps.workspacesRoots).toEqual(['/srv/maestrly'])
     expect(server.authorizedKeys).toEqual([
       expect.stringMatching(new RegExp(`^ssh-ed25519 \\S+ ${installed.record?.remote?.keyTag}$`)),
     ])
@@ -237,6 +239,7 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
       'MAESTRLY_GATEWAY_PORT=7443',
       "MAESTRLY_GATEWAY_DISPLAY_NAME='fleet-vps'",
       'MAESTRLY_GATEWAY_BOT_EGRESS=public',
+      'MAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly',
     ])
       expect(env).toContain(line)
     expect(vps.files.get('/opt/maestrly-bots/compose.yml')).toBe(
@@ -269,9 +272,17 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
     expect(gateway.requests.filter((request) => request.key === 'devicesSelfDelete')).toHaveLength(1)
     expect((await installerStatus(page)).record).toBeNull()
 
-    // Another computer's older app installed this server: its `.env` names older images, still on the server.
+    // Another computer's older app installed this server: its `.env` names older images, still on the server, and,
+    // written before servers hosted workspaces, no directory for them.
     const older = images('0.0.1')
-    vps.files.set(REMOTE_ENV, env.replace(images(version)[0], older[0]).replace(images(version)[1], older[1]))
+    vps.files.set(
+      REMOTE_ENV,
+      env
+        .replace(images(version)[0], older[0])
+        .replace(images(version)[1], older[1])
+        .replace('MAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly\n', '')
+    )
+    vps.workspacesRoots.length = 0
     for (const ref of older) vps.engine.images.add(ref)
     const commandsBeforeJoin = server.commands.length
     await installOnServer('rotated-root-password')
@@ -306,8 +317,11 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
       `MAESTRLY_GATEWAY_BOT_IMAGE=${images(version)[1]}`,
       "MAESTRLY_GATEWAY_DISPLAY_NAME='fleet-vps'",
       'MAESTRLY_GATEWAY_BOT_EGRESS=public',
+      'MAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly',
     ])
       expect(updated).toContain(line)
+    // The update gave the older server its directory for workspaces.
+    expect(vps.workspacesRoots).toEqual(['/srv/maestrly'])
     // The older images are removed once the server runs the new ones.
     expect([...vps.engine.images].sort()).toEqual([...images(version)].sort())
     await expect(connected(page)).toContainText('fleet-vps', CONNECTED)

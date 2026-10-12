@@ -485,6 +485,31 @@ export default {
     },
   },
 
+  workspaces: {
+    title: 'Workspaces',
+    label: 'Chats e workspaces',
+    description:
+      'Roda seus chats e workspaces neste servidor: eles continuam trabalhando com este computador desligado e aparecem na barra lateral ao lado dos deste computador.',
+    create: 'Configurar workspaces neste servidor',
+    creating: 'Configurando…',
+    createNote: 'Começa sem contas próprias. Adicione-as na página dele quando estiver rodando.',
+    unsupported: 'Atualize o servidor para rodar workspaces nele.',
+    manage: 'Gerenciar',
+    sharedTitle: 'Contas e ferramentas',
+    sharedConfig: 'Usado por todos os chats e workspaces deste servidor.',
+    lifecycleNote: 'Parar, reiniciar ou atualizar agora interrompe os chats que estão rodando neste servidor.',
+    confirmRestart: 'Os chats rodando neste servidor são interrompidos.',
+    confirmUpdate:
+      'Os workspaces reiniciam na versão atual do servidor. Os chats rodando neste servidor são interrompidos.',
+    confirmStop: 'Os chats e workspaces deste servidor param até você iniciá-los de novo.',
+    confirmArchiveTitle: 'Arquivar os workspaces?',
+    confirmArchive:
+      'O contêiner é removido. A pasta pessoal dele, com chats, contas e configurações, fica no servidor e volta se você restaurar. Os arquivos da pasta de workspaces do servidor não são alterados.',
+    archive: 'Arquivar workspaces',
+    archiveNote: 'Remove o contêiner e mantém os chats, as contas e os arquivos no servidor.',
+    updateVersion: 'A Maestrly {{version}} está pronta para os seus workspaces.',
+    updateNoVersion: 'Uma imagem mais nova está pronta para os seus workspaces.',
+  },
   connection: {
     unconfigured: 'Nenhum servidor de bots conectado',
     connecting: 'Conectando…',

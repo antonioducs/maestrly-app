@@ -53,15 +53,15 @@ function commitReady(commit: string): boolean {
 
 /**
  * Standalone CLI download identifier by OS/architecture: cli-prefixed Darwin/Linux/Windows, x64/arm64
- * and Linux armhf.
+ * and Linux armhf. Microsoft publishes the x64 and arm64 Linux CLIs only as their Alpine builds (`cli-linux-x64` and
+ * `cli-linux-arm64` answer 404); those are static binaries that run on glibc distributions too.
  */
-function cliTarget(): string {
-  const arch = process.arch
-  if (process.platform === 'darwin') return arch === 'arm64' ? 'cli-darwin-arm64' : 'cli-darwin-x64'
-  if (process.platform === 'win32') return arch === 'arm64' ? 'cli-win32-arm64' : 'cli-win32-x64'
-  if (arch === 'arm64') return 'cli-linux-arm64'
+export function cliTarget(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
+  if (platform === 'darwin') return arch === 'arm64' ? 'cli-darwin-arm64' : 'cli-darwin-x64'
+  if (platform === 'win32') return arch === 'arm64' ? 'cli-win32-arm64' : 'cli-win32-x64'
+  if (arch === 'arm64') return 'cli-alpine-arm64'
   if (arch === 'arm') return 'cli-linux-armhf'
-  return 'cli-linux-x64'
+  return 'cli-alpine-x64'
 }
 
 /** Version-API platform identifier omits cli-; the commit is shared. */

@@ -193,6 +193,19 @@ async function reply(req) {
     if (tools.length === 1) return validatedTool(req, 'browser_read_text', {})
     return { text: 'E2E-COOKIE-SEEN value=' + (/E2E-COOKIE-VALUE:([A-Za-z0-9-]+)/.exec(last)?.[1] ?? 'unreadable') }
   }
+  // A workspaces host drives its own browser: it opens a page of the local site, reads it and takes a picture of it.
+  if (text.includes('E2E-HOST-BROWSER')) {
+    const url = field(text, 'url')
+    const { tools, last } = turn(messages, 'E2E-HOST-BROWSER')
+    if (tools.length === 0) return validatedTool(req, 'browser_navigate', { url })
+    if (tools.length === 1) return validatedTool(req, 'browser_read_text', {})
+    if (tools.length === 2)
+      return last.includes('E2E-COOKIE-VALUE:')
+        ? validatedTool(req, 'browser_screenshot', {})
+        : { text: 'E2E-HOST-BROWSER-UNREAD ' + last.slice(0, 200) }
+    // The screenshot's note says where the page is scrolled; a failed capture says why instead.
+    return { text: /Scroll y=\d+\/\d+/.test(last) ? 'E2E-HOST-BROWSER-OK' : 'E2E-HOST-BROWSER-NO-SCREENSHOT ' + last.slice(0, 200) }
+  }
   // A bot reaches the owner's computers: all of them at once, then one computer per call.
   if (text.includes('E2E-DESKTOPS-LIST')) {
     const { tools, last } = turn(messages, 'E2E-DESKTOPS-LIST')
@@ -272,10 +285,28 @@ function cookiePage(req, res, url) {
   res.end(`<!doctype html><html><head><title>E2E cookie</title></head><body><p>${body}</p></body></html>`)
 }
 
+// A page the workspaces test drives through the streamed browser: a field whose value becomes the title, a list whose
+// choice does too, and a file field. Each sits at a fixed place, where the test clicks.
+const STREAM_PAGE = `<!doctype html><html><head><title>E2E stream</title></head>
+<body style="margin:0;font:16px sans-serif;background:#fff">
+<input id="field" autocomplete="off" style="position:absolute;left:0;top:0;width:400px;height:40px"
+  oninput="document.title = 'typed:' + this.value">
+<select id="choice" style="position:absolute;left:0;top:60px;width:200px;height:30px"
+  onchange="document.title = 'chose:' + this.value">
+  <option value="a">Alpha</option>
+  <optgroup label="More"><option value="b">Beta</option><option value="c" disabled>Gamma</option></optgroup>
+</select>
+<input id="file" type="file" style="position:absolute;left:0;top:120px;width:300px;height:30px">
+</body></html>`
+
 http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://e2e-model')
   if (req.method === 'GET' && (url.pathname === '/e2e/cookie/set' || url.pathname === '/e2e/cookie/show'))
     return cookiePage(req, res, url)
+  if (req.method === 'GET' && url.pathname === '/e2e/stream') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(STREAM_PAGE)
+  }
   if (req.headers.authorization !== 'Bearer ' + key) return json(res, 401, { error: { message: 'Invalid API key' } })
   if (req.method === 'GET' && url.pathname === '/e2e/cookie/log') return json(res, 200, { requests: cookieLog })
   if (req.method === 'GET' && req.url === '/v1/models') {

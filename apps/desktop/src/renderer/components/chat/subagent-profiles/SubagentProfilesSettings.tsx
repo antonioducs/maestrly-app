@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import type { ChatConfig } from '../../../../shared/chat'
 import type { SubagentProfileCatalog, SubagentProfileConfigPayload } from '../../../../shared/subagent-profiles'
@@ -7,10 +8,11 @@ import { SubagentProfileRulesEditor } from './SubagentProfileRulesEditor'
 
 export function SubagentProfilesSettings({ config }: { config: ChatConfig }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [payload, setPayload] = useState<SubagentProfileConfigPayload | null>(null)
   const [catalog, setCatalog] = useState<SubagentProfileCatalog>({ agents: [], categories: [] })
   const refresh = () =>
-    Promise.all([window.api.chatSubagentProfilesGetGlobal(), window.api.chatSubagentProfilesCatalog()]).then(
+    Promise.all([api.chatSubagentProfilesGetGlobal(), api.chatSubagentProfilesCatalog()]).then(
       ([nextPayload, nextCatalog]) => {
         setPayload(nextPayload)
         setCatalog(nextCatalog)
@@ -32,7 +34,7 @@ export function SubagentProfilesSettings({ config }: { config: ChatConfig }) {
           config={config}
           diagnostics={payload.diagnostics}
           onSave={async (rules) => {
-            const result = await window.api.chatSubagentProfilesSetGlobal(rules)
+            const result = await api.chatSubagentProfilesSetGlobal(rules)
             if (!result.ok) return false
             setPayload(result.value)
 

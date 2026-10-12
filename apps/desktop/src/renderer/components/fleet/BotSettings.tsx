@@ -3,7 +3,7 @@ import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { hasEnvironments } from '@/lib/fleet/environments'
-import { environmentOf } from '@/lib/fleet/selectors'
+import { botEnvironments, environmentOf } from '@/lib/fleet/selectors'
 import {
   botProvisioningKey,
   contextLimitAvailability,
@@ -180,7 +180,9 @@ export function BotSettings({
   const { t, i18n } = useTranslation('fleet')
   // With environments, accounts, skills, MCP servers and resources belong to the bot's environment and are managed
   // there; without them, a bot keeps every section it had.
-  const environments = hasEnvironments(fleet.state.connection) ? fleet.state.snapshot.environments : undefined
+  const environments = hasEnvironments(fleet.state.connection)
+    ? botEnvironments(fleet.state.snapshot.environments)
+    : undefined
   const shared = environments !== undefined && bot.environmentId !== null
   const environment = shared ? environmentOf(fleet.state.snapshot.environments, bot) : undefined
   // The last bot of an environment leaves it running, empty, until the owner stops or archives it.

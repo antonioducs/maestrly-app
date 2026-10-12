@@ -457,6 +457,124 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   a bot only the projects you would let it work in. See
   [Work in the projects of your computers](bot-fleet.md#work-in-the-projects-of-your-computers).
 
+## Remote workspaces
+
+A bot server can run one **workspaces environment**: a container with a full
+Maestrly, in server mode, that hosts the owner's chats and workspaces instead of
+bots. A paired computer drives it through a **bridge**: see
+[remote workspaces](remote-workspaces.md).
+
+- **A paired computer controls the host as a window controls its own
+  computer.** Over the bridge, the computer's renderers call the host's IPC
+  handlers, the same ones a Maestrly window reaches on its own machine. That
+  includes reading and writing the host's files, running commands in its
+  terminals, using its model accounts, and changing its settings. Pairing
+  already grants authority over every environment of the server, so the bridge
+  adds no new principal; it widens what a paired device can do in that one
+  environment. Pair only computers you control, and revoke a lost one.
+- **The bridge is authenticated by the gateway, not by the host.** A computer
+  asks the gateway for a ticket with its device token. The ticket is random,
+  bound to the device and the environment, valid for 30 seconds, and spent by
+  its first use. The gateway then forwards the WebSocket handshake to the
+  environment's control server with the environment's control token, which
+  never leaves the gateway and the container, and passes bytes both ways
+  without reading them. A device holds at most eight bridges. Revoking a
+  device discards its tickets and closes its bridges; stopping or archiving
+  the environment closes every bridge to it.
+- **The host refuses what belongs to a desktop.** For a computer's renderer it
+  refuses channels that drive a window, native views, sound, updates, the bot
+  fleet client and its installer, and the microphone, and channels whose
+  effect is on the host's own desktop: opening a file, a folder, or a PDF in a
+  desktop app, native folder dialogs, and exporting or resetting data. The
+  list is `apps/desktop/src/shared/host-channels.ts`, and a test checks every
+  channel of the preload against it.
+- **The host sees only its own folders.** Workspaces are added from the
+  environment's home folder and, when the server names one, from a single
+  server directory mounted at the same path (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`;
+  `/srv/maestrly` on a VPS that Maestrly set up). The folder browser resolves
+  symbolic links before checking a path against those folders. No request can
+  mount another directory of the server: mounts are fixed when the container
+  is created. The container has no Docker socket and no `sudo`, and runs as
+  uid 1000 under the same egress guard and seccomp profile as a bot
+  environment. An agent there can still read and change everything in those
+  folders, as on any computer it runs on.
+- **File transfers take their own route, with the same authority.** Moving
+  files between a computer and the host uses the gateway's `host-files` routes
+  instead of the bridge. They require the device token, and the gateway passes
+  their bodies and answers to the environment's control server, with the
+  control token in place of the device's, without reading or keeping them; it
+  only bounds how much one request may send. The host reads and writes files
+  only inside the folders above, resolving links first, and reads the copies of
+  PDF attachments it makes for the computer to open. Revoking the device or
+  stopping the environment cuts its transfers as it closes its bridges. On the
+  computer, a download is always written to its Downloads folder, or to a
+  temporary folder to open it, as the app decides; an upload reads only files the
+  person picked in a file dialog or dropped on the window. Each part and each
+  whole file is checked with SHA-256 on both ends, which detects corruption, not
+  tampering by the server itself.
+- **The host's browser is streamed only to a computer's renderer.** The
+  channels of the remote browser (`REMOTE_VIEWER_CHANNELS` in
+  `apps/desktop/src/shared/host-channels.ts`) run only in server mode and only
+  for a renderer that arrived over the bridge; a window of the host itself is
+  refused. The host sends the page's frames, cursor, and requests to the one
+  renderer that started the stream, under a random stream id that every later
+  call must repeat; another renderer that starts one takes it over, and the
+  first is told. Input goes to the page through its DevTools session, never to
+  the host's display, and only to the page the viewer sees. Each input is
+  checked field by field against a fixed shape, and editing commands come from
+  a fixed list. The page's `<select>` lists and selected text are read by a
+  script in an isolated world that the page cannot see or call, which reports
+  only lists the person opened with real input; what it reports is checked
+  again as untrusted. While a page is streamed, its file chooser is refused
+  instead of opening a dialog on the host. Copying and pasting go through the
+  host's clipboard, one operation at a time and bounded in size: the text the
+  person pastes becomes the host's clipboard for the page to read, and a copy
+  returns the page's text to the computer, which writes it to its own
+  clipboard. Other pages of the host can read that clipboard while it holds the
+  text.
+- **The host's editor stays behind the gateway.** VS Code's serve-web listens
+  only on the host's loopback, with a connection token kept in the host's
+  profile. A computer reaches it under `/v1/environments/:eid/editor/` of the
+  gateway with its device token; the gateway passes requests, WebSockets, and
+  cookies to `/v1/editor/` of the environment's control server with the control
+  token in place of the device's, bounds how many editor connections a device
+  holds, and cuts them when the device is revoked or the environment stops.
+  The host drops the caller's credentials and any editor token it sends, and
+  adds the real token as the cookie serve-web reads. The workbench page
+  receives that token as a cookie too, because VS Code's page sends it in the
+  handshake of its own connection; with it alone nothing reaches the editor,
+  which answers only on the host's loopback and through the control server. It
+  accepts as the editor's origin only a loopback address. The editor can do on
+  the host what its terminal can: it adds no authority. Its channels over the
+  bridge (`editor:*`, in `REMOTE_VIEWER_CHANNELS`) open, follow, and restart it,
+  only for another computer and only in server mode. The first opening
+  downloads VS Code from Microsoft on the host, as the local editor does on a
+  computer.
+- **The editor's local address is guarded on the computer.** The computer gives
+  the editor a loopback origin (`127.0.0.1` and a port), served by a proxy of its
+  main process, which other programs of the computer can reach too. The proxy
+  passes a request only with a random access cookie it sets in the editor views'
+  own session, which pages cannot read (HttpOnly), and only with that origin as
+  Host and, when present, Origin. It removes the page's Origin, Referer, and the
+  access cookie before adding the device's credentials. Each host's editor views
+  use a session of their own, apart from this computer's editor and from other
+  hosts.
+- **Both ends must run the same version.** The computer's renderer calls the
+  host's functions directly, so the host refuses a computer of another app
+  version or bridge protocol and says which version it runs. It never
+  downgrades itself.
+- **Several computers share one host.** Every paired computer sees the same
+  conversations, receives the same streams, and can answer the same permission
+  requests, questions, and plans. There is no per-computer or per-workspace
+  isolation inside a host: use separate servers for work that must stay apart.
+- **Workspaces and bots do not share a container**, and the gateway refuses to
+  place a bot in a workspaces environment. They do share the Docker host and
+  the fleet network, like any two environments.
+
+A development or test build, never a packaged one, also accepts
+`MAESTRLY_DEV_DIRECT_HOST`, which connects it straight to a host's control
+server with that host's control token.
+
 ## MCP, skills, and memory
 
 A stdio MCP server is an executable chosen by the user. A remote MCP server is a

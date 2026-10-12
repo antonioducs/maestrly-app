@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, RotateCcw, TriangleAlert } from 'lucide-react'
+import { useHostApi } from '../../lib/hosts/host-context'
 
 /**
  * Shown on a conversation started from another conversation whose first turn could not start. The task is kept
@@ -8,19 +9,20 @@ import { Loader2, RotateCcw, TriangleAlert } from 'lucide-react'
  */
 export function ConversationDispatchBanner({ conversationId }: { conversationId: string }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [status, setStatus] = useState<{ phase: string; error: string | null } | null>(null)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
 
   const load = useCallback(
     (isAlive: () => boolean) =>
-      void window.api
+      void api
         .conversationDispatchStatus(conversationId)
         .then((next) => {
           if (isAlive()) setStatus(next)
         })
         .catch(() => {}),
-    [conversationId]
+    [api, conversationId]
   )
 
   useEffect(() => {
@@ -28,14 +30,14 @@ export function ConversationDispatchBanner({ conversationId }: { conversationId:
     setStatus(null)
     setRetryError(null)
     load(() => alive)
-    const unsubscribe = window.api.onConversationDispatchChanged((payload) => {
+    const unsubscribe = api.onConversationDispatchChanged((payload) => {
       if (payload.conversationId === conversationId) load(() => alive)
     })
     return () => {
       alive = false
       unsubscribe()
     }
-  }, [conversationId, load])
+  }, [api, conversationId, load])
 
   if (status?.phase !== 'start-failed') return null
 
@@ -43,7 +45,7 @@ export function ConversationDispatchBanner({ conversationId }: { conversationId:
     setRetrying(true)
     setRetryError(null)
     try {
-      const result = await window.api.retryConversationDispatch(conversationId)
+      const result = await api.retryConversationDispatch(conversationId)
       if (!result.ok) setRetryError(result.error ?? null)
     } catch (error) {
       setRetryError(error instanceof Error ? error.message : String(error))

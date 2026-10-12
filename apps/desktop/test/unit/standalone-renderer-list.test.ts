@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ values: [] as unknown[], index: 0 }))
 vi.mock('react', () => ({
+  // The hook reaches its host through the host context module, which creates a context when it loads.
+  createContext: (value: unknown) => ({ value }),
+  useContext: (context: { value: unknown }) => context.value,
   useCallback: (callback: unknown) => callback,
   useRef: (current: unknown) => ({ current }),
   useState: (initial: unknown) => {
@@ -17,10 +20,14 @@ vi.mock('react', () => ({
 }))
 import { useStandaloneChats } from '../../src/renderer/lib/use-standalone-chats'
 
+// One stub for the whole file: the host context keeps the API object it got from the preload.
+const listStandaloneConversations = vi.fn()
+vi.stubGlobal('window', { api: { hostApi: () => ({ listStandaloneConversations }) } })
+
 beforeEach(() => {
   state.index = 0
   state.values = []
-  vi.stubGlobal('window', { api: { listStandaloneConversations: vi.fn() } })
+  listStandaloneConversations.mockReset()
 })
 
 describe('standalone list refresh', () => {
@@ -29,17 +36,17 @@ describe('standalone list refresh', () => {
       { id: 'active', archived: 0 },
       { id: 'archived', archived: 1 },
     ]
-    vi.mocked(window.api.listStandaloneConversations).mockResolvedValue(chats as never)
+    listStandaloneConversations.mockResolvedValue(chats as never)
     const list = useStandaloneChats()
     await list.refresh(false)
     expect(state.values).toEqual([[chats[0]], 1])
     await list.refresh(true)
     expect(state.values).toEqual([chats, 1])
-    expect(window.api.listStandaloneConversations).toHaveBeenCalledWith(true)
+    expect(listStandaloneConversations).toHaveBeenCalledWith(true)
   })
   it('does not let an earlier request overwrite newer visibility', async () => {
     let finishOld!: (value: never[]) => void
-    vi.mocked(window.api.listStandaloneConversations)
+    listStandaloneConversations
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {

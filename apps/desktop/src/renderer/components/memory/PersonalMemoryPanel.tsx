@@ -29,6 +29,9 @@ import { MemoryConfirmation } from './MemoryConfirmation'
 import { PersonalMemorySheet } from './PersonalMemorySheet'
 import { PersonalMemorySettingsDialog } from './PersonalMemorySettingsDialog'
 import { memoryError, usePersonalMemory } from './use-personal-memory'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import type { HostId } from '../../../shared/host-key'
 
 type Section = 'all' | 'recent' | 'archived'
 type Selection = { memory?: LocalMemory }
@@ -37,17 +40,28 @@ const SECTIONS: Section[] = ['all', 'recent', 'archived']
 export interface PersonalMemoryPanelProps {
   focusMemoryId?: string
   focusMemoryRequest?: number
+  /** Shows the personal memory of another host: this computer's, or a server's that runs chats. */
+  onHostChange?: (hostId: HostId) => void
   onShowSidebar?: () => void
   onClose: () => void
 }
 
+/**
+ * The personal memory of the host it renders in: what chats there remember about the person. Each host keeps its own;
+ * the chats of a server remember with the server's.
+ */
 export function PersonalMemoryPanel({
   focusMemoryId,
   focusMemoryRequest,
+  onHostChange,
   onShowSidebar,
   onClose,
 }: PersonalMemoryPanelProps) {
   const { t, i18n } = useTranslation('ui')
+  const api = useHostApi()
+  const hostId = useHostId()
+  // Hosts whose memory can be shown now, and the one shown even while it is not reached.
+  const hostChoices = useHosts().filter((host) => !host.remote || host.state === 'online' || host.id === hostId)
   const data = usePersonalMemory()
   const [section, setSection] = useState<Section>('all')
   const [query, setQuery] = useState('')
@@ -134,12 +148,12 @@ export function PersonalMemoryPanel({
   }
   const toggle = (enabled: boolean) =>
     void perform(async () => {
-      const latest = await window.api.getPersonalMemorySettings()
-      await window.api.setPersonalMemorySettings({ ...latest, enabled })
+      const latest = await api.getPersonalMemorySettings()
+      await api.setPersonalMemorySettings({ ...latest, enabled })
     })
   const exportFile = (format: 'json' | 'markdown') =>
     void perform(async () => {
-      const result = await window.api.exportPersonalMemories()
+      const result = await api.exportPersonalMemories()
       const url = URL.createObjectURL(
         new Blob([result[format]], { type: format === 'json' ? 'application/json' : 'text/markdown' })
       )
@@ -203,6 +217,26 @@ export function PersonalMemoryPanel({
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto @container">
         <main className="mx-auto max-w-[1120px] px-4 py-7 @min-[700px]:px-8">
+          {onHostChange && hostChoices.length > 1 && (
+            <div data-memory-host className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span id="personal-memory-host-label" className="text-[13px] font-medium">
+                {t('personalMemory.host.label')}
+              </span>
+              <OptionSelect
+                value={hostId}
+                onValueChange={onHostChange}
+                aria-labelledby="personal-memory-host-label"
+                className="h-8 w-60 text-xs"
+              >
+                {hostChoices.map((host) => (
+                  <SelectOption key={host.id} value={host.id}>
+                    {host.remote ? host.label || t('sidebar.hostUnnamed') : t('sidebar.hostThisComputer')}
+                  </SelectOption>
+                ))}
+              </OptionSelect>
+              <p className="basis-full text-xs text-muted-foreground">{t('personalMemory.host.hint')}</p>
+            </div>
+          )}
           <div className="mb-7 flex items-start justify-between gap-5">
             <p className="text-xs text-muted-foreground">{t('personalMemory.description')}</p>
             <label className="flex shrink-0 items-center gap-2 text-[11px]">
@@ -510,7 +544,7 @@ export function PersonalMemoryPanel({
                 disabled={busy || data.index?.state === 'indexing'}
                 onClick={() =>
                   void perform(async () => {
-                    await window.api.rebuildPersonalMemoryIndex()
+                    await api.rebuildPersonalMemoryIndex()
                     await data.reload()
                   })
                 }

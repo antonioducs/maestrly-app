@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Copy, ExternalLink, KeyRound, Loader2, Power, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { ChatGptWebStatusPayload } from '../../../preload'
 import type { ChatGptWebReviewLoopInfo } from '../../../shared/chat'
 import { isReviewLoopConversationReserved } from '../../../shared/chat'
@@ -35,6 +36,7 @@ function formatElapsed(ms: number): string {
 
 export function ChatGptWebSessionBanner({ conversationId, starting }: { conversationId: string; starting: boolean }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [status, setStatus] = useState<ChatGptWebStatusPayload | null>(null)
   const [busy, setBusy] = useState<'copyPrompt' | 'copyKey' | 'open' | 'end' | null>(null)
   const [loopBusy, setLoopBusy] = useState(false)
@@ -45,9 +47,9 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
   const [, setClock] = useState(0)
 
   useEffect(() => {
-    void window.api.chatGptWebStatus().then(setStatus)
-    return window.api.onChatGptWebStatus(setStatus)
-  }, [])
+    void api.chatGptWebStatus().then(setStatus)
+    return api.onChatGptWebStatus(setStatus)
+  }, [api])
 
   const session = status?.sessions.find((item) => item.conversationId === conversationId && item.state !== 'ended')
   const reviewLoop = session?.reviewLoop ?? null
@@ -67,7 +69,7 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
     setBusy('copyPrompt')
     setError(null)
     try {
-      const result = await window.api.chatGptWebCompanionCopyPrompt(conversationId)
+      const result = await api.chatGptWebCompanionCopyPrompt(conversationId)
       if (!result.ok) throw new Error(result.error || 'session-not-found')
       setPromptCopied(true)
       setTimeout(() => setPromptCopied(false), 2500)
@@ -82,7 +84,7 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
     setBusy('copyKey')
     setError(null)
     try {
-      const result = await window.api.chatGptWebCompanionCopySessionKey(conversationId)
+      const result = await api.chatGptWebCompanionCopySessionKey(conversationId)
       if (!result.ok) throw new Error(result.error || 'session-not-found')
       setSessionKeyCopied(true)
       setTimeout(() => setSessionKeyCopied(false), 2500)
@@ -96,7 +98,7 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
   const openWindow = async () => {
     setBusy('open')
     setError(null)
-    const result = await window.api.chatGptWebCompanionOpen(conversationId)
+    const result = await api.chatGptWebCompanionOpen(conversationId)
     if (!result.ok) setError(result.error || t('chatgptWeb.error'))
     setBusy(null)
   }
@@ -104,7 +106,7 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
   const end = async () => {
     setBusy('end')
     setError(null)
-    await window.api.chatGptWebCompanionEnd(conversationId)
+    await api.chatGptWebCompanionEnd(conversationId)
     setBusy(null)
   }
 
@@ -112,7 +114,7 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
     setLoopBusy(true)
     setError(null)
     try {
-      await window.api.chatGptWebReviewLoopStop(conversationId)
+      await api.chatGptWebReviewLoopStop(conversationId)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -124,7 +126,7 @@ export function ChatGptWebSessionBanner({ conversationId, starting }: { conversa
     setVisualBusy(true)
     setError(null)
     try {
-      const result = await window.api.chatGptWebReviewLoopShowPreview(conversationId)
+      const result = await api.chatGptWebReviewLoopShowPreview(conversationId)
       if (!result.ok) throw new Error(result.error || 'visual-preview-not-active')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, CircleAlert, Clock3, LoaderCircle, Pause } from 'lucide-react'
 import { useSettings } from '@/lib/use-settings'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { BackgroundCompactionStatus as BackgroundCompactionState } from '../../../shared/background-compaction'
 
 const statusLabelKey: Record<BackgroundCompactionState['status'], string> = {
@@ -25,6 +26,7 @@ export function BackgroundCompactionStatus({
   onOpenSettings?: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const { openSettings } = useSettings()
   const [retrying, setRetrying] = useState(false)
 
@@ -51,7 +53,7 @@ export function BackgroundCompactionStatus({
     setRetrying(true)
     try {
       if (onRetry) await onRetry()
-      else await window.api.chatRetryBackgroundCompaction(conversationId)
+      else await api.chatRetryBackgroundCompaction(conversationId)
     } catch {
       // The failed state remains actionable; the next event or hydration supplies backend details.
     } finally {

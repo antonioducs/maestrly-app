@@ -1,4 +1,4 @@
-import { conversationTabAllowed } from './drawer-scope'
+import { conversationTabAllowed, isRemoteConversation } from './drawer-scope'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import {
   closeShellTerminal,
@@ -42,6 +42,17 @@ import { getConversation, patchConvUiPrefs, type FloatingBounds, type FloatTab }
 import { receiveMemoryEvictionReady } from './window-ipc'
 import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
+import {
+  acknowledgeBrowserFrame,
+  chooseBrowserStreamOption,
+  closeBrowserStreamPopup,
+  copyBrowserStream,
+  inputBrowserStream,
+  pasteBrowserStream,
+  resizeBrowserStream,
+  startBrowserStream,
+  stopBrowserStream,
+} from './drawer/browser-stream'
 
 export interface DrawerIpcDeps {
   loadVSCodeFolder: (convId: string, folder: string) => Promise<void>
@@ -49,6 +60,8 @@ export interface DrawerIpcDeps {
   /** Recreates a cold-evicted ChatGPT view only when the conversation still owns an active session. */
   restoreChatGptView?: (convId: string) => Promise<boolean>
   openConversation?: (convId: string) => void
+  /** Restarts a remote host's editor and reloads this computer's views of it (drawer/remote-vscode). */
+  restartRemoteVSCode?: (convId: string) => Promise<void>
 }
 
 /** Canonical source for deciding whether a Companion completion is visible to the user. */
@@ -111,6 +124,35 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     ensureBrowser(convId)
     return getBrowserState(convId)
   })
+  // The browser streamed to a remote viewer (drawer/browser-stream): each call checks that it comes from the
+  // viewer's renderer through the host bridge, and the stream it names is that viewer's.
+  reg.mhandle('drawer:browser-stream-start', (e, convId: unknown, width: unknown, height: unknown) =>
+    startBrowserStream(e.sender, convId, width, height)
+  )
+  reg.mon('drawer:browser-stream-resize', (e, convId: unknown, streamId: unknown, width: unknown, height: unknown) =>
+    resizeBrowserStream(e.sender, convId, streamId, width, height)
+  )
+  reg.mon('drawer:browser-stream-ack', (e, convId: unknown, streamId: unknown, seq: unknown) =>
+    acknowledgeBrowserFrame(e.sender, convId, streamId, seq)
+  )
+  reg.mon('drawer:browser-stream-stop', (e, convId: unknown, streamId: unknown) =>
+    stopBrowserStream(e.sender, convId, streamId)
+  )
+  reg.mon('drawer:browser-input', (e, convId: unknown, streamId: unknown, input: unknown) =>
+    inputBrowserStream(e.sender, convId, streamId, input)
+  )
+  reg.mhandle('drawer:browser-copy', (e, convId: unknown, streamId: unknown, cut: unknown) =>
+    copyBrowserStream(e.sender, convId, streamId, cut)
+  )
+  reg.mon('drawer:browser-paste', (e, convId: unknown, streamId: unknown, data: unknown) =>
+    pasteBrowserStream(e.sender, convId, streamId, data)
+  )
+  reg.mon('drawer:browser-select-choose', (e, convId: unknown, streamId: unknown, requestId: unknown, index: unknown) =>
+    chooseBrowserStreamOption(e.sender, convId, streamId, requestId, index)
+  )
+  reg.mon('drawer:browser-popup-close', (e, convId: unknown, streamId: unknown) =>
+    closeBrowserStreamPopup(e.sender, convId, streamId)
+  )
   // loadVSCodeFolder owns serve-web startup, settings, URL, and the loading page (#318), allowing
   // popup-manager to reuse the flow when opening a cold editor and resolving cwd itself.
   reg.mhandle('drawer:load-vscode', async (_e, convId: string, folder: string) => {
@@ -123,7 +165,12 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
   // #318: Restart a stalled or crashed serve-web without closing the app, then reload all open Code tabs
   // with its new URL. The global server may choose a different port.
-  reg.mhandle('drawer:restart-vscode', async () => {
+  reg.mhandle('drawer:restart-vscode', async (_e, convId?: unknown) => {
+    // A remote host's conversation restarts that host's editor; this computer's editor server keeps running.
+    if (typeof convId === 'string' && isRemoteConversation(convId)) {
+      if (conversationTabAllowed(convId, 'vscode')) await deps.restartRemoteVSCode?.(convId)
+      return
+    }
     showVSCodeLoadingAll('restarting') // show immediate feedback in open tabs during server restart
     await restartVSCodeServer()
     const settingsJson = await getMergedSettingsJson()
@@ -139,7 +186,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
 
   // --- detach drawer tabs by reparenting their native views ---
   reg.mon('drawer:detach', (_e, convId: string, tab: FloatTab) => {
-    if (conversationTabAllowed(convId, tab)) floatingManager.detach(convId, tab)
+    // The tools of a remote host's conversation stay docked in the drawer.
+    if (conversationTabAllowed(convId, tab) && !isRemoteConversation(convId)) floatingManager.detach(convId, tab)
   })
   reg.mon('drawer:reattach', (_e, convId: string, tab: FloatTab) => floatingManager.reattach(convId, tab))
   reg.mon('drawer:set-float-bounds', (_e, convId: string, tab: FloatTab, bounds: FloatingBounds) =>
@@ -169,7 +217,7 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     if (conversationTabAllowed(convId, tab)) deps.openPopup(convId, tab)
   })
   reg.mon('popup:open-floating', (_e, convId: string, tab: FloatTab) => {
-    if (!conversationTabAllowed(convId, tab)) return
+    if (!conversationTabAllowed(convId, tab) || isRemoteConversation(convId)) return
     // Release popup placement and stack state before floating-manager reparents the same view.
     if (popupManager.releasePopupForFloating(convId, tab)) floatingManager.detach(convId, tab)
   })

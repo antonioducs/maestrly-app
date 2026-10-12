@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog'
 import { MemorySettings } from '@/components/chat/MemorySettings'
 import type { ChatConfig } from '../../../shared/chat'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 export function PersonalMemorySettingsDialog({
   onClose,
@@ -21,6 +22,8 @@ export function PersonalMemorySettingsDialog({
   onRestoreFocus: () => void
 }) {
   const { t } = useTranslation('chat')
+  // The host of the memory center: its personal memory, and the models of its accounts for extraction.
+  const api = useHostApi()
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -37,13 +40,13 @@ export function PersonalMemorySettingsDialog({
       const current = ++request
       setLoadError(false)
       try {
-        const next = await window.api.chatConfig()
+        const next = await api.chatConfig()
         if (active && current === request) setConfig(next)
       } catch {
         if (active && current === request) setLoadError(true)
       }
     }
-    const unsubscribe = window.api.onChatModelsCatalogChanged(() => {
+    const unsubscribe = api.onChatModelsCatalogChanged(() => {
       setCatalogRevision((revision) => revision + 1)
       void refresh()
     })
@@ -52,7 +55,7 @@ export function PersonalMemorySettingsDialog({
       active = false
       unsubscribe()
     }
-  }, [attempt])
+  }, [api, attempt])
 
   const requestClose = () => {
     if (busyRef.current || confirmDiscard) return

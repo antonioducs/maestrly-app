@@ -33,6 +33,7 @@ const host = (gatewayVersion: string, botImageVersion: string | null = null) =>
 const environment = (id: string, patch: Partial<FleetEnvironment> = {}): FleetEnvironment => ({
   id,
   name: 'Environment ' + id,
+  kind: 'bots',
   lifecycle: 'running',
   setup: { step: 'ready', error: null, errorMessage: null },
   resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },

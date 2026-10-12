@@ -12,6 +12,7 @@ import {
   ClipboardList,
   GitPullRequest,
   StickyNote,
+  Files,
   MessageCircle,
   PictureInPicture2,
   PictureInPicture,
@@ -33,9 +34,12 @@ import type { ChatGptWebCapabilitiesInfo } from '../../shared/chat'
 import { isReviewLoopConversationReserved } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { isRemoteKey, rawId } from '@/lib/hosts/shell-keys'
 import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
+import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
 import { restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from '@/components/chat/ChatGptWebAccessEditor'
 import { ToolPalette } from '@/components/ToolPalette'
@@ -79,13 +83,14 @@ export interface TermTab {
 
 const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'chatgpt'])
 
-const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'chatgpt'])
-const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal']) // panel.html hosts the second renderer.
+const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'files', 'chatgpt'])
+const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal', 'files']) // panel.html hosts the second renderer.
 
 const mainTabDefs = (t: TFunction): Record<Tab, { label: string; icon: React.ReactNode }> => ({
   browser: { label: t('drawer.tabBrowser'), icon: <Globe className="size-4" /> },
   vscode: { label: t('drawer.tabCode'), icon: <Code2 className="size-4" /> },
   terminal: { label: t('drawer.tabTerminal'), icon: <SquareTerminal className="size-4" /> },
+  files: { label: t('drawer.tabFiles'), icon: <Files className="size-4" /> },
   plan: { label: t('drawer.tabPlan'), icon: <ClipboardList className="size-4" /> },
   review: { label: t('drawer.tabReview'), icon: <GitPullRequest className="size-4" /> },
   notes: { label: t('drawer.tabNotes'), icon: <StickyNote className="size-4" /> },
@@ -109,8 +114,18 @@ export function Drawer({
   chatGptWebEnabled,
 }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const tabDefs = mainTabDefs(t)
   const convId = activeConv?.id ?? null
+  // The window knows a remote host's conversation by its host key; that host's API takes its own id. A remote
+  // host's browser is streamed into the drawer (RemoteBrowserSurface) instead of placed as a native view.
+  const remoteConv = convId !== null && isRemoteKey(convId)
+  const hostConvId = convId === null ? null : rawId(convId)
+  const addressRef = useRef<HTMLInputElement>(null)
+  const focusAddress = useCallback(() => {
+    addressRef.current?.focus()
+    addressRef.current?.select()
+  }, [])
   const setTab = onTabChange
 
   const selectTab = (key: Tab): void => {
@@ -165,7 +180,7 @@ export function Drawer({
       window.api.drawerReattach(convId, t)
       return
     }
-    if (t === 'browser') window.api.drawerEnsureBrowser(convId)
+    if (t === 'browser') api.drawerEnsureBrowser(convId)
     if (t === 'vscode') {
       if (!activeConv) return
       void window.api
@@ -181,7 +196,7 @@ export function Drawer({
     if (restarting) return
     setRestarting(true)
     void window.api
-      .drawerRestartVSCode()
+      .drawerRestartVSCode(convId ?? undefined)
       .catch((e) => console.error('vscode restart:', e))
       .finally(() => setRestarting(false))
   }
@@ -222,16 +237,16 @@ export function Drawer({
           | undefined) ?? null
       )
     }
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptSession(null))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [convId, chatGptWebEnabled])
+  }, [convId, chatGptWebEnabled, api])
 
   useEffect(() => {
     setChatGptError(null)
@@ -249,7 +264,7 @@ export function Drawer({
     }
     let alive = true
     setChatGptCapabilities(null)
-    void window.api
+    void api
       .chatGptWebCapabilities(convId)
       .then((value) => {
         if (alive) setChatGptCapabilities(value)
@@ -260,15 +275,15 @@ export function Drawer({
     return () => {
       alive = false
     }
-  }, [convId, chatGptWebEnabled, chatGptSessionActive])
+  }, [convId, chatGptWebEnabled, chatGptSessionActive, api])
 
   const startCompanion = async (): Promise<void> => {
     if (!convId || chatGptStarting || !chatGptCapabilities?.editable) return
     setChatGptStarting(true)
     setChatGptError(null)
     try {
-      const saved = await window.api.chatGptWebSetCapabilities(convId, chatGptCapabilities.capabilities)
-      const result = await startChatGptWebCompanion(convId)
+      const saved = await api.chatGptWebSetCapabilities(convId, chatGptCapabilities.capabilities)
+      const result = await startChatGptWebCompanion(convId, api)
       setChatGptCapabilities({ ...saved, editable: false })
       setChatGptPromptCopied(result.promptCopied)
     } catch (cause) {
@@ -287,13 +302,12 @@ export function Drawer({
       const capabilities = chatGptCapabilities.capabilities
 
       const result = await restartChatGptWebCompanion(convId, capabilities, chatGptReviewLoopActive, {
-        chatGptWebCompanionStart: (conversationId) => window.api.chatGptWebCompanionStart(conversationId),
-        chatGptWebCompanionCopyPrompt: (conversationId) => window.api.chatGptWebCompanionCopyPrompt(conversationId),
-        chatGptWebCompanionOpen: (conversationId) => window.api.chatGptWebCompanionOpen(conversationId),
-        chatGptWebSetCapabilities: (conversationId, value) =>
-          window.api.chatGptWebSetCapabilities(conversationId, value),
+        chatGptWebCompanionStart: (conversationId) => api.chatGptWebCompanionStart(conversationId),
+        chatGptWebCompanionCopyPrompt: (conversationId) => api.chatGptWebCompanionCopyPrompt(conversationId),
+        chatGptWebCompanionOpen: (conversationId) => api.chatGptWebCompanionOpen(conversationId),
+        chatGptWebSetCapabilities: (conversationId, value) => api.chatGptWebSetCapabilities(conversationId, value),
         chatGptWebCompanionEnd: async (conversationId) => {
-          const ended = await window.api.chatGptWebCompanionEnd(conversationId)
+          const ended = await api.chatGptWebCompanionEnd(conversationId)
           previousSessionEnded = ended.ok
           return ended
         },
@@ -305,7 +319,7 @@ export function Drawer({
       const detail = cause instanceof Error ? cause.message : String(cause)
       if (previousSessionEnded) {
         try {
-          setChatGptCapabilities(await window.api.chatGptWebCapabilities(convId))
+          setChatGptCapabilities(await api.chatGptWebCapabilities(convId))
         } catch {}
       }
       setChatGptError(
@@ -322,7 +336,7 @@ export function Drawer({
     if (!convId) return
     setChatGptError(null)
     try {
-      setChatGptCapabilities(await window.api.chatGptWebCapabilities(convId))
+      setChatGptCapabilities(await api.chatGptWebCapabilities(convId))
       setChatGptAccessOpen(true)
     } catch (cause) {
       setChatGptError(cause instanceof Error ? cause.message : String(cause))
@@ -333,7 +347,7 @@ export function Drawer({
     if (!convId || chatGptCopying) return
     setChatGptCopying(true)
     try {
-      const result = await window.api.chatGptWebCompanionCopyPrompt(convId)
+      const result = await api.chatGptWebCompanionCopyPrompt(convId)
       setChatGptPromptCopied(result.ok)
     } catch {
       setChatGptPromptCopied(false)
@@ -396,8 +410,8 @@ export function Drawer({
   }, [tab, suspended, paletteOpen, convId, visible, floating, chatGptSessionActive, chatGptAccessOpen])
 
   useEffect(() => {
-    if (visible && tab === 'browser' && convId) window.api.drawerEnsureBrowser(convId)
-  }, [visible, tab, convId])
+    if (visible && tab === 'browser' && hostConvId) api.drawerEnsureBrowser(hostConvId)
+  }, [visible, tab, hostConvId, api])
 
   useEffect(() => {
     if (visible && tab === 'vscode' && activeConv) {
@@ -407,7 +421,7 @@ export function Drawer({
 
   useEffect(() => {
     if (visible && convId && tab && !isFloating(tab) && PANEL_TABS_UI.has(tab)) {
-      window.api.drawerEnsurePanel(convId, tab as 'terminal' | 'plan' | 'review' | 'notes')
+      window.api.drawerEnsurePanel(convId, tab as 'terminal' | 'files' | 'plan' | 'review' | 'notes')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, tab, convId, floating])
@@ -468,17 +482,21 @@ export function Drawer({
             <RotateCw className={cn('size-4', restarting && 'animate-spin')} />
           </Button>
         )}
-        {tab && DETACHABLE.has(tab) && (tab !== 'chatgpt' || chatGptSessionActive) && (
-          <Button
-            variant={isFloating(tab) ? 'secondary' : 'ghost'}
-            size="icon"
-            className="no-drag size-7 shrink-0"
-            onClick={() => toggleDetach(tab)}
-            title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
-          >
-            {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
-          </Button>
-        )}
+        {/* The tools of a remote host's conversation stay docked here. */}
+        {tab &&
+          DETACHABLE.has(tab) &&
+          !(convId && isRemoteKey(convId)) &&
+          (tab !== 'chatgpt' || chatGptSessionActive) && (
+            <Button
+              variant={isFloating(tab) ? 'secondary' : 'ghost'}
+              size="icon"
+              className="no-drag size-7 shrink-0"
+              onClick={() => toggleDetach(tab)}
+              title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
+            >
+              {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
+            </Button>
+          )}
         <Button
           variant="ghost"
           size="icon"
@@ -499,7 +517,9 @@ export function Drawer({
         ignoreRef={addBtnRef}
       />
 
-      {tab === 'browser' && !isFloating('browser') && convId && <BrowserChrome convId={convId} />}
+      {tab === 'browser' && !isFloating('browser') && hostConvId && (
+        <BrowserChrome convId={hostConvId} addressRef={addressRef} />
+      )}
 
       <div className="relative min-h-0 flex-1">
         {tab === null && (
@@ -514,10 +534,15 @@ export function Drawer({
           />
         )}
 
+        {tab === 'browser' && remoteConv && hostConvId && (
+          <RemoteBrowserSurface key={convId} convId={hostConvId} active={visible} onFocusAddress={focusAddress} />
+        )}
+
         {tab &&
           SLOT_TABS.has(tab) &&
           convId &&
           !isFloating(tab) &&
+          !(tab === 'browser' && remoteConv) &&
           (tab !== 'chatgpt' || (chatGptSessionActive && !chatGptAccessOpen)) && (
             <div
               ref={slotRef}

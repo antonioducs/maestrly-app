@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /** Everything the main process pushed to the window, so an announcement can be read back verbatim. */
@@ -594,5 +596,45 @@ describe('IPC stats contract: contextIdentity never crosses the boundary while i
     } finally {
       clearApiKey(provider.id)
     }
+  })
+})
+
+describe('PDF attachments of a chat on a host', () => {
+  it('hands a computer the read-only copy to download, and opens nothing on the host', async () => {
+    const { attachmentPreviewRoot, savePdfAttachment } = await import('../../src/main/chat/attachment-artifacts')
+    const conversation = makeConversation(makeWorkspace().id, { mode: 'local' })
+    const pdf = Buffer.from('%PDF-1.4\n%%EOF\n')
+    const stored = await savePdfAttachment({ conversationId: conversation.id, bytes: pdf, label: 'Spec' })
+    upsertChatMessage({
+      id: 'msg-pdf',
+      conversationId: conversation.id,
+      role: 'user',
+      createdAt: 1,
+      parts: [
+        {
+          type: 'file',
+          id: 'part-pdf',
+          name: stored.name,
+          mediaType: stored.mediaType,
+          kind: 'pdf',
+          artifactId: stored.artifactId,
+          byteSize: stored.byteSize,
+        },
+      ],
+    } as StoredChatMessage)
+    const handlers = register()
+    const file = (await handlers.get('chat:attachment-pdf-file')!(
+      {},
+      { conversationId: conversation.id, messageId: 'msg-pdf', partId: 'part-pdf' }
+    )) as { ok: true; path: string }
+    expect(file.ok).toBe(true)
+    expect(file.path.startsWith(attachmentPreviewRoot() + path.sep)).toBe(true)
+    expect(readFileSync(file.path).equals(pdf)).toBe(true)
+    expect(
+      await handlers.get('chat:attachment-pdf-file')!(
+        {},
+        { conversationId: conversation.id, messageId: 'msg-pdf', partId: 'other' }
+      )
+    ).toEqual({ ok: false, error: 'not-found' })
   })
 })

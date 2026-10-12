@@ -1,4 +1,4 @@
-import { localSkillsSettingsSource, type SkillsSettingsSource } from './skills-settings-source'
+import { hostSkillsSettingsSource, type SkillsSettingsSource } from './skills-settings-source'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -19,6 +19,8 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import type { ChatSkillDetail, ChatSkillGroup, ChatSkillSearchHit, ChatSkillsState } from '../../../shared/chat'
 
 const inputCls =
@@ -86,7 +88,7 @@ function SkillDetailPanel({ detail, onClose }: { detail: ChatSkillDetail; onClos
 }
 
 export function SkillsSettings({
-  source = localSkillsSettingsSource,
+  source: providedSource,
   renderDetail,
   onDirtyChange,
   confirmAction = async (message) => confirm(message),
@@ -97,6 +99,9 @@ export function SkillsSettings({
   confirmAction?: (message: string, kind?: 'remove' | 'replace') => Promise<boolean>
 } = {}) {
   const { t } = useTranslation('chat')
+  const hostApi = useHostApi()
+  const host = useHostInfo()
+  const source = providedSource ?? hostSkillsSettingsSource(hostApi)
   const [state, setState] = useState<ChatSkillsState>({
     skills: [],
     groups: [],
@@ -564,7 +569,8 @@ export function SkillsSettings({
                 >
                   <Eye className="h-3.5 w-3.5" />
                 </button>
-                {!source.remote && (
+                {/* Revealing a folder of a server's own desktop shows it to nobody. */}
+                {!source.remote && host.desktopEffects && (
                   <button
                     type="button"
                     onClick={() => void source.chatSkillReveal(skill.name)}

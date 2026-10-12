@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BrainCircuit } from 'lucide-react'
 import { useChatSourceFocus } from '@/lib/chat-window-context'
+import { useHostId } from '@/lib/hosts/host-context'
+import type { OpenMemoryRequest } from '@/lib/memory-target'
+import { hostKey } from '../../../shared/host-key'
 import type { ChatMessage } from '../../../shared/chat'
 
 export function MemorySourcesChip({
@@ -15,6 +18,7 @@ export function MemorySourcesChip({
 }) {
   const { t } = useTranslation('chat')
   const focusSource = useChatSourceFocus()
+  const hostId = useHostId()
   const [expanded, setExpanded] = useState(false)
   return (
     <>
@@ -40,9 +44,10 @@ export function MemorySourcesChip({
                   onClick={() => {
                     if (source.kind === 'local') {
                       focusSource()
+                      // The conversation as the window keys it: its memory is that of its host.
                       window.dispatchEvent(
-                        new CustomEvent('maestrly:open-memory', {
-                          detail: { conversationId: message.conversationId, memoryId: source.id },
+                        new CustomEvent<OpenMemoryRequest>('maestrly:open-memory', {
+                          detail: { conversationId: hostKey(hostId, message.conversationId), memoryId: source.id },
                         })
                       )
                       return

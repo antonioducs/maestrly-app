@@ -17,6 +17,21 @@ test('bot entrypoint and guard have valid bash syntax', { skip }, () => {
   }
 })
 
+test('bot entrypoint starts Maestrly as a bot unless the gateway asks for server mode', { skip }, () => {
+  const lines = readFileSync(entrypoint, 'utf8')
+    .split('\n')
+    .filter((line) => line.includes('MAESTRLY_BOT_MODE') && !line.trimStart().startsWith('#'))
+  assert.equal(lines.length, 1)
+  const mode = (env) =>
+    spawnSync('bash', ['-c', lines[0] + '\nprintenv MAESTRLY_BOT_MODE || echo unset'], {
+      env: { PATH: process.env.PATH, ...env },
+      encoding: 'utf8',
+    }).stdout.trim()
+  assert.equal(mode({}), '1')
+  assert.equal(mode({ MAESTRLY_SERVER_MODE: '0' }), '1')
+  assert.equal(mode({ MAESTRLY_SERVER_MODE: '1' }), 'unset')
+})
+
 function runGuard(fail = false, ipv6 = false) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-egress-'))
   const log = path.join(dir, 'calls.jsonl')

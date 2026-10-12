@@ -503,7 +503,7 @@ test('switching environments drops delayed responses and old images cannot write
 })
 
 test('named account creation and Google AI login relay leave the local profile unchanged', async () => {
-  const localBefore = await page.evaluate(() => window.api.chatConfig())
+  const localBefore = await page.evaluate(() => window.api.hostApi('local').chatConfig())
   await panel().getByRole('button', { name: 'Adicionar uma chave de API', exact: true }).click()
   await panel().getByLabel('Nome da conta', { exact: true }).fill('Synthetic integration')
   await panel().getByLabel('Chave de API', { exact: true }).fill('synthetic-placeholder-not-a-real-key')
@@ -531,11 +531,11 @@ test('named account creation and Google AI login relay leave the local profile u
     path: '/',
     query: 'code=synthetic-code&state=synthetic-state',
   })
-  expect(await page.evaluate(() => window.api.chatConfig())).toEqual(localBefore)
+  expect(await page.evaluate(() => window.api.hostApi('local').chatConfig())).toEqual(localBefore)
 })
 
 test('skills create, edit, toggle and install through the remote library', async () => {
-  const localBefore = await page.evaluate(() => window.api.chatSkills())
+  const localBefore = await page.evaluate(() => window.api.hostApi('local').chatSkills())
   await section('skills')
   await page.getByRole('button', { name: 'Nova skill', exact: true }).click()
   await page.getByPlaceholder('nome (ex.: deploy)', { exact: true }).fill('synthetic-review')
@@ -560,7 +560,7 @@ test('skills create, edit, toggle and install through the remote library', async
   await page.getByRole('button', { name: 'Instalar', exact: true }).click()
   await expect.poll(() => gateway.states.get('studio')!.skills.some((s) => s.name === 'library-review')).toBe(true)
   expect(gateway.states.get('research')!.skills).toHaveLength(1)
-  expect(await page.evaluate(() => window.api.chatSkills())).toEqual(localBefore)
+  expect(await page.evaluate(() => window.api.hostApi('local').chatSkills())).toEqual(localBefore)
 })
 
 test('offline gateway retains remote scope and blocks writes without local fallback', async () => {

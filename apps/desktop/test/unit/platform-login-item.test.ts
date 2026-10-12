@@ -58,7 +58,7 @@ describe('executor login item', () => {
     expect(index).toContain(
       'startHiddenAtLogin = !isBotMode() && shouldStartHidden(executorSettings(), wasLaunchedAtLogin())'
     )
-    expect(index).toContain('show: !isBotMode() && !startHidden')
+    expect(index).toContain('show: !isHeadlessInstance() && !startHidden')
     expect(index).toContain('if (!win.isVisible()) win.show()')
     expect(platformIpc).toContain('if (app.isPackaged && !isE2E()) applyExecutorLoginItem(value)')
     expect(platformIpc).not.toContain('openAsHidden')

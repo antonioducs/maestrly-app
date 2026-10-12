@@ -467,6 +467,12 @@ describe('installing on a VPS', () => {
     ])
     expect(remote.files.get('/opt/maestrly-bots/.env')).toContain("MAESTRLY_GATEWAY_DISPLAY_NAME='vps-synthetic'\n")
     expect(remote.files.get('/opt/maestrly-bots/.env')).toContain('MAESTRLY_GATEWAY_PORT=7443\n')
+    // A VPS gets a directory for workspaces and their files, owned by the user its containers run as, before the
+    // gateway that mounts it starts.
+    expect(remote.files.get('/opt/maestrly-bots/.env')).toContain('MAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly\n')
+    const root = vps.commands.find((item) => item.input.startsWith('# maestrly-bot-server:workspaces-root\n'))
+    expect(root?.command).toBe("sh -s -- '/srv/maestrly'")
+    expect(root?.input).toContain('install -d -o 1000 -g 1000')
     expect(remote.commands(['pull'])).toEqual([
       ['pull', images.gateway],
       ['pull', images.bot],
@@ -762,6 +768,42 @@ describe('keeping the server up to date', () => {
     fleetState.snapshot.host = { gatewayVersion: '0.9.9' }
     fleetState.connection = { ...fleetState.connection, state: 'reconnecting' }
     expect(service.status().update).toBe('available')
+  })
+
+  it('gives a VPS installed before workspaces their directory, once', async () => {
+    const before = oldEnv
+      .split('\n')
+      .filter((line) => !line.startsWith('MAESTRLY_GATEWAY_WORKSPACES_ROOT='))
+      .join('\n')
+    expect(before).not.toBe(oldEnv)
+    const { service, remote, keySession } = setup({ record: remoteRecord({ version: '0.9.3' }), key: 'k' })
+    remote.files.set('/opt/maestrly-bots/.env', before)
+    const roots = () =>
+      keySession.commands.filter((item) => item.input.startsWith('# maestrly-bot-server:workspaces-root\n'))
+    const status = await service.update()
+    expect(status.job?.error).toBeNull()
+    expect(steps(status)?.slice(0, 4)).toEqual([
+      ['connect', 'done'],
+      ['files', 'done'],
+      ['images', 'done'],
+      ['start', 'done'],
+    ])
+    expect(roots().map((item) => item.command)).toEqual(["sh -s -- '/srv/maestrly'"])
+    expect(remote.files.get('/opt/maestrly-bots/.env')).toBe(
+      before.replace(/:0\.9\.3/g, ':0.9.4') + 'MAESTRLY_GATEWAY_WORKSPACES_ROOT=/srv/maestrly\n'
+    )
+  })
+
+  it('keeps the workspaces directory a VPS already names, or that its owner left empty', async () => {
+    for (const root of ['/data/projects', '']) {
+      const env = oldEnv.replace('MAESTRLY_GATEWAY_WORKSPACES_ROOT=\n', `MAESTRLY_GATEWAY_WORKSPACES_ROOT=${root}\n`)
+      const { service, remote, keySession } = setup({ record: remoteRecord({ version: '0.9.3' }), key: 'k' })
+      remote.files.set('/opt/maestrly-bots/.env', env)
+      const status = await service.update()
+      expect(status.job?.error).toBeNull()
+      expect(remote.files.get('/opt/maestrly-bots/.env')).toBe(env.replace(/:0\.9\.3/g, ':0.9.4'))
+      expect(keySession.commands.some((item) => item.input.includes('maestrly-bot-server:workspaces-root'))).toBe(false)
+    }
   })
 
   it('switches what bots may reach and restarts the gateway', async () => {

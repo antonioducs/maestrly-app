@@ -12,6 +12,7 @@ import {
   FLEET_ARTIFACT_BODY_MAX,
   FLEET_SKILL_BODY_MAX,
   FLEET_DESKTOP_BRIDGE_LIMITS,
+  parseFleetGatewayEditorPath,
   type FleetInternalDesktopCallRequest,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
@@ -27,6 +28,9 @@ import { publicRoute } from './routes/public.js'
 import { Peers } from './peers.js'
 import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
+import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
+import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
+import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge } from './desktop-bridge.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
@@ -91,6 +95,14 @@ export function createGatewayServers(ctx: GatewayContext) {
   const desktops = ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events)
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
   ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
+  const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
+  const hostFiles = ctx.hostFiles ?? new HostFilesProxy(lifecycleHostFilesDeps(ctx.lifecycle))
+  const hostEditor = ctx.hostEditor ?? new HostEditorProxy(lifecycleHostEditorDeps(ctx.lifecycle))
+  ctx.lifecycle.onCloseEnvironmentBridges = (id) => {
+    bridge.closeEnvironment(id)
+    hostFiles.closeEnvironment(id)
+    hostEditor.closeEnvironment(id)
+  }
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -99,6 +111,9 @@ export function createGatewayServers(ctx: GatewayContext) {
     revoking.add(deviceId)
     try {
       screen.closeDevice(deviceId)
+      bridge.closeDevice(deviceId)
+      hostFiles.closeDevice(deviceId)
+      hostEditor.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
       desktops.revokeDevice(deviceId)
       await Promise.allSettled(
@@ -118,7 +133,18 @@ export function createGatewayServers(ctx: GatewayContext) {
         .map((device) => revokeDevice(device.id))
     )
   }
-  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, desktops, revokeDevice }
+  const activeCtx: GatewayContext = {
+    ...ctx,
+    ownerMemory,
+    peers,
+    routines,
+    screen,
+    desktops,
+    bridge,
+    hostFiles,
+    hostEditor,
+    revokeDevice,
+  }
   ctx.lifecycle.onTurnFinished = (id, event) => {
     if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
   }
@@ -142,6 +168,14 @@ export function createGatewayServers(ctx: GatewayContext) {
       }
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const url = new URL(req.url ?? '/', 'http://gateway')
+      // A workspaces environment's editor: any path under its prefix streams to the environment as it arrives.
+      const editor = internal ? null : parseFleetGatewayEditorPath(url.pathname)
+      if (editor) {
+        if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION))
+          throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
+        const device = ctx.auth.device(req.headers.authorization)
+        return await hostEditor.forward(editor.environmentId, editor.editorPath + url.search, req, res, device.id)
+      }
       const match = matchRoute(internal ? FLEET_INTERNAL_ROUTES : FLEET_GATEWAY_ROUTES, req.method ?? '', url.pathname)
       if (!match) throw new GatewayError('NOT_FOUND', 'Route not found')
       if (
@@ -151,6 +185,16 @@ export function createGatewayServers(ctx: GatewayContext) {
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
       const caller = internal ? ctx.auth.internalBot(req.headers.authorization) : null
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
+      // Host-file bodies are streamed to the workspaces host as they arrive; the gateway never buffers or parses them.
+      if (!internal && isHostFileRoute(match.key))
+        return await hostFiles.forward(
+          match.key,
+          match.params,
+          url,
+          req,
+          res,
+          ctx.auth.device(req.headers.authorization).id
+        )
       const body = match.route.body
         ? match.route.body.parse(
             await readBody(
@@ -247,8 +291,17 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
-      if (new URL(req.url ?? '/', 'http://gateway').pathname !== FLEET_GATEWAY_ROUTES.screen.path)
-        throw new GatewayError('NOT_FOUND', 'Route not found')
+      const { pathname, search } = new URL(req.url ?? '/', 'http://gateway')
+      if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
+      // The editor's WebSockets authenticate with the device token, as its requests do.
+      const editor = parseFleetGatewayEditorPath(pathname)
+      if (editor) {
+        if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION))
+          throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
+        const device = ctx.auth.device(req.headers.authorization)
+        return hostEditor.upgrade(editor.environmentId, editor.editorPath + search, req, socket, head, device.id)
+      }
+      if (pathname !== FLEET_GATEWAY_ROUTES.screen.path) throw new GatewayError('NOT_FOUND', 'Route not found')
       screen.upgrade(req, socket, head)
       return
     } catch (caught) {
@@ -271,6 +324,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     routines,
     peers,
     screen,
+    bridge,
     sweepRevocations,
     async listen() {
       await network.refresh()
@@ -299,6 +353,9 @@ export function createGatewayServers(ctx: GatewayContext) {
       await ctx.artifacts?.close()
       routines.stop()
       screen.close()
+      bridge.close()
+      hostFiles.close()
+      hostEditor.close()
       ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(

@@ -40,6 +40,10 @@ import { useConvRows } from '@/components/sidebar/conv-rows'
 import { SidebarHeader } from '@/components/sidebar/SidebarHeader'
 import { SidebarFooter } from '@/components/sidebar/SidebarFooter'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
+import { HostSectionHeader, HostSectionNotice, type HostSectionActions } from '@/components/sidebar/HostSection'
+import type { RemoteHostShell } from '@/lib/hosts/remote-host-runtime'
+import { isRemoteKey } from '@/lib/hosts/shell-keys'
+import type { HostView } from '../../shared/hosts'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { fleetSearchCount } from '@/lib/fleet/environments'
 import {
@@ -51,6 +55,31 @@ import {
 } from '@/components/sidebar/sidebar-tabs'
 
 export type { OpenTargets, OpenExternalTarget }
+
+/** A remote host in the sidebar: what it lists, in shell form, and what its heading does. */
+export interface SidebarHostSection {
+  host: HostView
+  /** Null until the host listed its chats and workspaces once. */
+  shell: RemoteHostShell | null
+  creatingChat: boolean
+  onNewChat: () => void
+  onAddWorkspace: () => void
+  onRetry: () => void
+  onStart: () => void
+  onManage: () => void
+}
+
+function filterWorkspaces(workspaces: WorkspaceWithConversations[], q: string): WorkspaceWithConversations[] {
+  if (!q) return workspaces
+  return workspaces
+    .map((ws) => ({
+      ...ws,
+      conversations: ws.conversations.filter(
+        (c) => c.name.toLowerCase().includes(q) || (c.branch ?? '').toLowerCase().includes(q)
+      ),
+    }))
+    .filter((ws) => ws.conversations.length > 0 || ws.name.toLowerCase().includes(q))
+}
 
 interface Props {
   standaloneConversations: StandaloneConversation[]
@@ -128,6 +157,15 @@ interface Props {
   openTargets: OpenTargets
 
   onOpenExternal: (scope: 'conv' | 'workspace', id: string, target: OpenExternalTarget) => void
+
+  /**
+   * Remote hosts, each with a section of its own under this computer's in the Chats and Workspaces tabs. The props
+   * above are this computer's; their handlers also take the conversations and workspaces of these sections.
+   */
+  hostSections?: SidebarHostSection[]
+  /** This computer's view, for the heading its lists get once there is another host. */
+  localHost?: HostView
+  appVersion?: string | null
 }
 
 export function Sidebar({
@@ -187,6 +225,9 @@ export function Sidebar({
   onCollapseSidebar,
   openTargets,
   onOpenExternal,
+  hostSections = [],
+  localHost,
+  appVersion = null,
 }: Props) {
   const { t } = useTranslation('ui')
   const [query, setQuery] = useState('')
@@ -216,7 +257,9 @@ export function Sidebar({
 
   useEffect(() => {
     if (!focusedWorkspaceId) return
-    const workspace = workspaces.find((item) => item.id === focusedWorkspaceId)
+    const workspace = [...workspaces, ...hostSections.flatMap((section) => section.shell?.workspaces ?? [])].find(
+      (item) => item.id === focusedWorkspaceId
+    )
     if (!workspace) return
     selectTab('workspaces')
     setQuery('')
@@ -232,25 +275,17 @@ export function Sidebar({
   }, [focusedWorkspaceId])
 
   const q = query.trim().toLowerCase()
-  const filtered = useMemo(() => {
-    if (!q) return workspaces
-    return workspaces
-      .map((ws) => ({
-        ...ws,
-        conversations: ws.conversations.filter(
-          (c) => c.name.toLowerCase().includes(q) || (c.branch ?? '').toLowerCase().includes(q)
-        ),
-      }))
-      .filter((ws) => ws.conversations.length > 0 || ws.name.toLowerCase().includes(q))
-  }, [workspaces, q])
+  const filtered = useMemo(() => filterWorkspaces(workspaces, q), [workspaces, q])
+  const remoteChats = hostSections.flatMap((section) => section.shell?.standaloneConversations ?? [])
+  const remoteWorkspaces = hostSections.flatMap((section) => section.shell?.workspaces ?? [])
 
   const filteredChats = useMemo(
     () => filterStandaloneConversations(standaloneConversations, q).filter((chat) => q || chat.pinnedAt === null),
     [standaloneConversations, q]
   )
   const filterCounts = {
-    chats: q ? filterStandaloneConversations(standaloneConversations, q).length : 0,
-    workspaces: workspaceFilterCount(workspaces, q),
+    chats: q ? filterStandaloneConversations([...standaloneConversations, ...remoteChats], q).length : 0,
+    workspaces: workspaceFilterCount([...workspaces, ...remoteWorkspaces], q),
     bots: q ? fleetSearchCount(fleet.state.connection, fleet.state.snapshot, q) : 0,
   }
   const crossMatches = q && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
@@ -455,7 +490,7 @@ export function Sidebar({
           </ContextMenuTrigger>
           <ContextMenuContent>{workspaceMenuItems(ws, contextKit)}</ContextMenuContent>
         </ContextMenu>
-        <WorkspaceKanbanLink workspaceId={ws.id} compact />
+        {!isRemoteKey(ws.id) && <WorkspaceKanbanLink workspaceId={ws.id} compact />}
 
         {!isCollapsed && (
           <ul>
@@ -556,6 +591,104 @@ export function Sidebar({
     )
   }
 
+  const hostSectionActions = (section: SidebarHostSection, kind: 'chats' | 'workspaces'): HostSectionActions => {
+    const host = section.host.label || t('sidebar.hostUnnamed')
+    return {
+      onAdd: kind === 'chats' ? section.onNewChat : section.onAddWorkspace,
+      addLabel: t(kind === 'chats' ? 'sidebar.hostNewChat' : 'sidebar.hostAddWorkspace', { host }),
+      adding: kind === 'chats' && section.creatingChat,
+      onRetry: section.onRetry,
+      onStart: section.onStart,
+      onManage: section.onManage,
+      onToggleArchived: section.shell?.actions.toggleArchived,
+      showArchived: section.shell?.showArchived,
+    }
+  }
+
+  const pinnedHeading = (count: number) => (
+    <div className="flex items-center gap-1.5 px-2 py-1">
+      <Pin className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="truncate text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        {t('sidebar.pinnedConversations')}
+      </span>
+      <span className="shrink-0 rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">{count}</span>
+    </div>
+  )
+
+  /**
+   * A remote host's chats or workspaces, under its heading. Its rows are the rows of this computer's lists: their
+   * ids carry the host, and the handlers above act on the host they belong to. While the host is unreachable its last
+   * lists stay, dimmed, under what is wrong; while a filter is typed, a host with no match is left out.
+   */
+  const renderHostSection = (section: SidebarHostSection, kind: 'chats' | 'workspaces') => {
+    const { host, shell } = section
+    const actions = hostSectionActions(section, kind)
+    const online = host.state === 'online'
+    const chats = kind === 'chats' && shell ? filterStandaloneConversations(shell.standaloneConversations, q) : []
+    const trees = kind === 'workspaces' && shell ? filterWorkspaces(shell.workspaces, q) : []
+    if (q && chats.length === 0 && trees.length === 0) return null
+    const hostPinnedChats = q
+      ? []
+      : chats
+          .filter((chat) => chat.pinnedAt !== null && chat.archived !== 1)
+          .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0))
+    const hostPinned = kind === 'workspaces' && shell && !q ? collectPinnedConversations(shell.workspaces) : []
+    const hostPinnedLabels = hostPinned.length && shell ? buildPinnedWorkspaceLabels(shell.workspaces) : null
+    const empty = shell?.loaded && (kind === 'chats' ? shell.standaloneConversations : shell.workspaces).length === 0
+    return (
+      <section key={host.id} data-host-section={host.id}>
+        <HostSectionHeader host={host} actions={actions} />
+        {(!online || !shell?.loaded) && <HostSectionNotice host={host} appVersion={appVersion} actions={actions} />}
+        {shell && (
+          <div className={cn(!online && 'opacity-60')}>
+            {hostPinnedChats.length > 0 && (
+              <div className="mb-1 border-b border-border/40 pb-1">
+                {pinnedHeading(hostPinnedChats.length)}
+                <ul>
+                  {hostPinnedChats.map((conv) => convItem(conv, { pl: 'pl-6', instanceKey: `pinned:${conv.id}` }))}
+                </ul>
+              </div>
+            )}
+            {hostPinned.length > 0 && (
+              <div className="mb-1 border-b border-border/40 pb-1">
+                {pinnedHeading(hostPinned.length)}
+                <ul>
+                  {hostPinned.map((entry) =>
+                    convItem(entry.conversation, {
+                      pl: 'pl-6',
+                      instanceKey: `pinned:${entry.conversation.id}`,
+                      contextLabel: hostPinnedLabels?.get(entry.workspace.id) ?? entry.workspace.name,
+                      contextTooltip: entry.workspace.path,
+                    })
+                  )}
+                </ul>
+              </div>
+            )}
+            {kind === 'chats' ? (
+              <StandaloneChatList
+                conversations={chats.filter((chat) => q || chat.pinnedAt === null)}
+                enabled={!q && renaming === null && online}
+                onReorder={shell.actions.reorderStandaloneConversations}
+                renderConv={(conv, dnd, isOver) =>
+                  convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
+                }
+              />
+            ) : (
+              trees.map((ws) => renderWorkspace(ws))
+            )}
+            {empty && !q && (
+              <p className="px-3 pb-1 text-xs text-muted-foreground">
+                {t(kind === 'chats' ? 'sidebar.noChats' : 'sidebar.hostNoWorkspaces')}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+    )
+  }
+  // This computer's lists get a heading only beside another host's: alone, the sidebar is as it always was.
+  const localHeading = hostSections.length > 0 && localHost ? <HostSectionHeader host={localHost} /> : null
+
   return (
     <nav className="glass hairline-r flex w-64 shrink-0 flex-col bg-sidebar">
       <SidebarHeader
@@ -582,6 +715,7 @@ export function Sidebar({
         hidden={tab !== 'chats'}
         className="min-h-0 flex-1 overflow-y-auto py-1"
       >
+        {localHeading}
         {!q && pinnedChats.length > 0 && (
           <div className="mb-1 border-b border-border/40 pb-1">
             <div className="flex items-center gap-1.5 px-2 py-1">
@@ -607,9 +741,10 @@ export function Sidebar({
         {standaloneConversations.length === 0 && !q && (
           <p className="px-3 pb-1 text-xs text-muted-foreground">{t('sidebar.noChats')}</p>
         )}
-        {q && filteredChats.length === 0 && (
+        {q && filteredChats.length === 0 && filterCounts.chats === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t('sidebar.nothingFound')}</p>
         )}
+        {hostSections.map((section) => renderHostSection(section, 'chats'))}
         {tab === 'chats' &&
           crossMatches.map(({ tab: matchTab, count }) => (
             <button
@@ -631,7 +766,8 @@ export function Sidebar({
         hidden={tab !== 'workspaces'}
         className="min-h-0 flex-1 overflow-y-auto py-1"
       >
-        {filtered.length === 0 && (
+        {localHeading}
+        {filtered.length === 0 && (!q || filterCounts.workspaces === 0) && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
             {q ? t('sidebar.nothingFound') : t('sidebar.noWorkspaces')}
           </p>
@@ -739,6 +875,7 @@ export function Sidebar({
             </SortableContext>
           </DndContext>
         )}
+        {hostSections.map((section) => renderHostSection(section, 'workspaces'))}
         {tab === 'workspaces' &&
           crossMatches.map(({ tab: matchTab, count }) => (
             <button

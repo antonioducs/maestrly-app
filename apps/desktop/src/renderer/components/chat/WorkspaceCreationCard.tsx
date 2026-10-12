@@ -9,13 +9,16 @@ import {
   type WorkspaceCreationResult,
 } from '../../../shared/workspace-creation'
 import { cn } from '@/lib/utils'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { hostKey } from '../../../shared/host-key'
 import { ToolCallCard } from './ToolCallCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
-/** Ask the app shell to show a workspace in the sidebar (handled in DesktopApp). */
-function focusWorkspace(workspaceId: string): void {
-  window.dispatchEvent(new CustomEvent('maestrly:focus-workspace', { detail: { workspaceId } }))
+/** Ask the app shell to show a workspace in the sidebar (handled in DesktopApp), by its shell key. */
+function focusWorkspace(workspaceKey: string): void {
+  window.dispatchEvent(new CustomEvent('maestrly:focus-workspace', { detail: { workspaceId: workspaceKey } }))
 }
 
 function inputOf(part: ToolPart): { requestKey?: string; name?: string; kind?: string; label?: string } {
@@ -32,6 +35,7 @@ function inputOf(part: ToolPart): { requestKey?: string; name?: string; kind?: s
 
 function SetProjectsFolder() {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [saved, setSaved] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,7 +48,7 @@ function SetProjectsFolder() {
           setBusy(true)
           setError(null)
           try {
-            const result = await window.api.pickProjectsDirectory()
+            const result = await api.pickProjectsDirectory()
             if (result.ok && result.path) setSaved(result.path)
             else if (result.error) setError(result.error)
           } finally {
@@ -73,6 +77,10 @@ export function WorkspaceCreationCard({
   messageId: string
 }) {
   const { t } = useTranslation(['chat', 'ui'])
+  const api = useHostApi()
+  const hostId = useHostId()
+  // Choosing a folder opens a picker on the host's own desktop: a server has nobody there to answer it.
+  const canPickFolder = useHostInfo().desktopEffects
   const input = inputOf(part)
   const running =
     part.state.status === 'pending' || part.state.status === 'running' || part.state.status === 'awaiting-permission'
@@ -80,10 +88,10 @@ export function WorkspaceCreationCard({
 
   useEffect(() => {
     if (!running || !input.requestKey) return
-    return window.api.onWorkspaceCreationProgress((next) => {
+    return api.onWorkspaceCreationProgress((next) => {
       if (next.conversationId === conversationId && next.requestKey === input.requestKey) setProgress(next)
     })
-  }, [running, conversationId, input.requestKey])
+  }, [api, running, conversationId, input.requestKey])
 
   if (running) {
     const phase =
@@ -169,12 +177,14 @@ export function WorkspaceCreationCard({
               {result.error}
             </p>
           )}
-          {!result.ok && result.code && PROJECTS_DIRECTORY_ERROR_CODES.includes(result.code) && <SetProjectsFolder />}
+          {!result.ok && result.code && PROJECTS_DIRECTORY_ERROR_CODES.includes(result.code) && canPickFolder && (
+            <SetProjectsFolder />
+          )}
         </div>
         {result.ok && result.workspaceId && (
           <button
             type="button"
-            onClick={() => focusWorkspace(result.workspaceId!)}
+            onClick={() => focusWorkspace(hostKey(hostId, result.workspaceId!))}
             className="flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] text-primary hover:bg-white/[0.06]"
           >
             {t('chat:workspaceCreation.show')} <ArrowUpRight className="size-3" />

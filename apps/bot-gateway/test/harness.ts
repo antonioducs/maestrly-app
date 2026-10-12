@@ -116,6 +116,8 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
         ] as import('@maestrly/bot-fleet-protocol').FleetRuntimeInfo[])
       : null,
     results: { results: [{ index: 0, target: 'prov_test', outcome: 'added', error: null }] } as FleetImportResults,
+    /** What a workspaces host says about its running chats on a health check; null says nothing. */
+    busy: null as boolean | null,
     skill: { name: 'x', outcome: 'added' },
     failure: null as { code: string; message: string } | null,
     login: {
@@ -316,6 +318,7 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
           protocol: 1,
           ready: true,
           ...(environments ? { capabilities: provisioning.capabilities } : {}),
+          ...(provisioning.busy === null ? {} : { busy: provisioning.busy }),
         })
       if (req.url === '/v1/status') return send(200, status)
       if (req.url === '/v1/accounts/api-key' && req.method === 'POST') {

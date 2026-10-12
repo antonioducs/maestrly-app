@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Play, Pause, Settings2, MessageSquare } from 'lucide-react'
 import { Button } from '../ui/button'
 import { useSettings } from '../../lib/use-settings'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type {
   DesktopExecutorSettings,
   DesktopExecutionRecord,
@@ -14,6 +15,7 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
   const { i18n } = useTranslation(),
     { openSettings } = useSettings(),
     L = (en: string, pt: string) => (i18n.language.startsWith('pt') ? pt : en)
+  const api = useHostApi()
   const [settings, setSettings] = useState<DesktopExecutorSettings | null>(null),
     [providers, setProviders] = useState<Array<{ id: string; name: string; models: string[] }>>([]),
     [history, setHistory] = useState<DesktopExecutionRecord[]>([]),
@@ -22,10 +24,10 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
     [busy, setBusy] = useState(false)
   useEffect(() => {
     let active = true
-    void window.api.platformExecutorSettings().then((v) => {
+    void api.platformExecutorSettings().then((v) => {
       if (active) setSettings(v)
     })
-    void window.api
+    void api
       .platformExecutorProviders()
       .then((v) => {
         if (active) setProviders(v)
@@ -34,10 +36,10 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
         if (active) setError(e.message)
       })
     const refresh = () => {
-      void window.api.platformRunnerStatus().then((v) => {
+      void api.platformRunnerStatus().then((v) => {
         if (active) setStatus(v)
       })
-      void window.api.platformExecutorHistory().then((v) => {
+      void api.platformExecutorHistory().then((v) => {
         if (active) setHistory(v)
       })
     }
@@ -47,7 +49,7 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
       active = false
       clearInterval(timer)
     }
-  }, [])
+  }, [api])
   async function act(fn: () => Promise<void>) {
     if (busy) return
     setBusy(true)
@@ -167,7 +169,7 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void act(async () => setProviders(await window.api.platformExecutorProviders()))}
+            onClick={() => void act(async () => setProviders(await api.platformExecutorProviders()))}
           >
             {L('Refresh accounts', 'Atualizar contas')}
           </Button>
@@ -213,11 +215,11 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
           onClick={() =>
             void act(async () => {
               if (active) {
-                await window.api.platformRunnerStop()
+                await api.platformRunnerStop()
                 setStatus({ state: 'stopped' })
               } else {
-                await window.api.platformSaveExecutorSettings({ ...settings, connectionId: connection!.id })
-                setStatus(await window.api.platformRunnerStart(connection!.id))
+                await api.platformSaveExecutorSettings({ ...settings, connectionId: connection!.id })
+                setStatus(await api.platformRunnerStart(connection!.id))
               }
             })
           }
@@ -231,7 +233,7 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
           onClick={() =>
             void act(async () => {
               setSettings(
-                await window.api.platformSaveExecutorSettings({
+                await api.platformSaveExecutorSettings({
                   ...settings,
                   ...(connection ? { connectionId: connection.id } : {}),
                 })
@@ -255,7 +257,7 @@ export function ExecutorSection({ connections }: { connections: PlatformConnecti
             <button
               key={run.runId}
               className="flex w-full items-center gap-3 rounded-lg p-2 text-left hover:bg-muted"
-              onClick={() => void act(() => window.api.platformOpenExecutorConversation(run.conversationId))}
+              onClick={() => void act(() => api.platformOpenExecutorConversation(run.conversationId))}
             >
               <MessageSquare size={15} />
               <span className="min-w-0 flex-1 truncate text-xs">{run.title}</span>

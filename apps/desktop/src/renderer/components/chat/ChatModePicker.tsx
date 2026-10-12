@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Bot, Palette, ClipboardList, MessageCircle, Check, Loader2, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { ChatMode } from '../../../shared/chat'
 import type { StandardToMaestroError, StandardToMaestroResult } from '../../../shared/conversation-experience'
 
@@ -31,6 +32,7 @@ export function ChatModePicker({
   const ownerDocument = useChatDocument()
   const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [open, setOpen] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
   const [transitionError, setTransitionError] = useState<string | null>(null)
@@ -126,7 +128,7 @@ export function ChatModePicker({
     setTransitionError(null)
     setTransitioning(true)
     try {
-      const payload = await window.api.chatMaestroGetConversation(conversationId)
+      const payload = await api.chatMaestroGetConversation(conversationId)
       const strategy = t(`maestro.strategies.${payload.config.strategy}`)
       const model = modelId || t('mode.selectedModel')
       if (!ownerWindow.confirm(t('mode.confirmMaestro', { model, strategy }))) return

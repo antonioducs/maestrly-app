@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Activity, AppWindow, Archive, Settings, HelpCircle, Info, Sparkles, BookOpen, LifeBuoy } from 'lucide-react'
 import type { WorkspaceWithConversations } from '../../../preload'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useOnboarding } from '@/lib/use-onboarding'
@@ -32,6 +33,7 @@ export function SidebarFooter({
   onOpenAbout: () => void
 }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
 
   const { openSettings } = useSettings()
 
@@ -44,21 +46,21 @@ export function SidebarFooter({
   const refreshUsageTargets = useCallback(async () => {
     const request = ++usageTargetsRequestRef.current
     try {
-      const config = await window.api.chatConfig()
+      const config = await api.chatConfig()
       if (request === usageTargetsRequestRef.current) setUsageTargets(connectedQuickUsageTargets(config))
     } catch {}
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void refreshUsageTargets()
-    const offCodex = window.api.onChatSubscriptionStatus('codex-subscription', () => void refreshUsageTargets())
-    const offClaude = window.api.onChatSubscriptionStatus('claude-subscription', () => void refreshUsageTargets())
+    const offCodex = api.onChatSubscriptionStatus('codex-subscription', () => void refreshUsageTargets())
+    const offClaude = api.onChatSubscriptionStatus('claude-subscription', () => void refreshUsageTargets())
     return () => {
       usageTargetsRequestRef.current += 1
       offCodex()
       offClaude()
     }
-  }, [refreshUsageTargets])
+  }, [refreshUsageTargets, api])
 
   useEffect(() => {
     if (usageTargets.length === 0) setUsageOpen(false)

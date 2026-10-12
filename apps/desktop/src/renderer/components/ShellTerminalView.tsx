@@ -8,6 +8,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { PtyOutputSnapshot, PtyStreamMeta } from '../../shared/pty'
 import { i18n } from '@/lib/i18n'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { TERMINAL_SEARCH_OPTIONS, isTerminalSearchShortcut } from '@/lib/terminal-search'
 import { TerminalSearchBar } from '@/components/TerminalSearchBar'
 
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props) {
+  const api = useHostApi()
   const hostRef = useRef<HTMLDivElement>(null)
   // Keep terminal handles available for repainting when the panel becomes visible.
   const termRef = useRef<Terminal | null>(null)
@@ -150,7 +152,7 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
       if (!visibleRef.current) return
       term.focus()
     }
-    const offData = window.api.onPtyData(agentId, (data, meta) => {
+    const offData = api.onPtyData(agentId, (data, meta) => {
       if (!meta) {
         if (!ready) return
         term.write(data)
@@ -163,7 +165,7 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
       }
       writeLive(data, meta)
     })
-    void window.api.readTerminal(agentId).then((rawSnapshot) => {
+    void api.readTerminal(agentId).then((rawSnapshot) => {
       if (disposed) return
       const snapshot = (
         typeof rawSnapshot === 'string' ? { data: rawSnapshot, generation: 0, sequence: 0 } : rawSnapshot
@@ -191,12 +193,12 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
       replayQueue.length = 0
     })
 
-    const offExit = window.api.onPtyExit(agentId, (code, generation) => {
+    const offExit = api.onPtyExit(agentId, (code, generation) => {
       if (ready && generation !== undefined && !acceptGeneration(generation)) return
       if (!gotData) return
       term.write(`\r\n\x1b[90m${i18n.t('ui:terminal.processEnded', { code })}\x1b[0m\r\n`)
     })
-    const dataDisposable = term.onData((data) => window.api.writePty(agentId, data))
+    const dataDisposable = term.onData((data) => api.writePty(agentId, data))
 
     let timer: ReturnType<typeof setTimeout> | undefined
     const scheduleFit = () => {
@@ -206,7 +208,7 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
         if (!visibleRef.current) return
         if (host.clientHeight <= 0 || host.clientWidth <= 0) return
         fit.fit()
-        window.api.resizePty(agentId, term.cols, term.rows)
+        api.resizePty(agentId, term.cols, term.rows)
         term.refresh(0, term.rows - 1) // Repaint the buffer after returning from display:none.
       }, 60)
     }
@@ -215,7 +217,7 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
 
     window.addEventListener('resize', scheduleFit)
 
-    const offFocus = window.api.onTerminalFocus((id) => {
+    const offFocus = api.onTerminalFocus((id) => {
       if (id === agentId) term.focus()
     })
 
@@ -244,7 +246,7 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
       fitRef.current = null
       searchRef.current = null
     }
-  }, [agentId])
+  }, [agentId, api])
 
   useEffect(() => {
     const search = searchRef.current
@@ -273,12 +275,12 @@ export function ShellTerminalView({ agentId, visible = true, onOscTitle }: Props
       const fit = fitRef.current
       if (!host || !term || !fit || host.clientHeight <= 0 || host.clientWidth <= 0) return
       fit.fit()
-      window.api.resizePty(agentId, term.cols, term.rows)
+      api.resizePty(agentId, term.cols, term.rows)
       term.refresh(0, term.rows - 1)
       term.focus()
     })
     return () => cancelAnimationFrame(raf)
-  }, [visible, agentId])
+  }, [visible, agentId, api])
 
   return (
     <div className="relative h-full w-full">

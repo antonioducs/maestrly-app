@@ -4,6 +4,7 @@ import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { environmentBots, formatNames } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { updateBlockers } from '@/lib/fleet/updates'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
@@ -12,7 +13,7 @@ export type EnvironmentConfirmKind = 'restart' | 'update' | 'updateNow' | 'stop'
 
 /**
  * Asks before an action that acts on every bot of an environment, naming them, and runs it. It stays open with the
- * reason when the action fails.
+ * reason when the action fails. A workspaces environment has no bots to name: what stops is the chats it runs.
  */
 export function EnvironmentConfirm({
   kind,
@@ -30,6 +31,7 @@ export function EnvironmentConfirm({
   const { t, i18n } = useTranslation('fleet')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const workspaces = isWorkspacesEnvironment(environment)
   const bots = environmentBots(environment, fleet.state.snapshot.bots)
   const blockers = updateBlockers(environment, fleet.state.snapshot.bots)
   const names =
@@ -76,9 +78,16 @@ export function EnvironmentConfirm({
           ? t('updates.confirmNowTitle', { name: environment.name })
           : kind === 'stop'
             ? t('environment.confirmStopTitle', { name: environment.name })
-            : t('environment.confirmArchiveTitle')
-  const message =
-    kind === 'restart'
+            : t(workspaces ? 'workspaces.confirmArchiveTitle' : 'environment.confirmArchiveTitle')
+  const message = workspaces
+    ? kind === 'restart'
+      ? t('workspaces.confirmRestart')
+      : kind === 'update' || kind === 'updateNow'
+        ? t('workspaces.confirmUpdate')
+        : kind === 'stop'
+          ? t('workspaces.confirmStop')
+          : t('workspaces.confirmArchive')
+    : kind === 'restart'
       ? t('environment.confirmRestart', { bots: names })
       : kind === 'update'
         ? t('environment.confirmUpdate', { bots: names })

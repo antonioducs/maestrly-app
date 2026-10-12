@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Download, Trash2 } from 'lucide-react'
 import type { LocalDataSummary } from '../../../shared/local-data'
+import { useHostApi } from '../../lib/hosts/host-context'
 import type { TFn } from './shared'
 
 export function LocalDataSection({ t }: { t: TFn }) {
+  const api = useHostApi()
   const [summary, setSummary] = useState<LocalDataSummary | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     let disposed = false
-    void window.api.getLocalDataSummary().then(
+    void api.getLocalDataSummary().then(
       (value) => {
         if (!disposed) setSummary(value)
       },
@@ -21,7 +23,7 @@ export function LocalDataSection({ t }: { t: TFn }) {
     return () => {
       disposed = true
     }
-  }, [])
+  }, [api])
 
   async function perform(action: 'export' | 'reset') {
     setBusy(true)
@@ -29,7 +31,7 @@ export function LocalDataSection({ t }: { t: TFn }) {
     setFailed(false)
     try {
       if (action === 'export') {
-        const result = await window.api.exportData()
+        const result = await api.exportData()
         if (result.ok) {
           setFailed(result.incomplete)
           setMessage(
@@ -43,7 +45,7 @@ export function LocalDataSection({ t }: { t: TFn }) {
           setMessage(result.error ?? t('localData.error'))
         }
       } else {
-        const result = await window.api.resetLocalData()
+        const result = await api.resetLocalData()
         if (result.ok) window.location.reload()
         else {
           setFailed(true)

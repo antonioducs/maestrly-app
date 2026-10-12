@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
 import { useEnvironmentSettingsResource, useEnvironmentSettingsSource } from '@/lib/fleet/environment-settings'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { EnvironmentCompaction } from '../EnvironmentCompaction'
 import { SettingsSwitch } from '../SettingsSwitch'
 import {
@@ -115,13 +116,16 @@ function PreferencesEditor({
         <SettingsSwitch checked disabled label={t('environmentSettings.appTools')} onChange={() => {}} />
       </div>
       <SaveDiscard {...editor} />
-      <EnvironmentCompaction
-        {...{ onDirtyChange: compactionDirty }}
-        environment={environment}
-        fleet={fleet}
-        bots={fleet.state.snapshot.bots.filter((bot) => bot.environmentId === environment.id)}
-        optionsKey={environment.id}
-      />
+      {/* The default compaction model is for bots, and a workspaces environment has none. */}
+      {!isWorkspacesEnvironment(environment) && (
+        <EnvironmentCompaction
+          {...{ onDirtyChange: compactionDirty }}
+          environment={environment}
+          fleet={fleet}
+          bots={fleet.state.snapshot.bots.filter((bot) => bot.environmentId === environment.id)}
+          optionsKey={environment.id}
+        />
+      )}
     </SettingsPanel>
   )
 }

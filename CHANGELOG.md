@@ -212,6 +212,14 @@ User-visible changes by version. Downloads are on
   plans, subagents, published artifacts, generated images, and tool screenshots
   stay in view.
 
+- Experimental: run your chats and workspaces on your bot server. **Set up
+  workspaces on this server** on the server page starts a Maestrly there for
+  them; the sidebar then lists the chats and workspaces of this computer and of
+  the server side by side, and conversations on the server keep working while
+  this computer is off. Terminal, Plan, Review, and Notes work in the drawer;
+  the agent's browser runs on the server and is not shown yet. See
+  [Remote workspaces and chats](docs/remote-workspaces.md).
+
 ### Fixed
 
 - Share plain-text clipboard contents while controlling a bot or environment
@@ -226,6 +234,9 @@ User-visible changes by version. Downloads are on
   searchable dropdown such as the environment choice when creating a bot.
 - Never move a bot server back to an older version when another computer
   already updated it past this app.
+- Wait for a bot's new browser tab to be ready before a tool drives it, so the
+  first navigation of a conversation is not replaced by the tab's empty start
+  page.
 
 ## [0.11.0] - 2026-09-28
 

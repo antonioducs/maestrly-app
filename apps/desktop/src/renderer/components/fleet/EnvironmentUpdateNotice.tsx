@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { CircleArrowUp, Clock } from 'lucide-react'
 import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { environmentUpdateState, updateBlockers } from '@/lib/fleet/updates'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { botStatusDot } from './BotChatHeader'
@@ -9,7 +10,8 @@ import type { EnvironmentConfirmKind } from './EnvironmentConfirm'
 
 /**
  * A newer image the server offers to an environment, at the top of its overview: updating waits for its bots, and a
- * waiting update says which bots it waits for and can be forced or cancelled. A gateway that cannot schedule updates
+ * waiting update says which bots it waits for and can be forced or cancelled. A workspaces environment has no bots to
+ * wait for, so updating it asks first: it interrupts the chats it runs. A gateway that cannot schedule updates
  * only restarts the environment onto the new image.
  */
 export function EnvironmentUpdateNotice({
@@ -32,6 +34,7 @@ export function EnvironmentUpdateNotice({
   const blockers = updateBlockers(environment, fleet.state.snapshot.bots)
   const pendingSince = environment.update?.pendingSince ?? null
   const pending = state === 'pending'
+  const workspaces = isWorkspacesEnvironment(environment)
   return (
     <section
       aria-label={t('environment.updateRegion')}
@@ -47,17 +50,21 @@ export function EnvironmentUpdateNotice({
           {pending
             ? t('updates.pendingTitle')
             : host?.botImageVersion
-              ? t('updates.availableVersion', { version: host.botImageVersion })
-              : t('updates.availableNoVersion')}
+              ? t(workspaces ? 'workspaces.updateVersion' : 'updates.availableVersion', {
+                  version: host.botImageVersion,
+                })
+              : t(workspaces ? 'workspaces.updateNoVersion' : 'updates.availableNoVersion')}
         </h2>
         <p className="text-[12.5px] leading-relaxed text-muted-foreground">
           {pending
             ? t('updates.pendingNote')
             : state === 'next-start'
               ? t('updates.nextStart')
-              : schedulable
-                ? t('environment.updateWhenIdle')
-                : t('environment.updateRestarts')}
+              : workspaces
+                ? t('workspaces.lifecycleNote')
+                : schedulable
+                  ? t('environment.updateWhenIdle')
+                  : t('environment.updateRestarts')}
         </p>
         {pending && pendingSince && (
           <p className="text-[12.5px] text-muted-foreground">
@@ -96,6 +103,10 @@ export function EnvironmentUpdateNotice({
                   {t('updates.cancel')}
                 </Button>
               </>
+            ) : workspaces ? (
+              <Button size="sm" onClick={() => onConfirm(schedulable ? 'updateNow' : 'update')}>
+                {t('environment.update')}
+              </Button>
             ) : schedulable ? (
               // Nothing is interrupted: the update waits for the environment's bots on the server.
               <Button size="sm" onClick={() => void fleet.updateEnvironment(environment.id, 'idle')}>

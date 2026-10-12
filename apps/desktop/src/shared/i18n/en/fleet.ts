@@ -482,6 +482,30 @@ export default {
     },
   },
 
+  workspaces: {
+    title: 'Workspaces',
+    label: 'Chats and workspaces',
+    description:
+      'Runs your chats and workspaces on this server: they keep working while this computer is off, and appear in the sidebar beside the ones of this computer.',
+    create: 'Set up workspaces on this server',
+    creating: 'Setting up…',
+    createNote: 'It starts with no accounts of its own. Add them on its page once it runs.',
+    unsupported: 'Update the server to run workspaces on it.',
+    manage: 'Manage',
+    sharedTitle: 'Accounts and tools',
+    sharedConfig: 'Used by every chat and workspace on this server.',
+    lifecycleNote: 'Stopping, restarting or updating now interrupts the chats that are running on this server.',
+    confirmRestart: 'Chats running on this server are interrupted.',
+    confirmUpdate: "Workspaces restart on the server's current version. Chats running on this server are interrupted.",
+    confirmStop: 'Chats and workspaces on this server stop until you start them again.',
+    confirmArchiveTitle: 'Archive workspaces?',
+    confirmArchive:
+      'Its container is removed. Its home folder, with chats, accounts and settings, stays on the server and comes back if you restore it. Files in the workspaces folder of the server are not touched.',
+    archive: 'Archive workspaces',
+    archiveNote: 'Removes the container and keeps its chats, accounts and files on the server.',
+    updateVersion: 'Maestrly {{version}} is ready for your workspaces.',
+    updateNoVersion: 'A newer image is ready for your workspaces.',
+  },
   connection: {
     unconfigured: 'No bot server connected',
     connecting: 'Connecting…',

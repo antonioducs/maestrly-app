@@ -25,7 +25,7 @@ function setup() {
     compactionRevisionRef: { current: 0 },
     visibleRef: { current: true },
     conversationId: 'conversation',
-    window: { api: { chatCompact: vi.fn(() => compact.promise) } },
+    api: { chatCompact: vi.fn(() => compact.promise) },
     setCompacting: vi.fn(),
     reloadLatestPage: vi.fn(() => history.promise),
     setCompactDismissed: vi.fn(),
@@ -49,7 +49,7 @@ describe('manual compaction queue lifecycle', () => {
     const pending = h.run()
     expect(h.compactingRef.current).toBe(true)
     expect(await h.run()).toBe(false)
-    expect(h.window.api.chatCompact).toHaveBeenCalledTimes(1)
+    expect(h.api.chatCompact).toHaveBeenCalledTimes(1)
     h.compact.resolve(result)
     await Promise.resolve()
     expect(h.reloadLatestPage).toHaveBeenCalledOnce()

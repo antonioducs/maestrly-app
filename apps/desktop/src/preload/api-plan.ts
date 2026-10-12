@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 import type { StandardPlanHandoff } from '../shared/conversation-dispatch'
 
 export interface PlanLineComment {
@@ -35,21 +36,25 @@ export interface PlanReceived {
   previousPlan: string | null
 }
 
-export const planApi = {
-  onPlanReceived: (cb: (plan: PlanReceived) => void): (() => void) => {
-    const listener = (_e: unknown, plan: PlanReceived) => cb(plan)
-    ipcRenderer.on('plan:received', listener)
-    return () => ipcRenderer.removeListener('plan:received', listener)
-  },
-  onPlanCleared: (cb: (payload: { agentId: string }) => void): (() => void) => {
-    const listener = (_e: unknown, payload: { agentId: string }) => cb(payload)
-    ipcRenderer.on('plan:cleared', listener)
-    return () => ipcRenderer.removeListener('plan:cleared', listener)
-  },
-  decidePlan: (agentId: string, decision: PlanDecision): Promise<PlanDecisionResponse | undefined> =>
-    ipcRenderer.invoke('plan:decide', agentId, decision),
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makePlanApi(ipcRenderer: IpcTransport) {
+  return {
+    onPlanReceived: (cb: (plan: PlanReceived) => void): (() => void) => {
+      const listener = (_e: unknown, plan: PlanReceived) => cb(plan)
+      ipcRenderer.on('plan:received', listener)
+      return () => ipcRenderer.removeListener('plan:received', listener)
+    },
+    onPlanCleared: (cb: (payload: { agentId: string }) => void): (() => void) => {
+      const listener = (_e: unknown, payload: { agentId: string }) => cb(payload)
+      ipcRenderer.on('plan:cleared', listener)
+      return () => ipcRenderer.removeListener('plan:cleared', listener)
+    },
+    decidePlan: (agentId: string, decision: PlanDecision): Promise<PlanDecisionResponse | undefined> =>
+      ipcRenderer.invoke('plan:decide', agentId, decision),
 
-  getPendingPlan: (convId: string): Promise<PlanReceived | null> => ipcRenderer.invoke('plan:get', convId),
-  openPlanFile: (convId: string, filePath: string, line?: number, endLine?: number): Promise<void> =>
-    ipcRenderer.invoke('plan:open-file', convId, filePath, line, endLine),
+    getPendingPlan: (convId: string): Promise<PlanReceived | null> => ipcRenderer.invoke('plan:get', convId),
+    openPlanFile: (convId: string, filePath: string, line?: number, endLine?: number): Promise<void> =>
+      ipcRenderer.invoke('plan:open-file', convId, filePath, line, endLine),
+  }
 }
+export const planApi = makePlanApi(ipcRenderer)

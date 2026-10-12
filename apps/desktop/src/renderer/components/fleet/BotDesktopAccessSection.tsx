@@ -16,6 +16,11 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { cn } from '@/lib/utils'
 import { SettingsCard, SettingsSection } from './SettingsSection'
 import { SettingsSwitch } from './SettingsSwitch'
+import { hostApi } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
+
+// A bot reaches this computer's workspaces and providers through its desktop link.
+const localApi = hostApi(LOCAL_HOST_ID)
 
 const fieldInput =
   'w-full rounded-[9px] border border-input bg-black/25 px-3 py-2 text-sm transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 hover:border-border-strong focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 aria-[invalid=true]:border-destructive'
@@ -65,8 +70,8 @@ export function BotDesktopAccessSection({ bot, id }: { bot: FleetBot; id: string
     setError('')
     void Promise.all([
       window.api.fleetDesktopAccess(bot.id),
-      window.api.listWorkspaces(),
-      window.api.platformExecutorProviders(),
+      localApi.listWorkspaces(),
+      localApi.platformExecutorProviders(),
     ])
       .then(([access, projects, accounts]) => {
         if (!alive) return

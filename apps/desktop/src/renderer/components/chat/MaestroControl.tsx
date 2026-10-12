@@ -18,6 +18,7 @@ import { cloneMaestroConfig } from '../../../shared/maestro'
 import { CHAT_SUBSCRIPTION_PROVIDER_KINDS, type ChatConfig } from '../../../shared/chat'
 import { notifyMaestroConfigChanged, subscribeMaestroConfigChanged } from '@/lib/maestro-config-events'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
@@ -60,6 +61,7 @@ function useCandidateHealth(
   catalogRevision: number,
   t: Translate
 ): { level: HealthLevel; message: string } {
+  const api = useHostApi()
   const [state, setState] = useState<{ level: HealthLevel; message: string }>({
     level: 'checking',
     message: t('maestro.health.checking'),
@@ -79,8 +81,8 @@ function useCandidateHealth(
       list.map(async (candidate) => {
         try {
           const [catalog, metadata] = await Promise.all([
-            window.api.chatSubagentProfilesModelCatalog(candidate.providerId),
-            window.api.chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId),
+            api.chatSubagentProfilesModelCatalog(candidate.providerId),
+            api.chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId),
           ])
           if (catalog.status !== 'available') {
             return t('maestro.health.providerUnavailable', { provider: candidate.providerId })
@@ -107,7 +109,7 @@ function useCandidateHealth(
     return () => {
       alive = false
     }
-  }, [signature, catalogRevision, t])
+  }, [api, signature, catalogRevision, t])
 
   return state
 }
@@ -593,6 +595,7 @@ export function MaestroControl({
   const ownerWindow = useChatOwnerWindow()
   const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [open, setOpen] = useState(false)
   const [payload, setPayload] = useState<MaestroConfigPayload | null>(null)
   const [draft, setDraft] = useState<MaestroConfigV1 | null>(null)
@@ -606,11 +609,11 @@ export function MaestroControl({
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const reload = useCallback(async () => {
-    const next = await window.api.chatMaestroGetConversation(conversationId)
+    const next = await api.chatMaestroGetConversation(conversationId)
     setPayload(next)
     setDraft(cloneMaestroConfig(next.config))
     return next
-  }, [conversationId])
+  }, [api, conversationId])
 
   useEffect(() => {
     void reload()
@@ -625,17 +628,17 @@ export function MaestroControl({
   )
   useEffect(() => {
     let alive = true
-    void window.api.chatConfig().then((next) => alive && setConfig(next))
+    void api.chatConfig().then((next) => alive && setConfig(next))
     return () => {
       alive = false
     }
-  }, [])
+  }, [api])
   useEffect(() => {
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
-      window.api.onChatSubscriptionStatus(provider, () => setCatalogRevision((revision) => revision + 1))
+      api.onChatSubscriptionStatus(provider, () => setCatalogRevision((revision) => revision + 1))
     )
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [])
+  }, [api])
 
   const enabledCount = useMemo(() => draft?.pool.filter((resource) => resource.enabled).length ?? 0, [draft])
   const dirty = useMemo(
@@ -666,8 +669,8 @@ export function MaestroControl({
     try {
       const result =
         target === 'global'
-          ? await window.api.chatMaestroSetGlobal(draft)
-          : await window.api.chatMaestroSetConversation(conversationId, draft)
+          ? await api.chatMaestroSetGlobal(draft)
+          : await api.chatMaestroSetConversation(conversationId, draft)
       if (!result.ok) {
         throw new Error(result.errors?.map((item) => item.message).join(' ') || t('maestro.errors.invalidConfig'))
       }
@@ -688,7 +691,7 @@ export function MaestroControl({
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.chatMaestroSetConversation(conversationId, null)
+      const result = await api.chatMaestroSetConversation(conversationId, null)
       if (!result.ok) {
         setError(result.errors?.map((item) => item.message).join(' ') || t('maestro.errors.clearOverride'))
         return
@@ -735,7 +738,7 @@ export function MaestroControl({
 
   const importAgents = async () => {
     if (!draft) return
-    const catalog = await window.api.chatSubagentProfilesCatalog(conversationId)
+    const catalog = await api.chatSubagentProfilesCatalog(conversationId)
     const ids = new Set(draft.pool.map((resource) => resource.id))
     const imported = catalog.agents
       .filter((agent) => !ids.has(agent.name))

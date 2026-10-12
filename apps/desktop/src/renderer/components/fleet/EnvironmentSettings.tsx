@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { FLEET_ENVIRONMENT_SETTINGS_FEATURE, type FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { useFleetProvisioning } from '@/lib/fleet/provisioning'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { MAIN_NAVIGATION_EVENT, requestMainNavigation, type MainNavigationDetail } from '@/lib/main-navigation'
 import { Button } from '@/components/ui/button'
 import {
@@ -261,6 +262,8 @@ export function EnvironmentSettingsSheet({
   }
   const tabLabel = (tab: Tab) => t(`environmentSettingsShell.sections.${tab}`)
   const bots = fleet.state.snapshot.bots.filter((bot) => environment.botIds.includes(bot.id))
+  // A workspaces environment serves the owner's chats and workspaces: it has no bots and no screen.
+  const workspaces = isWorkspacesEnvironment(environment)
   const list = new Intl.ListFormat(i18n.language, { type: 'conjunction' })
   return (
     <Dialog
@@ -297,22 +300,28 @@ export function EnvironmentSettingsSheet({
           </Button>
         </header>
         <p className="-mt-1.5 px-[18px] pb-2.5 text-[12.5px] text-muted-foreground">
-          {t('environmentSettingsShell.shared')}{' '}
-          {bots.length
-            ? bots.map((bot, index) => (
-                <span key={bot.id}>
-                  {index > 0 && ', '}
-                  <button
-                    type="button"
-                    className="text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    onClick={() => leave(() => onOpenBot(bot.id))}
-                  >
-                    {bot.name}
-                  </button>
-                </span>
-              ))
-            : t('environmentSettingsShell.noBots')}
-          {'. '}
+          {workspaces ? (
+            t('workspaces.sharedConfig')
+          ) : (
+            <>
+              {t('environmentSettingsShell.shared')}{' '}
+              {bots.length
+                ? bots.map((bot, index) => (
+                    <span key={bot.id}>
+                      {index > 0 && ', '}
+                      <button
+                        type="button"
+                        className="text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => leave(() => onOpenBot(bot.id))}
+                      >
+                        {bot.name}
+                      </button>
+                    </span>
+                  ))
+                : t('environmentSettingsShell.noBots')}
+              {'.'}
+            </>
+          )}{' '}
           {t('environmentSettingsShell.localSeparate')}
         </p>
         <div
@@ -361,7 +370,7 @@ export function EnvironmentSettingsSheet({
                 className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3.5 py-3 text-[12.5px]"
               >
                 <p className="min-w-56 flex-1">{t(`environmentSettingsShell.${reason}`)}</p>
-                {running && (
+                {running && !workspaces && (
                   <Button size="sm" variant="outline" onClick={() => leave(onOpenScreen)}>
                     {t('environment.openScreen')}
                   </Button>
@@ -412,17 +421,19 @@ export function EnvironmentSettingsSheet({
               })}
             {active === 'archive' && (
               <div id={panelId('archive')} role="tabpanel" aria-labelledby={tabId('archive')} className="space-y-3">
-                <p className="text-[12.5px] leading-relaxed text-muted-foreground">{t('environment.lifecycleNote')}</p>
+                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+                  {t(workspaces ? 'workspaces.lifecycleNote' : 'environment.lifecycleNote')}
+                </p>
                 <div className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 p-[18px]">
                   <p className="min-w-64 flex-1 text-[12.5px] leading-relaxed text-muted-foreground">
-                    {t('environment.archiveNote')}
+                    {t(workspaces ? 'workspaces.archiveNote' : 'environment.archiveNote')}
                   </p>
                   <Button
                     variant="outline"
                     className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => setArchiving(true)}
                   >
-                    {t('environment.archive', { name: environment.name })}
+                    {workspaces ? t('workspaces.archive') : t('environment.archive', { name: environment.name })}
                   </Button>
                 </div>
               </div>

@@ -66,6 +66,18 @@ vi.mock('../../src/main/drawer-manager', () => ({
   toggleBrowserDevTools: vi.fn(),
 }))
 
+vi.mock('../../src/main/drawer/browser-stream', () => ({
+  acknowledgeBrowserFrame: vi.fn(),
+  chooseBrowserStreamOption: vi.fn(),
+  closeBrowserStreamPopup: vi.fn(),
+  copyBrowserStream: vi.fn(),
+  inputBrowserStream: vi.fn(),
+  pasteBrowserStream: vi.fn(),
+  resizeBrowserStream: vi.fn(),
+  startBrowserStream: vi.fn(),
+  stopBrowserStream: vi.fn(),
+}))
+
 vi.mock('../../src/main/vscode/vscode-server', () => ({
   getMergedSettingsJson: vi.fn(),
   getVSCodeUrl: vi.fn(),
@@ -92,8 +104,17 @@ import {
   isTabVisibleInSlot,
   setDialogSuppressionOwners,
   setLayout,
+  showVSCodeLoadingAll,
 } from '../../src/main/drawer-manager'
+import { setRemoteEditorHosts } from '../../src/main/drawer-scope'
+import { waitForEditorReady } from '../../src/main/vscode/vscode-server'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
+import {
+  acknowledgeBrowserFrame,
+  copyBrowserStream,
+  inputBrowserStream,
+  startBrowserStream,
+} from '../../src/main/drawer/browser-stream'
 
 describe('registerDrawerIpc', () => {
   beforeEach(() => {
@@ -158,6 +179,8 @@ describe('registerDrawerIpc', () => {
       'panel:plan-draft-get',
     ])
     expect([...mhandles.keys()].sort()).toEqual([
+      'drawer:browser-copy',
+      'drawer:browser-stream-start',
       'drawer:clear-cache',
       'drawer:load-vscode',
       'drawer:restart-vscode',
@@ -166,6 +189,13 @@ describe('registerDrawerIpc', () => {
     expect([...ons.keys()]).toEqual([])
     expect([...mons.keys()].sort()).toEqual([
       'drawer:back',
+      'drawer:browser-input',
+      'drawer:browser-paste',
+      'drawer:browser-popup-close',
+      'drawer:browser-select-choose',
+      'drawer:browser-stream-ack',
+      'drawer:browser-stream-resize',
+      'drawer:browser-stream-stop',
       'drawer:close-terminal',
       'drawer:create-terminal',
       'drawer:detach',
@@ -198,6 +228,42 @@ describe('registerDrawerIpc', () => {
       'popup:open-floating',
       'popup:set-suppressed',
     ])
+  })
+
+  it('hands the browser stream calls their sender, which the stream checks itself', async () => {
+    const { reg, mons, mhandles } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const sender = { id: -1000 }
+    await mhandles.get('drawer:browser-stream-start')!({ sender } as never, 'conv', 800, 600)
+    mons.get('drawer:browser-stream-ack')!({ sender } as never, 'conv', 'stream-id', 3)
+    mons.get('drawer:browser-input')!({ sender } as never, 'conv', 'stream-id', { type: 'text', text: 'a' })
+    await mhandles.get('drawer:browser-copy')!({ sender } as never, 'conv', 'stream-id', true)
+    expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600)
+    expect(acknowledgeBrowserFrame).toHaveBeenCalledWith(sender, 'conv', 'stream-id', 3)
+    expect(inputBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', { type: 'text', text: 'a' })
+    expect(copyBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', true)
+  })
+
+  it("restarts a remote host's editor for its conversation, and this computer's otherwise", async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    const restartRemoteVSCode = vi.fn(async () => undefined)
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn(), restartRemoteVSCode })
+    const restart = mhandles.get('drawer:restart-vscode')!
+    // A host that does not serve its editor has no Code tab to restart.
+    await restart({} as never, 'server-1/workspaces#conv-1')
+    expect(restartRemoteVSCode).not.toHaveBeenCalled()
+    setRemoteEditorHosts(() => true)
+    try {
+      await restart({} as never, 'server-1/workspaces#conv-1')
+    } finally {
+      setRemoteEditorHosts(() => false)
+    }
+    expect(restartRemoteVSCode).toHaveBeenCalledWith('server-1/workspaces#conv-1')
+    expect(showVSCodeLoadingAll).not.toHaveBeenCalled()
+    vi.mocked(waitForEditorReady).mockResolvedValue(undefined)
+    await restart({} as never, undefined)
+    expect(showVSCodeLoadingAll).toHaveBeenCalledWith('restarting')
+    expect(restartRemoteVSCode).toHaveBeenCalledTimes(1)
   })
 
   it('popup:open-floating releases the stack before detaching the same view', () => {

@@ -4,6 +4,7 @@ import { Boxes, Monitor, Play, RotateCcw, Settings, Square } from 'lucide-react'
 import { FLEET_ENVIRONMENT_SETTINGS_FEATURE, type FleetBot, type FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { fleetErrorText } from '@/lib/fleet/errors'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { createKeyWatcher, environmentBots, type ProvisioningSubject } from '@/lib/fleet/environments'
 import {
   environmentJoinAvailability,
@@ -62,19 +63,18 @@ function lifecycleDot(lifecycle: FleetEnvironment['lifecycle']): string {
 /**
  * An environment, laid out as a bot is: its overview (its bots, what they share, its resources) beside its screen,
  * each under its own header, and its settings in a panel over both. The `screen` destination opens the screen,
- * `settings` opens the panel on a section, and `overview` only closes that panel.
+ * `settings` opens the panel on a section, and `overview` only closes that panel. A workspaces environment runs
+ * Maestrly for the owner's chats and workspaces: it has no bots and no screen, so it shows its overview alone.
  */
 function EnvironmentViewContent({ environment, view, fleet, onView, onOpenBot, onCreateBot }: EnvironmentViewProps) {
   const { t } = useTranslation('fleet')
-  const layout = useEnvironmentWorkspaceLayout(
-    fleet.state.connection.url,
-    environment.id,
-    view.tab === 'screen' ? 'split' : 'chat'
-  )
+  const workspaces = isWorkspacesEnvironment(environment)
+  const screenTab = !workspaces && view.tab === 'screen'
+  const layout = useEnvironmentWorkspaceLayout(fleet.state.connection.url, environment.id, screenTab ? 'split' : 'chat')
   const { openComputer, closeComputer, showPane } = layout
   useEffect(() => {
-    if (view.tab === 'screen') openComputer()
-  }, [view.tab, openComputer])
+    if (screenTab) openComputer()
+  }, [screenTab, openComputer])
   const settingsOpen = view.tab === 'settings'
   const environmentView = (
     tab: 'overview' | 'screen' | 'settings',
@@ -148,7 +148,7 @@ function EnvironmentViewContent({ environment, view, fleet, onView, onOpenBot, o
           </>
         }
         secondary={
-          layout.computerOpened ? (
+          !workspaces && layout.computerOpened ? (
             <EnvironmentScreen
               environment={environment}
               fleet={fleet}
@@ -224,6 +224,7 @@ function EnvironmentHeader({
   onConfirm: (kind: EnvironmentConfirmKind) => void
 }) {
   const { t } = useTranslation('fleet')
+  const workspaces = isWorkspacesEnvironment(environment)
   const host = fleet.state.snapshot.host?.hostname ?? t('view.server')
   const running = environment.lifecycle === 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
@@ -255,7 +256,7 @@ function EnvironmentHeader({
         </p>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {narrow && (
+        {narrow && !workspaces && (
           <BotPaneSwitch
             active={activePane}
             onChange={onShowPane}
@@ -309,7 +310,7 @@ function EnvironmentHeader({
         >
           <Settings />
         </Button>
-        {!screenOpen && !narrow && (
+        {!screenOpen && !narrow && !workspaces && (
           <Button
             size="sm"
             variant="outline"
@@ -349,6 +350,7 @@ function EnvironmentOverview({
   onConfirm: (kind: EnvironmentConfirmKind) => void
 }) {
   const { t } = useTranslation('fleet')
+  const workspaces = isWorkspacesEnvironment(environment)
   const bots = environmentBots(environment, fleet.state.snapshot.bots)
   const modernSettings =
     fleet.state.connection.features.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE) &&
@@ -364,12 +366,16 @@ function EnvironmentOverview({
           onConfirm={onConfirm}
           onOpenInbox={onOpenInbox}
         />
-        <EnvironmentRack
-          bots={bots}
-          joinHint={joinHint ? t(joinHint.key, joinHint.values) : null}
-          onOpenBot={onOpenBot}
-          onCreateBot={onCreateBot}
-        />
+        {workspaces ? (
+          <p className="text-sm text-muted-foreground">{t('workspaces.description')}</p>
+        ) : (
+          <EnvironmentRack
+            bots={bots}
+            joinHint={joinHint ? t(joinHint.key, joinHint.values) : null}
+            onOpenBot={onOpenBot}
+            onCreateBot={onCreateBot}
+          />
+        )}
         {modernSettings ? (
           <EnvironmentSharedSummary
             key={summaryRevision}
@@ -404,6 +410,7 @@ function LegacySharedSetup({
   onOpenScreen: () => void
 }) {
   const { t } = useTranslation('fleet')
+  const workspaces = isWorkspacesEnvironment(environment)
   const running = environment.lifecycle === 'running'
   const availability = provisioningAvailability(fleet, environment)
   const lists = useFleetProvisioning({ environmentId: environment.id }, availability === 'ready' && running)
@@ -439,16 +446,19 @@ function LegacySharedSetup({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 id="fleet-environment-shared" className="text-[15px] font-semibold">
-            {t('environment.sharedTitle')}
+            {t(workspaces ? 'workspaces.sharedTitle' : 'environment.sharedTitle')}
           </h2>
-          <p className="text-xs text-muted-foreground">{t('environment.sharedConfig')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(workspaces ? 'workspaces.sharedConfig' : 'environment.sharedConfig')}
+          </p>
         </div>
         <Button size="sm" variant="ghost" disabled={availability !== 'ready' || !running} onClick={lists.refresh}>
           {t('environment.refresh')}
         </Button>
       </div>
+      {/* Siblings need keys of their own: two with one key are duplicated when React matches them by key. */}
       <BotAccountsSection
-        key={environment.id}
+        key={`accounts-${environment.id}`}
         subject={subject}
         lists={lists}
         availability={availability}
@@ -461,29 +471,40 @@ function LegacySharedSetup({
             await fleet.refresh()
           }}
         />
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={screenBusy || !running || oldImage}
-          onClick={() => void logInOnScreen()}
-        >
-          {t('environment.loginOnScreen')}
-        </Button>
-        {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
+        {!workspaces && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={screenBusy || !running || oldImage}
+            onClick={() => void logInOnScreen()}
+          >
+            {t('environment.loginOnScreen')}
+          </Button>
+        )}
+        {!workspaces && oldImage && (
+          <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>
+        )}
         {screenError && (
           <p role="alert" className="text-xs text-destructive">
             {screenError}
           </p>
         )}
       </BotAccountsSection>
-      <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
-      <EnvironmentCompaction
-        key={`compaction-${environment.id}`}
-        environment={environment}
-        bots={bots}
-        fleet={fleet}
-        optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
+      <BotSkillsMcpSection
+        key={`skills-${environment.id}`}
+        subject={subject}
+        lists={lists}
+        availability={availability}
       />
+      {!workspaces && (
+        <EnvironmentCompaction
+          key={`compaction-${environment.id}`}
+          environment={environment}
+          bots={bots}
+          fleet={fleet}
+          optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
+        />
+      )}
       <EnvironmentRuntimes environment={environment} fleet={fleet} />
     </section>
   )

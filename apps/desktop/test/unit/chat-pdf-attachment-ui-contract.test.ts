@@ -22,8 +22,12 @@ describe('PDF attachments in the chat UI', () => {
   it('opens only persisted PDFs, through the ownership-checked IPC', () => {
     const chip = read('../../src/renderer/components/chat/PdfAttachmentChip.tsx')
     expect(read('../../src/renderer/components/chat/ChatMessageList.tsx')).toContain('<PdfAttachmentChip')
-    expect(chip).toContain('if (!part.artifactId)')
-    expect(chip).toContain('window.api.chatOpenAttachmentPdf(conversationId, messageId, part.id)')
+    // Only a persisted PDF opens: here in the system viewer, and from a server through a download to this computer.
+    expect(chip).toContain('if (!part.artifactId || (!host.desktopEffects && !viaDownload))')
+    expect(chip).toContain('const viaDownload = host.remote && !host.desktopEffects')
+    expect(chip).toContain('api.chatOpenAttachmentPdf(conversationId, messageId, part.id)')
+    expect(chip).toContain('api.chatAttachmentPdfFile(conversationId, messageId, part.id)')
+    expect(chip).toContain('window.api.transfersOpen(hostId, file.path)')
     // The saved message replaces the optimistic bubble right after send, so the chip becomes clickable.
     expect(read('../../src/renderer/components/chat/ChatView.tsx')).toContain(
       'imagesSentRef.current = hasArtifactAttachment(atts)'

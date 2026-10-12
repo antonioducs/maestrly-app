@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { Button } from '@/components/ui/button'
 import { ShellTerminalView } from '@/components/ShellTerminalView'
 import { useReorder } from '@/components/useReorder'
@@ -15,23 +16,24 @@ interface TermTab {
 
 export function TerminalTabs({ convId, active = true }: { convId: string; active?: boolean }) {
   const { t: tr } = useTranslation('ui')
+  const api = useHostApi()
   const [terminals, setTerminals] = useState<TermTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [termTitles, setTermTitles] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const initialTerminalHandled = useRef(false)
-  const reorder = useReorder((f, t) => window.api.drawerReorderTerminal(convId, f, t))
+  const reorder = useReorder((f, t) => api.drawerReorderTerminal(convId, f, t))
   const handleOscTitle = useCallback((id: string, title: string) => {
     setTermTitles((prev) => (prev[id] === title ? prev : { ...prev, [id]: title }))
   }, [])
 
   const createTerminal = useCallback(() => {
-    window.api.drawerCreateTerminal(convId)
-  }, [convId])
+    api.drawerCreateTerminal(convId)
+  }, [convId, api])
 
   useEffect(() => {
     let alive = true
-    void window.api.getTerminalState(convId).then((s) => {
+    void api.getTerminalState(convId).then((s) => {
       if (!alive) return
       setTerminals(s.terminals)
       setActiveId(s.activeId)
@@ -40,21 +42,21 @@ export function TerminalTabs({ convId, active = true }: { convId: string; active
     return () => {
       alive = false
     }
-  }, [convId])
+  }, [convId, api])
 
   useEffect(() => {
-    return window.api.onTerminalState((s) => {
+    return api.onTerminalState((s) => {
       if (s.convId !== convId) return
       setTerminals(s.terminals)
       setActiveId(s.activeId)
     })
-  }, [convId])
+  }, [convId, api])
 
   useEffect(() => {
     if (!loaded || initialTerminalHandled.current) return
     initialTerminalHandled.current = true
-    if (terminals.length === 0) window.api.drawerCreateTerminal(convId)
-  }, [loaded, convId, terminals.length])
+    if (terminals.length === 0) api.drawerCreateTerminal(convId)
+  }, [loaded, convId, terminals.length, api])
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
@@ -69,7 +71,7 @@ export function TerminalTabs({ convId, active = true }: { convId: string; active
             <div
               key={t.id}
               {...reorder.props(i)}
-              onClick={() => window.api.drawerSetActiveTerminal(convId, t.id)}
+              onClick={() => api.drawerSetActiveTerminal(convId, t.id)}
               className={cn(
                 'group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs',
                 inst
@@ -86,7 +88,7 @@ export function TerminalTabs({ convId, active = true }: { convId: string; active
                 className="size-3 shrink-0 opacity-0 hover:text-destructive group-hover:opacity-60"
                 onClick={(e) => {
                   e.stopPropagation()
-                  window.api.drawerCloseTerminal(convId, t.id)
+                  api.drawerCloseTerminal(convId, t.id)
                 }}
               />
             </div>

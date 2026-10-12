@@ -22,7 +22,7 @@ describe('AttachmentImage thumbnail memory limits', () => {
   })
 
   it('fetches sidecar bytes through the bounded withImageFetchSlot pool', () => {
-    expect(source).toContain('withImageFetchSlot(() => window.api.chatAttachmentImage')
+    expect(source).toContain('withImageFetchSlot(() => api.chatAttachmentImage')
   })
 
   it('aborts fetch on unmount or part changes and revokes the object URL on cleanup', () => {

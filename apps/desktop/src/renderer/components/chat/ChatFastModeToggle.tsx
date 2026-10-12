@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 export function FastModeChip({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   const { t } = useTranslation('chat')
@@ -23,6 +24,7 @@ export function FastModeChip({ enabled, onToggle }: { enabled: boolean; onToggle
 }
 
 export function ChatFastModeToggle({ conversationId }: { conversationId: string }) {
+  const api = useHostApi()
   const [enabled, setEnabled] = useState(false)
 
   useEffect(() => {
@@ -30,22 +32,22 @@ export function ChatFastModeToggle({ conversationId }: { conversationId: string 
 
     setEnabled(false)
     const load = () =>
-      void window.api.chatGetFastMode(conversationId).then((value) => {
+      void api.chatGetFastMode(conversationId).then((value) => {
         if (alive) setEnabled(value)
       })
     load()
     // The conversation is not only configured from here: a bot that configures it also decides this.
-    const unsubscribe = window.api.onChatSettingsChanged(conversationId, load)
+    const unsubscribe = api.onChatSettingsChanged(conversationId, load)
     return () => {
       alive = false
       unsubscribe()
     }
-  }, [conversationId])
+  }, [api, conversationId])
 
   const toggle = () => {
     const next = !enabled
     setEnabled(next)
-    void window.api.chatSetFastMode(conversationId, next)
+    void api.chatSetFastMode(conversationId, next)
   }
 
   return <FastModeChip enabled={enabled} onToggle={toggle} />

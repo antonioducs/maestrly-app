@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Bug, Eraser, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { Button } from '@/components/ui/button'
 import { useReorder } from '@/components/useReorder'
 
@@ -26,12 +28,30 @@ const EMPTY_BROWSER: BrowserState = {
   devtoolsOpen: false,
 }
 
-export function BrowserChrome({ convId }: { convId: string | null }) {
+/**
+ * The tabs and address bar of a conversation's browser. `convId` is the conversation's id on the host the chrome
+ * renders for; a remote host's browser has no DevTools here.
+ */
+export function BrowserChrome({
+  convId,
+  addressRef,
+}: {
+  convId: string | null
+  addressRef?: React.Ref<HTMLInputElement>
+}) {
   const { t: tr } = useTranslation('ui')
+  const api = useHostApi()
+  const remote = useHostInfo().remote
   const [bstate, setBstate] = useState<BrowserState>(EMPTY_BROWSER)
   const [urlInput, setUrlInput] = useState('')
+  // What the person types stays until they submit it or leave the field: the page's own events (a load finishing, a
+  // remote host's state arriving late) do not replace it.
+  const editing = useRef(false)
+  const showUrl = (url: string): void => {
+    if (!editing.current) setUrlInput(url)
+  }
   const activeTab = bstate.tabs.find((t) => t.id === bstate.activeId)
-  const browserReorder = useReorder((f, t) => convId && window.api.drawerReorderTab(convId, f, t))
+  const browserReorder = useReorder((f, t) => convId && api.drawerReorderTab(convId, f, t))
 
   const [cacheCleared, setCacheCleared] = useState(false)
   const cacheTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -39,7 +59,7 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
 
   const clearCache = async () => {
     if (!convId) return
-    await window.api.drawerClearCache(convId)
+    await api.drawerClearCache(convId)
     setCacheCleared(true)
     clearTimeout(cacheTimer.current)
     cacheTimer.current = setTimeout(() => setCacheCleared(false), 1500)
@@ -48,35 +68,37 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
   useEffect(() => {
     if (!convId) return
     let alive = true
-    void window.api.getBrowserState(convId).then((s) => {
+    void api.getBrowserState(convId).then((s) => {
       if (!alive || s.convId !== convId) return
       setBstate(s)
       const act = s.tabs.find((t) => t.id === s.activeId)
-      setUrlInput(act?.url ?? '')
+      showUrl(act?.url ?? '')
     })
     return () => {
       alive = false
     }
-  }, [convId])
+  }, [convId, api])
 
   useEffect(() => {
-    return window.api.onBrowserState((s) => {
+    return api.onBrowserState((s) => {
       if (s.convId !== convId) return
       setBstate(s)
       const act = s.tabs.find((t) => t.id === s.activeId)
-      if (act) setUrlInput(act.url)
+      if (act) showUrl(act.url)
     })
-  }, [convId])
+  }, [convId, api])
 
   useEffect(() => {
     setBstate(EMPTY_BROWSER)
+    editing.current = false
     setUrlInput('')
   }, [convId])
 
   const submitUrl = (e: React.FormEvent) => {
     e.preventDefault()
+    editing.current = false
     if (convId) {
-      window.api.drawerNavigate(convId, urlInput)
+      api.drawerNavigate(convId, urlInput)
     }
   }
 
@@ -87,7 +109,7 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
           <div
             key={t.id}
             {...browserReorder.props(i)}
-            onClick={() => convId && window.api.drawerSwitchTab(convId, t.id)}
+            onClick={() => convId && api.drawerSwitchTab(convId, t.id)}
             className={cn(
               'group flex max-w-40 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs',
               t.id === bstate.activeId ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/50',
@@ -99,7 +121,7 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
               className="size-3 shrink-0 opacity-0 hover:text-destructive group-hover:opacity-60"
               onClick={(e) => {
                 e.stopPropagation()
-                if (convId) window.api.drawerCloseTab(convId, t.id)
+                if (convId) api.drawerCloseTab(convId, t.id)
               }}
             />
           </div>
@@ -108,7 +130,7 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
           variant="ghost"
           size="icon"
           className="size-6 shrink-0"
-          onClick={() => convId && window.api.drawerNewTab(convId)}
+          onClick={() => convId && api.drawerNewTab(convId)}
           title={tr('browserChrome.newTab')}
         >
           <Plus className="size-3.5" />
@@ -120,7 +142,7 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
           size="icon"
           className="size-7"
           disabled={!bstate.canGoBack}
-          onClick={() => convId && window.api.drawerBack(convId)}
+          onClick={() => convId && api.drawerBack(convId)}
         >
           <ArrowLeft className="size-4" />
         </Button>
@@ -129,22 +151,24 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
           size="icon"
           className="size-7"
           disabled={!bstate.canGoForward}
-          onClick={() => convId && window.api.drawerForward(convId)}
+          onClick={() => convId && api.drawerForward(convId)}
         >
           <ArrowRight className="size-4" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={() => convId && window.api.drawerReload(convId)}
-        >
+        <Button variant="ghost" size="icon" className="size-7" onClick={() => convId && api.drawerReload(convId)}>
           <RotateCw className={cn('size-4', activeTab?.loading && 'animate-spin')} />
         </Button>
         <form onSubmit={submitUrl} className="flex-1">
           <input
+            ref={addressRef}
             value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
+            onChange={(e) => {
+              editing.current = true
+              setUrlInput(e.target.value)
+            }}
+            onBlur={() => {
+              editing.current = false
+            }}
             placeholder={tr('browserChrome.urlPlaceholder')}
             className="h-7 w-full rounded-md border border-input bg-transparent px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
           />
@@ -160,21 +184,23 @@ export function BrowserChrome({ convId }: { convId: string | null }) {
             {cacheCleared ? <Check className="size-4 text-emerald-400" /> : <Eraser className="size-4" />}
           </Button>
         </HoverTip>
-        <HoverTip label={tr('browserChrome.toggleDevtools')} align="right">
-          <Button
-            variant={bstate.devtoolsOpen ? 'secondary' : 'ghost'}
-            size="icon"
-            className="size-7"
-            onClick={() => {
-              if (convId) {
-                window.api.drawerDevTools(convId)
-              }
-            }}
-            aria-label={tr('browserChrome.toggleDevtools')}
-          >
-            <Bug className="size-4" />
-          </Button>
-        </HoverTip>
+        {!remote && (
+          <HoverTip label={tr('browserChrome.toggleDevtools')} align="right">
+            <Button
+              variant={bstate.devtoolsOpen ? 'secondary' : 'ghost'}
+              size="icon"
+              className="size-7"
+              onClick={() => {
+                if (convId) {
+                  api.drawerDevTools(convId)
+                }
+              }}
+              aria-label={tr('browserChrome.toggleDevtools')}
+            >
+              <Bug className="size-4" />
+            </Button>
+          </HoverTip>
+        )}
       </div>
     </>
   )

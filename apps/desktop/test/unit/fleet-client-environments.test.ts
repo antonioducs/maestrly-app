@@ -84,7 +84,12 @@ import {
   fleetTargetKey,
 } from '../../src/shared/fleet-targets'
 import { fleetReducer, initialFleetState, type FleetState } from '../../src/renderer/lib/fleet/state'
-import { groupBotsByEnvironment } from '../../src/renderer/lib/fleet/selectors'
+import {
+  botEnvironments,
+  groupBotsByEnvironment,
+  isWorkspacesEnvironment,
+  workspacesEnvironment,
+} from '../../src/renderer/lib/fleet/selectors'
 import { memorySegments } from '../../src/renderer/lib/fleet/format'
 import {
   environmentJoinAvailability,
@@ -107,6 +112,7 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
   return {
     id,
     name,
+    kind: 'bots',
     lifecycle: 'running',
     setup: { step: 'ready', error: null, errorMessage: null },
     resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
@@ -863,6 +869,45 @@ describe('environments in the renderer state', () => {
       groups: [],
       ungrouped: [bot('a', { name: 'A' }), bot('b', { name: 'B' })],
     })
+  })
+})
+
+describe('workspaces environment', () => {
+  const host = environment('workspaces', 'Workspaces', { kind: 'workspaces' })
+
+  it('is shown apart from the environments bots run in', () => {
+    const all = [environment('work', 'Work'), host, environment('home', 'Home')]
+    expect(isWorkspacesEnvironment(host)).toBe(true)
+    expect(botEnvironments(all).map((item) => item.id)).toEqual(['work', 'home'])
+    expect(workspacesEnvironment(all)).toBe(host)
+    expect(workspacesEnvironment([environment('work')])).toBeNull()
+    // Bot lists never offer it: not as a group, and not as a place a bot could be listed under.
+    const grouped = groupBotsByEnvironment(all, [bot('coder', { environmentId: 'work' })])
+    expect(grouped.groups.map((group) => group.environment.id)).toEqual(['home', 'work'])
+  })
+
+  it('is created as one environment of its own kind, on a server that can host it', async () => {
+    const { mutate } = register()
+    features.list = ['environments']
+    expect(() => mutate('fleet:createWorkspaces')).toThrow('Update the server to run workspaces on it.')
+    expect(mocks.call).not.toHaveBeenCalled()
+
+    features.list = ['environments', 'workspaces-host']
+    mocks.call.mockResolvedValueOnce(host)
+    expect(await mutate('fleet:createWorkspaces')).toBe(host)
+    expect(calls()).toEqual([
+      [
+        'environmentsCreate',
+        { body: { name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces', idempotencyKey: KEY } },
+      ],
+    ])
+  })
+
+  it('reaches its IPC channel from the preload', async () => {
+    const invoke = vi.spyOn(ipcRenderer, 'invoke').mockResolvedValue(host)
+    expect(await fleetApi.fleetCreateWorkspaces()).toBe(host)
+    expect(invoke).toHaveBeenCalledWith('fleet:createWorkspaces')
+    invoke.mockRestore()
   })
 })
 

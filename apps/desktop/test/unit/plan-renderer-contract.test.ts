@@ -16,8 +16,8 @@ describe('plan decision failure in the renderer', () => {
     const host = source('src/renderer/panel.tsx')
     const panel = source('src/renderer/components/PlanPanel.tsx')
 
-    expect(host).toContain('onDecide={(d) => window.api.decidePlan(conv, d)}')
-    expect(host).not.toContain('onDecide={(d) => void window.api.decidePlan(conv, d)}')
+    expect(host).toContain('onDecide={(d) => api.decidePlan(conv, d)}')
+    expect(host).not.toContain('onDecide={(d) => void api.decidePlan(conv, d)}')
     expect(panel).toContain('setBusy(false)')
     expect(panel).toContain("t('panel.planDecisionFailed', { error: decisionError })")
   })
@@ -57,7 +57,7 @@ describe('plan decision failure in the renderer', () => {
     expect(dialog).toContain('<FastModeChip')
     expect(dialog).not.toContain('<select')
     // Starts from the source settings without writing them back.
-    expect(dialog).toContain('window.api.chatGetSelection(sourceConversationId)')
+    expect(dialog).toContain('api.chatGetSelection(sourceConversationId)')
     expect(dialog).not.toMatch(/chatSet(Selection|Reasoning|FastMode|Mode)/)
     // Late metadata for a previous model can neither unlock submission nor show stale choices.
     expect(dialog).toContain('metaGeneration.current === generation')
@@ -88,8 +88,8 @@ describe('plan decision failure in the renderer', () => {
     expect(panels).toContain("window.addEventListener('maestrly:open-conversation', listener)")
     expect(view).toContain('<ConversationDispatchBanner conversationId={conversationId} />')
     expect(banner).toContain("status?.phase !== 'start-failed'")
-    expect(banner).toContain('window.api.retryConversationDispatch(conversationId)')
-    expect(banner).toContain('window.api.onConversationDispatchChanged(')
+    expect(banner).toContain('api.retryConversationDispatch(conversationId)')
+    expect(banner).toContain('api.onConversationDispatchChanged(')
   })
 
   it('shows chat-created projects with progress, a sidebar link and the projects folder action', () => {
@@ -101,13 +101,13 @@ describe('plan decision failure in the renderer', () => {
 
     expect(list).toContain("toolPart.toolName === 'create_workspace'")
     expect(card).toContain('parseWorkspaceCreationResult')
-    expect(card).toContain('window.api.onWorkspaceCreationProgress(')
-    expect(card).toContain('window.api.pickProjectsDirectory()')
+    expect(card).toContain('api.onWorkspaceCreationProgress(')
+    expect(card).toContain('api.pickProjectsDirectory()')
     expect(card).toContain("new CustomEvent('maestrly:focus-workspace'")
     expect(card).not.toMatch(/<select\b/)
     expect(app).toContain("window.addEventListener('maestrly:focus-workspace', focus)")
-    expect(app).toContain('window.api.onWorkspacesChanged(')
+    expect(app).toContain('api.onWorkspacesChanged(')
     expect(settings).toContain('<ProjectsDirectorySection t={t} />')
-    expect(dialog).toContain('window.api\n      .getProjectsDirectory()')
+    expect(dialog).toContain('api\n      .getProjectsDirectory()')
   })
 })

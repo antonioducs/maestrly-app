@@ -1,4 +1,3 @@
-import { PERSONAL_MEMORY_SPACE_ID } from '../../shared/memory'
 /** Coordinate mutually exclusive project panels, settings, and onboarding. */
 import {
   useCallback,
@@ -12,9 +11,10 @@ import {
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import { requestMainNavigation } from './main-navigation'
 import type { SettingsSection } from '@/components/settings/nav'
+import { hostApi } from '@/lib/hosts/host-context'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
+import { memoryKeyFor, memoryTargetOf, type OpenMemoryRequest, personalMemoryKey } from './memory-target'
 import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
-
-export type MemoryTarget = { kind: 'personal' } | { kind: 'workspace'; workspaceId: string }
 
 export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
@@ -29,10 +29,12 @@ export type FleetView =
   | { kind: 'memory' }
 
 type UseMainPanelsParams = {
+  /** Chats and workspaces of every host, keyed for the window: links to a conversation or its memory find it here. */
   standaloneConversations: Conversation[]
   workspaces: WorkspaceWithConversations[]
   setActive: Dispatch<SetStateAction<Conversation | null>>
   refreshWorkspaces: () => Promise<WorkspaceWithConversations[]>
+  hostId?: HostId
 }
 
 export function useMainPanels({
@@ -40,7 +42,9 @@ export function useMainPanels({
   standaloneConversations,
   setActive,
   refreshWorkspaces,
+  hostId = LOCAL_HOST_ID,
 }: UseMainPanelsParams) {
+  const api = hostApi(hostId)
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
   const [focusMemoryRequest, setFocusMemoryRequest] = useState(0)
@@ -62,17 +66,10 @@ export function useMainPanels({
 
   useEffect(() => {
     const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string; personal?: boolean }>).detail
+      const detail = (event as CustomEvent<OpenMemoryRequest>).detail
       if (!detail) return
-      const workspace = workspaces.find((item) =>
-        item.conversations.some((conversation) => conversation.id === detail.conversationId)
-      )
-      const personal =
-        detail.personal ||
-        standaloneConversations.some(
-          (conversation) => conversation.id === detail.conversationId && !conversation.botOrigin
-        )
-      if (!workspace && !personal) return
+      const key = memoryKeyFor(detail, workspaces, standaloneConversations)
+      if (!key) return
       setProjectNotesWs(null)
       setFleetView(null)
       setCreateBot(false)
@@ -81,7 +78,7 @@ export function useMainPanels({
       setOnboardingOpen(false)
       setFocusMemoryId(detail.memoryId)
       setFocusMemoryRequest((value) => value + 1)
-      setProjectMemoryWs(personal ? PERSONAL_MEMORY_SPACE_ID : workspace!.id)
+      setProjectMemoryWs(key)
     }
     window.addEventListener('maestrly:open-memory', open)
     return () => window.removeEventListener('maestrly:open-memory', open)
@@ -111,6 +108,12 @@ export function useMainPanels({
     return () => window.removeEventListener('maestrly:open-conversation', listener)
   }, [refreshWorkspaces, setActive, workspaces, standaloneConversations])
 
+  /** Shows the personal memory of another host in the open memory center. */
+  const showPersonalMemoryOf = useCallback((memoryHostId: HostId) => {
+    setFocusMemoryId(undefined)
+    setProjectMemoryWs(personalMemoryKey(memoryHostId))
+  }, [])
+
   const mainOverride =
     projectNotesWs ||
     projectMemoryWs ||
@@ -122,7 +125,7 @@ export function useMainPanels({
 
   useEffect(
     () =>
-      window.api.onConversationOpen(async ({ conversation, focus }) => {
+      api.onConversationOpen(async ({ conversation, focus }) => {
         await refreshWorkspaces()
         if (!focus) return
         requestMainNavigation(() => {
@@ -136,7 +139,7 @@ export function useMainPanels({
           setActive(conversation)
         })
       }),
-    [refreshWorkspaces, setActive]
+    [refreshWorkspaces, setActive, api]
   )
 
   const handleCreated = useCallback(
@@ -266,12 +269,8 @@ export function useMainPanels({
     projectNotesWs,
     setProjectNotesWs,
     projectMemoryWs,
-    memoryTarget:
-      projectMemoryWs === PERSONAL_MEMORY_SPACE_ID
-        ? ({ kind: 'personal' } as MemoryTarget)
-        : projectMemoryWs
-          ? ({ kind: 'workspace', workspaceId: projectMemoryWs } as MemoryTarget)
-          : null,
+    memoryTarget: memoryTargetOf(projectMemoryWs),
+    showPersonalMemoryOf,
     focusMemoryId,
     focusMemoryRequest,
     setProjectMemoryWs,

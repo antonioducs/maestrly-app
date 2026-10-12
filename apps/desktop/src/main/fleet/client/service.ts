@@ -28,6 +28,7 @@ import {
   type TokenPersistence,
 } from './settings'
 import { FleetScreenBridge } from './screen-bridge'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 import { saveFleetFile } from './downloads'
 import { findFleetDownload, fleetDownloadPath, rememberFleetDownload } from './download-history'
 
@@ -69,6 +70,23 @@ export class FleetClientService {
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
+  private readonly listeners = new Set<() => void>()
+
+  /** Calls back after the connection or what is known of the server changed; returns the function that stops it. */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => void this.listeners.delete(listener)
+  }
+
+  private changed(): void {
+    for (const listener of [...this.listeners]) {
+      try {
+        listener()
+      } catch {
+        /* A listener's failure must not stop the fleet client. */
+      }
+    }
+  }
   /**
    * Answers bots' desktop calls and keeps this computer's links to them; set by the main process before the client
    * starts. Without it this computer never says it takes desktop calls, so it is offline for every bot.
@@ -81,7 +99,7 @@ export class FleetClientService {
   } | null = null
 
   start(): void {
-    if (process.env.MAESTRLY_BOT_MODE === '1') return
+    if (isHeadlessInstance()) return
     const settings = readFleetSettings()
     if (settings.url && settings.token) {
       const allowed = isAllowedFleetUrl(settings.url)
@@ -115,6 +133,7 @@ export class FleetClientService {
     }
     this.connection = { ...this.connection, ...patch }
     broadcast('fleet:connection', this.connection)
+    this.changed()
     if (patch.state || patch.features) this.onArtifactEvent?.({ type: 'changed' })
   }
 
@@ -127,6 +146,12 @@ export class FleetClientService {
   /** Whether the connected gateway advertises a feature (`/v1/meta`), refreshed on every reconnect. */
   hasFeature(feature: string): boolean {
     return this.connection.features.includes(feature)
+  }
+
+  /** The paired gateway's origin and this device's headers, for requests that stream: null while unpaired. */
+  hostFilesAccess(): { origin: string; headers: Record<string, string> } | null {
+    const api = this.api
+    return api ? { origin: api.origin, headers: api.headers() } : null
   }
 
   private requireApi(): FleetApiClient {
@@ -346,6 +371,7 @@ export class FleetClientService {
       }
     }
     broadcast('fleet:event', event)
+    this.changed()
   }
 
   private dropEnvironment(environmentId: string): void {

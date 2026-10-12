@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
 import type { Conversation } from '../../preload'
 import type { Tab as DrawerTab } from '@/components/Drawer'
 import { defaultDrawerShortcut, formatAccelerator } from '../../shared/shortcuts'
@@ -12,7 +21,11 @@ import {
   reorderVisibleTabs,
   sanitizeOpenTabs,
   tabAvailableInContext,
+  type RemoteToolHosts,
 } from '@/lib/drawer-tabs'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import { hostTarget } from '@/lib/hosts/shell-keys'
 
 const MIN_DRAWER = 360
 
@@ -27,6 +40,7 @@ type UseDrawerStateParams = {
 }
 
 export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerStateParams) {
+  const api = useHostApi()
   const shortcutOs = window.api.platformInfo.os
   const [drawerShortcutLabel, setDrawerShortcutLabel] = useState(() =>
     formatAccelerator(defaultDrawerShortcut(shortcutOs), shortcutOs)
@@ -45,21 +59,30 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const [chatGptWebEnabled, setChatGptWebEnabled] = useState(false)
   const chatGptWebEnabledRef = useRef(false)
   chatGptWebEnabledRef.current = chatGptWebEnabled
+  // A remote host that streams its browser or serves its editor offers that tab for its conversations.
+  const hosts = useHosts()
+  const remoteTools = useMemo<RemoteToolHosts>(() => {
+    const browsers = new Set(hosts.filter((host) => host.remote && host.browser).map((host) => host.id))
+    const editors = new Set(hosts.filter((host) => host.remote && host.editor).map((host) => host.id))
+    return (hostId, tab) => (tab === 'browser' ? browsers : editors).has(hostId)
+  }, [hosts])
+  const remoteToolsRef = useRef(remoteTools)
+  remoteToolsRef.current = remoteTools
   useEffect(() => {
     let alive = true
     const apply = (status: { enabled: boolean }) => {
       if (alive) setChatGptWebEnabled(status.enabled)
     }
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptWebEnabled(false))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [api])
 
   const [drawerOpenByConv, setDrawerOpenByConv] = useState<Record<string, boolean>>({})
   const drawerOpen = active ? (drawerOpenByConv[active.id] ?? false) : false
@@ -83,15 +106,17 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const drawerTabRef = useRef(drawerTabByConv)
   drawerTabRef.current = drawerTabByConv
 
+  // A conversation's drawer tabs are kept by its host, under the host's own id.
   const persistOpenTabs = useCallback((id: string, tabs: DrawerTab[], activeTab: DrawerTab | null) => {
-    window.api.setConvOpenTabs(id, tabs, activeTab)
+    const target = hostTarget(id)
+    target.api.setConvOpenTabs(target.id, tabs, activeTab)
   }, [])
 
   /** Adds the tab to the bar when needed, activates it and persists the set. */
   const openDrawerTab = useCallback(
     (id: string, t: DrawerTab) => {
       const conv = activeRef.current?.id === id ? activeRef.current : { id }
-      if (!tabAvailableInContext(t, conv, chatGptWebEnabledRef.current)) return
+      if (!tabAvailableInContext(t, conv, chatGptWebEnabledRef.current, remoteToolsRef.current)) return
       const list = openTabInList(openTabsRef.current[id] ?? [], t)
       if (list !== openTabsRef.current[id]) {
         openTabsRef.current = { ...openTabsRef.current, [id]: list }
@@ -155,7 +180,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
       let activeNext = drawerTabRef.current
       for (const { conv, openTabs, activeTab } of entries) {
         if (tabsNext[conv.id]) continue
-        const list = sanitizeOpenTabs(openTabs, conv, chatGptWebEnabledRef.current)
+        const list = sanitizeOpenTabs(openTabs, conv, chatGptWebEnabledRef.current, remoteToolsRef.current)
         if (list.length === 0) continue
         if (tabsNext === openTabsRef.current) tabsNext = { ...tabsNext }
         tabsNext[conv.id] = list
@@ -178,10 +203,10 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
 
   const [mainTabOrderByConv, setMainTabOrderByConv] = useState<Record<string, DrawerTab[]>>({})
   const mainTabOrder = active
-    ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, chatGptWebEnabled)
+    ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, chatGptWebEnabled, remoteTools)
     : mainTabsForFeatures(DEFAULT_MAIN_ORDER, chatGptWebEnabled)
   const openTabs: DrawerTab[] = active
-    ? (openTabsByConv[active.id] ?? []).filter((t) => tabAvailableInContext(t, active, chatGptWebEnabled))
+    ? (openTabsByConv[active.id] ?? []).filter((t) => tabAvailableInContext(t, active, chatGptWebEnabled, remoteTools))
     : []
   const requestedDrawerTab = active ? drawerTabByConv[active.id] : undefined
   const drawerTab: DrawerTab | null =
@@ -193,10 +218,11 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     const id = activeRef.current?.id
     if (!id) return
     const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
-    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current)
+    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current, remoteToolsRef.current)
     const next = reorderVisibleTabs(full, visible, from, to)
     if (next === full) return
-    window.api.setConvMainTabOrder(id, next)
+    const target = hostTarget(id)
+    target.api.setConvMainTabOrder(target.id, next)
     setMainTabOrderByConv((prev) => ({ ...prev, [id]: next }))
   }, [])
 
@@ -238,28 +264,28 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   }, [])
 
   useEffect(() => {
-    const offFocus = window.api.onDrawerTerminalFocus(({ convId }) => {
+    const offFocus = api.onDrawerTerminalFocus(({ convId }) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'terminal')
     })
     return () => {
       offFocus()
     }
-  }, [openDrawerTab])
+  }, [openDrawerTab, api])
 
   useEffect(() => {
-    return window.api.onDrawerBrowserFocus(({ convId }) => {
+    return api.onDrawerBrowserFocus(({ convId }) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'browser')
     })
-  }, [openDrawerTab])
+  }, [openDrawerTab, api])
 
   useEffect(() => {
-    return window.api.onChatGptWebOpen((convId) => {
+    return api.onChatGptWebOpen((convId) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'chatgpt')
     })
-  }, [openDrawerTab])
+  }, [openDrawerTab, api])
 
   useEffect(() => {
     return window.api.onDebugEnsureVscode((convId) => {

@@ -1,4 +1,5 @@
 import { getMainWebContents } from '../../window-ipc'
+import { sendToRemoteMains } from '../../remote-ui-targets'
 import { classifyCodexQuotaFailureWithRateLimits } from '../codex-subscription/quota-error'
 import { subscriptionAccountId } from '../catalog'
 import { getCodexSubscriptionManager } from '../codex-subscription/manager'
@@ -190,10 +191,13 @@ function exhaustionSource(
 
 export function emitSubscriptionFailoverEvent(conversationId: string, info: CodexEphemeralFailoverTransition): void {
   failoverDiag('transition', { conversationId, ...info })
+  const channel = `chat:subscription-failover:${conversationId}`
+  // On a host, the main renderer of every connected computer shows the transition too.
+  sendToRemoteMains(channel, info)
   const wc = getMainWebContents()
   if (!wc || wc.isDestroyed()) return
   try {
-    wc.send(`chat:subscription-failover:${conversationId}`, info)
+    wc.send(channel, info)
   } catch {
     /* renderer may have gone away */
   }

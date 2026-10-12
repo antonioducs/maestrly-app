@@ -7,6 +7,11 @@ import { dictationLanguage, type AsrSupport, type DictationLanguageMode } from '
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
 import { MIC_AUTO_SEND_KEY, MIC_LANGUAGE_KEY, readAutoSend, readLanguageMode } from '@/lib/dictation'
 import { DictationModelCard } from './DictationModelCard'
+import { hostApi } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
+
+// Dictation runs on this computer, where the microphone is, whichever host the chat belongs to.
+const localApi = hostApi(LOCAL_HOST_ID)
 
 type Status = 'idle' | 'recording' | 'transcribing' | 'silent' | 'error'
 
@@ -112,11 +117,11 @@ export function ChatMicButton({
       .chatAsrSupport()
       .then((next) => alive && setSupport(next))
       .catch(() => {})
-    void window.api
+    void localApi
       .runtimeAssetStatus('whisper-model')
       .then((next) => alive && setModel(next))
       .catch(() => {})
-    const unsubscribe = window.api.onRuntimeAssetChanged((info) => {
+    const unsubscribe = localApi.onRuntimeAssetChanged((info) => {
       if (info.id === 'whisper-model') setModel(info)
     })
     return () => {

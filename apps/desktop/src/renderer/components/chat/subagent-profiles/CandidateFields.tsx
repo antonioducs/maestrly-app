@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { SearchSelect } from '@/components/ui/search-select'
 import {
   changeSubagentProfileModel,
@@ -43,6 +44,7 @@ export function CandidateFields({
   onChange: (candidate: SubagentProfileCandidate) => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [models, setModels] = useState<string[]>([])
   const [modelCatalogStatus, setModelCatalogStatus] = useState<'loading' | 'available' | 'unavailable'>('loading')
   const [modelMeta, setModelMeta] = useState<SubagentProfileModelMetaResult | null>(null)
@@ -56,7 +58,7 @@ export function CandidateFields({
       return
     }
 
-    void window.api
+    void api
       .chatSubagentProfilesModelCatalog(candidate.providerId)
       .then((catalog) => {
         if (!alive) return
@@ -70,21 +72,21 @@ export function CandidateFields({
     return () => {
       alive = false
     }
-  }, [candidate.providerId, catalogRevision, config])
+  }, [api, candidate.providerId, catalogRevision, config])
 
   useEffect(() => {
     let alive = true
     setModelMeta(null)
     if (!candidate.providerId || !candidate.modelId) return
 
-    void window.api
+    void api
       .chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId)
       .then((value) => alive && setModelMeta(value))
       .catch(() => alive && setModelMeta({ status: 'unavailable', meta: null }))
     return () => {
       alive = false
     }
-  }, [candidate.providerId, candidate.modelId, catalogRevision, config])
+  }, [api, candidate.providerId, candidate.modelId, catalogRevision, config])
 
   useEffect(() => {
     if (!modelMeta || candidate.fastMode !== true || modelMeta.meta?.fastModeCapability === true) return

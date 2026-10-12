@@ -6,6 +6,7 @@ import {
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
+  FLEET_WORKSPACES_HOST_FEATURE,
   type FleetActivityEntry,
   type FleetArchivedBot,
   type FleetArchivedEnvironment,
@@ -14,6 +15,7 @@ import {
   type FleetCompactionConfig,
   type FleetCreateBotRequest,
   type FleetEnvironment,
+  type FleetEnvironmentKind,
   type FleetEnvironmentSetup,
   type FleetRuntimeInfo,
   type FleetErrorCode,
@@ -39,6 +41,10 @@ const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
 const environmentLabel = 'org.maestrly.fleet.environment-id'
 const egressLabel = 'org.maestrly.fleet.egress'
+/** The host directory a workspaces environment's container was created with; empty when none. */
+const workspacesRootLabel = 'org.maestrly.fleet.workspaces-root'
+/** Shown on a workspaces environment whose container runs an image from before workspaces hosts. */
+const WORKSPACES_UNSUPPORTED = 'This bot image cannot host workspaces. Update the server.'
 const runtimeUpdatesLabel = 'org.maestrly.fleet.runtime-updates'
 /** The label of containers created before environments: their bot's id, which their environment took over. */
 const legacyBotLabel = 'org.maestrly.fleet.bot-id'
@@ -105,6 +111,8 @@ export class Lifecycle {
       additionalRuntimes?: FleetRuntimeInfo[]
     }
   >()
+  /** Whether each workspaces environment had chat turns running at its last health check. */
+  private readonly hostBusy = new Map<string, boolean>()
   /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
   private readonly pendingSeen = new Map<string, Set<string>>()
@@ -121,6 +129,8 @@ export class Lifecycle {
   private readonly logger = new Logger()
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   onCloseEnvironmentScreens: (environmentId: string, code: number) => void = () => {}
+  /** Closes the bridges computers hold to a workspaces environment: its container stops or goes away. */
+  onCloseEnvironmentBridges: (environmentId: string) => void = () => {}
   controlCount: (id: string) => number = () => 0
   artifactsEnabled: () => boolean = () => false
   onReady: (id: string) => void = () => {}
@@ -481,6 +491,7 @@ export class Lifecycle {
     return {
       id: environment.id,
       name: environment.name,
+      kind: environment.kind,
       lifecycle: environment.lifecycle,
       setup: environment.setup,
       resources: {
@@ -508,7 +519,7 @@ export class Lifecycle {
    * What an environment's Maestrly can do. One from before environments names nothing at its health check: its bot's
    * status tells instead (as it does for configuration from the Mac), and never that it hosts several bots.
    */
-  private environmentCapabilities(id: string): string[] {
+  environmentCapabilities(id: string): string[] {
     const instance = this.instances.get(id)
     if (!instance || instance.capabilities.includes(FLEET_ENVIRONMENTS_FEATURE)) return instance?.capabilities ?? []
     const bot = this.singleBot(id)
@@ -570,13 +581,19 @@ export class Lifecycle {
       tint: bot.tint,
     }
   }
-  private insertEnvironment(name: string, memoryLimitBytes: number | null, at: string): string {
+  private insertEnvironment(
+    name: string,
+    memoryLimitBytes: number | null,
+    at: string,
+    kind: FleetEnvironmentKind = 'bots'
+  ): string {
     const taken = [...this.store.listEnvironments(), ...this.store.archivedEnvironments()].map((item) => item.id)
     const id = deriveBotId(name, taken)
     this.store.insertEnvironment(
       {
         id,
         name,
+        kind,
         lifecycle: 'creating',
         setup: environmentSetup('container'),
         containerName: environmentContainerName(id),
@@ -592,9 +609,25 @@ export class Lifecycle {
     )
     return id
   }
-  /** Creates an environment with no bot yet: its container, then its desktop. */
-  createEnvironment(input: { name: string; memoryLimitBytes: number | null }): FleetEnvironment {
-    const id = this.insertEnvironment(input.name, input.memoryLimitBytes, now())
+  /** A server hosts workspaces in one environment: its owner separates work by using separate servers. */
+  private requireNoWorkspacesEnvironment() {
+    if (this.store.listEnvironments().some((environment) => environment.kind === 'workspaces'))
+      throw new GatewayError('CONFLICT', 'This server already hosts workspaces.')
+  }
+  /**
+   * Creates an environment with no bot yet: its container, then its desktop. A `workspaces` environment never gets
+   * bots: it runs Maestrly in server mode for the owner's chats and workspaces.
+   */
+  createEnvironment(input: {
+    name: string
+    memoryLimitBytes: number | null
+    kind?: FleetEnvironmentKind
+  }): FleetEnvironment {
+    const kind = input.kind ?? 'bots'
+    const id = this.store.transaction(() => {
+      if (kind === 'workspaces') this.requireNoWorkspacesEnvironment()
+      return this.insertEnvironment(input.name, input.memoryLimitBytes, now(), kind)
+    })
     this.recordEnvironmentActivity(id, 'environment_created')
     this.emitEnvironment(id, false)
     this.queueProvision(id, false)
@@ -645,6 +678,7 @@ export class Lifecycle {
       this.validatePeers(id, input.talksTo)
       let target: string
       if (input.environmentId !== undefined) {
+        // The store refuses a bot in a workspaces environment.
         target = this.requireEnvironment(input.environmentId).id
         this.requireSingleBotRoom(target, id)
       } else
@@ -801,8 +835,12 @@ export class Lifecycle {
       single = this.singleBot(environmentId)
     const sole = active.length === 1 && single?.id === active[0].id ? single : null
     const soleToken = sole ? this.store.botGatewaySecrets(sole.id)?.gatewayToken : undefined
+    const workspaces = environment.kind === 'workspaces'
+    const root = workspaces ? this.config.workspacesRoot : null
     const env = {
-      [FLEET_BOT_ENV.mode]: '1',
+      // A workspaces environment runs Maestrly in server mode; the image's entrypoint then leaves bot mode unset.
+      [workspaces ? FLEET_BOT_ENV.serverMode : FLEET_BOT_ENV.mode]: '1',
+      ...(root ? { [FLEET_BOT_ENV.workspacesRoot]: root } : {}),
       [FLEET_BOT_ENV.environmentId]: environmentId,
       [FLEET_BOT_ENV.controlHost]: '0.0.0.0',
       [FLEET_BOT_ENV.controlPort]: String(FLEET_PORTS.instanceControl),
@@ -825,10 +863,13 @@ export class Lifecycle {
         [environmentLabel]: environmentId,
         [egressLabel]: this.config.botEgress,
         [runtimeUpdatesLabel]: this.config.botRuntimeUpdates,
+        ...(workspaces ? { [workspacesRootLabel]: root ?? '' } : {}),
       },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
       network: this.config.network,
       volume: environment.volumeName,
+      // The same path inside as on the host, so paths in logs, in the host's shell and in Maestrly agree.
+      ...(root ? { binds: [{ source: root, target: root }] } : {}),
       memory: environment.memoryLimitBytes ?? this.config.botMemory,
       shmSize: this.config.botShm,
       securityOpt: this.config.botSecurityOpt,
@@ -860,7 +901,11 @@ export class Lifecycle {
     const egressChanged = (container.labels[egressLabel] ?? 'open') !== this.config.botEgress
     // Containers from before this setting update on their own, as `auto` does.
     const runtimeUpdatesChanged = (container.labels[runtimeUpdatesLabel] ?? 'auto') !== this.config.botRuntimeUpdates
-    if (imageId && (imageChanged || egressChanged || runtimeUpdatesChanged)) {
+    // A workspaces environment is created with its host directory: a server that gained or moved one replaces it.
+    const rootChanged =
+      this.store.getEnvironment(environmentId)?.kind === 'workspaces' &&
+      (container.labels[workspacesRootLabel] ?? '') !== (this.config.workspacesRoot ?? '')
+    if (imageId && (imageChanged || egressChanged || runtimeUpdatesChanged || rootChanged)) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
       this.instances.delete(environmentId)
@@ -905,6 +950,11 @@ export class Lifecycle {
       await sleep(Math.min(1000, Math.max(1, deadline - Date.now())))
     }
     if (!health) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop did not become ready')
+    if (
+      this.store.getEnvironment(environmentId)?.kind === 'workspaces' &&
+      !health.capabilities.includes(FLEET_WORKSPACES_HOST_FEATURE)
+    )
+      throw new GatewayError('INSTANCE_UNAVAILABLE', WORKSPACES_UNSUPPORTED)
     this.instances.set(environmentId, health)
     // The desktop answers: bots still to be installed move on to their profile step.
     for (const bot of this.store.botsOfEnvironment(environmentId))
@@ -1125,6 +1175,7 @@ export class Lifecycle {
     this.stopLink(environmentId)
     this.releaseBots(environmentId, 4002)
     this.onCloseEnvironmentScreens(environmentId, 4002)
+    this.onCloseEnvironmentBridges(environmentId)
     const code = failureCode(error)
     this.updateEnvironment(environmentId, {
       // Starting it again recreates its container on the configured image anyway.
@@ -1133,7 +1184,13 @@ export class Lifecycle {
       setup: {
         step: 'failed',
         error: code,
-        errorMessage: code === 'IMAGE_MISSING' ? 'Bot image missing' : 'Bot startup failed',
+        // Fixed texts only: what a container or Docker answered is not shown to the owner.
+        errorMessage:
+          code === 'IMAGE_MISSING'
+            ? 'Bot image missing'
+            : error instanceof GatewayError && error.message === WORKSPACES_UNSUPPORTED
+              ? WORKSPACES_UNSUPPORTED
+              : 'Bot startup failed',
       },
     })
     for (const bot of this.store.botsOfEnvironment(environmentId)) this.activity(bot.id, 'bot_failed')
@@ -1175,6 +1232,7 @@ export class Lifecycle {
     this.stopLink(id)
     this.releaseBots(id, 4002)
     this.onCloseEnvironmentScreens(id, 4002)
+    this.onCloseEnvironmentBridges(id)
     const container = await this.container(environment)
     if (container) await this.docker.stop(container.id)
     this.resources.delete(id)
@@ -1196,6 +1254,7 @@ export class Lifecycle {
     this.stopLink(id)
     this.releaseBots(id, 4002)
     this.onCloseEnvironmentScreens(id, 4002)
+    this.onCloseEnvironmentBridges(id)
     try {
       if (!(await this.startWithCurrentImage(id, container, true, via))) this.lifecycleActivity(id, via, 'restarted')
     } catch (error) {
@@ -1264,22 +1323,38 @@ export class Lifecycle {
     if (environment?.updateRequestedAt && !environment.archivedAt)
       this.updateEnvironment(id, { updateRequestedAt: null })
   }
-  private readyToUpdate(id: string): boolean {
+  /** Whether a scheduled update could apply to the environment at all, busy or not. */
+  private awaitsUpdate(id: string): StoredEnvironment | null {
     const environment = this.store.getEnvironment(id)
-    return (
-      !!environment?.updateRequestedAt &&
-      !environment.archivedAt &&
-      environment.lifecycle === 'running' &&
-      this.busyBots(id).length === 0
-    )
+    return environment?.updateRequestedAt && !environment.archivedAt && environment.lifecycle === 'running'
+      ? environment
+      : null
   }
-  /** Applies a waiting update once none of the environment's bots is busy. */
+  /**
+   * Asks a workspaces environment whether chat turns are running. It has no bots whose statuses would tell: its
+   * Maestrly reports it on its health check. An environment that does not answer counts as busy.
+   */
+  private async refreshHostBusy(id: string): Promise<void> {
+    try {
+      this.hostBusy.set(id, (await this.client(id).health()).busy === true)
+    } catch {
+      this.hostBusy.set(id, true)
+    }
+  }
+  private readyToUpdate(id: string): boolean {
+    const environment = this.awaitsUpdate(id)
+    if (!environment) return false
+    return environment.kind === 'workspaces' ? this.hostBusy.get(id) === false : this.busyBots(id).length === 0
+  }
+  /** Applies a waiting update once none of the environment's bots is busy, or no chat of a workspaces host runs. */
   private maybeUpdate(id: string): Promise<void> {
     const running = this.draining.get(id)
     if (running) return running
-    if (!this.readyToUpdate(id)) return Promise.resolve()
+    const workspaces = this.awaitsUpdate(id)?.kind === 'workspaces'
+    if (!workspaces && !this.readyToUpdate(id)) return Promise.resolve()
     const drain = this.exclusive(id, async () => {
       // Checked again with the statuses of this moment: a turn may have started while the lock was taken.
+      if (workspaces) await this.refreshHostBusy(id)
       if (!this.readyToUpdate(id)) return
       this.logger.info('Environment idle; updating', { environmentId: id })
       await this.restartLocked(id, null)
@@ -1385,6 +1460,7 @@ export class Lifecycle {
       this.stopLink(id)
       this.releaseBots(id, 4002)
       this.onCloseEnvironmentScreens(id, 4002)
+      this.onCloseEnvironmentBridges(id)
       if (container) {
         await this.docker.stop(container.id)
         await this.docker.remove(container.id, true)
@@ -1435,6 +1511,7 @@ export class Lifecycle {
       throw new GatewayError('NOT_FOUND', 'Archived environment not found')
     const peers = new Set<string>()
     const botIds = this.store.transaction(() => {
+      if (environment.kind === 'workspaces') this.requireNoWorkspacesEnvironment()
       const restored = this.store.restoreEnvironment(id)
       for (const botId of restored) {
         const talksTo = this.activePeers(this.store.getBot(botId)!)

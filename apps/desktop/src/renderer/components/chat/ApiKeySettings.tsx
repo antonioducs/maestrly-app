@@ -19,6 +19,7 @@ import {
   ArrowUp,
   ArrowDown,
 } from 'lucide-react'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import {
   addFallback,
@@ -173,6 +174,7 @@ function AddProviderForm({
   onCancel: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [name, setName] = useState('')
   const [baseURL, setBaseURL] = useState('')
   const [key, setKey] = useState('')
@@ -199,7 +201,7 @@ function AddProviderForm({
     }
     setBusy(true)
     setError(null)
-    const r = await window.api.chatAddProvider({
+    const r = await api.chatAddProvider({
       name: name.trim(),
       baseURL: baseURL.trim(),
       key: key.trim() || undefined,
@@ -296,6 +298,7 @@ function AddProviderForm({
 
 function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: string; onFilterChanged: () => void }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [open, setOpen] = useState(false)
   const [models, setModels] = useState<string[]>([])
   const [hidden, setHidden] = useState<string[]>([])
@@ -325,7 +328,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
   useEffect(() => {
     let alive = true
     const hiddenRevision = hiddenRevisionRef.current
-    window.api
+    api
       .chatHiddenModels()
       .then((map) => {
         if (alive && hiddenRevision === hiddenRevisionRef.current) applyHidden(map[providerId] ?? [])
@@ -334,7 +337,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
     return () => {
       alive = false
     }
-  }, [applyHidden, providerId])
+  }, [applyHidden, providerId, api])
 
   useEffect(() => {
     if (!open) return
@@ -345,7 +348,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
     setSaveError(false)
     setModels([])
     setQuery('')
-    Promise.all([window.api.chatModels(providerId, false, true), window.api.chatHiddenModels()])
+    Promise.all([api.chatModels(providerId, false, true), api.chatHiddenModels()])
       .then(([all, map]) => {
         if (!alive) return
         setModels(all)
@@ -357,7 +360,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
     return () => {
       alive = false
     }
-  }, [applyHidden, open, providerId])
+  }, [applyHidden, open, providerId, api])
 
   const hiddenSet = new Set(hidden)
   const persist = (update: (current: string[]) => string[]) => {
@@ -371,7 +374,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
     const save = async () => {
       hiddenRevisionRef.current += 1
       try {
-        const result = await window.api.chatSetHiddenModels(providerId, next)
+        const result = await api.chatSetHiddenModels(providerId, next)
         if (!result.ok) throw new Error(result.error ?? 'save-failed')
 
         hiddenRevisionRef.current += 1
@@ -384,7 +387,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
 
         if (!aliveRef.current || saveId !== latestSaveIdRef.current) return
         try {
-          const map = await window.api.chatHiddenModels()
+          const map = await api.chatHiddenModels()
           if (!aliveRef.current || saveId !== latestSaveIdRef.current) return
           hiddenRevisionRef.current += 1
           applyHidden(map[providerId] ?? [])
@@ -508,6 +511,7 @@ function ProviderRow({
   onModelFilterChanged: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const officialOpenAI = isOfficialOpenAIProvider(provider.baseURL)
@@ -516,7 +520,7 @@ function ProviderRow({
   const changeKind = async (k: ChatProviderKind) => {
     if (k === effectiveKind) return
     setBusy(true)
-    await window.api.chatUpdateProvider(provider.id, { kind: k })
+    await api.chatUpdateProvider(provider.id, { kind: k })
     setBusy(false)
     onChanged()
   }
@@ -524,7 +528,7 @@ function ProviderRow({
   const saveKey = async () => {
     if (!value.trim()) return
     setBusy(true)
-    await window.api.chatSetKey(provider.id, value.trim())
+    await api.chatSetKey(provider.id, value.trim())
     setValue('')
     setBusy(false)
     onChanged()
@@ -532,7 +536,7 @@ function ProviderRow({
   const remove = async () => {
     if (!confirm(t('settings.confirmRemoveProvider', { name: provider.name }))) return
     setBusy(true)
-    await window.api.chatRemoveProvider(provider.id)
+    await api.chatRemoveProvider(provider.id)
     setBusy(false)
     onChanged()
   }
@@ -617,6 +621,7 @@ function FailoverRouteEditor({
   onChanged: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const prefix = subscriptionProviderCopy[providerKind].prefix
   const defaultLabel = t(`settings.${prefix}Heading`)
   const initial = routeForPrimary(config.subscriptionFailover.routes, primaryProviderId)
@@ -633,7 +638,7 @@ function FailoverRouteEditor({
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.chatSubscriptionFailoverSetRoute({
+      const result = await api.chatSubscriptionFailoverSetRoute({
         primaryProviderId: next.primaryProviderId,
         enabled: next.enabled,
         fallbackProviderIds: next.fallbackProviderIds,
@@ -774,6 +779,7 @@ function SubscriptionProviderCard({
   onModelFilterChanged: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [status, setStatus] = useState<ChatSubscriptionAuthStatus | null>(null)
   const [loginInstructions, setLoginInstructions] = useState<ChatSubscriptionLoginResult | null>(null)
   const [busy, setBusy] = useState<'refresh' | 'login' | 'logout' | null>(null)
@@ -797,7 +803,7 @@ function SubscriptionProviderCard({
       const request = ++usageRequestRef.current
       setUsageBusy(true)
       try {
-        const next = await window.api.chatSubscriptionUsage(providerKind, force, accountId)
+        const next = await api.chatSubscriptionUsage(providerKind, force, accountId)
         if (request === usageRequestRef.current) setUsage(next)
         return next
       } catch (error) {
@@ -813,14 +819,14 @@ function SubscriptionProviderCard({
         if (request === usageRequestRef.current) setUsageBusy(false)
       }
     },
-    [accountId, providerKind, usageSupported]
+    [accountId, providerKind, usageSupported, api]
   )
 
   const refreshStatus = async (force = false): Promise<ChatSubscriptionAuthStatus | null> => {
     setBusy((current) => current ?? 'refresh')
     setActionError(null)
     try {
-      const next = await window.api.chatSubscriptionStatus(providerKind, force, accountId)
+      const next = await api.chatSubscriptionStatus(providerKind, force, accountId)
       setStatus(next)
 
       onChanged()
@@ -839,7 +845,7 @@ function SubscriptionProviderCard({
 
   useEffect(() => {
     void refreshStatus()
-    return window.api.onChatSubscriptionStatus(providerKind, (next) => {
+    return api.onChatSubscriptionStatus(providerKind, (next) => {
       if ((next.accountId ?? null) !== accountId) return
       setStatus(next)
       setBusy(null)
@@ -855,7 +861,7 @@ function SubscriptionProviderCard({
     })
     // `onChanged` is the stable config refresher owned by ApiKeySettings.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId])
+  }, [accountId, api])
 
   useEffect(() => {
     if (status?.state === 'signed-in' && usageSupported) {
@@ -869,12 +875,12 @@ function SubscriptionProviderCard({
 
   useEffect(() => {
     if (!runtimeId) return
-    void window.api.runtimeAssetStatus(runtimeId).then((next) => {
+    void api.runtimeAssetStatus(runtimeId).then((next) => {
       if (runtimeStateRef.current !== null) return
       runtimeStateRef.current = next.status.state
       setRuntime(next)
     })
-    return window.api.onRuntimeAssetChanged((next) => {
+    return api.onRuntimeAssetChanged((next) => {
       if (next.id !== runtimeId) return
       const previousState = runtimeStateRef.current
       runtimeStateRef.current = next.status.state
@@ -891,7 +897,7 @@ function SubscriptionProviderCard({
         })
       }
     })
-  }, [runtimeId])
+  }, [runtimeId, api])
 
   const login = async () => {
     setBusy('login')
@@ -903,8 +909,8 @@ function SubscriptionProviderCard({
         try {
           const installed =
             runtime?.status.state === 'failed' || runtime?.status.state === 'corrupt'
-              ? await window.api.runtimeAssetRepair(runtimeId)
-              : await window.api.runtimeAssetInstall(runtimeId)
+              ? await api.runtimeAssetRepair(runtimeId)
+              : await api.runtimeAssetInstall(runtimeId)
           runtimeStateRef.current = installed.status.state
           setRuntime(installed)
           if (installed.status.state !== 'ready')
@@ -922,7 +928,7 @@ function SubscriptionProviderCard({
           throw new Error(recovered?.error || t(copyKey('LoginFailed')))
         }
       }
-      const result = await window.api.chatSubscriptionLogin(providerKind, accountId)
+      const result = await api.chatSubscriptionLogin(providerKind, accountId)
       if (!result.ok) {
         if (result.status) setStatus(result.status)
         throw new Error(result.error || t(copyKey('LoginFailed')))
@@ -943,7 +949,7 @@ function SubscriptionProviderCard({
     setBusy('logout')
     setActionError(null)
     try {
-      const result = await window.api.chatSubscriptionLogout(providerKind, accountId)
+      const result = await api.chatSubscriptionLogout(providerKind, accountId)
       if (!result.ok) {
         throw new Error(result.error || t(copyKey('LogoutFailed')))
       }
@@ -973,7 +979,7 @@ function SubscriptionProviderCard({
     setBusy('logout')
     setActionError(null)
     try {
-      const result = await window.api.chatSubscriptionAccountRemove(accountId)
+      const result = await api.chatSubscriptionAccountRemove(accountId)
       if (!result.ok) throw new Error(result.error || t('settings.accountRemoveFailed'))
       onChanged()
     } catch (error) {
@@ -986,7 +992,7 @@ function SubscriptionProviderCard({
   const commitRename = async () => {
     if (accountId && renaming?.trim()) {
       setActionError(null)
-      const result = await window.api.chatSubscriptionAccountRename(accountId, renaming.trim())
+      const result = await api.chatSubscriptionAccountRename(accountId, renaming.trim())
       if (!result.ok) setActionError(result.error || t('settings.accountRenameFailed'))
       onChanged()
     }
@@ -1095,7 +1101,7 @@ function SubscriptionProviderCard({
                   <button
                     type="button"
                     className="text-amber-200 hover:text-white"
-                    onClick={() => void window.api.runtimeAssetCancel(runtime.id)}
+                    onClick={() => void api.runtimeAssetCancel(runtime.id)}
                   >
                     {t('settings.componentCancel')}
                   </button>
@@ -1222,6 +1228,7 @@ function AddSubscriptionAccountForm({
   onCancel: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1229,7 +1236,7 @@ function AddSubscriptionAccountForm({
     if (!label.trim()) return
     setBusy(true)
     setError(null)
-    const r = await window.api.chatSubscriptionAccountAdd({
+    const r = await api.chatSubscriptionAccountAdd({
       kind,
       label: label.trim(),
     })
@@ -1395,6 +1402,7 @@ export function ApiKeySettings({
   backgroundCompactionLocked = false,
 }: ChatSettingsOptions = {}) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const visibleTabs = tabs ? CHAT_SETTINGS_TABS.filter((tab) => tabs.includes(tab.id)) : CHAT_SETTINGS_TABS
   const shown = (id: ChatSettingsTab) => visibleTabs.some((tab) => tab.id === id)
@@ -1403,7 +1411,7 @@ export function ApiKeySettings({
 
   const [modelFilterRevision, setModelFilterRevision] = useState(0)
 
-  const refresh = () => window.api.chatConfig().then(setConfig)
+  const refresh = () => api.chatConfig().then(setConfig)
   const modelFilterChanged = () => setModelFilterRevision((revision) => revision + 1)
   useEffect(() => {
     refresh()
@@ -1530,7 +1538,7 @@ export function ApiKeySettings({
             headingKey="settings.appToolsHeading"
             descriptionKey="settings.appToolsDescription"
             enabled={config.appToolsEnabled}
-            setEnabled={window.api.chatSetAppTools}
+            setEnabled={api.chatSetAppTools}
             onChanged={refresh}
             lockedDescriptionKey={appToolsLocked ? 'plusMenu.appToolsBotLocked' : undefined}
           />
@@ -1539,14 +1547,14 @@ export function ApiKeySettings({
             headingKey="settings.imageGenHeading"
             descriptionKey="settings.imageGenDescription"
             enabled={config.imageGenEnabled}
-            setEnabled={window.api.chatSetImageGen}
+            setEnabled={api.chatSetImageGen}
             onChanged={refresh}
           />
           <FlagToggle
             headingKey="settings.bashFiltersHeading"
             descriptionKey="settings.bashFiltersDescription"
             enabled={config.bashFiltersEnabled}
-            setEnabled={window.api.chatSetBashFilters}
+            setEnabled={api.chatSetBashFilters}
             onChanged={refresh}
           />
           <McpSettings servers={config.mcpServers} onChanged={refresh} />
@@ -1588,10 +1596,11 @@ export function ApiKeySettings({
 
 function PromptsSettings() {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [prompts, setPrompts] = useState<ChatUserPrompt[]>([])
   const [editing, setEditing] = useState<ChatUserPrompt | 'new' | null>(null)
 
-  const refresh = () => window.api.chatPrompts().then(setPrompts)
+  const refresh = () => api.chatPrompts().then(setPrompts)
   useEffect(() => {
     refresh()
   }, [])
@@ -1632,7 +1641,7 @@ function PromptsSettings() {
               type="button"
               onClick={() => {
                 if (!confirm(t('settings.skillConvertConfirm', { name: p.name }))) return
-                void window.api.chatSkillFromPrompt(p.id).then(() => {
+                void api.chatSkillFromPrompt(p.id).then(() => {
                   refresh()
 
                   window.dispatchEvent(new Event('maestrly:skills-changed'))
@@ -1653,7 +1662,7 @@ function PromptsSettings() {
             </button>
             <button
               type="button"
-              onClick={() => void window.api.chatPromptRemove(p.id).then(refresh)}
+              onClick={() => void api.chatPromptRemove(p.id).then(refresh)}
               className="shrink-0 text-muted-foreground hover:text-destructive"
               title={t('settings.remove')}
             >
@@ -1687,6 +1696,7 @@ function PromptForm({
   onCancel: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [name, setName] = useState(prompt?.name ?? '')
   const [description, setDescription] = useState(prompt?.description ?? '')
   const [content, setContent] = useState(prompt?.content ?? '')
@@ -1697,12 +1707,12 @@ function PromptForm({
     setBusy(true)
     setError('')
     const res = prompt
-      ? await window.api.chatPromptUpdate(prompt.id, {
+      ? await api.chatPromptUpdate(prompt.id, {
           name,
           description,
           content,
         })
-      : await window.api.chatPromptAdd({ name, description, content })
+      : await api.chatPromptAdd({ name, description, content })
     setBusy(false)
     if (res.ok) onDone()
     else setError((res as { error?: string }).error || t('settings.errSavePrompt'))
@@ -1806,6 +1816,7 @@ function FlagToggle({
 
 /** Global default of each app-tool group; inactive while the whole surface is off. */
 function AppToolGroupSettings({ config, onChanged }: { config: ChatConfig; onChanged: () => void }) {
+  const api = useHostApi()
   const { t } = useTranslation('chat')
   const inactive = !config.appToolsEnabled
   return (
@@ -1826,7 +1837,7 @@ function AppToolGroupSettings({ config, onChanged }: { config: ChatConfig; onCha
               aria-checked={on}
               aria-label={label}
               disabled={inactive}
-              onClick={() => window.api.chatSetAppToolGroup(group, !on).then(onChanged)}
+              onClick={() => api.chatSetAppToolGroup(group, !on).then(onChanged)}
               className={cn(
                 'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors disabled:cursor-not-allowed',
                 on ? 'bg-emerald-500/70' : 'bg-white/10'
@@ -1852,6 +1863,7 @@ function DefaultModelPicker({
   modelFilterRevision: number
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const connectedProviders = config.providers.filter(isChatProviderConnected)
   const initialProviderId = config.defaultSelection?.providerId ?? connectedProviders[0]?.id ?? ''
   const [providerId, setProviderId] = useState(initialProviderId)
@@ -1879,7 +1891,7 @@ function DefaultModelPicker({
     let alive = true
     setModels([])
     setLoading(true)
-    window.api
+    api
       .chatModels(providerId)
       .then((m) => {
         if (!alive) return
@@ -1896,7 +1908,7 @@ function DefaultModelPicker({
     return () => {
       alive = false
     }
-  }, [providerId, providerConnected, modelFilterRevision])
+  }, [providerId, providerConnected, modelFilterRevision, api])
 
   useEffect(() => {
     if (!modelId) {
@@ -1904,24 +1916,24 @@ function DefaultModelPicker({
       return
     }
     let alive = true
-    window.api.chatModelMeta(modelId, providerId).then((m) => alive && setMeta(m))
+    api.chatModelMeta(modelId, providerId).then((m) => alive && setMeta(m))
     return () => {
       alive = false
     }
-  }, [modelId, providerId])
+  }, [modelId, providerId, api])
 
   const efforts = meta?.reasoningEfforts?.length ? meta.reasoningEfforts : [...DEFAULT_REASONING_EFFORTS]
 
   useEffect(() => {
     if (reasoning !== 'off' && meta?.reasoning && !efforts.includes(reasoning)) {
       setReasoning('off')
-      if (providerId && modelId) window.api.chatSetDefault({ providerId, modelId, reasoning: 'off' }).then(onChanged)
+      if (providerId && modelId) api.chatSetDefault({ providerId, modelId, reasoning: 'off' }).then(onChanged)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meta, modelId])
+  }, [meta, modelId, api])
 
   const commit = (pId: string, mId: string, r: string = reasoning) => {
-    if (pId && mId) window.api.chatSetDefault({ providerId: pId, modelId: mId, reasoning: r }).then(onChanged)
+    if (pId && mId) api.chatSetDefault({ providerId: pId, modelId: mId, reasoning: r }).then(onChanged)
   }
 
   return (
@@ -2000,7 +2012,7 @@ function DefaultModelPicker({
         <button
           type="button"
           disabled={!providerConnected}
-          onClick={() => window.api.chatModels(providerId, true).then(setModels)}
+          onClick={() => api.chatModels(providerId, true).then(setModels)}
           className="rounded-md border border-border px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-white/5"
           title={t('settings.reloadModelsTitle')}
         >
@@ -2021,6 +2033,7 @@ function ImageInterpreterPicker({
   modelFilterRevision: number
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const connectedProviders = config.providers.filter(isChatProviderConnected)
   const [providerId, setProviderId] = useState(config.imageInterpreter?.providerId ?? '')
   const [modelId, setModelId] = useState(config.imageInterpreter?.modelId ?? '')
@@ -2038,7 +2051,7 @@ function ImageInterpreterPicker({
     let alive = true
     setModels([])
     setLoading(true)
-    window.api
+    api
       .chatModels(providerId)
       .then((m) => {
         if (!alive) return
@@ -2050,7 +2063,7 @@ function ImageInterpreterPicker({
     return () => {
       alive = false
     }
-  }, [providerId, modelFilterRevision])
+  }, [providerId, modelFilterRevision, api])
 
   useEffect(() => {
     if (!providerId || !modelId) {
@@ -2058,11 +2071,11 @@ function ImageInterpreterPicker({
       return
     }
     let alive = true
-    window.api.chatModelMeta(modelId, providerId).then((m) => alive && setMeta(m))
+    api.chatModelMeta(modelId, providerId).then((m) => alive && setMeta(m))
     return () => {
       alive = false
     }
-  }, [modelId, providerId])
+  }, [modelId, providerId, api])
 
   const efforts = meta?.reasoningEfforts?.length ? meta.reasoningEfforts : [...DEFAULT_REASONING_EFFORTS]
   const commit = (pId: string, mId: string, eff: string) => {
@@ -2074,7 +2087,7 @@ function ImageInterpreterPicker({
             ...(eff && eff !== 'off' ? { effort: eff } : {}),
           }
         : null
-    void window.api.chatSetImageInterpreter(value).then(onChanged)
+    void api.chatSetImageInterpreter(value).then(onChanged)
   }
 
   // Reject tool schemas that provider runtimes cannot describe.
@@ -2193,6 +2206,7 @@ function parseEnv(text: string): Record<string, string> {
 
 function McpAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => void }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [name, setName] = useState('')
   const [transport, setTransport] = useState<'http' | 'stdio'>('http')
   const [url, setUrl] = useState('')
@@ -2206,7 +2220,7 @@ function McpAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
   const submit = async () => {
     setBusy(true)
     setError(null)
-    const r = await window.api.chatMcpAdd(
+    const r = await api.chatMcpAdd(
       transport === 'http'
         ? {
             name: name.trim(),
@@ -2332,6 +2346,7 @@ function McpAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
 
 function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChanged: () => void }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [adding, setAdding] = useState(false)
   return (
     <div className="mt-1 flex flex-col gap-2 border-t border-border pt-3">
@@ -2346,7 +2361,7 @@ function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChang
         >
           <button
             type="button"
-            onClick={() => window.api.chatMcpUpdate(s.id, { enabled: !s.enabled }).then(onChanged)}
+            onClick={() => api.chatMcpUpdate(s.id, { enabled: !s.enabled }).then(onChanged)}
             className={cn(
               'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
               s.enabled ? 'bg-emerald-500/70' : 'bg-white/10'
@@ -2369,7 +2384,7 @@ function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChang
           </span>
           <button
             type="button"
-            onClick={() => window.api.chatMcpRemove(s.id).then(onChanged)}
+            onClick={() => api.chatMcpRemove(s.id).then(onChanged)}
             className="shrink-0 text-muted-foreground hover:text-destructive"
             title={t('settings.remove')}
           >

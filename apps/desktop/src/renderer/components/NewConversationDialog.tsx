@@ -31,6 +31,8 @@ import { SearchSelect } from '@/components/ui/search-select'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import { LocalConversationPreview } from '@/components/local-conversation/LocalConversationPreview'
 import { initialLocalConversationFlow, localConversationFlowReducer } from '@/components/local-conversation/flow'
@@ -87,6 +89,8 @@ export function NewConversationDialog({
   onCreated,
 }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
+  const host = useHostInfo()
   const [selected, setSelected] = useState<string[]>([])
   const [branchesByWs, setBranchesByWs] = useState<Record<string, Branches>>({})
 
@@ -116,7 +120,7 @@ export function NewConversationDialog({
     try {
       await Promise.all(
         selected.map(async (wsId) => {
-          const info = await window.api.fetchBranches(wsId)
+          const info = await api.fetchBranches(wsId)
           setBranchesByWs((prev) => ({ ...prev, [wsId]: info }))
         })
       )
@@ -159,7 +163,7 @@ export function NewConversationDialog({
     }
     for (const wsId of selected) {
       if (branchesByWs[wsId]) continue
-      window.api
+      api
         .getBranches(wsId)
         .then((info) => {
           setBranchesByWs((prev) => ({ ...prev, [wsId]: info }))
@@ -172,7 +176,7 @@ export function NewConversationDialog({
         .catch((e) => setError(cleanError(e)))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected])
+  }, [selected, api])
 
   function removeRepo(wsId: string) {
     setSelected((prev) => prev.filter((x) => x !== wsId))
@@ -259,7 +263,7 @@ export function NewConversationDialog({
           return
         }
         finishCreated(
-          await window.api.createConversation({
+          await api.createConversation({
             workspaceId: selected[0],
             branch: repos[0].branch,
             isNewBranch: true,
@@ -284,7 +288,7 @@ export function NewConversationDialog({
           return
         }
         dispatchLocalFlow({ type: 'prepare' })
-        const result = await window.api.prepareLocalConversation({
+        const result = await api.prepareLocalConversation({
           workspaceId: wsId,
           experience,
           intent: buildLocalIntent(info),
@@ -293,7 +297,7 @@ export function NewConversationDialog({
           if (result.requiresConfirmation) {
             dispatchLocalFlow({ type: 'preview', token: result.token, preview: result.preview })
           } else {
-            finishLocalConfirmation(await window.api.confirmLocalConversation({ token: result.token }))
+            finishLocalConfirmation(await api.confirmLocalConversation({ token: result.token }))
           }
         } else if (result.status === 'blocked') {
           dispatchLocalFlow({
@@ -308,7 +312,7 @@ export function NewConversationDialog({
         return
       }
       finishCreated(
-        await window.api.createConversation({
+        await api.createConversation({
           workspaceId: wsId,
           branch,
           isNewBranch: branchMode === 'new',
@@ -334,7 +338,7 @@ export function NewConversationDialog({
     setError(null)
     dispatchLocalFlow({ type: 'confirm' })
     try {
-      const result = await window.api.confirmLocalConversation({ token: localFlow.token })
+      const result = await api.confirmLocalConversation({ token: localFlow.token })
       finishLocalConfirmation(result)
     } catch (e) {
       setError(cleanError(e))
@@ -385,8 +389,8 @@ export function NewConversationDialog({
               recovery={localFlow.step === 'recovery' ? localFlow.recovery : undefined}
               message={localFlow.step === 'preview' ? localFlow.message : undefined}
               onOpenTerminal={
-                localFlow.step === 'recovery'
-                  ? () => void window.api.openExternal('workspace', selected[0], 'terminal')
+                localFlow.step === 'recovery' && host.desktopEffects
+                  ? () => void api.openExternal('workspace', selected[0], 'terminal')
                   : undefined
               }
               onCopyCommands={

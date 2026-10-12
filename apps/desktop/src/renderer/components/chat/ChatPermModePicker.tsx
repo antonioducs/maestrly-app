@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Hand, ShieldAlert, TerminalSquare, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { ChatPermMode } from '../../../shared/chat'
 import type { ChatComposerSource } from './chat-composer-source'
 
@@ -32,6 +33,7 @@ export function ChatPermModePicker({
 }) {
   const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [mode, setMode] = useState<ChatPermMode>('ask')
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -43,17 +45,17 @@ export function ChatPermModePicker({
     }
     let alive = true
     const load = () =>
-      void window.api.chatGetPermMode(conversationId).then((value) => {
+      void api.chatGetPermMode(conversationId).then((value) => {
         if (alive) setMode(value)
       })
     load()
     // A bot conversation runs at the ceiling its owner chose, and that is decided outside this picker.
-    const unsubscribe = window.api.onChatSettingsChanged(conversationId, load)
+    const unsubscribe = api.onChatSettingsChanged(conversationId, load)
     return () => {
       alive = false
       unsubscribe()
     }
-  }, [conversationId, source?.bot?.ceiling])
+  }, [api, conversationId, source?.bot?.ceiling])
 
   useEffect(() => {
     if (!open) return
@@ -69,7 +71,7 @@ export function ChatPermModePicker({
     setMode(id)
     setOpen(false)
     if (source?.bot) void source.bot.setCeiling(id)
-    else window.api.chatSetPermMode(conversationId, id)
+    else api.chatSetPermMode(conversationId, id)
   }
 
   return (

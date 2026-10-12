@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Download, ImageIcon, Loader2, TriangleAlert } from 'lucide-react'
 import type { MessagePart } from '../../../shared/chat'
 import { imageResultToObjectUrl, withImageFetchSlot } from '../../lib/binary-image'
+import { useHostApi } from '../../lib/hosts/host-context'
 
 type GeneratedImagePart = Extract<MessagePart, { type: 'generated-image' }>
 
@@ -21,6 +22,7 @@ export const GeneratedImageCard = memo(function GeneratedImageCard({
   onOpenImage?: (src: string, name: string) => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const containerRef = useRef<HTMLDivElement>(null)
   const [nearViewport, setNearViewport] = useState(false)
   const [result, setResult] = useState<GeneratedImageView | null>(null)
@@ -55,7 +57,7 @@ export const GeneratedImageCard = memo(function GeneratedImageCard({
     let objectUrl: string | null = null
     const controller = new AbortController()
     setResult(null)
-    void withImageFetchSlot(() => window.api.chatGeneratedImage(conversationId, messageId, part.id), controller.signal)
+    void withImageFetchSlot(() => api.chatGeneratedImage(conversationId, messageId, part.id), controller.signal)
       .then((next) => {
         if (!active) return
         if (!next.ok) {
@@ -73,7 +75,7 @@ export const GeneratedImageCard = memo(function GeneratedImageCard({
       controller.abort(new Error('Generated image card was unmounted.'))
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [nearViewport, conversationId, messageId, part.id, part.artifactId])
+  }, [api, nearViewport, conversationId, messageId, part.id, part.artifactId])
 
   const revised = part.revisedPrompt?.trim()
 

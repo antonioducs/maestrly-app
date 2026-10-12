@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useHostApi } from '../../lib/hosts/host-context'
 import {
   isUpdatableRuntimeAssetId,
   type RuntimeAssetId,
@@ -44,6 +45,7 @@ function RuntimeAssetUpdatePanel({
   onChanged: (next: RuntimeAssetInfo) => void
 }) {
   const { t, i18n } = useTranslation('chat')
+  const api = useHostApi()
   const [busy, setBusy] = useState<UpdateAction | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Optimistic value while the preference is persisted in the main process.
@@ -64,12 +66,12 @@ function RuntimeAssetUpdatePanel({
     if (action === 'automatic') setAutomaticDraft(enabled === true)
     try {
       const next = await (action === 'check'
-        ? window.api.runtimeAssetCheckUpdate(id)
+        ? api.runtimeAssetCheckUpdate(id)
         : action === 'update'
-          ? window.api.runtimeAssetUpdate(id)
+          ? api.runtimeAssetUpdate(id)
           : action === 'rollback'
-            ? window.api.runtimeAssetRollback(id)
-            : window.api.runtimeAssetSetAutoUpdate(id, enabled === true))
+            ? api.runtimeAssetRollback(id)
+            : api.runtimeAssetSetAutoUpdate(id, enabled === true))
       onChanged(next)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -115,7 +117,7 @@ function RuntimeAssetUpdatePanel({
             <button
               className="text-[11px] text-muted-foreground hover:text-foreground"
               type="button"
-              onClick={() => void window.api.runtimeAssetCancel(asset.id)}
+              onClick={() => void api.runtimeAssetCancel(asset.id)}
             >
               {t('settings.componentCancel')}
             </button>
@@ -166,28 +168,29 @@ function RuntimeAssetUpdatePanel({
 
 export function RuntimeComponentsSettings() {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [assets, setAssets] = useState<readonly RuntimeAssetInfo[]>([])
   const [busy, setBusy] = useState<RuntimeAssetId | null>(null)
   const [error, setError] = useState<string | null>(null)
   const replace = (next: RuntimeAssetInfo) =>
     setAssets((current) => current.map((item) => (item.id === next.id ? next : item)))
-  const refresh = () => window.api.runtimeAssetList().then(setAssets)
+  const refresh = () => api.runtimeAssetList().then(setAssets)
   useEffect(() => {
     void refresh()
-    return window.api.onRuntimeAssetChanged((next) =>
+    return api.onRuntimeAssetChanged((next) =>
       setAssets((current) => current.map((item) => (item.id === next.id ? next : item)))
     )
-  }, [])
+  }, [api])
   const act = async (id: RuntimeAssetId, action: ComponentAction) => {
     if (action === 'remove' && !confirm(t('settings.componentRemoveConfirm'))) return
     setBusy(id)
     setError(null)
     try {
       const next = await (action === 'install'
-        ? window.api.runtimeAssetInstall(id)
+        ? api.runtimeAssetInstall(id)
         : action === 'repair'
-          ? window.api.runtimeAssetRepair(id)
-          : window.api.runtimeAssetRemove(id))
+          ? api.runtimeAssetRepair(id)
+          : api.runtimeAssetRemove(id))
       replace(next)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -235,7 +238,7 @@ export function RuntimeComponentsSettings() {
                 <button
                   className="text-[11px] text-muted-foreground hover:text-foreground"
                   type="button"
-                  onClick={() => void window.api.runtimeAssetCancel(asset.id)}
+                  onClick={() => void api.runtimeAssetCancel(asset.id)}
                 >
                   {t('settings.componentCancel')}
                 </button>

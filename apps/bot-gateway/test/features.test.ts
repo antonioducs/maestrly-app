@@ -269,7 +269,7 @@ describe('secrets and configuration', () => {
     db.close()
     const migrated = new Store(dir)
     expect(migrated.routineById('old')?.createdBy).toBe('owner')
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '10' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '11' })
     migrated.close()
   })
   it('migrates version 3 bots and persists their compaction model', () => {
@@ -279,7 +279,7 @@ describe('secrets and configuration', () => {
     db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
     db.close()
     const migrated = new Store(dir)
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '10' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '11' })
     expect(migrated.db.prepare('PRAGMA table_info(bots)').all()).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'compaction_json' })])
     )
@@ -304,6 +304,17 @@ describe('secrets and configuration', () => {
       'public'
     )
     expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
+    // The host directory of the workspaces environment: none unless named, and only as an absolute path.
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).workspacesRoot).toBeNull()
+    expect(
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: ' ' }).workspacesRoot
+    ).toBeNull()
+    expect(
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: '/srv/maestrly' }).workspacesRoot
+    ).toBe('/srv/maestrly')
+    expect(() =>
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: 'srv/maestrly' })
+    ).toThrow()
   })
   it('reads whether bots update their runtimes on their own, automatically by default', () => {
     const dir = temp()

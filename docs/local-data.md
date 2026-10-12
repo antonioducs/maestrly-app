@@ -267,6 +267,40 @@ hosting or a bot's publication permission off preserves pages. Unpairing leaves
 the server running; explicit server removal with data deletion removes its
 artifact data too. See [bot server management](bot-fleet.md#update-disconnect-and-remove).
 
+## Remote workspaces data
+
+A [workspaces environment](remote-workspaces.md) keeps a whole Maestrly profile
+on the server, not on this computer:
+
+| Data | Where it is kept |
+| --- | --- |
+| The host's profile: conversations, messages, memory, notes, settings, model accounts and their keys, skills, MCP servers, and the agent's browser profile | The environment's home volume, `maestrly-env-<id>-home`, mounted at `/home/bot`. Secrets are encrypted with the keyring of the environment, as in a bot environment. |
+| Files of plain chats and worktrees of conversations | The same home volume, inside the profile |
+| Workspaces added from the server's **Workspaces** folder | That folder of the server itself (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`; `/srv/maestrly` on a VPS that Maestrly set up), as ordinary files owned by uid 1000 |
+| The environment's record and kind | The gateway's database (`environments.kind`, schema 11) |
+| Uploads in progress | A hidden `.maestrly-upload-<id>.part` file next to the destination, and its record under `host-file-uploads/` in the profile. An upload untouched for 7 days is removed with its partial file. |
+
+This computer keeps only what it needs to show the host: its own id for the
+paired server (`fleet.serverId`, removed when you disconnect the server) and,
+for each conversation of the host you opened, the drawer's width and open
+state for as long as the window runs. Conversations and messages of the host
+are never stored here. The drawer tabs a conversation has open are kept by the
+host, with the conversation.
+
+Files moved with the **Files** tab are the exception, because you ask for them:
+
+| Data | Where it is kept on this computer |
+| --- | --- |
+| The transfer queue: each transfer, its paths, size, state, checksums, and which of its parts arrived | The `host_transfers` and `host_transfer_ranges` tables of the app database. **Clear finished** in the **Transfers** list removes finished ones. |
+| A download in progress | A hidden `.maestrly-<id>.download` file in the Downloads folder, renamed to the file's name once it is verified |
+| Files opened from the server | `maestrly-remote-files/<id>/` in the system's temporary folder |
+| Downloaded files | The Downloads folder, as ordinary files |
+
+Archiving a workspaces environment removes its container and keeps its home
+volume; deleting it forever removes the volume and everything in the host's
+profile. Neither touches the files under the server's **Workspaces** folder.
+Back up that folder and the environment's home volume to keep both.
+
 ## Temporary tool output
 
 Large built-in chat tool results are saved under `chat-tool-output` so the agent

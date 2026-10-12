@@ -14,6 +14,11 @@ export const BOT_SERVER_REMOTE_DIR = '/opt/maestrly-bots'
 export const BOT_SERVER_DEV_PROJECT = 'maestrly-fleet-dev'
 /** The gateway's public port inside its container, published or tunneled to this computer. */
 export const BOT_SERVER_GATEWAY_PORT = 7443
+/**
+ * The directory of a VPS its workspaces environment mounts at the same path, for workspaces and their files. A server
+ * on this computer has none: its workspaces environment keeps its files in its home volume.
+ */
+export const BOT_SERVER_WORKSPACES_ROOT = '/srv/maestrly'
 
 export interface BotServerEnvValues {
   gatewayImage: string
@@ -23,10 +28,18 @@ export interface BotServerEnvValues {
   displayName: string
   egress: FleetEgress
   timezone: string
+  /** The host directory mounted for workspaces; null or absent mounts none. */
+  workspacesRoot?: string | null
 }
 
 const imagePattern = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/
 const timezonePattern = /^[A-Za-z0-9_+/-]+$/
+const workspacesRootKey = 'MAESTRLY_GATEWAY_WORKSPACES_ROOT'
+
+/** A plain absolute path: it is written unquoted in `.env` and handed to Docker as a bind mount source. */
+function validWorkspacesRoot(value: string): boolean {
+  return /^(?:\/[A-Za-z0-9._-]+)+$/.test(value) && !value.split('/').some((part) => part === '.' || part === '..')
+}
 
 export function renderBotServerEnv(values: BotServerEnvValues): string {
   if (!Number.isInteger(values.port) || values.port < 1 || values.port > 65535) throw new Error('Invalid port')
@@ -39,6 +52,8 @@ export function renderBotServerEnv(values: BotServerEnvValues): string {
     if (!imagePattern.test(image)) throw new Error('Invalid image reference')
   if (values.egress !== 'open' && values.egress !== 'public') throw new Error('Invalid egress')
   if (!timezonePattern.test(values.timezone)) throw new Error('Invalid time zone')
+  const workspacesRoot = values.workspacesRoot ?? ''
+  if (workspacesRoot && !validWorkspacesRoot(workspacesRoot)) throw new Error('Invalid workspaces root')
   const displayName = displayNameFor(values.displayName)
   return [
     `MAESTRLY_GATEWAY_IMAGE=${values.gatewayImage}`,
@@ -50,6 +65,7 @@ export function renderBotServerEnv(values: BotServerEnvValues): string {
     `MAESTRLY_GATEWAY_DISPLAY_NAME='${displayName}'`,
     `MAESTRLY_GATEWAY_BOT_EGRESS=${values.egress}`,
     `MAESTRLY_GATEWAY_NETWORK=${BOT_SERVER_PROJECT}`,
+    `${workspacesRootKey}=${workspacesRoot}`,
     `TZ=${values.timezone}`,
     '',
   ].join('\n')
@@ -60,6 +76,8 @@ export function parseBotServerEnv(text: string): {
   botImage: string | null
   egress: FleetEgress | null
   port: number | null
+  /** Undefined when the file does not mention it: a server from before workspaces, which an update completes. */
+  workspacesRoot: string | null | undefined
   artifactsPort: number | null
 } {
   const values = new Map<string, string>()
@@ -77,6 +95,7 @@ export function parseBotServerEnv(text: string): {
   }
   const egress = values.get('MAESTRLY_GATEWAY_BOT_EGRESS')
   const port = Number(values.get('MAESTRLY_GATEWAY_PORT'))
+  const root = values.get(workspacesRootKey)
   const artifactsPort = Number(values.get('MAESTRLY_ARTIFACTS_PORT'))
   return {
     artifactsPort:
@@ -85,13 +104,21 @@ export function parseBotServerEnv(text: string): {
     botImage: image('MAESTRLY_GATEWAY_BOT_IMAGE'),
     egress: egress === 'open' || egress === 'public' ? egress : null,
     port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null,
+    workspacesRoot: root === undefined ? undefined : validWorkspacesRoot(root) ? root : null,
   }
 }
 
-/** The values Maestrly changes in an installed server's `.env`: its images and what bots may reach. */
+/**
+ * The values Maestrly changes in an installed server's `.env`: its images, what bots may reach, and the workspaces
+ * directory of a server installed before workspaces.
+ */
 export type BotServerEnvChanges = Partial<
   Record<
-    'MAESTRLY_GATEWAY_IMAGE' | 'MAESTRLY_GATEWAY_BOT_IMAGE' | 'MAESTRLY_GATEWAY_BOT_EGRESS' | 'MAESTRLY_ARTIFACTS_PORT',
+    | 'MAESTRLY_GATEWAY_IMAGE'
+    | 'MAESTRLY_GATEWAY_BOT_IMAGE'
+    | 'MAESTRLY_GATEWAY_BOT_EGRESS'
+    | 'MAESTRLY_GATEWAY_WORKSPACES_ROOT'
+    | 'MAESTRLY_ARTIFACTS_PORT',
     string
   >
 >
@@ -104,7 +131,9 @@ export function withEnvValues(text: string, changes: BotServerEnvChanges): strin
         ? /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 65535
         : key === 'MAESTRLY_GATEWAY_BOT_EGRESS'
           ? value === 'open' || value === 'public'
-          : imagePattern.test(value ?? '')
+          : key === workspacesRootKey
+            ? validWorkspacesRoot(value ?? '')
+            : imagePattern.test(value ?? '')
     if (!valid) throw new Error(`Invalid ${key}`)
   }
   const pending = new Map(Object.entries(changes) as Array<[string, string]>)

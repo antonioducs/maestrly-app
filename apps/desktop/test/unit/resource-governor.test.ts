@@ -64,6 +64,18 @@ describe('resource governor', () => {
     expect(panel.throttled.at(-1)).toBe(true)
   })
 
+  it('keeps a page streamed to a remote viewer awake and counts it as shown', () => {
+    const page = target()
+    registerThrottleTarget('browser', 'conv-s', 'tab-1', page)
+    expect(page.throttled.at(-1)).toBe(true)
+    setResourcePlacementActive('browser', 'conv-s', 'tab-1', 'stream', true)
+    expect(page.throttled.at(-1)).toBe(false)
+    expect(resourceHasVisibleSurface('browser', 'conv-s', 'tab-1')).toBe(true)
+    setResourcePlacementActive('browser', 'conv-s', 'tab-1', 'stream', false)
+    expect(page.throttled.at(-1)).toBe(true)
+    expect(resourceHasVisibleSurface('browser', 'conv-s', 'tab-1')).toBe(false)
+  })
+
   it('distinguishes an actually visible surface from an agent-only lease', () => {
     registerThrottleTarget('chatgpt', 'conv-surface', undefined, target())
     const release = acquireAgentActivity('chatgpt', 'conv-surface')

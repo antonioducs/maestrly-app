@@ -20,6 +20,8 @@ import { X, Pencil, ArrowDown } from 'lucide-react'
 import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPrefill } from '@/lib/composer-prefill'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
   applyChatEvent,
@@ -171,6 +173,7 @@ export function ChatView({
   onEvictionSafetyChange,
 }: Props) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const ownerWindow = useChatOwnerWindow()
   const showSourceConversation = useChatSourceConversation()
   // A released chat still belongs to its bot; what changes is that the person may write in it too.
@@ -373,8 +376,8 @@ export function ChatView({
     [setQueueState]
   )
   useEffect(
-    () => window.api.onChatMaestroLive(conversationId, applyMaestroLiveEvent),
-    [applyMaestroLiveEvent, conversationId]
+    () => api.onChatMaestroLive(conversationId, applyMaestroLiveEvent),
+    [api, applyMaestroLiveEvent, conversationId]
   )
   useEffect(
     () => () => {
@@ -440,7 +443,7 @@ export function ChatView({
   const refreshStats = useCallback(() => {
     const target = contextTargetRef.current
     const request = ++statsRequestRef.current
-    void window.api.chatHistoryStats(conversationId).then((s) => {
+    void api.chatHistoryStats(conversationId).then((s) => {
       if (
         request === statsRequestRef.current &&
         convIdRef.current === conversationId &&
@@ -448,7 +451,7 @@ export function ChatView({
       )
         setHistoryStats({ ...target, stats: s })
     })
-  }, [conversationId])
+  }, [api, conversationId])
   useEffect(() => {
     if (selectedContextModel) refreshStats()
   }, [selectedContextModel, refreshStats])
@@ -474,7 +477,7 @@ export function ChatView({
   const reloadLatestPage = useCallback(async () => {
     const revision = ++historyReloadRevisionRef.current
     const preserveLive = workspaceId === null && streamingRef.current
-    const page = await window.api.chatHistoryPage(conversationId, { limit: HISTORY_PAGE_SIZE })
+    const page = await api.chatHistoryPage(conversationId, { limit: HISTORY_PAGE_SIZE })
     if (convIdRef.current !== conversationId || revision !== historyReloadRevisionRef.current) return
 
     const hydrated = mergePendingChatQuestions(page.messages, conversationId, runtimeQuestionsRef.current)
@@ -495,15 +498,15 @@ export function ChatView({
     earliestSeqRef.current = page.earliestSeq
     anchoredRef.current = false
     refreshStats()
-  }, [conversationId, normalizeHistoryWindow, refreshStats, workspaceId])
+  }, [api, conversationId, normalizeHistoryWindow, refreshStats, workspaceId])
 
   useEffect(
-    () => window.api.onChatGptWebDelivery(conversationId, () => void reloadLatestPage()),
-    [conversationId, reloadLatestPage]
+    () => api.onChatGptWebDelivery(conversationId, () => void reloadLatestPage()),
+    [api, conversationId, reloadLatestPage]
   )
   useEffect(
-    () => window.api.onChatReviewLoopDelivery(conversationId, () => void reloadLatestPage()),
-    [conversationId, reloadLatestPage]
+    () => api.onChatReviewLoopDelivery(conversationId, () => void reloadLatestPage()),
+    [api, conversationId, reloadLatestPage]
   )
 
   // Load older messages on demand and return the number prepended.
@@ -511,7 +514,7 @@ export function ChatView({
   const loadOlder = useCallback(async (): Promise<number> => {
     const cursor = earliestSeqRef.current
     if (cursor == null) return 0
-    const page = await window.api.chatHistoryPage(conversationId, { beforeSeq: cursor, limit: HISTORY_PAGE_SIZE })
+    const page = await api.chatHistoryPage(conversationId, { beforeSeq: cursor, limit: HISTORY_PAGE_SIZE })
     if (convIdRef.current !== conversationId || page.messages.length === 0) {
       if (convIdRef.current === conversationId) setHasMore(false)
       return 0
@@ -529,7 +532,7 @@ export function ChatView({
       return next.messages
     })
     return page.messages.length
-  }, [conversationId, keepIdsFor])
+  }, [api, conversationId, keepIdsFor])
 
   useEffect(() => {
     void reloadLatestPage()
@@ -595,7 +598,7 @@ export function ChatView({
       const isCurrent = () => convIdRef.current === reqConv && searchNavigationRef.current === navigation
       const present = !!scrollRef.current?.querySelector(`[data-msg-id="${CSS.escape(hit.messageId)}"]`)
       if (!present) {
-        const page = await window.api.chatHistoryPage(conversationId, { aroundSeq: hit.seq, limit: HISTORY_PAGE_SIZE })
+        const page = await api.chatHistoryPage(conversationId, { aroundSeq: hit.seq, limit: HISTORY_PAGE_SIZE })
         if (!isCurrent()) return
         earliestSeqRef.current = page.earliestSeq
         setHasMore(page.hasMore)
@@ -627,7 +630,7 @@ export function ChatView({
         flashHighlight(hit.messageId)
       })
     },
-    [cancelSearchNavigation, conversationId, flashHighlight, normalizeHistoryWindow]
+    [api, cancelSearchNavigation, conversationId, flashHighlight, normalizeHistoryWindow]
   )
 
   useEffect(() => {
@@ -646,7 +649,7 @@ export function ChatView({
     const reqConv = conversationId
     const request = ++searchRequestRef.current
     const handle = setTimeout(async () => {
-      const hits = await window.api.chatSearchMessages(conversationId, q)
+      const hits = await api.chatSearchMessages(conversationId, q)
       if (convIdRef.current !== reqConv || searchRequestRef.current !== request) return
       setSearchHits(hits)
       setSearchResultQuery(q)
@@ -663,7 +666,7 @@ export function ChatView({
       clearTimeout(handle)
       if (searchRequestRef.current === request) searchRequestRef.current++
     }
-  }, [searchQuery, searchOpen, conversationId, goToHit, cancelSearchNavigation])
+  }, [api, searchQuery, searchOpen, conversationId, goToHit, cancelSearchNavigation])
 
   const searchHitIds = useMemo(() => new Set(searchHits.map((hit) => hit.messageId)), [searchHits])
   const currentSearchHitId = searchIndex >= 0 ? (searchHits[searchIndex]?.messageId ?? null) : null
@@ -862,7 +865,7 @@ export function ChatView({
       streamingRef.current = true
       turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
-      const res = await window.api
+      const res = await api
         .chatSend(
           conversationId,
           text,
@@ -892,7 +895,7 @@ export function ChatView({
       }
       return res
     },
-    [conversationId, pushAssistantError, reloadLatestPage, subagents]
+    [api, conversationId, pushAssistantError, reloadLatestPage, subagents]
   )
 
   const finishTurn = useCallback(
@@ -940,7 +943,7 @@ export function ChatView({
       // The ordinary terminal event usually lands first; only an unreleased turn reaches the runtime.
       if (!streamingRef.current || compactingRef.current || localManualCompactionRef.current) return
       if (revision !== turnRevisionRef.current) return
-      void window.api.chatRuntime(conversationId).then((runtime) => {
+      void api.chatRuntime(conversationId).then((runtime) => {
         if (!alive || convIdRef.current !== conversationId) return
         if (runtime.streaming || runtime.compacting) return
         if (revision !== turnRevisionRef.current || !streamingRef.current) return
@@ -951,7 +954,7 @@ export function ChatView({
       alive = false
       window.clearTimeout(timer)
     }
-  }, [conversationId, status, streaming])
+  }, [api, conversationId, status, streaming])
 
   const pendingQuestionToolCallId = pendingQuestion?.toolCallId
   const needsLiveSubscription =
@@ -1131,13 +1134,13 @@ export function ChatView({
   useEffect(() => {
     if (!needsLiveSubscription) return
 
-    const offStream = window.api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))
-    const offPerm = window.api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))
+    const offStream = api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))
+    const offPerm = api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))
     return () => {
       offStream()
       offPerm()
     }
-  }, [conversationId, needsLiveSubscription])
+  }, [api, conversationId, needsLiveSubscription])
 
   useEffect(() => {
     if (!visible) return
@@ -1155,7 +1158,7 @@ export function ChatView({
     const compactionRevision = compactionRevisionRef.current
     const questionRevision = runtimeQuestionRevisionRef.current
     const maestroRevision = maestroLiveRevisionRef.current
-    void window.api.chatRuntime(conversationId).then((runtime) => {
+    void api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
       if (runtime.backgroundCompaction) {
         applyBackgroundCompactionState(conversationId, runtime.backgroundCompaction)
@@ -1203,6 +1206,7 @@ export function ChatView({
       alive = false
     }
   }, [
+    api,
     applyBackgroundCompactionState,
     conversationId,
     normalizeHistoryWindow,
@@ -1214,7 +1218,7 @@ export function ChatView({
   ])
 
   useEffect(() => {
-    Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
+    Promise.all([api.chatGetSelection(conversationId), api.chatConfig()]).then(([sel, cfg]) => {
       if (!alive) return
       const p = sel ? cfg.providers.find((pp) => pp.id === sel.providerId) : undefined
       setKeyMissing(!p || !isChatProviderConnected(p))
@@ -1226,13 +1230,13 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [conversationId, messages.length, modelRefresh])
+  }, [api, conversationId, messages.length, modelRefresh])
 
   useEffect(() => {
     setFailoverNotice(null)
     const labelFor = (providerId: string): string =>
       labelForSubscriptionProvider(providerId, chatProviders, t(subscriptionDefaultLabelKey(providerId)))
-    return window.api.onChatSubscriptionFailover(conversationId, (ev: ChatSubscriptionFailoverEvent) => {
+    return api.onChatSubscriptionFailover(conversationId, (ev: ChatSubscriptionFailoverEvent) => {
       setFailoverNotice(
         t('settings.failoverSwitchStatus', {
           from: labelFor(ev.fromProviderId),
@@ -1240,7 +1244,7 @@ export function ChatView({
         })
       )
     })
-  }, [conversationId, chatProviders, t])
+  }, [api, conversationId, chatProviders, t])
 
   useEffect(() => {
     if (!failoverNotice) return
@@ -1250,19 +1254,19 @@ export function ChatView({
 
   useEffect(() => {
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
-      window.api.onChatSubscriptionStatus(provider, () => setModelRefresh((n) => n + 1))
+      api.onChatSubscriptionStatus(provider, () => setModelRefresh((n) => n + 1))
     )
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [])
+  }, [api])
 
   useEffect(() => {
     const ownsConversation = (loop: ReviewLoopInfo) =>
       loop.participants.executor.conversationId === conversationId ||
       loop.participants.reviewer?.conversationId === conversationId
-    const refresh = () => void window.api.chatReviewLoopStatus(conversationId).then(setReviewLoop)
+    const refresh = () => void api.chatReviewLoopStatus(conversationId).then(setReviewLoop)
     void refresh()
-    return window.api.onChatReviewLoopChanged((loops) => setReviewLoop(loops.find(ownsConversation) ?? null))
-  }, [conversationId])
+    return api.onChatReviewLoopChanged((loops) => setReviewLoop(loops.find(ownsConversation) ?? null))
+  }, [api, conversationId])
 
   useEffect(() => {
     if (!selModelId) {
@@ -1271,13 +1275,13 @@ export function ChatView({
     }
     let alive = true
 
-    window.api.chatModelMeta(selModelId, selProviderId ?? undefined).then((m) => {
+    api.chatModelMeta(selModelId, selProviderId ?? undefined).then((m) => {
       if (alive && selProviderId) setModelMeta({ model: { providerId: selProviderId, modelId: selModelId }, meta: m })
     })
     return () => {
       alive = false
     }
-  }, [selModelId, selProviderId, modelRefresh])
+  }, [api, selModelId, selProviderId, modelRefresh])
 
   const [metaByModel, setMetaByModel] = useState<Record<string, ChatModelMeta | null>>({})
   const metaByModelRef = useRef(metaByModel)
@@ -1302,9 +1306,7 @@ export function ChatView({
     let alive = true
     Promise.all(
       missing.map(([providerId, modelId]) =>
-        window.api
-          .chatModelMeta(modelId, providerId || undefined)
-          .then((mm) => [`${providerId}\0${modelId}`, mm] as const)
+        api.chatModelMeta(modelId, providerId || undefined).then((mm) => [`${providerId}\0${modelId}`, mm] as const)
       )
     ).then((loaded) => {
       if (alive) setMetaByModel((prev) => ({ ...prev, ...Object.fromEntries(loaded) }))
@@ -1312,7 +1314,7 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [modelPairsKey])
+  }, [api, modelPairsKey])
 
   useEffect(() => {
     if (isMaestro) {
@@ -1322,42 +1324,42 @@ export function ChatView({
     }
     let active = true
     setModeChangeError(null)
-    void window.api.chatGetMode(conversationId).then((storedMode) => {
+    void api.chatGetMode(conversationId).then((storedMode) => {
       if (active && convIdRef.current === conversationId) setMode(storedMode)
     })
-    const unsubscribe = window.api.onChatModeChanged(conversationId, (storedMode) => {
+    const unsubscribe = api.onChatModeChanged(conversationId, (storedMode) => {
       if (active && convIdRef.current === conversationId) setMode(storedMode)
     })
     return () => {
       active = false
       unsubscribe()
     }
-  }, [conversationId, isMaestro])
+  }, [api, conversationId, isMaestro])
 
   useEffect(() => {
     const load = () =>
-      void window.api.chatGetReasoning(conversationId).then((effort) => {
+      void api.chatGetReasoning(conversationId).then((effort) => {
         if (convIdRef.current === conversationId) setReasoning(effort)
       })
     load()
     // A fleet bot, a project chat or a provider failover moves this conversation's account, model, effort
     // and behavior mode without anyone touching the pickers. Read them again so the composer never
     // shows a selection the next turn will not use.
-    return window.api.onChatSettingsChanged(conversationId, () => {
+    return api.onChatSettingsChanged(conversationId, () => {
       if (convIdRef.current !== conversationId) return
       load()
       setModelRefresh((n) => n + 1)
       if (isMaestro) return
-      void window.api.chatGetMode(conversationId).then((storedMode) => {
+      void api.chatGetMode(conversationId).then((storedMode) => {
         // A change the person is making right now wins: their pending answer is not overwritten here.
         if (convIdRef.current === conversationId && !modeChangeRequestRef.current) setMode(storedMode)
       })
     })
-  }, [conversationId, isMaestro])
+  }, [api, conversationId, isMaestro])
   const applyReasoning = useCallback(
     (r: ChatReasoningEffort) => {
       setReasoning(r)
-      void window.api.chatSetReasoning(conversationId, r)
+      void api.chatSetReasoning(conversationId, r)
       if (
         routeHarnessReasoningChange({
           streaming: streamingRef.current,
@@ -1367,10 +1369,10 @@ export function ChatView({
           liveReasoningReset,
         }) === 'live-and-next-turn'
       ) {
-        void window.api.chatUpdateLiveReasoning(conversationId, r)
+        void api.chatUpdateLiveReasoning(conversationId, r)
       }
     },
-    [conversationId, liveReasoningEfforts, liveReasoningReset, liveReasoningUpdate]
+    [api, conversationId, liveReasoningEfforts, liveReasoningReset, liveReasoningUpdate]
   )
 
   const applyMode = useCallback(
@@ -1383,7 +1385,7 @@ export function ChatView({
       modeChangeRequestRef.current = request
       setModeChangeError(null)
       try {
-        const result = await window.api.chatSetMode(conversationId, m)
+        const result = await api.chatSetMode(conversationId, m)
         if (convIdRef.current !== conversationId || modeChangeRequestRef.current !== request) return result
         if (result.ok) setMode(m)
         else setModeChangeError(t('mode.changeFailed'))
@@ -1397,7 +1399,7 @@ export function ChatView({
         if (modeChangeRequestRef.current === request) modeChangeRequestRef.current = null
       }
     },
-    [conversationId, isMaestro, t]
+    [api, conversationId, isMaestro, t]
   )
 
   const cycleMode = useCallback(() => {
@@ -1406,25 +1408,25 @@ export function ChatView({
   }, [applyMode, isMaestro, mode])
 
   const convertMaestroToStandard = useCallback(async () => {
-    const result = await window.api.chatMaestroConvertToStandard(conversationId)
+    const result = await api.chatMaestroConvertToStandard(conversationId)
     if (result.ok) {
-      const restoredMode = await window.api.chatGetMode(conversationId)
+      const restoredMode = await api.chatGetMode(conversationId)
       setCurrentExperience('standard')
       setMode(restoredMode)
       onExperienceChange?.(conversationId, 'standard')
     }
     return result
-  }, [conversationId, onExperienceChange])
+  }, [api, conversationId, onExperienceChange])
 
   const convertStandardToMaestro = useCallback(async () => {
-    const result = await window.api.chatStandardConvertToMaestro(conversationId)
+    const result = await api.chatStandardConvertToMaestro(conversationId)
     if (result.ok) {
       setCurrentExperience('maestro')
       setMode('agent')
       onExperienceChange?.(conversationId, 'maestro')
     }
     return result
-  }, [conversationId, onExperienceChange])
+  }, [api, conversationId, onExperienceChange])
 
   const submitDraft = useCallback(
     ({ text: rawText, agentMentions }: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => {
@@ -1442,7 +1444,7 @@ export function ChatView({
         const live = maestroLiveRef.current
         if (isMaestro && maestroSendTarget === 'current' && atts.length === 0 && live?.run.status === 'active') {
           setMaestroPostPending((count) => count + 1)
-          void window.api
+          void api
             .chatMaestroLivePost(conversationId, live.run.id, text, agentMentions)
             .then((result) => {
               if (result.ok) {
@@ -1458,7 +1460,7 @@ export function ChatView({
                   },
                 ])
 
-                void window.api.chatMaestroLiveSnapshot(conversationId).then((snapshot) => {
+                void api.chatMaestroLiveSnapshot(conversationId).then((snapshot) => {
                   if (!snapshot || convIdRef.current !== conversationId) return
                   applyMaestroLiveEvent({
                     kind: 'messages-updated',
@@ -1505,7 +1507,7 @@ export function ChatView({
                 ? current
                 : [...current, { id: clientUserMessageId, text, attachments: [], agentMentions: [] }]
             )
-          void window.api
+          void api
             .chatSteer(conversationId, text, clientUserMessageId)
             .then((result) => {
               if (!result.ok || !result.accepted) enqueueFallback()
@@ -1526,6 +1528,7 @@ export function ChatView({
       })
     },
     [
+      api,
       applyMaestroLiveEvent,
       attachments,
       conversationId,
@@ -1537,14 +1540,14 @@ export function ChatView({
     ]
   )
 
-  const searchFiles = useCallback((q: string) => window.api.chatSearchFiles(conversationId, q), [conversationId])
+  const searchFiles = useCallback((q: string) => api.chatSearchFiles(conversationId, q), [api, conversationId])
 
   // ChatPlusMenu → ConversationSubagentProfiles).
 
   const reloadSubagents = useCallback(() => {
     setSubagents(null)
     const request = isMaestro
-      ? window.api.chatMaestroGetConversation(conversationId).then((payload) => ({
+      ? api.chatMaestroGetConversation(conversationId).then((payload) => ({
           agents: payload.config.pool
             .filter((resource) => resource.enabled)
             .map((resource) => ({
@@ -1556,11 +1559,11 @@ export function ChatView({
               baseAgentName: resource.agentName,
             })),
         }))
-      : window.api.chatSubagentProfilesCatalog(conversationId)
+      : api.chatSubagentProfilesCatalog(conversationId)
     request.then((catalog) => {
       if (convIdRef.current === conversationId) setSubagents(catalog.agents)
     })
-  }, [conversationId, isMaestro])
+  }, [api, conversationId, isMaestro])
   useEffect(() => {
     reloadSubagents()
   }, [reloadSubagents, visible])
@@ -1570,12 +1573,15 @@ export function ChatView({
     return subscribeSubagentProfilesChanged(reloadSubagents)
   }, [reloadSubagents, visible])
 
+  // A file of a server opens in an editor nobody sees: there, a mention stays a reference.
+  const opensFiles = useHostInfo().desktopEffects
   const openMention = useCallback(
     (relPath: string, startLine?: number, endLine?: number) => {
+      if (!opensFiles) return
       showSourceConversation()
-      void window.api.openPlanFile(conversationId, relPath, startLine, endLine)
+      void api.openPlanFile(conversationId, relPath, startLine, endLine)
     },
-    [conversationId, showSourceConversation]
+    [api, conversationId, opensFiles, showSourceConversation]
   )
 
   const [remoteCmds, setRemoteCmds] = useState<{
@@ -1586,8 +1592,8 @@ export function ChatView({
   remoteCmdsRef.current = remoteCmds
 
   const reloadCommands = useCallback(() => {
-    void window.api.chatCommands(conversationId).then(setRemoteCmds)
-  }, [conversationId])
+    void api.chatCommands(conversationId).then(setRemoteCmds)
+  }, [api, conversationId])
   useEffect(() => {
     if (!visible) return
     window.addEventListener('maestrly:skills-changed', reloadCommands)
@@ -1596,13 +1602,13 @@ export function ChatView({
   useEffect(() => {
     if (!visible) return
     let alive = true
-    window.api.chatCommands(conversationId).then((c) => {
+    api.chatCommands(conversationId).then((c) => {
       if (alive) setRemoteCmds(c)
     })
     return () => {
       alive = false
     }
-  }, [conversationId, visible])
+  }, [api, conversationId, visible])
 
   const commands = useMemo<ChatSlashCommand[]>(
     () => [
@@ -1638,7 +1644,7 @@ export function ChatView({
     setCompacting(true)
     let completed = false
     try {
-      const res = await window.api.chatCompact(conversationId)
+      const res = await api.chatCompact(conversationId)
       if (!res.ok && res.error !== 'too-short') {
         pushAssistantError(res.error === 'no-model' ? t('view.errNoModel') : t('view.errCompactFailed'))
         return false
@@ -1662,14 +1668,14 @@ export function ChatView({
       if (completed) finishTurn(!visibleRef.current)
       setStreaming(streamingRef.current)
     }
-  }, [conversationId, finishTurn, pushAssistantError, reloadLatestPage, t])
+  }, [api, conversationId, finishTurn, pushAssistantError, reloadLatestPage, t])
   const runCompact = useCallback(() => void runCompactAsync(), [runCompactAsync])
 
   const pickCommand = useCallback(
     (cmd: ChatSlashCommand) => {
       if (cmd.kind === 'action') {
         if (cmd.action === 'clear') {
-          void window.api.chatClear(conversationId).then((result) => {
+          void api.chatClear(conversationId).then((result) => {
             if (!result.ok) return
             setMessages([])
             for (const item of queueRef.current) revokeAttachmentPreviews(item.attachments)
@@ -1696,12 +1702,12 @@ export function ChatView({
       setDraft((cmd.content ?? '').replace(/\$ARGUMENTS/g, '').trim())
       setDraftMentions([])
     },
-    [conversationId, runCompact, setQueueState]
+    [api, conversationId, runCompact, setQueueState]
   )
 
   useEffect(
     () =>
-      window.api.onChatReference(conversationId, (r) => {
+      api.onChatReference(conversationId, (r) => {
         const range = r.startLine
           ? `:L${r.startLine}${r.endLine && r.endLine !== r.startLine ? '-' + r.endLine : ''}`
           : ''
@@ -1710,7 +1716,7 @@ export function ChatView({
         const mention = `@${p}${range}`
         setDraft((d) => (d && !d.endsWith(' ') ? `${d} ${mention} ` : `${d}${mention} `))
       }),
-    [conversationId]
+    [api, conversationId]
   )
 
   // Apply both per-file limits and the aggregate binary budget (images + PDFs) to the existing draft plus the
@@ -1796,16 +1802,19 @@ export function ChatView({
   const stop = useCallback(() => {
     stoppedRef.current = true
     setStopPending(true)
-    window.api.chatStop(conversationId)
+    api.chatStop(conversationId)
     setStreaming(false)
     for (const item of queueRef.current) revokeAttachmentPreviews(item.attachments)
     setQueueState([]) // Stop cancels the active turn and the pending queue.
-  }, [conversationId, setQueueState])
+  }, [api, conversationId, setQueueState])
 
-  const decide = useCallback((requestId: string, reply: 'once' | 'always' | 'reject') => {
-    // The broker's resolved event dismisses the prompt only after it accepts the decision.
-    window.api.chatPermissionRespond(requestId, reply)
-  }, [])
+  const decide = useCallback(
+    (requestId: string, reply: 'once' | 'always' | 'reject') => {
+      // The broker's resolved event dismisses the prompt only after it accepts the decision.
+      api.chatPermissionRespond(requestId, reply)
+    },
+    [api]
+  )
 
   const startEdit = useCallback((id: string) => setEditingId(id), [])
   const cancelEdit = useCallback(() => setEditingId(null), [])
@@ -1848,7 +1857,7 @@ export function ChatView({
       imagesSentRef.current = resendHasImage
       optimisticSentRef.current = true
       setStreaming(true)
-      const res = await window.api.chatResend(conversationId, id, text, agentMentions)
+      const res = await api.chatResend(conversationId, id, text, agentMentions)
       if (!res.ok) {
         slashSentRef.current = false
         agentMentionsSentRef.current = false
@@ -1858,7 +1867,7 @@ export function ChatView({
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
       }
     },
-    [conversationId, pushAssistantError, subagents]
+    [api, conversationId, pushAssistantError, subagents]
   )
 
   const contextObservation = useMemo(
@@ -1896,16 +1905,16 @@ export function ChatView({
   }, [messages])
 
   const reloadSubagentSessions = useCallback(async () => {
-    const sessions = await window.api.chatSubagentSessions(conversationId, { limit: 200 })
+    const sessions = await api.chatSubagentSessions(conversationId, { limit: 200 })
     setSubagentSessions(sessions)
     return sessions
-  }, [conversationId])
+  }, [api, conversationId])
 
   useEffect(() => {
     if (!visible) return
     void reloadSubagentSessions()
     let timer: ReturnType<typeof setTimeout> | null = null
-    const off = window.api.onChatSubagentSession(conversationId, () => {
+    const off = api.onChatSubagentSession(conversationId, () => {
       if (timer) return
       timer = setTimeout(() => {
         timer = null
@@ -1916,18 +1925,18 @@ export function ChatView({
       off()
       if (timer) clearTimeout(timer)
     }
-  }, [conversationId, reloadSubagentSessions, visible])
+  }, [api, conversationId, reloadSubagentSessions, visible])
 
   const openSubagentSession = useCallback<OpenSubagentSession>(
     async ({ conversationId: ownerConversationId, parentMessageId, toolCallId }) => {
       if (ownerConversationId !== conversationId) return false
-      const session = await window.api.chatSubagentResolve(conversationId, parentMessageId, toolCallId)
+      const session = await api.chatSubagentResolve(conversationId, parentMessageId, toolCallId)
       if (!session) return false
       setSubagentSessions((current) => [session, ...current.filter((item) => item.id !== session.id)])
       setSelectedSubagentSessionId(session.id)
       return true
     },
-    [conversationId]
+    [api, conversationId]
   )
 
   const beginSubagentPaneResize = useCallback(
@@ -2138,11 +2147,7 @@ export function ChatView({
                         title={t('view.queueEdit')}
                         onClick={() => {
                           if (q.maestroLive) {
-                            void window.api.chatMaestroLiveCancel(
-                              conversationId,
-                              q.maestroLive.runId,
-                              q.maestroLive.messageId
-                            )
+                            void api.chatMaestroLiveCancel(conversationId, q.maestroLive.runId, q.maestroLive.messageId)
                           }
                           setDraft(q.text)
                           setDraftMentions(q.agentMentions)
@@ -2158,11 +2163,7 @@ export function ChatView({
                         title={t('view.queueRemove')}
                         onClick={() => {
                           if (q.maestroLive) {
-                            void window.api.chatMaestroLiveCancel(
-                              conversationId,
-                              q.maestroLive.runId,
-                              q.maestroLive.messageId
-                            )
+                            void api.chatMaestroLiveCancel(conversationId, q.maestroLive.runId, q.maestroLive.messageId)
                           }
                           revokeAttachmentPreviews(q.attachments)
                           setQueueState((cur) => cur.filter((x) => x.id !== q.id))
@@ -2230,8 +2231,8 @@ export function ChatView({
               <QuestionComposer
                 key={pendingQuestion.toolCallId}
                 questions={pendingQuestion.questions}
-                onSubmit={(answers) => window.api.chatQuestionRespond(pendingQuestion.toolCallId, answers)}
-                onDismiss={() => window.api.chatQuestionRespond(pendingQuestion.toolCallId, [])}
+                onSubmit={(answers) => api.chatQuestionRespond(pendingQuestion.toolCallId, answers)}
+                onDismiss={() => api.chatQuestionRespond(pendingQuestion.toolCallId, [])}
               />
             ) : (
               <ChatComposer

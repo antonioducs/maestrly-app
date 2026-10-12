@@ -3,6 +3,8 @@ import { FolderOpen, ShieldAlert } from 'lucide-react'
 import type { ChatPermMode } from '../../../preload'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import type { TFn } from './shared'
 
 export function DefaultPermissionSection({
@@ -43,32 +45,37 @@ export function DefaultPermissionSection({
   )
 }
 
-/** Folder where chats create and clone projects; chosen with the native picker and validated in main. */
+/**
+ * Folder where chats create and clone projects; chosen with the native picker and validated in main. A server has no
+ * picker anybody could answer: its chats use its workspaces folder until another is set there.
+ */
 export function ProjectsDirectorySection({ t }: { t: TFn }) {
+  const api = useHostApi()
+  const canPick = useHostInfo().desktopEffects
   const [directory, setDirectory] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
-    void window.api
+    void api
       .getProjectsDirectory()
       .then((value) => {
         if (alive) setDirectory(value)
       })
       .catch(() => {})
-    const off = window.api.onProjectsDirectoryChanged(setDirectory)
+    const off = api.onProjectsDirectoryChanged(setDirectory)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [api])
 
   const choose = async () => {
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.pickProjectsDirectory()
+      const result = await api.pickProjectsDirectory()
       setDirectory(result.path)
       if (!result.ok && result.error) setError(result.error)
     } finally {
@@ -93,10 +100,12 @@ export function ProjectsDirectorySection({ t }: { t: TFn }) {
         >
           {directory ?? t('settings.projectsDirectory.empty')}
         </div>
-        <Button variant="outline" size="sm" className="h-8 gap-1.5 text-[12px]" disabled={busy} onClick={choose}>
-          <FolderOpen className="size-3.5" />
-          {t('settings.projectsDirectory.choose')}
-        </Button>
+        {canPick && (
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-[12px]" disabled={busy} onClick={choose}>
+            <FolderOpen className="size-3.5" />
+            {t('settings.projectsDirectory.choose')}
+          </Button>
+        )}
         {directory && (
           <Button
             variant="ghost"
@@ -104,7 +113,7 @@ export function ProjectsDirectorySection({ t }: { t: TFn }) {
             className="h-8 text-[12px]"
             disabled={busy}
             onClick={async () => {
-              await window.api.clearProjectsDirectory()
+              await api.clearProjectsDirectory()
               setDirectory(null)
             }}
           >

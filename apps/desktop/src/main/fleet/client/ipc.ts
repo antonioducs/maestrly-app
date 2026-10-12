@@ -5,6 +5,7 @@ import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_WORKSPACES_HOST_FEATURE,
   fleetBotIdSchema,
   fleetFileIdSchema,
   fleetEnvironmentIdSchema,
@@ -29,6 +30,7 @@ import {
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
 import {
@@ -96,7 +98,7 @@ const updateWhen = fleetEnvironmentUpdateRequestSchema.shape.when
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
   registerFleetProvisioningIpc(reg, fleet)
   registerFleetEnvironmentSettingsIpc(reg, fleet)
-  if (process.env.MAESTRLY_BOT_MODE !== '1') {
+  if (!isHeadlessInstance()) {
     fleet.start()
     app.once('will-quit', () => fleet.stop())
   }
@@ -135,6 +137,14 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const route = environmentActionRoute[environmentAction.parse(rawAction)]
     requireEnvironments(fleet)
     return fleet.call(route, { params })
+  })
+  // A server hosts the owner's chats and workspaces in one environment of its own kind, with no bots.
+  reg.mhandle('fleet:createWorkspaces', () => {
+    if (!fleet.hasFeature(FLEET_WORKSPACES_HOST_FEATURE))
+      throw new FleetClientError('INVALID_REQUEST', 400, 'Update the server to run workspaces on it.')
+    return fleet.call('environmentsCreate', {
+      body: { name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces', idempotencyKey: fleet.idempotencyKey() },
+    })
   })
   reg.mhandle('fleet:environmentUpdate', (_event, rawId: unknown, rawWhen: unknown) => {
     const params = { eid: environmentId.parse(rawId) }

@@ -5,11 +5,11 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as electron from 'electron' // Alias to the same stub instance imported by preload.
 import { localDataApi } from '../../src/preload/api-local-data'
-import { appApi } from '../../src/preload/api-app'
-import { chatApi } from '../../src/preload/api-chat'
+import { appApi, appHostApi } from '../../src/preload/api-app'
+import { chatApi, chatLocalApi } from '../../src/preload/api-chat'
 import { chatWindowApi } from '../../src/preload/api-chat-window'
 import { conversationMigrationApi } from '../../src/preload/api-conversation-migration'
-import { drawerApi } from '../../src/preload/api-drawer'
+import { drawerApi, drawerHostApi } from '../../src/preload/api-drawer'
 import { memoryApi } from '../../src/preload/api-memory'
 import { notesApi } from '../../src/preload/api-notes'
 import { planApi } from '../../src/preload/api-plan'
@@ -19,17 +19,20 @@ import { performanceApi } from '../../src/preload/api-performance'
 import { projectSetupApi } from '../../src/preload/api-project-setup'
 import { runtimeAssetsApi } from '../../src/preload/api-runtime-assets'
 import { reviewApi } from '../../src/preload/api-review'
-import { settingsApi } from '../../src/preload/api-settings'
+import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
-import { platformApi } from '../../src/preload/api-platform'
+import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
+import { hostsApi } from '../../src/preload/api-hosts'
+import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
+import { transfersApi } from '../../src/preload/api-transfers'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -46,6 +49,7 @@ const clipboardWriteSpy = vi.spyOn(electron.clipboard, 'writeText')
 let api: Api
 const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['appApi', appApi],
+  ['appHostApi', appHostApi],
   ['localDataApi', localDataApi],
   ['ptyApi', ptyApi],
   ['performanceApi', performanceApi],
@@ -56,20 +60,27 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['memoryApi', memoryApi],
   ['notesApi', notesApi],
   ['drawerApi', drawerApi],
+  ['drawerHostApi', drawerHostApi],
   ['popupApi', popupApi],
   ['planApi', planApi],
   ['reviewApi', reviewApi],
   ['settingsApi', settingsApi],
+  ['settingsHostApi', settingsHostApi],
   ['soundApi', soundApi],
   ['updateApi', updateApi],
   ['chatApi', chatApi],
+  ['chatLocalApi', chatLocalApi],
   ['chatWindowApi', chatWindowApi],
   ['platformApi', platformApi],
+  ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetInstallerApi', fleetInstallerApi],
+  ['hostsApi', hostsApi],
+  ['hostFsApi', hostFsApi],
   ['artifactsApi', artifactsApi],
+  ['transfersApi', transfersApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -131,7 +142,15 @@ const PRELOAD_API_CHANNEL_RE = /ipcRenderer\.(?:invoke|send)\(\s*'([^']+)'/g
 const PRELOAD_LISTENER_CHANNEL_RE = /ipcRenderer\.on\(\s*'([^']+)'/g
 
 // Main registrations without preload consumers require an explicit explanation.
-const KNOWN_MAIN_ONLY: string[] = []
+const KNOWN_MAIN_ONLY: string[] = [
+  // A workspaces host's editor channels: this computer's main process invokes them over the host bridge
+  // (remote-host/client/editor), never a renderer through the preload.
+  'editor:open',
+  'editor:status',
+  'editor:restart',
+  'editor:navigate',
+  'editor:snapshot',
+]
 
 // Read sources without importing them to inventory channels and event emissions.
 const mainFiles = readMainFiles()
@@ -301,8 +320,55 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(524)
+    expect(keys).toHaveLength(566)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('relays the API of a remote host through this computer’s main process', async () => {
+    const hostId = 'server-1/workspaces'
+    const remote = hostsApi.hostApi(hostId)
+    // One object per host, with the members this computer's own host API has.
+    expect(hostsApi.hostApi(hostId)).toBe(remote)
+    expect(Object.keys(remote).sort()).toEqual(Object.keys(hostsApi.hostApi('local')).sort())
+
+    await remote.listWorkspaces(true)
+    expect(invokeSpy).toHaveBeenLastCalledWith('host:invoke', hostId, 'workspace:list', [true])
+    remote.setWorkspaceCollapsed('ws-1', true)
+    expect(sendSpy).toHaveBeenLastCalledWith('host:send', hostId, 'workspace:set-collapsed', ['ws-1', true])
+
+    // Every host shares one listener; an event reaches only the subscribers of its host and channel.
+    const here = vi.fn()
+    const there = vi.fn()
+    const stopHere = remote.onStatus(here)
+    const stopThere = hostsApi.hostApi('server-1/other').onStatus(there)
+    const relays = onSpy.mock.calls.filter(([channel]) => channel === 'host:event')
+    expect(relays).toHaveLength(1)
+    const relay = relays[0][1] as (event: unknown, ...args: unknown[]) => void
+    expect(onSpy.mock.calls.some(([channel]) => channel === 'agent:status')).toBe(false)
+    const status = { agentId: 'conv-1', status: 'working' }
+    relay({}, hostId, 'agent:status', [status])
+    relay({}, hostId, 'agent:other', [status])
+    expect(here).toHaveBeenCalledExactlyOnceWith(status)
+    expect(there).not.toHaveBeenCalled()
+    stopHere()
+    relay({}, hostId, 'agent:status', [status])
+    expect(here).toHaveBeenCalledTimes(1)
+    stopThere()
+  })
+
+  it('lists hosts, follows their changes and dials one again', async () => {
+    await hostsApi.hostsList()
+    expect(invokeSpy).toHaveBeenLastCalledWith('hosts:list')
+    await hostsApi.hostsRetry('server-1/workspaces')
+    expect(invokeSpy).toHaveBeenLastCalledWith('hosts:retry', 'server-1/workspaces')
+    const changed = vi.fn()
+    const off = hostsApi.onHostsChanged(changed)
+    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (event: unknown, hosts: unknown) => void]
+    expect(channel).toBe('hosts:changed')
+    listener({}, [{ id: 'local' }])
+    expect(changed).toHaveBeenCalledWith([{ id: 'local' }])
+    off()
+    expect(removeListenerSpy).toHaveBeenLastCalledWith('hosts:changed', listener)
   })
 
   it('routes copied screen text through the main process with its channel id', async () => {

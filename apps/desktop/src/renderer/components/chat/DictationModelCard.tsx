@@ -4,6 +4,11 @@ import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
 import { assetProgress, formatBytes } from './runtime-asset-presentation'
+import { hostApi } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
+
+// Dictation runs on this computer, where the microphone is, whichever host the chat belongs to.
+const localApi = hostApi(LOCAL_HOST_ID)
 
 const primaryCls =
   'rounded-md bg-indigo-500 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-indigo-400 disabled:opacity-50'
@@ -60,9 +65,9 @@ export function DictationModelCard({
       .catch((error: unknown) => console.error('[mic] voice model operation failed', error))
       .finally(() => setRequesting(false))
   }
-  const install = () => run(() => window.api.runtimeAssetInstall('whisper-model'))
-  const cancel = () => run(() => window.api.runtimeAssetCancel('whisper-model'))
-  const repair = () => run(() => window.api.runtimeAssetRepair('whisper-model'))
+  const install = () => run(() => localApi.runtimeAssetInstall('whisper-model'))
+  const cancel = () => run(() => localApi.runtimeAssetCancel('whisper-model'))
+  const repair = () => run(() => localApi.runtimeAssetRepair('whisper-model'))
 
   // The service reports a user cancel as `failed` with a "cancelled" message; offer a plain Download again.
   const cancelled = info?.status.state === 'failed' && /cancel/i.test(info.status.error ?? '')

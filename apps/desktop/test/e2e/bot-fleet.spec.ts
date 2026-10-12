@@ -1201,15 +1201,16 @@ async function runFleetScenario(workspaceOnly: boolean) {
     const page = await app.firstWindow()
     await page.waitForFunction(() => Boolean((window as any).api))
     const inventory = await page.evaluate(async () => {
-      const provider = await window.api.chatAddProvider({
+      const host = window.api.hostApi('local')
+      const provider = await host.chatAddProvider({
         name: 'Mac fixture key',
         kind: 'openai',
         baseURL: 'https://fixture-user:fixture-password@api.example.com/v1?token=fixture-url-token#fixture-fragment',
         key: '',
       })
       if (!provider.id) throw new Error('No fixture provider')
-      await window.api.chatSetKey(provider.id, 'sk-e2e-provision')
-      await window.api.chatMcpAdd({
+      await host.chatSetKey(provider.id, 'sk-e2e-provision')
+      await host.chatMcpAdd({
         name: 'Mac fixture MCP',
         transport: 'stdio',
         command: 'node',

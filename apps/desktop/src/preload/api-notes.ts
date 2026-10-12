@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 
 export type NotesScope = 'conv' | 'project'
 
@@ -16,46 +17,51 @@ export type NotesState =
 
 export type UploadImageResult = { ok: true; relPath: string } | { ok: false; error: string }
 
-export const notesApi = {
-  listNotePages: (scope: NotesScope, id: string): Promise<PageMeta[]> => ipcRenderer.invoke('notes:list', scope, id),
-  readNotePage: (scope: NotesScope, id: string, pageId: string): Promise<string> =>
-    ipcRenderer.invoke('notes:readPage', scope, id, pageId),
-  writeNotePage: (scope: NotesScope, id: string, pageId: string, content: string): Promise<void> =>
-    ipcRenderer.invoke('notes:writePage', scope, id, pageId, content),
-  appendNotePage: (scope: NotesScope, id: string, pageId: string, text: string): Promise<void> =>
-    ipcRenderer.invoke('notes:appendPage', scope, id, pageId, text),
-  createNotePage: (
-    scope: NotesScope,
-    id: string,
-    args: { title?: string; parentId?: string | null }
-  ): Promise<PageMeta | null> => ipcRenderer.invoke('notes:createPage', scope, id, args),
-  renameNotePage: (
-    scope: NotesScope,
-    id: string,
-    pageId: string,
-    patch: { title?: string; emoji?: string | null }
-  ): Promise<void> => ipcRenderer.invoke('notes:renamePage', scope, id, pageId, patch),
-  moveNotePage: (
-    scope: NotesScope,
-    id: string,
-    pageId: string,
-    parentId: string | null,
-    order: number
-  ): Promise<void> => ipcRenderer.invoke('notes:movePage', scope, id, pageId, parentId, order),
-  deleteNotePage: (scope: NotesScope, id: string, pageId: string): Promise<void> =>
-    ipcRenderer.invoke('notes:deletePage', scope, id, pageId),
-  mergeNotes: (convId: string): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('notes:merge', convId),
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makeNotesApi(ipcRenderer: IpcTransport) {
+  return {
+    listNotePages: (scope: NotesScope, id: string): Promise<PageMeta[]> => ipcRenderer.invoke('notes:list', scope, id),
+    readNotePage: (scope: NotesScope, id: string, pageId: string): Promise<string> =>
+      ipcRenderer.invoke('notes:readPage', scope, id, pageId),
+    writeNotePage: (scope: NotesScope, id: string, pageId: string, content: string): Promise<void> =>
+      ipcRenderer.invoke('notes:writePage', scope, id, pageId, content),
+    appendNotePage: (scope: NotesScope, id: string, pageId: string, text: string): Promise<void> =>
+      ipcRenderer.invoke('notes:appendPage', scope, id, pageId, text),
+    createNotePage: (
+      scope: NotesScope,
+      id: string,
+      args: { title?: string; parentId?: string | null }
+    ): Promise<PageMeta | null> => ipcRenderer.invoke('notes:createPage', scope, id, args),
+    renameNotePage: (
+      scope: NotesScope,
+      id: string,
+      pageId: string,
+      patch: { title?: string; emoji?: string | null }
+    ): Promise<void> => ipcRenderer.invoke('notes:renamePage', scope, id, pageId, patch),
+    moveNotePage: (
+      scope: NotesScope,
+      id: string,
+      pageId: string,
+      parentId: string | null,
+      order: number
+    ): Promise<void> => ipcRenderer.invoke('notes:movePage', scope, id, pageId, parentId, order),
+    deleteNotePage: (scope: NotesScope, id: string, pageId: string): Promise<void> =>
+      ipcRenderer.invoke('notes:deletePage', scope, id, pageId),
+    mergeNotes: (convId: string): Promise<{ ok: boolean; message: string }> =>
+      ipcRenderer.invoke('notes:merge', convId),
 
-  uploadNoteImage: (scope: NotesScope, id: string, mime: string, data: ArrayBuffer): Promise<UploadImageResult> =>
-    ipcRenderer.invoke('notes:uploadImage', scope, id, mime, data),
+    uploadNoteImage: (scope: NotesScope, id: string, mime: string, data: ArrayBuffer): Promise<UploadImageResult> =>
+      ipcRenderer.invoke('notes:uploadImage', scope, id, mime, data),
 
-  readNoteAsset: (scope: NotesScope, id: string, relPath: string): Promise<string> =>
-    ipcRenderer.invoke('notes:readAsset', scope, id, relPath),
-  onNotesState: (cb: (s: NotesState) => void) => {
-    const listener = (_e: unknown, s: NotesState) => cb(s)
-    ipcRenderer.on('drawer:notes-state', listener)
-    return () => {
-      ipcRenderer.removeListener('drawer:notes-state', listener)
-    }
-  },
+    readNoteAsset: (scope: NotesScope, id: string, relPath: string): Promise<string> =>
+      ipcRenderer.invoke('notes:readAsset', scope, id, relPath),
+    onNotesState: (cb: (s: NotesState) => void) => {
+      const listener = (_e: unknown, s: NotesState) => cb(s)
+      ipcRenderer.on('drawer:notes-state', listener)
+      return () => {
+        ipcRenderer.removeListener('drawer:notes-state', listener)
+      }
+    },
+  }
 }
+export const notesApi = makeNotesApi(ipcRenderer)

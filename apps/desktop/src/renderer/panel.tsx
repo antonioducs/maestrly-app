@@ -9,27 +9,37 @@ import { ReviewPanel } from '@/components/ReviewPanel'
 import { PlanPanel } from '@/components/PlanPanel'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { TerminalTabs } from '@/components/TerminalTabs'
+import { FilesPanel } from '@/components/files/FilesPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { i18n, initRendererI18n } from './lib/i18n'
+import { HostProvider, useHostApi } from '@/lib/hosts/host-context'
 import type { PlanReceived } from '../preload'
+import { hostKey, LOCAL_HOST_ID } from '../shared/host-key'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import './styles.css'
 
 const params = new URLSearchParams(location.search)
 const panel = params.get('panel') ?? ''
 const conv = params.get('conv') ?? ''
+const host = params.get('host') ?? LOCAL_HOST_ID
+// This computer knows the panel's conversation by its host key; the host knows it by `conv`.
+const convKey = hostKey(host, conv)
 
 function PlanPanelHost({ conv }: { conv: string }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
+  // A file chip opens the file in the conversation's editor: this computer's, or a remote host's when it serves one.
+  const opensFiles = useHostInfo().editor
   const [plan, setPlan] = useState<PlanReceived | null>(null)
   useEffect(() => {
     let alive = true
-    void window.api.getPendingPlan(conv).then((p) => {
+    void api.getPendingPlan(conv).then((p) => {
       if (alive && p) setPlan(p)
     })
-    const offR = window.api.onPlanReceived((p) => {
+    const offR = api.onPlanReceived((p) => {
       if (p.agentId === conv) setPlan(p)
     })
-    const offC = window.api.onPlanCleared(({ agentId }) => {
+    const offC = api.onPlanCleared(({ agentId }) => {
       if (agentId === conv) setPlan(null)
     })
     return () => {
@@ -37,7 +47,7 @@ function PlanPanelHost({ conv }: { conv: string }) {
       offR()
       offC()
     }
-  }, [conv])
+  }, [conv, api])
   if (!plan) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
@@ -48,8 +58,11 @@ function PlanPanelHost({ conv }: { conv: string }) {
   return (
     <PlanPanel
       plan={plan}
-      onDecide={(d) => window.api.decidePlan(conv, d)}
-      onOpenFile={(filePath, line) => void window.api.openPlanFile(conv, filePath, line)}
+      onDecide={(d) => api.decidePlan(conv, d)}
+      // A file of a server opens in an editor nobody sees: there, a path stays a reference.
+      onOpenFile={(filePath, line) => {
+        if (opensFiles) void api.openPlanFile(conv, filePath, line)
+      }}
     />
   )
 }
@@ -61,7 +74,7 @@ function TerminalPanelHost({ conv }: { conv: string }) {
   useEffect(
     () =>
       window.api.onTerminalPanelActivity((state) => {
-        if (state.convId === conv) setFullSpeed(state.fullSpeed)
+        if (state.convId === convKey) setFullSpeed(state.fullSpeed)
       }),
     [conv]
   )
@@ -71,7 +84,16 @@ function TerminalPanelHost({ conv }: { conv: string }) {
   return <TerminalTabs convId={conv} active={fullSpeed} />
 }
 
+/** A panel of a remote host's conversation is mounted again each time the host answers again. */
+function HostPanel() {
+  const info = useHostInfo()
+  return <PanelRoot key={info.epoch} />
+}
+
 function PanelRoot() {
+  const api = useHostApi()
+  // A file chip opens the file in the conversation's editor: this computer's, or a remote host's when it serves one.
+  const opensFiles = useHostInfo().editor
   switch (panel) {
     case 'notes':
       return <NotesPanel key={conv} scope="conv" scopeId={conv} showMerge visible />
@@ -80,7 +102,9 @@ function PanelRoot() {
         <ReviewPanel
           convId={conv}
           visible
-          onOpenFile={(path, line) => void window.api.openPlanFile(conv, path, line)}
+          onOpenFile={(path, line) => {
+            if (opensFiles) void api.openPlanFile(conv, path, line)
+          }}
           onOpenUrl={(url) => void window.api.openExternalUrl(url)}
         />
       )
@@ -90,6 +114,8 @@ function PanelRoot() {
       return <BrowserChrome convId={conv} />
     case 'terminal':
       return <TerminalPanelHost conv={conv} />
+    case 'files':
+      return <FilesPanel conv={conv} />
     default:
       return null
   }
@@ -101,7 +127,9 @@ void initRendererI18n().finally(() => {
       <I18nextProvider i18n={i18n}>
         <ErrorBoundary>
           <div className="h-screen w-screen bg-surface text-foreground">
-            <PanelRoot />
+            <HostProvider hostId={host}>
+              <HostPanel />
+            </HostProvider>
           </div>
         </ErrorBoundary>
       </I18nextProvider>

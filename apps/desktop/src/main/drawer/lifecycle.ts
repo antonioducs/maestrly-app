@@ -1,19 +1,12 @@
 import type { WebContentsView } from 'electron'
 import { unregisterPanelTarget } from '../window-ipc'
-import {
-  drawers,
-  fkey,
-  floatWinByKey,
-  placementByConv,
-  setActiveConvId,
-  win,
-  type ConvDrawer,
-} from './state'
+import { drawers, fkey, floatWinByKey, placementByConv, setActiveConvId, win, type ConvDrawer } from './state'
 import { applyLayout } from './layout'
 import { disposeBrowserTabEviction, persistTimers, scheduleColdBrowserEviction } from './browser'
 import { disposePanelEviction, scheduleColdPanelEviction } from './panels'
 import { closeChatGptWebView, disposeChatGptWebViews } from '../chat/chatgpt-web/companion-window'
 import { closeVSCodeView } from './vscode'
+import { disposeStreamWindow } from './stream-window'
 import { disposeConversationResources, disposeResourceGovernor } from '../performance/resource-governor'
 
 // ---------------- ciclo de vida ----------------
@@ -30,6 +23,8 @@ function closeView(v: WebContentsView | null | undefined): void {
 }
 
 function destroyDrawer(convId: string, d: ConvDrawer): void {
+  // A browser a remote viewer watches lives in its stream window: that window goes first, then its views close.
+  disposeStreamWindow(convId)
   for (const t of d.browserTabs) closeView(t.view)
   d.browserTabs.length = 0
   d.activeBrowserId = null

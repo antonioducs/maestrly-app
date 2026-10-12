@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
+import { hostApi } from './hosts/host-context'
 
 type AgentStatus = 'idle' | 'working' | 'ready' | 'waiting' | 'asking' | 'error'
 
@@ -8,6 +10,7 @@ type UseAgentStatusesParams = {
   mainOverride: string | null
 
   chatGptVisibleConversationId?: string | null
+  hostId?: HostId
 }
 
 export interface AgentAttentionState {
@@ -77,7 +80,9 @@ export function useAgentStatuses({
   activeId,
   mainOverride,
   chatGptVisibleConversationId = null,
+  hostId = LOCAL_HOST_ID,
 }: UseAgentStatusesParams) {
+  const api = hostApi(hostId)
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({})
 
   const [attentionState, setAttentionState] = useState<AgentAttentionState>(() => ({
@@ -99,14 +104,14 @@ export function useAgentStatuses({
   }, [])
   useEffect(() => {
     refreshWorkspaces()
-    const offStatus = window.api.onStatus(({ agentId, status }) => {
+    const offStatus = api.onStatus(({ agentId, status }) => {
       const endedTurn = statusesRef.current[agentId] === 'working' && (status === 'ready' || status === 'error')
       if ((endedTurn || status === 'asking') && agentId !== focusedRef.current) {
         setAttentionState((state) => applyNormalAttention(state, agentId))
       }
       setStatuses((prev) => ({ ...prev, [agentId]: status as AgentStatus }))
     })
-    const offChatGptCompletion = window.api.onChatGptWebTurnCompleted(({ conversationId }) => {
+    const offChatGptCompletion = api.onChatGptWebTurnCompleted(({ conversationId }) => {
       if (!conversationId) return
       const acknowledgementRevision = acknowledgementRevisionRef.current.get(conversationId) ?? 0
 
@@ -122,7 +127,7 @@ export function useAgentStatuses({
       offStatus()
       offChatGptCompletion()
     }
-  }, [refreshWorkspaces])
+  }, [refreshWorkspaces, api])
 
   useEffect(() => {
     const id = chatGptVisibleConversationId

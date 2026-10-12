@@ -1,7 +1,12 @@
 import {
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
+  parseFleetInstanceEditorPath,
   type FleetEnvironmentSettingsService,
+  type FleetHostFileDigestRequest,
+  type FleetHostFileStatRequest,
+  type FleetHostFileUploadBegin,
+  type FleetHostFileUploadCommit,
 } from '@maestrly/bot-fleet-protocol'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
@@ -14,6 +19,7 @@ import {
   FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_INSTANCE_BRIDGE_PATH,
   FLEET_INSTANCE_ROUTES,
   FLEET_MESSAGE_BODY_MAX,
   FLEET_PROTOCOL_HEADER,
@@ -66,6 +72,7 @@ import {
   type FleetUiOpenRequest,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
+import type { HostFiles } from '../../remote-host/server/host-files'
 import type { BotInstanceConfig } from './config'
 import type { DisplaySurface, VncLease, VncMode } from './displays'
 
@@ -135,7 +142,15 @@ export interface InstanceEnvironment {
   readonly settings?: FleetEnvironmentSettingsService
   /** The environment's event stream; each bot event names its bot. */
   readonly events: InstanceEvents
-  health(): { ok: true; appVersion: string; protocol: 1; ready: boolean; capabilities: readonly string[] }
+  health(): {
+    ok: true
+    appVersion: string
+    protocol: 1
+    ready: boolean
+    capabilities: readonly string[]
+    /** Only a workspaces host reports it: chat turns are running. */
+    busy?: boolean
+  }
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus>
   /** The models of the environment's accounts, freshly read; `current` is null, an environment has no selection. */
   selections(): Promise<{ options: FleetSelectionOption[]; current: null }>
@@ -377,7 +392,35 @@ type Handler = (request: { params: Record<string, string>; url: URL; input: unkn
  * apps display is separate. A bot's screens need that bot's takeover for control, and its controls end when its
  * takeover does; the environment screen needs none.
  */
-export function createInstanceControlServer(config: BotInstanceConfig, environment: InstanceEnvironment): http.Server {
+/** What the control server needs of a workspaces host's files; only a workspaces host passes them. */
+export type HostFilesRoutes = Pick<
+  HostFiles,
+  'stat' | 'digest' | 'content' | 'beginUpload' | 'uploadChunk' | 'commitUpload' | 'abortUpload'
+>
+
+/** Takes over an authenticated upgrade of the bridge path; a workspaces host passes its remote UI hub. */
+export interface BridgeUpgrade {
+  handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void
+}
+
+/**
+ * Serves the requests and upgrades under the editor prefix, once authenticated; a workspaces host passes its editor
+ * (remote-host/server/host-editor). `editorPath` is the editor's own path and query.
+ */
+export interface EditorRoutes {
+  request(request: IncomingMessage, response: ServerResponse, editorPath: string): Promise<void>
+  upgrade(request: IncomingMessage, socket: Duplex, head: Buffer, editorPath: string): void
+}
+
+export function createInstanceControlServer(
+  config: BotInstanceConfig,
+  environment: InstanceEnvironment,
+  options: { bridge?: BridgeUpgrade; hostFiles?: HostFilesRoutes; editor?: EditorRoutes } = {}
+): http.Server {
+  const hostFiles = (): HostFilesRoutes => {
+    if (!options.hostFiles) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+    return options.hostFiles
+  }
   function settings(): FleetEnvironmentSettingsService {
     if (!environment.settings)
       throw new InstanceHttpError(409, 'CONFLICT', 'Environment settings are unavailable. Restart to update.')
@@ -545,6 +588,12 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       return hold
     },
     botConversationCall: ({ params, input }) => bot(params).conversationCall(input as FleetConversationCallRequest),
+    hostFileStat: ({ input }) => hostFiles().stat(input as FleetHostFileStatRequest),
+    hostFileDigest: ({ input }) => hostFiles().digest(input as FleetHostFileDigestRequest),
+    hostFileUploadBegin: ({ input }) => hostFiles().beginUpload(input as FleetHostFileUploadBegin),
+    hostFileUploadCommit: ({ params, input }) =>
+      hostFiles().commitUpload(params.uploadId, input as FleetHostFileUploadCommit),
+    hostFileUploadAbort: ({ params }) => hostFiles().abortUpload(params.uploadId),
   }
 
   const server = http.createServer(async (request, response) => {
@@ -555,10 +604,20 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       if (!authorized(request.headers.authorization, config.controlToken))
         throw new InstanceHttpError(401, 'UNAUTHORIZED', 'Invalid control credentials.')
       const url = new URL(request.url ?? '/', 'http://localhost')
+      // The editor's requests stream both ways, as the editor sends and answers them.
+      const editorPath = options.editor ? parseFleetInstanceEditorPath(url.pathname) : null
+      if (options.editor && editorPath !== null)
+        return await options.editor.request(request, response, editorPath + url.search)
       const match = routeFor(request.method ?? '', url.pathname)
       if (!match) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
       if (SCREEN_ROUTES.has(match.key)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       if (match.key === 'events') return streamEvents(request, response, url, environment.events)
+      // An environment without host files refuses their routes before reading a body, as it does unknown routes.
+      if (match.key.startsWith('hostFile')) hostFiles()
+      // Content and chunks stream their bodies: they never go through the JSON body reader below.
+      if (match.key === 'hostFileContent') return await hostFiles().content(request, response, url)
+      if (match.key === 'hostFileUploadChunk')
+        return await hostFiles().uploadChunk(request, response, match.params.uploadId, url)
       // Routes of an instance that hosted a single bot, such as `/v1/status`, are gone: bots are addressed by id.
       const handler = handlers[match.key]
       if (!handler) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
@@ -673,6 +732,14 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       if (!authorized(request.headers.authorization, config.controlToken))
         return fail(401, 'UNAUTHORIZED', 'Invalid control credentials.')
       const url = new URL(request.url ?? '/', 'http://localhost')
+      if (options.bridge && request.method === 'GET' && url.pathname === FLEET_INSTANCE_BRIDGE_PATH) {
+        if (request.headers.upgrade?.toLowerCase() !== 'websocket')
+          return fail(400, 'INVALID_REQUEST', 'WebSocket upgrade required.')
+        return options.bridge.handleUpgrade(request, socket, head)
+      }
+      const editorPath = options.editor ? parseFleetInstanceEditorPath(url.pathname) : null
+      if (options.editor && editorPath !== null && request.method === 'GET')
+        return options.editor.upgrade(request, socket, head, editorPath + url.search)
       const screen = request.method === 'GET' ? screenFor(url.pathname) : null
       if (!screen) return fail(404, 'NOT_FOUND', 'Route not found.')
       if (

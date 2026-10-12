@@ -15,6 +15,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { HostFolderDialog } from '@/components/HostFolderDialog'
 import type { ProjectSetupDialogState, ProjectSetupMode } from './use-project-setup'
 
 interface Props {
@@ -37,11 +40,15 @@ function newOperationId(): string {
 
 export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmptyRemote, onClose }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [path, setPath] = useState('')
   const [parentPath, setParentPath] = useState('')
   const [name, setName] = useState('')
   const [remoteUrl, setRemoteUrl] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
+  // A host nobody sits at has no native folder dialog: its folders are browsed in a dialog of this window.
+  const host = useHostInfo()
+  const [browsing, setBrowsing] = useState<'open' | 'parent' | null>(null)
   const result = state.result
 
   useEffect(() => {
@@ -50,7 +57,7 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
     setPath('')
     setParentPath('')
     // The configured projects folder is the default parent; the person can still choose another one.
-    void window.api
+    void api
       .getProjectsDirectory()
       .then((directory) => {
         if (alive && directory) setParentPath((current) => current || directory)
@@ -62,7 +69,7 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
     return () => {
       alive = false
     }
-  }, [state.open, state.options.remoteUrl])
+  }, [api, state.open, state.options.remoteUrl])
 
   const awaitingEmptyRemote = state.progress?.phase === 'awaiting-empty-remote-confirmation'
   const needsInitialization = result?.status === 'needs-initialization'
@@ -75,9 +82,13 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
     return state.mode === 'create' || remoteUrl.trim().length > 0
   }, [name, parentPath, path, remoteUrl, state.busy, state.mode])
 
+  const picked = (purpose: 'open' | 'parent', selected: string) =>
+    purpose === 'open' ? setPath(selected) : setParentPath(selected)
+
   async function pick(purpose: 'open' | 'parent') {
-    const selected = await window.api.pickProjectDirectory(purpose)
-    if (selected) purpose === 'open' ? setPath(selected) : setParentPath(selected)
+    if (!host.desktopEffects) return setBrowsing(purpose)
+    const selected = await api.pickProjectDirectory(purpose)
+    if (selected) picked(purpose, selected)
   }
 
   function updateRemoteUrl(value: string) {
@@ -285,6 +296,16 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
             </Button>
           </DialogFooter>
         )}
+        {/* Inside this dialog's content, so that using it does not count as a click outside this dialog. */}
+        <HostFolderDialog
+          open={browsing !== null}
+          purpose={browsing ?? 'open'}
+          onPick={(selected) => {
+            if (browsing) picked(browsing, selected)
+            setBrowsing(null)
+          }}
+          onClose={() => setBrowsing(null)}
+        />
       </DialogContent>
     </Dialog>
   )
