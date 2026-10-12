@@ -24,7 +24,16 @@ export interface McpServer {
   startupTimeoutMs?: number
   toolTimeoutMs?: number
   toolFilter?: { allow?: string[]; deny?: string[] }
+  /**
+   * Set only on a per-account connection of a server with several signed-in accounts: the account whose tokens this
+   * connection uses. Each account gets its own connection.
+   */
+  oauthAccountId?: string
 }
+
+/** Pool key of a connection: one per server, or one per signed-in account of the server. */
+export const mcpConnectionKey = (server: Pick<McpServer, 'id' | 'oauthAccountId'>): string =>
+  server.oauthAccountId ? `${server.id}#${server.oauthAccountId}` : server.id
 
 /** A server from the user's own MCP settings (`chat.mcpServers`). */
 export type UserMcpServer = McpServer & { transport: UserMcpTransport }

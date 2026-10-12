@@ -59,7 +59,7 @@ import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../shared/runtime-a
 import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
 import { SubagentProfilesSettings } from './subagent-profiles/SubagentProfilesSettings'
 import { SkillsSettings } from './SkillsSettings'
-import { McpSignIn } from './McpSignIn'
+import { McpSignIn, signInStatus } from './McpSignIn'
 import { PluginsSettings } from '../plugins/PluginsSettings'
 import { PLUGINS_CHANGED_EVENT } from '../plugins/plugins-source'
 import { ChatGptWebSettings } from './ChatGptWebSettings'
@@ -2425,7 +2425,7 @@ function McpSettings({
             </div>
             {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
           </div>
-          <McpSignIn serverId={s.id} auth={s.auth} onChanged={onChanged} className="shrink-0" />
+          <McpSignIn serverId={s.id} auth={signInStatus(s.oauth)} onChanged={onChanged} className="shrink-0" />
           <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {s.transport}
           </span>

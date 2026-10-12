@@ -16,7 +16,7 @@ import type {
 } from '../../shared/plugins'
 import { removeMcpCatalog } from '../chat/mcp-catalog'
 import { invalidateMcpRuntime } from '../chat/mcp'
-import { forgetMcpOAuth, mcpOAuthStatus } from '../chat/mcp-oauth'
+import { forgetMcpOAuth, mcpOAuthField } from '../chat/mcp-oauth'
 import { sniffImageFormat } from '../chat/image-magic'
 import { forgetSkillNames } from '../chat/skill-state'
 import { isSecureStorageAvailable } from '../secure-store'
@@ -357,12 +357,16 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
       .filter((server) => server.origin?.pluginKey === record.key)
       .map((server) => [server.origin!.serverKey, server])
   )
-  const authStatus = (serverKey: string) => {
+  const oauth = (serverKey: string) => {
     const server = runtime.get(serverKey)
-    return server && !server.unavailable ? mcpOAuthStatus(server, !!server.oauth) : 'none'
+    return server ? mcpOAuthField(server) : undefined
+  }
+  const needsSignIn = (serverKey: string) => {
+    const summary = oauth(serverKey)
+    return !!summary && (summary.needsAuth || summary.accounts.some((account) => account.status === 'needs-auth'))
   }
   const serversNeedingAuth = (record.mcpServers ?? []).filter(
-    (server) => record.servers[server.key]?.enabled && authStatus(server.key) === 'needs-auth'
+    (server) => record.servers[server.key]?.enabled && needsSignIn(server.key)
   )
   return {
     key: record.key,
@@ -382,9 +386,10 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
     },
     skills: pkg ? skillDtos(pkg) : [],
     mcpServers: pkg
-      ? mcpServerDtos(pkg, record, (server) =>
-          server.transport === 'stdio' ? {} : { authStatus: authStatus(server.key) }
-        )
+      ? mcpServerDtos(pkg, record, (server) => {
+          const summary = server.transport === 'stdio' ? undefined : oauth(server.key)
+          return summary ? { oauth: summary } : {}
+        })
       : [],
     inputs: inputDtos(inputs, stored),
     policy: record.policy ?? DEFAULT_POLICY,

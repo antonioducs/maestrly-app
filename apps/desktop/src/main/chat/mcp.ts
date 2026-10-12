@@ -57,13 +57,14 @@ import { LazyMcpRuntime, type LazyMcpDiagnostic } from './mcp-lazy-runtime'
 import { isMcpNeedsAuthError, McpNeedsAuthError } from './mcp-auth-errors'
 import { forgetMcpOAuth, hostMcpOAuthProvider, markMcpNeedsAuth } from './mcp-oauth'
 import { listPluginMcpServers } from '../plugins/runtime'
-import type {
-  ListedMcpTool,
-  McpCallToolResult,
-  McpConnection,
-  McpRequestOptions,
-  McpServer,
-  UserMcpServer,
+import {
+  type ListedMcpTool,
+  type McpCallToolResult,
+  type McpConnection,
+  type McpRequestOptions,
+  type McpServer,
+  mcpConnectionKey,
+  type UserMcpServer,
 } from './mcp-types'
 export type {
   ListedMcpTool,
@@ -367,8 +368,10 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
     await client.close().catch(() => {})
     // A 401 the stored sign-in cannot answer: the person signs in from Settings; turns never open a browser.
     if (server.transport !== 'stdio' && (error instanceof UnauthorizedError || isMcpNeedsAuthError(error))) {
-      markMcpNeedsAuth(server.id)
-      throw isMcpNeedsAuthError(error) ? error : new McpNeedsAuthError(server.id, server.name)
+      // The provider already marked the account it stopped for; a bare 401 marks this connection.
+      if (isMcpNeedsAuthError(error)) throw error
+      markMcpNeedsAuth(mcpConnectionKey(server))
+      throw new McpNeedsAuthError(server.id, server.name)
     }
     throw error
   }

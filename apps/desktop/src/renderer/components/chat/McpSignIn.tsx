@@ -3,9 +3,17 @@ import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
+import type { McpOAuthSummaryDto } from '../../../shared/chat'
 import type { McpSignInActions } from './mcp-sign-in-actions'
 
 export type { McpSignInActions } from './mcp-sign-in-actions'
+
+/** One status for a server's sign-in: whether anything needs a sign-in, otherwise whether an account is signed in. */
+export function signInStatus(oauth: McpOAuthSummaryDto | undefined): 'connected' | 'needs-auth' | undefined {
+  if (!oauth) return undefined
+  if (oauth.needsAuth || oauth.accounts.some((account) => account.status === 'needs-auth')) return 'needs-auth'
+  return oauth.accounts.length ? 'connected' : undefined
+}
 
 /**
  * Sign-in of one remote MCP server: its status, and Sign in / Sign out. The browser part runs on this computer; the

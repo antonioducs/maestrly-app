@@ -10,8 +10,8 @@ import {
   type McpOAuthBundle,
   McpOAuthBundleSchema,
   type McpOAuthDescriptor,
-  mcpOAuthStatus,
-  saveMcpOAuth,
+  mcpOAuthField,
+  saveMcpOAuthAccount,
 } from './mcp-oauth'
 import { McpOAuthConnectFailure, runMcpOAuthConnect } from './mcp-oauth-connect'
 import type { McpServer } from './mcp-types'
@@ -52,9 +52,11 @@ export function mcpOAuthDescriptor(id: unknown): McpOAuthDescriptor | null {
 /** Sign-in status of this host's remote servers, user and plugin servers alike; those without one are left out. */
 export function mcpOAuthStatuses(): { id: string; status: 'connected' | 'needs-auth' }[] {
   return listRuntimeMcpServers({ includeInactivePlugins: true }).flatMap((server) => {
-    if (server.unavailable || server.transport === 'stdio') return []
-    const status = mcpOAuthStatus(server, !!server.oauth)
-    return status === 'none' ? [] : [{ id: server.id, status }]
+    const summary = mcpOAuthField(server)
+    if (!summary) return []
+    const needs = summary.needsAuth || summary.accounts.some((account) => account.status === 'needs-auth')
+    if (!needs && !summary.accounts.length) return []
+    return [{ id: server.id, status: needs ? ('needs-auth' as const) : ('connected' as const) }]
   })
 }
 
@@ -75,7 +77,8 @@ export function storeMcpOAuth(id: unknown, bundle: unknown): McpOAuthStoreResult
   if (!parsed.success) return { ok: false, error: 'invalid-input' }
   const server = remoteServer(parsedId.data)
   if (!server || server.url !== parsed.data.url) return { ok: false, error: 'server-changed' }
-  if (!saveMcpOAuth(server, parsed.data as McpOAuthBundle)) return { ok: false, error: 'storage' }
+  const saved = saveMcpOAuthAccount(server, parsed.data as McpOAuthBundle, {})
+  if (!saved.ok) return { ok: false, error: saved.error === 'server-changed' ? 'server-changed' : 'storage' }
   invalidateMcpRuntime(server.id)
   return { ok: true }
 }

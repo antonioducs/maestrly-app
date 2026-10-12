@@ -129,6 +129,27 @@ const input = z
 const skill = z
   .object({ name: text(200), description: text(4096), kind: z.enum(['skill', 'command']), hasScripts: z.boolean() })
   .strict()
+/** One signed-in account of a remote MCP server; never a token. */
+export const fleetMcpOAuthAccountSchema = z
+  .object({
+    id: z.string().regex(/^acc_[0-9a-f]{12}$/),
+    label: text(40),
+    email: optionalText(320),
+    scope: fleetPluginScopeSchema,
+    status: z.enum(['connected', 'needs-auth']),
+  })
+  .strict()
+/** Sign-in of a remote MCP server: its accounts and the own client's id, never a token or a secret. */
+export const fleetMcpOAuthSummarySchema = z
+  .object({
+    needsAuth: z.boolean(),
+    accounts: list(fleetMcpOAuthAccountSchema, 50),
+    client: z
+      .object({ clientId: text(4096) })
+      .strict()
+      .nullable(),
+  })
+  .strict()
 const mcpServer = z
   .object({
     key: text(64),
@@ -140,7 +161,7 @@ const mcpServer = z
     status: componentStatus,
     enabled: z.boolean().optional(),
     consented: z.boolean().optional(),
-    authStatus: z.enum(['none', 'connected', 'needs-auth']).optional(),
+    oauth: fleetMcpOAuthSummarySchema.optional(),
   })
   .strict()
 const policy = z

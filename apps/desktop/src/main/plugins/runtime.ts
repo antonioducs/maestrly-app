@@ -9,7 +9,7 @@ import {
   SKILL_BODY_MAX_CHARS,
 } from '../chat/skills'
 import type { McpServer } from '../chat/mcp-types'
-import { getConversation } from '../store'
+import { scopeAppliesTo } from '../chat/workspace-scope'
 import { appPluginLayout } from './app-layout'
 import { loadPluginPackage } from './formats/detect'
 import { type PluginLayout, pluginKeyHash } from './layout'
@@ -43,19 +43,9 @@ export function invalidatePluginRuntimeCache(key?: string): void {
     for (const cacheKey of [...map.keys()]) if (cacheKey.startsWith(`${key}\0`)) map.delete(cacheKey)
 }
 
-/** Workspaces of a project conversation (every repository of a multi-repository one); none for standalone chats. */
-function conversationWorkspaces(conversationId: string | null | undefined): string[] {
-  if (!conversationId) return []
-  const conversation = getConversation(conversationId)
-  if (!conversation || conversation.scope === 'standalone') return []
-  return [conversation.workspaceId, ...(conversation.repos ?? []).map((repo) => repo.workspaceId)]
-}
-
 export function pluginAppliesTo(record: InstalledPluginRecord, ctx: PluginRuntimeContext): boolean {
   if (!record.enabled || record.status !== 'ready' || record.blocked?.length) return false
-  if (ctx.conversationId === undefined || record.scope.kind === 'global') return true
-  const scoped = record.scope.workspaceIds
-  return conversationWorkspaces(ctx.conversationId).some((id) => scoped.includes(id))
+  return scopeAppliesTo(record.scope, ctx.conversationId)
 }
 
 export function activePlugins(ctx: PluginRuntimeContext): InstalledPluginRecord[] {

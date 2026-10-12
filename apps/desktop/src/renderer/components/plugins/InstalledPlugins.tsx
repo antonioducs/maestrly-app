@@ -23,7 +23,7 @@ import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginInputsForm } from './PluginInputsForm'
 import { PluginInstallDialog } from './PluginInstallDialog'
 import { PluginScopePicker, scopeIsComplete } from './PluginScopePicker'
-import { McpSignIn } from '../chat/McpSignIn'
+import { McpSignIn, signInStatus } from '../chat/McpSignIn'
 import type { PluginsSource } from './plugins-source'
 import { errorText, reasonText, shortCommit, Toggle } from './plugin-ui'
 
@@ -260,11 +260,11 @@ export function InstalledPlugins({
                     {(!source.remote || source.mcpSignIn) &&
                       server.id &&
                       server.enabled &&
-                      server.authStatus !== undefined && (
+                      server.oauth !== undefined && (
                         <McpSignIn
                           actions={source.mcpSignIn}
                           serverId={server.id}
-                          auth={server.authStatus === 'none' ? undefined : server.authStatus}
+                          auth={signInStatus(server.oauth)}
                           onChanged={() => {
                             source.notifyChanged()
                             onChanged()

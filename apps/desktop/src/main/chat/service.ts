@@ -99,7 +99,7 @@ import {
   type McpServer,
   type UserMcpServer,
 } from './mcp'
-import { mcpOAuthStatus } from './mcp-oauth'
+import { mcpOAuthField } from './mcp-oauth'
 import {
   invalidateProvider,
   resolveLanguageModel,
@@ -2091,11 +2091,10 @@ function safeUrlHost(url: string): string {
   }
 }
 
-/** The sign-in status Settings shows for a remote server; nothing for local or unreadable ones. */
-function mcpAuthField(server: McpServer): Pick<McpServerInfo, 'auth'> {
-  if (server.unavailable || server.transport === 'stdio') return {}
-  const status = mcpOAuthStatus(server, !!server.oauth)
-  return status === 'none' ? {} : { auth: status }
+/** The sign-in Settings shows for a remote server; nothing for local or unreadable ones. */
+function mcpAuthField(server: McpServer): Pick<McpServerInfo, 'oauth'> {
+  const oauth = mcpOAuthField(server)
+  return oauth ? { oauth } : {}
 }
 
 function buildConfig(): ChatConfig {

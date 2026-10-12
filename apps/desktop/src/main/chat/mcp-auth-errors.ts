@@ -5,9 +5,12 @@
 export class McpNeedsAuthError extends Error {
   constructor(
     readonly serverId: string,
-    serverName: string
+    serverName: string,
+    accountLabel?: string
   ) {
-    super(`Sign-in required: connect "${serverName}" in Settings → Maestrly Chat → Tools, then try again.`)
+    super(
+      `Sign-in required: connect "${serverName}"${accountLabel ? ` (account "${accountLabel}")` : ''} in Settings → Maestrly Chat → Tools, then try again.`
+    )
     this.name = 'McpNeedsAuthError'
   }
 }

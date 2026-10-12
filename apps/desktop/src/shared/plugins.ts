@@ -1,3 +1,5 @@
+import type { McpOAuthSummaryDto } from './chat'
+
 /**
  * Plugin DTOs shared by the main process and the renderer. A plugin is installed once per host (this computer, a
  * remote workspaces host, or a bot environment); its skills and MCP servers reach every provider through Maestrly's
@@ -113,7 +115,6 @@ export interface PluginSkillDto {
   kind: 'skill' | 'command'
   hasScripts: boolean
 }
-export type McpAuthStatus = 'none' | 'connected' | 'needs-auth'
 export interface PluginMcpServerDto {
   key: string
   id: string | null
@@ -126,7 +127,8 @@ export interface PluginMcpServerDto {
   status: PluginComponentStatus
   enabled?: boolean
   consented?: boolean
-  authStatus?: McpAuthStatus
+  /** OAuth sign-in of a remote server on its host: absent when none is known to be needed. */
+  oauth?: McpOAuthSummaryDto
 }
 export type PluginSourceErrorCode =
   | 'git-unavailable'

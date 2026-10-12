@@ -7,6 +7,7 @@ import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 import type { AppToolGroupState } from './app-tool-groups'
+import type { PluginScope } from './plugins'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -1736,7 +1737,26 @@ export interface McpServerInfo {
   /** Set for servers an installed plugin provides; they are managed in Settings → Plugins. */
   plugin?: { key: string; displayName: string }
   /** OAuth sign-in of a remote server: absent when none is known to be needed. */
-  auth?: 'connected' | 'needs-auth'
+  oauth?: McpOAuthSummaryDto
+}
+
+/** One signed-in account of a remote MCP server. */
+export interface McpOAuthAccountDto {
+  id: string
+  /** Unique per server; the model names the account by it. */
+  label: string
+  email: string | null
+  /** Conversations the account serves: all of them, or those of selected projects. */
+  scope: PluginScope
+  status: 'connected' | 'needs-auth'
+}
+
+/** OAuth sign-in of a remote MCP server: its accounts and the person's own client, never a token or a secret. */
+export interface McpOAuthSummaryDto {
+  /** The server asked for a sign-in that no account answers yet. */
+  needsAuth: boolean
+  accounts: McpOAuthAccountDto[]
+  client: { clientId: string } | null
 }
 
 /** Outcome of signing in to a remote MCP server from this computer. */
