@@ -44,6 +44,20 @@ saved copy still exists when the card appears or the window regains focus; a
 deleted or moved copy is no longer shown as saved. Downloads are tracked separately
 for each paired bot server.
 
+Shared videos (MP4, M4V, WebM and MOV) also play in the conversation. When the
+card scrolls into view, the app copies the video to a private cache in its data
+folder and shows the first frame with its duration. Click it to open the player,
+which has play and pause, a seek bar, playback speed from 0.5× to 2×, volume and
+full screen. In the player, Space or K plays and pauses, the arrow keys move
+5 seconds, J and L move 10 seconds, M mutes, F switches full screen, `<` and `>`
+change the speed, and Esc closes it. A cached video still plays while the bot is
+offline. The cache keeps up to 1 GiB and drops the least recently watched videos
+first. It is cleared when the bot is removed, when this computer disconnects from
+the server, and when local app data is reset. A format the app cannot decode
+shows a message, and **Download** still saves the file. Bots on versions before
+video support publish videos without a video type; the app recognizes them by
+their extension.
+
 Transfers use the paired gateway connection: the same flow works with Docker on
 this computer and with the SSH tunnel to a VPS. No public link or artifact-hosting
 setting is required. The bot's environment must be running and reachable.

@@ -202,6 +202,7 @@ import { createDesktopSources, serverUnavailable } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
+import { handleFleetMediaProtocol, registerFleetMediaScheme } from './fleet/client/media-scheme'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
 import { playSound } from './platform'
@@ -223,6 +224,8 @@ const isDev = !!process.env.ELECTRON_RENDERER_URL
 
 // Isolate the application profile before acquiring locks or opening persistent stores.
 applyChannelIdentity()
+// Privileged schemes can only be declared before the app is ready.
+registerFleetMediaScheme()
 
 // Disable hardware acceleration for the Linux configurations affected by Chromium GPU startup loops.
 const isWaylandSession = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
@@ -526,7 +529,7 @@ function applyProdCsp(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+          "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; media-src 'self' maestrly-media:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
         ],
       },
     })
@@ -992,6 +995,7 @@ app.whenReady().then(async () => {
   setupSessionPermissions()
   hardenBrowserSession()
   applyProdCsp()
+  handleFleetMediaProtocol(fleetClientService)
   registry.on('status', broadcastStatus)
   registry.setSoundSettings(getSoundSettings())
 

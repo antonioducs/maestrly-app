@@ -122,6 +122,8 @@ export type FleetOutgoingAttachment = {
 }
 /** Bytes of a bot image (a FleetImageRef from the transcript). */
 export type FleetImageData = { mediaType: FleetImageMediaType; data: Uint8Array }
+/** How much of a shared video main has copied to its cache so far. */
+export type FleetMediaProgress = { botId: string; fileId: string; received: number; total: number }
 export type FleetScreenState = {
   channelId: string
   state: 'connecting' | 'open' | 'closed' | 'error'
@@ -298,6 +300,9 @@ export const fleetApi = {
   fleetRevealDownload: (receipt: string): Promise<void> => ipcRenderer.invoke('fleet:revealDownload', receipt),
   fleetGetDownload: (botId: string, fileId: string): Promise<string | null> =>
     ipcRenderer.invoke('fleet:getDownload', botId, fileId),
+  /** A `maestrly-media:` URL that plays a shared video once main has it in its cache. */
+  fleetPrepareMedia: (botId: string, fileId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:prepareMedia', botId, fileId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
   fleetResolveInteraction: (
@@ -372,6 +377,8 @@ export const fleetApi = {
   onFleetDesktopAccess: (cb: (payload: { botId: string }) => void): (() => void) =>
     subscribe('fleet:desktop-access', cb),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
+  onFleetMediaProgress: (cb: (progress: FleetMediaProgress) => void): (() => void) =>
+    subscribe('fleet:mediaProgress', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),
