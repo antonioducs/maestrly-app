@@ -155,6 +155,11 @@ updates, and deletes directories no record references. Uninstalling removes the
 plugin's servers, cached tool catalogs, skill settings, stored values and
 installed files.
 
+A remote workspaces host and a bot environment keep the same records and files in
+their own profile, in the environment's persistent home volume. A plugin brought
+from a computer is downloaded there from its source; the computer keeps its own
+copy, and later changes on either side do not affect the other.
+
 ## Configuration brought to an environment
 
 Global skills sent from a computer are installed atomically in

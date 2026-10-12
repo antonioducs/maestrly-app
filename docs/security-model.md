@@ -604,7 +604,7 @@ computer, whichever host runs the server:
   authorization endpoint with any other scheme or host is refused.
 - It exchanges the code for tokens and hands the client registration, tokens,
   and discovery results to the host, which encrypts them through the secure store.
-  Your computer keeps no copy of a remote host's sign-in.
+  Your computer keeps no copy of a remote host's or a bot environment's sign-in.
 
 The host refreshes tokens itself. Chat turns never open a browser and never
 register a client: when a server needs a new sign-in, its tools fail with a
@@ -643,7 +643,17 @@ line, scripts and executables, and every component with its support status.
   never reused: plugin servers sign in like any other server (see
   [MCP OAuth sign-in](#mcp-oauth-sign-in)).
 - **Hosts.** A plugin's stdio servers run on the host that installed it: this
-  computer, or a remote workspaces host.
+  computer, a remote workspaces host, or a bot environment.
+- **Bot environments.** An environment fetches, checks, and installs plugins
+  itself; plugin files are never copied from this computer. Bringing a plugin
+  from this computer sends its source, its exact commit, the approvals given here,
+  and the values entered here. This computer's main process builds that request,
+  so the values never reach a window; they travel to the environment through the
+  bot server and are encrypted there. The environment installs only the same
+  version: approvals that do not match its own inspection are refused. OAuth
+  tokens of an environment's servers take the same path (see
+  [MCP OAuth sign-in](#mcp-oauth-sign-in)); no environment-settings response
+  returns plugin values or tokens.
 
 Desktop project memory and notes stay in the local profile. Search indexes and
 embeddings are reproducible caches, not authoritative copies. Promoting local memory into a repository is an

@@ -7,7 +7,7 @@ conversation. You do not need a separate version of a plugin for each model.
 Maestrly reads three plugin formats: [Agent Plugins](https://agent-plugins.org/) (`plugin.json`), Codex
 (`.codex-plugin/plugin.json`), and Claude Code (`.claude-plugin/plugin.json`).
 
-Plugins are not available in bot environments yet.
+Plugins also work in [bot environments](#bot-environments), managed from this computer.
 
 ## Open the plugin center
 
@@ -105,6 +105,21 @@ local server. The MCP servers that need them stay off until you provide them; th
 With a server selected in Settings, the plugin center manages the server's plugins. They are downloaded and run on the
 server, and conversations on the server use them. **Selected projects** lists the server's workspaces. Nothing is copied
 between this computer and the server.
+
+## Bot environments
+
+Open the environment's settings and choose **Plugins**. The plugin center works the same way, with these differences:
+
+- The environment downloads, checks, and runs its plugins itself. Its plugins serve all of its conversations.
+- **Bring from this computer** installs one of this computer's plugins in the environment. The environment downloads
+  it from the same source at the same commit, checks it against the approvals you gave on this computer, and stores
+  the settings you entered here, encrypted. Plugin files are never copied from this computer. If the environment
+  cannot match your approval, install the plugin from the environment's sources and review it there.
+- **Sign in** for a server of the environment opens the consent page in this computer's browser. The environment
+  keeps the sign-in.
+
+The bot server and the environment must be up to date. See [Configure an environment from the
+app](bot-fleet.md#configure-an-environment-from-the-app).
 
 ## Related documentation
 

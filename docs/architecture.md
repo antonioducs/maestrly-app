@@ -144,6 +144,14 @@ it already uses for skills and MCP. Contexts that switch MCP off by id cover
 plugin servers too. On a remote workspaces host, the `chat:plugins:*` channels
 run on the host, so a remote conversation uses the host's plugins.
 
+A bot environment serves the same engine through environment-settings
+operations behind the `environment-plugins-v1` feature (gateway) and capability
+(instance). The protocol lists the plugin operations explicitly
+(`FLEET_PLUGIN_SETTINGS_OPERATIONS`) with strict schemas; the gateway checks the
+capability and forwards them. `bringPlugin` and `setMcpOAuth` carry plugin values
+and OAuth tokens, so they have no renderer channel: this computer's main process
+builds them (`fleet:plugins:bring`, `fleet:mcp-oauth:connect`).
+
 ## Browser and loopback services
 
 Embedded browsing is expected network activity initiated through browser or web
