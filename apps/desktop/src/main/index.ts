@@ -136,6 +136,7 @@ import {
   type FloatTab,
 } from './store'
 import {
+  invalidateMcpConfiguration,
   resolvePlanReview as resolveChatGptWebPlanReview,
   restoreCompanionWindow as restoreChatGptWebCompanionWindow,
   status as getChatGptWebStatus,
@@ -163,7 +164,7 @@ import { registerPluginIpc } from './plugins/ipc'
 import { allRuntimeMcpServerIds } from './chat/mcp'
 import { type McpOAuthBundle, type McpOAuthDescriptor, sweepOrphanMcpOAuth } from './chat/mcp-oauth'
 import { type McpOAuthStoreResult, registerMcpOAuthIpc } from './chat/mcp-oauth-ipc'
-import { reconcilePluginsOnStartup } from './plugins/service'
+import { onPluginMcpSurfaceChanged, reconcilePluginsOnStartup } from './plugins/service'
 
 import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
@@ -810,6 +811,10 @@ function registerIpc(): void {
     },
   })
   registerPluginIpc(reg)
+  // ChatGPT web sessions froze their MCP servers when they started: a plugin change ends them, as an MCP edit does.
+  onPluginMcpSurfaceChanged(() => {
+    void invalidateMcpConfiguration().catch(() => undefined)
+  })
   registerMcpOAuthIpc(reg, {
     // Sign-in for a remote host's server: this computer runs the browser part and the host keeps the result.
     remoteHostCalls: (sender, hostId) => {

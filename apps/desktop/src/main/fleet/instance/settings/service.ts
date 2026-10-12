@@ -45,12 +45,7 @@ export function createEnvironmentSettingsService(
     setRuntimeAutomatic,
     preferences,
     setPreferences,
+    // The plugin engine reports its MCP changes itself (`onPluginMcpSurfaceChanged`, wired at startup).
     ...pluginSettingsService,
-    async patchPlugin(input) {
-      const result = await pluginSettingsService.patchPlugin(input)
-      // Plugin servers switch on, off or change with the plugin: web sessions pick up the new MCP surface.
-      environmentMcpChanged()
-      return result
-    },
   }
 }

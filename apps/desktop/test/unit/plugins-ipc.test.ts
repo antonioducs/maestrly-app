@@ -9,7 +9,11 @@ import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
 import { PLUGIN_MUTATION_CHANNELS, PLUGIN_READ_CHANNELS, registerPluginIpc } from '../../src/main/plugins/ipc'
 import { pluginLayout } from '../../src/main/plugins/layout'
-import { resetPluginServiceCachesForTests, setPluginGitSourceForTests } from '../../src/main/plugins/service'
+import {
+  onPluginMcpSurfaceChanged,
+  resetPluginServiceCachesForTests,
+  setPluginGitSourceForTests,
+} from '../../src/main/plugins/service'
 import { listInstalled, onInstalledChanged } from '../../src/main/plugins/store'
 import { remoteChannelRefusal } from '../../src/shared/host-channels'
 import type {
@@ -268,5 +272,39 @@ describe('plugin IPC', () => {
     stop()
     expect(maxInstalling).toBe(1)
     expect(results.map((r) => (r.ok ? 'ok' : r.error)).sort()).toEqual(['already-installed', 'ok'])
+  })
+
+  it('reports the changes that add, change or remove plugin MCP servers, and nothing else', async () => {
+    const changes = vi.fn()
+    const stop = onPluginMcpSurfaceChanged(changes)
+    try {
+      const added = await call<PluginOpResult<PluginMarketplaceDto>>('chat:plugins:marketplace-add', {
+        url: pathToFileURL(repo.dir).href,
+      })
+      if (!added.ok) throw new Error(added.error)
+      const inspection = await call<PluginOpResult<PluginInspectionDto>>('chat:plugins:inspect', {
+        marketplaceId: added.value.id,
+        name: 'demo',
+      })
+      if (!inspection.ok) throw new Error(inspection.error)
+      await call('chat:plugins:catalog', added.value.id)
+      expect(changes).not.toHaveBeenCalled()
+      const request = {
+        marketplaceId: added.value.id,
+        name: 'demo',
+        consent: { consentFingerprint: inspection.value.consentFingerprint, stdio: [], executables: false },
+        scope: { kind: 'global' },
+      }
+      expect((await call<PluginOpResult>('chat:plugins:install', request)).ok).toBe(true)
+      expect(changes).toHaveBeenCalledTimes(1)
+      expect(await call<PluginOpResult>('chat:plugins:install', request)).toMatchObject({ error: 'already-installed' })
+      expect(changes).toHaveBeenCalledTimes(1)
+      await call('chat:plugins:set-enabled', { key: 'demo@fixture-market', enabled: false })
+      expect(changes).toHaveBeenCalledTimes(2)
+      await call('chat:plugins:marketplace-remove', { id: added.value.id, uninstall: true })
+      expect(changes).toHaveBeenCalledTimes(3)
+    } finally {
+      stop()
+    }
   })
 })
