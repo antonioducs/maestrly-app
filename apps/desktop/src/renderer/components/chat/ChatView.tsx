@@ -1046,6 +1046,11 @@ export function ChatView({
       setLiveReasoningReset(event.liveReasoningReset)
       return
     }
+    if (event.kind === 'questions-pending') {
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState(event.questions)
+      return
+    }
     if (event.kind === 'steering-accepted') {
       if (!hidden) {
         setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))

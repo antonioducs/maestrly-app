@@ -14,6 +14,7 @@ const REQUEST = 'Abra duas conversas novas, uma para cada card (PROJ-1 e PROJ-2)
 const ANALYSIS = 'Analise os cards PROJ-1 e PROJ-2 e me diga o que falta.'
 const FOLLOW_UP = 'Abra uma nova conversa para o PROJ-3 no mesmo checkout.'
 const PLAN_REQUEST = 'Planeje o PROJ-4.'
+const LOOSE = 'Manda outro agent revisar o PROJ-1 em paralelo.'
 const SEED_MARKER = 'This conversation was started from the Maestrly conversation'
 
 interface ModelRequest {
@@ -24,11 +25,12 @@ interface ModelRequest {
 
 /**
  * Deterministic end-to-end coverage with real chat turns against a scripted OpenAI-compatible model: explicit
- * natural-language dispatch into isolated worktrees with per-task models, replay instead of duplicates, refusal of
- * a non-explicit request even when the model tries, no recursive dispatch from seeded child turns, a later human
- * request in a child, and a plan handed off to a new Standard conversation.
+ * natural-language dispatch into isolated worktrees with per-task models, replay instead of duplicates, a request
+ * that is not explicit started only after the person confirms it in the chat (and nothing when they decline), no
+ * recursive dispatch from seeded child turns, a later human request in a child, and a plan handed off to a new
+ * Standard conversation.
  */
-test('starts persistent conversations only on explicit requests and hands plans off to Standard', async () => {
+test('starts persistent conversations on explicit or confirmed requests and hands plans off to Standard', async () => {
   test.setTimeout(240_000)
   await access(path.join(desktop, 'out/main/index.js'))
   const root = mkdtempSync(path.join(os.tmpdir(), 'maestrly-conversation-dispatch-'))
@@ -132,6 +134,14 @@ test('starts persistent conversations only on explicit requests and hands plans 
         })
       return end(res, 'Analysis only.')
     }
+    if (lastUser.includes(LOOSE)) {
+      if (!did('loose-1'))
+        return call(res, 'loose-1', 'start_conversations', {
+          tasks: [{ requestKey: 'PROJ-5', title: 'PROJ-5 · Review', prompt: 'Review PROJ-1.' }],
+          placement: 'shared',
+        })
+      return end(res, 'Started PROJ-5.')
+    }
     if (lastUser.includes(FOLLOW_UP)) {
       if (!did('follow-1'))
         return call(res, 'follow-1', 'start_conversations', {
@@ -154,6 +164,15 @@ test('starts persistent conversations only on explicit requests and hands plans 
     ((await api('listConversations', workspaceId)) as Array<{ id: string; name: string; cwd: string; branch: string }>)
   const idle = (conversationId: string) =>
     expect.poll(async () => (await api('chatRuntime', conversationId)).streaming, { timeout: 60_000 }).toBe(false)
+  /** Answer the confirmation the app shows in the chat when a request was not explicit. */
+  const answerConfirmation = async (option: RegExp) => {
+    const question = page.getByTestId('question-composer')
+    await expect(question).toContainText('New conversations', { timeout: 60_000 })
+    await question.getByRole('button', { name: option }).click()
+    await question.getByRole('button', { name: 'Next', exact: true }).click()
+    await question.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(question).toBeHidden()
+  }
 
   try {
     await new Promise<void>((resolve) => model.listen(0, '127.0.0.1', resolve))
@@ -236,14 +255,28 @@ test('starts persistent conversations only on explicit requests and hands plans 
     await expect(page.getByTestId('conversation-dispatch-origin').first()).toBeVisible()
     await expect(page.getByText('Working on the dispatched task.').first()).toBeVisible()
 
-    // 2. Analysis only: even when the model calls the tool, nothing is created.
+    // 2. Analysis only: when the model calls the tool anyway, the person is asked and declining creates nothing.
+    await page.locator('li.conv-item', { hasText: 'Source' }).first().click()
     expect((await api('chatSend', source.id, ANALYSIS)).ok).toBe(true)
+    await answerConfirmation(/Don't start$/)
     await expect.poll(() => requests.some((request) => 'rogue-1' in request.toolResults), { timeout: 60_000 }).toBe(true)
     await idle(source.id)
     const refusal = requests.find((request) => 'rogue-1' in request.toolResults)!.toolResults['rogue-1']
     expect(JSON.parse(refusal)).toMatchObject({ ok: false, items: [] })
-    expect(refusal).toContain('does not explicitly ask')
+    expect(refusal).toContain('declined')
     expect((await workspaceConversations(workspace.id)).filter((item) => item.name.startsWith('PROJ-'))).toHaveLength(2)
+
+    // 2b. A loosely worded request starts once the person confirms it in the chat.
+    await page.locator('.chat-input[contenteditable="true"]:visible').fill(LOOSE)
+    await page.locator('button[title="Send"]:visible').click()
+    await answerConfirmation(/Start$/)
+    await expect(page.getByText('Started PROJ-5.')).toBeVisible({ timeout: 60_000 })
+    await idle(source.id)
+    const review = (await workspaceConversations(workspace.id)).find((item) => item.name === 'PROJ-5 · Review')
+    expect(review).toBeDefined()
+    expect((await workspaceConversations(workspace.id)).filter((item) => item.name.startsWith('PROJ-'))).toHaveLength(3)
+    await expect.poll(async () => (await api('conversationDispatchStatus', review!.id))?.phase).toBe('started')
+    await idle(review!.id)
 
     // 3. A later explicit request typed in a child may start its own conversation.
     const child = byName('PROJ-1 · Export')

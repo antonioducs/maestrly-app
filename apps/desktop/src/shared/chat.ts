@@ -1094,6 +1094,11 @@ export type ChatStreamEvent =
       activeHarnessProfile: ChatActiveHarnessProfile | null
     }
   | { kind: 'steering-accepted'; message: ChatMessage }
+  /**
+   * Questions a running tool is waiting on, replacing the previous list. ask_question cards come from their tool
+   * part; this also covers confirmations asked from inside other tools (for example starting conversations).
+   */
+  | { kind: 'questions-pending'; questions: PendingChatQuestion[] }
   | {
       kind: 'message-start'
       messageId: string
