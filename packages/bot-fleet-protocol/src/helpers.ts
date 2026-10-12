@@ -1,6 +1,6 @@
 import type { FleetLoginKind } from './api.js'
 import { FLEET_ENVIRONMENT_DISPLAY, FLEET_REASONING_QUERY, FLEET_UPDATE_BUSY_STATUSES } from './constants.js'
-import type { FleetBot, FleetTranscriptItem } from './domain.js'
+import type { FleetBot, FleetSelection, FleetSelectionOption, FleetTranscriptItem } from './domain.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
 export function deriveBotId(name: string, existingIds: Iterable<string>): string {
@@ -65,6 +65,73 @@ export function formatPairingCode(input: string): string {
   const code = normalizePairingCode(input)
   if (!code) throw new Error('Invalid pairing code')
   return code.slice(0, 4) + '-' + code.slice(4)
+}
+
+export type FleetPairingLink = { origin: string; code: string }
+const PAIRING_LINK = /^maestrly:\/\/pair\?([^#]*)$/
+
+/** The link a desktop shows as a QR code so a phone can pair: the server address the phone uses and a one-use code. */
+export function formatPairingLink(server: string, code: string): string {
+  const normalized = normalizePairingCode(code)
+  if (!normalized) throw new Error('Invalid pairing code')
+  const allowed = isAllowedFleetUrl(server)
+  if (!allowed.ok) throw new Error(allowed.reason)
+  return `maestrly://pair?server=${encodeURIComponent(allowed.origin)}&code=${normalized}`
+}
+
+// Parsed by hand: React Native's URL support for custom schemes differs between engines.
+export function parsePairingLink(text: string): FleetPairingLink | null {
+  const query = PAIRING_LINK.exec(text.trim())?.[1]
+  if (query === undefined) return null
+  const fields = new Map<string, string>()
+  for (const part of query.split('&')) {
+    const at = part.indexOf('=')
+    if (at < 1) continue
+    try {
+      fields.set(part.slice(0, at), decodeURIComponent(part.slice(at + 1).replace(/\+/g, ' ')))
+    } catch {
+      return null
+    }
+  }
+  const code = normalizePairingCode(fields.get('code') ?? '')
+  const server = fields.get('server')
+  if (!code || !server) return null
+  const allowed = isAllowedFleetUrl(server)
+  return allowed.ok ? { origin: allowed.origin, code } : null
+}
+
+/** iOS and Android refuse plain HTTP, so phones reach the bot server over HTTPS; simulators may use loopback. */
+export function isAllowedPhoneServerUrl(input: string, options: { allowLoopback?: boolean } = {}): FleetUrlResult {
+  const allowed = isAllowedFleetUrl(input)
+  if (!allowed.ok || allowed.origin.startsWith('https://')) return allowed
+  const host = new URL(allowed.origin).hostname
+  const loopback = host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host)
+  return options.allowLoopback && loopback
+    ? allowed
+    : { ok: false, reason: 'Phones connect to the bot server over HTTPS' }
+}
+
+/** What a bot's selection becomes when its owner picks a model, an effort or Fast; shared by desktop and phone. */
+export function selectionPatch(
+  current: FleetSelection | null,
+  change: { model?: FleetSelectionOption | null; reasoning?: string | null; fastMode?: boolean }
+): FleetSelection | null {
+  if ('model' in change) {
+    if (!change.model) return null
+    const model = change.model
+    const sameModel = current?.providerId === model.providerId && current.modelId === model.modelId
+    return {
+      providerId: model.providerId,
+      modelId: model.modelId,
+      reasoning:
+        sameModel && current?.reasoning && model.efforts.includes(current.reasoning)
+          ? current.reasoning
+          : (model.efforts[0] ?? null),
+      fastMode: sameModel && model.fastMode ? current.fastMode : false,
+    }
+  }
+  if (!current) return null
+  return { ...current, ...change }
 }
 
 export function summarizeText(input: string, max: number): string {

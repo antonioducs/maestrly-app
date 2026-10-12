@@ -272,3 +272,8 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
   inputBytesMax: 320 * 1024,
   resultBytesMax: 2 * 1024 * 1024,
 } as const
+
+/** A paired device may create a one-use pairing code for another device, which the desktop shows as a QR code. */
+export const FLEET_DEVICE_PAIRING_FEATURE = 'device-pairing'
+/** Unused, unexpired codes paired devices may have at once. The CLI is not limited. */
+export const FLEET_ACTIVE_PAIRINGS_MAX = 5

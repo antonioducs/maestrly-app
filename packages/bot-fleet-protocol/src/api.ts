@@ -241,6 +241,11 @@ export const fleetPairRequestSchema = z.object({
 export type FleetPairRequest = z.infer<typeof fleetPairRequestSchema>
 export const fleetPairResponseSchema = z.object({ deviceId: fleetIdSchema, token: fleetIdSchema })
 export type FleetPairResponse = z.infer<typeof fleetPairResponseSchema>
+export const fleetPairingCodeResponseSchema = z.object({
+  code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/),
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetPairingCodeResponse = z.infer<typeof fleetPairingCodeResponseSchema>
 
 export const fleetBotsResponseSchema = z.object({ bots: z.array(fleetBotSchema) })
 export type FleetBotsResponse = z.infer<typeof fleetBotsResponseSchema>
@@ -1100,6 +1105,13 @@ export const FLEET_GATEWAY_ROUTES = {
 
   meta: { method: 'GET', path: '/v1/meta', body: null, response: fleetMetaResponseSchema },
   pair: { method: 'POST', path: '/v1/pair', body: fleetPairRequestSchema, response: fleetPairResponseSchema },
+  /** A paired device creates a one-use code for another device; the CLI `pair` command is the other way. */
+  pairingsCreate: {
+    method: 'POST',
+    path: '/v1/pairings',
+    body: z.object({}).strict(),
+    response: fleetPairingCodeResponseSchema,
+  },
   devicesSelfDelete: { method: 'DELETE', path: '/v1/devices/self', body: null, response: null },
   host: { method: 'GET', path: '/v1/host', body: null, response: fleetHostInfoSchema },
   botsList: { method: 'GET', path: '/v1/bots', body: null, response: fleetBotsResponseSchema },
