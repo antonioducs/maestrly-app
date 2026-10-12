@@ -42,7 +42,7 @@ import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
-import { hostRegistry, registerHostsIpc } from './remote-host/client/ipc'
+import { hostRegistry, originRole, registerHostsIpc } from './remote-host/client/ipc'
 import { RemoteEditors } from './remote-host/client/editor'
 import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
 import { setRemoteVSCodeHandlers } from './drawer/vscode'
@@ -160,6 +160,9 @@ import { registerSettingsIpc, reloadShortcuts } from './settings-ipc'
 import { registerWorkspaceIpc } from './workspace-ipc'
 import { registerProjectSetupIpc } from './project-setup/ipc'
 import { registerPluginIpc } from './plugins/ipc'
+import { allRuntimeMcpServerIds } from './chat/mcp'
+import { type McpOAuthBundle, type McpOAuthDescriptor, sweepOrphanMcpOAuth } from './chat/mcp-oauth'
+import { type McpOAuthStoreResult, registerMcpOAuthIpc } from './chat/mcp-oauth-ipc'
 import { reconcilePluginsOnStartup } from './plugins/service'
 
 import { registerPlanIpc } from './plan-ipc'
@@ -807,8 +810,26 @@ function registerIpc(): void {
     },
   })
   registerPluginIpc(reg)
+  registerMcpOAuthIpc(reg, {
+    // Sign-in for a remote host's server: this computer runs the browser part and the host keeps the result.
+    remoteHostCalls: (sender, hostId) => {
+      const registry = hostRegistry()
+      if (!registry || !registry.list().some((host) => host.id === hostId)) return null
+      const connection = registry.use(hostId, sender.id, () => originRole(sender))
+      return {
+        descriptor: async (id) =>
+          (await connection.invoke(sender.id, 'chat:mcp-oauth:descriptor', [id])) as McpOAuthDescriptor | null,
+        store: async (id: string, bundle: McpOAuthBundle) =>
+          (await connection.invoke(sender.id, 'chat:mcp-oauth:store', [id, bundle])) as McpOAuthStoreResult,
+      }
+    },
+  })
   // Finish or roll back plugin installs, updates and removals a previous run left in flight.
+  // Then drop MCP sign-ins whose server is gone (a removal interrupted before its cleanup).
   void reconcilePluginsOnStartup()
+    .catch(() => undefined)
+    .then(() => sweepOrphanMcpOAuth(new Set(allRuntimeMcpServerIds())))
+    .catch(() => undefined)
   // Nothing in flight survives a restart: settle dispatches left mid-allocation/start from durable state.
   void getConversationDispatchService()
     .then((service) => service.reconcile())

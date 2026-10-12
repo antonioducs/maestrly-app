@@ -17,6 +17,8 @@ const LOCAL_ONLY_PREFIXES = [
   'artifacts:',
   'chat-window:',
   'transfers:',
+  // Signing in to an MCP server opens this computer's browser and listens on its loopback, whichever host runs it.
+  'mcp-oauth:',
 ]
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:info',

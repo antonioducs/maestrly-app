@@ -15,6 +15,7 @@ import type { ToolResultOutput } from '@ai-sdk/provider-utils'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { tool, jsonSchema, type Tool, type ToolSet } from 'ai'
@@ -53,6 +54,8 @@ import {
   writeMcpCatalog,
 } from './mcp-catalog'
 import { LazyMcpRuntime, type LazyMcpDiagnostic } from './mcp-lazy-runtime'
+import { isMcpNeedsAuthError, McpNeedsAuthError } from './mcp-auth-errors'
+import { forgetMcpOAuth, hostMcpOAuthProvider, markMcpNeedsAuth } from './mcp-oauth'
 import { listPluginMcpServers } from '../plugins/runtime'
 import type {
   ListedMcpTool,
@@ -267,6 +270,7 @@ export function removeMcpServer(id: string): void {
       id
     )
     if (!secureRemove(DETAILS_PREFIX + id)) throw new Error('Secure credential storage is unavailable.')
+    forgetMcpOAuth(id)
     invalidateMcpRuntime(id)
     removeMcpCatalog(id)
   })
@@ -339,11 +343,13 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
     if (server.transport === 'http') {
       const transport = new StreamableHTTPClientTransport(new URL(server.url!), {
         requestInit: server.headers ? { headers: server.headers } : undefined,
+        authProvider: hostMcpOAuthProvider(server),
       })
       await client.connect(transport, options)
     } else if (server.transport === 'sse') {
       const transport = new SSEClientTransport(new URL(server.url!), {
         requestInit: server.headers ? { headers: server.headers } : undefined,
+        authProvider: hostMcpOAuthProvider(server),
       })
       await client.connect(transport, options)
     } else {
@@ -359,6 +365,11 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
     return connectionFromClient(client)
   } catch (error) {
     await client.close().catch(() => {})
+    // A 401 the stored sign-in cannot answer: the person signs in from Settings; turns never open a browser.
+    if (server.transport !== 'stdio' && (error instanceof UnauthorizedError || isMcpNeedsAuthError(error))) {
+      markMcpNeedsAuth(server.id)
+      throw isMcpNeedsAuthError(error) ? error : new McpNeedsAuthError(server.id, server.name)
+    }
     throw error
   }
 }

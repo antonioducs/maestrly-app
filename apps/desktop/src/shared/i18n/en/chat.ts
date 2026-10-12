@@ -6,7 +6,28 @@ export default {
     open: 'Open',
     openFailed: 'Could not open the artifact.',
   },
-  mcp: { unavailable: 'Its connection details could not be read on this computer. Configure it again.' },
+  mcp: {
+    unavailable: 'Its connection details could not be read on this computer. Configure it again.',
+    auth: {
+      signIn: 'Sign in',
+      signOut: 'Sign out',
+      signedIn: 'Signed in',
+      needsSignIn: 'Needs sign-in',
+      waiting: 'Finish signing in in your browser…',
+      cancel: 'Cancel',
+      error: {
+        timeout: 'Sign-in timed out. Try again.',
+        denied: 'Sign-in was declined in the browser.',
+        'registration-unsupported':
+          'This server does not let apps register for sign-in. Add an access token as a request header instead.',
+        'discovery-failed': 'The server did not describe how to sign in.',
+        unavailable: 'This server cannot be signed in to right now.',
+        'server-changed': 'The server changed during sign-in. Try again.',
+        storage: 'Secure storage is unavailable, so the sign-in could not be saved.',
+        failed: 'Sign-in failed. Try again.',
+      },
+    },
+  },
   personalMemorySettings: {
     dialogTitle: 'Personal memory settings',
     enabledHint: 'Use personal memories across chats in this profile.',

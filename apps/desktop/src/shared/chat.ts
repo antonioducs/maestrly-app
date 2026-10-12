@@ -1735,7 +1735,26 @@ export interface McpServerInfo {
   command?: string
   /** Set for servers an installed plugin provides; they are managed in Settings → Plugins. */
   plugin?: { key: string; displayName: string }
+  /** OAuth sign-in of a remote server: absent when none is known to be needed. */
+  auth?: 'connected' | 'needs-auth'
 }
+
+/** Outcome of signing in to a remote MCP server from this computer. */
+export type McpOAuthConnectResult =
+  | { ok: true }
+  | {
+      ok: false
+      error:
+        | 'cancelled'
+        | 'timeout'
+        | 'denied'
+        | 'registration-unsupported'
+        | 'discovery-failed'
+        | 'unavailable'
+        | 'server-changed'
+        | 'storage'
+        | 'failed'
+    }
 
 export interface ChatConfig {
   memory?: MemorySettings

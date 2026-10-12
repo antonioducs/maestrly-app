@@ -4,6 +4,7 @@ import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import type { IpcTransport } from './ipc-transport'
 import type {
+  McpOAuthConnectResult,
   ChatConfig,
   ChatConvTools,
   ChatConvToolsPatch,
@@ -151,6 +152,11 @@ export const chatLocalApi = {
     ),
   chatAsrWarm: (): Promise<boolean> => ipcRenderer.invoke('chat:asr-warm'),
   chatAsrSupport: (): Promise<AsrSupport> => ipcRenderer.invoke('chat:asr-support'),
+  /** Signs in to a remote MCP server of `hostId` in this computer's browser; the host keeps the sign-in. */
+  chatMcpOAuthConnect: (hostId: string, serverId: string): Promise<McpOAuthConnectResult> =>
+    ipcRenderer.invoke('mcp-oauth:connect', hostId, serverId),
+  chatMcpOAuthCancel: (hostId: string, serverId: string): Promise<void> =>
+    ipcRenderer.invoke('mcp-oauth:cancel', hostId, serverId),
 }
 
 /**
@@ -496,6 +502,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:mcp-update', id, patch),
 
     chatMcpRemove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:mcp-remove', id),
+    /** Signs out of a remote MCP server of this host. */
+    chatMcpOAuthForget: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:mcp-oauth:forget', id),
 
     chatSetAppTools: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-app-tools', enabled),
 

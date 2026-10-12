@@ -18,6 +18,8 @@ export interface McpServer {
   env?: Record<string, string>
   /** Set for servers an installed plugin provides; they are managed in Settings → Plugins, never edited here. */
   origin?: { kind: 'plugin'; pluginKey: string; pluginName: string; serverKey: string }
+  /** Set for plugin servers that declare OAuth sign-in, with the scopes and resource indicator they ask for. */
+  oauth?: { scopes?: string[]; resource?: string }
   cwd?: string
   startupTimeoutMs?: number
   toolTimeoutMs?: number

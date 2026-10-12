@@ -15,6 +15,7 @@ import type {
 } from '../../shared/plugins'
 import { removeMcpCatalog } from '../chat/mcp-catalog'
 import { invalidateMcpRuntime } from '../chat/mcp'
+import { forgetMcpOAuth, mcpOAuthStatus } from '../chat/mcp-oauth'
 import { sniffImageFormat } from '../chat/image-magic'
 import { forgetSkillNames } from '../chat/skill-state'
 import { isSecureStorageAvailable } from '../secure-store'
@@ -47,7 +48,7 @@ import { PLUGIN_LIMITS } from './limits'
 import type { MarketplaceEntry, ParsedMarketplace } from './marketplace'
 import { readMarketplace } from './marketplace'
 import { type PackageTree, type TreeEntry, gitPackageTree } from './package-tree'
-import { invalidatePluginRuntimeCache, loadInstalledPackage } from './runtime'
+import { invalidatePluginRuntimeCache, listPluginMcpServers, loadInstalledPackage } from './runtime'
 import {
   type InstalledPluginRecord,
   type MarketplaceRecord,
@@ -118,6 +119,7 @@ function installerDeps(): InstallerDeps {
       invalidateMcpRuntime(id)
       removeMcpCatalog(id)
     },
+    forgetServer: (id) => forgetMcpOAuth(id),
     onSkillsRemoved: (names) => forgetSkillNames(names),
   }
 }
@@ -313,6 +315,19 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
   const stdioNeedingConsent = (record.mcpServers ?? []).filter(
     (server) => server.transport === 'stdio' && record.consent.stdio[server.key] !== launchDigest(server)
   )
+  // Sign-in status of the plugin's remote servers, from their expanded URLs on this host.
+  const runtime = new Map(
+    listPluginMcpServers({ conversationId: undefined }, { includeInactive: true })
+      .filter((server) => server.origin?.pluginKey === record.key)
+      .map((server) => [server.origin!.serverKey, server])
+  )
+  const authStatus = (serverKey: string) => {
+    const server = runtime.get(serverKey)
+    return server && !server.unavailable ? mcpOAuthStatus(server, !!server.oauth) : 'none'
+  }
+  const serversNeedingAuth = (record.mcpServers ?? []).filter(
+    (server) => record.servers[server.key]?.enabled && authStatus(server.key) === 'needs-auth'
+  )
   return {
     key: record.key,
     name: record.name,
@@ -327,10 +342,14 @@ export async function installedDto(record: InstalledPluginRecord): Promise<Insta
     setup: {
       missingInputs: missingInputs.map((input) => input.id),
       stdioNeedingConsent: stdioNeedingConsent.map((server) => server.key),
-      serversNeedingAuth: [],
+      serversNeedingAuth: serversNeedingAuth.map((server) => server.key),
     },
     skills: pkg ? skillDtos(pkg) : [],
-    mcpServers: pkg ? mcpServerDtos(pkg, record) : [],
+    mcpServers: pkg
+      ? mcpServerDtos(pkg, record, (server) =>
+          server.transport === 'stdio' ? {} : { authStatus: authStatus(server.key) }
+        )
+      : [],
     inputs: inputDtos(inputs, stored),
     policy: record.policy ?? DEFAULT_POLICY,
     installedAt: record.installedAt,

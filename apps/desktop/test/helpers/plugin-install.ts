@@ -67,7 +67,14 @@ export async function installFixturePlugin(
       scope: opts.scope ?? { kind: 'global' },
       inputs: opts.inputs,
     },
-    { layout, now: () => Date.now(), invalidateServer: () => {}, onSkillsRemoved: () => {}, ...opts.deps }
+    {
+      layout,
+      now: () => Date.now(),
+      invalidateServer: () => {},
+      forgetServer: () => {},
+      onSkillsRemoved: () => {},
+      ...opts.deps,
+    }
   )
   if (!result.ok) throw new Error(`install failed: ${result.error} ${result.detail ?? ''}`)
   return result.value

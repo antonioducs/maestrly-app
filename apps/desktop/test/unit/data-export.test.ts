@@ -24,6 +24,7 @@ describe('data export v7', () => {
         { key: 'license.device_id', value: 'device-1' },
         { key: 'provider.api_key', value: 'private' },
         { key: 'bot.desktop.credential.bridge.device', value: 'enc:v1:synthetic-ciphertext' },
+        { key: 'chat.mcpOAuth.mcp_00000000-0000-0000-0000-000000000000', value: 'enc:v1:synthetic-ciphertext' },
         { key: 'telemetry.enabled', value: 'true' },
         { key: 'cloud.state', value: '{}' },
         { key: 'ui.locale', value: 'pt-BR' },

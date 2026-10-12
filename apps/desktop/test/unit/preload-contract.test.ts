@@ -152,6 +152,10 @@ const KNOWN_MAIN_ONLY: string[] = [
   'editor:restart',
   'editor:navigate',
   'editor:snapshot',
+  // MCP OAuth: this computer's main process asks the server's host for a descriptor and hands it the finished
+  // sign-in (mcp-oauth:connect), directly or over the host bridge; no renderer calls them.
+  'chat:mcp-oauth:descriptor',
+  'chat:mcp-oauth:store',
 ]
 
 // Read sources without importing them to inventory channels and event emissions.
@@ -322,7 +326,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(580)
+    expect(keys).toHaveLength(583)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1419,6 +1423,15 @@ describe('preload API — chat pagination (#559)', () => {
   it('chatSearchMessages(convId,query) -> chat:search (invoke) [#559]', () => {
     api.chatSearchMessages('c1', 'term')
     expect(invokeSpy).toHaveBeenCalledWith('chat:search', 'c1', 'term')
+  })
+
+  it('MCP sign-in wrappers name the host and the server', () => {
+    api.chatMcpOAuthConnect('direct/host', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:connect', 'direct/host', 'mcp_1')
+    api.chatMcpOAuthCancel('local', 'plg_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:cancel', 'local', 'plg_1')
+    api.chatMcpOAuthForget('mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:forget', 'mcp_1')
   })
 
   it('plugin wrappers preserve channels and pass a single payload', () => {

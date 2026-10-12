@@ -31,8 +31,10 @@ import type { PluginPackage } from './types'
 export interface InstallerDeps {
   layout: PluginLayout
   now: () => number
-  /** Retires pooled connections and the cached tool catalog of a server (and its OAuth state). */
+  /** Retires pooled connections and the cached tool catalog of a server. Called on every update too. */
   invalidateServer: (id: string) => void
+  /** Drops what a server leaves behind once it is gone for good: its OAuth sign-in. */
+  forgetServer: (id: string) => void
   /** Removes skill names from global disable lists and groups. */
   onSkillsRemoved: (names: string[]) => void
 }
@@ -347,7 +349,10 @@ export async function updatePrepared(
     })
     // Paths and configuration changed: every server of the plugin reconnects on next use.
     for (const server of Object.values(record.servers)) deps.invalidateServer(server.id)
-    for (const id of removedServers) deps.invalidateServer(id)
+    for (const id of removedServers) {
+      deps.invalidateServer(id)
+      deps.forgetServer(id)
+    }
     if (removedSkills.length) deps.onSkillsRemoved(removedSkills)
     if (placed.dirName !== previous.dirName)
       await fsp
@@ -372,7 +377,10 @@ async function removeEverything(
   deleteData: boolean,
   deps: InstallerDeps
 ): Promise<void> {
-  for (const server of Object.values(record.servers)) deps.invalidateServer(server.id)
+  for (const server of Object.values(record.servers)) {
+    deps.invalidateServer(server.id)
+    deps.forgetServer(server.id)
+  }
   if (record.skillNames?.length) deps.onSkillsRemoved(record.skillNames)
   removePluginSecrets(record.key)
   const keyHash = pluginKeyHash(record.key)

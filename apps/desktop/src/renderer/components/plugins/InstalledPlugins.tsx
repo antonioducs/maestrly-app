@@ -17,6 +17,7 @@ import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginInputsForm } from './PluginInputsForm'
 import { PluginInstallDialog } from './PluginInstallDialog'
 import { PluginScopePicker, scopeIsComplete } from './PluginScopePicker'
+import { McpSignIn } from '../chat/McpSignIn'
 import type { PluginsSource } from './plugins-source'
 import { errorText, shortCommit, Toggle } from './plugin-ui'
 
@@ -235,6 +236,18 @@ export function InstalledPlugins({
                     <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
                       {server.endpoint}
                     </span>
+                    {/* Bot environments sign in through their own settings operations (not yet available). */}
+                    {!source.remote && server.id && server.enabled && server.authStatus !== undefined && (
+                      <McpSignIn
+                        serverId={server.id}
+                        auth={server.authStatus === 'none' ? undefined : server.authStatus}
+                        onChanged={() => {
+                          source.notifyChanged()
+                          onChanged()
+                        }}
+                        className="shrink-0"
+                      />
+                    )}
                   </div>
                 ))}
               </div>

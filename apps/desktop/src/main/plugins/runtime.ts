@@ -240,7 +240,11 @@ export function listPluginMcpServers(
         inputs.some((input) => input.required && !inputValue(input.id))
       const expand = (value: string): string =>
         value.replace(PLACEHOLDER, (_, name: string) =>
-          name === 'PLUGIN_ROOT' ? root : name === 'PLUGIN_DATA' ? data : (inputValue(name.slice('input:'.length)) ?? '')
+          name === 'PLUGIN_ROOT'
+            ? root
+            : name === 'PLUGIN_DATA'
+              ? data
+              : (inputValue(name.slice('input:'.length)) ?? '')
         )
       const server: McpServer = {
         id: state.id,
@@ -256,6 +260,14 @@ export function listPluginMcpServers(
         ...(spec.startupTimeoutMs ? { startupTimeoutMs: spec.startupTimeoutMs } : {}),
         ...(spec.toolTimeoutMs ? { toolTimeoutMs: spec.toolTimeoutMs } : {}),
         ...(spec.toolFilter ? { toolFilter: spec.toolFilter } : {}),
+        ...(spec.auth.kind === 'oauth'
+          ? {
+              oauth: {
+                ...(spec.auth.scopes?.length ? { scopes: spec.auth.scopes } : {}),
+                ...(spec.auth.resource ? { resource: spec.auth.resource } : {}),
+              },
+            }
+          : {}),
       }
       if (spec.transport === 'stdio') {
         try {

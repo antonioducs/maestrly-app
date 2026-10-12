@@ -99,6 +99,7 @@ import {
   type McpServer,
   type UserMcpServer,
 } from './mcp'
+import { mcpOAuthStatus } from './mcp-oauth'
 import {
   invalidateProvider,
   resolveLanguageModel,
@@ -393,6 +394,7 @@ import type {
   FrozenChatSelection,
   InternalTurnHandle,
   InternalTurnOutcome,
+  McpServerInfo,
   MessagePart,
   ReviewLoopInfo,
   ReviewLoopRole,
@@ -2089,6 +2091,13 @@ function safeUrlHost(url: string): string {
   }
 }
 
+/** The sign-in status Settings shows for a remote server; nothing for local or unreadable ones. */
+function mcpAuthField(server: McpServer): Pick<McpServerInfo, 'auth'> {
+  if (server.unavailable || server.transport === 'stdio') return {}
+  const status = mcpOAuthStatus(server, !!server.oauth)
+  return status === 'none' ? {} : { auth: status }
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
@@ -2149,6 +2158,7 @@ function buildConfig(): ChatConfig {
       url: s.origin ? (s.url ? safeUrlHost(s.url) : undefined) : s.url,
       command: s.origin ? (s.command ? path.basename(s.command) : undefined) : s.command,
       ...(s.origin ? { plugin: { key: s.origin.pluginKey, displayName: s.origin.pluginName } } : {}),
+      ...mcpAuthField(s),
     })),
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),

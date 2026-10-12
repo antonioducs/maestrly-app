@@ -9,6 +9,7 @@ import {
   type LazyMcpDiagnostic,
 } from '../../src/main/chat/mcp-lazy-runtime'
 import type { McpConnection, McpRequestOptions, McpServer } from '../../src/main/chat/mcp-types'
+import { McpNeedsAuthError } from '../../src/main/chat/mcp-auth-errors'
 
 function server(overrides: Partial<McpServer> = {}): McpServer {
   return {
@@ -194,6 +195,21 @@ describe('LazyMcpRuntime', () => {
     await expect(runtime.listTools(server())).resolves.toHaveLength(1)
     expect(connect).toHaveBeenCalledOnce()
     expect(connected.close).not.toHaveBeenCalled()
+  })
+
+  it('does not open the circuit when a server needs sign-in, so a new sign-in works at once', async () => {
+    const connected = connection()
+    const remote = server({ transport: 'http', url: 'https://mcp.example.invalid/mcp', command: undefined })
+    const connect = vi
+      .fn()
+      .mockRejectedValueOnce(new McpNeedsAuthError(remote.id, remote.name))
+      .mockResolvedValue(connected)
+    const runtime = createRuntime(connect)
+
+    await expect(runtime.listTools(remote)).rejects.toThrow(/Sign-in required/)
+    await expect(runtime.listTools(remote)).resolves.toHaveLength(1)
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect(diagnostic).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'mcp-lazy-circuit-open' }))
   })
 
   it('dispose closes every pooled connection and cancels idle timers', async () => {

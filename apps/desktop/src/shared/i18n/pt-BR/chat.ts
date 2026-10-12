@@ -10,7 +10,28 @@ export default {
     open: 'Abrir',
     openFailed: 'Não foi possível abrir o artefato.',
   },
-  mcp: { unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.' },
+  mcp: {
+    unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.',
+    auth: {
+      signIn: 'Entrar',
+      signOut: 'Sair',
+      signedIn: 'Conectado',
+      needsSignIn: 'Precisa entrar',
+      waiting: 'Termine de entrar no navegador…',
+      cancel: 'Cancelar',
+      error: {
+        timeout: 'O login expirou. Tente de novo.',
+        denied: 'O login foi recusado no navegador.',
+        'registration-unsupported':
+          'Este servidor não permite que apps se registrem para login. Adicione um token de acesso como cabeçalho da requisição.',
+        'discovery-failed': 'O servidor não informou como fazer login.',
+        unavailable: 'Não é possível entrar neste servidor agora.',
+        'server-changed': 'O servidor mudou durante o login. Tente de novo.',
+        storage: 'O armazenamento seguro não está disponível, então o login não pôde ser salvo.',
+        failed: 'O login falhou. Tente de novo.',
+      },
+    },
+  },
   personalMemorySettings: {
     dialogTitle: 'Configurações da memória pessoal',
     enabledHint: 'Use memórias pessoais nos chats deste perfil.',

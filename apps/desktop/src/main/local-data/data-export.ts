@@ -24,6 +24,8 @@ const SETTINGS_SECRET_PATTERNS = [
   'api-key',
   'credential',
   'jwt',
+  // OAuth sign-ins of MCP servers (`chat.mcpOAuth.<id>`): tokens, even encrypted, stay on this computer.
+  'mcpoauth',
 ]
 
 export function filterExportableSettings(entries: Array<{ key: string; value: string }>): Record<string, string> {

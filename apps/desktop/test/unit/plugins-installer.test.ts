@@ -64,6 +64,7 @@ const demo = (args: string[] = ['./mcp/server.mjs'], extra: FixtureFiles = {}): 
 
 let deps: InstallerDeps & {
   invalidateServer: ReturnType<typeof vi.fn<(id: string) => void>>
+  forgetServer: ReturnType<typeof vi.fn<(id: string) => void>>
   onSkillsRemoved: ReturnType<typeof vi.fn<(names: string[]) => void>>
 }
 let base: string
@@ -97,6 +98,7 @@ beforeEach(() => {
     layout: pluginLayout(base),
     now: () => Date.now(),
     invalidateServer: vi.fn(),
+    forgetServer: vi.fn(),
     onSkillsRemoved: vi.fn(),
   }
 })
@@ -264,6 +266,8 @@ describe('plugin installer', () => {
     expect(existsSync(deps.layout.packageDir(keyHash, updated.value.dirName))).toBe(true)
     expect(readFileSync(path.join(deps.layout.data(keyHash), 'state.json'), 'utf8')).toBe('{}')
     expect(deps.invalidateServer).toHaveBeenCalledWith(installed.value.servers.local.id)
+    // A server that stays keeps its sign-in across updates.
+    expect(deps.forgetServer).not.toHaveBeenCalledWith(installed.value.servers.local.id)
   })
 
   it('updates without new consent when nothing that needs consent changed', async () => {
@@ -286,6 +290,7 @@ describe('plugin installer', () => {
     expect((await uninstallPlugin('demo@market', { deleteData: false }, deps)).ok).toBe(true)
     expect(deps.invalidateServer).toHaveBeenCalledWith(installed.value.servers.local.id)
     expect(deps.invalidateServer).toHaveBeenCalledWith(installed.value.servers.remote.id)
+    expect(deps.forgetServer).toHaveBeenCalledWith(installed.value.servers.remote.id)
     expect(deps.onSkillsRemoved).toHaveBeenCalledWith(['demo:hello'])
     expect(readPluginSecrets('demo@market')).toEqual({})
     expect(existsSync(deps.layout.packages(keyHash))).toBe(false)

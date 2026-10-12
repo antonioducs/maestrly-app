@@ -1,6 +1,7 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js'
 import { mcpServerFingerprint } from './mcp-catalog'
 import type { ListedMcpTool, McpCallToolResult, McpConnection, McpRequestOptions, McpServer } from './mcp-types'
+import { isMcpNeedsAuthError } from './mcp-auth-errors'
 
 export const MCP_STARTUP_TIMEOUT_MS = 5_000
 export const MCP_IDLE_TTL_MS = 5 * 60_000
@@ -136,7 +137,8 @@ export class LazyMcpRuntime {
         durationMs: Math.max(0, this.now() - startedAt),
       })
       if (isTransportFailure(error)) {
-        if (!entry.retired) this.recordFailure(server, entry.fingerprint)
+        // A missing sign-in is not an outage: it clears as soon as someone signs in, without a backoff.
+        if (!entry.retired && !isMcpNeedsAuthError(error)) this.recordFailure(server, entry.fingerprint)
         await this.evictEntry(server.id, entry, 'transport-error')
       }
       throw error
@@ -240,7 +242,7 @@ export class LazyMcpRuntime {
         outcome: 'error',
         durationMs: Math.max(0, this.now() - connectStartedAt),
       })
-      if (!entry.retired) this.recordFailure(server, entry.fingerprint)
+      if (!entry.retired && !isMcpNeedsAuthError(error)) this.recordFailure(server, entry.fingerprint)
       if (this.entries.get(server.id) === entry) this.entries.delete(server.id)
       entry.connection = null
       if (connection) await connection.close().catch(() => {})
