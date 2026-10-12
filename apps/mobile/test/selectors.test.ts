@@ -8,6 +8,7 @@ import {
   botsByEnvironment,
   interactionForItem,
   isComposerLocked,
+  statusLineText,
   waitingItems,
 } from '../src/fleet/selectors'
 
@@ -82,6 +83,13 @@ describe('fleet selectors', () => {
     expect(line({ status: 'offline' }).text).toBe('Stopped')
     expect(line({ status: 'starting' }).text).toBe('Starting…')
     expect(line({ status: 'human' }).text).toBe('Being used from a computer')
+  })
+
+  it('shows a shell command as a prompt line', () => {
+    const shell = botRecord({ id: 'b', name: 'B', status: 'working', activity: { kind: 'tool', tool: 'bash', target: 'npm test' } })
+    const read = botRecord({ id: 'r', name: 'R', status: 'working', activity: { kind: 'tool', tool: 'read', target: 'a.md' } })
+    expect(statusLineText(shell, botStatusLine(shell, text))).toBe('$ npm test')
+    expect(statusLineText(read, botStatusLine(read, text))).toBe('read a.md')
   })
 
   it('locks the composer while the bot cannot take messages from the phone', () => {

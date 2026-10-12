@@ -4,13 +4,14 @@ import type { FleetState } from './state'
 
 const FleetContext = createContext<FleetController | null>(null)
 
-export function FleetProvider({ controller, children }: { controller: FleetController; children: ReactNode }) {
+/** The active server's controller; null until a server is paired and its controller has started. */
+export function FleetProvider({ controller, children }: { controller: FleetController | null; children: ReactNode }) {
   return <FleetContext.Provider value={controller}>{children}</FleetContext.Provider>
 }
 
 export function useFleetController(): FleetController {
   const controller = useContext(FleetContext)
-  if (!controller) throw new Error('useFleetController must be used inside FleetProvider')
+  if (!controller) throw new Error('useFleetController must be used where a server is active')
   return controller
 }
 

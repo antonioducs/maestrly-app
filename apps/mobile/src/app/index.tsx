@@ -1,12 +1,8 @@
-import { Text, View } from 'react-native'
-import { fonts } from '../theme/tokens'
-import { useTheme } from '../theme/ThemeProvider'
+import { Redirect } from 'expo-router'
+import { useServers } from '../servers/ServersProvider'
 
+/** The app opens on the pairing flow until a server is paired, then on the bots. */
 export default function Index() {
-  const { palette } = useTheme()
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.canvas }}>
-      <Text style={{ fontFamily: fonts.display, fontSize: 34, color: palette.ink }}>Maestrly</Text>
-    </View>
-  )
+  const { servers } = useServers()
+  return <Redirect href={servers.length ? '/home' : '/welcome'} />
 }

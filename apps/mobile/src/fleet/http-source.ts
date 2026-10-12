@@ -6,12 +6,16 @@ import { openEventStream, type StreamingFetch } from '../gateway/event-stream'
 import type { PairedServer } from '../servers/registry'
 import type { FleetSource } from './source'
 
-/**
- * A paired bot server. Expo's fetch streams response bodies (the event stream needs it) and, being native, sends no
- * Origin header, which the gateway refuses.
- */
+/** Expo's fetch streams response bodies (the event stream needs it) and, being native, sends no Origin header. */
+export const nativeFetch = expoFetch as unknown as FetchLike
+
+/** A client for one paired server, such as for unpairing a server that is not the active one. */
+export const gatewayClientFor = (server: PairedServer, token: string) =>
+  createGatewayClient({ origin: server.origin, token, fetch: nativeFetch })
+
+/** A paired bot server, reached over the network. */
 export function createHttpSource(server: PairedServer, token: string): FleetSource {
-  const client = createGatewayClient({ origin: server.origin, token, fetch: expoFetch as unknown as FetchLike })
+  const client = gatewayClientFor(server, token)
   const reasoning = server.features.includes(FLEET_TRANSCRIPT_REASONING_FEATURE)
   return {
     serverId: server.id,

@@ -83,6 +83,16 @@ export function botStatusLine(bot: FleetBot, { t, plural }: Text): StatusLine {
   }
 }
 
+const SHELL_TOOLS = new Set(['bash', 'shell', 'exec_command'])
+
+/** How a status line reads on screen: a shell command as `$ command`, as the prototype and terminals show it. */
+export function statusLineText(bot: FleetBot, line: StatusLine): string {
+  const activity = bot.activity
+  if (line.tone === 'mono' && activity?.kind === 'tool' && activity.target && SHELL_TOOLS.has(activity.tool))
+    return `$ ${activity.target}`
+  return line.text
+}
+
 /** A bot in these states takes no messages from the phone, as on the desktop. */
 export const isComposerLocked = (bot: FleetBot): boolean =>
   ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
