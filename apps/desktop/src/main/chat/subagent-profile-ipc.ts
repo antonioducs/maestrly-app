@@ -26,6 +26,7 @@ import {
 } from './subagent-profile-config'
 import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
 import { subagentModelCatalog, subagentProviderStatus } from './subagent-provider-runtime'
+import { listPluginAgents } from '../plugins/runtime'
 
 interface SubagentProfileIpcDeps {
   mhandle: (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void
@@ -144,6 +145,9 @@ async function catalogForConversation(conversationId?: string): Promise<Subagent
     for (const cwd of cwds) {
       for (const agent of await listAgents(cwd)) if (!byName.has(agent.name)) byName.set(agent.name, agent)
     }
+    // Every enabled plugin's agents, whatever project they apply to.
+    for (const agent of await listPluginAgents({ conversationId: undefined }))
+      if (!byName.has(agent.name)) byName.set(agent.name, agent)
     // GLOBAL byAgent aliases enter the global catalog (without conversationId) through a merge without conversation rules.
     const merged = mergeVirtualSubagents({
       agents: [...byName.values()],

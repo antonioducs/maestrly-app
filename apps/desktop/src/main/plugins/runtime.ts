@@ -1,6 +1,8 @@
 import { mkdirSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { normalizeSkillName } from '../../shared/chat'
+import { normalizeSubagentProfileKey } from '../../shared/subagent-profiles'
+import type { ChatAgent } from '../chat/agents'
 import {
   type ChatSkill,
   parseSkillFrontmatter,
@@ -31,15 +33,17 @@ export interface PluginRuntimeContext {
 
 const packages = new Map<string, Promise<PluginPackage | null>>()
 const skillLists = new Map<string, Promise<ChatSkill[]>>()
+const agentLists = new Map<string, Promise<ChatAgent[]>>()
 onInstalledChanged(() => invalidatePluginRuntimeCache())
 
 export function invalidatePluginRuntimeCache(key?: string): void {
   if (!key) {
     packages.clear()
     skillLists.clear()
+    agentLists.clear()
     return
   }
-  for (const map of [packages, skillLists] as Map<string, unknown>[])
+  for (const map of [packages, skillLists, agentLists] as Map<string, unknown>[])
     for (const cacheKey of [...map.keys()]) if (cacheKey.startsWith(`${key}\0`)) map.delete(cacheKey)
 }
 
@@ -124,6 +128,54 @@ async function buildPluginSkills(record: InstalledPluginRecord, layout: PluginLa
     })
   }
   return out
+}
+
+/**
+ * A plugin's agents as subagents named `<plugin>-<agent>`. They carry no model of their own: they run on the parent's
+ * model unless a subagent rule chooses another, so they behave the same with every provider.
+ */
+async function buildPluginAgents(record: InstalledPluginRecord, layout: PluginLayout): Promise<ChatAgent[]> {
+  const pkg = await loadInstalledPackage(record, layout)
+  if (!pkg) return []
+  const root = installedPackageDir(record, layout)
+  const displayName = displayNameOf(record, pkg)
+  const out: ChatAgent[] = []
+  for (const spec of pkg.agents) {
+    const name = normalizeSubagentProfileKey(`${pkg.name}-${spec.name}`)
+    const raw = await readCappedSkillText(path.join(root, ...spec.filePath.split('/')))
+    if (!name || !raw) continue
+    const prompt = parseSkillFrontmatter(raw.text).body.trim()
+    if (!prompt) continue
+    const truncated = raw.clipped || prompt.length > SKILL_BODY_MAX_CHARS
+    out.push({
+      name,
+      description: spec.description,
+      ...(spec.tools?.length ? { tools: spec.tools } : {}),
+      prompt: truncated ? `${prompt.slice(0, SKILL_BODY_MAX_CHARS)}\n… (truncated)` : prompt,
+      source: `plugin:${displayName}/${spec.filePath}`,
+    })
+  }
+  return out
+}
+
+/** Agents of the plugins active in a context, as subagents; the first plugin (by key) keeps a repeated name. */
+export async function listPluginAgents(
+  ctx: PluginRuntimeContext,
+  layout: PluginLayout = appPluginLayout()
+): Promise<ChatAgent[]> {
+  const lists = await Promise.all(
+    activePlugins(ctx).map((record) => {
+      const cacheKey = `${record.key}\0${record.dirName}`
+      let pending = agentLists.get(cacheKey)
+      if (!pending) {
+        pending = buildPluginAgents(record, layout).catch(() => [])
+        agentLists.set(cacheKey, pending)
+      }
+      return pending
+    })
+  )
+  const seen = new Set<string>()
+  return lists.flat().filter((agent) => !seen.has(agent.name) && (seen.add(agent.name), true))
 }
 
 /** Skills and commands of the plugins active in a context, namespaced `<plugin>:<name>`. */

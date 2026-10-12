@@ -11,6 +11,7 @@ import {
 import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginLogo } from './PluginCard'
 import type { PluginsSource } from './plugins-source'
+import { normalizeSubagentProfileKey } from '../../../shared/subagent-profiles'
 import { errorText, reasonText, SectionTitle, shortCommit } from './plugin-ui'
 
 const STATUS_CLASS: Record<PluginComponentDto['status'], string> = {
@@ -251,6 +252,29 @@ export function PluginDetails({
           <p className="text-[12px] text-muted-foreground">{t('details.noSkills')}</p>
         )}
       </Section>
+
+      {inspection.agents.length > 0 && (
+        <Section title={t('details.agents')}>
+          <p className="text-[11px] text-muted-foreground">{t('details.agentsHint')}</p>
+          <ul className="flex flex-col gap-1">
+            {inspection.agents.map((agent) => (
+              <li key={agent.name} className="text-[12px]">
+                <span className="font-mono text-foreground">
+                  #{normalizeSubagentProfileKey(`${inspection.name}-${agent.name}`)}
+                </span>
+                <span className="ml-1.5 text-muted-foreground">{agent.description}</span>
+                <div className="text-[11px] text-muted-foreground">
+                  {agent.tools
+                    ? t('details.agentTools', { tools: agent.tools.join(', ') })
+                    : t('details.agentDefaultTools')}
+                  {agent.droppedTools.length > 0 &&
+                    ` · ${t('details.agentDropped', { tools: agent.droppedTools.join(', ') })}`}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
       <Section title={t('details.mcpServers')}>
         {inspection.mcpServers.length ? (

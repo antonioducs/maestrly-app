@@ -177,6 +177,12 @@ export function InstalledPlugins({
                     {plugin.skills.map((skill) => skill.name).join(', ')}
                   </div>
                 )}
+                {plugin.agents.length > 0 && (
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    {t('installed.agents', { count: plugin.agents.length })}:{' '}
+                    {plugin.agents.map((agent) => agent.name).join(', ')}
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {rowBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
