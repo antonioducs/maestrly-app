@@ -485,28 +485,41 @@ test("remote host editor: opened through both proxies, which keep each side's cr
     await page.getByTitle(/^Toggle drawer/).click()
     await page.getByTitle('Open a tool').click()
     await page.getByRole('dialog', { name: 'Open a tool' }).getByText('Code', { exact: true }).click()
-    // The view's own address: Playwright may still report the loading page it showed first.
-    const findEditor = async () => {
-      for (const window of client!.windows()) {
-        // A page between documents may not answer: it is asked again on the next attempt.
-        const href = await Promise.race([
-          window.evaluate(() => location.href).catch(() => ''),
-          new Promise<string>((resolve) => setTimeout(() => resolve(''), 2_000)),
-        ])
-        if (href.includes('folder=')) return { window, href }
-      }
-      return null
+    // The editor's view as this computer's main process knows it: Playwright may keep the first page a view showed.
+    const editorView = () =>
+      client!.evaluate(({ webContents }) => {
+        const view = webContents.getAllWebContents().find((contents) => contents.getURL().includes('folder='))
+        return view ? { id: view.id, url: view.getURL() } : null
+      })
+    const inEditor = async (script: string): Promise<string> => {
+      const view = await editorView()
+      if (!view) return ''
+      return client!
+        .evaluate(
+          ({ webContents }, [id, code]) => webContents.fromId(id as number)!.executeJavaScript(code as string),
+          [view.id, script]
+        )
+        .catch(() => '')
     }
-    await expect.poll(findEditor, { timeout: 60_000 }).not.toBeNull()
-    const { window: editor, href } = (await findEditor())!
-    const editorUrl = new URL(href)
+    // What every page of this computer shows, said when the editor is not found.
+    const views = () =>
+      client!.evaluate(({ webContents }) =>
+        webContents.getAllWebContents().map((contents) => {
+          const url = contents.getURL()
+          return url.startsWith('data:') ? 'data: ' + contents.getTitle() : url
+        })
+      )
+    try {
+      await expect.poll(editorView, { timeout: 60_000 }).not.toBeNull()
+    } catch (error) {
+      console.log('Editor view not found; pages:', JSON.stringify(await views().catch(String)))
+      throw error
+    }
+    const editorUrl = new URL((await editorView())!.url)
     expect(editorUrl.hostname).toBe('127.0.0.1')
     expect(editorUrl.searchParams.get('folder')).toBe(chat.cwd)
     // Its WebSocket reaches the editor through both proxies.
-    // Read from the page itself: Playwright may keep the title of the loading page it saw first.
-    await expect
-      .poll(() => editor.evaluate(() => document.title).catch(() => ''), { timeout: 30_000 })
-      .toBe('editor:echo:hello')
+    await expect.poll(() => inEditor('document.title'), { timeout: 30_000 }).toBe('editor:echo:hello')
 
     // The editor got the token from the host, and nothing of this computer's proxy or of the control server.
     // (The host also asks serve-web directly whether it is ready, with the token in the address.)
@@ -521,7 +534,7 @@ test("remote host editor: opened through both proxies, which keep each side's cr
     expect(upgrades[0].headers.authorization).toBeUndefined()
     // The page holds the token, which VS Code's page sends to authenticate its connection, and the editor's cookies;
     // the proxy's access cookie is out of its reach.
-    const cookies = await editor.evaluate(() => document.cookie)
+    const cookies = await inEditor('document.cookie')
     expect(cookies).toContain(`vscode-tkn=${editorToken}`)
     expect(cookies).toContain('vscode-cli-secret-half=half')
     expect(cookies).not.toContain('maestrly-editor-access')
