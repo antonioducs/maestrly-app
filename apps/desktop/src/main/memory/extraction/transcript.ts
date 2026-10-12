@@ -9,8 +9,16 @@ export interface ExtractionBlock {
 }
 const cut = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
 
+/** Host-delivered input written by an agent, never by the person. */
+function fromAnotherConversation(message: StoredChatMessage): boolean {
+  return message.source === 'conversation-dispatch' || message.source === 'conversation-message'
+}
+
 function label(message: StoredChatMessage, bot: boolean, text: string): string {
   if (message.role === 'assistant') return 'Assistant'
+  if (message.source === 'conversation-dispatch') return 'Task from another conversation'
+  if (message.source === 'conversation-message')
+    return `Message from the conversation "${message.peer?.fromConversationName ?? 'unknown'}"`
   if (!bot) return 'User'
   if (text.startsWith('Scheduled routine "')) return 'Routine input'
   if (text.startsWith('Message from bot "')) return 'Message from another bot'
@@ -50,7 +58,7 @@ export function renderExtractionTranscript(
   const blocks: ExtractionBlock[] = []
   for (const { seq, message } of messages) {
     if (message.internal && message.role === 'user') continue
-    if (opts.personal && message.role !== 'user') continue
+    if (opts.personal && (message.role !== 'user' || fromAnotherConversation(message))) continue
     const parts = opts.personal ? message.parts.filter((part) => part.type === 'text') : message.parts
     const lines = parts.map(partLine).filter((line): line is string => Boolean(line?.trim()))
     if (!lines.length) continue
