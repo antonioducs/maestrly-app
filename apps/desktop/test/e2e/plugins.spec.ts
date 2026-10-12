@@ -56,13 +56,15 @@ const marketplace = (): FixtureFiles => ({
     mcpServers: { notes: { command: 'node', args: ['./mcp/server.mjs'] } },
   }),
   'plugins/release-notes/mcp/server.mjs': ECHO_SERVER,
+  'plugins/release-notes/agents/notes-reviewer.md':
+    '---\ndescription: Reviews release notes\ntools: Read\n---\nNOTES-REVIEWER-PROMPT: check the notes.\n',
   'plugins/hosted-only/.codex-plugin/plugin.json': JSON.stringify({ name: 'hosted-only', version: '1.0.0' }),
   'plugins/hosted-only/.app.json': JSON.stringify({ apps: { hosted: { id: 'connector_e2e_fixture' } } }),
 })
 
 interface ModelRequest {
   messages: Array<{ role: string; content: unknown; tool_call_id?: string }>
-  tools?: Array<{ function: { name: string; description?: string } }>
+  tools?: Array<{ function: { name: string; description?: string; parameters?: unknown } }>
 }
 
 /**
@@ -95,7 +97,31 @@ function toolModel() {
     const search = input.tools?.find((entry) => entry.function.name === 'mcp_search')
     const serverId = search?.function.description?.match(/\((plg_[\w-]+)\)/)?.[1]
     const answered = input.messages.some((message) => message.role === 'tool')
-    if (serverId && !answered) {
+    const last = input.messages.at(-1)
+    // The plugin's agent, run as a subagent: its prompt is the system message.
+    if (
+      JSON.stringify(input.messages).includes('NOTES-REVIEWER-PROMPT') &&
+      !input.tools?.some((t) => t.function.name === 'task')
+    ) {
+      chunk({ role: 'assistant', content: 'REVIEWER-DONE' })
+      chunk({}, 'stop')
+    } else if (last?.role === 'user' && JSON.stringify(last.content).includes('Review the notes')) {
+      chunk({
+        role: 'assistant',
+        tool_calls: [
+          {
+            index: 0,
+            id: 'call_plugin_agent',
+            type: 'function',
+            function: {
+              name: 'task',
+              arguments: JSON.stringify({ agent: 'release-notes-notes-reviewer', prompt: 'Check the draft notes.' }),
+            },
+          },
+        ],
+      })
+      chunk({}, 'tool_calls')
+    } else if (serverId && !answered) {
       chunk({
         role: 'assistant',
         tool_calls: [
@@ -158,6 +184,9 @@ async function addSourceAndInstall(page: Page, center: ReturnType<Page['getByTes
   await expect(details).toContainText('Draft release notes from merged changes')
   await expect(details).toContainText('MIT')
   await expect(details).toContainText('notes')
+  // The plugin's agent becomes a subagent every model can call.
+  await expect(details).toContainText('#release-notes-notes-reviewer')
+  await expect(details).toContainText('Tools: read')
   await details.getByRole('button', { name: 'Install', exact: true }).click()
 
   // The local server is approved by its exact launch line.
@@ -240,6 +269,29 @@ test('plugins: add a source, install with consent, use the skill and tool, and u
     expect(JSON.stringify(model.requests[0].messages)).toContain('release-notes:draft')
     const toolResult = model.requests.flatMap((request) => request.messages).find((message) => message.role === 'tool')
     expect(JSON.stringify(toolResult?.content)).toContain('note:from-e2e')
+
+    // The plugin's agent runs as a subagent: the model is offered it in `task` and gets its answer.
+    const beforeReview = model.requests.length
+    await page.locator('.chat-input[contenteditable="true"]:visible').fill('Review the notes')
+    await page.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect
+      .poll(() =>
+        JSON.stringify(
+          model.requests
+            .slice(beforeReview)
+            .flatMap((request) => request.messages)
+            .filter((message) => message.role === 'tool')
+        )
+      )
+      .toContain('REVIEWER-DONE')
+    const offered = model.requests[beforeReview].tools?.find((entry) => entry.function.name === 'task')
+    expect(JSON.stringify(offered?.function.parameters)).toContain('release-notes-notes-reviewer')
+    expect(
+      model.requests
+        .slice(beforeReview)
+        .some((request) => JSON.stringify(request.messages).includes('NOTES-REVIEWER-PROMPT'))
+    ).toBe(true)
+    await expect(page.getByText('release-notes-notes-reviewer').first()).toBeVisible()
 
     // The composer's menus group the plugin's skill under its name and link to the plugin center.
     await page.locator('button[title="Skills"]:visible').click()
