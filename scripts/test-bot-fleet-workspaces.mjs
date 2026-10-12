@@ -276,6 +276,24 @@ function jpegSize(jpeg) {
   throw new Error('The JPEG has no frame header')
 }
 
+/**
+ * Removes the mounted folder. It holds what the environment wrote there as its own user (uid 1000): where Docker keeps
+ * those owners (Linux), this user cannot remove them, and a throwaway root container of the bot image empties it first.
+ */
+async function removeWorkspacesRoot() {
+  try {
+    rmSync(workspacesRoot, { recursive: true, force: true })
+    return
+  } catch (error) {
+    if (!['EACCES', 'EPERM', 'ENOTEMPTY'].includes(error?.code)) throw error
+  }
+  const image = process.env.MAESTRLY_GATEWAY_BOT_IMAGE || 'maestrly/bot-instance:local'
+  const mount = workspacesRoot + ':/mnt/workspaces'
+  const empty = ['find', '/mnt/workspaces', '-mindepth', '1', '-delete']
+  await docker(['run', '--rm', '--user', '0', '--network', 'none', '--entrypoint', '', '-v', mount, image, ...empty])
+  rmSync(workspacesRoot, { recursive: true, force: true })
+}
+
 async function cleanup() {
   bridge?.close()
   if (!dockerReady) return
@@ -289,7 +307,11 @@ async function cleanup() {
   await docker(['volume', 'rm', container + '-home'], { allowFailure: true })
   if (composeEnv) await compose(['down', '-v', '--remove-orphans'], { allowFailure: true })
   await docker(['network', 'rm', network], { allowFailure: true })
-  if (workspacesRoot) rmSync(workspacesRoot, { recursive: true, force: true })
+  if (workspacesRoot)
+    await removeWorkspacesRoot().catch((error) => {
+      console.error('Could not remove ' + workspacesRoot + ': ' + (error?.message ?? error))
+      process.exitCode = 1
+    })
   const left = [
     ...(await docker(['ps', '-aq', '--filter', 'name=' + suffix], { allowFailure: true })).stdout.split(/\s+/),
     ...(await docker(['volume', 'ls', '-q', '--filter', 'name=' + suffix], { allowFailure: true })).stdout.split(/\s+/),
