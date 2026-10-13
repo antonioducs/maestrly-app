@@ -48,6 +48,45 @@ import { acquireRuntimeAssetLease, readyRuntimeAsset } from '../../runtime-asset
 import { isBotMode } from '../../fleet/instance/config'
 import { isManagedCodexPath, resolveBotCodexRuntime } from './bot-runtime'
 import type { RuntimeAssetLease } from '../../../shared/runtime-assets'
+import { withSubscriptionAccount } from '../../../shared/chat'
+import { getSubscriptionFailoverRouter } from '../subscription-failover/router'
+
+const CODEX_SUBSCRIPTION_BASE_PROVIDER_ID = 'builtin_codex_subscription'
+
+/** Items only the model produces; user messages, hooks and local compaction do not prove the account answers. */
+const CODEX_MODEL_OUTPUT_ITEM_TYPES = new Set([
+  'agentMessage',
+  'reasoning',
+  'plan',
+  'commandExecution',
+  'fileChange',
+  'mcpToolCall',
+  'dynamicToolCall',
+  'webSearch',
+  'imageGeneration',
+  'collabAgentToolCall',
+])
+
+function isCodexModelOutput(notification: CodexNotification): boolean {
+  switch (notification.method) {
+    case 'item/agentMessage/delta':
+    case 'item/plan/delta':
+    case 'item/reasoning/summaryTextDelta':
+    case 'item/reasoning/textDelta':
+      return true
+    case 'item/started': {
+      const params = notification.params as { item?: { type?: unknown } } | null
+      return typeof params?.item?.type === 'string' && CODEX_MODEL_OUTPUT_ITEM_TYPES.has(params.item.type)
+    }
+    case 'thread/tokenUsage/updated': {
+      const params = notification.params as { tokenUsage?: { last?: { outputTokens?: unknown } } } | null
+      const output = Number(params?.tokenUsage?.last?.outputTokens)
+      return Number.isFinite(output) && output > 0
+    }
+    default:
+      return false
+  }
+}
 
 export interface CodexSubscriptionPublicError {
   code?: string | number
@@ -1286,6 +1325,13 @@ export class CodexSubscriptionManager {
   }
 
   private handleNotification(notification: CodexNotification): void {
+    if (isCodexModelOutput(notification)) {
+      // Every Codex path (root, children, helpers, image generation) shares this account's app-server, so the
+      // failover circuit learns here, once for all of them, that this account answers again.
+      getSubscriptionFailoverRouter().confirmServing(
+        withSubscriptionAccount(CODEX_SUBSCRIPTION_BASE_PROVIDER_ID, this.accountId)
+      )
+    }
     if (notification.method === 'account/login/completed') {
       this.handleLoginCompleted(notification.params)
       return

@@ -506,3 +506,23 @@ describe('runCodexEphemeralWithFailover', () => {
     expect(listCodexEphemeralAttempts()).toHaveLength(0)
   })
 })
+
+describe('anyCodexFailoverAccountConnected', () => {
+  it('keeps the route connected while its primary is probed after a reset', async () => {
+    const { SubscriptionFailoverRouter, anyCodexFailoverAccountConnected } = await import(
+      '../../src/main/chat/subscription-failover'
+    )
+    const router = new SubscriptionFailoverRouter()
+    h.getSubscriptionFailoverRouter.mockReturnValue(router)
+    h.getCodexSubscriptionManager.mockReturnValue({ getStatusSnapshot: () => ({ authenticated: true }) })
+    const now = Date.now()
+    for (const providerId of [PRIMARY, FALLBACK])
+      router.markExhausted(providerId, { reason: 'quota', source: 'structured-error', resetsAt: now + 3_600_000, now })
+    expect(anyCodexFailoverAccountConnected(PRIMARY, now)).toBe(false)
+
+    router.markExhausted(PRIMARY, { reason: 'quota', source: 'structured-error', resetsAt: now - 1, now: now - 2 })
+    expect(router.tryAdmit(PRIMARY, now).ok).toBe(true)
+
+    expect(anyCodexFailoverAccountConnected(PRIMARY, now)).toBe(true)
+  })
+})

@@ -104,7 +104,39 @@ export function persistedBackgroundCompactionSelection(selection: FrozenChatSele
           },
         }
       : {}),
+    ...(selection.failoverRoute
+      ? {
+          failoverRoute: selection.failoverRoute.map((account) => ({
+            providerId: account.providerId,
+            ...(account.identityFingerprint != null ? { identityFingerprint: account.identityFingerprint } : {}),
+            ...(account.identityEpoch != null ? { identityEpoch: account.identityEpoch } : {}),
+          })),
+        }
+      : {}),
   }
+}
+
+function parseFailoverRoute(value: unknown): FrozenChatSelection['failoverRoute'] | null {
+  if (!Array.isArray(value)) return null
+  const route = value.flatMap((item) => {
+    const account = objectValue(item)
+    if (
+      !account ||
+      typeof account.providerId !== 'string' ||
+      account.providerId.length === 0 ||
+      (account.identityFingerprint != null && typeof account.identityFingerprint !== 'string') ||
+      (account.identityEpoch != null && !Number.isSafeInteger(account.identityEpoch))
+    )
+      return []
+    return [
+      {
+        providerId: account.providerId,
+        ...(account.identityFingerprint != null ? { identityFingerprint: account.identityFingerprint as string } : {}),
+        ...(account.identityEpoch != null ? { identityEpoch: account.identityEpoch as number } : {}),
+      },
+    ]
+  })
+  return route.length === value.length ? route : null
 }
 
 function parseSelection(value: unknown): FrozenChatSelection | null {
@@ -133,9 +165,12 @@ function parseSelection(value: unknown): FrozenChatSelection | null {
   ) {
     return null
   }
+  const failoverRoute = raw.failoverRoute == null ? undefined : parseFailoverRoute(raw.failoverRoute)
+  if (failoverRoute === null) return null
   const selection = persistedBackgroundCompactionSelection({
     ...raw,
     cursorModelSelection: undefined,
+    failoverRoute,
   } as unknown as FrozenChatSelection)
   if (raw.cursorModelSelection != null) {
     const cursor = objectValue(raw.cursorModelSelection)

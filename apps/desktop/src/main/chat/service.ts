@@ -392,6 +392,7 @@ import type {
   CodexSubscriptionAuthStatus,
   ChatExecutionScope,
   FrozenChatSelection,
+  FrozenFailoverAccount,
   InternalTurnHandle,
   InternalTurnOutcome,
   MessagePart,
@@ -3757,10 +3758,12 @@ async function startSend(
   let githubCopilotModelAtAdmission: GitHubCopilotModelInfo | undefined
   let claudeIdentityAtAdmission: ClaudeSubscriptionAccountIdentity | undefined
   let claudeModelAtAdmission: ClaudeModelInfo | undefined
+  // A loop round runs on the fallback route frozen with its profile (its own account when it had none). It never
+  // reads the live route: a route edited mid-loop must not add accounts the loop did not start with.
+  const loopFailoverChain = internalLoop ? frozenFailoverChain(internalLoop.selectionOverride) : null
+  const loopRouted = (loopFailoverChain?.length ?? 0) > 1
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? internalLoop
-      ? [selection.providerId]
-      : freezeFailoverChain(selection.providerId)
+    ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
     : []
   const claudeRequestedEffort =
     internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning
@@ -3845,7 +3848,7 @@ async function startSend(
       )
         return { ok: false, error: 'busy' }
       // With a failover chain, the logical account may be unavailable; resolveCodexRuntimeTarget decides.
-      const earlyChain = freezeFailoverChain(selection.providerId)
+      const earlyChain = loopFailoverChain ?? freezeFailoverChain(selection.providerId)
       if (!status.authenticated && earlyChain.length <= 1) return { ok: false, error: 'no-key' }
     } else if (useGitHubCopilot) {
       if (!selectionAccountId && (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)) {
@@ -4136,11 +4139,17 @@ async function startSend(
 
     // Freeze all runtime-selection inputs for this admission. Revalidation may change only the physical
     // account selected from this chain; it must not observe a concurrent model/effort preference change.
-    const codexFastMode = useCodexSubscription && getConvUiPrefs(conversationId).chat?.fastMode === true
+    const codexFastMode =
+      useCodexSubscription &&
+      (internalLoop
+        ? internalLoop.selectionOverride.fastMode === true
+        : getConvUiPrefs(conversationId).chat?.fastMode === true)
     const codexRequestedEffort = useCodexSubscription
       ? (internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning)
       : undefined
-    const frozenCodexChain = useCodexSubscription ? freezeFailoverChain(selection.providerId) : null
+    const frozenCodexChain = useCodexSubscription
+      ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+      : null
     try {
       parts.push(
         ...(await admitChatAttachments({
@@ -4483,7 +4492,8 @@ async function startSend(
     // the lease before compacting, lower the validated ceiling monotonically, and admit again. The frozen chain
     // bounds churn; no half-open lease is held while compactReserved/preflightContext runs.
     let admittedCodexTarget: CodexRuntimeTarget | undefined
-    if (useCodexSubscription && !isolated) {
+    // An isolated round has no preflighted window, so its routed admission takes the first eligible target.
+    if (useCodexSubscription && (!isolated || loopRouted)) {
       const maxAdmissionAttempts = Math.max(2, (frozenCodexChain?.length ?? 1) + 1)
       for (let attempt = 0; attempt < maxAdmissionAttempts; attempt += 1) {
         const admissionResolution = await resolveCodexTargetForStart(true)
@@ -4510,11 +4520,17 @@ async function startSend(
       // Failing closed is safer than starting with a target whose context ceiling was never validated.
       if (!admittedCodexTarget) return { ok: false, error: 'unavailable' }
     }
-    if (useCodexSubscription && !isolated && !admittedCodexTarget) {
+    if (useCodexSubscription && (!isolated || loopRouted) && !admittedCodexTarget) {
       throw new Error('Codex runtime target was not resolved before start')
     }
 
-    if (useClaudeSubscription && !isolated) {
+    if (useClaudeSubscription && isolated && loopRouted) {
+      // The isolated preflight never compacts, so there is no window to re-check: admit the first eligible target.
+      const result = await resolveClaudeTargetForStart(true)
+      if (!result.ok) return result
+      claudeIdentityAtAdmission = result.target.accountIdentity
+      claudeModelAtAdmission = result.target.model
+    } else if (useClaudeSubscription && !isolated) {
       let admitted = false
       for (let attempt = 0; attempt < Math.max(2, claudeFailoverChain.length + 1); attempt++) {
         const result = await resolveClaudeTargetForStart(true)
@@ -4914,7 +4930,8 @@ async function startSend(
       : {}
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
-    if (useCodexSubscription && isolated) {
+    // A routed loop round takes the admitted-target branch below, which reproduces the frozen axes on each account.
+    if (useCodexSubscription && isolated && !loopRouted) {
       const selectedModelId = selection!.modelId
       const logicalProviderId = selection!.providerId
       turnPromise = (async () => {
@@ -5352,7 +5369,7 @@ async function startSend(
         const promise = runClaudeChat({
           ...(claudeRuntimeTarget ? { initialTarget: claudeRuntimeTarget } : {}),
           failoverChain: claudeFailoverChain,
-          ...(!isolated
+          ...(!isolated || loopRouted
             ? {
                 resolveNextTarget: async (input: { attemptedProviderIds: ReadonlySet<string>; admit?: boolean }) => {
                   const resolved = await resolveClaudeRuntimeTarget({
@@ -7101,21 +7118,37 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       }
     : selectionFor(conversationId)
   if (!selection?.providerId || !selection.modelId) return { ok: false, error: 'no-model' }
+  // A frozen profile (loop round, background compaction, a bot's compaction model) carries the fallback route its
+  // account had at freeze; the summary rotates across that route like any helper, with the frozen axes.
+  const frozenRouteChain =
+    frozen != null &&
+    (isClaudeSubscriptionProvider(selection.providerId) || isCodexSubscriptionProvider(selection.providerId)) &&
+    frozenFailoverChain(frozen).length > 1
+      ? frozenFailoverChain(frozen)
+      : null
+  const pinnedToFrozenAccount = frozen != null && !frozenRouteChain
   const compactClaudeChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? frozen
-      ? [selection.providerId]
-      : (opts.claudeFailoverChain ?? freezeFailoverChain(selection.providerId))
+    ? (frozenRouteChain ??
+      (frozen ? [selection.providerId] : (opts.claudeFailoverChain ?? freezeFailoverChain(selection.providerId))))
     : []
   let compactResolvedModelId = opts.resolvedModelId ?? frozen?.resolvedModelId
   let compactClaudeTarget: ClaudeRuntimeTarget | undefined
-  if (isClaudeSubscriptionProvider(selection.providerId) && !frozen) {
+  if (isClaudeSubscriptionProvider(selection.providerId) && !pinnedToFrozenAccount) {
     const prefs = getConvUiPrefs(conversationId).chat
     const resolved = await resolveClaudeRuntimeTarget({
       logicalProviderId: selection.providerId,
       modelId: selection.modelId,
       runtimeModelId: compactResolvedModelId,
-      reasoningEffort: opts.claudeExecutionAxes ? opts.claudeExecutionAxes.reasoningEffort : prefs?.reasoning,
-      fastMode: opts.claudeExecutionAxes ? opts.claudeExecutionAxes.fastMode : prefs?.fastMode === true,
+      reasoningEffort: frozen
+        ? frozen.reasoningEffort
+        : opts.claudeExecutionAxes
+          ? opts.claudeExecutionAxes.reasoningEffort
+          : prefs?.reasoning,
+      fastMode: frozen
+        ? frozen.fastMode
+        : opts.claudeExecutionAxes
+          ? opts.claudeExecutionAxes.fastMode
+          : prefs?.fastMode === true,
       chain: compactClaudeChain,
       attemptedProviderIds: new Set(),
       admit: false,
@@ -7221,7 +7254,14 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       summarize = (prompt, _phase, stageSignal = compactSignal) =>
         runCodexEphemeralWithFailover({
           logicalProviderId: selection.providerId,
-          ...(frozen ? { chain: [selection.providerId] } : {}),
+          ...(frozenRouteChain
+            ? {
+                chain: frozenRouteChain,
+                ...(frozen?.reasoningEffort ? { reasoningEffort: frozen.reasoningEffort } : {}),
+              }
+            : pinnedToFrozenAccount
+              ? { chain: [selection.providerId] }
+              : {}),
           modelId: selection.modelId,
           signal: stageSignal,
           scope: 'helper',
@@ -7280,7 +7320,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           ...(frozen?.reasoningEffort ? { effort: frozen.reasoningEffort } : {}),
         })
     } else if (isClaudeSubscriptionProvider(selection.providerId)) {
-      if (!frozen) {
+      if (!pinnedToFrozenAccount) {
         const chain = compactClaudeChain
         summarize = (prompt, _phase, stageSignal = compactSignal) =>
           runClaudeEphemeralWithFailover({
@@ -7617,7 +7657,39 @@ function publishBackgroundCompactionStatus(conversationId: string, state: Backgr
   else emitChatHost(conversationId, channel, event)
 }
 
+/** Snapshot-only identity of a route account: null when signed out or not yet read. */
+function routeAccountIdentitySnapshot(providerId: string): { fingerprint: string; epoch?: number } | null {
+  const account = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = getCodexSubscriptionManager(account).getStatusSnapshot()
+    if (!status?.authenticated) return null
+    return {
+      fingerprint: codexAccountFingerprint(toCodexAuthStatus(status, account)),
+      ...(account ? {} : { epoch: codexAccountUpdateEpoch }),
+    }
+  }
+  const status = getClaudeSubscriptionManager(account).getStatusSnapshot()
+  return status?.authenticated && status.accountFingerprint
+    ? { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+    : null
+}
+
 function backgroundIdentityCurrent(frozen: FrozenChatSelection): boolean {
+  if (frozen.failoverRoute && frozen.failoverRoute.length > 1) {
+    try {
+      // Same rule as revalidation: any re-logged account invalidates the selection, signed-out ones are skipped.
+      let usable = false
+      for (const account of frozen.failoverRoute) {
+        const live = routeAccountIdentitySnapshot(account.providerId)
+        if (!live) continue
+        if (routeAccountIdentityChanged(account, live)) return false
+        usable = true
+      }
+      return usable
+    } catch {
+      return false
+    }
+  }
   try {
     const account = subscriptionAccountId(frozen.providerId)
     if (isCodexSubscriptionProvider(frozen.providerId)) {
@@ -8039,6 +8111,70 @@ export async function validateReviewLoopStart(
   return { ok: true }
 }
 
+type LiveRouteAccountIdentity = { authenticated: false } | { authenticated: true; fingerprint: string; epoch?: number }
+
+/** Identity a frozen route compares against; only the default Codex account also carries the global epoch. */
+async function liveRouteAccountIdentity(providerId: string): Promise<LiveRouteAccountIdentity> {
+  const accountId = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = await codexAuthStatus(false, undefined, accountId)
+    if (!status.authenticated) return { authenticated: false }
+    return {
+      authenticated: true,
+      fingerprint: codexAccountFingerprint(status),
+      ...(accountId ? {} : { epoch: codexAccountUpdateEpoch }),
+    }
+  }
+  const status = await getClaudeSubscriptionManager(accountId).status({ refresh: false })
+  if (!status.authenticated || !status.accountFingerprint) return { authenticated: false }
+  return { authenticated: true, fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+}
+
+function routeAccountIdentityChanged(
+  account: FrozenFailoverAccount,
+  live: { fingerprint: string; epoch?: number }
+): boolean {
+  return (
+    (account.identityFingerprint != null && live.fingerprint !== account.identityFingerprint) ||
+    (typeof account.identityEpoch === 'number' && live.epoch !== account.identityEpoch)
+  )
+}
+
+/**
+ * The enabled fallback route of a Claude/Codex account, with each account's identity at freeze. An account signed
+ * out right now has no identity to hold it to, so it stays out: a later sign-in must not join a frozen execution.
+ */
+async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<FrozenFailoverAccount[] | undefined> {
+  if (!isClaudeSubscriptionProvider(primary.providerId) && !isCodexSubscriptionProvider(primary.providerId)) {
+    return undefined
+  }
+  const chain = freezeFailoverChain(primary.providerId)
+  if (chain.length <= 1 || chain[0] !== primary.providerId) return undefined
+  const route: FrozenFailoverAccount[] = [primary]
+  for (const providerId of chain.slice(1)) {
+    if (!getProvider(providerId)) continue
+    try {
+      const live = await liveRouteAccountIdentity(providerId)
+      if (!live.authenticated) continue
+      route.push({
+        providerId,
+        identityFingerprint: live.fingerprint,
+        ...(live.epoch !== undefined ? { identityEpoch: live.epoch } : {}),
+      })
+    } catch {
+      // An account whose status cannot be read stays out of the frozen route.
+    }
+  }
+  return route.length > 1 ? route : undefined
+}
+
+/** Physical accounts a frozen selection may run on: its frozen fallback route, or only its own account. */
+export function frozenFailoverChain(frozen: FrozenChatSelection): string[] {
+  return frozen.failoverRoute && frozen.failoverRoute.length > 1
+    ? frozen.failoverRoute.map((account) => account.providerId)
+    : [frozen.providerId]
+}
+
 /** Resolves the CURRENT profile (provider+model+reasoning+fastMode+identity) to FREEZE for the loop. No silent fallback. */
 export async function resolveReviewLoopSelection(
   conversationId: string,
@@ -8235,6 +8371,11 @@ export async function resolveReviewLoopSelection(
     resolvedModelId,
     flags: captureHarnessFlags(),
   })
+  const failoverRoute = await freezeFailoverRoute({
+    providerId: selection.providerId,
+    ...(identityFingerprint ? { identityFingerprint } : {}),
+    ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
+  })
   return {
     ok: true,
     selection: {
@@ -8251,6 +8392,7 @@ export async function resolveReviewLoopSelection(
       ...(identityFingerprint ? { identityFingerprint } : {}),
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
+      ...(failoverRoute ? { failoverRoute } : {}),
     },
   }
 }
@@ -8347,8 +8489,43 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
 /**
  * Revalidates FROZEN profile identity/availability between rounds.
  * Any fingerprint/epoch change → executor_unavailable (never silently switch model/account).
+ * A frozen fallback route applies the same rule to every account in it: one re-logged as another identity ends
+ * the execution, while a signed-out account is only skipped. At least one account must still reproduce the frozen
+ * profile; the turn's resolver then picks among them by quota.
  */
 export async function revalidateReviewLoopSelection(
+  frozen: FrozenChatSelection
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!frozen.failoverRoute || frozen.failoverRoute.length <= 1) return revalidateFrozenAccount(frozen)
+  const signedIn: FrozenFailoverAccount[] = []
+  for (const account of frozen.failoverRoute) {
+    let live: LiveRouteAccountIdentity
+    try {
+      live = await liveRouteAccountIdentity(account.providerId)
+    } catch {
+      continue
+    }
+    if (!live.authenticated) continue
+    if (routeAccountIdentityChanged(account, live)) return { ok: false, error: 'executor-unavailable' }
+    signedIn.push(account)
+  }
+  if (signedIn.length === 0) return { ok: false, error: 'no-key' }
+  let firstFailure: { ok: false; error: string } | undefined
+  for (const account of signedIn) {
+    const result = await revalidateFrozenAccount({
+      ...frozen,
+      providerId: account.providerId,
+      identityFingerprint: account.identityFingerprint,
+      identityEpoch: account.identityEpoch,
+      failoverRoute: undefined,
+    })
+    if (result.ok) return result
+    firstFailure ??= result
+  }
+  return firstFailure!
+}
+
+async function revalidateFrozenAccount(
   frozen: FrozenChatSelection
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const behaviorResolution = resolveHarnessContract(providerKindOf(frozen.providerId), frozen.modelId, {

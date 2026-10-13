@@ -199,6 +199,7 @@ import {
   compactReserved,
   registerChatIpc,
   resolveReviewLoopSelection,
+  revalidateReviewLoopSelection,
   startInternalChatTurn,
   stopChat,
   stopChatAndWait,
@@ -408,6 +409,98 @@ describe('Claude physical account service ownership', () => {
     }
   )
 
+  it('freezes the fallback route with the identity of each signed-in account', async () => {
+    const fallback = slot()
+    const conv = conversation()
+    register()
+    const frozen = await resolveReviewLoopSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    expect(frozen.selection.failoverRoute).toEqual([
+      { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, identityFingerprint: 'sha256:claude-account', identityEpoch: 2 },
+      { providerId: fallback.providerId, identityFingerprint: 'account-B', identityEpoch: 7 },
+    ])
+
+    fallback.status.authenticated = false
+    const withoutSignedOut = await resolveReviewLoopSelection(conv.id)
+    if (!withoutSignedOut.ok) throw new Error(withoutSignedOut.error)
+    expect(withoutSignedOut.selection.failoverRoute).toBeUndefined()
+  })
+
+  it('revalidates a frozen route: skips signed-out accounts and ends on a re-logged one', async () => {
+    const fallback = slot()
+    const conv = conversation()
+    register()
+    const frozen = await resolveReviewLoopSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({ ok: true })
+
+    h.state.status = { ...h.state.status, authenticated: false, accountFingerprint: null }
+    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({ ok: true })
+
+    fallback.status.authenticated = false
+    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({ ok: false, error: 'no-key' })
+
+    fallback.status.authenticated = true
+    fallback.status.accountFingerprint = 'account-C'
+    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({
+      ok: false,
+      error: 'executor-unavailable',
+    })
+  })
+
+  it.each([
+    ['frozen route', true],
+    ['route enabled after the loop started', false],
+  ] as const)('runs a review-loop round on the %s', async (_case, routeAtFreeze) => {
+    const fallback = slot()
+    const conv = conversation()
+    register()
+    if (!routeAtFreeze) {
+      setFailoverRoute({ primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, enabled: false, fallbackProviderIds: [] })
+    }
+    const frozen = await resolveReviewLoopSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    setFailoverRoute({
+      primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      enabled: true,
+      fallbackProviderIds: [fallback.providerId],
+    })
+    if (routeAtFreeze) exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    const loopId = `claude-route-loop-${conv.id}`
+    expect(
+      reserveReviewLoop({ loopId, driver: 'chatgpt-web', cwd: conv.cwd!, participants: { executor: conv.id } }).ok
+    ).toBe(true)
+    try {
+      const result = await startInternalChatTurn({
+        conversationId: conv.id,
+        prompt: 'Apply review findings.',
+        selection: frozen.selection,
+        source: 'chatgpt-web-review-loop',
+        loopId,
+        iteration: 1,
+        maxIterations: 3,
+        signal: new AbortController().signal,
+      })
+      if (!result.ok) throw new Error(result.error)
+      await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+      const args = (h.runClaude.mock.calls as any)[0][0]
+      expect(args).toMatchObject({ ephemeralSession: true, frozenResolvedModelId: 'claude-sonnet-5' })
+      if (routeAtFreeze) {
+        expect(args.failoverChain).toEqual([CLAUDE_SUBSCRIPTION_PROVIDER_ID, fallback.providerId])
+        expect(args.initialTarget).toMatchObject({ providerId: fallback.providerId, runtimeModelId: 'claude-sonnet-5' })
+        expect(args.manager).toBe(fallback.manager)
+        expect(args.resolveNextTarget).toEqual(expect.any(Function))
+      } else {
+        expect(args.failoverChain).toEqual([CLAUDE_SUBSCRIPTION_PROVIDER_ID])
+        expect(args.manager).toBe(h.manager)
+        expect(args.resolveNextTarget).toBeUndefined()
+      }
+      await result.handle.done
+    } finally {
+      releaseReviewLoop(loopId)
+    }
+  })
+
   it.each(['quota', 'signed-out'])(
     'admits physical B when logical A is %s without changing selection',
     async (reason) => {
@@ -543,6 +636,45 @@ describe('Claude physical account service ownership', () => {
       await stopChatAndWait(conv.id)
     } finally {
       clearCompactionSummarizer(conv.id)
+    }
+  })
+
+  it('rotates a dedicated compaction model to its fallback account while the primary is exhausted', async () => {
+    const fallback = slot()
+    const conv = conversation()
+    register()
+    history(conv.id)
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    setCompactionSummarizer(conv.id, () => ({
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      modelId: 'sonnet',
+      effort: 'off',
+      fastMode: false,
+    }))
+    try {
+      await expect(compactReserved(conv.id)).resolves.toMatchObject({ ok: true })
+      expect(h.summarizePortable).toHaveBeenCalled()
+      for (const [args] of h.summarizePortable.mock.calls as any) expect(args.manager).toBe(fallback.manager)
+    } finally {
+      clearCompactionSummarizer(conv.id)
+    }
+  })
+
+  it('compacts a frozen loop profile on its fallback route while the primary is exhausted', async () => {
+    const fallback = slot()
+    const conv = conversation()
+    register()
+    history(conv.id, 'x'.repeat(30000))
+    const frozen = await resolveReviewLoopSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await expect(
+      compactReserved(conv.id, { selectionOverride: frozen.selection, persist: false, allowActive: true })
+    ).resolves.toMatchObject({ ok: true })
+    expect(h.summarizePortable).toHaveBeenCalled()
+    for (const [args] of h.summarizePortable.mock.calls as any) {
+      expect(args.manager).toBe(fallback.manager)
+      expect(args).toMatchObject({ modelId: 'claude-sonnet-5', effort: 'high', fastMode: true })
     }
   })
 

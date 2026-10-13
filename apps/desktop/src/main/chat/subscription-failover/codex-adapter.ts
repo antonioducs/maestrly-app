@@ -14,6 +14,8 @@ import { failoverDiag } from './diag'
 import { harnessFor } from '../harness/execution'
 import {
   getSubscriptionFailoverRouter,
+  HALF_OPEN_PROBE_WAIT_MS,
+  probingCandidates,
   type AvailabilityLease,
   type SubscriptionFailoverRouter,
   type TryAdmitResult,
@@ -78,6 +80,8 @@ export interface ResolveCodexTargetArgs {
   harnessFlags?: Readonly<Record<string, boolean>>
   signal?: AbortSignal
   now?: number
+  /** Upper bound for waiting on another caller's half-open probe; defaults to HALF_OPEN_PROBE_WAIT_MS. */
+  probeWaitMs?: number
 }
 
 export type ResolveCodexTargetResult =
@@ -336,9 +340,31 @@ async function ensureAuthenticated(manager: CodexSubscriptionManager): Promise<C
 
 /**
  * Resolve a Codex subscription runtime target by walking the frozen failover chain with the
- * circuit-breaker router (tryAdmit / half-open lease).
+ * circuit-breaker router (tryAdmit / half-open lease). When nothing else is usable but an account is in another
+ * caller's half-open probe (the first request after a reset), wait for that probe instead of reporting the chain
+ * exhausted: callers that arrive together after a reset then all return to the recovered primary.
  */
 export async function resolveCodexRuntimeTarget(args: ResolveCodexTargetArgs): Promise<ResolveCodexTargetResult> {
+  const router = getSubscriptionFailoverRouter()
+  const deadline = Date.now() + (args.probeWaitMs ?? HALF_OPEN_PROBE_WAIT_MS)
+  let attempt = args
+  while (true) {
+    const result = await resolveCodexRuntimeTargetOnce(attempt)
+    if (result.ok || result.error === 'aborted') return result
+    const probing = probingCandidates(router, args.chain, args.attemptedProviderIds)
+    const remaining = deadline - Date.now()
+    if (probing.length === 0 || remaining <= 0) return result
+    failoverDiag('codex-wait-half-open', { logicalProviderId: args.logicalProviderId, providerIds: probing })
+    await router.waitForProbeSettlement(probing, remaining, args.signal)
+    if (args.signal?.aborted) {
+      return { ok: false, error: 'aborted', message: 'Codex failover resolution was aborted' }
+    }
+    // A fixed `now` only describes the first walk; the retry must see the probe's outcome.
+    attempt = { ...args, now: undefined }
+  }
+}
+
+async function resolveCodexRuntimeTargetOnce(args: ResolveCodexTargetArgs): Promise<ResolveCodexTargetResult> {
   const router = getSubscriptionFailoverRouter()
   const now = args.now ?? Date.now()
   let earliestResetsAt: number | null | undefined
