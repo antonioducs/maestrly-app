@@ -570,6 +570,14 @@ export const en = {
   'artifact.error.offline': "Couldn't reach the server. Try again when you're connected.",
   'artifact.error.demo':
     "The demo server doesn't host pages. With your own server, this opens the page the agent published.",
+
+  'details.compactNoModel': 'Needs a compaction model. Choose one in the bot settings on your computer.',
+  'details.compactStopped': 'Available while the bot is running.',
+  'details.compactRetry': 'Prepare the summary again',
+  'details.compactRetrySub': 'The summary the bot prepares in the background failed.',
+  'details.compactError.busy': 'The bot is busy. Try again when its turn ends.',
+  'details.compactError.notConfigured': 'The bot has no compaction model. Choose one in its settings on your computer.',
+  'details.compactError.failed': "Couldn't start compacting. Try again.",
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1148,4 +1156,13 @@ export const ptBR: Record<keyof typeof en, string> = {
   'artifact.error.offline': 'Não foi possível falar com o servidor. Tente de novo quando estiver conectado.',
   'artifact.error.demo':
     'O servidor de demonstração não hospeda páginas. Com o seu servidor, isto abre a página que o agente publicou.',
+
+  'details.compactNoModel': 'Precisa de um modelo de compactação. Escolha um nos ajustes do bot no computador.',
+  'details.compactStopped': 'Disponível enquanto o bot estiver rodando.',
+  'details.compactRetry': 'Preparar o resumo de novo',
+  'details.compactRetrySub': 'O resumo que o bot prepara em segundo plano falhou.',
+  'details.compactError.busy': 'O bot está ocupado. Tente de novo quando o turno terminar.',
+  'details.compactError.notConfigured':
+    'O bot não tem modelo de compactação. Escolha um nos ajustes dele no computador.',
+  'details.compactError.failed': 'Não foi possível começar a compactar. Tente de novo.',
 }

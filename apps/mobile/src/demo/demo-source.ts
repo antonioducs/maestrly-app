@@ -485,6 +485,35 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
           finish(id, null)
         }
         return undefined
+      case 'botConversationCall': {
+        const bot = requireBot(id)
+        const { op } = body as { op: string }
+        if (op === 'chatBackgroundCompactionRetry') return { result: { ok: true } }
+        if (op !== 'chatCompact') throw new GatewayError('NOT_FOUND', 404, 'The demo server does not offer this')
+        if (bot.status !== 'idle' || bot.activity?.kind === 'compacting')
+          return { result: { ok: false, error: 'busy' } }
+        const before = bot.activity
+        updateBot(id, { activity: { kind: 'compacting' } })
+        void sleep(2600).then(() => {
+          upsert(id, {
+            id: nextId(id),
+            at: stamp(),
+            kind: 'compaction',
+            origin: 'manual',
+            summary: 'Earlier in this conversation: the work so far, the decisions made and what is still open.',
+            truncated: false,
+          })
+          const current = requireBot(id)
+          const used = current.usage?.contextUsedTokens ?? 0
+          updateBot(id, {
+            activity: before,
+            usage: current.usage
+              ? { ...current.usage, contextUsedTokens: Math.min(used, 9_000), updatedAt: stamp() }
+              : null,
+          })
+        })
+        return { result: { ok: true } }
+      }
       case 'devicesSelfDelete':
         return undefined
       default:

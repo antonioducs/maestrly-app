@@ -1,8 +1,8 @@
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useState } from 'react'
-import { View } from 'react-native'
-import type { BotAction } from '../../fleet/controller'
+import { AccessibilityInfo, ActivityIndicator, View } from 'react-native'
+import { BotCompactError, type BotAction, type BotCompactIssue } from '../../fleet/controller'
 import { formatCost, formatTokens } from '../../fleet/format'
 import { useFleet, useFleetController } from '../../fleet/react'
 import { botStatusLine, statusLineText } from '../../fleet/selectors'
@@ -94,6 +94,85 @@ function ContextMeter({ bot }: { bot: FleetBot }) {
         </AppText>
       </View>
     </View>
+  )
+}
+
+/** Below this, a summary would not free enough context to be worth a turn of the compaction model. */
+const COMPACT_MIN_TOKENS = 20_000
+const selectOnline = (state: FleetState) => state.connection === 'open'
+
+/** Compacting the bot's conversation now, and preparing its background summary again after a failure. */
+function Compaction({ bot }: { bot: FleetBot }) {
+  const { palette } = useTheme()
+  const { t } = useI18n()
+  const controller = useFleetController()
+  const online = useFleet(selectOnline)
+  const [busy, setBusy] = useState<'compact' | 'retry' | null>(null)
+  const [issue, setIssue] = useState<BotCompactIssue | null>(null)
+  const compacting = bot.activity?.kind === 'compacting'
+  const configured = bot.compactionState?.configured !== false
+  const running = bot.status === 'idle' || bot.status === 'waiting'
+  const used = bot.usage?.contextUsedTokens ?? 0
+  const can = online && configured && running && !compacting && used >= COMPACT_MIN_TOKENS
+  const sub = compacting
+    ? t('chat.setup.compacting')
+    : !configured
+      ? t('details.compactNoModel')
+      : !online
+        ? t('chat.setup.compactOffline')
+        : bot.status === 'working' || bot.status === 'starting'
+          ? t('chat.setup.compactWorking')
+          : !running
+            ? t('details.compactStopped')
+            : used < COMPACT_MIN_TOKENS
+              ? t('chat.setup.compactSmall')
+              : t('chat.setup.compactSub')
+  const failed = bot.compactionState?.background.status === 'failed'
+
+  async function run(kind: 'compact' | 'retry') {
+    setBusy(kind)
+    setIssue(null)
+    try {
+      if (kind === 'compact') {
+        await controller.compact(bot.id)
+        AccessibilityInfo.announceForAccessibility(t('chat.setup.compacting'))
+      } else await controller.retryBackgroundCompaction(bot.id)
+    } catch (error) {
+      setIssue(error instanceof BotCompactError ? error.issue : 'failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      <Cell
+        icon="compress"
+        label={t('chat.setup.compact')}
+        sub={sub}
+        disabled={!can || busy !== null}
+        trailing={busy === 'compact' || compacting ? <ActivityIndicator size="small" color={palette.muted} /> : null}
+        onPress={() => void run('compact')}
+      />
+      {failed && configured ? (
+        <Cell
+          icon="restart"
+          label={t('details.compactRetry')}
+          sub={t('details.compactRetrySub')}
+          disabled={!online || busy !== null}
+          trailing={busy === 'retry' ? <ActivityIndicator size="small" color={palette.muted} /> : null}
+          onPress={() => void run('retry')}
+        />
+      ) : null}
+      {issue ? (
+        <AppText
+          accessibilityRole="alert"
+          style={{ marginHorizontal: 14, marginBottom: 10, fontSize: 13, color: palette.brick }}
+        >
+          {t(`details.compactError.${issue}`)}
+        </AppText>
+      ) : null}
+    </>
   )
 }
 
@@ -207,6 +286,7 @@ function Details({ bot }: { bot: FleetBot }) {
           onPress={() => router.push({ pathname: '/bot-setup/[id]', params: { id: bot.id } })}
         />
         <ContextMeter bot={bot} />
+        <Compaction bot={bot} />
         {environment ? <Cell icon="server" label={t('details.environment')} value={environment} /> : null}
       </Group>
       <RoutineList bot={bot} />

@@ -291,6 +291,34 @@ export function createFleetController(
     async patchBot(botId: string, patch: FleetPatchBotRequest) {
       applyBot(await source.call('botPatch', { params: { id: botId }, body: patch }))
     },
+    /**
+     * Summarizes the bot's conversation with its compaction model. The bot answers at once; progress shows in its
+     * activity and the summary arrives in the transcript.
+     */
+    compact(botId: string) {
+      return conversationOp(botId, 'chatCompact')
+    },
+    /** Prepares the background summary again after it failed. */
+    retryBackgroundCompaction(botId: string) {
+      return conversationOp(botId, 'chatBackgroundCompactionRetry')
+    },
+  }
+
+  async function conversationOp(botId: string, op: 'chatCompact' | 'chatBackgroundCompactionRetry') {
+    const { result } = await source.call('botConversationCall', { params: { id: botId }, body: { op, args: [] } })
+    const answer = result as { ok?: unknown; error?: unknown } | null
+    if (answer?.ok === true) return
+    throw new BotCompactError(
+      answer?.error === 'busy' ? 'busy' : answer?.error === 'not-configured' ? 'notConfigured' : 'failed'
+    )
+  }
+}
+
+export type BotCompactIssue = 'busy' | 'notConfigured' | 'failed'
+export class BotCompactError extends Error {
+  constructor(readonly issue: BotCompactIssue) {
+    super(issue)
+    this.name = 'BotCompactError'
   }
 }
 

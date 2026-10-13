@@ -1,7 +1,7 @@
 import type { FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it, vi } from 'vitest'
 import type { StreamState } from '../src/gateway/event-stream'
-import { createFleetController } from '../src/fleet/controller'
+import { BotCompactError, createFleetController } from '../src/fleet/controller'
 import { botRecord } from '../src/fleet/factories'
 import type { FleetSource } from '../src/fleet/source'
 import { memoryStores } from '../src/servers/registry'
@@ -133,5 +133,32 @@ describe('fleet controller', () => {
     controller.foreground()
     expect(f.reconnect).toHaveBeenCalledTimes(1)
     controller.stop()
+  })
+
+  it('asks the bot to compact and says why it could not', async () => {
+    const f = fakeSource()
+    const controller = createFleetController(f.source, memoryStores().kv)
+    let answer: unknown = { ok: true }
+    f.responses.botConversationCall = () => ({ result: answer })
+    await controller.compact('juno')
+    expect(f.call).toHaveBeenLastCalledWith('botConversationCall', {
+      params: { id: 'juno' },
+      body: { op: 'chatCompact', args: [] },
+    })
+    await controller.retryBackgroundCompaction('juno')
+    expect(f.call.mock.calls.at(-1)?.[1]).toMatchObject({ body: { op: 'chatBackgroundCompactionRetry' } })
+    const issue = () =>
+      controller.compact('juno').then(
+        () => null,
+        (error: unknown) => (error instanceof BotCompactError ? error.issue : 'other')
+      )
+    answer = { ok: false, error: 'busy' }
+    expect(await issue()).toBe('busy')
+    answer = { ok: false, error: 'not-configured' }
+    expect(await issue()).toBe('notConfigured')
+    answer = { ok: false, error: 'invalid' }
+    expect(await issue()).toBe('failed')
+    answer = null
+    expect(await issue()).toBe('failed')
   })
 })
