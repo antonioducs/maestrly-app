@@ -103,15 +103,17 @@ describe('bridge proxy', () => {
       sockets.push(socket)
       return h.outcome(socket)
     }
-    expect(await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path, 'https://bots.example.dev')).toBe(
-      'open'
-    )
+    expect(
+      await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path, 'https://bots.example.dev')
+    ).toBe('open')
     expect(h.upstream.upgrades[0].origin).toBeUndefined()
     // Written as a client may write it: the comparison is on the normalized Origin.
-    expect(await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path, 'https://BOTS.example.dev:443')).toBe(
-      'open'
-    )
-    expect(await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path, 'https://evil.example')).toBe(403)
+    expect(
+      await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path, 'https://BOTS.example.dev:443')
+    ).toBe('open')
+    expect(
+      await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path, 'https://evil.example')
+    ).toBe(403)
     // A phone's ticket also opens without an Origin; a computer's ticket never accepts one.
     expect(await open(h.proxy.ticket('workspaces', 'phone', 'https://bots.example.dev').path)).toBe('open')
     expect(await open(h.proxy.ticket('workspaces', 'device-1').path, 'https://bots.example.dev')).toBe(403)

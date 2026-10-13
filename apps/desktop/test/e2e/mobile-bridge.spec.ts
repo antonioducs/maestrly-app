@@ -48,7 +48,12 @@ async function configureModel(port: number, token: string, appVersion: string, b
     })
   )
   socket.send(JSON.stringify({ t: 'open', origin: 1, role: 'main' }))
-  const provider = await invoke('chat:provider-add', { name: 'Phone fixture', kind: 'openai', key: 'fixture-key', baseURL })
+  const provider = await invoke('chat:provider-add', {
+    name: 'Phone fixture',
+    kind: 'openai',
+    key: 'fixture-key',
+    baseURL,
+  })
   expect(provider.value?.ok).toBe(true)
   await invoke('chat:set-default', { providerId: provider.value.id, modelId: 'remote-fixture' })
   socket.close()
@@ -76,7 +81,12 @@ test('mobile bridge: a phone lists, creates and streams a chat on a workspaces h
       })
     ).json()
     expect(health.capabilities).toContain('mobile-api')
-    await configureModel(launched.port, launched.token, health.appVersion, `http://127.0.0.1:${portOf(model.server)}/v1`)
+    await configureModel(
+      launched.port,
+      launched.token,
+      health.appVersion,
+      `http://127.0.0.1:${portOf(model.server)}/v1`
+    )
 
     const states: MobileBridgeState[] = []
     const events: MobileEvent[] = []

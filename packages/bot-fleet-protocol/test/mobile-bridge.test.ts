@@ -35,7 +35,13 @@ describe('bridge origins', () => {
 describe('mobile chat items', () => {
   it('are transcript items or dispatch cards', () => {
     expect(
-      mobileChatItemSchema.parse({ kind: 'assistant', id: 'a', at: '2026-10-13T12:00:00.000Z', text: 'Hi', streaming: false })
+      mobileChatItemSchema.parse({
+        kind: 'assistant',
+        id: 'a',
+        at: '2026-10-13T12:00:00.000Z',
+        text: 'Hi',
+        streaming: false,
+      })
     ).toMatchObject({ kind: 'assistant' })
     expect(
       mobileChatItemSchema.parse({
@@ -145,9 +151,19 @@ describe('mobile bridge client', () => {
     socket.receive({ t: 'result', id: 2, ok: false, error: { message: 'Unknown conversation', code: 'not-found' } })
     await expect(failing).rejects.toMatchObject({ code: 'not-found', message: 'Unknown conversation' })
 
-    socket.receive({ t: 'event', origin: 1, channel: 'mobile:v1:status', args: [{ conversationId: 'c1', status: 'working' }] })
+    socket.receive({
+      t: 'event',
+      origin: 1,
+      channel: 'mobile:v1:status',
+      args: [{ conversationId: 'c1', status: 'working' }],
+    })
     socket.receive({ t: 'event', origin: 1, channel: 'mobile:v1:unknown', args: [{}] })
-    socket.receive({ t: 'event', origin: 1, channel: 'mobile:v1:status', args: [{ conversationId: 'c1', status: 'odd' }] })
+    socket.receive({
+      t: 'event',
+      origin: 1,
+      channel: 'mobile:v1:status',
+      args: [{ conversationId: 'c1', status: 'odd' }],
+    })
     expect(h.events).toEqual([{ key: 'status', payload: { conversationId: 'c1', status: 'working' } }])
 
     socket.receive({ t: 'ping', n: 7 })
@@ -160,7 +176,9 @@ describe('mobile bridge client', () => {
     h.client.start()
     await flush()
     await h.welcome(h.sockets[0])
-    await expect(h.client.invoke('send', { conversationId: 'c1', text: 'hi', attachments: [], clientId: 'nope' })).rejects.toMatchObject({
+    await expect(
+      h.client.invoke('send', { conversationId: 'c1', text: 'hi', attachments: [], clientId: 'nope' })
+    ).rejects.toMatchObject({
       code: 'INVALID',
     })
     const slow = h.client.invoke('lists', {}, 1000)

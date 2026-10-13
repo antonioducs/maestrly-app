@@ -31,7 +31,10 @@ describe('pairing links', () => {
 
 describe('phone server addresses', () => {
   it('accepts HTTPS, and loopback HTTP only when asked (simulators)', () => {
-    expect(isAllowedPhoneServerUrl('https://bots.example.dev')).toEqual({ ok: true, origin: 'https://bots.example.dev' })
+    expect(isAllowedPhoneServerUrl('https://bots.example.dev')).toEqual({
+      ok: true,
+      origin: 'https://bots.example.dev',
+    })
     expect(isAllowedPhoneServerUrl('http://127.0.0.1:7443')).toEqual({
       ok: false,
       reason: 'Phones connect to the bot server over HTTPS',

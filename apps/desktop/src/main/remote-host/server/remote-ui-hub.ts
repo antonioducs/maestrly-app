@@ -246,7 +246,13 @@ class Session {
   private invoke(frame: Extract<BridgeClientFrame, { t: 'invoke' }>): void {
     if (this.mobile) {
       const api = this.mobileOrigins.get(frame.origin)
-      if (!api) return this.write({ t: 'result', id: frame.id, ok: false, error: { message: 'Unknown origin', code: 'unknown-origin' } })
+      if (!api)
+        return this.write({
+          t: 'result',
+          id: frame.id,
+          ok: false,
+          error: { message: 'Unknown origin', code: 'unknown-origin' },
+        })
       api.invoke(frame.channel, frame.args).then(
         (value) => this.write({ t: 'result', id: frame.id, ok: true, value }),
         (error) => this.write({ t: 'result', id: frame.id, ok: false, error: failure(error) })

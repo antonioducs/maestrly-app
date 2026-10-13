@@ -43,7 +43,10 @@ import {
   type MessagePart,
 } from '../../../shared/chat'
 import type { Conversation, ConversationStatus } from '../../../shared/conversation'
-import { conversationDispatchBranchSlug, parseConversationDispatchBatchResult } from '../../../shared/conversation-dispatch'
+import {
+  conversationDispatchBranchSlug,
+  parseConversationDispatchBatchResult,
+} from '../../../shared/conversation-dispatch'
 import { imageId } from '../../fleet/instance/images'
 import { permissionTool, projectChatMessages } from '../../fleet/instance/transcript'
 import { registerRemoteUiTarget } from '../../remote-ui-targets'
@@ -251,7 +254,10 @@ export class MobileApi {
       defaults: () => this.defaults(),
       setDefaults: (value) => this.setDefaults(value),
       compact: async (value) => {
-        const result = (await this.call('chat:compact', value.conversationId)) as { ok?: boolean; error?: string } | null
+        const result = (await this.call('chat:compact', value.conversationId)) as {
+          ok?: boolean
+          error?: string
+        } | null
         return { ok: result?.ok === true, ...(result?.error ? { error: String(result.error) } : {}) }
       },
       image: (value) => this.image(value.conversationId, value.imageId),
@@ -316,7 +322,10 @@ export class MobileApi {
   private async create(args: MobileArgs<'create'>): Promise<MobileConversation> {
     if (args.workspaceId === null) {
       if (args.experience === 'maestro') throw new MobileApiError('invalid', 'Maestro needs a workspace')
-      const created = (await this.call('conversation:create-standalone', args.name ? { name: args.name } : {})) as Conversation
+      const created = (await this.call(
+        'conversation:create-standalone',
+        args.name ? { name: args.name } : {}
+      )) as Conversation
       this.listsChanged()
       return mobileConversation(created, null)
     }
@@ -353,8 +362,14 @@ export class MobileApi {
     const [page, runtime, plan, dispatch] = await Promise.all([
       this.call('chat:history:page', id, { limit: MOBILE_BRIDGE_LIMITS.pageSize }) as Promise<ChatHistoryPage>,
       this.call('chat:runtime', id) as Promise<ChatRuntimeState>,
-      this.call('plan:get', id).catch(() => null) as Promise<{ plan?: string; title?: string; version?: number } | null>,
-      this.call('conversation-dispatch:status', id).catch(() => null) as Promise<{ sourceConversationId?: string | null } | null>,
+      this.call('plan:get', id).catch(() => null) as Promise<{
+        plan?: string
+        title?: string
+        version?: number
+      } | null>,
+      this.call('conversation-dispatch:status', id).catch(() => null) as Promise<{
+        sourceConversationId?: string | null
+      } | null>,
     ])
     open.messages = mergePendingChatQuestions(page?.messages ?? [], id, runtime?.pendingQuestions ?? [])
     open.before = page?.hasMore && page.earliestSeq !== null ? `seq-${page.earliestSeq}` : null
@@ -418,7 +433,8 @@ export class MobileApi {
         error instanceof Error ? error.message : String(error)
       )
     }
-    if (!result?.ok) throw new MobileApiError(result?.error ?? 'send-failed', result?.error ?? 'The message was not sent')
+    if (!result?.ok)
+      throw new MobileApiError(result?.error ?? 'send-failed', result?.error ?? 'The message was not sent')
     noteSent(args.conversationId, args.clientId)
     // The message the host admitted is in the latest page; the stream carries the answer.
     if (open) this.refetch(open)
@@ -456,7 +472,9 @@ export class MobileApi {
     const model = ref?.providerId && ref.modelId ? { providerId: ref.providerId, modelId: ref.modelId } : null
     const [meta, limit] = model
       ? await Promise.all([
-          this.call('chat:model-meta', model.modelId, model.providerId).catch(() => null) as Promise<ChatModelMeta | null>,
+          this.call('chat:model-meta', model.modelId, model.providerId).catch(
+            () => null
+          ) as Promise<ChatModelMeta | null>,
           this.call('chat:context-limit:get', model.providerId, model.modelId).catch(() => null) as Promise<{
             limit?: number | null
             providerWindow?: number | null
@@ -475,7 +493,11 @@ export class MobileApi {
       permMode: permMode === 'full' || permMode === 'auto' ? permMode : 'ask',
       experience: conversation.experience,
       ultra: meta?.nativeUltraMode ? 'native' : 'maestrly',
-      tools: { app: tools?.app !== false, imageGen: tools?.imageGen !== false, subagents: subagents?.subagentsEnabled !== false },
+      tools: {
+        app: tools?.app !== false,
+        imageGen: tools?.imageGen !== false,
+        subagents: subagents?.subagentsEnabled !== false,
+      },
       contextLimit: model
         ? {
             limit: positive(limit?.limit),
@@ -498,7 +520,8 @@ export class MobileApi {
   private async setSetup({ conversationId: id, patch }: MobileArgs<'setSetup'>): Promise<MobileChatSetup> {
     const answer = (value: unknown) => {
       const result = value as { ok?: boolean; error?: string } | null | undefined
-      if (result && result.ok === false) throw new MobileApiError(result.error ?? 'setup-failed', result.error ?? 'Not changed')
+      if (result && result.ok === false)
+        throw new MobileApiError(result.error ?? 'setup-failed', result.error ?? 'Not changed')
     }
     if (patch.selection) answer(await this.call('chat:set-selection', id, patch.selection))
     if (patch.reasoning) answer(await this.call('chat:set-reasoning', id, patch.reasoning))
@@ -552,7 +575,8 @@ export class MobileApi {
       ...(args.reasoning ? { reasoning: args.reasoning } : {}),
       ...(args.fastMode !== undefined ? { fastMode: args.fastMode } : {}),
     })) as { ok?: boolean; error?: string } | null
-    if (result && result.ok === false) throw new MobileApiError(result.error ?? 'setup-failed', result.error ?? 'Not changed')
+    if (result && result.ok === false)
+      throw new MobileApiError(result.error ?? 'setup-failed', result.error ?? 'Not changed')
     return this.defaults()
   }
 
@@ -598,7 +622,8 @@ export class MobileApi {
           partId: source.partId,
         }))) as { ok?: boolean; bytes?: Uint8Array; mediaType?: string; dataUrl?: string } | null
     if (!result?.ok) throw new MobileApiError('not-found', 'The image is no longer available')
-    if (result.bytes) return { mediaType: result.mediaType ?? 'image/png', dataBase64: Buffer.from(result.bytes).toString('base64') }
+    if (result.bytes)
+      return { mediaType: result.mediaType ?? 'image/png', dataBase64: Buffer.from(result.bytes).toString('base64') }
     const dataUrl = /^data:([^;,]+);base64,(.*)$/s.exec(result.dataUrl ?? '')
     if (!dataUrl) throw new MobileApiError('not-found', 'The image is no longer available')
     return { mediaType: dataUrl[1], dataBase64: dataUrl[2] }
@@ -611,7 +636,11 @@ export class MobileApi {
    * a turn's answer may be stamped a moment before the message it answers was saved: each message is given a time
    * after the one before it in the history's order, and keeps it (`order`) while the conversation stays open.
    */
-  private project(conversationId: string, raw: ChatMessage[], order: Map<string, number> | null = null): MobileChatItem[] {
+  private project(
+    conversationId: string,
+    raw: ChatMessage[],
+    order: Map<string, number> | null = null
+  ): MobileChatItem[] {
     let previous = -Infinity
     const messages = raw.map((message) => {
       const time = order?.get(message.id) ?? Math.max(message.createdAt, previous + 1)
@@ -619,7 +648,8 @@ export class MobileApi {
       previous = time
       // A transcript's user item holds at most FLEET_MESSAGE_TEXT_MAX characters; a longer paste would drop the item.
       const parts =
-        message.role === 'user' && message.parts.some((part) => part.type === 'text' && part.text.length > FLEET_MESSAGE_TEXT_MAX)
+        message.role === 'user' &&
+        message.parts.some((part) => part.type === 'text' && part.text.length > FLEET_MESSAGE_TEXT_MAX)
           ? message.parts.map((part) =>
               part.type === 'text' && part.text.length > FLEET_MESSAGE_TEXT_MAX
                 ? { ...part, text: part.text.slice(0, FLEET_MESSAGE_TEXT_MAX - 1) + '…' }
@@ -655,8 +685,19 @@ export class MobileApi {
         .slice(0, 8)
         .flatMap((image): FleetImageRef[] => {
           if (!/^image\/(png|jpeg|webp|gif)$/.test(image.mediaType)) return []
-          const id = 't-' + createHash('sha256').update(conversationId + '\0' + image.id).digest('base64url').slice(0, 32)
-          this.images.set(id, { kind: 'tool', conversationId, messageId: message.id, toolPartId: part.id, imageId: image.id })
+          const id =
+            't-' +
+            createHash('sha256')
+              .update(conversationId + '\0' + image.id)
+              .digest('base64url')
+              .slice(0, 32)
+          this.images.set(id, {
+            kind: 'tool',
+            conversationId,
+            messageId: message.id,
+            toolPartId: part.id,
+            imageId: image.id,
+          })
           return [
             {
               id,
@@ -692,7 +733,9 @@ export class MobileApi {
     const message = messages.find((entry) => entry.id === item.id.slice(0, at))
     const part = message?.parts[Number(item.id.slice(at + 1))]
     const output =
-      part?.type === 'tool' && part.state.status === 'completed' ? toolOutputText(part.state.output) : (item.output ?? '')
+      part?.type === 'tool' && part.state.status === 'completed'
+        ? toolOutputText(part.state.output)
+        : (item.output ?? '')
     const result = parseConversationDispatchBatchResult(output.slice(0, FLEET_TOOL_OUTPUT_MAX * 20))
     return {
       kind: 'dispatch',
@@ -735,7 +778,10 @@ export class MobileApi {
       if (snapshot)
         context = {
           usedTokens: Math.max(0, Math.round(snapshot.usedTokens)),
-          windowTokens: snapshot.modelContextWindow && snapshot.modelContextWindow > 0 ? Math.round(snapshot.modelContextWindow) : null,
+          windowTokens:
+            snapshot.modelContextWindow && snapshot.modelContextWindow > 0
+              ? Math.round(snapshot.modelContextWindow)
+              : null,
           quality: snapshot.quality,
         }
     }
@@ -746,7 +792,8 @@ export class MobileApi {
 
   private internal(channel: string, payload: unknown): void {
     if (this.disposed) return
-    if (channel.startsWith('chat:delta:')) return this.delta(channel.slice('chat:delta:'.length), payload as ChatStreamEvent)
+    if (channel.startsWith('chat:delta:'))
+      return this.delta(channel.slice('chat:delta:'.length), payload as ChatStreamEvent)
     if (channel.startsWith('chat:permission:'))
       return this.permission(channel.slice('chat:permission:'.length), payload as ChatPermissionEvent)
     if (channel === 'agent:status') {
@@ -755,7 +802,11 @@ export class MobileApi {
         this.emit('status', { conversationId: value.agentId, status: value.status as ConversationStatus })
       return
     }
-    if (channel === 'workspace:changed' || channel === 'conversation:open' || channel === 'conversation-dispatch:changed')
+    if (
+      channel === 'workspace:changed' ||
+      channel === 'conversation:open' ||
+      channel === 'conversation-dispatch:changed'
+    )
       return this.listsChanged()
     if (channel === 'plan:received' || channel === 'plan:cleared') {
       const value = payload as { agentId?: string; plan?: string; title?: string; version?: number } | null
@@ -776,7 +827,8 @@ export class MobileApi {
     if (!open || !event || typeof event !== 'object') return
     if (event.kind === 'message-start') open.streaming = true
     if (event.kind === 'finish' || event.kind === 'aborted' || event.kind === 'error') open.streaming = false
-    if (event.kind === 'compaction-progress') open.compacting = event.progress.status === 'running' || event.progress.status === 'retrying'
+    if (event.kind === 'compaction-progress')
+      open.compacting = event.progress.status === 'running' || event.progress.status === 'retrying'
     if (event.kind === 'compaction-finished') open.compacting = false
     try {
       open.messages = applyChatEvent(open.messages, event)
@@ -849,7 +901,8 @@ export class MobileApi {
     const kept = new Set(open.messages.map((message) => message.id))
     // An item of a message still shown disappeared (an answer withdrawn after an error): the phone reloads.
     const vanished = [...open.sent.keys()].some(
-      (itemId) => !present.has(itemId) && !itemId.startsWith('perm:') && kept.has(itemId.slice(0, itemId.lastIndexOf(':')))
+      (itemId) =>
+        !present.has(itemId) && !itemId.startsWith('perm:') && kept.has(itemId.slice(0, itemId.lastIndexOf(':')))
     )
     if (vanished) {
       open.sent = new Map(items.map((item) => [item.id, JSON.stringify(item)]))

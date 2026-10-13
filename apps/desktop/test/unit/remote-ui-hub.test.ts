@@ -302,7 +302,10 @@ describe('remote UI hub', () => {
       mixed.frame({ ...hello, client: { ...hello.client, kind: 'mobile', mobileApi: 1 } } as BridgeClientFrame)
       expect(mixed.socket.closed?.[0]).toBe(REMOTE_BRIDGE_CLOSE.badFrame)
       const unlabeled = setup()
-      unlabeled.frame({ ...phoneHello, client: { deviceName: 'iPhone', os: 'android', locale: 'en' } } as BridgeClientFrame)
+      unlabeled.frame({
+        ...phoneHello,
+        client: { deviceName: 'iPhone', os: 'android', locale: 'en' },
+      } as BridgeClientFrame)
       expect(unlabeled.socket.closed?.[0]).toBe(REMOTE_BRIDGE_CLOSE.badFrame)
     })
 

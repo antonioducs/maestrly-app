@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { fleetCeilingSchema, fleetSelectionOptionSchema, fleetTimestampSchema, fleetTranscriptItemSchema } from './domain.js'
+import {
+  fleetCeilingSchema,
+  fleetSelectionOptionSchema,
+  fleetTimestampSchema,
+  fleetTranscriptItemSchema,
+} from './domain.js'
 
 /**
  * The mobile API of a workspaces host: what a phone reaches over the bridge (see `FLEET_GATEWAY_ROUTES.bridge`). A
@@ -154,7 +159,10 @@ export const mobileChatSetupPatchSchema = z
     mode: mobileChatModeSchema.optional(),
     permMode: mobilePermModeSchema.optional(),
     mcp: z.object({ id, enabled: z.boolean() }).strict().optional(),
-    skill: z.object({ name: z.string().min(1).max(200), state: z.enum(['on', 'off', 'inherit']) }).strict().optional(),
+    skill: z
+      .object({ name: z.string().min(1).max(200), state: z.enum(['on', 'off', 'inherit']) })
+      .strict()
+      .optional(),
     /** Every skill back to what the host enables by default. */
     skillsReset: z.literal(true).optional(),
     tools: z
@@ -246,9 +254,7 @@ export const MOBILE_CHANNELS = {
   },
   permission: {
     channel: 'mobile:v1:permission',
-    args: z
-      .object({ conversationId: id, requestId: id, reply: z.enum(['once', 'always', 'reject']) })
-      .strict(),
+    args: z.object({ conversationId: id, requestId: id, reply: z.enum(['once', 'always', 'reject']) }).strict(),
     result: z.null(),
   },
   question: {
@@ -285,7 +291,11 @@ export const MOBILE_CHANNELS = {
   setDefaults: {
     channel: 'mobile:v1:defaults:set',
     args: z
-      .object({ selection: modelRef.optional(), reasoning: z.string().min(1).max(40).optional(), fastMode: z.boolean().optional() })
+      .object({
+        selection: modelRef.optional(),
+        reasoning: z.string().min(1).max(40).optional(),
+        fastMode: z.boolean().optional(),
+      })
       .strict(),
     result: mobileChatDefaultsSchema,
   },

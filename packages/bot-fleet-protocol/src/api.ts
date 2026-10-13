@@ -586,7 +586,13 @@ export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponse
  * then accepts that one Origin on the upgrade (`mobile-bridge`). Computers send no Origin and leave it out.
  */
 export const fleetBridgeTicketRequestSchema = z
-  .object({ origin: z.string().max(300).refine((value) => fleetBridgeOrigin(value) === value, 'Invalid origin').optional() })
+  .object({
+    origin: z
+      .string()
+      .max(300)
+      .refine((value) => fleetBridgeOrigin(value) === value, 'Invalid origin')
+      .optional(),
+  })
   .strict()
 export type FleetBridgeTicketRequest = z.infer<typeof fleetBridgeTicketRequestSchema>
 /** A one-use ticket to open the bridge of a workspaces environment. */

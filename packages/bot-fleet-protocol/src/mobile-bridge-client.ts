@@ -95,7 +95,11 @@ export function decodeMobileValue(value: unknown): unknown {
 export const mobileRetryDelay = (attempt: number, random: () => number): number =>
   Math.round(Math.min(30_000, 1_000 * 2 ** attempt) * (0.75 + random() * 0.5))
 
-type Pending = { resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> }
+type Pending = {
+  resolve: (value: unknown) => void
+  reject: (error: unknown) => void
+  timer: ReturnType<typeof setTimeout>
+}
 
 /**
  * A phone's bridge to its server's workspaces host. It keeps one socket open and reconnects with backoff, says hello as
@@ -185,7 +189,10 @@ export class MobileBridgeClient {
     }
   }
 
-  private setState(state: Parameters<MobileBridgeClientOptions['onState']>[0], detail?: { retryInMs?: number; hostVersion?: string }) {
+  private setState(
+    state: Parameters<MobileBridgeClientOptions['onState']>[0],
+    detail?: { retryInMs?: number; hostVersion?: string }
+  ) {
     this.options.onState(state, detail)
   }
 
@@ -219,7 +226,10 @@ export class MobileBridgeClient {
         client: { ...this.options.client, kind: 'mobile', mobileApi: MOBILE_API_VERSION },
       }
       this.write(hello)
-      this.welcomeTimer = setTimeout(() => socket.close(MOBILE_BRIDGE_CLOSE.dead, 'no-welcome'), MOBILE_BRIDGE_LIMITS.welcomeTimeoutMs)
+      this.welcomeTimer = setTimeout(
+        () => socket.close(MOBILE_BRIDGE_CLOSE.dead, 'no-welcome'),
+        MOBILE_BRIDGE_LIMITS.welcomeTimeoutMs
+      )
     }
     socket.onmessage = (event) => this.receive(socket, event.data)
     socket.onerror = () => {}
@@ -283,7 +293,10 @@ export class MobileBridgeClient {
   private armSilence(): void {
     if (this.silenceTimer) clearTimeout(this.silenceTimer)
     const socket = this.socket
-    this.silenceTimer = setTimeout(() => socket?.close(MOBILE_BRIDGE_CLOSE.dead, 'silent'), MOBILE_BRIDGE_LIMITS.silenceMs)
+    this.silenceTimer = setTimeout(
+      () => socket?.close(MOBILE_BRIDGE_CLOSE.dead, 'silent'),
+      MOBILE_BRIDGE_LIMITS.silenceMs
+    )
   }
 
   private closed(socket: MobileBridgeSocket, code: number): void {

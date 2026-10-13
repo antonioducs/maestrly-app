@@ -37,7 +37,14 @@ const answer = (id: string, text: string, at = T0 + 10): ChatMessage => ({
   conversationId: 'c1',
   role: 'assistant',
   parts: [
-    { type: 'tool', id: 'call-1', toolCallId: 'call-1', toolName: 'bash', input: { command: 'npm test' }, state: { status: 'completed', output: { text: '12 passed' } } },
+    {
+      type: 'tool',
+      id: 'call-1',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      input: { command: 'npm test' },
+      state: { status: 'completed', output: { text: '12 passed' } },
+    },
     { type: 'text', id: id + 't', text },
   ],
   finishReason: 'stop',
@@ -70,7 +77,13 @@ function setup() {
       name: 'maestrly',
       defaultBranch: 'main',
       conversations: [
-        conversation('c2', { scope: 'project', workspaceId: 'w1', branch: 'task/push', mode: 'worktree', experience: 'maestro' }),
+        conversation('c2', {
+          scope: 'project',
+          workspaceId: 'w1',
+          branch: 'task/push',
+          mode: 'worktree',
+          experience: 'maestro',
+        }),
         conversation('old', { scope: 'project', workspaceId: 'w1', branch: 'x', archived: 1 }),
       ],
     },
@@ -79,9 +92,18 @@ function setup() {
     conversation('c1', { pinnedAt: T0 }),
     conversation('bot', { botOrigin: { botId: 'juno' } }),
   ])
-  handle('conversation:create-standalone', (args) => conversation('new', { name: (args as { name?: string }).name ?? 'New chat' }))
+  handle('conversation:create-standalone', (args) =>
+    conversation('new', { name: (args as { name?: string }).name ?? 'New chat' })
+  )
   handle('workspace:branches', () => ({ defaultBranch: 'main', current: 'main', local: ['main'] }))
-  handle('conversation:create', (args) => conversation('wnew', { scope: 'project', workspaceId: 'w1', branch: (args as { branch: string }).branch, mode: 'worktree' }))
+  handle('conversation:create', (args) =>
+    conversation('wnew', {
+      scope: 'project',
+      workspaceId: 'w1',
+      branch: (args as { branch: string }).branch,
+      mode: 'worktree',
+    })
+  )
   handle('chat:subscribe', () => undefined, 'send')
   handle('chat:unsubscribe', () => undefined, 'send')
   handle('chat:history:page', (_id, opts) =>
@@ -133,7 +155,12 @@ function setup() {
   }))
   handle('chat:models', () => ['opus', 'sonnet'])
   handle('chat:model-meta', () => ({ contextWindow: 200000, nativeUltraMode: false, contextLimitEditable: true }))
-  handle('chat:context-limit:get', () => ({ limit: state.limit, providerWindow: 200000, catalogWindow: null, effective: 200000 }))
+  handle('chat:context-limit:get', () => ({
+    limit: state.limit,
+    providerWindow: 200000,
+    catalogWindow: null,
+    effective: 200000,
+  }))
   handle('chat:context-limit:set', (_p, _m, value) => {
     state.limit = value as number | null
     return { ok: true }
@@ -148,12 +175,32 @@ function setup() {
     state.defaults = sel as Record<string, unknown>
     return { ok: true }
   })
-  handle('chat:attachment-image', () => ({ ok: true, bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png', byteSize: 3 }))
+  handle('chat:attachment-image', () => ({
+    ok: true,
+    bytes: new Uint8Array([1, 2, 3]),
+    mediaType: 'image/png',
+    byteSize: 3,
+  }))
   const events: Array<[string, unknown]> = []
-  const api = new MobileApi({ table, emit: (channel, payload) => events.push([channel, payload]), log: vi.fn(), selections: null, flushMs: 10, listsMs: 10 })
+  const api = new MobileApi({
+    table,
+    emit: (channel, payload) => events.push([channel, payload]),
+    log: vi.fn(),
+    selections: null,
+    flushMs: 10,
+    listsMs: 10,
+  })
   const invoke = (channel: string, args: unknown = {}) => api.invoke(channel, [args])
   const push = (channel: string, payload: unknown) => sender?.send(channel, payload)
-  return { api, invoke, calls, events, state, push, called: (channel: string) => calls.filter(([name]) => name === channel) }
+  return {
+    api,
+    invoke,
+    calls,
+    events,
+    state,
+    push,
+    called: (channel: string) => calls.filter(([name]) => name === channel),
+  }
 }
 
 beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] }))
@@ -163,7 +210,10 @@ const settle = () => vi.advanceTimersByTimeAsync(50)
 describe('mobile API of a workspaces host', () => {
   it('lists active chats and workspaces, never a bot conversation', async () => {
     const h = setup()
-    const lists = (await h.invoke('mobile:v1:lists')) as { workspaces: Array<{ conversations: Array<{ id: string }> }>; chats: Array<{ id: string; pinned: boolean }> }
+    const lists = (await h.invoke('mobile:v1:lists')) as {
+      workspaces: Array<{ conversations: Array<{ id: string }> }>
+      chats: Array<{ id: string; pinned: boolean }>
+    }
     expect(lists.chats.map((chat) => [chat.id, chat.pinned])).toEqual([['c1', true]])
     expect(lists.workspaces).toEqual([
       {
@@ -190,14 +240,34 @@ describe('mobile API of a workspaces host', () => {
 
   it('creates a standalone chat, or one on a new branch of a workspace', async () => {
     const h = setup()
-    expect(await h.invoke('mobile:v1:conversation:create', { workspaceId: null, name: 'Ideas' })).toMatchObject({ id: 'new', workspaceId: null })
-    await expect(h.invoke('mobile:v1:conversation:create', { workspaceId: null, experience: 'maestro' })).rejects.toMatchObject({ code: 'invalid' })
-    await h.invoke('mobile:v1:conversation:create', { workspaceId: 'w1', name: 'Fix the flaky test', experience: 'maestro' })
+    expect(await h.invoke('mobile:v1:conversation:create', { workspaceId: null, name: 'Ideas' })).toMatchObject({
+      id: 'new',
+      workspaceId: null,
+    })
+    await expect(
+      h.invoke('mobile:v1:conversation:create', { workspaceId: null, experience: 'maestro' })
+    ).rejects.toMatchObject({ code: 'invalid' })
+    await h.invoke('mobile:v1:conversation:create', {
+      workspaceId: 'w1',
+      name: 'Fix the flaky test',
+      experience: 'maestro',
+    })
     const [args] = h.called('conversation:create')[0][1] as [Record<string, unknown>]
-    expect(args).toMatchObject({ workspaceId: 'w1', isNewBranch: true, base: 'main', mode: 'worktree', experience: 'maestro', name: 'Fix the flaky test' })
+    expect(args).toMatchObject({
+      workspaceId: 'w1',
+      isNewBranch: true,
+      base: 'main',
+      mode: 'worktree',
+      experience: 'maestro',
+      name: 'Fix the flaky test',
+    })
     expect(args.branch).toMatch(/^chat\/fix-the-flaky-test-[0-9a-f]{8}$/)
-    await expect(h.invoke('mobile:v1:conversation:create', { workspaceId: 'nope' })).rejects.toMatchObject({ code: 'not-found' })
-    await expect(h.invoke('mobile:v1:conversation:create', { workspaceId: 1 })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(h.invoke('mobile:v1:conversation:create', { workspaceId: 'nope' })).rejects.toMatchObject({
+      code: 'not-found',
+    })
+    await expect(h.invoke('mobile:v1:conversation:create', { workspaceId: 1 })).rejects.toMatchObject({
+      code: 'invalid',
+    })
     h.api.dispose()
   })
 
@@ -225,23 +295,47 @@ describe('mobile API of a workspaces host', () => {
     expect(items).toHaveLength(1)
     expect(items[0][1]).toEqual({
       conversationId: 'c1',
-      items: [{ kind: 'assistant', id: 'm3:0', at: new Date(T0 + 20).toISOString(), text: 'Deploying now', streaming: true }],
+      items: [
+        { kind: 'assistant', id: 'm3:0', at: new Date(T0 + 20).toISOString(), text: 'Deploying now', streaming: true },
+      ],
     })
-    expect(h.events.find(([channel]) => channel === 'mobile:v1:runtime')?.[1]).toMatchObject({ runtime: { streaming: true } })
+    expect(h.events.find(([channel]) => channel === 'mobile:v1:runtime')?.[1]).toMatchObject({
+      runtime: { streaming: true },
+    })
 
     // A permission request becomes a card, and its resolution updates it.
     h.push('chat:permission:c1', {
       kind: 'request',
-      request: { id: 'r1', conversationId: 'c1', toolCallId: 'call-1', toolName: 'bash', action: 'bash', title: 'Run a command', resources: ['npm run deploy'] },
+      request: {
+        id: 'r1',
+        conversationId: 'c1',
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        action: 'bash',
+        title: 'Run a command',
+        resources: ['npm run deploy'],
+      },
     })
     await settle()
-    const card = h.events.filter(([channel]) => channel === 'mobile:v1:items').at(-1)?.[1] as { items: Array<Record<string, unknown>> }
-    expect(card.items).toEqual([expect.objectContaining({ kind: 'permission', id: 'perm:r1', requestId: 'r1', state: 'pending', tool: { name: 'bash', target: 'npm test' } })])
+    const card = h.events.filter(([channel]) => channel === 'mobile:v1:items').at(-1)?.[1] as {
+      items: Array<Record<string, unknown>>
+    }
+    expect(card.items).toEqual([
+      expect.objectContaining({
+        kind: 'permission',
+        id: 'perm:r1',
+        requestId: 'r1',
+        state: 'pending',
+        tool: { name: 'bash', target: 'npm test' },
+      }),
+    ])
     await h.invoke('mobile:v1:permission', { conversationId: 'c1', requestId: 'r1', reply: 'once' })
     expect(h.called('chat:permission-respond')[0][1]).toEqual(['r1', 'once'])
     h.push('chat:permission:c1', { kind: 'resolved', requestId: 'r1', decision: 'allow' })
     await settle()
-    const resolved = h.events.filter(([channel]) => channel === 'mobile:v1:items').at(-1)?.[1] as { items: Array<Record<string, unknown>> }
+    const resolved = h.events.filter(([channel]) => channel === 'mobile:v1:items').at(-1)?.[1] as {
+      items: Array<Record<string, unknown>>
+    }
     expect(resolved.items[0]).toMatchObject({ id: 'perm:r1', state: 'approved' })
 
     // Statuses and list changes reach the phone; a burst of list changes is told once.
@@ -249,7 +343,9 @@ describe('mobile API of a workspaces host', () => {
     sendToRemoteMains('workspace:changed', {})
     sendToRemoteMains('conversation:open', {})
     await settle()
-    expect(h.events.filter(([channel]) => channel === 'mobile:v1:status')).toEqual([['mobile:v1:status', { conversationId: 'c2', status: 'working' }]])
+    expect(h.events.filter(([channel]) => channel === 'mobile:v1:status')).toEqual([
+      ['mobile:v1:status', { conversationId: 'c2', status: 'working' }],
+    ])
     expect(h.events.filter(([channel]) => channel === 'mobile:v1:lists-changed')).toHaveLength(1)
 
     // A plan for the open conversation arrives with its runtime.
@@ -264,7 +360,9 @@ describe('mobile API of a workspaces host', () => {
       items: [{ kind: 'user', text: 'Earlier' }],
       before: null,
     })
-    await expect(h.invoke('mobile:v1:conversation:page', { conversationId: 'c1', before: 'nope' })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(
+      h.invoke('mobile:v1:conversation:page', { conversationId: 'c1', before: 'nope' })
+    ).rejects.toMatchObject({ code: 'invalid' })
 
     await h.invoke('mobile:v1:conversation:close', { conversationId: 'c1' })
     expect(h.called('chat:unsubscribe')).toHaveLength(1)
@@ -280,12 +378,21 @@ describe('mobile API of a workspaces host', () => {
       clientId: '550e8400-e29b-41d4-a716-446655440000',
       attachments: [
         { name: 'a.png', kind: 'image', mediaType: 'image/png', dataBase64: Buffer.from([9, 8]).toString('base64') },
-        { name: 'notes.md', kind: 'text', mediaType: 'text/markdown', dataBase64: Buffer.from('# Hi').toString('base64') },
+        {
+          name: 'notes.md',
+          kind: 'text',
+          mediaType: 'text/markdown',
+          dataBase64: Buffer.from('# Hi').toString('base64'),
+        },
       ],
     }
     expect(await h.invoke('mobile:v1:conversation:send', message)).toEqual({ status: 'started' })
     const [payload] = h.called('chat:send')[0][1] as [{ attachments: Array<Record<string, unknown>> }]
-    expect(payload.attachments[0]).toMatchObject({ kind: 'image', mediaType: 'image/png', bytes: new Uint8Array([9, 8]) })
+    expect(payload.attachments[0]).toMatchObject({
+      kind: 'image',
+      mediaType: 'image/png',
+      bytes: new Uint8Array([9, 8]),
+    })
     expect(payload.attachments[1]).toEqual({ name: 'notes.md', mediaType: 'text/plain', kind: 'text', data: '# Hi' })
     expect(await h.invoke('mobile:v1:conversation:send', message)).toEqual({ status: 'duplicate' })
     expect(h.called('chat:send')).toHaveLength(1)
@@ -319,7 +426,13 @@ describe('mobile API of a workspaces host', () => {
     })
     const next = await h.invoke('mobile:v1:setup:set', {
       conversationId: 'c1',
-      patch: { mode: 'plan', mcp: { id: 'linear', enabled: false }, tools: { subagents: false, imageGen: false }, contextLimit: 150000, skillsReset: true },
+      patch: {
+        mode: 'plan',
+        mcp: { id: 'linear', enabled: false },
+        tools: { subagents: false, imageGen: false },
+        contextLimit: 150000,
+        skillsReset: true,
+      },
     })
     expect(next).toMatchObject({
       mode: 'plan',
@@ -329,18 +442,43 @@ describe('mobile API of a workspaces host', () => {
     })
     expect(h.called('chat:set-conv-tools').at(-1)?.[1]).toEqual(['c1', { imageGen: false }])
     expect(h.called('chat:skills:reset-overrides')).toHaveLength(1)
-    await expect(h.invoke('mobile:v1:setup:set', { conversationId: 'c1', patch: { contextLimit: 10 } })).rejects.toMatchObject({ code: 'invalid' })
+    await expect(
+      h.invoke('mobile:v1:setup:set', { conversationId: 'c1', patch: { contextLimit: 10 } })
+    ).rejects.toMatchObject({ code: 'invalid' })
     // New chats' defaults.
-    expect(await h.invoke('mobile:v1:defaults')).toEqual({ selection: { providerId: 'claude', modelId: 'opus' }, reasoning: 'off', fastMode: false })
+    expect(await h.invoke('mobile:v1:defaults')).toEqual({
+      selection: { providerId: 'claude', modelId: 'opus' },
+      reasoning: 'off',
+      fastMode: false,
+    })
     await h.invoke('mobile:v1:defaults:set', { reasoning: 'high', fastMode: true })
     expect(h.state.defaults).toEqual({ providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: true })
     await expect(
-      h.invoke('mobile:v1:setup:set', { conversationId: 'c1', patch: { selection: { providerId: 'claude', modelId: 'sonnet' } } })
+      h.invoke('mobile:v1:setup:set', {
+        conversationId: 'c1',
+        patch: { selection: { providerId: 'claude', modelId: 'sonnet' } },
+      })
     ).rejects.toMatchObject({ code: 'busy' })
     expect(await h.invoke('mobile:v1:models')).toEqual({
       options: [
-        { id: 'claude::opus', providerId: 'claude', providerLabel: 'Claude', modelId: 'opus', modelLabel: 'opus', efforts: [], fastMode: false },
-        { id: 'claude::sonnet', providerId: 'claude', providerLabel: 'Claude', modelId: 'sonnet', modelLabel: 'sonnet', efforts: [], fastMode: false },
+        {
+          id: 'claude::opus',
+          providerId: 'claude',
+          providerLabel: 'Claude',
+          modelId: 'opus',
+          modelLabel: 'opus',
+          efforts: [],
+          fastMode: false,
+        },
+        {
+          id: 'claude::sonnet',
+          providerId: 'claude',
+          providerLabel: 'Claude',
+          modelId: 'sonnet',
+          modelLabel: 'sonnet',
+          efforts: [],
+          fastMode: false,
+        },
       ],
       defaultSelection: { providerId: 'claude', modelId: 'opus' },
     })
@@ -356,7 +494,15 @@ describe('mobile API of a workspaces host', () => {
         role: 'user',
         parts: [
           { type: 'text', id: 't', text: 'See' },
-          { type: 'file', id: 'f', name: 'shot.png', mediaType: 'image/png', kind: 'image', artifactId: 'art', byteSize: 3 },
+          {
+            type: 'file',
+            id: 'f',
+            name: 'shot.png',
+            mediaType: 'image/png',
+            kind: 'image',
+            artifactId: 'art',
+            byteSize: 3,
+          },
         ],
         createdAt: T0,
       },
@@ -370,8 +516,12 @@ describe('mobile API of a workspaces host', () => {
       mediaType: 'image/png',
       dataBase64: Buffer.from([1, 2, 3]).toString('base64'),
     })
-    await expect(h.invoke('mobile:v1:image', { conversationId: 'c1', imageId: 'a-unknown' })).rejects.toMatchObject({ code: 'not-found' })
-    await expect(h.invoke('mobile:v1:image', { conversationId: 'c2', imageId: image?.id })).rejects.toMatchObject({ code: 'not-found' })
+    await expect(h.invoke('mobile:v1:image', { conversationId: 'c1', imageId: 'a-unknown' })).rejects.toMatchObject({
+      code: 'not-found',
+    })
+    await expect(h.invoke('mobile:v1:image', { conversationId: 'c2', imageId: image?.id })).rejects.toMatchObject({
+      code: 'not-found',
+    })
     h.api.dispose()
   })
 
@@ -397,7 +547,13 @@ describe('mobile API of a workspaces host', () => {
                 text: JSON.stringify({
                   ok: true,
                   items: [
-                    { requestKey: 'a', title: 'Push sender', status: 'started', conversationId: 'c7', conversationName: 'Gateway push sender' },
+                    {
+                      requestKey: 'a',
+                      title: 'Push sender',
+                      status: 'started',
+                      conversationId: 'c7',
+                      conversationName: 'Gateway push sender',
+                    },
                     { requestKey: 'b', title: 'Docs', status: 'start-failed', error: 'No model' },
                   ],
                 }),
@@ -407,7 +563,9 @@ describe('mobile API of a workspaces host', () => {
         ],
       },
     ]
-    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as { page: { items: unknown[] } }
+    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as {
+      page: { items: unknown[] }
+    }
     expect(opened.page.items).toEqual([
       {
         kind: 'dispatch',
