@@ -2,8 +2,8 @@
  * Reconcile persisted state after mutations while preserving mounted conversations and drawer state. */
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useStandaloneChats } from './use-standalone-chats'
-import { hostApi } from '@/lib/hosts/host-context'
-import { i18n } from '@/lib/i18n'
+import { hostApi } from './hosts/host-context'
+import { i18n } from './i18n'
 import type { Conversation, WorkspaceGroup, WorkspaceWithConversations } from '../../preload'
 import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 
@@ -30,7 +30,10 @@ export function useWorkspaces({
   const api = hostApi(hostId)
   const [workspaces, setWorkspaces] = useState<WorkspaceWithConversations[]>([])
 
-  const standalone = useStandaloneChats(hostId)
+  // Deletion removes the store row only after stopping the agent and removing its worktree and branch. Until then
+  // every refresh (another deletion finishing, a workspace broadcast) would list the conversation again.
+  const pendingDeletesRef = useRef<Set<string>>(new Set())
+  const standalone = useStandaloneChats(hostId, pendingDeletesRef)
 
   const [groups, setGroups] = useState<WorkspaceGroup[]>([])
   const [showArchived, setShowArchived] = useState(false)
@@ -39,19 +42,48 @@ export function useWorkspaces({
   workspacesRef.current = workspaces
   const groupsRef = useRef<WorkspaceGroup[]>([])
   groupsRef.current = groups
+  const refreshRevisionRef = useRef(0)
 
   const refreshWorkspaces = useCallback(
     async (includeArchived = showArchived) => {
-      const [list, gs] = await Promise.all([
+      const request = ++refreshRevisionRef.current
+      const [stored, gs] = await Promise.all([
         api.listWorkspaces(includeArchived),
         api.listGroups(),
         standalone.refresh(includeArchived),
       ])
-      setWorkspaces(list)
-      setGroups(gs)
+      const pending = pendingDeletesRef.current
+      const list = pending.size
+        ? stored.map((w) => ({ ...w, conversations: w.conversations.filter((c) => !pending.has(c.id)) }))
+        : stored
+      // A slower, earlier request must not overwrite a newer snapshot.
+      if (request === refreshRevisionRef.current) {
+        setWorkspaces(list)
+        setGroups(gs)
+      }
       return list
     },
     [showArchived, standalone.refresh, api]
+  )
+
+  /** Hide conversations while `run` deletes them; afterwards the store decides, so failures show them again. */
+  const whileDeleting = useCallback(
+    async (ids: string[], run: () => Promise<void>) => {
+      for (const id of ids) pendingDeletesRef.current.add(id)
+      const hidden = new Set(ids)
+      setWorkspaces((wss) =>
+        wss.map((w) => ({ ...w, conversations: w.conversations.filter((c) => !hidden.has(c.id)) }))
+      )
+      standalone.setConversations((chats) => chats.filter((chat) => !hidden.has(chat.id)))
+      try {
+        await run()
+      } finally {
+        // Release and refresh together: the new revision discards any refresh that read the rows before deletion.
+        for (const id of ids) pendingDeletesRef.current.delete(id)
+        await refreshWorkspaces()
+      }
+    },
+    [refreshWorkspaces, standalone.setConversations]
   )
 
   const reconcileWorkspace = useCallback(
@@ -132,17 +164,15 @@ export function useWorkspaces({
 
       if (active?.id === conv.id) setActive(null)
       forgetConvDrawerState(conv.id)
-      setWorkspaces((wss) => wss.map((w) => ({ ...w, conversations: w.conversations.filter((c) => c.id !== conv.id) })))
-      standalone.setConversations((chats) => chats.filter((chat) => chat.id !== conv.id))
-      try {
-        await api.deleteConversation(conv.id)
-      } catch (error) {
-        alert(String(error))
-      } finally {
-        await refreshWorkspaces()
-      }
+      await whileDeleting([conv.id], async () => {
+        try {
+          await api.deleteConversation(conv.id)
+        } catch (error) {
+          alert(String(error))
+        }
+      })
     },
-    [active, refreshWorkspaces, forgetConvDrawerState, api]
+    [active, whileDeleting, forgetConvDrawerState, api]
   )
 
   const handleArchiveSiblings = useCallback(
@@ -164,16 +194,23 @@ export function useWorkspaces({
       if (!members.length) return
       const msg = i18n.t('ui:app.confirmDeleteSiblings', { count: members.length })
       if (!confirm(msg)) return
-      const ids = new Set(members.map((c) => c.id))
-      if (active && ids.has(active.id)) setActive(null)
+      const ids = members.map((c) => c.id)
+      if (active && ids.includes(active.id)) setActive(null)
       members.forEach((c) => forgetConvDrawerState(c.id))
-      setWorkspaces((wss) => wss.map((w) => ({ ...w, conversations: w.conversations.filter((c) => !ids.has(c.id)) })))
-      void (async () => {
-        for (const conv of members) await api.deleteConversation(conv.id)
-        await refreshWorkspaces()
-      })()
+      void whileDeleting(ids, async () => {
+        // One failure must not keep the remaining siblings.
+        const errors: string[] = []
+        for (const conv of members) {
+          try {
+            await api.deleteConversation(conv.id)
+          } catch (error) {
+            errors.push(String(error))
+          }
+        }
+        if (errors.length) alert(errors.join('\n'))
+      })
     },
-    [active, refreshWorkspaces, forgetConvDrawerState, api]
+    [active, whileDeleting, forgetConvDrawerState, api]
   )
 
   const handleReorderWorkspaces = useCallback(
