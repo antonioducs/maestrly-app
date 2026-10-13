@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_DEVICE_PAIRING_FEATURE,
+  FLEET_MOBILE_BRIDGE_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -304,6 +305,7 @@ export async function publicRoute(
             FLEET_HOST_FILES_FEATURE,
             FLEET_HOST_EDITOR_FEATURE,
             FLEET_DEVICE_PAIRING_FEATURE,
+            FLEET_MOBILE_BRIDGE_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -400,7 +402,7 @@ export async function publicRoute(
       if (environment.kind !== 'workspaces')
         throw new GatewayError('CONFLICT', 'This environment does not host workspaces.')
       if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
-      return { body: ctx.bridge!.ticket(eid, device.id), status: 201 }
+      return { body: ctx.bridge!.ticket(eid, device.id, body.origin ?? null), status: 201 }
     }
     case 'environmentUiOpen':
       requireEnvironment(ctx, eid)

@@ -282,6 +282,15 @@ describe('workspaces environment routes', () => {
     expect(await upgrade(await ticket())).toBe(502)
     expect(await upgrade('/v1/bridge?ticket=forged')).toBe(403)
     expect(await upgrade(await ticket(), { Origin: 'https://example.com' })).toBe(403)
+    // A phone names the Origin its WebSocket sends; the upgrade may carry that one only.
+    const phoneTicket = async (origin: string) =>
+      (await json(await h.request('POST', `/v1/environments/${id}/bridge-tickets`, { origin }))).path
+    expect(await upgrade(await phoneTicket('https://bots.example.dev'), { Origin: 'https://bots.example.dev' })).toBe(502)
+    expect(await upgrade(await phoneTicket('https://bots.example.dev'), { Origin: 'https://evil.example' })).toBe(403)
+    expect(
+      (await h.request('POST', `/v1/environments/${id}/bridge-tickets`, { origin: 'https://bots.example.dev/path' }))
+        .status
+    ).toBe(400)
     // Revoking the device spends its tickets.
     const path = await ticket()
     await h.request('DELETE', '/v1/devices/self')

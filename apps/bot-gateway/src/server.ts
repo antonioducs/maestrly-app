@@ -290,9 +290,10 @@ export function createGatewayServers(ctx: GatewayContext) {
     let error: GatewayError = new GatewayError('NOT_FOUND', 'Route not found')
     try {
       if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
-      if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const { pathname, search } = new URL(req.url ?? '/', 'http://gateway')
+      // A bridge ticket says which Origin, if any, its upgrade may carry (`mobile-bridge`).
       if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
+      if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       // The editor's WebSockets authenticate with the device token, as its requests do.
       const editor = parseFleetGatewayEditorPath(pathname)
       if (editor) {
