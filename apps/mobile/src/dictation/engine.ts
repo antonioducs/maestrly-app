@@ -1,4 +1,4 @@
-import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition'
+import { requireOptionalNativeModule } from 'expo'
 import { Platform } from 'react-native'
 import type { SpeechEngine, SpeechError, SpeechResult } from './session'
 
@@ -10,21 +10,37 @@ type Listeners = {
 const listeners: Listeners = { result: new Set(), error: new Set(), end: new Set() }
 let subscribed = false
 
+type SpeechModule = typeof import('expo-speech-recognition').ExpoSpeechRecognitionModule
+let loaded: SpeechModule | null | undefined
+/**
+ * The recognizer module, or null where the app was built without it, such as Expo Go: the package looks its native
+ * module up as it loads and throws when it is missing, so it is loaded only once that module is known to exist.
+ */
+function speech(): SpeechModule | null {
+  if (loaded === undefined)
+    loaded =
+      Platform.OS === 'web' || requireOptionalNativeModule('ExpoSpeechRecognition')
+        ? (require('expo-speech-recognition') as typeof import('expo-speech-recognition')).ExpoSpeechRecognitionModule
+        : null
+  return loaded
+}
+
 /**
  * One subscription per event for the whole app, shared by every composer: on the web, removing one listener of the
  * module drops all the others of that event.
  */
 function subscribe<K extends keyof Listeners>(kind: K, listener: Listeners[K] extends Set<infer L> ? L : never) {
-  if (!subscribed) {
+  const module = speech()
+  if (module && !subscribed) {
     subscribed = true
-    ExpoSpeechRecognitionModule.addListener('result', (event) => {
+    module.addListener('result', (event) => {
       const value = { final: event.isFinal, transcript: event.results[0]?.transcript ?? '' }
       for (const each of listeners.result) each(value)
     })
-    ExpoSpeechRecognitionModule.addListener('error', (event) => {
+    module.addListener('error', (event) => {
       for (const each of listeners.error) each(event.error as SpeechError)
     })
-    ExpoSpeechRecognitionModule.addListener('end', () => {
+    module.addListener('end', () => {
       for (const each of listeners.end) each()
     })
   }
@@ -39,7 +55,7 @@ function subscribe<K extends keyof Listeners>(kind: K, listener: Listeners[K] ex
 export const speechEngine: SpeechEngine = {
   available() {
     try {
-      return ExpoSpeechRecognitionModule.isRecognitionAvailable()
+      return speech()?.isRecognitionAvailable() ?? false
     } catch {
       return false
     }
@@ -47,11 +63,13 @@ export const speechEngine: SpeechEngine = {
   async requestPermission() {
     // Browsers ask for the microphone themselves when listening starts.
     if (Platform.OS === 'web') return true
-    const response = await ExpoSpeechRecognitionModule.requestPermissionsAsync()
-    return response.granted
+    const response = await speech()?.requestPermissionsAsync()
+    return response?.granted === true
   },
   start(lang) {
-    ExpoSpeechRecognitionModule.start({
+    const module = speech()
+    if (!module) throw new Error('Speech recognition is not in this build')
+    module.start({
       lang,
       interimResults: true,
       continuous: true,
@@ -59,8 +77,8 @@ export const speechEngine: SpeechEngine = {
       iosTaskHint: 'dictation',
     })
   },
-  stop: () => ExpoSpeechRecognitionModule.stop(),
-  abort: () => ExpoSpeechRecognitionModule.abort(),
+  stop: () => speech()?.stop(),
+  abort: () => speech()?.abort(),
   onResult: (listener) => subscribe('result', listener),
   onError: (listener) => subscribe('error', listener),
   onEnd: (listener) => subscribe('end', listener),
