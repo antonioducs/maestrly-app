@@ -28,17 +28,18 @@ export default function Welcome() {
         <>
           <Button label={t('welcome.scan')} icon="qr" size="lg" onPress={() => router.push('/scan')} />
           <Button label={t('welcome.manual')} variant="secondary" size="lg" onPress={() => router.push('/pair')} />
-          {__DEV__ ? (
-            <Button
-              label={t('welcome.demo')}
-              variant="ghost"
-              busy={busy}
-              onPress={() => {
-                setBusy(true)
-                void exploreDemo().then(() => router.replace('/home'))
-              }}
-            />
-          ) : null}
+          {/* Also how App Review sees the app without a bot server of its own. */}
+          <Button
+            label={t('welcome.demo')}
+            variant="ghost"
+            busy={busy}
+            onPress={() => {
+              setBusy(true)
+              exploreDemo()
+                .then(() => router.replace('/home'))
+                .catch(() => setBusy(false))
+            }}
+          />
         </>
       }
     >

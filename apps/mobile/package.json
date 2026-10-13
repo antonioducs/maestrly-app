@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "build": "node scripts/export.mjs",
+    "icons": "node scripts/icons.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
@@ -60,6 +61,7 @@
   "devDependencies": {
     "@types/node": "24.19.1",
     "@types/react": "19.3.0",
+    "playwright-core": "1.63.0",
     "typescript": "7.0.2",
     "vitest": "5.0.3"
   }

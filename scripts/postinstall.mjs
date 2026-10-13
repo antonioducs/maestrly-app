@@ -65,6 +65,12 @@ function ensurePtySpawnHelperExecutable() {
   }
 }
 
+// EAS sets EAS_BUILD on the machines that build the phone app (apps/mobile), which need none of the desktop setup.
+if (process.env.EAS_BUILD) {
+  console.log('[postinstall] EAS build — skipping the desktop setup')
+  process.exit(0)
+}
+
 ensureElectron()
 runNodeScript('node_modules/electron-builder/install-app-deps.js', [])
 ensurePtySpawnHelperExecutable()
