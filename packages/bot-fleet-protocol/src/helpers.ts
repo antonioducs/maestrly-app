@@ -1,5 +1,10 @@
 import type { FleetLoginKind } from './api.js'
-import { FLEET_ENVIRONMENT_DISPLAY, FLEET_REASONING_QUERY, FLEET_UPDATE_BUSY_STATUSES } from './constants.js'
+import {
+  FLEET_CHAT_ATTENTION_QUERY,
+  FLEET_ENVIRONMENT_DISPLAY,
+  FLEET_REASONING_QUERY,
+  FLEET_UPDATE_BUSY_STATUSES,
+} from './constants.js'
 import type { FleetBot, FleetSelection, FleetSelectionOption, FleetTranscriptItem } from './domain.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
@@ -180,6 +185,11 @@ export function compareFleetTranscriptItems(a: { id: string; at: string }, b: { 
 /** Whether a reader of transcripts or events asked for `reasoning` items (`transcript-reasoning`). */
 export function fleetReaderWantsReasoning(search: URLSearchParams): boolean {
   return search.get(FLEET_REASONING_QUERY) === '1'
+}
+
+/** Whether a reader of an environment's events asked for `chat.attention` events; an older gateway would fail on them. */
+export function fleetReaderWantsChatAttention(search: URLSearchParams): boolean {
+  return search.get(FLEET_CHAT_ATTENTION_QUERY) === '1'
 }
 
 /** Whether a transcript item may go to a reader: `reasoning` items only to one that asked for them. */

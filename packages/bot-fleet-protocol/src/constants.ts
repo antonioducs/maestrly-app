@@ -98,6 +98,10 @@ export const FLEET_GATEWAY_ENV = {
   workspacesRoot: 'MAESTRLY_GATEWAY_WORKSPACES_ROOT',
   /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
   botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
+  /** `off` sends no push notifications to phones; `expo` (the default) sends them through Expo's push service. */
+  push: 'MAESTRLY_GATEWAY_PUSH',
+  /** An Expo access token, when the Expo account requires one for push notifications. */
+  expoAccessToken: 'MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN',
   timezone: 'TZ',
 } as const
 
@@ -282,3 +286,8 @@ export const FLEET_ACTIVE_PAIRINGS_MAX = 5
 export const FLEET_MOBILE_BRIDGE_FEATURE = 'mobile-bridge'
 /** Workspaces host capability: it speaks the mobile API (`mobile:v1:*` channels) to phones over the bridge. */
 export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
+
+/** Gateway feature: phones register for push notifications (`/v1/devices/self/push`). */
+export const FLEET_PUSH_FEATURE = 'push-notifications'
+/** A gateway reading an environment's events with this query set to 1 also gets `chat.attention` events. */
+export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'

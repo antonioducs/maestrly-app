@@ -1,6 +1,11 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
 import { fleetBridgeOrigin } from './helpers.js'
 import {
+  fleetChatAttentionKindSchema,
+  fleetPushRegistrationRequestSchema,
+  fleetPushRegistrationSchema,
+} from './push.js'
+import {
   fleetHostFileDigestRequestSchema,
   fleetHostFileDigestSchema,
   fleetHostFileStatRequestSchema,
@@ -856,6 +861,14 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
     summary: z.string().nullable(),
   }),
   z.object({ ...instanceEventBase, type: z.literal('reset') }),
+  /** A workspaces host's chat needs the owner (`chatAttention` readers only); the gateway turns it into a push. */
+  z.object({
+    ...instanceEventBase,
+    type: z.literal('chat.attention'),
+    conversationId: z.string().min(1).max(200),
+    name: z.string().max(200),
+    kind: fleetChatAttentionKindSchema,
+  }),
 ])
 export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
 export const fleetInstanceHealthSchema = z.object({
@@ -1430,6 +1443,26 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetScreenTicketResponseSchema,
   },
   screen: { method: 'GET', path: '/v1/screen', body: null, response: null },
+  devicePushGet: {
+    method: 'GET',
+    path: '/v1/devices/self/push',
+    body: null,
+    response: z.object({ registration: fleetPushRegistrationSchema.nullable() }),
+  },
+  devicePushSet: {
+    method: 'PUT',
+    path: '/v1/devices/self/push',
+    body: fleetPushRegistrationRequestSchema,
+    response: fleetPushRegistrationSchema,
+  },
+  devicePushDelete: { method: 'DELETE', path: '/v1/devices/self/push', body: null, response: null },
+  /** Sends this phone a test notification. */
+  devicePushTest: {
+    method: 'POST',
+    path: '/v1/devices/self/push/test',
+    body: z.object({}).strict(),
+    response: z.object({ sent: z.literal(true) }),
+  },
   environmentBridgeTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/bridge-tickets',
