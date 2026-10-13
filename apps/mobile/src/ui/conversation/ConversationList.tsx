@@ -5,6 +5,7 @@ import { transcriptRows, type TranscriptRow } from '../../fleet/transcript-rows'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { AppText } from '../primitives/Text'
+import { ArtifactCard } from './ArtifactCard'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DispatchCard } from './DispatchCard'
 import { HelpCard } from './HelpCard'
@@ -31,6 +32,8 @@ function RowView({ row }: { row: Row }) {
       return <ToolGroup tools={row.tools} />
     case 'todos':
       return <TodoCard todos={row.todos} />
+    case 'artifact':
+      return <ArtifactCard artifact={row.artifact} />
     default: {
       const item = row.item
       switch (item.kind) {

@@ -248,6 +248,17 @@ export function demoWorld(now: number): DemoWorld {
     pixel: [
       user('pixel-1', at(20), 'Review the new pricing page on staging and pick the hero layout.'),
       tool('pixel-2', at(18), 'browser', 'staging.example.dev/pricing', 'Captured 3 layouts at 390px and 1440px'),
+      tool(
+        'pixel-2b',
+        at(15),
+        'artifact_create',
+        'Pricing hero options',
+        JSON.stringify({
+          ok: true,
+          artifact: { id: 'PxPricingHeroOptions01', title: 'Pricing hero options', version: 2 },
+          skipped: [],
+        })
+      ),
       said(
         'pixel-3',
         at(6),

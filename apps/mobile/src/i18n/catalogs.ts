@@ -557,6 +557,19 @@ export const en = {
   'dictation.error.language': "This phone can't take dictation in its language yet.",
   'dictation.error.busy': 'Another app is using speech recognition. Try again in a moment.',
   'dictation.error.failed': "Dictation stopped. What was heard so far isn't lost.",
+
+  'artifact.untitled': 'Untitled page',
+  'artifact.version': 'Version {version}',
+  'artifact.open': 'Open',
+  'artifact.openNamed': 'Open {title}',
+  'artifact.error.unsupported': "This server doesn't host pages. Update it from Maestrly on your computer.",
+  'artifact.error.off': 'Page hosting is off on this server. Turn it on in Settings → Artifacts on your computer.',
+  'artifact.error.noAddress':
+    "Pages open on a phone through the server's public HTTPS address. Set it in Settings → Artifacts on your computer.",
+  'artifact.error.gone': 'This page is no longer on the server.',
+  'artifact.error.offline': "Couldn't reach the server. Try again when you're connected.",
+  'artifact.error.demo':
+    "The demo server doesn't host pages. With your own server, this opens the page the agent published.",
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1121,4 +1134,18 @@ export const ptBR: Record<keyof typeof en, string> = {
   'dictation.error.language': 'Este celular ainda não faz ditado no idioma dele.',
   'dictation.error.busy': 'Outro app está usando o reconhecimento de fala. Tente de novo em instantes.',
   'dictation.error.failed': 'O ditado parou. O que já foi ouvido não se perde.',
+
+  'artifact.untitled': 'Página sem título',
+  'artifact.version': 'Versão {version}',
+  'artifact.open': 'Abrir',
+  'artifact.openNamed': 'Abrir {title}',
+  'artifact.error.unsupported': 'Este servidor não hospeda páginas. Atualize-o pelo Maestrly no computador.',
+  'artifact.error.off':
+    'A hospedagem de páginas está desligada neste servidor. Ligue em Ajustes → Artefatos no computador.',
+  'artifact.error.noAddress':
+    'As páginas abrem no celular pelo endereço público HTTPS do servidor. Defina-o em Ajustes → Artefatos no computador.',
+  'artifact.error.gone': 'Esta página não está mais no servidor.',
+  'artifact.error.offline': 'Não foi possível falar com o servidor. Tente de novo quando estiver conectado.',
+  'artifact.error.demo':
+    'O servidor de demonstração não hospeda páginas. Com o seu servidor, isto abre a página que o agente publicou.',
 }

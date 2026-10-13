@@ -1,4 +1,5 @@
 import type { FleetTodo, FleetTranscriptItem, MobileChatItem } from '@maestrly/bot-fleet-protocol'
+import { artifactPublication, type ArtifactPublication } from '../artifacts/artifacts'
 import type { Pluralize, PluralKey, Translate } from '../i18n/translate'
 
 export type ToolItem = Extract<FleetTranscriptItem, { kind: 'tool' }>
@@ -6,13 +7,14 @@ export type TranscriptRow =
   | { kind: 'item'; item: MobileChatItem }
   | { kind: 'tools'; id: string; tools: ToolItem[] }
   | { kind: 'todos'; id: string; todos: FleetTodo[] }
+  | { kind: 'artifact'; id: string; artifact: ArtifactPublication }
 
 const isPlan = (item: MobileChatItem): item is ToolItem & { todos: FleetTodo[] } =>
   item.kind === 'tool' && item.name === 'todo_write' && Array.isArray(item.todos)
 
 /**
- * The rows a conversation shows: tools in a row become one collapsible group, and a turn's plan shows once, with
- * its latest list, where it first appeared.
+ * The rows a conversation shows: tools in a row become one collapsible group, a turn's plan shows once, with its
+ * latest list, where it first appeared, and a published page shows as its own card.
  */
 export function transcriptRows(items: MobileChatItem[]): TranscriptRow[] {
   const rows: TranscriptRow[] = []
@@ -25,6 +27,11 @@ export function transcriptRows(items: MobileChatItem[]): TranscriptRow[] {
         plan = { kind: 'todos', id: item.id, todos: item.todos }
         rows.push(plan)
       }
+      continue
+    }
+    const artifact = artifactPublication(item)
+    if (artifact) {
+      rows.push({ kind: 'artifact', id: item.id, artifact })
       continue
     }
     const last = rows.at(-1)
