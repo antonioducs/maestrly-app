@@ -46,7 +46,7 @@ publication card in the desktop opens the external viewer.
 
 - **In the chat**: each publication shows a card with the title and version.
   **Open** shows the page in the conversation's browser drawer.
-- **In the Artifacts center**: **Artifacts**, in the sidebar footer, shows every
+- **In the Artifacts center**: **Artifacts**, at the bottom of the sidebar's icon rail, shows every
   artifact as a card with a preview of its page. The sheets stacked behind a
   preview show that earlier versions exist. Each card names the project and the
   conversation it came from (or "Deleted conversation" and its last title) and

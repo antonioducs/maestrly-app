@@ -25,8 +25,9 @@ describe('update UI contract', () => {
     expect(card).toContain("t('update.card.skip')")
     expect(card).toContain("mode === 'notify'")
     expect(card).not.toContain('useEffect(() => { void download()')
-    const footer = source('src/renderer/components/sidebar/SidebarFooter.tsx')
-    expect(footer).toContain('<UpdateCard />')
+    // At the bottom of the sidebar's list panel, now that the footer's links live on the rail.
+    const sidebar = source('src/renderer/components/Sidebar.tsx')
+    expect(sidebar).toContain('<UpdateCard />')
   })
   it('exposes the settings section and provider', () => {
     expect(source('src/renderer/components/settings/nav.tsx')).toContain("labelKey: 'settings.nav.updates'")

@@ -52,6 +52,14 @@ async function panelOf(client: ElectronApplication, panel: string) {
   return find()!
 }
 
+/** Shows the host's chats in the sidebar, which lists one machine at a time, and starts a chat there. */
+async function newChatOnHost(page: Page, controlPort: number) {
+  await page.getByRole('tab', { name: 'Chats' }).click()
+  await page.locator(`[data-host-shortcut="${HOST_ID}"]`).click()
+  await expect(page.locator('[data-host-switcher]')).toHaveAttribute('data-host-switcher', HOST_ID)
+  await page.getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}`, exact: true }).click()
+}
+
 // Two real Electron instances of the built app on this machine: one hosts workspaces in server mode, the other is a
 // person's desktop connected straight to it (the development-only direct host). No gateway, Docker or account.
 test('remote host: mixed sidebar, a chat turn and a terminal that run on the host', async () => {
@@ -86,14 +94,22 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     const [, hostView] = await local('hostsList')
     expect(hostView).toMatchObject({ remote: true, desktopEffects: false, editor: true, browser: true, epoch: 1 })
 
-    // Mixed sidebar: one section per host under its heading, in the Chats and in the Workspaces tab.
+    // Mixed sidebar: one machine at a time, chosen in a switcher that offers both, in the Chats and Workspaces tabs.
     await page.getByRole('tab', { name: 'Chats' }).click()
-    await expect(chatsPanel().locator('[data-host-section-header]')).toHaveCount(2)
-    await expect(chatsPanel().locator('[data-host-section-header="local"]')).toContainText('This computer')
-    await expect(chatsPanel().locator(`[data-host-section-header="${HOST_ID}"]`)).toContainText(
-      `127.0.0.1:${controlPort}`
-    )
-    await expect(chatsPanel().locator('[data-host-status]')).toHaveCount(0)
+    const switcher = page.locator('[data-host-switcher]')
+    await expect(switcher).toHaveAttribute('data-host-switcher', 'local')
+    await expect(switcher).toContainText('This computer')
+    await expect(chatsPanel().locator('[data-host-section="local"]')).toHaveCount(1)
+    await expect(remoteSection()).toHaveCount(0)
+    await expect(page.locator('[data-host-status]')).toHaveCount(0)
+    await switcher.click()
+    await expect(page.locator('[data-host-option]')).toHaveCount(2)
+    await expect(page.locator(`[data-host-option="${HOST_ID}"]`)).toContainText(`127.0.0.1:${controlPort}`)
+    await page.keyboard.press('Escape')
+    await page.locator(`[data-host-shortcut="${HOST_ID}"]`).click()
+    await expect(switcher).toHaveAttribute('data-host-switcher', HOST_ID)
+    await expect(switcher).toContainText(`127.0.0.1:${controlPort}`)
+    await expect(chatsPanel().locator('[data-host-section="local"]')).toHaveCount(0)
     await expect(remoteSection()).toContainText('No chats yet')
 
     // The host has its own accounts: the model is configured there, through the bridge.
@@ -110,10 +126,8 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     expect(await providersOf(remote)).toContain('Remote fixture')
     expect(await providersOf(local)).not.toContain('Remote fixture')
 
-    // A chat started from the host's section is created on the host and opens here.
-    await remoteSection()
-      .getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}` })
-      .click()
+    // A chat started while the host is shown is created on the host and opens here.
+    await page.getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}`, exact: true }).click()
     await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
     expect(await local('listStandaloneConversations', true)).toEqual([])
     const [chat] = await remote('listStandaloneConversations', true)
@@ -159,11 +173,13 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
       .toContain('remote-42-shell')
     expect((await remote('readTerminal', terminalId)).data).toContain(chat.cwd)
 
-    // A workspace is added from the host's folders, browsed in a dialog of this window.
+    // A workspace is added from the host's folders, browsed in a dialog of this window. The host stays chosen across
+    // tabs.
     await page.getByRole('tab', { name: 'Workspaces' }).click()
+    await expect(switcher).toHaveAttribute('data-host-switcher', HOST_ID)
     const workspacesSection = page.locator(`#sidebar-panel-workspaces [data-host-section="${HOST_ID}"]`)
     await expect(workspacesSection).toContainText('No workspaces on this server.')
-    await workspacesSection.getByRole('button', { name: `Add workspace on 127.0.0.1:${controlPort}` }).click()
+    await page.getByRole('button', { name: `Add workspace on 127.0.0.1:${controlPort}`, exact: true }).click()
     await page.getByRole('button', { name: 'Create new', exact: true }).click()
     await page.getByRole('button', { name: 'Choose…', exact: true }).click()
     const folders = page.getByRole('dialog', { name: 'Choose where to create the project on the server' })
@@ -182,16 +198,17 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     // What needs the host's own desktop is refused there, and what is this computer's never goes to the host.
     await expect(remote('pickFolder')).rejects.toThrow(/not available on a remote host/)
 
-    // The host goes away: its section says so and keeps its list; this computer's chats are untouched.
+    // The host goes away: the switcher says so, its section keeps its list and creates nothing there; this
+    // computer's chats are untouched.
     await host.close()
     host = undefined
     await page.getByRole('tab', { name: 'Chats' }).click()
-    await expect(chatsPanel().locator(`[data-host-section-header="${HOST_ID}"] [data-host-status]`)).toHaveAttribute(
-      'data-host-status',
-      'reconnecting'
-    )
+    await expect(switcher.locator('[data-host-status]')).toHaveAttribute('data-host-status', 'reconnecting')
     await expect(remoteSection().locator('.conv-item')).toHaveCount(1)
     await expect(page.locator('[data-host-overlay="reconnecting"]')).toBeVisible()
+    await expect(page.getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}`, exact: true })).toBeDisabled()
+    await page.locator('[data-host-shortcut="local"]').click()
+    await expect(switcher).toHaveAttribute('data-host-switcher', 'local')
     await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
     await expect.poll(async () => (await local('listStandaloneConversations', true)).length).toBe(1)
   } finally {
@@ -202,7 +219,7 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
   }
 })
 
-test('without a remote host the sidebar has no host headings', async () => {
+test('without a remote host the sidebar has no host switcher', async () => {
   test.setTimeout(120_000)
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-hosts-local-'))
   let app: ElectronApplication | undefined
@@ -217,7 +234,7 @@ test('without a remote host the sidebar has no host headings', async () => {
     expect(await page.evaluate(() => (window as any).api.hostsList())).toHaveLength(1)
     await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
     await expect(page.locator('.conv-item')).toHaveCount(1)
-    await expect(page.locator('[data-host-section-header]')).toHaveCount(0)
+    await expect(page.locator('[data-host-switcher]')).toHaveCount(0)
     await expect(page.locator('[data-host-section]')).toHaveCount(0)
   } finally {
     await app?.close().catch(() => undefined)
@@ -250,11 +267,7 @@ test('remote host files: browse, preview, rename, delete, upload and download', 
     await client.evaluate(({ app }, dir) => app.setPath('downloads', dir), downloads)
 
     // A chat on the host, and its drawer's Files tab: a panel of this window that reaches the host on its own.
-    await page.getByRole('tab', { name: 'Chats' }).click()
-    await page
-      .locator(`#sidebar-panel-chats [data-host-section="${HOST_ID}"]`)
-      .getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}` })
-      .click()
+    await newChatOnHost(page, controlPort)
     await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
     const [chat] = await remote('listStandaloneConversations', true)
     await page.getByTitle(/^Toggle drawer/).click()
@@ -369,11 +382,7 @@ test('remote host browser: streamed live, typed into and copied from', async () 
     const connected = await connect(root)
     ;({ host, client } = connected)
     const { page, remote, controlPort } = connected
-    await page.getByRole('tab', { name: 'Chats' }).click()
-    await page
-      .locator(`#sidebar-panel-chats [data-host-section="${HOST_ID}"]`)
-      .getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}` })
-      .click()
+    await newChatOnHost(page, controlPort)
     await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
     const [chat] = await remote('listStandaloneConversations', true)
 
@@ -472,11 +481,7 @@ test("remote host editor: opened through both proxies, which keep each side's cr
     const connected = await connect(root, { MAESTRLY_E2E_VSCODE_SERVER: `${portOf(serveWeb)}:${editorToken}` })
     ;({ host, client } = connected)
     const { page, remote, controlPort } = connected
-    await page.getByRole('tab', { name: 'Chats' }).click()
-    await page
-      .locator(`#sidebar-panel-chats [data-host-section="${HOST_ID}"]`)
-      .getByRole('button', { name: `New chat on 127.0.0.1:${controlPort}` })
-      .click()
+    await newChatOnHost(page, controlPort)
     await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
     const [chat] = await remote('listStandaloneConversations', true)
     await writeFile(path.join(chat.cwd, 'hello.js'), 'console.log("hello from the host")\n')

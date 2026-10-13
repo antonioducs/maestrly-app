@@ -242,7 +242,8 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await menu('Beta standalone', 'Archive')
     await expect(row('Beta standalone')).toHaveCount(0)
     expect((await call('listStandaloneConversations')).map((c: any) => c.id)).toEqual([first.id])
-    await page.getByRole('button', { name: /Show archived/ }).click()
+    await page.getByRole('button', { name: 'View options', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Show archived/ }).click()
     await menu('Beta standalone', 'Unarchive')
     await expect.poll(async () => (await list()).find((c: any) => c.id === second.id).archived).toBe(0)
 

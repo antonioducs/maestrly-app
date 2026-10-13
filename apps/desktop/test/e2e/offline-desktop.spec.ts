@@ -58,7 +58,7 @@ test('opens the full desktop with a fresh profile, no account fixtures, and bloc
     await page.getByRole('button', { name: 'Skip', exact: true }).click()
     await expect(page.getByText('No workspaces. Click + to add a folder.', { exact: true })).toBeVisible()
     await expect(page.getByText('Sign in', { exact: true })).toHaveCount(0)
-    await page.getByTitle('Settings').click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('button', { name: /Privacy/ }).click()
     await expect(page.getByText('Local data', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Export data', exact: true })).toBeVisible()
