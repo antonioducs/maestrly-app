@@ -14,6 +14,8 @@ const googleServicesFile = env('MAESTRLY_GOOGLE_SERVICES_FILE')
 const CANVAS_LIGHT = '#f6f5f1'
 const CANVAS_DARK = '#141615'
 const TILE = '#131514'
+/** Every plugin that touches the microphone gets the same reason, so none of them overrides it with a generic one. */
+const MICROPHONE = 'Maestrly uses the microphone only while you dictate a message.'
 
 const config: ExpoConfig = {
   name: 'Maestrly',
@@ -74,13 +76,19 @@ const config: ExpoConfig = {
         dark: { image: './assets/images/splash-icon.png', backgroundColor: CANVAS_DARK },
       },
     ],
+    [
+      'expo-speech-recognition',
+      {
+        microphonePermission: MICROPHONE,
+        speechRecognitionPermission: 'Maestrly turns what you dictate into text for your messages.',
+      },
+    ],
     ['expo-notifications', { icon: './assets/images/notification-icon.png', color: '#c79a3a' }],
     [
       'expo-camera',
       {
         cameraPermission: 'Maestrly uses the camera to scan the pairing code shown on your computer.',
-        microphonePermission: false,
-        recordAudioAndroid: false,
+        microphonePermission: MICROPHONE,
       },
     ],
     [
@@ -88,7 +96,7 @@ const config: ExpoConfig = {
       {
         photosPermission: 'Maestrly attaches the photos you choose to your messages.',
         cameraPermission: 'Maestrly uses the camera to take photos you send to your bots.',
-        microphonePermission: false,
+        microphonePermission: MICROPHONE,
       },
     ],
   ],

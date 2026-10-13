@@ -1,7 +1,9 @@
 import { FLEET_FILES_FEATURE, FLEET_MESSAGE_TEXT_MAX, type FleetBot } from '@maestrly/bot-fleet-protocol'
-import { useCallback, useState, type ReactNode, type Ref } from 'react'
-import { AccessibilityInfo, Pressable, TextInput, View } from 'react-native'
+import { useCallback, useRef, useState, type ReactNode, type Ref } from 'react'
+import { AccessibilityInfo, Linking, Pressable, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { appendDictation } from '../../dictation/session'
+import { useDictation } from '../../dictation/useDictation'
 import { validateAttachments, type AttachmentIssue, type OutboxAttachment } from '../../fleet/attachments'
 import { useFleet, useFleetController } from '../../fleet/react'
 import type { FleetState } from '../../fleet/state'
@@ -14,6 +16,7 @@ import { IconButton } from '../primitives/IconButton'
 import { AppText } from '../primitives/Text'
 import { AttachmentChips } from './AttachmentChips'
 import { AttachSheet } from './AttachSheet'
+import { Listening } from './Listening'
 import { SetupPill } from './SetupPill'
 
 /** Unsent text per conversation, kept while the app runs so leaving one and coming back keeps what was being written. */
@@ -64,14 +67,20 @@ export function ComposerShell({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
 
+  const latestText = useRef(text)
+  latestText.current = text
   const setText = useCallback(
     (value: string) => {
+      latestText.current = value
       setTextState(value)
       if (value) drafts.set(draftKey, value)
       else drafts.delete(draftKey)
     },
     [draftKey]
   )
+  const dictation = useDictation((heard) => setText(appendDictation(latestText.current, heard)))
+  const listening = dictation.state.phase !== 'idle'
+  const dictationIssue = dictation.state.phase === 'idle' ? dictation.state.issue : null
   const add = (picked: OutboxAttachment[]) => {
     const problem = validateAttachments(attachments, picked, filesEnabled)
     setIssue(problem)
@@ -119,6 +128,26 @@ export function ComposerShell({
         >
           {issue ? t(`attach.error.${issue}`) : t('composer.failed')}
         </AppText>
+      ) : dictationIssue ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, marginBottom: 6 }}>
+          <AppText accessibilityRole="alert" style={{ flex: 1, fontSize: 13, color: palette.brick }}>
+            {t(`dictation.error.${dictationIssue}`)}
+          </AppText>
+          {dictationIssue === 'denied' ? (
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={12}
+              onPress={() => {
+                dictation.dismiss()
+                void Linking.openSettings().catch(() => {})
+              }}
+            >
+              <AppText style={{ fontSize: 13, color: palette.brass, fontFamily: fonts.bodySemi }}>
+                {t('dictation.openSettings')}
+              </AppText>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
       <View
         style={{
@@ -138,10 +167,19 @@ export function ComposerShell({
             setIssue(null)
           }}
         />
+        {listening ? (
+          <Listening
+            starting={dictation.state.phase === 'starting'}
+            text={dictation.state.phase === 'listening' ? dictation.state.text : ''}
+          />
+        ) : null}
         <TextInput
           ref={inputRef}
           value={text}
-          onChangeText={setText}
+          onChangeText={(value) => {
+            setText(value)
+            if (dictationIssue) dictation.dismiss()
+          }}
           multiline
           maxLength={FLEET_MESSAGE_TEXT_MAX}
           placeholder={placeholder}
@@ -149,6 +187,7 @@ export function ComposerShell({
           accessibilityLabel={placeholder}
           onContentSizeChange={(event) => setHeight(event.nativeEvent.contentSize.height)}
           style={{
+            display: listening ? 'none' : 'flex',
             minHeight: 34,
             // The reported content height already includes the padding; adding to it would grow the field forever.
             height: Math.min(MAX_HEIGHT, Math.max(34, height)),
@@ -163,34 +202,79 @@ export function ComposerShell({
           }}
         />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-          <IconButton
-            icon="plus"
-            label={t('composer.attach')}
-            onPress={() => setPicking(true)}
-            style={{ width: 44, height: 44, borderRadius: 22 }}
-          />
-          {setup}
+          {listening ? (
+            <IconButton
+              icon="x"
+              label={t('dictation.cancel')}
+              onPress={dictation.cancel}
+              style={{ width: 44, height: 44, borderRadius: 22 }}
+            />
+          ) : (
+            <>
+              <IconButton
+                icon="plus"
+                label={t('composer.attach')}
+                onPress={() => setPicking(true)}
+                style={{ width: 44, height: 44, borderRadius: 22 }}
+              />
+              {setup}
+            </>
+          )}
           <View style={{ flex: 1 }} />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={stoppable ? (stopLabel ?? '') : t('composer.send')}
-            aria-disabled={disabled || busy || (empty && !stoppable)}
-            disabled={disabled || busy || (empty && !stoppable)}
-            onPress={() => void (stoppable ? stop() : send())}
-            hitSlop={4}
-            style={({ pressed }) => ({
-              width: 36,
-              height: 36,
-              marginLeft: 4,
-              borderRadius: 18,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: disabled || (empty && !stoppable) ? palette.lineStrong : palette.ink,
-              transform: [{ scale: pressed ? 0.94 : 1 }],
-            })}
-          >
-            <Icon name={stoppable ? 'stop' : 'arrow-up'} size={18} color={palette.canvas} strokeWidth={2.2} />
-          </Pressable>
+          {dictation.available && !listening ? (
+            <IconButton
+              icon="mic"
+              label={t('dictation.start')}
+              disabled={disabled}
+              onPress={() => {
+                setError(false)
+                dictation.start()
+              }}
+              size={21}
+              style={{ width: 44, height: 44, borderRadius: 22 }}
+            />
+          ) : null}
+          {listening ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t('dictation.stop')}
+              onPress={dictation.stop}
+              hitSlop={4}
+              style={({ pressed }) => ({
+                width: 36,
+                height: 36,
+                marginLeft: 4,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: palette.ink,
+                transform: [{ scale: pressed ? 0.94 : 1 }],
+              })}
+            >
+              <Icon name="stop" size={16} color={palette.canvas} strokeWidth={2.2} />
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={stoppable ? (stopLabel ?? '') : t('composer.send')}
+              aria-disabled={disabled || busy || (empty && !stoppable)}
+              disabled={disabled || busy || (empty && !stoppable)}
+              onPress={() => void (stoppable ? stop() : send())}
+              hitSlop={4}
+              style={({ pressed }) => ({
+                width: 36,
+                height: 36,
+                marginLeft: 4,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: disabled || (empty && !stoppable) ? palette.lineStrong : palette.ink,
+                transform: [{ scale: pressed ? 0.94 : 1 }],
+              })}
+            >
+              <Icon name={stoppable ? 'stop' : 'arrow-up'} size={18} color={palette.canvas} strokeWidth={2.2} />
+            </Pressable>
+          )}
         </View>
       </View>
       <AttachSheet open={picking} onClose={() => setPicking(false)} filesEnabled={filesEnabled} onPicked={add} />

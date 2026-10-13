@@ -543,6 +543,20 @@ export const en = {
   'notifications.sampleChat': 'Finished its turn',
   'notifications.sampleReply': 'Routine report ready',
   'notifications.sampleApproval': 'Needs your approval',
+
+  'dictation.start': 'Dictate a message',
+  'dictation.stop': 'Stop dictation',
+  'dictation.cancel': 'Cancel dictation',
+  'dictation.starting': 'Getting the microphone ready…',
+  'dictation.listening': 'Listening…',
+  'dictation.openSettings': 'Open Settings',
+  'dictation.error.denied': 'Maestrly needs the microphone and speech recognition to take dictation.',
+  'dictation.error.unavailable': "Speech recognition isn't available on this phone right now.",
+  'dictation.error.noSpeech': "Didn't hear anything. Try again closer to the phone.",
+  'dictation.error.network': 'Dictation needs an internet connection for this language.',
+  'dictation.error.language': "This phone can't take dictation in its language yet.",
+  'dictation.error.busy': 'Another app is using speech recognition. Try again in a moment.',
+  'dictation.error.failed': "Dictation stopped. What was heard so far isn't lost.",
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1093,4 +1107,18 @@ export const ptBR: Record<keyof typeof en, string> = {
   'notifications.sampleChat': 'Terminou o turno',
   'notifications.sampleReply': 'Relatório da rotina pronto',
   'notifications.sampleApproval': 'Precisa da sua aprovação',
+
+  'dictation.start': 'Ditar uma mensagem',
+  'dictation.stop': 'Parar o ditado',
+  'dictation.cancel': 'Cancelar o ditado',
+  'dictation.starting': 'Preparando o microfone…',
+  'dictation.listening': 'Ouvindo…',
+  'dictation.openSettings': 'Abrir Ajustes',
+  'dictation.error.denied': 'O Maestrly precisa do microfone e do reconhecimento de fala para o ditado.',
+  'dictation.error.unavailable': 'O reconhecimento de fala não está disponível neste celular agora.',
+  'dictation.error.noSpeech': 'Não ouvi nada. Tente de novo mais perto do celular.',
+  'dictation.error.network': 'O ditado precisa de internet para este idioma.',
+  'dictation.error.language': 'Este celular ainda não faz ditado no idioma dele.',
+  'dictation.error.busy': 'Outro app está usando o reconhecimento de fala. Tente de novo em instantes.',
+  'dictation.error.failed': 'O ditado parou. O que já foi ouvido não se perde.',
 }

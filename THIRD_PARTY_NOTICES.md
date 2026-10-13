@@ -66,8 +66,11 @@ also includes, under the MIT License,
 [react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2
 with [marked](https://github.com/markedjs/marked) 18.0.14,
 [react-native-svg](https://github.com/software-mansion/react-native-svg) 15.15.4,
-and [AsyncStorage](https://github.com/react-native-async-storage/async-storage)
-2.2.0. Their complete licenses are distributed with each package.
+[AsyncStorage](https://github.com/react-native-async-storage/async-storage)
+2.2.0, and
+[expo-speech-recognition](https://github.com/jamsch/expo-speech-recognition)
+57.1.1 (Copyright (c) 2024 jamsch). Their complete licenses are distributed with
+each package.
 
 The app bundles three font families through `@expo-google-fonts` (MIT): Bricolage
 Grotesque (Copyright 2022 The Bricolage Grotesque Project Authors), Instrument
