@@ -299,6 +299,8 @@ async function environmentInstance(environmentId: string, capable = true) {
     failures,
     emit,
     statusOf,
+    /** What the instance says it can do; a test adds `workspaces-host` to make it a workspaces host. */
+    capabilities,
     setTunnelToken(value: string) {
       tunnelToken = value
     },
@@ -1727,5 +1729,39 @@ describe('pauses during an installation', () => {
     expect(work.installed.get(scout)?.hold).toEqual(noHold)
     expect(f.lifecycle.statuses.get(scout)?.hold).toEqual(noHold)
     expect(f.lifecycle.get(scout)).toMatchObject({ paused: false, status: 'idle' })
+  })
+})
+
+describe('chats of a workspaces host', () => {
+  it('hands on what a chat needs from the host, asking the host for it, and only from a workspaces host', async () => {
+    const f = fixture()
+    const heard: Array<[string, string, string]> = []
+    f.lifecycle.onChatAttention = (conversationId, name, kind) => heard.push([conversationId, name, kind])
+    const host = await f.instance('workspaces')
+    host.capabilities.push('workspaces-host')
+    const created = f.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
+    expect(created.id).toBe('workspaces')
+    await until(() => f.lifecycle.environment(created.id)?.lifecycle === 'running')
+    await until(() => host.subscriptions.length > 0)
+    expect(host.requests.find((item) => item.path.startsWith('/v1/events'))?.path).toContain('chatAttention=1')
+    host.emit({
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'c1',
+      name: 'Fix the flaky test',
+      kind: 'question',
+    })
+    await until(() => heard.length === 1)
+    expect(heard).toEqual([['c1', 'Fix the flaky test', 'question']])
+
+    // A bots environment has no chats: an event that claims one is dropped.
+    const work = await f.instance('work')
+    const { environmentId } = await environment(f, 'work', ['Scout'])
+    expect(environmentId).toBe('work')
+    await until(() => work.subscriptions.length > 0)
+    work.emit({ type: 'chat.attention', botId: null, conversationId: 'c2', name: 'Not a chat', kind: 'waiting' })
+    host.emit({ type: 'chat.attention', botId: null, conversationId: 'c3', name: 'Changelog', kind: 'finished' })
+    await until(() => heard.length === 2)
+    expect(heard.map(([id]) => id)).toEqual(['c1', 'c3'])
   })
 })

@@ -17,6 +17,8 @@ export class EventHub {
   private statsTimer: NodeJS.Timeout | null = null
   private readonly lastBotSent = new Map<string, number>()
   private readonly pendingBots = new Map<string, { event: FleetGatewayEvent; timer: NodeJS.Timeout }>()
+  /** Hear every event, whether or not a device streams them now, such as push notifications. */
+  readonly observers = new Set<(event: FleetGatewayEvent) => void>()
   constructor(readonly refresh: () => Promise<void>) {}
   add(
     response: ServerResponse,
@@ -76,6 +78,13 @@ export class EventHub {
     }
   }
   emit(event: FleetGatewayEvent) {
+    for (const observe of this.observers) {
+      try {
+        observe(event)
+      } catch {
+        // An observer never stops an event from reaching devices.
+      }
+    }
     if (!this.subscribers.size) return
     // Bot and environment updates are coalesced per bot and per environment (their keys cannot collide, although an
     // environment may share its id with a bot); a removal drops the update still waiting.

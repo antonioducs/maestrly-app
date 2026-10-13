@@ -1,4 +1,5 @@
 import {
+  type FleetChatAttentionKind,
   deriveBotId,
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
@@ -141,6 +142,8 @@ export class Lifecycle {
     event: { outcome: 'completed' | 'cancelled' | 'failed'; inputId: string | null; text: string | null }
   ) => void
   onEvent: (event: FleetGatewayEvent) => void = () => {}
+  /** A chat of the workspaces host needs the owner (`chat.attention`). */
+  onChatAttention?: (conversationId: string, name: string, kind: FleetChatAttentionKind) => void
   constructor(
     readonly store: Store,
     readonly docker: DockerDriver,
@@ -305,6 +308,12 @@ export class Lifecycle {
     })()
   }
   private dispatch(environmentId: string, event: FleetInstanceEvent) {
+    // A workspaces host's chats are not bots: what they need goes to the owner's phones.
+    if (event.type === 'chat.attention') {
+      if (this.store.getEnvironment(environmentId)?.kind === 'workspaces')
+        this.onChatAttention?.(event.conversationId, event.name, event.kind)
+      return
+    }
     const id = this.eventBot(environmentId, event.botId)
     if (!id) return
     if (event.type === 'status') this.updateStatus(id, event.status)

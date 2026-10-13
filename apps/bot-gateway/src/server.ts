@@ -4,6 +4,7 @@ import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { FleetNetwork } from './network.js'
 import {
+  type FleetGatewayEvent,
   FLEET_GATEWAY_ROUTES,
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
@@ -30,6 +31,7 @@ import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
+import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge } from './desktop-bridge.js'
 
@@ -103,6 +105,21 @@ export function createGatewayServers(ctx: GatewayContext) {
     hostFiles.closeEnvironment(id)
     hostEditor.closeEnvironment(id)
   }
+  // Phones hear of what waits on the owner even while no app streams events.
+  const push =
+    ctx.push ??
+    new PushNotifier({
+      store: ctx.store,
+      sender:
+        ctx.config.push === 'off'
+          ? disabledPushSender
+          : new ExpoPushSender({ accessToken: ctx.config.expoAccessToken }),
+      serverName: () => ctx.config.displayName ?? ctx.config.publicHost,
+      log: (message) => console.error(JSON.stringify({ component: 'push', level: 'warn', message })),
+    })
+  const observePush = (event: FleetGatewayEvent) => push.observe(event)
+  ctx.events.observers.add(observePush)
+  ctx.lifecycle.onChatAttention = (conversationId, name, kind) => void push.chat(conversationId, name, kind)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -135,6 +152,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   const activeCtx: GatewayContext = {
     ...ctx,
+    push,
     ownerMemory,
     peers,
     routines,
@@ -357,6 +375,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       bridge.close()
       hostFiles.close()
       hostEditor.close()
+      ctx.events.observers.delete(observePush)
       ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(

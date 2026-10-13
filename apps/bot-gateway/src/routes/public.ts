@@ -7,6 +7,7 @@ import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_DEVICE_PAIRING_FEATURE,
   FLEET_MOBILE_BRIDGE_FEATURE,
+  FLEET_PUSH_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -306,6 +307,7 @@ export async function publicRoute(
             FLEET_HOST_EDITOR_FEATURE,
             FLEET_DEVICE_PAIRING_FEATURE,
             FLEET_MOBILE_BRIDGE_FEATURE,
+            ...(ctx.config.push === 'off' ? [] : [FLEET_PUSH_FEATURE]),
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -318,6 +320,27 @@ export async function publicRoute(
     }
     case 'pairingsCreate':
       return { body: ctx.auth.createPairing({ limitActive: true }), status: 201 }
+    case 'devicePushGet': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: { registration: ctx.store.pushRegistration(device.id) } }
+    }
+    case 'devicePushSet': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      if (ctx.config.push === 'off') throw new GatewayError('CONFLICT', 'This server sends no push notifications.')
+      return { body: ctx.store.savePushRegistration(device.id, body) }
+    }
+    case 'devicePushDelete': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      ctx.store.deletePushRegistration(device.id)
+      return { status: 204 }
+    }
+    case 'devicePushTest': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      if (ctx.config.push === 'off' || !ctx.push)
+        throw new GatewayError('CONFLICT', 'This server sends no push notifications.')
+      await ctx.push.test(device.id)
+      return { body: { sent: true } }
+    }
     case 'devicesSelfDelete': {
       const device = ctx.auth.device(res.req?.headers.authorization)
       ctx.store.revokeDevice(device.id)
