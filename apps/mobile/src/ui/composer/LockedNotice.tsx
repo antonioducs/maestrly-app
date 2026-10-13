@@ -21,11 +21,21 @@ export function LockedNotice({ bot }: { bot: FleetBot }) {
   const needsCompaction = bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
   const spec: { icon: IconName; title: MessageKey; body: MessageKey; action?: { label: string; run: BotAction } } =
     bot.status === 'offline'
-      ? { icon: 'pause', title: 'locked.offline.title', body: 'locked.offline.body', action: { label: t('locked.start', { name }), run: 'start' } }
+      ? {
+          icon: 'pause',
+          title: 'locked.offline.title',
+          body: 'locked.offline.body',
+          action: { label: t('locked.start', { name }), run: 'start' },
+        }
       : bot.status === 'starting'
         ? { icon: 'clock', title: 'locked.starting.title', body: 'locked.starting.body' }
         : bot.status === 'paused'
-          ? { icon: 'pause', title: 'locked.paused.title', body: 'locked.paused.body', action: { label: t('locked.resume'), run: 'resume' } }
+          ? {
+              icon: 'pause',
+              title: 'locked.paused.title',
+              body: 'locked.paused.body',
+              action: { label: t('locked.resume'), run: 'resume' },
+            }
           : bot.status === 'human'
             ? { icon: 'hand', title: 'locked.human.title', body: 'locked.human.body' }
             : {

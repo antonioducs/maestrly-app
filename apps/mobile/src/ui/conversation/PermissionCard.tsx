@@ -1,7 +1,5 @@
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { View } from 'react-native'
-import { useFleet } from '../../fleet/react'
-import { interactionForItem } from '../../fleet/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
@@ -14,9 +12,8 @@ const SHELL = new Set(['bash', 'shell', 'exec_command'])
 export function PermissionCard({ item }: { item: Extract<FleetTranscriptItem, { kind: 'permission' }> }) {
   const { palette } = useTheme()
   const { t } = useI18n()
-  const { bot } = useConversation()
-  const interaction = useFleet((state) => interactionForItem(state, bot.id, item.id))
-  const { busy, error, run, disabled } = useResolver(interaction?.id ?? null)
+  const { bot, name } = useConversation()
+  const { busy, error, run, disabled } = useResolver(item)
 
   if (item.state !== 'pending')
     return item.state === 'approved' ? (
@@ -31,10 +28,18 @@ export function PermissionCard({ item }: { item: Extract<FleetTranscriptItem, { 
   return (
     <CueCard>
       <AppText accessibilityRole="header" style={{ fontSize: 17, lineHeight: 22, fontWeight: '600', marginBottom: 10 }}>
-        {command !== null ? t('perm.titleCommand', { name: bot.name }) : item.title}
+        {command === null ? item.title : bot ? t('perm.titleCommand', { name }) : t('perm.titleCommandChat')}
       </AppText>
       {item.tool?.target ? (
-        <View style={{ marginBottom: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, backgroundColor: palette.codeBg }}>
+        <View
+          style={{
+            marginBottom: 8,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderRadius: 10,
+            backgroundColor: palette.codeBg,
+          }}
+        >
           <AppText style={{ fontFamily: fonts.mono, fontSize: 13, lineHeight: 18, color: palette.codeInk }}>
             {command !== null ? <AppText style={{ color: '#d4b273', fontFamily: fonts.mono }}>$ </AppText> : null}
             {item.tool.target}

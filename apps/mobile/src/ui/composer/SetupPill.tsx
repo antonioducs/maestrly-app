@@ -40,7 +40,10 @@ export function SetupPill({ bot }: { bot: FleetBot }) {
       })}
     >
       {full ? <Icon name="shield" size={15} color={palette.brick} /> : null}
-      <AppText numberOfLines={1} style={{ flexShrink: 1, fontFamily: fonts.bodyMedium, fontSize: 13.5, lineHeight: 18 }}>
+      <AppText
+        numberOfLines={1}
+        style={{ flexShrink: 1, fontFamily: fonts.bodyMedium, fontSize: 13.5, lineHeight: 18 }}
+      >
         {summary}
       </AppText>
       {bot.selection?.fastMode ? <Icon name="zap-fill" size={14} color={palette.brass} /> : null}

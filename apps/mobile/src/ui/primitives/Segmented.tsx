@@ -1,5 +1,6 @@
 import { Pressable, View } from 'react-native'
 import { useTheme } from '../../theme/ThemeProvider'
+import { Icon, type IconName } from '../icons'
 import { AppText } from './Text'
 
 /** A row of exclusive choices drawn by the app, never the system picker. */
@@ -10,7 +11,7 @@ export function Segmented<T extends string>({
   onChange,
 }: {
   label: string
-  options: { value: T; label: string }[]
+  options: { value: T; label: string; icon?: IconName }[]
   value: T
   onChange: (value: T) => void
 }) {
@@ -30,9 +31,11 @@ export function Segmented<T extends string>({
             aria-checked={selected}
             accessibilityLabel={option.label}
             onPress={() => onChange(option.value)}
+            hitSlop={4}
             style={{
               flex: 1,
-              minHeight: 36,
+              minHeight: option.icon ? 52 : 36,
+              gap: 2,
               borderRadius: 8,
               alignItems: 'center',
               justifyContent: 'center',
@@ -44,7 +47,12 @@ export function Segmented<T extends string>({
               elevation: selected ? 1 : 0,
             }}
           >
-            <AppText variant="bodyMedium" tone={selected ? 'ink' : 'muted'} style={{ fontSize: 14 }}>
+            {option.icon ? <Icon name={option.icon} size={18} color={selected ? palette.ink : palette.muted} /> : null}
+            <AppText
+              variant="bodyMedium"
+              tone={selected ? 'ink' : 'muted'}
+              style={{ fontSize: option.icon ? 12.5 : 14 }}
+            >
               {option.label}
             </AppText>
           </Pressable>

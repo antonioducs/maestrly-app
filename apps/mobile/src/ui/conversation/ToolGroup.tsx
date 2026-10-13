@@ -1,7 +1,5 @@
-import { Image } from 'expo-image'
 import { memo, useState } from 'react'
 import { ActivityIndicator, Pressable, View } from 'react-native'
-import { useFleetController } from '../../fleet/react'
 import { toolHeadline, toolSummary, type ToolItem } from '../../fleet/transcript-rows'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -9,21 +7,18 @@ import { fonts } from '../../theme/tokens'
 import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
 import { formatElapsed, useNow } from '../useNow'
-import { useConversation } from './CueCard'
+import { TranscriptImage } from './TranscriptImage'
 
 function ToolImages({ tool }: { tool: ToolItem }) {
   const { palette } = useTheme()
-  const controller = useFleetController()
-  const { bot } = useConversation()
   if (!tool.images.length) return null
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
       {tool.images.map((image) => (
-        <Image
+        <TranscriptImage
           key={image.id}
-          source={controller.source.imageSource(bot.id, image.id)}
-          accessibilityLabel={image.name ?? tool.target ?? tool.name}
-          contentFit="cover"
+          imageId={image.id}
+          label={image.name ?? tool.target ?? tool.name}
           style={{ width: 160, height: 100, borderRadius: 10, backgroundColor: palette.surface }}
         />
       ))}
@@ -42,7 +37,9 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
   const stopped = tools.some((tool) => tool.state === 'interrupted')
   const headline = running ? toolHeadline(running, t) : null
   const summary = toolSummary(tools, plural)
-  const extras = [failed ? t('tool.failed', { count: failed }) : null, stopped ? t('tool.stopped') : null].filter(Boolean)
+  const extras = [failed ? t('tool.failed', { count: failed }) : null, stopped ? t('tool.stopped') : null].filter(
+    Boolean
+  )
   // Images a bot shared show in the conversation; the others only in the tool's details.
   const shared = tools.filter((tool) => tool.images.length && tool.shared !== false)
 
@@ -64,7 +61,10 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
               {headline.verb}
             </AppText>
             {headline.target ? (
-              <AppText numberOfLines={1} style={{ flexShrink: 1, fontFamily: fonts.mono, fontSize: 12.5, color: palette.ink }}>
+              <AppText
+                numberOfLines={1}
+                style={{ flexShrink: 1, fontFamily: fonts.mono, fontSize: 12.5, color: palette.ink }}
+              >
                 {headline.target}
               </AppText>
             ) : null}
@@ -77,7 +77,9 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
             <Icon name="tools" size={16} color={palette.muted} />
             <AppText variant="sub" tone="muted" numberOfLines={1} style={{ fontSize: 14, flexShrink: 1 }}>
               {summary}
-              {extras.length ? <AppText style={{ color: palette.brick, fontSize: 14 }}>{` · ${extras.join(' · ')}`}</AppText> : null}
+              {extras.length ? (
+                <AppText style={{ color: palette.brick, fontSize: 14 }}>{` · ${extras.join(' · ')}`}</AppText>
+              ) : null}
             </AppText>
           </>
         )}
@@ -86,7 +88,16 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
         </View>
       </Pressable>
       {open ? (
-        <View style={{ gap: 8, marginTop: 6, marginLeft: 6, paddingLeft: 13, borderLeftWidth: 1.5, borderLeftColor: palette.line }}>
+        <View
+          style={{
+            gap: 8,
+            marginTop: 6,
+            marginLeft: 6,
+            paddingLeft: 13,
+            borderLeftWidth: 1.5,
+            borderLeftColor: palette.line,
+          }}
+        >
           {tools.map((tool) => (
             <View key={tool.id} style={{ flexDirection: 'row', gap: 8 }}>
               <View style={{ width: 16, paddingTop: 2 }}>
@@ -106,8 +117,19 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
                   {tool.target ?? ''}
                 </AppText>
                 {tool.output ? (
-                  <View style={{ marginTop: 4, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 8, backgroundColor: palette.surface }}>
-                    <AppText selectable style={{ fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 17, color: palette.muted }}>
+                  <View
+                    style={{
+                      marginTop: 4,
+                      paddingVertical: 7,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      backgroundColor: palette.surface,
+                    }}
+                  >
+                    <AppText
+                      selectable
+                      style={{ fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 17, color: palette.muted }}
+                    >
                       {tool.output}
                     </AppText>
                   </View>

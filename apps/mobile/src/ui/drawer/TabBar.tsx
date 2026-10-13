@@ -58,7 +58,9 @@ export function TabBar({ tabs, value, onChange }: { tabs: Tab[]; value: string; 
                   backgroundColor: palette.cue,
                 }}
               >
-                <AppText style={{ fontSize: 10.5, lineHeight: 13, fontWeight: '700', color: '#1f201e' }}>{tab.badge}</AppText>
+                <AppText style={{ fontSize: 10.5, lineHeight: 13, fontWeight: '700', color: '#1f201e' }}>
+                  {tab.badge}
+                </AppText>
               </View>
             ) : null}
           </Pressable>

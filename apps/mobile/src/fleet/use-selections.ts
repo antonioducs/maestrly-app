@@ -24,7 +24,7 @@ export function useBotSelections(bot: FleetBot) {
     }
   }, [controller, bot.id, key])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new selection on the server is a reason to reload
+  // A new selection on the server is a reason to reload.
   useEffect(() => {
     void reload()
   }, [reload, selection])

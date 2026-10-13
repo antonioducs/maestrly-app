@@ -97,6 +97,9 @@ describe('transcript rows', () => {
     )
     expect(toolSummary([tool('a', 'edit')], text.plural)).toBe('Edited 1 file')
     expect(toolSummary([tool('a', 'mcp__linear__create')], text.plural)).toBe('Used 1 tool')
-    expect(toolHeadline(tool('a', 'bash', { target: 'npm test' }), text.t)).toEqual({ verb: 'Running', target: 'npm test' })
+    expect(toolHeadline(tool('a', 'bash', { target: 'npm test' }), text.t)).toEqual({
+      verb: 'Running',
+      target: 'npm test',
+    })
   })
 })

@@ -1,20 +1,20 @@
-import type { FleetTodo, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import type { FleetTodo, FleetTranscriptItem, MobileChatItem } from '@maestrly/bot-fleet-protocol'
 import type { Pluralize, PluralKey, Translate } from '../i18n/translate'
 
 export type ToolItem = Extract<FleetTranscriptItem, { kind: 'tool' }>
 export type TranscriptRow =
-  | { kind: 'item'; item: FleetTranscriptItem }
+  | { kind: 'item'; item: MobileChatItem }
   | { kind: 'tools'; id: string; tools: ToolItem[] }
   | { kind: 'todos'; id: string; todos: FleetTodo[] }
 
-const isPlan = (item: FleetTranscriptItem): item is ToolItem & { todos: FleetTodo[] } =>
+const isPlan = (item: MobileChatItem): item is ToolItem & { todos: FleetTodo[] } =>
   item.kind === 'tool' && item.name === 'todo_write' && Array.isArray(item.todos)
 
 /**
  * The rows a conversation shows: tools in a row become one collapsible group, and a turn's plan shows once, with
  * its latest list, where it first appeared.
  */
-export function transcriptRows(items: FleetTranscriptItem[]): TranscriptRow[] {
+export function transcriptRows(items: MobileChatItem[]): TranscriptRow[] {
   const rows: TranscriptRow[] = []
   let plan: Extract<TranscriptRow, { kind: 'todos' }> | null = null
   for (const item of items) {

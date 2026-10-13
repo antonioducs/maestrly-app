@@ -28,7 +28,16 @@ export function ServerRow({ name, online, onPress }: { name: string; online: boo
         backgroundColor: pressed ? palette.surface : 'transparent',
       })}
     >
-      <View style={{ width: 14, height: 14, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: `${dot}38` }}>
+      <View
+        style={{
+          width: 14,
+          height: 14,
+          borderRadius: 7,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: `${dot}38`,
+        }}
+      >
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: dot }} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>

@@ -31,7 +31,11 @@ function weighted(style: TextStyle): TextStyle {
   if (!family || !BODY_FAMILIES.includes(family) || !style.fontWeight) return style
   const weight = String(style.fontWeight)
   const heavy = weight === 'bold' || Number(weight) >= 600
-  return { ...style, fontFamily: heavy ? fonts.bodySemi : weight === '500' ? fonts.bodyMedium : fonts.body, fontWeight: undefined }
+  return {
+    ...style,
+    fontFamily: heavy ? fonts.bodySemi : weight === '500' ? fonts.bodyMedium : fonts.body,
+    fontWeight: undefined,
+  }
 }
 
 /** Text in the app's type scale; system font scaling stays on. */

@@ -10,7 +10,8 @@ export type OutboxAttachment = {
 }
 export type AttachmentIssue = 'count' | 'size' | 'total' | 'pdfs' | 'unsupported' | 'type'
 
-const TEXT_NAME = /\.(txt|md|markdown|json|jsonl|csv|log|ya?ml|toml|ini|conf|xml|html?|css|[cm]?[jt]sx?|py|go|rs|rb|sh|sql)$/i
+const TEXT_NAME =
+  /\.(txt|md|markdown|json|jsonl|csv|log|ya?ml|toml|ini|conf|xml|html?|css|[cm]?[jt]sx?|py|go|rs|rb|sh|sql)$/i
 const IMAGE_TYPES: readonly string[] = FLEET_IMAGE_MEDIA_TYPES
 
 /** The kind a file is sent as, from its media type and name; null when the gateway would refuse it. */

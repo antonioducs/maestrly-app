@@ -1,6 +1,5 @@
 import { ActivityIndicator, View } from 'react-native'
-import { useFleetController } from '../../fleet/react'
-import type { OutboxEntry } from '../../fleet/outbox'
+import type { OutboxAttachment } from '../../fleet/attachments'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { FileChip } from '../conversation/UserBubble'
@@ -8,18 +7,36 @@ import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { AppText } from '../primitives/Text'
 
-/** A message written on this phone that the server has not confirmed yet, with what holds it back. */
-export function OutboxRow({ entry }: { entry: OutboxEntry }) {
+export type OutboxRowEntry = {
+  text: string
+  attachments: OutboxAttachment[]
+  state: 'waiting' | 'sending' | 'failed'
+}
+
+/** A message written on this phone that the server has not taken yet, with what holds it back. */
+export function OutboxRow({
+  entry,
+  waitingText,
+  failedReason,
+  onRetry,
+  onDelete,
+}: {
+  entry: OutboxRowEntry
+  /** Why a waiting message waits: the connection, or a turn still running. */
+  waitingText: string
+  failedReason: string
+  onRetry: () => void
+  onDelete: () => void
+}) {
   const { palette } = useTheme()
   const { t } = useI18n()
-  const controller = useFleetController()
   const failed = entry.state === 'failed'
   const status =
     entry.state === 'sending'
       ? t('outbox.sending')
       : failed
-        ? t('outbox.failed', { reason: t(`outbox.error.${entry.error ?? 'generic'}`) })
-        : t('outbox.waiting')
+        ? t('outbox.failed', { reason: failedReason })
+        : waitingText
   return (
     <View style={{ alignItems: 'flex-end', gap: 4 }}>
       <View
@@ -56,8 +73,8 @@ export function OutboxRow({ entry }: { entry: OutboxEntry }) {
       </View>
       {failed ? (
         <View style={{ flexDirection: 'row', gap: 6 }}>
-          <Button label={t('common.tryAgain')} size="sm" variant="secondary" onPress={() => void controller.retryOutbox(entry.id)} />
-          <Button label={t('common.delete')} size="sm" variant="danger" onPress={() => void controller.deleteOutbox(entry.id)} />
+          <Button label={t('common.tryAgain')} size="sm" variant="secondary" onPress={onRetry} />
+          <Button label={t('common.delete')} size="sm" variant="danger" onPress={onDelete} />
         </View>
       ) : null}
     </View>

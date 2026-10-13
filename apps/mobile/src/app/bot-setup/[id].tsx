@@ -1,4 +1,9 @@
-import { selectionPatch, type FleetBot, type FleetCeiling, type FleetPatchBotRequest } from '@maestrly/bot-fleet-protocol'
+import {
+  selectionPatch,
+  type FleetBot,
+  type FleetCeiling,
+  type FleetPatchBotRequest,
+} from '@maestrly/bot-fleet-protocol'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { AccessibilityInfo, ActivityIndicator, Switch, View } from 'react-native'
@@ -60,7 +65,10 @@ function Setup({ bot, initialPage }: { bot: FleetBot; initialPage: 'root' | 'mod
   }
 
   const errorLine = error ? (
-    <AppText accessibilityRole="alert" style={{ marginTop: 10, marginHorizontal: 6, fontSize: 13, color: palette.brick }}>
+    <AppText
+      accessibilityRole="alert"
+      style={{ marginTop: 10, marginHorizontal: 6, fontSize: 13, color: palette.brick }}
+    >
       {error}
     </AppText>
   ) : null
@@ -74,12 +82,15 @@ function Setup({ bot, initialPage }: { bot: FleetBot; initialPage: 'root' | 'mod
       >
         {errorLine}
         <ModelList
-          botName={bot.name}
+          defaultChoice={{ label: t('setup.botDefault'), sub: t('setup.botDefaultSub') }}
+          foot={t('setup.modelsFoot', { name: bot.name })}
           options={options}
           current={bot.selection}
           disabled={saving !== null}
           onPick={(picked) =>
-            void save('model', { selection: selectionPatch(bot.selection, { model: picked }) }).then(() => setPage('root'))
+            void save('model', { selection: selectionPatch(bot.selection, { model: picked }) }).then(() =>
+              setPage('root')
+            )
           }
         />
       </SheetScreen>
@@ -111,7 +122,9 @@ function Setup({ bot, initialPage }: { bot: FleetBot; initialPage: 'root' | 'mod
                 accessibilityLabel={t('setup.fast')}
                 value={bot.selection.fastMode}
                 disabled={saving !== null}
-                onValueChange={(fastMode) => void save('fast', { selection: selectionPatch(bot.selection, { fastMode }) })}
+                onValueChange={(fastMode) =>
+                  void save('fast', { selection: selectionPatch(bot.selection, { fastMode }) })
+                }
                 trackColor={{ true: palette.brass, false: palette.lineStrong }}
               />
             }
@@ -151,7 +164,11 @@ function Setup({ bot, initialPage }: { bot: FleetBot; initialPage: 'root' | 'mod
             leading={
               <View style={{ width: 22, alignItems: 'center' }}>
                 {saving === 'ceiling' && bot.ceiling !== ceiling ? null : (
-                  <Icon name={ceiling === 'full' ? 'shield' : ceiling === 'auto' ? 'sparkles' : 'hand'} size={18} color={ceiling === 'full' ? palette.brick : palette.muted} />
+                  <Icon
+                    name={ceiling === 'full' ? 'shield' : ceiling === 'auto' ? 'sparkles' : 'hand'}
+                    size={18}
+                    color={ceiling === 'full' ? palette.brick : palette.muted}
+                  />
                 )}
               </View>
             }

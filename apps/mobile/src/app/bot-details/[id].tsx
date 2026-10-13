@@ -61,14 +61,32 @@ function ContextMeter({ bot }: { bot: FleetBot }) {
       accessibilityLabel={`${t('details.context')}: ${share !== null ? t('details.contextLabel', { percent: Math.round(share * 100) }) : ''} ${parts.join(', ')}`}
       style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 14 }}
     >
-      <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 8,
+          backgroundColor: palette.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
         <Icon name="gauge" size={18} color={palette.ink} />
       </View>
       <View style={{ flex: 1 }}>
         <AppText>{t('details.context')}</AppText>
         {share !== null ? (
-          <View style={{ height: 6, marginTop: 6, borderRadius: 3, overflow: 'hidden', backgroundColor: palette.surface }}>
-            <View style={{ width: `${Math.max(2, share * 100)}%`, height: 6, borderRadius: 3, backgroundColor: palette.brass }} />
+          <View
+            style={{ height: 6, marginTop: 6, borderRadius: 3, overflow: 'hidden', backgroundColor: palette.surface }}
+          >
+            <View
+              style={{
+                width: `${Math.max(2, share * 100)}%`,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: palette.brass,
+              }}
+            />
           </View>
         ) : null}
         <AppText variant="sub" tone="muted" style={{ marginTop: 4 }}>
@@ -85,7 +103,10 @@ function Details({ bot }: { bot: FleetBot }) {
   const { t } = text
   const controller = useFleetController()
   const environment = useFleet(
-    useCallback((state: FleetState) => state.environments.find((item) => item.id === bot.environmentId)?.name ?? null, [bot.environmentId])
+    useCallback(
+      (state: FleetState) => state.environments.find((item) => item.id === bot.environmentId)?.name ?? null,
+      [bot.environmentId]
+    )
   )
   const { option } = useBotSelections(bot)
   const [busy, setBusy] = useState<BotAction | null>(null)
@@ -140,7 +161,15 @@ function Details({ bot }: { bot: FleetBot }) {
               key={action}
               label={t(ACTION_LABEL[action])}
               variant={action === 'start' || action === 'resume' ? 'primary' : 'secondary'}
-              icon={action === 'start' || action === 'resume' ? 'play' : action === 'restart' ? 'restart' : action === 'pause' ? 'pause' : 'stop'}
+              icon={
+                action === 'start' || action === 'resume'
+                  ? 'play'
+                  : action === 'restart'
+                    ? 'restart'
+                    : action === 'pause'
+                      ? 'pause'
+                      : 'stop'
+              }
               busy={busy === action}
               disabled={busy !== null}
               onPress={() => void act(action)}
@@ -150,7 +179,10 @@ function Details({ bot }: { bot: FleetBot }) {
         </View>
       ) : null}
       {error ? (
-        <AppText accessibilityRole="alert" style={{ marginTop: 8, marginHorizontal: 4, fontSize: 13, color: palette.brick }}>
+        <AppText
+          accessibilityRole="alert"
+          style={{ marginTop: 8, marginHorizontal: 4, fontSize: 13, color: palette.brick }}
+        >
           {error}
         </AppText>
       ) : null}

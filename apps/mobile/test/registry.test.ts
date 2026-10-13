@@ -23,10 +23,13 @@ describe('paired servers', () => {
 
   it('writes the token first, so a failed list write leaves no server without one', async () => {
     const { secrets, kv } = memoryStores()
-    const failing = { ...kv, set: async (key: string, value: string) => {
-      if (key === 'servers') throw new Error('disk full')
-      await kv.set(key, value)
-    } }
+    const failing = {
+      ...kv,
+      set: async (key: string, value: string) => {
+        if (key === 'servers') throw new Error('disk full')
+        await kv.set(key, value)
+      },
+    }
     const registry = new ServerRegistry(secrets, failing)
     await expect(registry.add(server('a'), 'tok')).rejects.toThrow('disk full')
     expect(await registry.list()).toEqual([])

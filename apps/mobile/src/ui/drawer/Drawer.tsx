@@ -108,10 +108,7 @@ export function Drawer({
           transform: [{ translateX: mainShift }],
         }}
       >
-        <View
-          style={{ flex: 1 }}
-          aria-hidden={open}
-        >
+        <View style={{ flex: 1 }} aria-hidden={open}>
           {children}
         </View>
         <Animated.View

@@ -10,7 +10,12 @@ export function Group({ label, foot, children }: { label?: string; foot?: ReactN
   return (
     <View style={label ? undefined : { marginTop: 12 }}>
       {label ? (
-        <AppText variant="label" tone="muted" accessibilityRole="header" style={{ marginTop: 18, marginBottom: 7, marginHorizontal: 6 }}>
+        <AppText
+          variant="label"
+          tone="muted"
+          accessibilityRole="header"
+          style={{ marginTop: 18, marginBottom: 7, marginHorizontal: 6 }}
+        >
           {label}
         </AppText>
       ) : null}

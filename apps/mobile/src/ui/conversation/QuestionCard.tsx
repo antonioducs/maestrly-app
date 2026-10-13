@@ -1,26 +1,28 @@
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { useState } from 'react'
 import { Pressable, View } from 'react-native'
-import { useFleet } from '../../fleet/react'
-import { interactionForItem } from '../../fleet/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { AppText } from '../primitives/Text'
-import { CardError, CueCard, ResolvedLine, useConversation, useResolver } from './CueCard'
+import { CardError, CueCard, ResolvedLine, useResolver } from './CueCard'
 
 export function QuestionCard({ item }: { item: Extract<FleetTranscriptItem, { kind: 'question' }> }) {
   const { palette } = useTheme()
   const { t } = useI18n()
-  const { bot } = useConversation()
-  const interaction = useFleet((state) => interactionForItem(state, bot.id, item.id))
-  const { busy, error, run, disabled } = useResolver(interaction?.id ?? null)
+  const { busy, error, run, disabled } = useResolver(item)
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<string[][]>(() => item.questions.map(() => []))
 
   if (item.state === 'answered')
-    return <ResolvedLine icon="check" tone="ok" text={t('question.answered', { answer: (item.answers ?? []).flat().join(', ') })} />
+    return (
+      <ResolvedLine
+        icon="check"
+        tone="ok"
+        text={t('question.answered', { answer: (item.answers ?? []).flat().join(', ') })}
+      />
+    )
   if (item.state === 'dismissed') return <ResolvedLine icon="x" tone="muted" text={t('question.dismissed')} />
   const question = item.questions[index]
   if (!question) return null
@@ -87,7 +89,9 @@ export function QuestionCard({ item }: { item: Extract<FleetTranscriptItem, { ki
                   justifyContent: 'center',
                 }}
               >
-                {selected && question.multiSelect ? <Icon name="check" size={14} color={palette.raised} strokeWidth={2.4} /> : null}
+                {selected && question.multiSelect ? (
+                  <Icon name="check" size={14} color={palette.raised} strokeWidth={2.4} />
+                ) : null}
               </View>
               <View style={{ flex: 1 }}>
                 <AppText style={{ fontSize: 15, lineHeight: 20, fontWeight: '600' }}>{option.label}</AppText>

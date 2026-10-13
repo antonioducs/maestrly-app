@@ -65,7 +65,11 @@ export function botStatusLine(bot: FleetBot, { t, plural }: Text): StatusLine {
       return { text: t('status.working'), tone: 'plain' }
     case 'setup':
       return {
-        text: t(activity?.kind === 'setup' && activity.need === 'compaction' ? 'status.setupCompaction' : 'status.setupAccount'),
+        text: t(
+          activity?.kind === 'setup' && activity.need === 'compaction'
+            ? 'status.setupCompaction'
+            : 'status.setupAccount'
+        ),
         tone: 'plain',
       }
     case 'paused':

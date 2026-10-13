@@ -33,10 +33,10 @@ export type AskSpec =
       title: string
       detail: string | null
       tool: { name: string; target: string }
-      then: { allow: ScriptName; deny: ScriptName }
+      next: { allow: ScriptName; deny: ScriptName }
     }
-  | { kind: 'question'; questions: FleetQuestion[]; then: (answer: string) => Step[] }
-  | { kind: 'help'; reason: string; then: ScriptName }
+  | { kind: 'question'; questions: FleetQuestion[]; next: (answer: string) => Step[] }
+  | { kind: 'help'; reason: string; next: ScriptName }
 
 export type Step =
   | { think: number }
@@ -98,6 +98,8 @@ export function demoWorld(now: number): DemoWorld {
   const environments = [
     environmentRecord({ id: 'studio', name: 'studio', botIds: ['juno', 'atlas', 'pixel'] }),
     environmentRecord({ id: 'research', name: 'research', botIds: ['ledger', 'scout'] }),
+    // The server's chats and workspaces run here (the demo's are in demo-chats).
+    environmentRecord({ id: 'workspaces', name: 'Workspaces', kind: 'workspaces', capabilities: ['mobile-api'] }),
   ]
   const bots = [
     botRecord({
@@ -266,9 +268,13 @@ export function demoWorld(now: number): DemoWorld {
             options: [
               {
                 label: 'Split',
-                description: 'Copy on the left, plan cards on the right. Strongest on desktop; cards fall below the fold on phones.',
+                description:
+                  'Copy on the left, plan cards on the right. Strongest on desktop; cards fall below the fold on phones.',
               },
-              { label: 'Stacked', description: 'Copy above full-width plan cards. Consistent on every screen, a little less punch.' },
+              {
+                label: 'Stacked',
+                description: 'Copy above full-width plan cards. Consistent on every screen, a little less punch.',
+              },
               { label: 'Keep the current hero', description: 'No layout change. I only fix the spacing.' },
             ],
           },
@@ -366,13 +372,16 @@ export const DEMO_SCRIPTS: Record<ScriptName, Step[]> = {
         kind: 'help',
         reason:
           "The staging admin password for the e2e account was rotated, so the 3 admin tests can't log in. Update the login in the studio environment, then mark this resolved and I'll re-run them.",
-        then: 'junoHelped',
+        next: 'junoHelped',
       },
     },
   ],
   junoHelped: [
     { think: 700 },
-    { tool: { name: 'bash', target: 'npx playwright test admin/', output: '6 passed (chromium, webkit) in 41s' }, ms: 2600 },
+    {
+      tool: { name: 'bash', target: 'npx playwright test admin/', output: '6 passed (chromium, webkit) in 41s' },
+      ms: 2600,
+    },
     { say: 'Thanks. The admin tests pass on both browsers now. Final result for the night: **88 of 88 passed**.' },
     { summary: 'Nightly regression: 88 of 88 passed' },
   ],
@@ -414,7 +423,11 @@ export const DEMO_SCRIPTS: Record<ScriptName, Step[]> = {
   junoReply: [
     { think: 600 },
     {
-      tool: { name: 'bash', target: 'npx playwright test --grep @smoke --project=webkit', output: '12 passed in 1m 08s' },
+      tool: {
+        name: 'bash',
+        target: 'npx playwright test --grep @smoke --project=webkit',
+        output: '12 passed in 1m 08s',
+      },
       ms: 2200,
     },
     { say: 'Smoke tests pass on WebKit: **12 passed** in 1m 08s. Nothing new to report.' },

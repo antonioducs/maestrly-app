@@ -104,7 +104,10 @@ function applyEvent(state: FleetState, event: FleetGatewayEvent): FleetState {
       if (!previous?.loaded) return state
       return {
         ...state,
-        transcripts: { ...state.transcripts, [event.botId]: { ...previous, items: merge(previous.items, [event.item]) } },
+        transcripts: {
+          ...state.transcripts,
+          [event.botId]: { ...previous, items: merge(previous.items, [event.item]) },
+        },
       }
     }
     case 'transcript.reset': {

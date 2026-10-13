@@ -13,7 +13,11 @@ import { PairingMark } from '../ui/PairingMark'
 import { Button } from '../ui/primitives/Button'
 import { AppText } from '../ui/primitives/Text'
 
-const rawCode = (value: string) => value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 8)
+const rawCode = (value: string) =>
+  value
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, '')
+    .slice(0, 8)
 const formatCode = (raw: string) => (raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw)
 const hostOf = (address: string) => {
   try {
@@ -55,7 +59,12 @@ export default function Pair() {
       const reason = cause instanceof PairingError ? cause.reason : 'failed'
       setError({
         text: t(`pair.error.${reason}`, { host }),
-        field: reason === 'address' || reason === 'unreachable' ? 'address' : reason === 'code' || reason === 'expired' ? 'code' : null,
+        field:
+          reason === 'address' || reason === 'unreachable'
+            ? 'address'
+            : reason === 'code' || reason === 'expired'
+              ? 'code'
+              : null,
       })
       setPhase(back === 'confirm' && reason !== 'address' && reason !== 'code' ? 'confirm' : 'form')
     }
@@ -67,7 +76,12 @@ export default function Pair() {
     return (
       <OnboardingScreen center>
         <PairingMark state="pairing" />
-        <AppText variant="display" accessibilityRole="header" accessibilityLiveRegion="polite" style={{ fontSize: 28, lineHeight: 32, textAlign: 'center' }}>
+        <AppText
+          variant="display"
+          accessibilityRole="header"
+          accessibilityLiveRegion="polite"
+          style={{ fontSize: 28, lineHeight: 32, textAlign: 'center' }}
+        >
           {t('pair.pairing')}
         </AppText>
         <AppText tone="muted" style={{ textAlign: 'center', marginTop: 12 }}>
@@ -109,7 +123,11 @@ export default function Pair() {
       >
         {errorBox}
         <PairingMark state="idle" />
-        <AppText variant="display" accessibilityRole="header" style={{ fontSize: 28, lineHeight: 32, textAlign: 'center' }}>
+        <AppText
+          variant="display"
+          accessibilityRole="header"
+          style={{ fontSize: 28, lineHeight: 32, textAlign: 'center' }}
+        >
           {t('pair.confirmTitle', { host })}
         </AppText>
         <AppText tone="muted" style={{ textAlign: 'center', marginTop: 12, maxWidth: 320 }}>

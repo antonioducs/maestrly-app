@@ -29,7 +29,11 @@ export function AttachSheet({
   onPicked: (attachments: OutboxAttachment[]) => void
 }) {
   const { t } = useI18n()
-  const imageOptions: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.8, allowsMultipleSelection: true }
+  const imageOptions: ImagePicker.ImagePickerOptions = {
+    mediaTypes: ['images'],
+    quality: 0.8,
+    allowsMultipleSelection: true,
+  }
 
   async function camera() {
     onClose()
@@ -65,7 +69,9 @@ export function AttachSheet({
   return (
     <Sheet open={open} title={t('attach.title')} onClose={onClose}>
       <Group>
-        {Platform.OS === 'web' ? null : <Cell icon="camera" label={t('attach.takePhoto')} onPress={() => void camera()} />}
+        {Platform.OS === 'web' ? null : (
+          <Cell icon="camera" label={t('attach.takePhoto')} onPress={() => void camera()} />
+        )}
         <Cell icon="image" label={t('attach.choosePhotos')} onPress={() => void photos()} />
         {filesEnabled ? <Cell icon="file" label={t('attach.chooseFile')} onPress={() => void file()} /> : null}
       </Group>

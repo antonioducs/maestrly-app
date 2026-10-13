@@ -14,7 +14,12 @@ function DoingMark() {
   useEffect(() => {
     if (reduced) return
     const loop = Animated.loop(
-      Animated.timing(spin, { toValue: 1, duration: 1000, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 1000,
+        easing: Easing.linear,
+        useNativeDriver: Platform.OS !== 'web',
+      })
     )
     loop.start()
     return () => loop.stop()
@@ -70,13 +75,24 @@ export function TodoCard({ todos }: { todos: FleetTodo[] }) {
             style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 }}
           >
             {state === 'done' ? (
-              <View style={{ width: 17, height: 17, borderRadius: 9, backgroundColor: palette.moss, alignItems: 'center', justifyContent: 'center' }}>
+              <View
+                style={{
+                  width: 17,
+                  height: 17,
+                  borderRadius: 9,
+                  backgroundColor: palette.moss,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
                 <Icon name="check" size={12} color={palette.canvas} strokeWidth={2.6} />
               </View>
             ) : state === 'doing' ? (
               <DoingMark />
             ) : (
-              <View style={{ width: 17, height: 17, borderRadius: 9, borderWidth: 1.5, borderColor: palette.lineStrong }} />
+              <View
+                style={{ width: 17, height: 17, borderRadius: 9, borderWidth: 1.5, borderColor: palette.lineStrong }}
+              />
             )}
             <AppText
               style={{

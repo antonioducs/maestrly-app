@@ -55,7 +55,17 @@ export function RoutineList({ bot }: { bot: FleetBot }) {
         </AppText>
       ) : (
         routines.map((routine) => (
-          <View key={routine.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingVertical: 10, paddingHorizontal: 14 }}>
+          <View
+            key={routine.id}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              minHeight: 56,
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+            }}
+          >
             <View style={{ flex: 1, minWidth: 0 }}>
               <AppText numberOfLines={1}>{routine.title}</AppText>
               <AppText variant="sub" tone="muted" numberOfLines={1}>
@@ -63,7 +73,9 @@ export function RoutineList({ bot }: { bot: FleetBot }) {
               </AppText>
             </View>
             {routine.enabled ? null : (
-              <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: palette.surface }}>
+              <View
+                style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: palette.surface }}
+              >
                 <AppText variant="small" tone="muted">
                   {t('details.routineOff')}
                 </AppText>

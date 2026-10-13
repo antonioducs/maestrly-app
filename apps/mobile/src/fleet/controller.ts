@@ -80,7 +80,8 @@ export function createFleetController(
     dispatch({ type: 'outbox', entries })
     return persist()
   }
-  const replaceEntry = (entry: OutboxEntry) => setOutbox(state.outbox.map((item) => (item.id === entry.id ? entry : item)))
+  const replaceEntry = (entry: OutboxEntry) =>
+    setOutbox(state.outbox.map((item) => (item.id === entry.id ? entry : item)))
 
   async function loadOutbox() {
     const raw = await persistence.get(outboxKey).catch(() => null)

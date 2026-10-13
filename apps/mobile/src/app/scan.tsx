@@ -70,14 +70,17 @@ export default function Scan() {
         actions={
           <>
             {action ? <Button label={action.label} size="lg" variant="onDark" onPress={action.onPress} /> : null}
-            <Button label={t('welcome.manual')} icon="keyboard" size="lg" variant="onDark" onPress={() => router.replace('/pair')} />
+            <Button
+              label={t('welcome.manual')}
+              icon="keyboard"
+              size="lg"
+              variant="onDark"
+              onPress={() => router.replace('/pair')}
+            />
           </>
         }
       >
-        <View
-          aria-hidden
-          style={{ width: FRAME, height: FRAME, alignSelf: 'center', marginTop: 56, marginBottom: 28 }}
-        >
+        <View aria-hidden style={{ width: FRAME, height: FRAME, alignSelf: 'center', marginTop: 56, marginBottom: 28 }}>
           {(['tl', 'tr', 'bl', 'br'] as const).map((position) => (
             <View key={position} style={corner(position, notMaestrly ? '#ff8288' : '#ffffff')} />
           ))}
@@ -91,7 +94,14 @@ export default function Scan() {
         </AppText>
         <AppText
           accessibilityLiveRegion="polite"
-          style={{ color: 'rgba(255,255,255,0.68)', textAlign: 'center', fontSize: 14, lineHeight: 20, maxWidth: 290, alignSelf: 'center' }}
+          style={{
+            color: 'rgba(255,255,255,0.68)',
+            textAlign: 'center',
+            fontSize: 14,
+            lineHeight: 20,
+            maxWidth: 290,
+            alignSelf: 'center',
+          }}
         >
           {help}
         </AppText>

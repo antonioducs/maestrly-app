@@ -15,7 +15,12 @@ export function PairingMark({ state }: { state: 'idle' | 'pairing' | 'done' }) {
     spin.setValue(0)
     if (state !== 'pairing' || reduced) return
     const loop = Animated.loop(
-      Animated.timing(spin, { toValue: 1, duration: 1600, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 1600,
+        easing: Easing.linear,
+        useNativeDriver: Platform.OS !== 'web',
+      })
     )
     loop.start()
     return () => loop.stop()
@@ -24,13 +29,32 @@ export function PairingMark({ state }: { state: 'idle' | 'pairing' | 'done' }) {
   return (
     <View
       aria-hidden
-      style={{ width: 132, height: 132, alignItems: 'center', justifyContent: 'center', marginBottom: 28, alignSelf: 'center' }}
+      style={{
+        width: 132,
+        height: 132,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 28,
+        alignSelf: 'center',
+      }}
     >
       <BrandMark size={84} radius={21} />
       <Animated.View style={{ position: 'absolute', width: 132, height: 132, transform: [{ rotate }] }}>
         <Svg width={132} height={132} viewBox="0 0 40 40">
-          <Path d="M5.26 9.67A18 18 0 0 1 34.74 9.67" fill="none" stroke={palette.brass} strokeWidth={1.6} strokeLinecap="round" />
-          <Path d="M34.74 30.33A18 18 0 0 1 5.26 30.33" fill="none" stroke={palette.brass} strokeWidth={1.6} strokeLinecap="round" />
+          <Path
+            d="M5.26 9.67A18 18 0 0 1 34.74 9.67"
+            fill="none"
+            stroke={palette.brass}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
+          <Path
+            d="M34.74 30.33A18 18 0 0 1 5.26 30.33"
+            fill="none"
+            stroke={palette.brass}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
         </Svg>
       </Animated.View>
       {state === 'done' ? (

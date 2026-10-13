@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { FetchLike } from '../src/gateway/client'
 import { pairWithServer, PairingError } from '../src/servers/pairing'
 
-const meta = { protocol: 1, gatewayVersion: '0.16.0', botImage: 'maestrly-bot', botImageVersion: null, features: ['files'] }
+const meta = {
+  protocol: 1,
+  gatewayVersion: '0.16.0',
+  botImage: 'maestrly-bot',
+  botImageVersion: null,
+  features: ['files'],
+}
 
 function gateway(routes: Record<string, () => { status: number; json?: unknown }>) {
   const calls: Array<{ url: string; method: string; headers: Record<string, string>; body?: string }> = []

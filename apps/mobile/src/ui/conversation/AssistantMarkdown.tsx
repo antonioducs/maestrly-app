@@ -20,11 +20,21 @@ function Caret() {
     loop.start()
     return () => loop.stop()
   }, [opacity, reduced])
-  return <Animated.View style={{ width: 9, height: 9, marginTop: 4, borderRadius: 5, backgroundColor: palette.ink, opacity }} />
+  return (
+    <Animated.View
+      style={{ width: 9, height: 9, marginTop: 4, borderRadius: 5, backgroundColor: palette.ink, opacity }}
+    />
+  )
 }
 
 /** A bot's reply, rendered from Markdown with the app's type and colors; a blinking dot while it streams. */
-export const AssistantMarkdown = memo(function AssistantMarkdown({ text, streaming }: { text: string; streaming: boolean }) {
+export const AssistantMarkdown = memo(function AssistantMarkdown({
+  text,
+  streaming,
+}: {
+  text: string
+  streaming: boolean
+}) {
   const { palette, scheme } = useTheme()
   const options = useMemo(
     () => ({
@@ -58,7 +68,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text, streami
     <View>
       {elements.map((element, index) => (
         // Markdown blocks have no identity of their own; their order is stable while a reply streams.
-        // biome-ignore lint/suspicious/noArrayIndexKey: see above
         <View key={index}>{element}</View>
       ))}
       {streaming ? <Caret /> : null}

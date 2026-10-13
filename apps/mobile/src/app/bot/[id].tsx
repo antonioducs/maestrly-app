@@ -1,15 +1,9 @@
-import { Redirect, router, useLocalSearchParams } from 'expo-router'
-import { useEffect } from 'react'
-import { useServers } from '../../servers/ServersProvider'
+import { Redirect, useLocalSearchParams } from 'expo-router'
+import { useOpenLink } from '../../servers/use-open-link'
 
-/** `maestrly://bot/<id>`: opens that bot's conversation; notifications will link here. */
+/** `maestrly://bot/<id>?server=<server>`: opens that bot's conversation, as a notification does. */
 export default function BotLink() {
-  const { id } = useLocalSearchParams<{ id: string }>()
-  const { servers, controller, setCurrentBotId } = useServers()
-  useEffect(() => {
-    if (!controller) return
-    setCurrentBotId(typeof id === 'string' ? id : null)
-    router.replace('/home')
-  }, [controller, id, setCurrentBotId])
-  return servers.length === 0 ? <Redirect href="/welcome" /> : null
+  const { id, server } = useLocalSearchParams<{ id: string; server?: string }>()
+  const paired = useOpenLink(typeof id === 'string' ? { kind: 'bot', id } : null, server)
+  return paired ? null : <Redirect href="/welcome" />
 }

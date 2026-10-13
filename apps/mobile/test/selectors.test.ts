@@ -25,7 +25,15 @@ const bots = [
 const inbox = [
   {
     botId: 'atlas',
-    interaction: { kind: 'permission' as const, id: 'p2', at: at(5), title: 'Run', detail: null, tool: null, itemId: 'i2' },
+    interaction: {
+      kind: 'permission' as const,
+      id: 'p2',
+      at: at(5),
+      title: 'Run',
+      detail: null,
+      tool: null,
+      itemId: 'i2',
+    },
   },
   {
     botId: 'atlas',
@@ -38,11 +46,14 @@ const inbox = [
 ]
 const state = fleetReducer(initialFleetState, { type: 'snapshot', bots, environments: [studio, research], inbox })
 
-const line = (fields: Partial<FleetBot>) => botStatusLine(botRecord({ id: 'b', name: 'B', role: 'Writer', ...fields }), text)
+const line = (fields: Partial<FleetBot>) =>
+  botStatusLine(botRecord({ id: 'b', name: 'B', role: 'Writer', ...fields }), text)
 
 describe('fleet selectors', () => {
   it('groups bots by environment in server order and searches name, role and environment', () => {
-    expect(botsByEnvironment(state, '').map((group) => [group.name, group.bots.map((bot) => bot.id), group.working])).toEqual([
+    expect(
+      botsByEnvironment(state, '').map((group) => [group.name, group.bots.map((bot) => bot.id), group.working])
+    ).toEqual([
       ['studio', ['juno', 'atlas'], 1],
       ['research', ['ledger'], 0],
       ['Bots', ['loose'], 0],
@@ -78,7 +89,9 @@ describe('fleet selectors', () => {
       line({ status: 'idle', activity: { kind: 'idle', lastTurnSummary: 'Report delivered', lastTurnAt: null } }).text
     ).toBe('Report delivered')
     expect(line({ status: 'idle', activity: null }).text).toBe('Writer')
-    expect(line({ status: 'setup', activity: { kind: 'setup', need: 'compaction' } }).text).toBe('Needs a compaction model')
+    expect(line({ status: 'setup', activity: { kind: 'setup', need: 'compaction' } }).text).toBe(
+      'Needs a compaction model'
+    )
     expect(line({ status: 'paused' }).text).toBe('Paused')
     expect(line({ status: 'offline' }).text).toBe('Stopped')
     expect(line({ status: 'starting' }).text).toBe('Starting…')
@@ -86,8 +99,18 @@ describe('fleet selectors', () => {
   })
 
   it('shows a shell command as a prompt line', () => {
-    const shell = botRecord({ id: 'b', name: 'B', status: 'working', activity: { kind: 'tool', tool: 'bash', target: 'npm test' } })
-    const read = botRecord({ id: 'r', name: 'R', status: 'working', activity: { kind: 'tool', tool: 'read', target: 'a.md' } })
+    const shell = botRecord({
+      id: 'b',
+      name: 'B',
+      status: 'working',
+      activity: { kind: 'tool', tool: 'bash', target: 'npm test' },
+    })
+    const read = botRecord({
+      id: 'r',
+      name: 'R',
+      status: 'working',
+      activity: { kind: 'tool', tool: 'read', target: 'a.md' },
+    })
     expect(statusLineText(shell, botStatusLine(shell, text))).toBe('$ npm test')
     expect(statusLineText(read, botStatusLine(read, text))).toBe('read a.md')
   })

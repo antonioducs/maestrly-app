@@ -19,7 +19,15 @@ const juno = botRecord({ id: 'juno', name: 'Juno' })
 const atlas = botRecord({ id: 'atlas', name: 'Atlas' })
 const permission = {
   botId: 'atlas',
-  interaction: { kind: 'permission' as const, id: 'p1', at: at(1), title: 'Run', detail: null, tool: null, itemId: 'i1' },
+  interaction: {
+    kind: 'permission' as const,
+    id: 'p1',
+    at: at(1),
+    title: 'Run',
+    detail: null,
+    tool: null,
+    itemId: 'i1',
+  },
 }
 
 function loaded(state: FleetState, botId: string, items: FleetTranscriptItem[]): FleetState {
@@ -28,7 +36,12 @@ function loaded(state: FleetState, botId: string, items: FleetTranscriptItem[]):
 
 describe('fleet state', () => {
   it('updates bots in place, adds new ones, and removes a bot with its transcript and requests', () => {
-    let state = fleetReducer(initialFleetState, { type: 'snapshot', bots: [juno, atlas], environments: [], inbox: [permission] })
+    let state = fleetReducer(initialFleetState, {
+      type: 'snapshot',
+      bots: [juno, atlas],
+      environments: [],
+      inbox: [permission],
+    })
     state = fleetReducer(state, event({ type: 'bot.updated', bot: { ...juno, status: 'working' } }))
     expect(state.bots.map((bot) => [bot.id, bot.status])).toEqual([
       ['juno', 'working'],
@@ -44,13 +57,21 @@ describe('fleet state', () => {
   })
 
   it('replaces the whole inbox', () => {
-    let state = fleetReducer(initialFleetState, { type: 'snapshot', bots: [atlas], environments: [], inbox: [permission] })
+    let state = fleetReducer(initialFleetState, {
+      type: 'snapshot',
+      bots: [atlas],
+      environments: [],
+      inbox: [permission],
+    })
     state = fleetReducer(state, event({ type: 'inbox.updated', items: [] }))
     expect(state.inbox).toEqual([])
   })
 
   it('upserts transcript items of a loaded transcript only', () => {
-    let state = fleetReducer(initialFleetState, event({ type: 'transcript.upsert', botId: 'juno', item: assistant('a1', 1, 'x') }))
+    let state = fleetReducer(
+      initialFleetState,
+      event({ type: 'transcript.upsert', botId: 'juno', item: assistant('a1', 1, 'x') })
+    )
     expect(state.transcripts.juno).toBeUndefined()
     state = loaded(state, 'juno', [assistant('a1', 1, 'Hel'), assistant('a2', 2, 'Bye')])
     state = fleetReducer(state, event({ type: 'transcript.upsert', botId: 'juno', item: assistant('a1', 1, 'Hello') }))

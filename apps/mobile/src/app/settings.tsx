@@ -2,6 +2,8 @@ import Constants from 'expo-constants'
 import { router } from 'expo-router'
 import { useState } from 'react'
 import { View } from 'react-native'
+import { useChats } from '../chats/react'
+import type { ChatsState } from '../chats/state'
 import { useI18n, type LocalePreference } from '../i18n'
 import { useServers } from '../servers/ServersProvider'
 import { useTheme, type ThemePreference } from '../theme/ThemeProvider'
@@ -13,11 +15,14 @@ import { Segmented } from '../ui/primitives/Segmented'
 import { AppText } from '../ui/primitives/Text'
 import { SheetScreen } from '../ui/SheetScreen'
 
+const selectHosted = (state: ChatsState) => state.hosted
+
 export default function Settings() {
   const theme = useTheme()
   const { t, preference, setPreference } = useI18n()
   const { active, forget, deviceName } = useServers()
   const [busy, setBusy] = useState(false)
+  const hosted = useChats(selectHosted)
   const server = active?.name ?? ''
 
   async function unpair() {
@@ -57,10 +62,26 @@ export default function Settings() {
     <SheetScreen title={t('settings.title')} onDone={() => router.back()}>
       {active ? (
         <Group label={t('settings.server')}>
-          <Cell icon="server" label={active.name} sub={active.origin.replace(/^https?:\/\//, '')} chevron onPress={() => router.push('/servers')} />
+          <Cell
+            icon="server"
+            label={active.name}
+            sub={active.origin.replace(/^https?:\/\//, '')}
+            chevron
+            onPress={() => router.push('/servers')}
+          />
         </Group>
       ) : null}
-      <AppText variant="label" tone="muted" accessibilityRole="header" style={{ marginTop: 18, marginBottom: 7, marginHorizontal: 6 }}>
+      {hosted ? (
+        <Group label={t('settings.newChats')} foot={t('settings.newChatsFoot', { server })}>
+          <Cell icon="message" label={t('chat.defaults.title')} chevron onPress={() => router.push('/chat-defaults')} />
+        </Group>
+      ) : null}
+      <AppText
+        variant="label"
+        tone="muted"
+        accessibilityRole="header"
+        style={{ marginTop: 18, marginBottom: 7, marginHorizontal: 6 }}
+      >
         {t('settings.appearance')}
       </AppText>
       <Segmented<ThemePreference>
@@ -73,7 +94,12 @@ export default function Settings() {
           { value: 'dark', label: t('theme.dark') },
         ]}
       />
-      <AppText variant="label" tone="muted" accessibilityRole="header" style={{ marginTop: 18, marginBottom: 7, marginHorizontal: 6 }}>
+      <AppText
+        variant="label"
+        tone="muted"
+        accessibilityRole="header"
+        style={{ marginTop: 18, marginBottom: 7, marginHorizontal: 6 }}
+      >
         {t('settings.language')}
       </AppText>
       <Segmented<LocalePreference>
@@ -90,7 +116,12 @@ export default function Settings() {
         <Group label={t('settings.thisPhone')} foot={t('settings.unpairFoot', { server })}>
           <Cell label={t('settings.deviceName')} value={active.deviceName || deviceName} />
           <View style={{ padding: 4 }}>
-            <Button label={t('settings.unpair', { server })} variant="danger" busy={busy} onPress={() => void unpair()} />
+            <Button
+              label={t('settings.unpair', { server })}
+              variant="danger"
+              busy={busy}
+              onPress={() => void unpair()}
+            />
           </View>
         </Group>
       ) : null}

@@ -16,11 +16,12 @@ export default function Welcome() {
   const { t } = useI18n()
   const { exploreDemo } = useServers()
   const [busy, setBusy] = useState(false)
-  const preview: { name: string; tint: string; status: AvatarStatus; line: string; tone: 'mono' | 'cue' | 'plain' }[] = [
-    { name: 'Juno', tint: '#3c8c68', status: 'working', line: t('welcome.previewWorking'), tone: 'mono' },
-    { name: 'Atlas', tint: '#4f7cac', status: 'waiting', line: t('status.permission'), tone: 'cue' },
-    { name: 'Ledger', tint: '#c0663f', status: 'idle', line: t('welcome.previewIdle'), tone: 'plain' },
-  ]
+  const preview: { name: string; tint: string; status: AvatarStatus; line: string; tone: 'mono' | 'cue' | 'plain' }[] =
+    [
+      { name: 'Juno', tint: '#3c8c68', status: 'working', line: t('welcome.previewWorking'), tone: 'mono' },
+      { name: 'Atlas', tint: '#4f7cac', status: 'waiting', line: t('status.permission'), tone: 'cue' },
+      { name: 'Ledger', tint: '#c0663f', status: 'idle', line: t('welcome.previewIdle'), tone: 'plain' },
+    ]
   return (
     <OnboardingScreen
       actions={

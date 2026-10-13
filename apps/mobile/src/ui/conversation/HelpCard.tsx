@@ -1,8 +1,6 @@
 import { FLEET_NOTE_MAX, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { useState } from 'react'
 import { TextInput } from 'react-native'
-import { useFleet } from '../../fleet/react'
-import { interactionForItem } from '../../fleet/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
@@ -13,9 +11,8 @@ import { CardError, CueCard, ResolvedLine, useConversation, useResolver } from '
 export function HelpCard({ item }: { item: Extract<FleetTranscriptItem, { kind: 'help' }> }) {
   const { palette } = useTheme()
   const { t } = useI18n()
-  const { bot } = useConversation()
-  const interaction = useFleet((state) => interactionForItem(state, bot.id, item.id))
-  const { busy, error, run, disabled } = useResolver(interaction?.id ?? null)
+  const { name } = useConversation()
+  const { busy, error, run, disabled } = useResolver(item)
   const [note, setNote] = useState('')
 
   if (item.state === 'resolved')
@@ -29,7 +26,7 @@ export function HelpCard({ item }: { item: Extract<FleetTranscriptItem, { kind: 
   return (
     <CueCard>
       <AppText accessibilityRole="header" style={{ fontSize: 17, lineHeight: 22, fontWeight: '600', marginBottom: 6 }}>
-        {t('help.title', { name: bot.name })}
+        {t('help.title', { name })}
       </AppText>
       <AppText style={{ fontSize: 15, lineHeight: 21, marginBottom: 12 }}>{item.reason}</AppText>
       <TextInput

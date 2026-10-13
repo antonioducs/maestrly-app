@@ -33,7 +33,16 @@ export function OnboardingScreen({
     >
       <View style={{ flex: 1, paddingTop: insets.top + 14, paddingBottom: insets.bottom + 14, paddingHorizontal: 24 }}>
         {back || title ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44, marginHorizontal: -10, marginBottom: 8 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              minHeight: 44,
+              marginHorizontal: -10,
+              marginBottom: 8,
+            }}
+          >
             {back ? (
               <IconButton
                 icon={back.icon}
@@ -55,7 +64,11 @@ export function OnboardingScreen({
         ) : null}
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ flexGrow: 1, justifyContent: center ? 'center' : 'flex-start', alignItems: center ? 'center' : 'stretch' }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: center ? 'center' : 'flex-start',
+            alignItems: center ? 'center' : 'stretch',
+          }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >

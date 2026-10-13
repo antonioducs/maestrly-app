@@ -18,7 +18,9 @@ export function AttachmentChips({
   const { t } = useI18n()
   if (attachments.length === 0) return null
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 4, paddingTop: 2, paddingBottom: 4 }}>
+    <View
+      style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 4, paddingTop: 2, paddingBottom: 4 }}
+    >
       {attachments.map((attachment) =>
         attachment.kind === 'image' ? (
           <View key={attachment.uri}>

@@ -109,7 +109,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
           title: item.title,
           detail: item.detail,
           tool: { name: 'bash', target: item.tool?.target ?? '' },
-          then: { allow: 'atlasDeploy', deny: 'atlasDenied' },
+          next: { allow: 'atlasDeploy', deny: 'atlasDenied' },
         },
       })
       inbox.push({
@@ -128,7 +128,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     if (item.kind === 'question' && item.state === 'pending') {
       pending.set(item.toolCallId, {
         botId: 'pixel',
-        spec: { kind: 'question', questions: item.questions, then: pixelAnswered },
+        spec: { kind: 'question', questions: item.questions, next: pixelAnswered },
       })
       inbox.push({
         botId: 'pixel',
@@ -193,15 +193,35 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       })
       setInbox([
         ...inbox,
-        { botId, interaction: { kind: 'permission', id, at, title: spec.title, detail: spec.detail, tool: spec.tool, itemId } },
+        {
+          botId,
+          interaction: { kind: 'permission', id, at, title: spec.title, detail: spec.detail, tool: spec.tool, itemId },
+        },
       ])
       updateBot(botId, { status: 'waiting', pendingCount: 1, activity: { kind: 'permission', title: spec.title } })
     } else if (spec.kind === 'question') {
-      upsert(botId, { id: itemId, at, kind: 'question', toolCallId: id, questions: spec.questions, state: 'pending', answers: null })
+      upsert(botId, {
+        id: itemId,
+        at,
+        kind: 'question',
+        toolCallId: id,
+        questions: spec.questions,
+        state: 'pending',
+        answers: null,
+      })
       setInbox([...inbox, { botId, interaction: { kind: 'question', id, at, questions: spec.questions, itemId } }])
       updateBot(botId, { status: 'waiting', pendingCount: 1, activity: { kind: 'question' } })
     } else {
-      upsert(botId, { id: itemId, at, kind: 'help', helpId: id, reason: spec.reason, state: 'pending', resolvedAt: null, note: null })
+      upsert(botId, {
+        id: itemId,
+        at,
+        kind: 'help',
+        helpId: id,
+        reason: spec.reason,
+        state: 'pending',
+        resolvedAt: null,
+        note: null,
+      })
       setInbox([...inbox, { botId, interaction: { kind: 'help', id, at, reason: spec.reason, itemId } }])
       updateBot(botId, { status: 'waiting', pendingCount: 1, activity: { kind: 'help', reason: spec.reason } })
     }
@@ -293,18 +313,18 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     if (item?.kind === 'permission' && request.spec.kind === 'permission' && resolution.kind === 'permission') {
       const allowed = resolution.reply !== 'reject'
       upsert(botId, { ...item, state: allowed ? 'approved' : 'denied', resolvedAt })
-      next = DEMO_SCRIPTS[allowed ? request.spec.then.allow : request.spec.then.deny]
+      next = DEMO_SCRIPTS[allowed ? request.spec.next.allow : request.spec.next.deny]
     } else if (item?.kind === 'question' && request.spec.kind === 'question') {
       if (resolution.kind === 'question') {
         upsert(botId, { ...item, state: 'answered', answers: resolution.answers })
-        next = request.spec.then(resolution.answers.flat().join(', '))
+        next = request.spec.next(resolution.answers.flat().join(', '))
       } else {
         upsert(botId, { ...item, state: 'dismissed' })
         next = DEMO_SCRIPTS.questionDismissed
       }
     } else if (item?.kind === 'help' && request.spec.kind === 'help' && resolution.kind === 'help') {
       upsert(botId, { ...item, state: 'resolved', resolvedAt, note: resolution.note })
-      next = DEMO_SCRIPTS[request.spec.then]
+      next = DEMO_SCRIPTS[request.spec.next]
     }
     setInbox(inbox.filter((entry) => entry !== open))
     void run(botId, next)

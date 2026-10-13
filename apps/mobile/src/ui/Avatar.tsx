@@ -49,8 +49,18 @@ export const Avatar = memo(function Avatar({
     else if (waiting)
       loop = Animated.loop(
         Animated.sequence([
-          Animated.timing(breathe, { toValue: 0.45, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: nativeDriver }),
-          Animated.timing(breathe, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: nativeDriver }),
+          Animated.timing(breathe, {
+            toValue: 0.45,
+            duration: 1200,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: nativeDriver,
+          }),
+          Animated.timing(breathe, {
+            toValue: 1,
+            duration: 1200,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: nativeDriver,
+          }),
         ])
       )
     loop?.start()
@@ -70,10 +80,7 @@ export const Avatar = memo(function Avatar({
             : `${tint}52`
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
   return (
-    <View
-      aria-hidden
-      style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
-    >
+    <View aria-hidden style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       <View
         style={{
           width: size * 0.74,

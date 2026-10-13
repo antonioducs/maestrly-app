@@ -23,13 +23,17 @@ const options = [
 
 describe('bot setup', () => {
   it('groups models by provider in the server’s order and searches providers and models', () => {
-    expect(groupOptions(options, '').map((group) => [group.provider, group.options.map((item) => item.modelLabel)])).toEqual([
+    expect(
+      groupOptions(options, '').map((group) => [group.provider, group.options.map((item) => item.modelLabel)])
+    ).toEqual([
       ['Claude', ['Opus 5.5', 'Haiku 5']],
       ['OpenAI', ['GPT-5.5']],
       ['Gemini', ['Gemini 3 Pro']],
     ])
     expect(groupOptions(options, 'CLAUDE').map((group) => group.provider)).toEqual(['Claude'])
-    expect(groupOptions(options, 'pro').flatMap((group) => group.options.map((item) => item.modelLabel))).toEqual(['Gemini 3 Pro'])
+    expect(groupOptions(options, 'pro').flatMap((group) => group.options.map((item) => item.modelLabel))).toEqual([
+      'Gemini 3 Pro',
+    ])
     expect(groupOptions(options, 'nothing')).toEqual([])
   })
 
@@ -41,11 +45,11 @@ describe('bot setup', () => {
   it('summarizes the model and effort a bot uses', () => {
     expect(setupSummary(botRecord({ id: 'b', name: 'B', selection: null }), null, t)).toBe('Bot default')
     const opus = { providerId: 'claude', modelId: 'opus-5.5', fastMode: false }
-    expect(setupSummary(botRecord({ id: 'b', name: 'B', selection: { ...opus, reasoning: 'high' } }), options[0], t)).toBe(
-      'Opus 5.5 · High'
-    )
-    expect(setupSummary(botRecord({ id: 'b', name: 'B', selection: { ...opus, reasoning: null } }), options[0], t)).toBe(
-      'Opus 5.5'
-    )
+    expect(
+      setupSummary(botRecord({ id: 'b', name: 'B', selection: { ...opus, reasoning: 'high' } }), options[0], t)
+    ).toBe('Opus 5.5 · High')
+    expect(
+      setupSummary(botRecord({ id: 'b', name: 'B', selection: { ...opus, reasoning: null } }), options[0], t)
+    ).toBe('Opus 5.5')
   })
 })

@@ -30,7 +30,9 @@ export function ReasoningBlock({ item }: { item: Extract<FleetTranscriptItem, { 
         </View>
       </Pressable>
       {open ? (
-        <View style={{ marginTop: 4, marginLeft: 6, paddingLeft: 13, borderLeftWidth: 1.5, borderLeftColor: palette.line }}>
+        <View
+          style={{ marginTop: 4, marginLeft: 6, paddingLeft: 13, borderLeftWidth: 1.5, borderLeftColor: palette.line }}
+        >
           <AppText variant="sub" tone="muted" selectable style={{ fontSize: 14, lineHeight: 20 }}>
             {item.text}
             {item.truncated ? '…' : ''}

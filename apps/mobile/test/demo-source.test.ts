@@ -21,7 +21,11 @@ describe('demo server', () => {
     const { bots } = await source.call('botsList')
     expect(bots.map((bot) => bot.name)).toEqual(['Juno', 'Atlas', 'Pixel', 'Ledger', 'Scout'])
     const { environments } = await source.call('environmentsList')
-    expect(environments.map((environment) => environment.name)).toEqual(['studio', 'research'])
+    expect(environments.map((environment) => [environment.name, environment.kind])).toEqual([
+      ['studio', 'bots'],
+      ['research', 'bots'],
+      ['Workspaces', 'workspaces'],
+    ])
     expect(bots.find((bot) => bot.id === 'scout')?.status).toBe('offline')
     expect(bots.find((bot) => bot.id === 'atlas')?.status).toBe('waiting')
     const { items } = await source.call('inbox')
@@ -29,7 +33,10 @@ describe('demo server', () => {
     const page = await source.call('botTranscript', { params: { id: 'ledger' }, query: { limit: 50 } })
     expect(page.items).toHaveLength(50)
     expect(page.before).not.toBeNull()
-    const older = await source.call('botTranscript', { params: { id: 'ledger' }, query: { limit: 50, before: page.before } })
+    const older = await source.call('botTranscript', {
+      params: { id: 'ledger' },
+      query: { limit: 50, before: page.before },
+    })
     expect(older.before).toBeNull()
     expect((older.items.at(-1)?.at ?? '') < page.items[0].at).toBe(true)
   })
@@ -50,7 +57,15 @@ describe('demo server', () => {
       if (item.kind === 'assistant') return [`assistant:${item.streaming ? 'streaming' : 'done'}`]
       return [item.kind]
     })
-    const order = ['user', 'bot:working', 'tool:running', 'tool:done', 'assistant:streaming', 'assistant:done', 'bot:idle']
+    const order = [
+      'user',
+      'bot:working',
+      'tool:running',
+      'tool:done',
+      'assistant:streaming',
+      'assistant:done',
+      'bot:idle',
+    ]
     let at = -1
     for (const step of order) {
       const next = trace.indexOf(step, at + 1)
@@ -58,7 +73,9 @@ describe('demo server', () => {
       at = next
     }
     const idle = events.filter((event) => event.type === 'bot.updated').at(-1)
-    expect(idle?.type === 'bot.updated' && idle.bot.activity?.kind === 'idle' && idle.bot.activity.lastTurnSummary).toBeTruthy()
+    expect(
+      idle?.type === 'bot.updated' && idle.bot.activity?.kind === 'idle' && idle.bot.activity.lastTurnSummary
+    ).toBeTruthy()
     const count = events.length
     expect(await source.call('botMessageSend', { params: { id: 'ledger' }, body })).toEqual(receipt)
     await vi.runAllTimersAsync()
@@ -93,7 +110,9 @@ describe('demo server', () => {
     const selection = { providerId: opus.providerId, modelId: opus.modelId, reasoning: 'low', fastMode: false }
     const bot = await source.call('botPatch', { params: { id: 'ledger' }, body: { selection } })
     expect(bot.selection).toEqual(selection)
-    expect(events.some((event) => event.type === 'bot.updated' && event.bot.selection?.modelId === opus.modelId)).toBe(true)
+    expect(events.some((event) => event.type === 'bot.updated' && event.bot.selection?.modelId === opus.modelId)).toBe(
+      true
+    )
   })
 
   it('refuses what the demo does not offer', async () => {

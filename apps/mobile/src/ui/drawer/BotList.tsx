@@ -80,12 +80,24 @@ export function BotList({
     <View>
       {groups.map((group, index) => (
         <View key={group.id || 'loose'} onLayout={(event) => onGroupLayout(group.id, event.nativeEvent.layout.y)}>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, paddingTop: index === 0 ? 10 : 16, paddingBottom: 6, paddingHorizontal: 10 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'baseline',
+              gap: 6,
+              paddingTop: index === 0 ? 10 : 16,
+              paddingBottom: 6,
+              paddingHorizontal: 10,
+            }}
+          >
             <AppText variant="label" tone="muted" accessibilityRole="header">
               {group.name}
             </AppText>
             <AppText variant="small" tone="faint">
-              {[plural('bots.count', group.bots.length), group.working ? t('bots.working', { count: group.working }) : null]
+              {[
+                plural('bots.count', group.bots.length),
+                group.working ? t('bots.working', { count: group.working }) : null,
+              ]
                 .filter(Boolean)
                 .join(' · ')}
             </AppText>

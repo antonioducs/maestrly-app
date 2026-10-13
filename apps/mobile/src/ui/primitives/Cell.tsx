@@ -96,7 +96,10 @@ export function Cell({
       aria-checked={role === 'radio' || role === 'checkbox' ? !!checked : undefined}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [style, { backgroundColor: pressed ? palette.surface : 'transparent', opacity: disabled ? 0.45 : 1 }]}
+      style={({ pressed }) => [
+        style,
+        { backgroundColor: pressed ? palette.surface : 'transparent', opacity: disabled ? 0.45 : 1 },
+      ]}
     >
       {content}
     </Pressable>

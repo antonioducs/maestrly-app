@@ -27,8 +27,20 @@ export function BrandMark({ size, radius }: { size: number; radius?: number }) {
       }}
     >
       <Svg width={size * 0.8} height={size * 0.8} viewBox="-32.7 77.8 966.4 966.4">
-        <Path d="M 188.9 241.4 A 413.0 413.0 0 0 1 711.7 241.1" fill="none" stroke="#C9A86A" strokeWidth={23.3} strokeLinecap="round" />
-        <Path d="M 719.9 874.0 A 413.0 413.0 0 0 1 181.6 874.5" fill="none" stroke="#C9A86A" strokeWidth={23.3} strokeLinecap="round" />
+        <Path
+          d="M 188.9 241.4 A 413.0 413.0 0 0 1 711.7 241.1"
+          fill="none"
+          stroke="#C9A86A"
+          strokeWidth={23.3}
+          strokeLinecap="round"
+        />
+        <Path
+          d="M 719.9 874.0 A 413.0 413.0 0 0 1 181.6 874.5"
+          fill="none"
+          stroke="#C9A86A"
+          strokeWidth={23.3}
+          strokeLinecap="round"
+        />
         <G transform="translate(0,1120) scale(0.1,-0.1)" fill="#EDEAE3" fillRule="evenodd">
           <Path d={M_PATH} />
         </G>

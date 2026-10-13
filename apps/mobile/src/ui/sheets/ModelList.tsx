@@ -10,19 +10,25 @@ import { Cell } from '../primitives/Cell'
 import { Group } from '../primitives/Group'
 import { AppText } from '../primitives/Text'
 
-/** Every model the bot's accounts offer, by provider, with the bot's default on top. */
+/** Every model the accounts offer, by provider, with a default on top when there is one to go back to. */
 export function ModelList({
-  botName,
   options,
   current,
   disabled,
   onPick,
+  defaultChoice,
+  foot,
+  ultra = false,
 }: {
-  botName: string
   options: FleetSelectionOption[]
-  current: FleetSelection | null
+  current: Pick<FleetSelection, 'providerId' | 'modelId'> | null
   disabled: boolean
   onPick: (option: FleetSelectionOption | null) => void
+  /** The choice that clears the model, such as a bot's environment default; none for a chat. */
+  defaultChoice: { label: string; sub: string } | null
+  foot: string
+  /** Whether Ultra counts among a model's levels (chats); bots never run it. */
+  ultra?: boolean
 }) {
   const { palette } = useTheme()
   const { t, plural } = useI18n()
@@ -56,12 +62,12 @@ export function ModelList({
           style={{ flex: 1, height: 40, color: palette.ink, fontFamily: fonts.body, fontSize: 16 }}
         />
       </View>
-      {query.trim() ? null : (
+      {query.trim() || !defaultChoice ? null : (
         <Group>
           <Cell
             icon="bot"
-            label={t('setup.botDefault')}
-            sub={t('setup.botDefaultSub')}
+            label={defaultChoice.label}
+            sub={defaultChoice.sub}
             role="radio"
             checked={current === null}
             disabled={disabled}
@@ -72,7 +78,7 @@ export function ModelList({
       {groups.map((group) => (
         <Group key={group.provider} label={group.provider}>
           {group.options.map((option) => {
-            const efforts = option.efforts.filter((effort) => !effort.includes('ultra')).length
+            const efforts = option.efforts.filter((effort) => ultra || !effort.includes('ultra')).length
             const sub = [
               efforts ? plural('setup.efforts', efforts) : t('setup.noEffortLevels'),
               option.fastMode ? t('setup.fast') : null,
@@ -99,7 +105,7 @@ export function ModelList({
         </AppText>
       ) : null}
       <AppText variant="small" tone="muted" style={{ marginTop: 10, marginHorizontal: 6 }}>
-        {t('setup.modelsFoot', { name: botName })}
+        {foot}
       </AppText>
     </View>
   )

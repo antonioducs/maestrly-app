@@ -18,7 +18,11 @@ export function Pills<T extends string | null>({
 }) {
   const { palette } = useTheme()
   return (
-    <View accessibilityRole="radiogroup" accessibilityLabel={label} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 12 }}>
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={label}
+      style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 12 }}
+    >
       {options.map((option) => {
         const selected = option.value === value
         return (

@@ -1,17 +1,24 @@
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
-import { Image } from 'expo-image'
 import { Pressable, View } from 'react-native'
-import { useFleetController } from '../../fleet/react'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
 import { useConversation } from './CueCard'
+import { TranscriptImage } from './TranscriptImage'
 
 type UserItem = Extract<FleetTranscriptItem, { kind: 'user' }>
 
 /** A file sent with a message, as a small chip with its name. */
-export function FileChip({ name, onRemove, removeLabel }: { name: string; onRemove?: () => void; removeLabel?: string }) {
+export function FileChip({
+  name,
+  onRemove,
+  removeLabel,
+}: {
+  name: string
+  onRemove?: () => void
+  removeLabel?: string
+}) {
   const { palette } = useTheme()
   return (
     <View
@@ -51,7 +58,6 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
   const { palette } = useTheme()
   const { t, plural } = useI18n()
   const { bot } = useConversation()
-  const controller = useFleetController()
   const origin =
     item.source === 'routine' && item.routine
       ? t('user.routine', { title: item.routine.title })
@@ -60,7 +66,11 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
         : item.source === 'continuation'
           ? t('user.continuation')
           : null
-  const queued = item.queued ? (bot.status === 'paused' ? t('user.queuedPaused', { name: bot.name }) : t('user.queued')) : null
+  const queued = item.queued
+    ? bot?.status === 'paused'
+      ? t('user.queuedPaused', { name: bot.name })
+      : t('user.queued')
+    : null
   return (
     <View style={{ alignItems: 'flex-end', gap: 4 }}>
       <View
@@ -83,11 +93,10 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
         {item.images.length ? (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 4 }}>
             {item.images.map((image) => (
-              <Image
+              <TranscriptImage
                 key={image.id}
-                source={controller.source.imageSource(bot.id, image.id)}
-                accessibilityLabel={image.name ?? plural('user.images', 1)}
-                contentFit="cover"
+                imageId={image.id}
+                label={image.name ?? plural('user.images', 1)}
                 style={{ width: 120, height: 120, borderRadius: 12, backgroundColor: palette.raised }}
               />
             ))}

@@ -38,7 +38,10 @@ describe('outbox', () => {
       state: 'waiting',
       attempts: 41,
     })
-    expect(afterSendFailure(base, new GatewayError('INTERNAL', 500, 'x'))).toMatchObject({ state: 'waiting', attempts: 1 })
+    expect(afterSendFailure(base, new GatewayError('INTERNAL', 500, 'x'))).toMatchObject({
+      state: 'waiting',
+      attempts: 1,
+    })
     expect(afterSendFailure({ ...base, attempts: 2 }, new GatewayError('INTERNAL', 503, 'x'))).toMatchObject({
       state: 'failed',
       error: 'server',

@@ -18,7 +18,15 @@ function BotCount() {
   const count = useFleet(selectCount)
   if (count === null) return null
   return (
-    <View style={{ marginTop: 18, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, backgroundColor: palette.surface }}>
+    <View
+      style={{
+        marginTop: 18,
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        borderRadius: 999,
+        backgroundColor: palette.surface,
+      }}
+    >
       <AppText style={{ fontSize: 13.5, fontWeight: '600' }}>{plural('bots.count', count)}</AppText>
     </View>
   )
@@ -32,7 +40,12 @@ export default function Paired() {
   return (
     <OnboardingScreen center actions={<Button label={t('common.continue')} size="lg" onPress={done} />}>
       <PairingMark state="done" />
-      <AppText variant="display" accessibilityRole="header" accessibilityLiveRegion="polite" style={{ fontSize: 28, lineHeight: 32, textAlign: 'center' }}>
+      <AppText
+        variant="display"
+        accessibilityRole="header"
+        accessibilityLiveRegion="polite"
+        style={{ fontSize: 28, lineHeight: 32, textAlign: 'center' }}
+      >
         {t('paired.title', { name: active?.name ?? '' })}
       </AppText>
       <AppText tone="muted" style={{ textAlign: 'center', marginTop: 12, maxWidth: 300 }}>
