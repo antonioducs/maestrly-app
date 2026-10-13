@@ -8,6 +8,7 @@ import {
   type FleetSubscriptionKind,
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_HOST_FILES_FEATURE,
+  FLEET_MOBILE_HOST_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
 } from '@maestrly/bot-fleet-protocol'
 import type { EnvironmentRuntime } from '../../fleet/instance/environment'
@@ -44,6 +45,7 @@ export class HostEnvironment implements InstanceEnvironment {
         FLEET_WORKSPACES_HOST_FEATURE,
         FLEET_HOST_FILES_FEATURE,
         FLEET_HOST_EDITOR_FEATURE,
+        FLEET_MOBILE_HOST_FEATURE,
       ],
       busy: this.busy(),
     }
@@ -57,6 +59,7 @@ export class HostEnvironment implements InstanceEnvironment {
         FLEET_WORKSPACES_HOST_FEATURE,
         FLEET_HOST_FILES_FEATURE,
         FLEET_HOST_EDITOR_FEATURE,
+        FLEET_MOBILE_HOST_FEATURE,
       ],
       bots: [],
     }

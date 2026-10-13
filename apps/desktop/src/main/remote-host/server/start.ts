@@ -11,6 +11,7 @@ import { parseServerModeConfig } from './config'
 import { HostEditor } from './host-editor'
 import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
+import { setHostModelOptions } from './mobile-api'
 
 /** What server mode needs from the main process. */
 export interface ServerHostDeps {
@@ -47,6 +48,8 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
   })
   try {
     await runtime.start()
+    // Phones choose a chat's model from what the host's accounts offer, listed as for bots.
+    setHostModelOptions(async () => (await runtime.selections()).options)
     // Computers move files of the host's folders, and read the copies it makes of PDF attachments for them.
     const hostFiles = new HostFiles({
       roots: () => hostFsRoots().map((root) => root.path),

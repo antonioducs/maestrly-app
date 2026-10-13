@@ -488,6 +488,20 @@ bots. A paired computer drives it through a **bridge**: see
   without reading them. A device holds at most eight bridges. Revoking a
   device discards its tickets and closes its bridges; stopping or archiving
   the environment closes every bridge to it.
+- **A phone reaches only the mobile API.** A phone says it is one in its first
+  frame and then may call only the versioned `mobile:v1:*` channels
+  (`packages/bot-fleet-protocol/src/mobile-bridge.ts`): list, create, open,
+  rename and archive chats; send messages and attachments; answer permission
+  requests, questions and plans; change a chat's model, effort, Fast, mode,
+  permission mode, MCP servers and skills; compact; and read the images of what
+  it was sent. It never calls the host's IPC handlers directly: the host runs
+  them on its behalf through a window of its own that the phone cannot address,
+  so a phone cannot read files, open terminals, change accounts or change
+  settings. A phone does not change the host's language. A phone's WebSocket
+  always sends an `Origin` header, which the gateway refuses elsewhere: the
+  phone names that origin when it asks for the ticket (`mobile-bridge`), the
+  upgrade may carry that one origin only, and the gateway strips it before the
+  host sees the handshake.
 - **The host refuses what belongs to a desktop.** For a computer's renderer it
   refuses channels that drive a window, native views, sound, updates, the bot
   fleet client and its installer, and the microphone, and channels whose
