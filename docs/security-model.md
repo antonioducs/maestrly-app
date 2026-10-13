@@ -648,7 +648,21 @@ line, scripts and executables, and every component with its support status.
   permission gate. An update that changes a launch line or an MCP endpoint, or
   adds executables, asks again. A stdio server whose launch line no longer
   matches its consent stays off.
-- **Never run.** Hooks, monitors, LSP servers, `bin/` executables, MCP bundles,
+- **Hooks.** Hook commands run without asking at their events, on the host,
+  with the user's permissions, so they need an explicit approval of the exact
+  list of hooks (event, matcher, command and timeout). Maestrly keeps a digest
+  of that list and runs only hooks whose digest matches; an update that changes
+  them asks again. Hooks run only in Agent and Design conversations, never in
+  Ask, Plan or Maestro, nor for a review-loop reviewer. Each runs with a time
+  limit (60 seconds by default, at most 10 minutes) and an output limit of
+  1 MiB, and its whole process group is ended on timeout or Stop. A hook can
+  deny a tool call or block a prompt, but its `allow` or `ask` answer never
+  skips Maestrly's permission gate. The transcript a hook can read is an
+  owner-only temporary file deleted when the turn ends. Hook messages are shown
+  above the composer and never stored. With tool hooks, Codex threads get no
+  native shell, patch or web search tools, so every call goes through them.
+- **Never run.** Hooks on events Maestrly does not control, hooks that are not
+  commands, monitors, LSP servers, `bin/` executables, MCP bundles,
   OpenAI app connectors and `command` plugin sources never run. Each one is
   listed with its reason; nothing is dropped silently. Native Codex apps,
   plugins, and tool suggestions are disabled on every Codex thread, so a

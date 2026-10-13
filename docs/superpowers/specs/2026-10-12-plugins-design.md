@@ -41,7 +41,8 @@ The parts left out are still listed with their reasons.
 ## Non-goals
 
 - Repository-local marketplaces (`<project>/.agents/plugins/marketplace.json`). Excluded by the owner for this delivery.
-- Running hooks, LSP servers, monitors, output styles, themes, workflows, or `bin/` executables.
+- Running hooks on events Maestrly does not control or of a type other than `command`, LSP servers, monitors, output
+  styles, themes, workflows, or `bin/` executables.
 - npm, archive, and `command` plugin sources. They are listed as unsupported. `command` sources run a shell command
   and will not be supported.
 - Private repositories and any interactive Git credential. Downloads use HTTPS without credentials.
@@ -249,7 +250,7 @@ level (Phase 6): a plugin either works the same with every model or is not offer
 | `portable` | Works with every model | Otherwise. |
 
 The blocking codes are `BLOCKING_REASON_CODES`; the blocking reason comes first. Every other reason is a note on a part
-that is not included (an app connector, hooks, a non-adapted agent, an unsupported component, an invalid or skipped
+that is not included (an app connector, a hook Maestrly does not run, an agent tool with no equivalent, an unsupported component, an invalid or skipped
 entry, an unsupported transport, a publisher or placeholder OAuth client). The catalog lists only portable plugins and
 counts the rest with their first blocking reason; the details list blocking reasons and notes separately.
 
@@ -397,7 +398,9 @@ Identifiers:
   - Plugins with executable files or `scripts/` require acknowledging that agents may run them through the normal
     `bash` permission gate.
   - Updates that change a stdio launch line or an HTTP endpoint, or that add executables, ask again.
-- **Never run:** hooks, monitors, `bin/`, and `command` sources never run.
+  - Hooks need their own approval of the exact list (event, matcher, command, timeout). Its digest (`hookDigest`) is
+    stored in `consent.hooks`, and only matching hooks run; an update that changes them answers `consent-required`.
+- **Never run:** hooks on other events or of other types, monitors, `bin/`, and `command` sources never run.
 - **Package safety:**
   - A plugin-relative path must start with `./` and stay inside the root, checked lexically and with `realpath`.
   - Symbolic links and submodules are not installed; they are reported.
@@ -543,6 +546,21 @@ model.
   `TodoWrite` and `NotebookEdit` are dropped and noted per agent. `model` is ignored, so the agent inherits the parent's
   profile. An agent without a description or a body is an invalid entry. A project or home agent with the same name
   wins. Agents count as a portable part, so an agents-only plugin is offered.
+- **Hooks (Phase 9)** are emulated in the main process with Claude Code's contract (`plugins/hooks-scan.ts`,
+  `plugins/hook-command.ts`, `chat/plugin-hooks.ts`) for `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+  `PostToolUse`, `PostToolUseFailure` and `Stop` command hooks; other events and types are noted `hook-unsupported`.
+  - Hooks run only in Agent and Design, never in Ask, Plan, Maestro or for a review-loop reviewer.
+  - Tool hooks wrap every runtime's Maestrly tools and subagents' tools, with Claude tool names and inputs. Only `deny`
+    takes effect from `permissionDecision`; `allow` and `ask` never skip Maestrly's permission.
+  - A Codex conversation with tool hooks runs with `environments: []`, `features.shell_tool=false` and web search off,
+    using Maestrly's `bash`, `read`, `write`, `edit`, `grep` and `glob`.
+  - `startSend` runs `SessionStart` (startup, clear, compact, tracked by the compaction boundary in `hookSession`) and
+    `UserPromptSubmit` before the prompt is stored, as hidden parts; a block returns `blocked-by-hook`. `Stop` can keep
+    the agent going with an internal turn, at most 8 times in a row. Steering waits for its own turn when prompt hooks
+    exist.
+  - The ChatGPT Web companion runs tool hooks around its tools and refuses to start (`companion-hooks-unsupported`)
+    when session, prompt or Stop hooks apply.
+  - Hook notices are a `hook-notice` stream event, shown above the composer and never stored.
 - Adapted components are marked `adapted`.
 - **Catalog value:** before Phase 6, adapting commands alone moved three plugins to Portable (build-macos-apps,
   cloudflare, expo). Under the two-state rule, figma and vercel are offered (their connectors are noted), and zoom
@@ -582,5 +600,7 @@ Each phase is one PR, validated with `npm run verify:pr -- --title "<title>" --f
   - **Local:** add a fixture source, inspect, install with consent, and see plugin skills in the composer. A scripted
     model sees the plugin skill catalog and calls a plugin stdio tool.
   - **Remote host:** the same through the host selector.
+  - **Hooks:** approved hooks block a prompt, add session and prompt context, deny and comment on tool calls, and keep
+    the agent going from `Stop`, with a scripted model; an Ask conversation runs none.
   - **Bots:** environment settings against the fake gateway, plus the container fleet script.
 - **Fixtures:** test fixtures never copy files from `openai/plugins` or other third-party plugins.

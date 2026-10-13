@@ -154,6 +154,24 @@ it already uses for skills and MCP. Contexts that switch MCP off by id cover
 plugin servers too. On a remote workspaces host, the `chat:plugins:*` channels
 run on the host, so a remote conversation uses the host's plugins.
 
+Plugin hooks run in the main process, never in a provider runtime, with
+Claude Code's stdin/stdout contract (`chat/plugin-hooks.ts`,
+`plugins/hook-command.ts`). `listPluginHooks` returns only the hooks whose
+digest the person approved. Tool hooks wrap each runtime's Maestrly `ToolSet`
+(`wrapToolSetWithHooks`) before it is adapted to the model, for the API-key,
+Claude, Codex, Cursor, GitHub Copilot and Google AI runtimes and for
+subagents; tool names and inputs are translated to Claude Code's
+(`chat/plugin-hook-tools.ts`). A Codex thread with tool hooks starts without
+environments, shell or web search and receives Maestrly's shell and file
+tools instead, under its own thread key. `startSend` runs `SessionStart` and
+`UserPromptSubmit` before the prompt is stored, as hidden parts of the
+message (outside the cached project context), records the session's
+compaction boundary in the conversation's preferences, and turns a `Stop`
+hook's reason into an internal continuation turn, like the Maestro
+reconciliation guard. The ChatGPT Web bridge takes `toolHooks` around its
+tools; the manager refuses a companion when turn hooks apply. Hook notices are
+a stream event (`hook-notice`) that is never persisted.
+
 A bot environment serves the same engine through environment-settings
 operations behind the `environment-plugins-v1` feature (gateway) and capability
 (instance). The protocol lists the plugin operations explicitly

@@ -161,6 +161,12 @@ updates, and deletes directories no record references. Uninstalling removes the
 plugin's servers, cached tool catalogs, skill settings, stored values and
 installed files.
 
+Plugin hooks keep little state. A conversation's `hookSession` preference
+records where its `SessionStart` hooks last ran. While a turn runs hooks, the
+conversation's text is copied to an owner-only file under the system temporary
+folder (`maestrly-hook-transcripts/`) for hooks that read `transcript_path`;
+the file is deleted when the turn ends. Hook messages are never stored.
+
 A remote workspaces host and a bot environment keep the same records and files in
 their own profile, in the environment's persistent home volume. A plugin brought
 from a computer is downloaded there from its source; the computer keeps its own

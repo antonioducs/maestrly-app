@@ -59,10 +59,11 @@ the same with every model** opens the plugins left out, each with its reason. A 
 - it has no skill and no MCP server Maestrly can run;
 - its manifest is invalid, or its source or marketplace rules it out.
 
-Maestrly adapts what it can. A plugin's commands become skills you start yourself with `/<plugin>:<command>`, and its
-agents become subagents (see [Agents](#agents)). Parts that only work inside one product, such as app connectors,
-hooks, and language servers, are never enabled for any model. They appear in the plugin's details under **Not
-included**, each with its reason; none is dropped silently.
+Maestrly adapts what it can. A plugin's commands become skills you start yourself with `/<plugin>:<command>`, its
+agents become subagents (see [Agents](#agents)), and Maestrly runs its hooks itself (see [Hooks](#hooks)). Parts that
+only work inside one product, such as app connectors, language servers, and hooks on events Maestrly does not control,
+are never enabled for any model. They appear in the plugin's details under **Not included**, each with its reason;
+none is dropped silently.
 
 An installed plugin that stops being compatible, for example after its files change, stops applying to every
 conversation. It stays in **Installed** with its reason, where you can update or uninstall it.
@@ -78,6 +79,8 @@ Choose **Install**. Before anything is installed, Maestrly asks you to:
 - approve each MCP server that runs as a local process (stdio);
 - acknowledge that the plugin ships scripts or executables that agents may run, with your approval, through the shell
   tool;
+- approve the plugin's [hooks](#hooks), if it has any. Each hook is listed with its event and command. You can install
+  the plugin without them and switch them on later;
 - choose where the plugin applies: **All conversations**, or **Selected projects** of the host;
 - fill in the settings the plugin asks for. Secret values are masked, stored encrypted on the host, and never shown
   again.
@@ -104,6 +107,45 @@ model can delegate to with `task` or a `#<plugin>-<agent>` mention, like your ow
   **Settings → Maestrly Chat → Subagents** chooses another, so it behaves the same with every provider.
 - **Names.** An agent file of the project (`.claude/agents`, `.agents/agents`) or of your home with the same name wins
   over the plugin's.
+
+### Hooks
+
+A plugin's hooks (`hooks/hooks.json`, or `hooks` in its manifest) are commands its publisher wrote to run at set moments
+of a conversation. Maestrly runs them itself, with Claude Code's input and output format, so they behave the same with
+every model.
+
+- **Approval.** Hooks run only after you approve them, at install or later with the **Hooks** switch under
+  **Installed**. An update that changes them asks again.
+- **Where.** Hooks run only in Agent and Design conversations, on the host that runs the conversation, in its folder.
+  They never run in Ask, Plan, or Maestro conversations, or for the reviewer of a review loop.
+- **Events.**
+
+  | Event | When | What the hook can do |
+  | --- | --- | --- |
+  | `SessionStart` | The first turn of a conversation, and the first after clearing or compacting it | Add context for the model |
+  | `UserPromptSubmit` | Each message you send, before it is stored | Add context, or block the message |
+  | `PreToolUse` | Before each tool call | Block the call, or change its input |
+  | `PostToolUse`, `PostToolUseFailure` | After a tool call succeeds or fails | Add text the model reads with the result |
+  | `Stop` | When the agent ends a turn | Keep the agent going with a reason, at most 8 times in a row |
+
+  Other events, and hooks that are not commands, are listed under **Not included**.
+- **Tools.** Hooks see Maestrly's tools with Claude Code's names and inputs: `bash` is `Bash`, `edit` is `Edit` with
+  `file_path`, and an MCP tool is `mcp__<server>__<tool>`, so matchers such as `Edit|Write` work. A hook can deny a
+  call, but its `allow` or `ask` answer never skips Maestrly's own permission.
+- **Every model.** In a conversation with tool hooks, Codex models use Maestrly's shell and file tools instead of their
+  own, so every call goes through the hooks. Subagents' tool calls run them too.
+- **Messages.** A hook's `systemMessage`, failure, or timeout shows above the composer and is not stored in the
+  conversation. Context from a hook reaches the model as hidden parts of your message. When a hook blocks a message,
+  the message comes back to the composer.
+- **Running.** A hook gets its input as JSON on standard input, and `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_ROOT`,
+  `CLAUDE_PLUGIN_DATA`, `PLUGIN_ROOT`, and `PLUGIN_DATA` in its environment. It has 60 seconds unless it sets another
+  timeout, up to 10 minutes; **Stop** ends it. Its `transcript_path` is a temporary copy of the conversation's text,
+  deleted when the turn ends.
+- **While the agent works.** With `UserPromptSubmit` hooks, a message you send during a turn waits for a turn of its
+  own instead of steering the current one, so the hooks see it.
+- **ChatGPT companion.** The ChatGPT Web companion runs tool hooks around its tools. Its turns run in ChatGPT, where
+  Maestrly cannot run `SessionStart`, `UserPromptSubmit`, or `Stop` hooks, so it does not start in an Agent
+  conversation with a plugin that has them. Switch that plugin's hooks off, or limit where the plugin applies.
 
 A plugin's MCP servers appear in the **+** menu and in **Settings → Maestrly Chat → Tools**, marked **From
 &lt;plugin&gt;**. You can switch a server off in one conversation from the **+** menu. Switch it off everywhere, or back
@@ -151,8 +193,9 @@ A plugin whose server declares only a client its publisher fills in signs in thi
 - switch it on or off;
 - **Change** where it applies;
 - switch each of its MCP servers on or off;
-- **Update** it when its source has a newer version. If the new version changes what runs, such as a new local server
-  or new scripts, Maestrly asks for your approval again;
+- switch its hooks on or off. Switching them on shows them for your approval;
+- **Update** it when its source has a newer version. If the new version changes what runs, such as a new local server,
+  new scripts, or changed hooks, Maestrly asks for your approval again;
 - **Edit settings**;
 - **Uninstall** it. Its skills and MCP tools leave every conversation, and its saved settings are deleted. Choose
   **Also delete the plugin's data** to remove the files its servers keep.
