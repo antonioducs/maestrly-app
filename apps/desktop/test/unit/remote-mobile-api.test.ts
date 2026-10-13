@@ -423,6 +423,29 @@ describe('mobile API of a workspaces host', () => {
     h.api.dispose()
   })
 
+  it('keeps a long message, and shows how a failed or stopped turn ended', async () => {
+    const h = setup()
+    h.state.messages = [
+      user('m1', 'x'.repeat(20_000)),
+      { ...answer('m2', 'Half'), finishReason: undefined, error: 'The provider refused the request' },
+      user('m3', 'Again', T0 + 100),
+      { ...answer('m4', 'Stop', T0 + 110), finishReason: 'aborted' },
+    ]
+    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as {
+      page: { items: Array<{ kind: string; id: string; text?: string | null; code?: string }> }
+    }
+    const items = opened.page.items
+    expect(items[0]).toMatchObject({ kind: 'user' })
+    expect(items[0].text).toHaveLength(16_000)
+    expect(items.filter((item) => item.kind === 'system')).toEqual([
+      expect.objectContaining({ id: 'm2:end', code: 'turn_failed', text: 'The provider refused the request' }),
+      expect.objectContaining({ id: 'm4:end', code: 'turn_cancelled', text: null }),
+    ])
+    // Each ends its own turn, after its answer.
+    expect(items.map((item) => item.id).indexOf('m2:end')).toBe(items.map((item) => item.id).indexOf('m2:1') + 1)
+    h.api.dispose()
+  })
+
   it('refuses unknown channels and stops hearing the host once disposed', async () => {
     const h = setup()
     await expect(h.invoke('chat:send')).rejects.toMatchObject({ code: 'unknown-channel' })

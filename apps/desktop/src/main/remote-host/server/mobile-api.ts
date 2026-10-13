@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   compareFleetTranscriptItems,
+  FLEET_MESSAGE_TEXT_MAX,
   FLEET_TOOL_OUTPUT_MAX,
   MOBILE_BRIDGE_LIMITS,
   MOBILE_CHANNEL_KEYS,
@@ -616,7 +617,16 @@ export class MobileApi {
       const time = order?.get(message.id) ?? Math.max(message.createdAt, previous + 1)
       order?.set(message.id, time)
       previous = time
-      return time === message.createdAt ? message : { ...message, createdAt: time }
+      // A transcript's user item holds at most FLEET_MESSAGE_TEXT_MAX characters; a longer paste would drop the item.
+      const parts =
+        message.role === 'user' && message.parts.some((part) => part.type === 'text' && part.text.length > FLEET_MESSAGE_TEXT_MAX)
+          ? message.parts.map((part) =>
+              part.type === 'text' && part.text.length > FLEET_MESSAGE_TEXT_MAX
+                ? { ...part, text: part.text.slice(0, FLEET_MESSAGE_TEXT_MAX - 1) + '…' }
+                : part
+            )
+          : message.parts
+      return time === message.createdAt && parts === message.parts ? message : { ...message, createdAt: time, parts }
     })
     const owner = new Map<Extract<MessagePart, { type: 'tool' }>, ChatMessage>()
     for (const message of messages) {
@@ -657,7 +667,22 @@ export class MobileApi {
           ]
         })
     })
-    return projected.map((item) => this.dispatchItem(item, messages) ?? item)
+    const items: MobileChatItem[] = projected.map((item) => this.dispatchItem(item, messages) ?? item)
+    // How a turn ended when it did not end well: the desktop shows it under the answer, and so does the phone.
+    for (const message of messages) {
+      if (message.role !== 'assistant' || message.internal) continue
+      const code = message.error ? 'turn_failed' : message.finishReason === 'aborted' ? 'turn_cancelled' : null
+      if (code)
+        items.push({
+          kind: 'system',
+          id: `${message.id}:end`,
+          at: new Date(message.createdAt).toISOString(),
+          code,
+          text: message.error ? message.error.slice(0, 500) : null,
+          durationMs: message.responseDurationMs ?? null,
+        })
+    }
+    return items.sort(compareFleetTranscriptItems)
   }
 
   /** A `start_conversations` call as the card of the conversations it started. */
