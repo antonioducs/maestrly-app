@@ -1,0 +1,331 @@
+import { z } from 'zod'
+import { fleetCeilingSchema, fleetSelectionOptionSchema, fleetTimestampSchema, fleetTranscriptItemSchema } from './domain.js'
+
+/**
+ * The mobile API of a workspaces host: what a phone reaches over the bridge (see `FLEET_GATEWAY_ROUTES.bridge`). A
+ * computer's bridge runs the host's own IPC handlers and needs the exact same app version; a phone, released through
+ * stores on its own schedule, speaks only these versioned channels instead. Chat messages reach it as the transcript
+ * items bots use (`fleetTranscriptItemSchema`), so one conversation view serves both.
+ */
+export const MOBILE_API_VERSION = 1
+/** The bridge's frame protocol, the same for computers and phones. */
+export const MOBILE_BRIDGE_PROTOCOL = 1
+
+export const MOBILE_BRIDGE_LIMITS = {
+  /** A phone sends attachments as base64 inside one frame. */
+  maxFrameBytes: 64 * 1024 * 1024,
+  /** The host pings every 15 s; a phone that hears nothing for longer than this reconnects. */
+  silenceMs: 45_000,
+  welcomeTimeoutMs: 10_000,
+  invokeTimeoutMs: 30_000,
+  pageSize: 40,
+  /** Send requests a host remembers per conversation, so that a phone resending after a reconnect sends once. */
+  sendKeysKept: 200,
+} as const
+
+/** Why a host closed a bridge socket; 4002 before a welcome also means a host that predates phones. */
+export const MOBILE_BRIDGE_CLOSE = { dead: 4001, badFrame: 4002, refused: 4003, slowClient: 4008 } as const
+
+const id = z.string().min(1).max(200)
+const name = z.string().max(400)
+
+export const mobileConversationStatusSchema = z.enum(['idle', 'working', 'ready', 'waiting', 'asking', 'error'])
+export type MobileConversationStatus = z.infer<typeof mobileConversationStatusSchema>
+export const mobileExperienceSchema = z.enum(['standard', 'maestro'])
+export type MobileExperience = z.infer<typeof mobileExperienceSchema>
+
+/** A chat of the host: standalone (no workspace) or in one of its workspaces, on its own branch. */
+export const mobileConversationSchema = z.object({
+  id,
+  name,
+  workspaceId: id.nullable(),
+  workspaceName: name.nullable(),
+  branch: z.string().max(300).nullable(),
+  status: mobileConversationStatusSchema,
+  lastActivityAt: fleetTimestampSchema,
+  pinned: z.boolean(),
+  experience: mobileExperienceSchema,
+})
+export type MobileConversation = z.infer<typeof mobileConversationSchema>
+
+export const mobileWorkspaceSchema = z.object({
+  id,
+  name,
+  defaultBranch: z.string().max(300).nullable(),
+  conversations: z.array(mobileConversationSchema),
+})
+export type MobileWorkspace = z.infer<typeof mobileWorkspaceSchema>
+
+export const mobileListsSchema = z.object({
+  workspaces: z.array(mobileWorkspaceSchema),
+  chats: z.array(mobileConversationSchema),
+})
+export type MobileLists = z.infer<typeof mobileListsSchema>
+
+/** Conversations an agent started from this one (`start_conversations`), each to open from the card. */
+export const mobileDispatchItemSchema = z.object({
+  kind: z.literal('dispatch'),
+  id,
+  at: fleetTimestampSchema,
+  state: z.enum(['running', 'done', 'error']),
+  conversations: z
+    .array(
+      z.object({
+        conversationId: id.nullable(),
+        title: name,
+        status: z.enum(['started', 'start-failed', 'failed', 'skipped']),
+        workspaceName: name.nullable(),
+        error: z.string().max(1000).nullable(),
+      })
+    )
+    .max(50),
+})
+export type MobileDispatchItem = z.infer<typeof mobileDispatchItemSchema>
+
+export const mobileChatItemSchema = z.union([fleetTranscriptItemSchema, mobileDispatchItemSchema])
+export type MobileChatItem = z.infer<typeof mobileChatItemSchema>
+
+/** Items oldest first; `before` asks for the page before them, null at the start of the conversation. */
+export const mobileChatPageSchema = z.object({ items: z.array(mobileChatItemSchema), before: z.string().nullable() })
+export type MobileChatPage = z.infer<typeof mobileChatPageSchema>
+
+/** A plan the agent wrote in Plan mode, waiting for a decision. */
+export const mobilePlanSchema = z.object({ version: z.number().int(), title: z.string().nullable(), text: z.string() })
+export type MobilePlan = z.infer<typeof mobilePlanSchema>
+
+export const mobileRuntimeSchema = z.object({
+  streaming: z.boolean(),
+  compacting: z.boolean(),
+  plan: mobilePlanSchema.nullable(),
+  context: z
+    .object({
+      usedTokens: z.number().int().nonnegative(),
+      windowTokens: z.number().int().positive().nullable(),
+      quality: z.enum(['measured', 'estimated']),
+    })
+    .nullable(),
+})
+export type MobileRuntime = z.infer<typeof mobileRuntimeSchema>
+
+export const mobileChatModeSchema = z.enum(['agent', 'design', 'plan', 'ask'])
+export type MobileChatMode = z.infer<typeof mobileChatModeSchema>
+/** Same values and meaning as a bot's ceiling: ask, approve for me, full access. */
+export const mobilePermModeSchema = fleetCeilingSchema
+export type MobilePermMode = z.infer<typeof mobilePermModeSchema>
+const modelRef = z.object({ providerId: id, modelId: id })
+
+export const mobileChatSetupSchema = z.object({
+  /** Null: the host's default model. */
+  selection: modelRef.nullable(),
+  /** `off` uses the model's own default. */
+  reasoning: z.string().max(40),
+  fastMode: z.boolean(),
+  mode: mobileChatModeSchema,
+  permMode: mobilePermModeSchema,
+  experience: mobileExperienceSchema,
+  mcp: z.array(z.object({ id, name, enabled: z.boolean() })),
+  skills: z.array(
+    z.object({
+      name: z.string().max(200),
+      description: z.string().max(2000),
+      enabled: z.boolean(),
+      override: z.enum(['on', 'off']).nullable(),
+    })
+  ),
+})
+export type MobileChatSetup = z.infer<typeof mobileChatSetupSchema>
+
+export const mobileChatSetupPatchSchema = z
+  .object({
+    selection: modelRef.optional(),
+    reasoning: z.string().min(1).max(40).optional(),
+    fastMode: z.boolean().optional(),
+    mode: mobileChatModeSchema.optional(),
+    permMode: mobilePermModeSchema.optional(),
+    mcp: z.object({ id, enabled: z.boolean() }).strict().optional(),
+    skill: z.object({ name: z.string().min(1).max(200), state: z.enum(['on', 'off', 'inherit']) }).strict().optional(),
+  })
+  .strict()
+export type MobileChatSetupPatch = z.infer<typeof mobileChatSetupPatchSchema>
+
+export const mobileAttachmentSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    kind: z.enum(['image', 'pdf', 'text']),
+    mediaType: z.string().min(1).max(100),
+    dataBase64: z.string().max(Math.ceil((10 * 1024 * 1024) / 3) * 4 + 4),
+  })
+  .strict()
+export type MobileAttachment = z.infer<typeof mobileAttachmentSchema>
+
+const conversationArgs = z.object({ conversationId: id }).strict()
+const ok = z.object({ ok: z.boolean(), error: z.string().max(500).optional() })
+
+/** Every call a phone makes: its channel, what it sends and what it gets back. Errors carry a `code`. */
+export const MOBILE_CHANNELS = {
+  lists: { channel: 'mobile:v1:lists', args: z.object({}).strict(), result: mobileListsSchema },
+  create: {
+    channel: 'mobile:v1:conversation:create',
+    args: z
+      .object({
+        /** Null: a standalone chat. */
+        workspaceId: id.nullable(),
+        name: z.string().trim().min(1).max(200).optional(),
+        experience: mobileExperienceSchema.optional(),
+      })
+      .strict(),
+    result: mobileConversationSchema,
+  },
+  open: {
+    channel: 'mobile:v1:conversation:open',
+    args: conversationArgs,
+    result: z.object({
+      conversation: mobileConversationSchema,
+      /** The conversation this one was started from, when an agent started it. */
+      sourceConversationId: id.nullable(),
+      page: mobileChatPageSchema,
+      runtime: mobileRuntimeSchema,
+    }),
+  },
+  close: { channel: 'mobile:v1:conversation:close', args: conversationArgs, result: z.null() },
+  page: {
+    channel: 'mobile:v1:conversation:page',
+    args: z.object({ conversationId: id, before: z.string().min(1).max(100) }).strict(),
+    result: mobileChatPageSchema,
+  },
+  send: {
+    channel: 'mobile:v1:conversation:send',
+    args: z
+      .object({
+        conversationId: id,
+        text: z.string().max(100_000),
+        attachments: z.array(mobileAttachmentSchema).max(8),
+        /** The phone's id for this message: a resend of the same id is not sent twice. */
+        clientId: z.uuid(),
+      })
+      .strict(),
+    result: z.object({ status: z.enum(['started', 'duplicate']) }),
+  },
+  stop: { channel: 'mobile:v1:conversation:stop', args: conversationArgs, result: z.null() },
+  rename: {
+    channel: 'mobile:v1:conversation:rename',
+    args: z.object({ conversationId: id, name: z.string().trim().min(1).max(200) }).strict(),
+    result: z.null(),
+  },
+  archive: {
+    channel: 'mobile:v1:conversation:archive',
+    args: z.object({ conversationId: id, archived: z.boolean() }).strict(),
+    result: z.null(),
+  },
+  permission: {
+    channel: 'mobile:v1:permission',
+    args: z
+      .object({ conversationId: id, requestId: id, reply: z.enum(['once', 'always', 'reject']) })
+      .strict(),
+    result: z.null(),
+  },
+  question: {
+    channel: 'mobile:v1:question',
+    /** No answers dismisses the question. */
+    args: z
+      .object({ conversationId: id, toolCallId: id, answers: z.array(z.array(z.string().max(4000)).max(20)).max(20) })
+      .strict(),
+    result: z.null(),
+  },
+  plan: {
+    channel: 'mobile:v1:plan',
+    args: z
+      .object({
+        conversationId: id,
+        action: z.enum(['approve', 'revise', 'discard']),
+        feedback: z.string().max(10_000).optional(),
+      })
+      .strict(),
+    result: ok,
+  },
+  setup: { channel: 'mobile:v1:setup', args: conversationArgs, result: mobileChatSetupSchema },
+  setSetup: {
+    channel: 'mobile:v1:setup:set',
+    args: z.object({ conversationId: id, patch: mobileChatSetupPatchSchema }).strict(),
+    result: mobileChatSetupSchema,
+  },
+  models: {
+    channel: 'mobile:v1:models',
+    args: z.object({}).strict(),
+    result: z.object({ options: z.array(fleetSelectionOptionSchema), defaultSelection: modelRef.nullable() }),
+  },
+  compact: { channel: 'mobile:v1:compact', args: conversationArgs, result: ok },
+  image: {
+    channel: 'mobile:v1:image',
+    args: z.object({ conversationId: id, imageId: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/) }).strict(),
+    result: z.object({ mediaType: z.string().max(100), dataBase64: z.string() }),
+  },
+} as const
+export type MobileChannels = typeof MOBILE_CHANNELS
+export type MobileChannelKey = keyof MobileChannels
+export type MobileArgs<K extends MobileChannelKey> = z.input<MobileChannels[K]['args']>
+export type MobileResult<K extends MobileChannelKey> = z.output<MobileChannels[K]['result']>
+
+/** What a host pushes to a phone: about the conversations it opened, and about its lists. */
+export const MOBILE_EVENTS = {
+  items: {
+    channel: 'mobile:v1:items',
+    payload: z.object({ conversationId: id, items: z.array(mobileChatItemSchema) }),
+  },
+  runtime: { channel: 'mobile:v1:runtime', payload: z.object({ conversationId: id, runtime: mobileRuntimeSchema }) },
+  status: {
+    channel: 'mobile:v1:status',
+    payload: z.object({ conversationId: id, status: mobileConversationStatusSchema }),
+  },
+  /** Chats or workspaces were added, renamed, archived or removed: read the lists again. */
+  lists: { channel: 'mobile:v1:lists-changed', payload: z.object({}) },
+  /** The conversation's setup changed elsewhere: read it again. */
+  setup: { channel: 'mobile:v1:setup-changed', payload: z.object({ conversationId: id }) },
+  /** The conversation's history changed in a way updates cannot describe: load it again. */
+  reset: { channel: 'mobile:v1:reset', payload: z.object({ conversationId: id }) },
+} as const
+export type MobileEvents = typeof MOBILE_EVENTS
+export type MobileEventKey = keyof MobileEvents
+export type MobileEventPayload<K extends MobileEventKey> = z.output<MobileEvents[K]['payload']>
+export type MobileEvent = { [K in MobileEventKey]: { key: K; payload: MobileEventPayload<K> } }[MobileEventKey]
+
+export const MOBILE_CHANNEL_KEYS = new Map<string, MobileChannelKey>(
+  (Object.keys(MOBILE_CHANNELS) as MobileChannelKey[]).map((key) => [MOBILE_CHANNELS[key].channel, key])
+)
+export const MOBILE_EVENT_KEYS = new Map<string, MobileEventKey>(
+  (Object.keys(MOBILE_EVENTS) as MobileEventKey[]).map((key) => [MOBILE_EVENTS[key].channel, key])
+)
+
+export const mobileClientOsSchema = z.enum(['ios', 'android'])
+/** A phone's first frame. */
+export const mobileHelloSchema = z.object({
+  t: z.literal('hello'),
+  protocol: z.literal(MOBILE_BRIDGE_PROTOCOL),
+  appVersion: z.string().max(64),
+  client: z.object({
+    kind: z.literal('mobile'),
+    deviceName: z.string().max(128),
+    os: mobileClientOsSchema,
+    locale: z.string().max(16),
+    mobileApi: z.number().int(),
+  }),
+})
+export type MobileHello = z.infer<typeof mobileHelloSchema>
+
+const errorShape = z.object({ message: z.string(), code: z.string().optional() })
+/** What a host sends a phone. Unknown frame types are ignored, so a host may add some. */
+export const mobileHostFrameSchema = z.union([
+  z.object({
+    t: z.literal('welcome'),
+    protocol: z.number(),
+    appVersion: z.string(),
+    mobileApi: z.number().int().optional(),
+  }),
+  z.object({ t: z.literal('refused'), reason: z.string(), hostVersion: z.string().optional() }),
+  z.object({ t: z.literal('result'), id: z.number().int(), ok: z.literal(true), value: z.unknown().optional() }),
+  z.object({ t: z.literal('result'), id: z.number().int(), ok: z.literal(false), error: errorShape }),
+  z.object({ t: z.literal('event'), origin: z.number().int(), channel: z.string(), args: z.array(z.unknown()) }),
+  z.object({ t: z.literal('ping'), n: z.number() }),
+  z.object({ t: z.literal('pong'), n: z.number() }),
+])
+export type MobileHostFrame = z.infer<typeof mobileHostFrameSchema>

@@ -6,3 +6,5 @@ export * from './host-files.js'
 export * from './host-editor.js'
 
 export * from './environment-settings.js'
+export * from './mobile-bridge.js'
+export * from './mobile-bridge-client.js'

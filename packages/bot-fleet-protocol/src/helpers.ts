@@ -100,6 +100,26 @@ export function parsePairingLink(text: string): FleetPairingLink | null {
   return allowed.ok ? { origin: allowed.origin, code } : null
 }
 
+/**
+ * The Origin a WebSocket client sends for an http(s) or ws(s) address, as browsers and React Native write it: the
+ * scheme as http or https, the host in lowercase, and the port only when it is not the scheme's default. Null for
+ * anything else (credentials, a path, a query, another scheme).
+ */
+export function fleetBridgeOrigin(input: string): string | null {
+  let url: URL
+  try {
+    url = new URL(input)
+  } catch {
+    return null
+  }
+  const scheme = { 'http:': 'http', 'ws:': 'http', 'https:': 'https', 'wss:': 'https' }[url.protocol]
+  if (!scheme || url.username || url.password || url.search || url.hash) return null
+  if (url.pathname !== '/' && url.pathname !== '') return null
+  if (/[?#]/.test(input) || !/^[a-z][a-z0-9+.-]*:\/\/[^/]+\/?$/i.test(input)) return null
+  const port = url.port && url.port !== (scheme === 'https' ? '443' : '80') ? ':' + url.port : ''
+  return `${scheme}://${url.hostname.toLowerCase()}${port}`
+}
+
 /** iOS and Android refuse plain HTTP, so phones reach the bot server over HTTPS; simulators may use loopback. */
 export function isAllowedPhoneServerUrl(input: string, options: { allowLoopback?: boolean } = {}): FleetUrlResult {
   const allowed = isAllowedFleetUrl(input)

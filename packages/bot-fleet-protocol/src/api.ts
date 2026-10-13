@@ -1,4 +1,5 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
+import { fleetBridgeOrigin } from './helpers.js'
 import {
   fleetHostFileDigestRequestSchema,
   fleetHostFileDigestSchema,
@@ -580,6 +581,14 @@ export const fleetScreenTicketResponseSchema = z.object({
   expiresAt: fleetTimestampSchema,
 })
 export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
+/**
+ * A bridge ticket request. A phone names the `origin` its WebSocket sends (React Native always sends one); the gateway
+ * then accepts that one Origin on the upgrade (`mobile-bridge`). Computers send no Origin and leave it out.
+ */
+export const fleetBridgeTicketRequestSchema = z
+  .object({ origin: z.string().max(300).refine((value) => fleetBridgeOrigin(value) === value, 'Invalid origin').optional() })
+  .strict()
+export type FleetBridgeTicketRequest = z.infer<typeof fleetBridgeTicketRequestSchema>
 /** A one-use ticket to open the bridge of a workspaces environment. */
 export const fleetBridgeTicketResponseSchema = z.object({
   ticket: fleetIdSchema,
@@ -1418,7 +1427,7 @@ export const FLEET_GATEWAY_ROUTES = {
   environmentBridgeTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/bridge-tickets',
-    body: z.object({}).strict(),
+    body: fleetBridgeTicketRequestSchema,
     response: fleetBridgeTicketResponseSchema,
   },
   /** The bridge itself: a WebSocket upgrade with a ticket, passed through to the workspaces environment. */

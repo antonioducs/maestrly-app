@@ -277,3 +277,8 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
 export const FLEET_DEVICE_PAIRING_FEATURE = 'device-pairing'
 /** Unused, unexpired codes paired devices may have at once. The CLI is not limited. */
 export const FLEET_ACTIVE_PAIRINGS_MAX = 5
+
+/** Gateway feature: a bridge ticket may name the Origin its WebSocket will send, which phones always send. */
+export const FLEET_MOBILE_BRIDGE_FEATURE = 'mobile-bridge'
+/** Workspaces host capability: it speaks the mobile API (`mobile:v1:*` channels) to phones over the bridge. */
+export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
