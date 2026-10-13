@@ -3,6 +3,7 @@ import { View } from 'react-native'
 import { useFleet } from '../fleet/react'
 import type { FleetState } from '../fleet/state'
 import { useI18n } from '../i18n'
+import { useNotifications } from '../notifications/NotificationsProvider'
 import { useServers } from '../servers/ServersProvider'
 import { useTheme } from '../theme/ThemeProvider'
 import { OnboardingScreen } from '../ui/Onboarding'
@@ -35,8 +36,14 @@ function BotCount() {
 export default function Paired() {
   const { t } = useI18n()
   const { active, controller, deviceName } = useServers()
-  // After pairing from the server list, the screens under this one are dropped too.
-  const done = () => (router.canDismiss() ? router.dismissTo('/home') : router.replace('/home'))
+  const notifications = useNotifications()
+  // After pairing from the server list, the screens under this one are dropped too. Notifications are offered once.
+  const done = () => {
+    if (notifications.available && notifications.permission === 'undetermined' && !notifications.offered)
+      router.replace('/notifications')
+    else if (router.canDismiss()) router.dismissTo('/home')
+    else router.replace('/home')
+  }
   return (
     <OnboardingScreen center actions={<Button label={t('common.continue')} size="lg" onPress={done} />}>
       <PairingMark state="done" />

@@ -10,6 +10,7 @@ import { InstrumentSans_500Medium } from '@expo-google-fonts/instrument-sans/500
 import { InstrumentSans_600SemiBold } from '@expo-google-fonts/instrument-sans/600SemiBold'
 import { JetBrainsMono_400Regular } from '@expo-google-fonts/jetbrains-mono/400Regular'
 import { I18nProvider, useI18n } from '../i18n'
+import { NotificationsProvider } from '../notifications/NotificationsProvider'
 import { ServersProvider, useServers } from '../servers/ServersProvider'
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider'
 
@@ -41,7 +42,7 @@ function Root() {
   if (!ready) return null
   const sheet = { ...SHEET, contentStyle: { backgroundColor: theme.palette.sheet } }
   return (
-    <>
+    <NotificationsProvider>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.palette.canvas } }}>
         <Stack.Screen name="settings" options={sheet} />
@@ -52,7 +53,7 @@ function Root() {
         <Stack.Screen name="chat-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
         <Stack.Screen name="chat-defaults" options={{ ...sheet, sheetAllowedDetents: [1] }} />
       </Stack>
-    </>
+    </NotificationsProvider>
   )
 }
 

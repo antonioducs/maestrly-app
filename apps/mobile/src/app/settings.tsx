@@ -13,6 +13,7 @@ import { Cell } from '../ui/primitives/Cell'
 import { Group } from '../ui/primitives/Group'
 import { Segmented } from '../ui/primitives/Segmented'
 import { AppText } from '../ui/primitives/Text'
+import { NotificationSettings } from '../ui/sheets/NotificationSettings'
 import { SheetScreen } from '../ui/SheetScreen'
 
 const selectHosted = (state: ChatsState) => state.hosted
@@ -71,6 +72,7 @@ export default function Settings() {
           />
         </Group>
       ) : null}
+      <NotificationSettings />
       {hosted ? (
         <Group label={t('settings.newChats')} foot={t('settings.newChatsFoot', { server })}>
           <Cell icon="message" label={t('chat.defaults.title')} chevron onPress={() => router.push('/chat-defaults')} />

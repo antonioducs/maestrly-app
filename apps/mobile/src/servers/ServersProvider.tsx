@@ -12,7 +12,7 @@ import { createDemoSource, DEMO_SERVER } from '../demo/demo-source'
 import { createFleetController, type FleetController } from '../fleet/controller'
 import { createHttpSource, gatewayClientFor, nativeFetch } from '../fleet/http-source'
 import { FleetProvider } from '../fleet/react'
-import { GatewayError } from '../gateway/client'
+import { GatewayError, type GatewayClient } from '../gateway/client'
 import { useI18n } from '../i18n'
 import { asyncKeyValue, secureSecrets } from './adapters'
 import { pairWithServer } from './pairing'
@@ -43,6 +43,8 @@ type Servers = {
   /** What the home screen shows. */
   current: Current | null
   setCurrent(current: Current | null): void
+  /** A gateway client for a paired server, such as to register for notifications; null for the demo server. */
+  clientFor(server: PairedServer): Promise<GatewayClient | null>
 }
 
 const ServersContext = createContext<Servers | null>(null)
@@ -198,6 +200,15 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     [kv, registry, reload, servers]
   )
 
+  const clientFor = useCallback(
+    async (server: PairedServer) => {
+      if (server.id === DEMO_SERVER.id) return null
+      const token = await registry.token(server.id)
+      return token ? gatewayClientFor(server, token) : null
+    },
+    [registry]
+  )
+
   const value = useMemo<Servers>(
     () => ({
       ready,
@@ -212,8 +223,9 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       forget,
       current,
       setCurrent,
+      clientFor,
     }),
-    [ready, servers, active, controller, chats, deviceName, activate, pair, exploreDemo, forget, current]
+    [ready, servers, active, controller, chats, deviceName, activate, pair, exploreDemo, forget, current, clientFor]
   )
   return (
     <ServersContext.Provider value={value}>
