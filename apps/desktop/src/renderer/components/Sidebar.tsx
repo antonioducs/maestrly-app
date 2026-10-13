@@ -54,7 +54,7 @@ import { useQuickTooltip } from '@/components/sidebar/use-quick-tooltip'
 import { useWorkspaceDnd } from '@/components/sidebar/use-workspace-dnd'
 import { useSidebarMenus, type OpenTargets, type OpenExternalTarget } from '@/components/sidebar/use-sidebar-menus'
 import { useConvRows } from '@/components/sidebar/conv-rows'
-import { SidebarPanelHeader, SidebarTitleBar, type SidebarCreateAction } from '@/components/sidebar/SidebarHeader'
+import { SidebarPanelHeader, type SidebarCreateAction } from '@/components/sidebar/SidebarHeader'
 import { SidebarRail } from '@/components/sidebar/SidebarRail'
 import { UpdateCard } from '@/components/sidebar/UpdateCard'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
@@ -173,7 +173,9 @@ interface Props {
   onMoveWorkspaceToGroup: (wsId: string, groupId: string | null, flatIds: string[]) => void
 
   onToggleWorkspaceCollapsed: (id: string) => void
-  onCollapseSidebar: () => void
+  /** Only the icon rail is shown: the list panel is collapsed. */
+  collapsed?: boolean
+  onCollapsedChange: (collapsed: boolean) => void
 
   openTargets: OpenTargets
 
@@ -243,7 +245,8 @@ export function Sidebar({
   onToggleGroupCollapsed,
   onMoveWorkspaceToGroup,
   onToggleWorkspaceCollapsed,
-  onCollapseSidebar,
+  collapsed = false,
+  onCollapsedChange,
   openTargets,
   onOpenExternal,
   hostSections = [],
@@ -301,11 +304,13 @@ export function Sidebar({
     selectHost(hostOfKey(workspace.id))
     setQuery('')
     if (workspace.collapsed) onToggleWorkspaceCollapsed(focusedWorkspaceId)
-    requestAnimationFrame(() => {
+    // Showing a workspace in the sidebar opens its panel; the workspace is scrolled to once the panel is laid out.
+    if (collapsed) onCollapsedChange(false)
+    const scroll = () =>
       document
         .querySelector(`[data-workspace-id="${focusedWorkspaceId}"]`)
         ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    })
+    requestAnimationFrame(() => (collapsed ? requestAnimationFrame(scroll) : scroll()))
     setHighlightedWorkspaceId(focusedWorkspaceId)
     const timer = window.setTimeout(() => setHighlightedWorkspaceId(null), 1_800)
     return () => window.clearTimeout(timer)
@@ -852,297 +857,295 @@ export function Sidebar({
     )
   }
   return (
-    <nav className="glass hairline-r flex w-[296px] shrink-0 flex-col bg-sidebar">
-      <SidebarTitleBar onCollapseSidebar={onCollapseSidebar} onOpenAbout={onOpenAbout} />
+    <nav
+      data-sidebar-collapsed={collapsed || undefined}
+      className={cn(
+        'flex shrink-0',
+        // Collapsed, only the rail is left, and the strip over it joins the title bar of the views beside it.
+        collapsed ? 'w-[var(--rail-width)]' : 'glass hairline-r w-[296px] bg-sidebar'
+      )}
+    >
+      <SidebarRail
+        tab={tab}
+        collapsed={collapsed}
+        onToggleCollapsed={() => onCollapsedChange(!collapsed)}
+        onTabChange={selectTab}
+        onTabActivate={(next) => {
+          selectTab(next)
+          if (collapsed) onCollapsedChange(false)
+        }}
+        attention={railAttention}
+        botPendingCount={botPendingCount}
+        botUpdate={botUpdate}
+        onOpenAbout={onOpenAbout}
+        showQuickTooltip={showQuickTooltip}
+        hideQuickTooltip={hideQuickTooltip}
+      />
 
-      <div className="flex min-h-0 flex-1">
-        <SidebarRail
-          tab={tab}
-          onTabChange={selectTab}
-          attention={railAttention}
-          botPendingCount={botPendingCount}
-          botUpdate={botUpdate}
-          onOpenAbout={onOpenAbout}
-          showQuickTooltip={showQuickTooltip}
-          hideQuickTooltip={hideQuickTooltip}
-        />
+      {/* Hidden rather than unmounted, so the filter and what is being renamed survive a collapse. */}
+      <div id="sidebar-panel" className={cn('min-w-0 flex-1 flex-col', collapsed ? 'hidden' : 'flex')}>
+        <SidebarPanelHeader tab={tab} create={createAction} viewMenu={viewMenu} query={query} onQueryChange={setQuery}>
+          {multiHost && tab !== 'bots' && (
+            <HostSwitcher
+              hosts={switcherHosts}
+              selectedId={selectedHostId}
+              activity={activityByHost}
+              onSelect={selectHost}
+              showQuickTooltip={showQuickTooltip}
+              hideQuickTooltip={hideQuickTooltip}
+            />
+          )}
+        </SidebarPanelHeader>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <SidebarPanelHeader
-            tab={tab}
-            create={createAction}
-            viewMenu={viewMenu}
-            query={query}
-            onQueryChange={setQuery}
+        <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+          <div
+            id="sidebar-panel-chats"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-chats"
+            hidden={tab !== 'chats'}
+            className="min-h-0 flex-1 overflow-y-auto py-1"
           >
-            {multiHost && tab !== 'bots' && (
-              <HostSwitcher
-                hosts={switcherHosts}
-                selectedId={selectedHostId}
-                activity={activityByHost}
-                onSelect={selectHost}
-                showQuickTooltip={showQuickTooltip}
-                hideQuickTooltip={hideQuickTooltip}
-              />
-            )}
-          </SidebarPanelHeader>
-
-          <div className="flex min-h-0 flex-1 flex-col border-t border-border">
-            <div
-              id="sidebar-panel-chats"
-              role="tabpanel"
-              aria-labelledby="sidebar-tab-chats"
-              hidden={tab !== 'chats'}
-              className="min-h-0 flex-1 overflow-y-auto py-1"
-            >
-              {selectedSection
-                ? renderHostSection(selectedSection, 'chats')
-                : localSection(
-                    <>
-                      {!q && pinnedChats.length > 0 && (
-                        <div className="mb-1 border-b border-border/40 pb-1">
-                          <div className="flex items-center gap-1.5 px-2 py-1">
-                            <Pin className="size-3.5 shrink-0 text-muted-foreground" />
-                            <span className="text-[11px] font-medium text-muted-foreground">
-                              {t('sidebar.pinnedConversations')}
-                            </span>
-                            <span className="rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
-                              {pinnedChats.length}
-                            </span>
-                          </div>
-                          <ul>
-                            {pinnedChats.map((conv) =>
-                              convItem(conv, { pl: 'pl-6', instanceKey: `pinned:${conv.id}` })
-                            )}
-                          </ul>
+            {selectedSection
+              ? renderHostSection(selectedSection, 'chats')
+              : localSection(
+                  <>
+                    {!q && pinnedChats.length > 0 && (
+                      <div className="mb-1 border-b border-border/40 pb-1">
+                        <div className="flex items-center gap-1.5 px-2 py-1">
+                          <Pin className="size-3.5 shrink-0 text-muted-foreground" />
+                          <span className="text-[11px] font-medium text-muted-foreground">
+                            {t('sidebar.pinnedConversations')}
+                          </span>
+                          <span className="rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
+                            {pinnedChats.length}
+                          </span>
                         </div>
-                      )}
-                      <StandaloneChatList
-                        conversations={filteredChats}
-                        enabled={!q && renaming === null}
-                        onReorder={onReorderStandaloneConversations}
-                        renderConv={(conv, dnd, isOver) =>
-                          convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
-                        }
-                      />
-                      {standaloneConversations.length === 0 && !q && (
-                        <p className="px-3 pb-1 text-xs text-muted-foreground">{t('sidebar.noChats')}</p>
-                      )}
-                      {q && filteredChats.length === 0 && (
-                        <p className="px-4 py-6 text-center text-xs text-muted-foreground">
-                          {t('sidebar.nothingFound')}
-                        </p>
-                      )}
-                    </>
-                  )}
-              {otherHostResults('chats')}
-              {tab === 'chats' &&
-                crossMatches.map(({ tab: matchTab, count }) => (
-                  <button
-                    key={matchTab}
-                    type="button"
-                    onClick={() => selectTab(matchTab)}
-                    className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                ))}
-            </div>
-
-            <div
-              id="sidebar-panel-workspaces"
-              role="tabpanel"
-              aria-labelledby="sidebar-tab-workspaces"
-              hidden={tab !== 'workspaces'}
-              className="min-h-0 flex-1 overflow-y-auto py-1"
-            >
-              {selectedSection
-                ? renderHostSection(selectedSection, 'workspaces')
-                : localSection(
-                    <>
-                      {filtered.length === 0 && (
-                        <p className="px-4 py-6 text-center text-xs text-muted-foreground">
-                          {q ? t('sidebar.nothingFound') : t('sidebar.noWorkspaces')}
-                        </p>
-                      )}
-
-                      {!q && pinned.length > 0 && (
-                        <div className="mb-1 border-b border-border/40 pb-1">
-                          <div className="flex items-center gap-1.5 px-2 py-1">
-                            <Pin className="size-3.5 shrink-0 text-muted-foreground" />
-                            <span className="truncate text-[11px] font-medium text-muted-foreground">
-                              {t('sidebar.pinnedConversations')}
-                            </span>
-                            <span className="shrink-0 rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
-                              {pinned.length}
-                            </span>
-                          </div>
-
-                          <ul>
-                            {pinned.map((item) =>
-                              convItem(item.conversation, {
-                                pl: 'pl-6',
-                                instanceKey: `pinned:${item.conversation.id}`,
-                                contextLabel: pinnedWorkspaceLabels.get(item.workspace.id) ?? item.workspace.name,
-                                contextTooltip: item.workspace.path,
-                              })
-                            )}
-                          </ul>
-                        </div>
-                      )}
-
-                      {q ? (
-                        filtered.map((ws) => renderWorkspace(ws))
-                      ) : (
-                        <DndContext
-                          sensors={sensors}
-                          onDragStart={onDragStart}
-                          onDragEnd={onDragEnd}
-                          onDragCancel={onDragCancel}
-                        >
-                          <Droppable id="rootdrop">
-                            {(d) => (
-                              <div
-                                ref={d.setNodeRef}
-                                className={cn(
-                                  'rounded-md',
-                                  d.isOver && 'ring-1 ring-inset ring-primary/50',
-                                  draggingWs &&
-                                    loose.length === 0 &&
-                                    'mx-1 min-h-[26px] border border-dashed border-border/60'
-                                )}
-                              >
-                                <SortableContext
-                                  items={loose.map((w) => `ws-${w.id}`)}
-                                  strategy={verticalListSortingStrategy}
-                                >
-                                  {loose.map((ws) => (
-                                    <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
-                                      {(s) => renderWorkspace(ws, s)}
-                                    </Sortable>
-                                  ))}
-                                </SortableContext>
-                                {draggingWs && loose.length === 0 && (
-                                  <p className="px-3 py-1 text-center text-[10px] text-muted-foreground/50">
-                                    {t('sidebar.dropOutsideGroups')}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                          </Droppable>
-
-                          <SortableContext
-                            items={groups.map((g) => `group-${g.id}`)}
-                            strategy={verticalListSortingStrategy}
-                          >
-                            {groups.map((g) => {
-                              const members = byGroup.get(g.id) ?? []
-                              return (
-                                <Sortable key={g.id} id={`group-${g.id}`} disabled={dndOff}>
-                                  {(s) => (
-                                    <div
-                                      ref={s.setNodeRef}
-                                      style={{
-                                        transform: CSS.Transform.toString(s.transform),
-                                        transition: s.transition,
-                                      }}
-                                      {...s.attributes}
-                                      className={cn('mb-0.5', s.isDragging && 'opacity-60')}
-                                    >
-                                      {renderGroupHeader(g, members, s.listeners)}
-                                      {!g.collapsed && (
-                                        <Droppable id={`groupdrop-${g.id}`}>
-                                          {(d) => (
-                                            <div
-                                              ref={d.setNodeRef}
-                                              className={cn(
-                                                // Indented under the group, with a guide under its chevron.
-                                                'relative mx-1 rounded-md pl-3 before:pointer-events-none before:absolute before:bottom-1 before:left-2.5 before:top-0 before:w-px before:bg-border',
-                                                d.isOver && 'ring-1 ring-inset ring-primary/40'
-                                              )}
-                                            >
-                                              <SortableContext
-                                                items={members.map((w) => `ws-${w.id}`)}
-                                                strategy={verticalListSortingStrategy}
-                                              >
-                                                {members.map((ws) => (
-                                                  <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
-                                                    {(sw) => renderWorkspace(ws, sw)}
-                                                  </Sortable>
-                                                ))}
-                                              </SortableContext>
-                                              {members.length === 0 && (
-                                                <p className="py-1.5 pl-9 pr-3 text-xs text-muted-foreground/50">
-                                                  {draggingWs
-                                                    ? t('sidebar.dropWorkspaceHere')
-                                                    : t('sidebar.emptyGroup')}
-                                                </p>
-                                              )}
-                                            </div>
-                                          )}
-                                        </Droppable>
-                                      )}
-                                    </div>
-                                  )}
-                                </Sortable>
-                              )
-                            })}
-                          </SortableContext>
-                        </DndContext>
-                      )}
-                    </>
-                  )}
-              {otherHostResults('workspaces')}
-              {tab === 'workspaces' &&
-                crossMatches.map(({ tab: matchTab, count }) => (
-                  <button
-                    key={matchTab}
-                    type="button"
-                    onClick={() => selectTab(matchTab)}
-                    className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                ))}
-            </div>
-
-            <div
-              id="sidebar-panel-bots"
-              role="tabpanel"
-              aria-labelledby="sidebar-tab-bots"
-              hidden={tab !== 'bots'}
-              className="min-h-0 flex-1 overflow-y-auto py-1"
-            >
-              <FleetSidebarPanel
-                fleet={fleet}
-                query={q}
-                selected={selectedFleet}
-                onOpenBotSettings={onOpenBotSettings}
-                onOpenBot={onOpenFleetBot}
-                onOpenEnvironment={onOpenFleetEnvironment}
-                onOpenServer={onOpenFleetServer}
-                onOpenInbox={onOpenFleetInbox}
-                onOpenOwnerMemory={onOpenFleetOwnerMemory}
-              />
-              {tab === 'bots' &&
-                crossMatches.map(({ tab: matchTab, count }) => (
-                  <button
-                    key={matchTab}
-                    type="button"
-                    onClick={() => selectTab(matchTab)}
-                    className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
-                    <ChevronRight className="size-3.5" />
-                  </button>
-                ))}
-            </div>
+                        <ul>
+                          {pinnedChats.map((conv) => convItem(conv, { pl: 'pl-6', instanceKey: `pinned:${conv.id}` }))}
+                        </ul>
+                      </div>
+                    )}
+                    <StandaloneChatList
+                      conversations={filteredChats}
+                      enabled={!q && renaming === null}
+                      onReorder={onReorderStandaloneConversations}
+                      renderConv={(conv, dnd, isOver) =>
+                        convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
+                      }
+                    />
+                    {standaloneConversations.length === 0 && !q && (
+                      <p className="px-3 pb-1 text-xs text-muted-foreground">{t('sidebar.noChats')}</p>
+                    )}
+                    {q && filteredChats.length === 0 && (
+                      <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t('sidebar.nothingFound')}</p>
+                    )}
+                  </>
+                )}
+            {otherHostResults('chats')}
+            {tab === 'chats' &&
+              crossMatches.map(({ tab: matchTab, count }) => (
+                <button
+                  key={matchTab}
+                  type="button"
+                  onClick={() => selectTab(matchTab)}
+                  className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+                  <ChevronRight className="size-3.5" />
+                </button>
+              ))}
           </div>
 
-          <UpdateCard />
+          <div
+            id="sidebar-panel-workspaces"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-workspaces"
+            hidden={tab !== 'workspaces'}
+            className="min-h-0 flex-1 overflow-y-auto py-1"
+          >
+            {selectedSection
+              ? renderHostSection(selectedSection, 'workspaces')
+              : localSection(
+                  <>
+                    {filtered.length === 0 && (
+                      <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+                        {q ? t('sidebar.nothingFound') : t('sidebar.noWorkspaces')}
+                      </p>
+                    )}
+
+                    {!q && pinned.length > 0 && (
+                      <div className="mb-1 border-b border-border/40 pb-1">
+                        <div className="flex items-center gap-1.5 px-2 py-1">
+                          <Pin className="size-3.5 shrink-0 text-muted-foreground" />
+                          <span className="truncate text-[11px] font-medium text-muted-foreground">
+                            {t('sidebar.pinnedConversations')}
+                          </span>
+                          <span className="shrink-0 rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
+                            {pinned.length}
+                          </span>
+                        </div>
+
+                        <ul>
+                          {pinned.map((item) =>
+                            convItem(item.conversation, {
+                              pl: 'pl-6',
+                              instanceKey: `pinned:${item.conversation.id}`,
+                              contextLabel: pinnedWorkspaceLabels.get(item.workspace.id) ?? item.workspace.name,
+                              contextTooltip: item.workspace.path,
+                            })
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                    {q ? (
+                      filtered.map((ws) => renderWorkspace(ws))
+                    ) : (
+                      <DndContext
+                        sensors={sensors}
+                        onDragStart={onDragStart}
+                        onDragEnd={onDragEnd}
+                        onDragCancel={onDragCancel}
+                      >
+                        <Droppable id="rootdrop">
+                          {(d) => (
+                            <div
+                              ref={d.setNodeRef}
+                              className={cn(
+                                'rounded-md',
+                                d.isOver && 'ring-1 ring-inset ring-primary/50',
+                                draggingWs &&
+                                  loose.length === 0 &&
+                                  'mx-1 min-h-[26px] border border-dashed border-border/60'
+                              )}
+                            >
+                              <SortableContext
+                                items={loose.map((w) => `ws-${w.id}`)}
+                                strategy={verticalListSortingStrategy}
+                              >
+                                {loose.map((ws) => (
+                                  <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
+                                    {(s) => renderWorkspace(ws, s)}
+                                  </Sortable>
+                                ))}
+                              </SortableContext>
+                              {draggingWs && loose.length === 0 && (
+                                <p className="px-3 py-1 text-center text-[10px] text-muted-foreground/50">
+                                  {t('sidebar.dropOutsideGroups')}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </Droppable>
+
+                        <SortableContext
+                          items={groups.map((g) => `group-${g.id}`)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {groups.map((g) => {
+                            const members = byGroup.get(g.id) ?? []
+                            return (
+                              <Sortable key={g.id} id={`group-${g.id}`} disabled={dndOff}>
+                                {(s) => (
+                                  <div
+                                    ref={s.setNodeRef}
+                                    style={{
+                                      transform: CSS.Transform.toString(s.transform),
+                                      transition: s.transition,
+                                    }}
+                                    {...s.attributes}
+                                    className={cn('mb-0.5', s.isDragging && 'opacity-60')}
+                                  >
+                                    {renderGroupHeader(g, members, s.listeners)}
+                                    {!g.collapsed && (
+                                      <Droppable id={`groupdrop-${g.id}`}>
+                                        {(d) => (
+                                          <div
+                                            ref={d.setNodeRef}
+                                            className={cn(
+                                              // Indented under the group, with a guide under its chevron.
+                                              'relative mx-1 rounded-md pl-3 before:pointer-events-none before:absolute before:bottom-1 before:left-2.5 before:top-0 before:w-px before:bg-border',
+                                              d.isOver && 'ring-1 ring-inset ring-primary/40'
+                                            )}
+                                          >
+                                            <SortableContext
+                                              items={members.map((w) => `ws-${w.id}`)}
+                                              strategy={verticalListSortingStrategy}
+                                            >
+                                              {members.map((ws) => (
+                                                <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
+                                                  {(sw) => renderWorkspace(ws, sw)}
+                                                </Sortable>
+                                              ))}
+                                            </SortableContext>
+                                            {members.length === 0 && (
+                                              <p className="py-1.5 pl-9 pr-3 text-xs text-muted-foreground/50">
+                                                {draggingWs ? t('sidebar.dropWorkspaceHere') : t('sidebar.emptyGroup')}
+                                              </p>
+                                            )}
+                                          </div>
+                                        )}
+                                      </Droppable>
+                                    )}
+                                  </div>
+                                )}
+                              </Sortable>
+                            )
+                          })}
+                        </SortableContext>
+                      </DndContext>
+                    )}
+                  </>
+                )}
+            {otherHostResults('workspaces')}
+            {tab === 'workspaces' &&
+              crossMatches.map(({ tab: matchTab, count }) => (
+                <button
+                  key={matchTab}
+                  type="button"
+                  onClick={() => selectTab(matchTab)}
+                  className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+                  <ChevronRight className="size-3.5" />
+                </button>
+              ))}
+          </div>
+
+          <div
+            id="sidebar-panel-bots"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-bots"
+            hidden={tab !== 'bots'}
+            className="min-h-0 flex-1 overflow-y-auto py-1"
+          >
+            <FleetSidebarPanel
+              fleet={fleet}
+              query={q}
+              selected={selectedFleet}
+              onOpenBotSettings={onOpenBotSettings}
+              onOpenBot={onOpenFleetBot}
+              onOpenEnvironment={onOpenFleetEnvironment}
+              onOpenServer={onOpenFleetServer}
+              onOpenInbox={onOpenFleetInbox}
+              onOpenOwnerMemory={onOpenFleetOwnerMemory}
+            />
+            {tab === 'bots' &&
+              crossMatches.map(({ tab: matchTab, count }) => (
+                <button
+                  key={matchTab}
+                  type="button"
+                  onClick={() => selectTab(matchTab)}
+                  className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+                  <ChevronRight className="size-3.5" />
+                </button>
+              ))}
+          </div>
         </div>
+
+        <UpdateCard />
       </div>
 
       {quickTooltipNode}

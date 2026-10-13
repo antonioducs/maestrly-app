@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FlaskConical, Loader2, MoreHorizontal, PanelLeft, Plus, Search, X } from 'lucide-react'
+import { FlaskConical, Loader2, MoreHorizontal, Plus, Search, X } from 'lucide-react'
 import { instanceBadgeStyle } from '../../../shared/instance-color'
 import type { AppInfo } from '../../../preload'
 import { cn } from '@/lib/utils'
@@ -8,14 +8,11 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { SidebarTab } from './sidebar-tabs'
 
-/** The window's title bar over the sidebar: room for the traffic lights, collapse, and the channel badge. */
-export function SidebarTitleBar({
-  onCollapseSidebar,
-  onOpenAbout,
-}: {
-  onCollapseSidebar: () => void
-  onOpenAbout: () => void
-}) {
+/**
+ * The channel a build that is not production runs on, at the bottom of the rail. The rail only fits the channel's
+ * name; the instance, which also picks a development build's color, and the version are in its tooltip.
+ */
+export function ChannelBadge({ onOpenAbout }: { onOpenAbout: () => void }) {
   const { t } = useTranslation('ui')
 
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
@@ -25,12 +22,6 @@ export function SidebarTitleBar({
       .then(setAppInfo)
       .catch(() => {})
   }, [])
-  const channelBadge =
-    appInfo && !appInfo.hideChannelBadge && appInfo.channel !== 'prod'
-      ? appInfo.instanceId
-        ? `${appInfo.channel.toUpperCase()} · ${appInfo.instanceId}`
-        : appInfo.channel.toUpperCase()
-      : null
   const instanceBadgeColors = useMemo((): CSSProperties | undefined => {
     if (appInfo?.channel === 'dev' && appInfo.instanceId) {
       return instanceBadgeStyle(appInfo.instanceId)
@@ -38,40 +29,30 @@ export function SidebarTitleBar({
     return undefined
   }, [appInfo?.channel, appInfo?.instanceId])
 
+  if (!appInfo || appInfo.hideChannelBadge || appInfo.channel === 'prod') return null
+  const title = t('sidebar.channelTitle', {
+    channel: appInfo.channel,
+    instance: appInfo.instanceId ? ` · ${appInfo.instanceId}` : '',
+    version: appInfo.version,
+  })
   return (
-    <div className="drag flex h-10 shrink-0 items-center pl-[var(--tt-offset)] pr-2">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="no-drag size-7 text-muted-foreground"
-        onClick={onCollapseSidebar}
-        title={t('sidebar.collapsePanel')}
-      >
-        <PanelLeft className="size-4" />
-      </Button>
-
-      {channelBadge && (
-        <button
-          type="button"
-          onClick={onOpenAbout}
-          className={cn(
-            'no-drag ml-auto cursor-pointer rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] transition-opacity hover:opacity-80',
-            !instanceBadgeColors &&
-              (appInfo?.channel === 'dev'
-                ? 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300'
-                : 'border-amber-400/40 bg-amber-400/15 text-amber-300')
-          )}
-          style={instanceBadgeColors}
-          title={t('sidebar.channelTitle', {
-            channel: appInfo?.channel,
-            instance: appInfo?.instanceId ? ` · ${appInfo.instanceId}` : '',
-            version: appInfo?.version,
-          })}
-        >
-          {channelBadge}
-        </button>
+    <button
+      type="button"
+      onClick={onOpenAbout}
+      title={title}
+      aria-label={title}
+      data-testid="sidebar-channel-badge"
+      className={cn(
+        'no-drag mt-1.5 max-w-10 cursor-pointer truncate rounded-full border px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.06em] transition-opacity hover:opacity-80',
+        !instanceBadgeColors &&
+          (appInfo.channel === 'dev'
+            ? 'border-emerald-400/40 bg-emerald-400/15 text-emerald-300'
+            : 'border-amber-400/40 bg-amber-400/15 text-amber-300')
       )}
-    </div>
+      style={instanceBadgeColors}
+    >
+      {appInfo.channel}
+    </button>
   )
 }
 
@@ -86,8 +67,9 @@ export interface SidebarCreateAction {
 }
 
 /**
- * The top of the list panel: the open section's name, its one create button and its view options, then what the
- * sidebar shows between them and the search (the host switcher), then the search.
+ * The top of the list panel: the open section's name, its one create button and its view options, in the window's
+ * title bar beside the traffic lights; then what the sidebar shows between them and the search (the host switcher),
+ * then the search.
  */
 export function SidebarPanelHeader({
   tab,
@@ -124,7 +106,7 @@ export function SidebarPanelHeader({
   )
   return (
     <>
-      <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3.5 pr-2">
+      <div className="drag flex h-10 shrink-0 items-center gap-1.5 pl-[var(--tt-past-rail)] pr-2">
         <h2 className="flex min-w-0 items-center gap-2 truncate text-[13px] font-semibold tracking-[-0.005em] text-foreground">
           {t(`sidebar.${tab}`)}
           {tab === 'bots' && (

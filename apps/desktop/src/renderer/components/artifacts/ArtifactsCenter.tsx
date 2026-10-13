@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, AppWindow, Check, HardDrive, Info, PanelLeft, Search, X } from 'lucide-react'
+import { AlertTriangle, AppWindow, Check, HardDrive, Info, Search, X } from 'lucide-react'
 import type { ArtifactListItem } from '../../../shared/artifacts'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { formatBytes } from '@/components/chat/runtime-asset-presentation'
 import { useLocale } from '@/lib/i18n'
-import { cn } from '@/lib/utils'
 import { ArtifactDetailSheet } from './ArtifactDetailSheet'
 import { ArtifactGridCard } from './ArtifactGridCard'
 import { EmptyState, LoadingGrid, NoMatchState, type SuggestionKey, UnavailableState } from './ArtifactsStates'
@@ -104,12 +103,10 @@ function Notices({ notices, onDismiss }: { notices: Notice[]; onDismiss: (id: nu
 /** Every artifact on the bot server: where it came from, its versions, and the owner's actions. */
 export function ArtifactsCenter({
   onClose,
-  onShowSidebar,
   onOpenSettings,
   onOpenBot,
 }: {
   onClose: () => void
-  onShowSidebar?: () => void
   onOpenSettings: () => void
   onOpenBot: (id: string) => void
 }) {
@@ -330,23 +327,7 @@ export function ArtifactsCenter({
 
   return (
     <div className="relative flex h-full flex-col" data-testid="artifacts-center">
-      <header
-        className={cn(
-          'drag flex h-10 shrink-0 items-center gap-2 hairline-b pr-3',
-          onShowSidebar ? 'pl-[var(--tt-offset)]' : 'pl-3'
-        )}
-      >
-        {onShowSidebar && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="no-drag size-7 text-muted-foreground"
-            onClick={onShowSidebar}
-            title={t('common.showWorkspaces')}
-          >
-            <PanelLeft className="size-4" />
-          </Button>
-        )}
+      <header className="drag flex h-10 shrink-0 items-center gap-2 hairline-b pl-[var(--view-header-inset)] pr-3">
         <AppWindow className="size-4 text-muted-foreground" />
         <span className="truncate text-[13px] font-medium text-foreground/90">{t('artifacts.title')}</span>
         <Button

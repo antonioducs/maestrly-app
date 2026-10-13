@@ -551,7 +551,6 @@ export default {
     disable: 'Desativar',
     on: 'Ligado',
     off: 'Desligado',
-    showWorkspaces: 'Mostrar painel de workspaces',
     dash: '—',
   },
 
@@ -1136,6 +1135,7 @@ export default {
     expandGroup: 'Expandir grupo',
     groupActions: 'Ações do grupo',
     collapsePanel: 'Recolher painel',
+    expandPanel: 'Expandir painel',
     channelTitle: 'Canal {{channel}}{{instance}} — dados e tokens isolados (v{{version}})',
     workspaces: 'Workspaces',
     newGroup: 'Novo grupo',

@@ -543,7 +543,6 @@ export default {
     disable: 'Disable',
     on: 'On',
     off: 'Off',
-    showWorkspaces: 'Show workspaces panel',
     dash: '—',
   },
 
@@ -1126,6 +1125,7 @@ export default {
     expandGroup: 'Expand group',
     groupActions: 'Group actions',
     collapsePanel: 'Collapse panel',
+    expandPanel: 'Expand panel',
     channelTitle: '{{channel}} channel{{instance}} — isolated data and tokens (v{{version}})',
     workspaces: 'Workspaces',
     newGroup: 'New group',

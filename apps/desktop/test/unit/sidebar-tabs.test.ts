@@ -84,4 +84,33 @@ describe('sidebar tabs', () => {
     expect(sidebar.match(/renderHostSection\(selectedSection, '(chats|workspaces)'\)/g)).toHaveLength(2)
     expect(sidebar).not.toContain('hostSections.map((section) => renderHostSection')
   })
+
+  it('collapses to the icon rail, whose one toggle stays in place, and remembers it', () => {
+    const app = source('src/renderer/DesktopApp.tsx')
+    const sidebar = source('src/renderer/components/Sidebar.tsx')
+    const rail = source('src/renderer/components/sidebar/SidebarRail.tsx')
+    // The sidebar is always mounted: collapsing hides its panel, not the rail.
+    expect(app).not.toContain('sidebarOpen && (')
+    expect(app).toContain("localStorage.getItem('sidebar.collapsed') !== '1'")
+    expect(app).toContain("localStorage.setItem('sidebar.collapsed', collapsed ? '1' : '0')")
+    expect(sidebar).toContain("collapsed ? 'hidden' : 'flex'")
+    // The toggle is the rail's, the same element open or collapsed, and says what it controls.
+    expect(rail).toContain('aria-expanded={!collapsed}')
+    expect(rail).toContain('aria-controls="sidebar-panel"')
+    expect(sidebar).toContain('id="sidebar-panel"')
+    // Clicking a section opens the panel on it; moving with the arrows does not.
+    expect(sidebar).toContain('if (collapsed) onCollapsedChange(false)')
+    expect(rail).toMatch(/onClick=\{\(\) => \{\s*hideQuickTooltip\(\)\s*onTabActivate\(item\)/)
+    // Views no longer carry a button of their own to show the sidebar.
+    for (const view of [
+      'src/renderer/components/ProjectNotesView.tsx',
+      'src/renderer/components/SettingsView.tsx',
+      'src/renderer/components/artifacts/ArtifactsCenter.tsx',
+      'src/renderer/components/memory/LocalMemoryPanel.tsx',
+      'src/renderer/components/memory/PersonalMemoryPanel.tsx',
+    ]) {
+      expect(source(view), view).not.toContain('onShowSidebar')
+      expect(source(view), view).toContain('pl-[var(--view-header-inset)]')
+    }
+  })
 })

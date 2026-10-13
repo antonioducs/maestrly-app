@@ -191,14 +191,28 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 
 :root {
   --tt-offset: 4.875rem; /* 78px */
+  /* The sidebar's icon rail, and the room its icons leave above them for the traffic lights. */
+  --rail-width: 3rem;
+  --rail-top: 2.5rem;
+  /* A row that starts after the rail clears the traffic lights reaching past it. */
+  --tt-past-rail: max(0.75rem, calc(var(--tt-offset) - var(--rail-width) + 0.75rem));
+  /* Where a view's header starts: after the sidebar, or after the lights once only the rail is beside it. */
+  --view-header-inset: 0.75rem;
 }
 :root.is-fullscreen {
   --tt-offset: 0.75rem; /* 12px */
+  --rail-top: 0px;
 }
 
 :root.is-windows,
 :root.is-linux {
-  --tt-offset: 0;
+  /* With a unit: a bare 0 makes the calc() of --tt-past-rail invalid. */
+  --tt-offset: 0px;
+  --rail-top: 0px;
+}
+
+.sidebar-collapsed {
+  --view-header-inset: var(--tt-past-rail);
 }
 
 .conv-item {
