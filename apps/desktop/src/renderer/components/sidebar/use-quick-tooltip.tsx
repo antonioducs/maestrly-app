@@ -1,7 +1,10 @@
-import { useState, type MouseEvent, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+
+type Placement = 'top' | 'bottom' | 'right'
 
 export function useQuickTooltip(): {
-  showQuickTooltip: (e: MouseEvent<HTMLElement>, text: string) => void
+  /** Below the element (above it near the bottom of the window), or beside it for the icon rail. */
+  showQuickTooltip: (e: { currentTarget: HTMLElement }, text: string, side?: 'below' | 'right') => void
   hideQuickTooltip: () => void
   quickTooltipNode: ReactNode
 } {
@@ -9,13 +12,17 @@ export function useQuickTooltip(): {
     text: string
     left: number
     top: number
-    placement: 'top' | 'bottom'
+    placement: Placement
   } | null>(null)
 
-  const showQuickTooltip = (e: MouseEvent<HTMLElement>, text: string) => {
+  const showQuickTooltip = (e: { currentTarget: HTMLElement }, text: string, side: 'below' | 'right' = 'below') => {
     const label = text.trim()
     if (!label) return
     const rect = e.currentTarget.getBoundingClientRect()
+    if (side === 'right') {
+      setQuickTooltip({ text: label, left: rect.right + 8, top: rect.top + rect.height / 2, placement: 'right' })
+      return
+    }
     const showAbove = rect.bottom + 40 > window.innerHeight
     setQuickTooltip({
       text: label,
@@ -35,7 +42,12 @@ export function useQuickTooltip(): {
         left: quickTooltip.left,
         top: quickTooltip.top,
         maxWidth: 'min(28rem, calc(100vw - 1rem))',
-        transform: quickTooltip.placement === 'top' ? 'translateY(-100%)' : undefined,
+        transform:
+          quickTooltip.placement === 'top'
+            ? 'translateY(-100%)'
+            : quickTooltip.placement === 'right'
+              ? 'translateY(-50%)'
+              : undefined,
       }}
     >
       {quickTooltip.text}

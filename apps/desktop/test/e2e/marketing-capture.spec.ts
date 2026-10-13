@@ -483,7 +483,7 @@ test('captures the integrated desktop product surfaces', async () => {
     await win.getByTitle('Toggle drawer').click()
 
     await setCaptureSize(app)
-    await win.getByTitle('Settings').click()
+    await win.getByRole('button', { name: 'Settings', exact: true }).click()
     await win.getByRole('button', { name: 'Usage & cost', exact: true }).click()
     await expect(win.getByRole('heading', { name: 'Usage & cost' })).toBeVisible()
     await expect(win.getByText('gpt-5.2-codex', { exact: true })).toBeVisible()

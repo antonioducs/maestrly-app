@@ -1,8 +1,8 @@
 # Remote workspaces and chats
 
 Maestrly can run your chats and workspaces on a server instead of this computer. They keep working while this computer
-is off, and you use them from the same window: the sidebar lists the chats and workspaces of this computer and of the
-server side by side, grouped by where they run.
+is off, and you use them from the same window: the sidebar lists the chats and workspaces of one machine at a time,
+this computer or the server, and switches between them in one click.
 
 This is experimental and builds on the [bot server](bot-fleet.md): the server runs one more Maestrly, in a container of
 its own, for your chats and workspaces. That container is called a **workspaces environment**, and the Maestrly in it a
@@ -32,17 +32,22 @@ When you come back, the conversation shows what happened meanwhile.
    brought from this computer, as for a [bot environment](bot-fleet.md#bring-from-your-computer). The host has its own
    accounts, skills, and MCP servers; nothing is copied from this computer unless you ask.
 
-Once the environment runs, the **Chats** and **Workspaces** tabs show two sections: **This computer** and the server's
-name. With no server that hosts workspaces, the sidebar has no headings and looks as it always did.
+Once the environment runs, the **Chats** and **Workspaces** tabs get a machine switcher above the search. It shows the
+machine whose chats and workspaces are listed, **This computer** or the server's name, with what is going on there: how
+many conversations need you and how many are running. Beside it, a shortcut to the other machine carries a red dot when
+a conversation there finished and needs you. Click the shortcut, or open the switcher and choose a machine. The choice
+applies to both tabs and is remembered; opening a conversation switches to the machine it runs on. While you filter,
+a link under the list says how many results another machine has. With no server that hosts workspaces, the sidebar has
+no switcher.
 
 If **Workspaces** says **Update the server to run workspaces on it**, the server runs a version from before this
 feature: use **Update bots** first.
 
 ## Use it
 
-- **New chat on the server.** Use the **+** button on the server's heading in the **Chats** tab. The header's own
-  **New chat** button still creates a chat on this computer.
-- **Add a workspace on the server.** Use the **+** button on the server's heading in the **Workspaces** tab. You open a
+- **New chat on the server.** Switch to the server, then use the **+** button next to **Chats**. With **This
+  computer** chosen, the same button creates a chat on this computer.
+- **Add a workspace on the server.** Switch to the server, then use the **+** button next to **Workspaces**. You open a
   folder that is already on the server, create a project, or clone a Git repository. Folders are chosen in a dialog
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
@@ -59,9 +64,9 @@ feature: use **Update bots** first.
   **Memories of** selector to show the server's or this computer's: open it with **Manage personal memory** in the
   host's **Maestrly Chat** settings. **Project memory** in a server workspace's menu shows that workspace's memory.
 - **Start, stop, restart, update, and archive.** These are on the environment's page, reached with **Manage** under
-  **Workspaces** on the server page, or **Open server page** in the menu of the server's heading. Stopping,
-  restarting, or updating at once interrupts the chats that are running on the server. **Update** waits until no chat
-  is running.
+  **Workspaces** on the server page, or **Open server page** in the **⋯** menu next to **Chats** or **Workspaces**
+  while the server is chosen. Stopping, restarting, or updating at once interrupts the chats that are running on the
+  server. **Update** waits until no chat is running.
 
 ### Where files live on the server
 
@@ -160,17 +165,18 @@ either end while it moves, the transfer stops: **Try again** starts it over with
 
 ## Connection states
 
-The server's heading shows how this computer reaches the host:
+The machine switcher shows how this computer reaches the host: a dot on the server's icon (green when connected, amber
+while connecting, gray when not reached, red on a failure) and, under the server's name, one of these states:
 
 | State | Meaning | What to do |
 | --- | --- | --- |
-| No label | Connected. | — |
-| **Connecting…** or **Reconnecting…** | The connection is being opened, or dropped and is being opened again. Work on the server continues. | Wait, or use **Try again**. The section keeps its last list, dimmed, and an open conversation says it is reconnecting. |
+| **Online**, or what its conversations are doing | Connected. | — |
+| **Connecting…** or **Reconnecting…** | The connection is being opened, or dropped and is being opened again. Work on the server continues. | Wait, or use **Try again**. The server's list keeps its last state, dimmed, and an open conversation says it is reconnecting. |
 | **Update required** | The host and this app run different versions. They must run the same version, because this window calls the host's own functions. | Update the older of the two: **Update bots** for the server, or the app's own update for this computer. |
 | **Stopped**, **Starting…**, or **Failed to start** | The state of the workspaces environment on the server. | **Start** it, or open the server page for details. |
 | **Not connected** | This computer does not reach the bot server. | Check the server and its connection in **Settings → Bot server**. |
 
-After a reconnection, the section and any open conversation of the host are loaded again. Messages queued behind a
+After a reconnection, the server's list and any open conversation of the host are loaded again. Messages queued behind a
 running turn are kept by this window only, and are lost if the connection drops or the window closes before they are
 sent.
 
@@ -204,7 +210,7 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 
 ## Troubleshooting
 
-- **The server's section stays on Connecting… or Reconnecting….** Open the server page: the workspaces environment
+- **The switcher stays on Connecting… or Reconnecting… for the server.** Open the server page: the workspaces environment
   must be **Running**. For a VPS, check that the SSH tunnel is connected in **Settings → Bot server**.
 - **Update required after updating the app.** Use **Update bots**: the server moves to this app's version, and the
   workspaces environment restarts on it once no chat is running.
@@ -222,7 +228,7 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 - `MAESTRLY_DEV_DIRECT_HOST=http://<control token>@<address>:<port>` connects a development or test build straight to
   the control server of an app started with `MAESTRLY_SERVER_MODE=1`, without a bot server. Packaged builds ignore it.
 - `apps/desktop/test/e2e/remote-hosts.spec.ts` runs two instances of the built app, one in server mode, and checks the
-  mixed sidebar, a chat turn, a terminal, adding a workspace, the **Files** tab (browsing, preview, rename, delete,
+  machine switcher, a chat turn, a terminal, adding a workspace, the **Files** tab (browsing, preview, rename, delete,
   upload, download, and opening a file), the **Browser** tab (frames drawn, address bar, typing with accents, and
   copying to this computer's clipboard), and the **Code** tab (the editor through both proxies, its token kept on the
   host, a Plan file opening it, and a selection reaching the composer). For the editor the host uses a stand-in for

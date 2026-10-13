@@ -6,7 +6,6 @@ import {
   Info,
   LoaderCircle,
   MoreHorizontal,
-  PanelLeft,
   Pin,
   Plus,
   RefreshCw,
@@ -42,7 +41,6 @@ export interface PersonalMemoryPanelProps {
   focusMemoryRequest?: number
   /** Shows the personal memory of another host: this computer's, or a server's that runs chats. */
   onHostChange?: (hostId: HostId) => void
-  onShowSidebar?: () => void
   onClose: () => void
 }
 
@@ -54,7 +52,6 @@ export function PersonalMemoryPanel({
   focusMemoryId,
   focusMemoryRequest,
   onHostChange,
-  onShowSidebar,
   onClose,
 }: PersonalMemoryPanelProps) {
   const { t, i18n } = useTranslation('ui')
@@ -170,23 +167,7 @@ export function PersonalMemoryPanel({
   const missing = Boolean(selectedMemory && !data.memories.some((row) => row.id === selectedMemory.id))
   return (
     <div ref={panel} className="flex h-full min-w-0 flex-col bg-background" data-testid="personal-memory-panel">
-      <header
-        className={cn(
-          'drag flex h-11 shrink-0 items-center gap-2 hairline-b pr-3',
-          onShowSidebar ? 'pl-[var(--tt-offset)]' : 'pl-3'
-        )}
-      >
-        {onShowSidebar && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="no-drag size-7"
-            onClick={onShowSidebar}
-            aria-label={t('common.showWorkspaces')}
-          >
-            <PanelLeft className="size-4" />
-          </Button>
-        )}
+      <header className="drag flex h-11 shrink-0 items-center gap-2 hairline-b pl-[var(--view-header-inset)] pr-3">
         <BrainCircuit className="size-4 shrink-0 text-primary" />
         <h1 className="min-w-0 truncate text-[13px] font-medium">{t('personalMemory.title')}</h1>
         <div className="no-drag ml-auto flex items-center gap-1">

@@ -4,7 +4,7 @@ import { useUpdate } from '@/lib/use-update'
 import { cn } from '@/lib/utils'
 
 /**
- * Update card at the top of the sidebar footer. It only appears when there is something to act on,
+ * Update card at the bottom of the sidebar's list panel. It only appears when there is something to act on,
  * and the whole card triggers the action for the current phase: download under explicit consent,
  * restart to install, or open the release page when this package cannot update itself. The `×`
  * skips the version, which the main process persists so the card stays gone until a newer release.

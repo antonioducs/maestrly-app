@@ -443,7 +443,7 @@ When finished, run `npm run bot-fleet:dev -- down`. It stops the dev gateway, re
 
 ## Use bots from your computer
 
-The sidebar has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the server, **Memory about you**, **Awaiting you** requests, and your environments, each with its bots listed under it. An environment header shows its name, status, memory, and bot count; select it to open the environment view. Search matches environment names as well as bot names and roles.
+The sidebar's icon rail has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the server, **Memory about you**, **Awaiting you** requests, and your environments, each with its bots listed under it. An environment header shows its name, status, memory, and bot count; select it to open the environment view. Search matches environment names as well as bot names and roles.
 
 Create a bot with **+**. Give it a **Name** and **What it does**, then choose **Where it runs**:
 

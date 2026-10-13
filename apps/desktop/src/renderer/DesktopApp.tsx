@@ -4,7 +4,7 @@ import { requestMainNavigation } from '@/lib/main-navigation'
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PanelRight, PanelLeft, MessagesSquare, ScanSearch } from 'lucide-react'
+import { PanelRight, MessagesSquare, ScanSearch } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import { setComposerPrefill } from '@/lib/composer-prefill'
 import type { Conversation, Workspace, FloatTab, ReviewLoopInfo } from '../preload'
@@ -560,7 +560,12 @@ export function DesktopApp() {
   const [dialogWs, setDialogWs] = useState<string | null>(null)
 
   const [branchDialogWs, setBranchDialogWs] = useState<string | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  // Whether the sidebar's list panel is open; its icon rail always stays. Remembered across launches.
+  const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem('sidebar.collapsed') !== '1')
+  const setSidebarCollapsed = useCallback((collapsed: boolean) => {
+    setSidebarOpen(!collapsed)
+    localStorage.setItem('sidebar.collapsed', collapsed ? '1' : '0')
+  }, [])
 
   const [openTargets, setOpenTargets] = useState<{ vscode: boolean }>({ vscode: false })
   const migration = useConversationMigration({
@@ -814,7 +819,9 @@ export function DesktopApp() {
     <SettingsProvider openSettings={openSettings}>
       <UpdateProvider>
         <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
-          <div className="relative flex h-full bg-background text-foreground">
+          <div
+            className={cn('relative flex h-full bg-background text-foreground', !sidebarOpen && 'sidebar-collapsed')}
+          >
             {remoteHosts
               .filter((host) => host.state === 'online')
               .map((host) => (
@@ -833,154 +840,153 @@ export function DesktopApp() {
                   onChange={onRemoteChange}
                 />
               ))}
-            {sidebarOpen && (
-              <Sidebar
-                workspaces={workspaces}
-                standaloneConversations={standaloneConversations}
-                standaloneArchivedCount={standaloneArchivedCount}
-                onNewChat={handleNewChat}
-                creatingChat={creatingChat}
-                onReorderStandaloneConversations={handleReorderStandaloneConversations}
-                statuses={statuses}
-                attention={attention}
-                activeId={active?.id ?? null}
-                selectedConversation={active}
-                requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
-                fleet={fleet}
-                selectedFleet={
-                  fleetView?.kind === 'bot'
-                    ? fleetView.botId
-                    : fleetView?.kind === 'environment'
-                      ? `environment:${fleetView.environmentId}`
-                      : (fleetView?.kind ?? null)
-                }
-                onOpenFleetBot={openFleetBot}
-                onOpenFleetEnvironment={openFleetEnvironment}
-                onOpenFleetServer={() => openFleetView({ kind: 'server' })}
-                onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
-                onOpenFleetOwnerMemory={() => openFleetView({ kind: 'memory' })}
-                botServerConnected={fleet.state.connection.state === 'connected'}
-                botPendingCount={fleet.state.snapshot.inbox.length}
-                botUpdate={botUpdates.summary.pending ? 'pending' : botUpdates.summary.available ? 'available' : null}
-                onCreateBot={() => {
-                  openCreateBot(null)
-                  setFleetTabRequest((value) => value + 1)
-                }}
-                onOpenBotSettings={() => openSettings('fleet')}
-                focusedWorkspaceId={focusedWorkspaceId}
-                pendingPlanIds={pendingPlanIds}
-                showArchived={showArchived}
-                onToggleArchived={() => setShowArchived((v) => !v)}
-                onSelect={handleSidebarConversationSelect}
-                onAddWorkspace={() => void requestProject()}
-                hostSections={hostSections}
-                localHost={hosts[0]}
-                appVersion={appVersion}
-                onRemoveWorkspace={(id) =>
-                  onHost(
-                    id,
-                    () => handleRemoveWorkspace(id),
-                    (actions) => actions.removeWorkspace(id)
-                  )
-                }
-                onNewConversation={(wsId) => setDialogWs(wsId)}
-                onOpenProjectNotes={(wsId) => {
-                  requestMainNavigation(() => {
-                    setProjectNotesWs(wsId)
-                    nav.setFleetView(null)
-                    setCreateBot(false)
-                    setProjectMemoryWs(null)
-                    setSettingsOpen(false)
-                    setArtifactsOpen(false)
-                    setOnboardingOpen(false)
-                  })
-                }}
-                onOpenProjectMemory={(wsId) => {
-                  requestMainNavigation(() => {
-                    setProjectMemoryWs(wsId)
-                    nav.setFleetView(null)
-                    setCreateBot(false)
-                    setProjectNotesWs(null)
-                    setSettingsOpen(false)
-                    setArtifactsOpen(false)
-                    setOnboardingOpen(false)
-                  })
-                }}
-                onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
-                onOpenAbout={() => setAboutOpen(true)}
-                onRenameConversation={(conv, name) =>
-                  onHost(
-                    conv.id,
-                    () => handleRename(conv, name),
-                    (actions) => actions.renameConversation(conv, name)
-                  )
-                }
-                onArchiveConversation={(conv, archived) =>
-                  onHost(
-                    conv.id,
-                    () => handleArchive(conv, archived),
-                    (actions) => actions.archiveConversation(conv, archived)
-                  )
-                }
-                onPinConversation={(conv, pinned) =>
-                  isRemoteKey(conv.id)
-                    ? remote[hostOfKey(conv.id)]?.actions.pinConversation(conv, pinned)
-                    : handlePinConversation(conv, pinned)
-                }
-                onDeleteConversation={(conv) =>
-                  onHost(
-                    conv.id,
-                    () => handleDelete(conv),
-                    (actions) => actions.deleteConversation(conv)
-                  )
-                }
-                onMigrateConversation={migration.openMigration}
-                onNewSiblingConversation={handleNewSiblingConversation}
-                onArchiveSiblings={(members, archived) =>
-                  onHost(
-                    members[0]?.id ?? '',
-                    () => handleArchiveSiblings(members, archived),
-                    (actions) => actions.archiveSiblings(members, archived)
-                  )
-                }
-                onDeleteSiblings={(members) =>
-                  onHost(
-                    members[0]?.id ?? '',
-                    () => handleDeleteSiblings(members),
-                    (actions) => actions.deleteSiblings(members)
-                  )
-                }
-                onReorderWorkspaces={handleReorderWorkspaces}
-                onReorderConversations={(workspaceId, ids) =>
-                  onHost(
-                    workspaceId,
-                    () => handleReorderConversations(workspaceId, ids),
-                    (actions) => actions.reorderConversations(workspaceId, ids)
-                  )
-                }
-                groups={groups}
-                onCreateGroup={handleCreateGroup}
-                onRenameGroup={handleRenameGroup}
-                onDeleteGroup={handleDeleteGroup}
-                onReorderGroups={handleReorderGroups}
-                onToggleGroupCollapsed={handleToggleGroupCollapsed}
-                onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
-                onToggleWorkspaceCollapsed={(id) =>
-                  onHost(
-                    id,
-                    () => handleToggleWorkspaceCollapsed(id),
-                    (actions) => actions.toggleWorkspaceCollapsed(id)
-                  )
-                }
-                onCollapseSidebar={() => setSidebarOpen(false)}
-                openTargets={openTargets}
-                onOpenExternal={(scope, id, target) =>
-                  void api.openExternal(scope, id, target).then((r) => {
-                    if (!r.ok) console.error('[open-external]', target, r.error)
-                  })
-                }
-              />
-            )}
+            <Sidebar
+              workspaces={workspaces}
+              standaloneConversations={standaloneConversations}
+              standaloneArchivedCount={standaloneArchivedCount}
+              onNewChat={handleNewChat}
+              creatingChat={creatingChat}
+              onReorderStandaloneConversations={handleReorderStandaloneConversations}
+              statuses={statuses}
+              attention={attention}
+              activeId={active?.id ?? null}
+              selectedConversation={active}
+              requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
+              fleet={fleet}
+              selectedFleet={
+                fleetView?.kind === 'bot'
+                  ? fleetView.botId
+                  : fleetView?.kind === 'environment'
+                    ? `environment:${fleetView.environmentId}`
+                    : (fleetView?.kind ?? null)
+              }
+              onOpenFleetBot={openFleetBot}
+              onOpenFleetEnvironment={openFleetEnvironment}
+              onOpenFleetServer={() => openFleetView({ kind: 'server' })}
+              onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
+              onOpenFleetOwnerMemory={() => openFleetView({ kind: 'memory' })}
+              botServerConnected={fleet.state.connection.state === 'connected'}
+              botPendingCount={fleet.state.snapshot.inbox.length}
+              botUpdate={botUpdates.summary.pending ? 'pending' : botUpdates.summary.available ? 'available' : null}
+              onCreateBot={() => {
+                openCreateBot(null)
+                setFleetTabRequest((value) => value + 1)
+              }}
+              onOpenBotSettings={() => openSettings('fleet')}
+              focusedWorkspaceId={focusedWorkspaceId}
+              pendingPlanIds={pendingPlanIds}
+              showArchived={showArchived}
+              onToggleArchived={() => setShowArchived((v) => !v)}
+              onSelect={handleSidebarConversationSelect}
+              onAddWorkspace={() => void requestProject()}
+              hostSections={hostSections}
+              localHost={hosts[0]}
+              appVersion={appVersion}
+              onRemoveWorkspace={(id) =>
+                onHost(
+                  id,
+                  () => handleRemoveWorkspace(id),
+                  (actions) => actions.removeWorkspace(id)
+                )
+              }
+              onNewConversation={(wsId) => setDialogWs(wsId)}
+              onOpenProjectNotes={(wsId) => {
+                requestMainNavigation(() => {
+                  setProjectNotesWs(wsId)
+                  nav.setFleetView(null)
+                  setCreateBot(false)
+                  setProjectMemoryWs(null)
+                  setSettingsOpen(false)
+                  setArtifactsOpen(false)
+                  setOnboardingOpen(false)
+                })
+              }}
+              onOpenProjectMemory={(wsId) => {
+                requestMainNavigation(() => {
+                  setProjectMemoryWs(wsId)
+                  nav.setFleetView(null)
+                  setCreateBot(false)
+                  setProjectNotesWs(null)
+                  setSettingsOpen(false)
+                  setArtifactsOpen(false)
+                  setOnboardingOpen(false)
+                })
+              }}
+              onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
+              onOpenAbout={() => setAboutOpen(true)}
+              onRenameConversation={(conv, name) =>
+                onHost(
+                  conv.id,
+                  () => handleRename(conv, name),
+                  (actions) => actions.renameConversation(conv, name)
+                )
+              }
+              onArchiveConversation={(conv, archived) =>
+                onHost(
+                  conv.id,
+                  () => handleArchive(conv, archived),
+                  (actions) => actions.archiveConversation(conv, archived)
+                )
+              }
+              onPinConversation={(conv, pinned) =>
+                isRemoteKey(conv.id)
+                  ? remote[hostOfKey(conv.id)]?.actions.pinConversation(conv, pinned)
+                  : handlePinConversation(conv, pinned)
+              }
+              onDeleteConversation={(conv) =>
+                onHost(
+                  conv.id,
+                  () => handleDelete(conv),
+                  (actions) => actions.deleteConversation(conv)
+                )
+              }
+              onMigrateConversation={migration.openMigration}
+              onNewSiblingConversation={handleNewSiblingConversation}
+              onArchiveSiblings={(members, archived) =>
+                onHost(
+                  members[0]?.id ?? '',
+                  () => handleArchiveSiblings(members, archived),
+                  (actions) => actions.archiveSiblings(members, archived)
+                )
+              }
+              onDeleteSiblings={(members) =>
+                onHost(
+                  members[0]?.id ?? '',
+                  () => handleDeleteSiblings(members),
+                  (actions) => actions.deleteSiblings(members)
+                )
+              }
+              onReorderWorkspaces={handleReorderWorkspaces}
+              onReorderConversations={(workspaceId, ids) =>
+                onHost(
+                  workspaceId,
+                  () => handleReorderConversations(workspaceId, ids),
+                  (actions) => actions.reorderConversations(workspaceId, ids)
+                )
+              }
+              groups={groups}
+              onCreateGroup={handleCreateGroup}
+              onRenameGroup={handleRenameGroup}
+              onDeleteGroup={handleDeleteGroup}
+              onReorderGroups={handleReorderGroups}
+              onToggleGroupCollapsed={handleToggleGroupCollapsed}
+              onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
+              onToggleWorkspaceCollapsed={(id) =>
+                onHost(
+                  id,
+                  () => handleToggleWorkspaceCollapsed(id),
+                  (actions) => actions.toggleWorkspaceCollapsed(id)
+                )
+              }
+              collapsed={!sidebarOpen}
+              onCollapsedChange={setSidebarCollapsed}
+              openTargets={openTargets}
+              onOpenExternal={(scope, id, target) =>
+                void api.openExternal(scope, id, target).then((r) => {
+                  if (!r.ok) console.error('[open-external]', target, r.error)
+                })
+              }
+            />
 
             <main
               ref={mainRef}
@@ -992,7 +998,6 @@ export function DesktopApp() {
                   <ProjectNotesView
                     workspaceId={rawId(projectNotesWs)}
                     workspaceName={allWorkspaces.find((w) => w.id === projectNotesWs)?.name ?? ''}
-                    onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                     onClose={() => setProjectNotesWs(null)}
                   />
                 </HostProvider>
@@ -1007,7 +1012,6 @@ export function DesktopApp() {
                     focusMemoryId={focusMemoryId}
                     focusMemoryRequest={focusMemoryRequest}
                     onHostChange={showPersonalMemoryOf}
-                    onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                     onClose={() => setProjectMemoryWs(null)}
                   />
                 </HostProvider>
@@ -1019,24 +1023,17 @@ export function DesktopApp() {
                     focusMemoryId={focusMemoryId}
                     focusMemoryRequest={focusMemoryRequest}
                     workspaceName={allWorkspaces.find((w) => w.id === memoryTarget.workspaceId)?.name ?? ''}
-                    onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                     onClose={() => setProjectMemoryWs(null)}
                   />
                 </HostProvider>
               )}
               {settingsOpen && (
-                <SettingsView
-                  fleet={fleet}
-                  initialSection={settingsSection}
-                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                  onClose={() => setSettingsOpen(false)}
-                />
+                <SettingsView fleet={fleet} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />
               )}
               {artifactsOpen && (
                 <ArtifactsCenter
                   onOpenBot={openFleetBot}
                   onClose={() => setArtifactsOpen(false)}
-                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onOpenSettings={() => openSettings('artifacts')}
                 />
               )}
@@ -1083,24 +1080,8 @@ export function DesktopApp() {
               )}
 
               <div className="flex min-h-0 flex-1 flex-col" style={mainOverride ? { display: 'none' } : undefined}>
-                <header
-                  className={cn(
-                    'drag flex h-10 shrink-0 items-center justify-between gap-2 hairline-b pr-2',
-                    sidebarOpen ? 'pl-3' : 'pl-[var(--tt-offset)]'
-                  )}
-                >
+                <header className="drag flex h-10 shrink-0 items-center justify-between gap-2 hairline-b pl-[var(--view-header-inset)] pr-2">
                   <div className="no-drag flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-                    {!sidebarOpen && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        onClick={() => setSidebarOpen(true)}
-                        title={t('common.showWorkspaces')}
-                      >
-                        <PanelLeft className="size-4" />
-                      </Button>
-                    )}
                     <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
                     {active?.botOrigin && <BotConversationBadge conversation={active} />}
                     {active?.scope === 'project' && (
