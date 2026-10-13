@@ -9,6 +9,9 @@ export interface HookNoticeItem {
   level: 'info' | 'error'
 }
 
+/** Start of a send error for a prompt a plugin's UserPromptSubmit hook blocked; the reason follows. */
+export const BLOCKED_BY_HOOK = 'blocked-by-hook: '
+
 /** Info notices leave on their own; failures stay until dismissed. */
 export const HOOK_NOTICE_INFO_MS = 8_000
 const MAX_NOTICES = 3

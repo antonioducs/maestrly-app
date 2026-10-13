@@ -15,13 +15,20 @@ vi.mock('../../src/main/chat/chat-store', async (original) => ({
   ...(await original<typeof import('../../src/main/chat/chat-store')>()),
   listConversationContextMessages: () => [
     { role: 'user', parts: [{ type: 'text', text: 'synthetic question' }] },
-    { role: 'assistant', parts: [{ type: 'reasoning', text: 'hidden' }, { type: 'text', text: 'synthetic answer' }] },
+    {
+      role: 'assistant',
+      parts: [
+        { type: 'reasoning', text: 'hidden' },
+        { type: 'text', text: 'synthetic answer' },
+      ],
+    },
     { role: 'assistant', parts: [{ type: 'tool', toolName: 'bash' }] },
   ],
 }))
 
 const {
   hasToolHooks,
+  hookSessionBoundary,
   hooksActive,
   pluginsWithTurnHooks,
   removeHookTranscript,
@@ -30,6 +37,8 @@ const {
   runSessionStart,
   runStop,
   runUserPromptSubmit,
+  sessionStartSource,
+  stopHookPrompt,
   wrapToolSetWithHooks,
   writeHookTranscript,
 } = await import('../../src/main/chat/plugin-hooks')
@@ -135,7 +144,7 @@ describe('plugin hooks', () => {
         `process.stdout.write(input.stop_hook_active ? '' : JSON.stringify({ decision: 'block', reason: 'run the tests' }))`
       ),
     ]
-    expect(await runStop(ctx(), false)).toEqual({ continueWith: 'run the tests' })
+    expect(await runStop(ctx(), false)).toEqual({ continueWith: 'run the tests', plugin: 'Guard' })
     expect(await runStop(ctx(), true)).toEqual({})
   })
 
@@ -161,7 +170,10 @@ describe('plugin hooks', () => {
   it('writes an owner-only transcript of the conversation text and removes it', () => {
     const file = writeHookTranscript('conv/../1')
     expect(path.basename(file)).toBe('conv____1.jsonl')
-    const lines = readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    const lines = readFileSync(file, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
     expect(lines).toEqual([
       { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'synthetic question' }] } },
       { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'synthetic answer' }] } },
@@ -205,5 +217,27 @@ describe('plugin hooks', () => {
     expect(wrapToolSetWithHooks(tools, ctx('ask'))).toBe(tools)
     // A ToolSet handed on to a subagent keeps one layer of hooks.
     expect(wrapToolSetWithHooks(wrapped, ctx()).bash).toBe(wrapped.bash)
+  })
+})
+
+describe('plugin hook sessions', () => {
+  it('starts a session when none ran, after a clear, or past a newer compaction', () => {
+    const marker = (id: string) => ({
+      id: `m-${id}`,
+      conversationId: 'conv-1',
+      role: 'assistant' as const,
+      createdAt: 1,
+      parts: [{ type: 'compaction' as const, id, text: 'summary', strategy: 'summary' as const }],
+    })
+    expect(hookSessionBoundary([])).toBe('')
+    expect(hookSessionBoundary([marker('a'), marker('b')])).toBe('b')
+    expect(sessionStartSource(undefined, '')).toBe('startup')
+    expect(sessionStartSource({ cleared: true }, '')).toBe('clear')
+    expect(sessionStartSource({ boundary: '' }, '')).toBeNull()
+    expect(sessionStartSource({ boundary: 'a' }, 'b')).toBe('compact')
+  })
+
+  it('words the prompt that keeps the agent going', () => {
+    expect(stopHookPrompt('Guard', 'run the tests')).toBe('Stop hook feedback from the Guard plugin:\nrun the tests')
   })
 })

@@ -99,6 +99,11 @@ export interface ConvUiPrefs {
   }
   /** Maestro settings are an override; absence inherits the global Maestro configuration. */
   maestro?: { config?: MaestroConfigV1; projectScoped?: boolean }
+  /**
+   * Where plugin SessionStart hooks last ran: the compaction boundary then current (a newer one starts a new
+   * session), or a clear since then. Absent before the first run.
+   */
+  hookSession?: { boundary: string } | { cleared: true }
   /** Plan-panel draft keyed by current plan version/hash. */
   planDraft?: {
     version: number

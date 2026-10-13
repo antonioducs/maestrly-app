@@ -426,6 +426,7 @@ export default {
     modelFailed: 'O download falhou.',
   },
   view: {
+    errBlockedByHook: 'Um hook de plugin bloqueou esta mensagem: {{reason}}',
     errBusy: 'Já há um turno em andamento.',
     errNoModel: 'Escolha um modelo no seletor abaixo.',
     errNoProvider: 'Nenhum provedor conectado. Entre ou configure um em Configurações › Maestrly Chat.',

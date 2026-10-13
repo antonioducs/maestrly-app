@@ -418,6 +418,7 @@ export default {
     modelFailed: 'Download failed.',
   },
   view: {
+    errBlockedByHook: 'A plugin hook blocked this message: {{reason}}',
     errBusy: "There's already a turn in progress.",
     errNoModel: 'Choose a model in the selector below.',
     errNoProvider: 'No connected provider. Sign in or configure one in Settings › Maestrly Chat.',

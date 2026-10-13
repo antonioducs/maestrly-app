@@ -2,8 +2,9 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { ToolSet } from 'ai'
-import type { ChatPermMode, ChatStreamEvent, MessagePart, ToolOutput } from '../../shared/chat'
+import type { ChatMessage, ChatPermMode, ChatStreamEvent, MessagePart, ToolOutput } from '../../shared/chat'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
+import type { ConvUiPrefs } from '../../shared/conversation'
 import type { ChatBehavior } from '../../shared/conversation-experience'
 import { runHookCommand } from '../plugins/hook-command'
 import { hookMatcherPattern, type PluginHookEvent } from '../plugins/hooks-scan'
@@ -12,6 +13,7 @@ import { getConvUiPrefs } from '../store'
 import { listConversationContextMessages } from './chat-store'
 import { conversationShellEnv } from './conversation-env'
 import { chatDiag } from './diag-log'
+import { isPortableCompactionMarker } from './message'
 import { claudeToolName, fromClaudeInput, toClaudeInput } from './plugin-hook-tools'
 import { modelOutputToChatToolOutput } from './tool-output'
 
@@ -63,6 +65,11 @@ export function hasToolHooks(conversationId: string, mode: ChatBehavior): boolea
   return (
     canRunHooks(mode, false) && listPluginHooks({ conversationId }).some((hook) => TOOL_EVENTS.has(hook.spec.event))
   )
+}
+
+/** Whether a conversation has hooks on one event (and may run them in this mode). */
+export function hasHookEvent(conversationId: string, mode: ChatBehavior, event: PluginHookEvent): boolean {
+  return canRunHooks(mode, false) && listPluginHooks({ conversationId }).some((hook) => hook.spec.event === event)
 }
 
 /** Whether a conversation has hooks on events only a Maestrly-run turn has: the session's start, prompts, turn ends. */
@@ -267,16 +274,24 @@ export async function runSessionStart(
 }
 
 /** When a turn ends: a hook can keep the agent going with a reason (`decision: 'block'` or exit 2). */
-export async function runStop(ctx: HookTurnContext, stopHookActive: boolean): Promise<{ continueWith?: string }> {
+export async function runStop(
+  ctx: HookTurnContext,
+  stopHookActive: boolean
+): Promise<{ continueWith?: string; plugin?: string }> {
   const answers = await runEvent(ctx, 'Stop', { stop_hook_active: stopHookActive })
   for (const answer of answers) {
     if (answer.json?.continue === false) return {}
     const reason =
       (answer.code === 2 ? text(answer.stderr) : undefined) ??
       (answer.json?.decision === 'block' ? text(answer.json.reason) : undefined)
-    if (reason) return { continueWith: reason }
+    if (reason) return { continueWith: reason.trim(), plugin: answer.hook.pluginName }
   }
   return {}
+}
+
+/** The prompt that keeps the agent going after a Stop hook asked for more. */
+export function stopHookPrompt(plugin: string, reason: string): string {
+  return `Stop hook feedback from the ${plugin} plugin:\n${reason}`
 }
 
 /** Hidden context a hook adds to the prompt, in the channel memory recall uses. */
@@ -293,13 +308,26 @@ export function hookContextPart(event: 'SessionStart' | 'UserPromptSubmit', text
   }
 }
 
-/** Which session-start source a turn has: a new conversation, or the first turn after clearing or compacting. */
+/** The conversation's latest compaction boundary ('' before any): a new one starts a new hook session. */
+export function hookSessionBoundary(messages: readonly ChatMessage[]): string {
+  let boundary = ''
+  for (const message of messages)
+    for (const part of message.parts)
+      if (part.type === 'compaction' && isPortableCompactionMarker(part)) boundary = part.id
+  return boundary
+}
+
+/**
+ * Which session-start source a turn has, from where SessionStart hooks last ran: never (a new session), before a
+ * clear, or before the latest compaction. `null` when the session already started.
+ */
 export function sessionStartSource(
-  contextMessages: readonly unknown[],
-  pending: 'clear' | 'compact' | undefined
+  state: ConvUiPrefs['hookSession'],
+  boundary: string
 ): 'startup' | 'clear' | 'compact' | null {
-  if (!contextMessages.length) return 'startup'
-  return pending ?? null
+  if (!state) return 'startup'
+  if ('cleared' in state) return 'clear'
+  return state.boundary === boundary ? null : 'compact'
 }
 
 /** Stop hooks keep an agent going at most this many turns in a row. */

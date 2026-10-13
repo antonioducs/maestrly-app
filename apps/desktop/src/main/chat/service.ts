@@ -486,6 +486,21 @@ import {
   parseBackgroundCompactionConfig,
 } from './background-compaction'
 import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
+import {
+  hasHookEvent,
+  hookContextPart,
+  hookSessionBoundary,
+  hooksActive,
+  MAX_STOP_HOOK_CONTINUATIONS,
+  removeHookTranscript,
+  runnerHookContext,
+  runSessionStart,
+  runStop,
+  runUserPromptSubmit,
+  sessionStartSource,
+  shouldContinueAfterStop,
+  stopHookPrompt,
+} from './plugin-hooks'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -3694,6 +3709,8 @@ interface StartSendOpts {
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
   dispatchSeed?: { dispatchId: string; sourceConversationId: string }
+  /** How many turns in a row plugin Stop hooks already kept going (this turn is one of them when above zero). */
+  stopHookContinuations?: number
 }
 
 async function startSend(
@@ -4219,6 +4236,44 @@ async function startSend(
           })
     if (turnMemory) for (const p of turnMemory.hiddenParts) parts.push(p)
 
+    // Plugin hooks on the session's start and on each prompt, run by Maestrly for every model before the prompt is
+    // stored: their context reaches the model as hidden parts of this message (never the cached project context).
+    const hookSend = makeSafeSend(wc)
+    const hookContext = (signal: AbortSignal) =>
+      runnerHookContext({
+        conversationId,
+        cwd: conv.cwd,
+        mode: turnBehavior,
+        signal,
+        emit: (event) => hookSend(`chat:delta:${conversationId}`, event),
+      })
+    const hookTurn = !internalLoop && hooksActive({ conversationId, mode: turnBehavior, reviewer: false })
+    let hookSessionToRecord: string | null = null
+    if (hookTurn) {
+      const ctx = hookContext(operation.controller.signal)
+      const boundary = hookSessionBoundary(listConversationContextMessages(conversationId))
+      const source = sessionStartSource(getConvUiPrefs(conversationId).hookSession, boundary)
+      if (source) {
+        const started = await runSessionStart(ctx, source)
+        if (started.context.length) parts.push(hookContextPart('SessionStart', started.context))
+        hookSessionToRecord = boundary
+      }
+      if (!opts?.internal) {
+        const prompt = await runUserPromptSubmit(ctx, text)
+        if (prompt.block) {
+          releaseCwdActivityOnce()
+          removeHookTranscript(conversationId)
+          return { ok: false, error: `blocked-by-hook: ${prompt.block}` }
+        }
+        if (prompt.context.length) parts.push(hookContextPart('UserPromptSubmit', prompt.context))
+      }
+      if (operation.controller.signal.aborted) {
+        releaseCwdActivityOnce()
+        removeHookTranscript(conversationId)
+        return { ok: false, error: 'cancelled' }
+      }
+    }
+
     if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
 
@@ -4697,6 +4752,9 @@ async function startSend(
     turnMemory?.commit()
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
+    // The session's start hooks ran for this boundary only once their context is part of a stored message.
+    if (hookSessionToRecord !== null)
+      patchConvUiPrefs(conversationId, { hookSession: { boundary: hookSessionToRecord } })
     operation.pendingMessage = undefined
     // Provenance is decided here, at admission, from how the turn entered — never from transcript roles.
     if (isHumanTurnAdmission(opts)) {
@@ -4910,6 +4968,7 @@ async function startSend(
       : {}
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
+    let stopHookContinuation: { prompt: string; count: number } | null = null
     if (useCodexSubscription && isolated) {
       const selectedModelId = selection!.modelId
       const logicalProviderId = selection!.providerId
@@ -5683,6 +5742,31 @@ async function startSend(
             }
           }
         }
+        // A plugin Stop hook may keep the agent going: its reason becomes an internal prompt, at most
+        // MAX_STOP_HOOK_CONTINUATIONS turns in a row.
+        if (hookTurn && !planSubmitted && !controller.signal.aborted && !hadError && !wasInterrupted) {
+          const continuations = opts?.stopHookContinuations ?? 0
+          const stop = await runStop(hookContext(controller.signal), continuations > 0)
+          if (stop.continueWith && stop.plugin && !controller.signal.aborted) {
+            const keepGoing = shouldContinueAfterStop(continuations)
+            send(`chat:delta:${conversationId}`, {
+              kind: 'hook-notice',
+              plugin: stop.plugin,
+              event: 'Stop',
+              text: keepGoing
+                ? stop.continueWith
+                : `Stop hooks kept the agent going ${MAX_STOP_HOOK_CONTINUATIONS} times in a row, so the turn ends here.`,
+              level: keepGoing ? 'info' : 'error',
+            } satisfies ChatStreamEvent)
+            if (keepGoing) {
+              stopHookContinuation = {
+                prompt: stopHookPrompt(stop.plugin, stop.continueWith),
+                count: continuations + 1,
+              }
+              return
+            }
+          }
+        }
         // Pure, tested decision (turn-status): abort→'idle'; error OR mid-stream cut→'error' (red);
         // otherwise→'ready'. `review_plan` retains ready behavior, but
         // emits it silently because the broker already played the dedicated plan alert.
@@ -5803,9 +5887,26 @@ async function startSend(
           scheduleMemoryExtraction(conversationId)
         }
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
+        if (hookTurn) removeHookTranscript(conversationId)
+        // Host continuations (Maestro's reconciliation guard, a Stop hook asking for more) run as an internal turn
+        // that settles this one when it ends; a Stop continuation keeps the authority this turn was admitted with.
         const guard = maestroGuardContinuation
+          ? { prompt: maestroGuardContinuation.prompt, failure: 'maestro-guard', opts: {} }
+          : stopHookContinuation
+            ? {
+                prompt: stopHookContinuation.prompt,
+                failure: 'stop-hook',
+                opts: {
+                  stopHookContinuations: stopHookContinuation.count,
+                  ...(opts?.botAdmission ? { botAdmission: opts.botAdmission } : {}),
+                  ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
+                  ...(opts?.runnerSignal ? { runnerSignal: opts.runnerSignal } : {}),
+                },
+              }
+            : null
         if (guard) {
           const continuation = await startSend(deps, wc, conversationId, guard.prompt, undefined, {
+            ...guard.opts,
             internal: true,
             onComplete: (result) => {
               try {
@@ -5818,7 +5919,7 @@ async function startSend(
               } else if (result.outcome === 'cancelled') {
                 run.settleOutcome({ status: 'cancelled', assistantMessageId: null })
               } else {
-                run.settleOutcome({ status: 'error', error: 'maestro-guard-failed', assistantMessageId: null })
+                run.settleOutcome({ status: 'error', error: `${guard.failure}-failed`, assistantMessageId: null })
               }
             },
           })
@@ -5832,7 +5933,7 @@ async function startSend(
             deps.emitStatus(conversationId, 'error')
             run.settleOutcome({
               status: 'error',
-              error: continuation.error ?? 'maestro-guard-admission-failed',
+              error: continuation.error ?? `${guard.failure}-admission-failed`,
               assistantMessageId: null,
             })
             send(`chat:delta:${conversationId}`, { kind: 'done' })
@@ -9526,6 +9627,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (!run || !control || !run.midTurnSteering) {
         return { ok: false as const, error: 'target-unavailable' as const }
       }
+      // Prompt hooks run on every prompt: a steered message would skip them, so it waits for a turn of its own.
+      if (hasHookEvent(conversationId, behaviorFor(conversationId), 'UserPromptSubmit')) {
+        return { ok: false as const, error: 'target-unavailable' as const }
+      }
       const existing = getChatMessage(conversationId, clientUserMessageId)
       if (existing?.steering?.status === 'queued') return { ok: true as const, accepted: true as const }
       if (existing) return { ok: false as const, error: 'duplicate-id' as const }
@@ -10050,6 +10155,9 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // Await artifact rm INSIDE the reservation: releasing early would let an in-flight rm delete an image
       // just written by the next turn.
       await clearChatMessages(conversationId)
+      // The next turn starts a new plugin hook session from a clear.
+      if (getConvUiPrefs(conversationId).hookSession)
+        patchConvUiPrefs(conversationId, { hookSession: { cleared: true } })
       publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
       clearMaestroLiveRunsForConversation(conversationId)
       return { ok: true }

@@ -108,7 +108,7 @@ import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
-import { addHookNotice, HOOK_NOTICE_INFO_MS, type HookNoticeItem, HookNotices } from './HookNotices'
+import { addHookNotice, BLOCKED_BY_HOOK, HOOK_NOTICE_INFO_MS, type HookNoticeItem, HookNotices } from './HookNotices'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { MaestroControl } from './MaestroControl'
 import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
@@ -762,7 +762,9 @@ export function ChatView({
                       ? t('view.errInvalidAttachment')
                       : error === 'pdf-unreadable'
                         ? t('view.errPdfUnreadable')
-                        : t('view.errSendFailed')
+                        : error?.startsWith(BLOCKED_BY_HOOK)
+                          ? t('view.errBlockedByHook', { reason: error.slice(BLOCKED_BY_HOOK.length) })
+                          : t('view.errSendFailed')
 
   const pushAssistantError = useCallback(
     (text: string) => {
@@ -1541,9 +1543,10 @@ export function ChatView({
         if (isMaestro) setMaestroSendTarget('current')
         return
       }
-      // A refused send must not cost what was written: a busy chat gives the draft back to be sent again.
+      // A refused send must not cost what was written: a busy chat, or a prompt a plugin hook blocked, gives the
+      // draft back to be sent again.
       void doSend(text, atts, agentMentions).then((result) => {
-        if (result?.error !== 'busy') return
+        if (result?.error !== 'busy' && !result?.error?.startsWith(BLOCKED_BY_HOOK)) return
         setDraft((current) => current || text)
         setDraftMentions((current) => (current.length ? current : agentMentions))
         setAttachments((current) => (current.length ? current : atts))

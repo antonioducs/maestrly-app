@@ -19,6 +19,12 @@ describe('plugin hooks reach every runtime', () => {
     expect(readFileSync(path.join(main, file), 'utf8')).toContain('wrapToolSetWithHooks(')
   })
 
+  it('sends a steered message to a turn of its own when prompt hooks exist, so they see it', () => {
+    const service = readFileSync(path.join(main, 'service.ts'), 'utf8')
+    const steer = service.slice(service.indexOf("'chat:steer',"), service.indexOf('control.steer('))
+    expect(steer).toContain("hasHookEvent(conversationId, behaviorFor(conversationId), 'UserPromptSubmit')")
+  })
+
   it('runs tool hooks around the ChatGPT web companion tools', () => {
     expect(readFileSync(path.join(main, 'chatgpt-web/bridge-server.ts'), 'utf8')).toContain('toolHooks')
     expect(readFileSync(path.join(main, 'chatgpt-web/manager.ts'), 'utf8')).toContain('runPreToolUse(')
