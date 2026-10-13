@@ -376,6 +376,18 @@ line is not limited. This adds no authority: every paired device can already
 control the whole gateway, and the new device gets exactly that authority. Each
 code is one-use, expires after ten minutes, and is stored only as a hash.
 
+A phone is a paired device with the same authority. It registers for
+notifications with its own device token (`/v1/devices/self/push`): the gateway
+keeps its Expo push token, language and preferences, deletes them when the
+device unpairs or is revoked, and sends notifications through Expo's push
+service unless the server sets `MAESTRLY_GATEWAY_PUSH=off`. A notification
+carries only the bot's name or the chat's title, a fixed phrase in the phone's
+language, and the ids the app needs to open it, never what a bot, chat or person
+wrote; Expo and Apple or Google see that much. A phone opens an artifact as its
+owner with a single-use ticket it requests with its device token, only through
+the server's HTTPS public address, and shows the page in the system's browser
+view, outside the app.
+
 VPS setup accepts a password or private key for that job and generates a new
 ed25519 key for later access. This key grants root or passwordless `sudo`
 authority to the VPS: protect it as you would an administrator credential. The

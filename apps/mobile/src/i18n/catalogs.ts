@@ -1135,7 +1135,7 @@ export const ptBR: Record<keyof typeof en, string> = {
   'dictation.starting': 'Preparando o microfone…',
   'dictation.listening': 'Ouvindo…',
   'dictation.openSettings': 'Abrir Ajustes',
-  'dictation.error.denied': 'O Maestrly precisa do microfone e do reconhecimento de fala para o ditado.',
+  'dictation.error.denied': 'A Maestrly precisa do microfone e do reconhecimento de fala para o ditado.',
   'dictation.error.unavailable': 'O reconhecimento de fala não está disponível neste celular agora.',
   'dictation.error.noSpeech': 'Não ouvi nada. Tente de novo mais perto do celular.',
   'dictation.error.network': 'O ditado precisa de internet para este idioma.',
@@ -1147,7 +1147,7 @@ export const ptBR: Record<keyof typeof en, string> = {
   'artifact.version': 'Versão {version}',
   'artifact.open': 'Abrir',
   'artifact.openNamed': 'Abrir {title}',
-  'artifact.error.unsupported': 'Este servidor não hospeda páginas. Atualize-o pelo Maestrly no computador.',
+  'artifact.error.unsupported': 'Este servidor não hospeda páginas. Atualize-o pela Maestrly no computador.',
   'artifact.error.off':
     'A hospedagem de páginas está desligada neste servidor. Ligue em Ajustes → Artefatos no computador.',
   'artifact.error.noAddress':

@@ -192,6 +192,8 @@ Installer setups start with the private-network switch off: **Let bots reach thi
    | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per environment | `1g` |
    | `MAESTRLY_GATEWAY_BOT_EGRESS` | `open` permits private network access; `public` guards it | `open` |
    | `MAESTRLY_GATEWAY_WORKSPACES_ROOT` | Absolute path of a host directory, owned by uid 1000, that the workspaces environment mounts at the same path | Empty: files stay in the environment's home volume |
+   | `MAESTRLY_GATEWAY_PUSH` | `expo` sends [notifications](mobile.md#notifications) to paired phones through Expo's push service; `off` sends none | `expo` |
+   | `MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN` | Expo access token for push, needed only when the app's Expo project requires one | Empty |
 
 3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
 

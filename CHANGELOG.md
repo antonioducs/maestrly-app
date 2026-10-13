@@ -5,6 +5,23 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Maestrly for iOS and Android. Pair a phone with your bot server by scanning
+  the QR code in **Settings → Bot server → Pair a phone**, then follow and
+  direct your bots and the chats and workspaces of the server's workspaces
+  environment: read conversations as they stream, send messages, photos and
+  files, dictate, approve requests, answer questions and plans, change models,
+  modes and skills, compact, and open the pages agents publish. Messages sent
+  offline wait on the phone. See [Mobile app](docs/mobile.md).
+- Push notifications on paired phones when a bot or chat needs you, finishes a
+  turn or a routine, or fails, chosen by category in the app. The bot server
+  sends them through Expo's push service with only the bot's name or chat's
+  title and a fixed phrase; set `MAESTRLY_GATEWAY_PUSH=off` to send none. See
+  [Notifications](docs/mobile.md#notifications).
+- Any paired device can create pairing codes for other devices, at most five
+  unused at once.
+
 ## [0.15.0] - 2026-10-08
 
 ### Added
