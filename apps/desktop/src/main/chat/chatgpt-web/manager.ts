@@ -85,8 +85,7 @@ import { getLocalMemory, markLocalMemoriesUsed } from '../../memory/local-memory
 import { getMemoryIndexStatus, reconcileMemoryIndex } from '../../memory/index'
 import { retrieveHybridMemory } from '../../memory/retrieval'
 import { discoverSharedKnowledge } from '../../memory/shared-knowledge'
-import { pluginsWithTurnHooks, runnerHookContext, runPostToolUse, runPreToolUse } from '../plugin-hooks'
-import { capabilityBehaviorFor } from '../../../shared/chat-mode'
+import { companionHooksRefusal, runnerHookContext, runPostToolUse, runPreToolUse } from '../plugin-hooks'
 import type { McpServer } from '../mcp-types'
 import type { BridgeToolHooks } from './bridge-server'
 
@@ -720,6 +719,13 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       return { ok: true }
     }
 
+    // Refused before any transport starts: plugin hooks a companion cannot run (see companionHooksRefusal).
+    const hooksRefusal = companionHooksRefusal(
+      input.conversationId,
+      getConvUiPrefs(input.conversationId).chat?.mode ?? 'agent'
+    )
+    if (hooksRefusal) return { ok: false, error: hooksRefusal }
+
     await ensureTransport()
     // Clear/end/disable may occur while the daemon starts. The epoch prevents the asynchronous
     // continuation from resurrecting a session that has already crossed this lifecycle boundary.
@@ -734,13 +740,6 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         return { ok: false, error: 'session-canceled' }
       }
       return { ok: true }
-    }
-    // The companion's turns run in chatgpt.com: Maestrly sees only its tool calls, so hooks on the session's start,
-    // prompts or turn ends cannot run there. A conversation with such hooks does not start a companion.
-    const companionMode = getConvUiPrefs(input.conversationId).chat?.mode ?? 'agent'
-    if (capabilityBehaviorFor(companionMode) === 'agent') {
-      const blocking = pluginsWithTurnHooks(input.conversationId)
-      if (blocking.length) return { ok: false, error: `companion-hooks-unsupported: ${blocking.join(', ')}` }
     }
     // A server whose every account is out of this conversation's reach is not offered to the session.
     const mcpServers = listRuntimeMcpServers({ conversationId: input.conversationId }).filter((server) =>

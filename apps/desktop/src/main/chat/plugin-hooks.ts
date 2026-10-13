@@ -80,6 +80,16 @@ export function pluginsWithTurnHooks(conversationId: string): string[] {
   return [...new Set(names)]
 }
 
+/**
+ * Why a ChatGPT web companion cannot serve a conversation: its turns run in chatgpt.com, where Maestrly sees only
+ * tool calls, so hooks on the session's start, prompts or turn ends could not run. Null when nothing stops it.
+ */
+export function companionHooksRefusal(conversationId: string, mode: ChatBehavior): string | null {
+  if (!canRunHooks(mode, false)) return null
+  const blocking = pluginsWithTurnHooks(conversationId)
+  return blocking.length ? `companion-hooks-unsupported: ${blocking.join(', ')}` : null
+}
+
 interface HookAnswer {
   hook: ActivePluginHook
   code: number | null

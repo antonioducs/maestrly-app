@@ -27,6 +27,7 @@ vi.mock('../../src/main/chat/chat-store', async (original) => ({
 }))
 
 const {
+  companionHooksRefusal,
   hasToolHooks,
   hookSessionBoundary,
   hooksActive,
@@ -165,6 +166,11 @@ describe('plugin hooks', () => {
     hooks.list = [hook('SessionStart', `process.exit(0)`), hook('Stop', `process.exit(0)`)]
     expect(hasToolHooks('conv-1', 'agent')).toBe(false)
     expect(pluginsWithTurnHooks('conv-1')).toEqual(['Guard'])
+    // A ChatGPT web companion cannot run them, so it does not start in Agent; Ask runs no hooks at all.
+    expect(companionHooksRefusal('conv-1', 'agent')).toBe('companion-hooks-unsupported: Guard')
+    expect(companionHooksRefusal('conv-1', 'ask')).toBeNull()
+    hooks.list = [hook('PreToolUse', `process.exit(0)`)]
+    expect(companionHooksRefusal('conv-1', 'agent')).toBeNull()
   })
 
   it('writes an owner-only transcript of the conversation text and removes it', () => {

@@ -27,6 +27,15 @@ describe('plugin hooks reach every runtime', () => {
 
   it('runs tool hooks around the ChatGPT web companion tools', () => {
     expect(readFileSync(path.join(main, 'chatgpt-web/bridge-server.ts'), 'utf8')).toContain('toolHooks')
-    expect(readFileSync(path.join(main, 'chatgpt-web/manager.ts'), 'utf8')).toContain('runPreToolUse(')
+    const manager = readFileSync(path.join(main, 'chatgpt-web/manager.ts'), 'utf8')
+    expect(manager).toContain('runPreToolUse(')
+    // A new session is refused before its transport starts.
+    const start = manager.slice(manager.indexOf('export async function startSession('))
+    const transport = start.indexOf(
+      'await ensureTransport()\n    // Clear/end/disable may occur while the daemon starts.'
+    )
+    expect(transport).toBeGreaterThan(-1)
+    expect(start.indexOf('companionHooksRefusal(')).toBeGreaterThan(-1)
+    expect(start.indexOf('companionHooksRefusal(')).toBeLessThan(transport)
   })
 })
