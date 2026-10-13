@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-13
+
 ### Added
 
 - Let the agents of different conversations read, wait for and message each
@@ -20,6 +22,26 @@ User-visible changes by version. Downloads are on
   bot is idle with nothing queued. Update the desktop app, the bot server and the
   bot environment to use it. See
   [bot conversation controls](docs/bot-fleet.md#bot-conversation-controls).
+- Play videos that bots share (MP4, M4V, WebM, and MOV) in the conversation.
+  The file card shows the first frame and the duration, and opens a player with
+  speed, volume, full screen, and keyboard shortcuts. **Download** still saves
+  the file. Formats the app cannot decode keep only the download.
+- Follow a bot file's download: its card shows progress, speed, and the time
+  left, and **Cancel** stops it and removes the partial file. Leaving the chat
+  keeps the same transfer, and a system notification says when it finishes or
+  fails. See [send and download files](docs/bot-fleet.md#send-and-download-files).
+- Let a bot environment rotate between its Claude or Codex accounts when one
+  reaches its usage limit. **Automatic account rotation** appears in the
+  environment's **Accounts** tab once it has two accounts of the same kind.
+  Update the bot server and restart the environment on the new image to use it.
+  See [configure an environment from the app](docs/bot-fleet.md#configure-an-environment-from-the-app).
+- Get address suggestions in the drawer browser from your history, open tabs,
+  and Google search suggestions, with inline completion of frequent sites.
+  Cmd/Ctrl+T opens a tab and Cmd/Ctrl+W closes the active one, without closing
+  the window. Typed text that is not an address, local host, or IP address is
+  sent to Google's suggestion service without cookies. History stays on this
+  computer and **Clear browsing data** deletes it. See
+  [drawer browser history](docs/local-data.md#drawer-browser-history).
 
 ### Changed
 
@@ -28,12 +50,35 @@ User-visible changes by version. Downloads are on
   in so many words, the chat asks you to confirm with **Start** or **Don't
   start** instead of refusing; "don't open conversations" is still respected.
   See [starting conversations by asking the agent](docs/chat-context.md#by-asking-the-agent).
+- Redesign the sidebar around an icon rail for Chats, Workspaces, and Bots,
+  with Artifacts, Usage, Settings, and Help at its bottom. Collapsing the
+  sidebar keeps the rail. With a remote workspaces server, the list shows one
+  machine at a time, with a switcher that says what each machine is doing.
+  **Show archived** moves to the list's **⋯** menu.
+- When every account of a bot has reached its usage limit, the bot waits until
+  the first account is expected back, checking at least every 10 minutes,
+  instead of retrying every few seconds. The conversation says when it will try
+  again, and other start failures back off up to 5 minutes.
+- Address bar entries such as `localhost:3000` and local IP addresses open over
+  HTTP instead of becoming a search.
 
 ### Fixed
 
 - Show a confirmation the agent needs while a tool runs, such as creating a
   public GitHub repository, as soon as it is asked in an open conversation
   instead of only after switching back to it.
+- Use a Claude or Codex subscription account again as soon as its usage limit
+  resets and it answers, instead of treating it as exhausted until you
+  refreshed it in Settings. Account failover now also covers Codex subagents of
+  other runtimes, review loops, and background and bot compaction.
+- Keep a bot's answered question in place in its transcript instead of at the
+  end of the turn.
+- Stop showing a bot's recalled memories as a downloadable attachment of your
+  message.
+- Keep a bot environment's screen responsive when its browsers download files:
+  downloads go straight to the environment's `~/Downloads` instead of opening
+  save dialogs that blocked input. Restart the environment on the new image to
+  apply it.
 
 ### Removed
 
