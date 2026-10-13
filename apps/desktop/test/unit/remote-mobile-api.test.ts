@@ -54,6 +54,9 @@ function setup() {
     send: { ok: true } as { ok: boolean; error?: string },
     mode: 'agent',
     mcpDisabled: [] as string[],
+    limit: null as number | null,
+    subagents: true,
+    defaults: null as Record<string, unknown> | null,
   }
   const handle = (channel: string, fn: (...args: unknown[]) => unknown, kind: 'invoke' | 'send' = 'invoke') =>
     table.record(channel, kind, (event: { sender: typeof sender }, ...args: unknown[]) => {
@@ -108,7 +111,8 @@ function setup() {
   handle('chat:set-fast-mode', () => undefined)
   handle('chat:get-conv-tools', () => ({ app: true, mcpDisabled: state.mcpDisabled, imageGen: true }))
   handle('chat:set-conv-tools', (_id, patch) => {
-    state.mcpDisabled = (patch as { mcpDisabled: string[] }).mcpDisabled
+    const value = patch as { mcpDisabled?: string[] }
+    if (value.mcpDisabled) state.mcpDisabled = value.mcpDisabled
     return undefined
   })
   handle('chat:skills:state', () => ({
@@ -128,6 +132,22 @@ function setup() {
     defaultSelection: { providerId: 'claude', modelId: 'opus' },
   }))
   handle('chat:models', () => ['opus', 'sonnet'])
+  handle('chat:model-meta', () => ({ contextWindow: 200000, nativeUltraMode: false, contextLimitEditable: true }))
+  handle('chat:context-limit:get', () => ({ limit: state.limit, providerWindow: 200000, catalogWindow: null, effective: 200000 }))
+  handle('chat:context-limit:set', (_p, _m, value) => {
+    state.limit = value as number | null
+    return { ok: true }
+  })
+  handle('chat:subagent-profiles:get-conversation', () => ({ subagentsEnabled: state.subagents }))
+  handle('chat:subagents:set-conversation-enabled', (_id, enabled) => {
+    state.subagents = enabled as boolean
+    return { ok: true }
+  })
+  handle('chat:skills:reset-overrides', () => ({ ok: true }))
+  handle('chat:set-default', (sel) => {
+    state.defaults = sel as Record<string, unknown>
+    return { ok: true }
+  })
   handle('chat:attachment-image', () => ({ ok: true, bytes: new Uint8Array([1, 2, 3]), mediaType: 'image/png', byteSize: 3 }))
   const events: Array<[string, unknown]> = []
   const api = new MobileApi({ table, emit: (channel, payload) => events.push([channel, payload]), log: vi.fn(), selections: null, flushMs: 10, listsMs: 10 })
@@ -269,6 +289,11 @@ describe('mobile API of a workspaces host', () => {
     expect(payload.attachments[1]).toEqual({ name: 'notes.md', mediaType: 'text/plain', kind: 'text', data: '# Hi' })
     expect(await h.invoke('mobile:v1:conversation:send', message)).toEqual({ status: 'duplicate' })
     expect(h.called('chat:send')).toHaveLength(1)
+    // A phone that reconnected resends on a new session: the host still knows the message.
+    const other = setup()
+    expect(await other.invoke('mobile:v1:conversation:send', message)).toEqual({ status: 'duplicate' })
+    expect(other.called('chat:send')).toHaveLength(0)
+    other.api.dispose()
     h.state.send = { ok: false, error: 'busy' }
     await expect(
       h.invoke('mobile:v1:conversation:send', { ...message, clientId: '550e8400-e29b-41d4-a716-446655440001' })
@@ -286,11 +311,29 @@ describe('mobile API of a workspaces host', () => {
       mode: 'agent',
       permMode: 'auto',
       experience: 'standard',
+      ultra: 'maestrly',
+      tools: { app: true, imageGen: true, subagents: true },
+      contextLimit: { limit: null, window: 200000, editable: true },
       mcp: [{ id: 'linear', name: 'Linear', enabled: true }],
       skills: [{ name: 'brainstorming', description: 'Explore ideas', enabled: true, override: 'on' }],
     })
-    const next = await h.invoke('mobile:v1:setup:set', { conversationId: 'c1', patch: { mode: 'plan', mcp: { id: 'linear', enabled: false } } })
-    expect(next).toMatchObject({ mode: 'plan', mcp: [{ id: 'linear', enabled: false }] })
+    const next = await h.invoke('mobile:v1:setup:set', {
+      conversationId: 'c1',
+      patch: { mode: 'plan', mcp: { id: 'linear', enabled: false }, tools: { subagents: false, imageGen: false }, contextLimit: 150000, skillsReset: true },
+    })
+    expect(next).toMatchObject({
+      mode: 'plan',
+      mcp: [{ id: 'linear', enabled: false }],
+      tools: { subagents: false },
+      contextLimit: { limit: 150000 },
+    })
+    expect(h.called('chat:set-conv-tools').at(-1)?.[1]).toEqual(['c1', { imageGen: false }])
+    expect(h.called('chat:skills:reset-overrides')).toHaveLength(1)
+    await expect(h.invoke('mobile:v1:setup:set', { conversationId: 'c1', patch: { contextLimit: 10 } })).rejects.toMatchObject({ code: 'invalid' })
+    // New chats' defaults.
+    expect(await h.invoke('mobile:v1:defaults')).toEqual({ selection: { providerId: 'claude', modelId: 'opus' }, reasoning: 'off', fastMode: false })
+    await h.invoke('mobile:v1:defaults:set', { reasoning: 'high', fastMode: true })
+    expect(h.state.defaults).toEqual({ providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: true })
     await expect(
       h.invoke('mobile:v1:setup:set', { conversationId: 'c1', patch: { selection: { providerId: 'claude', modelId: 'sonnet' } } })
     ).rejects.toMatchObject({ code: 'busy' })

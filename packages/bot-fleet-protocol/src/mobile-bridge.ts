@@ -123,6 +123,17 @@ export const mobileChatSetupSchema = z.object({
   mode: mobileChatModeSchema,
   permMode: mobilePermModeSchema,
   experience: mobileExperienceSchema,
+  /** What Ultra means for the selected model: the provider's own (`ultra`), or Maestrly's (`maestrly-ultra`). */
+  ultra: z.enum(['native', 'maestrly']),
+  tools: z.object({ app: z.boolean(), imageGen: z.boolean(), subagents: z.boolean() }),
+  /** The selected model's context limit (set per model, for every chat that uses it); null with the default model. */
+  contextLimit: z
+    .object({
+      limit: z.number().int().positive().nullable(),
+      window: z.number().int().positive().nullable(),
+      editable: z.boolean(),
+    })
+    .nullable(),
   mcp: z.array(z.object({ id, name, enabled: z.boolean() })),
   skills: z.array(
     z.object({
@@ -144,9 +155,25 @@ export const mobileChatSetupPatchSchema = z
     permMode: mobilePermModeSchema.optional(),
     mcp: z.object({ id, enabled: z.boolean() }).strict().optional(),
     skill: z.object({ name: z.string().min(1).max(200), state: z.enum(['on', 'off', 'inherit']) }).strict().optional(),
+    /** Every skill back to what the host enables by default. */
+    skillsReset: z.literal(true).optional(),
+    tools: z
+      .object({ app: z.boolean().optional(), imageGen: z.boolean().optional(), subagents: z.boolean().optional() })
+      .strict()
+      .optional(),
+    /** Tokens, or null for the model's whole window. */
+    contextLimit: z.number().int().min(20_000).max(100_000_000).nullable().optional(),
   })
   .strict()
 export type MobileChatSetupPatch = z.infer<typeof mobileChatSetupPatchSchema>
+
+/** What new chats of the host start with; each chat can change it. */
+export const mobileChatDefaultsSchema = z.object({
+  selection: modelRef.nullable(),
+  reasoning: z.string().max(40),
+  fastMode: z.boolean(),
+})
+export type MobileChatDefaults = z.infer<typeof mobileChatDefaultsSchema>
 
 export const mobileAttachmentSchema = z
   .object({
@@ -253,6 +280,14 @@ export const MOBILE_CHANNELS = {
     channel: 'mobile:v1:models',
     args: z.object({}).strict(),
     result: z.object({ options: z.array(fleetSelectionOptionSchema), defaultSelection: modelRef.nullable() }),
+  },
+  defaults: { channel: 'mobile:v1:defaults', args: z.object({}).strict(), result: mobileChatDefaultsSchema },
+  setDefaults: {
+    channel: 'mobile:v1:defaults:set',
+    args: z
+      .object({ selection: modelRef.optional(), reasoning: z.string().min(1).max(40).optional(), fastMode: z.boolean().optional() })
+      .strict(),
+    result: mobileChatDefaultsSchema,
   },
   compact: { channel: 'mobile:v1:compact', args: conversationArgs, result: ok },
   image: {

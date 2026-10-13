@@ -33,6 +33,7 @@ import {
   type ChatConvTools,
   type ChatHistoryPage,
   type ChatMessage,
+  type ChatModelMeta,
   type ChatPermissionEvent,
   type ChatPermissionRequest,
   type ChatRuntimeState,
@@ -71,6 +72,23 @@ export interface MobileApiDeps {
   flushMs?: number
   /** How long a burst of list changes waits before the phone is told. */
   listsMs?: number
+}
+
+/**
+ * The send requests each conversation admitted lately, by the phone's id for them. Kept by the host rather than by a
+ * bridge session: a phone that lost its connection while sending resends on a new one, and must not send twice.
+ */
+const recentSends = new Map<string, string[]>()
+const wasSent = (conversationId: string, clientId: string): boolean =>
+  recentSends.get(conversationId)?.includes(clientId) === true
+function noteSent(conversationId: string, clientId: string): void {
+  const keys = recentSends.get(conversationId) ?? []
+  keys.push(clientId)
+  if (keys.length > MOBILE_BRIDGE_LIMITS.sendKeysKept) keys.shift()
+  recentSends.delete(conversationId)
+  recentSends.set(conversationId, keys)
+  // Conversations least recently sent to are forgotten first.
+  if (recentSends.size > 500) recentSends.delete(recentSends.keys().next().value as string)
 }
 
 let hostModelOptions: (() => Promise<FleetSelectionOption[]>) | null = null
@@ -131,7 +149,6 @@ class OpenConversation {
   dirty = false
   flushTimer: ReturnType<typeof setTimeout> | null = null
   refetchTimer: ReturnType<typeof setTimeout> | null = null
-  sendKeys: string[] = []
   /** The time each message's items carry, kept while the conversation is open. */
   order = new Map<string, number>()
   constructor(readonly id: string) {}
@@ -230,6 +247,8 @@ export class MobileApi {
       setup: (value) => this.setup(value.conversationId),
       setSetup: (value) => this.setSetup(value),
       models: () => this.models(),
+      defaults: () => this.defaults(),
+      setDefaults: (value) => this.setDefaults(value),
       compact: async (value) => {
         const result = (await this.call('chat:compact', value.conversationId)) as { ok?: boolean; error?: string } | null
         return { ok: result?.ok === true, ...(result?.error ? { error: String(result.error) } : {}) }
@@ -384,7 +403,7 @@ export class MobileApi {
 
   private async send(args: MobileArgs<'send'>): Promise<MobileResult<'send'>> {
     const open = this.open.get(args.conversationId)
-    if (open?.sendKeys.includes(args.clientId)) return { status: 'duplicate' }
+    if (wasSent(args.conversationId, args.clientId)) return { status: 'duplicate' }
     let result: { ok?: boolean; error?: string } | null
     try {
       result = (await this.call('chat:send', {
@@ -399,12 +418,9 @@ export class MobileApi {
       )
     }
     if (!result?.ok) throw new MobileApiError(result?.error ?? 'send-failed', result?.error ?? 'The message was not sent')
-    if (open) {
-      open.sendKeys.push(args.clientId)
-      if (open.sendKeys.length > MOBILE_BRIDGE_LIMITS.sendKeysKept) open.sendKeys.shift()
-      // The message the host admitted is in the latest page; the stream carries the answer.
-      this.refetch(open)
-    }
+    noteSent(args.conversationId, args.clientId)
+    // The message the host admitted is in the latest page; the stream carries the answer.
+    if (open) this.refetch(open)
     return { status: 'started' }
   }
 
@@ -422,7 +438,7 @@ export class MobileApi {
 
   private async setup(id: string): Promise<MobileChatSetup> {
     const conversation = await this.findConversation(id)
-    const [mode, permMode, selection, reasoning, fastMode, tools, skills, config] = await Promise.all([
+    const [mode, permMode, selection, reasoning, fastMode, tools, skills, config, subagents] = await Promise.all([
       this.call('chat:get-mode', id),
       this.call('chat:get-perm-mode', id),
       this.call('chat:get-selection', id),
@@ -431,16 +447,41 @@ export class MobileApi {
       this.call('chat:get-conv-tools', id) as Promise<ChatConvTools | null>,
       this.call('chat:skills:state', id) as Promise<ChatSkillsState | null>,
       this.call('chat:config') as Promise<ChatConfig | null>,
+      this.call('chat:subagent-profiles:get-conversation', id).catch(() => null) as Promise<{
+        subagentsEnabled?: boolean
+      } | null>,
     ])
     const ref = selection as { providerId?: string; modelId?: string } | null
+    const model = ref?.providerId && ref.modelId ? { providerId: ref.providerId, modelId: ref.modelId } : null
+    const [meta, limit] = model
+      ? await Promise.all([
+          this.call('chat:model-meta', model.modelId, model.providerId).catch(() => null) as Promise<ChatModelMeta | null>,
+          this.call('chat:context-limit:get', model.providerId, model.modelId).catch(() => null) as Promise<{
+            limit?: number | null
+            providerWindow?: number | null
+            catalogWindow?: number | null
+            effective?: number | null
+          } | null>,
+        ])
+      : [null, null]
+    const positive = (value: unknown) => (typeof value === 'number' && value > 0 ? Math.round(value) : null)
     const disabled = new Set(tools?.mcpDisabled ?? [])
     return {
-      selection: ref?.providerId && ref.modelId ? { providerId: ref.providerId, modelId: ref.modelId } : null,
+      selection: model,
       reasoning: typeof reasoning === 'string' && reasoning ? reasoning : 'off',
       fastMode: fastMode === true,
       mode: mode === 'design' || mode === 'plan' || mode === 'ask' ? mode : 'agent',
       permMode: permMode === 'full' || permMode === 'auto' ? permMode : 'ask',
       experience: conversation.experience,
+      ultra: meta?.nativeUltraMode ? 'native' : 'maestrly',
+      tools: { app: tools?.app !== false, imageGen: tools?.imageGen !== false, subagents: subagents?.subagentsEnabled !== false },
+      contextLimit: model
+        ? {
+            limit: positive(limit?.limit),
+            window: positive(limit?.providerWindow) ?? positive(limit?.catalogWindow) ?? positive(limit?.effective),
+            editable: meta?.contextLimitEditable !== false,
+          }
+        : null,
       mcp: (config?.mcpServers ?? [])
         .filter((server) => server.enabled && !server.unavailable)
         .map((server) => ({ id: server.id, name: server.name, enabled: !disabled.has(server.id) })),
@@ -471,7 +512,47 @@ export class MobileApi {
       answer(await this.call('chat:set-conv-tools', id, { mcpDisabled: [...disabled] }))
     }
     if (patch.skill) answer(await this.call('chat:skills:set-override', id, patch.skill.name, patch.skill.state))
+    if (patch.skillsReset) answer(await this.call('chat:skills:reset-overrides', id))
+    if (patch.tools?.app !== undefined || patch.tools?.imageGen !== undefined)
+      answer(
+        await this.call('chat:set-conv-tools', id, {
+          ...(patch.tools.app !== undefined ? { app: patch.tools.app } : {}),
+          ...(patch.tools.imageGen !== undefined ? { imageGen: patch.tools.imageGen } : {}),
+        })
+      )
+    if (patch.tools?.subagents !== undefined)
+      answer(await this.call('chat:subagents:set-conversation-enabled', id, patch.tools.subagents))
+    if (patch.contextLimit !== undefined) {
+      const selection = (await this.call('chat:get-selection', id)) as { providerId?: string; modelId?: string } | null
+      if (!selection?.providerId || !selection.modelId)
+        throw new MobileApiError('invalid', 'Choose a model before setting its context limit')
+      answer(await this.call('chat:context-limit:set', selection.providerId, selection.modelId, patch.contextLimit))
+    }
     return this.setup(id)
+  }
+
+  private async defaults(): Promise<MobileResult<'defaults'>> {
+    const config = (await this.call('chat:config')) as ChatConfig | null
+    return {
+      selection: config?.defaultSelection
+        ? { providerId: config.defaultSelection.providerId, modelId: config.defaultSelection.modelId }
+        : null,
+      reasoning: config?.defaultReasoning || 'off',
+      fastMode: config?.defaultFastMode === true,
+    }
+  }
+
+  private async setDefaults(args: MobileArgs<'setDefaults'>): Promise<MobileResult<'setDefaults'>> {
+    const current = await this.defaults()
+    const selection = args.selection ?? current.selection
+    if (!selection) throw new MobileApiError('invalid', 'Choose a model for new chats first')
+    const result = (await this.call('chat:set-default', {
+      ...selection,
+      ...(args.reasoning ? { reasoning: args.reasoning } : {}),
+      ...(args.fastMode !== undefined ? { fastMode: args.fastMode } : {}),
+    })) as { ok?: boolean; error?: string } | null
+    if (result && result.ok === false) throw new MobileApiError(result.error ?? 'setup-failed', result.error ?? 'Not changed')
+    return this.defaults()
   }
 
   private async models(): Promise<MobileResult<'models'>> {
