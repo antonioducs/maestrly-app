@@ -34,6 +34,7 @@ import {
   fleetFileIdSchema,
   fleetFileRefSchema,
   fleetInstanceEventSchema,
+  fleetReaderWantsChatAttention,
   fleetReaderWantsReasoning,
   fleetTranscriptItemReadable,
   fleetScreenSurfaceSchema,
@@ -341,8 +342,12 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   if (!Number.isSafeInteger(since)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
   // A gateway that does not read `reasoning` items never gets them: it would fail on the whole stream.
   const reasoning = fleetReaderWantsReasoning(url.searchParams)
+  // Nor `chat.attention` events, which only a gateway that asks for them knows.
+  const chatAttention = fleetReaderWantsChatAttention(url.searchParams)
   const readable = (event: FleetInstanceEvent) =>
-    event.type !== 'transcript.upsert' || fleetTranscriptItemReadable(event.item, reasoning)
+    event.type === 'transcript.upsert'
+      ? fleetTranscriptItemReadable(event.item, reasoning)
+      : event.type !== 'chat.attention' || chatAttention
   const replay = events.replay(since)
   response.writeHead(200, {
     'content-type': 'text/event-stream',

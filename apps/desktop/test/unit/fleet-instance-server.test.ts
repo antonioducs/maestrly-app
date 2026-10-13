@@ -690,6 +690,29 @@ describe('instance control HTTP', () => {
     plain.controller.abort()
     asked.controller.abort()
   })
+
+  it('streams what a chat needs only to a gateway that asks for it', async () => {
+    const { base, events } = await setup()
+    events.publish({
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'c1',
+      name: 'Fix the test',
+      kind: 'question',
+    })
+    events.publish({ type: 'reset', botId: null })
+    const open = async (query: string) => {
+      const controller = new AbortController()
+      const stream = await fetch(base + '/v1/events?since=0' + query, { headers: headers(), signal: controller.signal })
+      return { controller, next: eventReader(stream) }
+    }
+    const plain = await open('')
+    expect((await plain.next(1)).map((event) => event.type)).toEqual(['reset'])
+    const asked = await open('&chatAttention=1')
+    expect((await asked.next(2)).map((event) => event.type)).toEqual(['chat.attention', 'reset'])
+    plain.controller.abort()
+    asked.controller.abort()
+  })
 })
 
 describe('bot routes', () => {
