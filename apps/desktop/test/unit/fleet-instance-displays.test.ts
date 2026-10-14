@@ -182,9 +182,7 @@ class FakeSpawner {
   }
   /** The encoders started for a display and region, such as `:0` and `1280,0,1280,800`. */
   encoders(display: string, region: string): FakeProcess[] {
-    return this.named(ENCODER).filter(
-      (child) => child.args.join(' ') === `--display ${display} --region ${region}`
-    )
+    return this.named(ENCODER).filter((child) => child.args.join(' ') === `--display ${display} --region ${region}`)
   }
   running(command: string): FakeProcess[] {
     return this.named(command).filter((child) => child.running)
@@ -872,10 +870,7 @@ describe('DisplayManager screens', () => {
 
   it('shares one session per surface and stops it a minute after the last lease', async () => {
     const { manager, spawner, clock } = setup()
-    const [first, second] = await Promise.all([
-      manager.acquireScreen(environment),
-      manager.acquireScreen(environment),
-    ])
+    const [first, second] = await Promise.all([manager.acquireScreen(environment), manager.acquireScreen(environment)])
     expect(second.session).toBe(first.session)
     expect(spawner.named(ENCODER)).toHaveLength(1)
     const encoder = spawner.named(ENCODER)[0]

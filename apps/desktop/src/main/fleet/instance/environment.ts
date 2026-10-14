@@ -808,7 +808,13 @@ export function productionDisplayDeps(
         log('error', `Could not start the screen encoder: ${errorMessage(error)}`)
         const closed = new PassThrough()
         closed.end()
-        return { stdin: new PassThrough(), stdout: closed, stderr: closed, exited: Promise.resolve(127), kill: () => {} }
+        return {
+          stdin: new PassThrough(),
+          stdout: closed,
+          stderr: closed,
+          exited: Promise.resolve(127),
+          kill: () => {},
+        }
       }
       const exited = new Promise<number | null>((resolve) => {
         child.once('error', (error) => {

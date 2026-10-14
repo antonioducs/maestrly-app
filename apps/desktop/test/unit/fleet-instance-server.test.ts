@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import { randomBytes, randomUUID } from 'node:crypto'
 import http from 'node:http'
 import { Readable } from 'node:stream'
-import net, { type AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
 import {
   FLEET_PROTOCOL_HEADER,
   FLEET_SCREEN_UPGRADE,
@@ -265,7 +265,7 @@ function fakeEnvironment() {
 type Fake = ReturnType<typeof fakeEnvironment>
 
 const servers: http.Server[] = []
-const clients = new Set<net.Socket>()
+const clients = new Set<Socket>()
 afterEach(async () => {
   for (const socket of clients) socket.destroy()
   clients.clear()
@@ -319,7 +319,7 @@ function fakeSession() {
   }
   return session
 }
-type Upgraded = { status: number; socket?: net.Socket; body?: string; bytes: () => Buffer }
+type Upgraded = { status: number; socket?: Socket; body?: string; bytes: () => Buffer }
 function upgrade(port: number, path: string, extra: Record<string, string> = {}) {
   return new Promise<Upgraded>((resolve, reject) => {
     const request = http.request({

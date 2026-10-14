@@ -36,7 +36,8 @@ describe('screen keyboard loader', () => {
   })
 
   it('never imports noVNC statically, so app startup never runs its hardware decoder probe', () => {
-    const read = (path: string) => readFileSync(fileURLToPath(new URL(`../../src/renderer/${path}`, import.meta.url)), 'utf8')
+    const read = (path: string) =>
+      readFileSync(fileURLToPath(new URL(`../../src/renderer/${path}`, import.meta.url)), 'utf8')
     // Bot and environment screens stream through the shared screen hook, which loads the keyboard on demand.
     const frame = read('components/fleet/ScreenFrame.tsx')
     expect(frame).toContain('loadScreenKeyboard()')
