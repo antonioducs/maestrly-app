@@ -39,6 +39,8 @@ let sourceStatus: string
 let deps: TargetDeps
 
 beforeEach(async () => {
+  // A host's environment would stage moves in its roots instead of this test profile.
+  vi.stubEnv('MAESTRLY_SERVER_MODE', '')
   freshDb()
   repo = makeRemoteRepo('maestrly-move-target-')
   git(repo.work, 'checkout', '-q', 'main')
@@ -83,6 +85,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   __resetMoveLeasesForTests()
   __resetCwdActivityForTests()
   await removeRestoredConversationFiles(source.conversationId)

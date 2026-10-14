@@ -35,6 +35,8 @@ let conv: ReturnType<typeof makeConversation>
 let deps: { quiesce: Mock<SourceDeps['quiesce']>; appVersion: () => string }
 
 beforeEach(async () => {
+  // A host's environment would stage moves in its roots instead of this test profile.
+  vi.stubEnv('MAESTRLY_SERVER_MODE', '')
   freshDb()
   repo = makeRemoteRepo('maestrly-move-source-')
   git(repo.work, 'checkout', '-q', 'main')
@@ -55,6 +57,7 @@ beforeEach(async () => {
   deps = { quiesce: vi.fn<SourceDeps['quiesce']>(async () => ({ ok: true, failed: [] })), appVersion: () => '1.0.0' }
 })
 afterEach(() => {
+  vi.unstubAllEnvs()
   __resetMoveLeasesForTests()
   __resetCwdActivityForTests()
   closeDb()
