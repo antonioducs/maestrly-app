@@ -64,7 +64,8 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const remoteTools = useMemo<RemoteToolHosts>(() => {
     const browsers = new Set(hosts.filter((host) => host.remote && host.browser).map((host) => host.id))
     const editors = new Set(hosts.filter((host) => host.remote && host.editor).map((host) => host.id))
-    return (hostId, tab) => (tab === 'browser' ? browsers : editors).has(hostId)
+    const computers = new Set(hosts.filter((host) => host.remote && host.computer).map((host) => host.id))
+    return (hostId, tab) => (tab === 'browser' ? browsers : tab === 'computer' ? computers : editors).has(hostId)
   }, [hosts])
   const remoteToolsRef = useRef(remoteTools)
   remoteToolsRef.current = remoteTools

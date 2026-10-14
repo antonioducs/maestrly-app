@@ -34,6 +34,8 @@ export function osFromPlatform(platform: string): ShortcutOs {
 
 const DEFAULT_KEYS: Record<FloatTab, string> = {
   browser: 'b',
+  // A remote workspaces conversation's computer: M for its monitor icon.
+  computer: 'm',
   vscode: 'e',
   terminal: 'j',
   // F with these modifiers is the macOS full-screen shortcut.

@@ -1676,6 +1676,7 @@ export default {
   },
   drawer: {
     tabBrowser: 'Navegador',
+    tabComputer: 'Computador',
     tabCode: 'Código',
     tabTerminal: 'Terminal',
     tabPlan: 'Plano',
@@ -1761,6 +1762,17 @@ export default {
     removeFromHistory: 'Remover do histórico',
   },
 
+  remoteComputer: {
+    starting: 'Ligando o computador desta conversa…',
+    busy: 'Os {{count}} computadores deste servidor estão em uso por: {{holders}}. Um computador é devolvido um minuto depois que ninguém o usa e seus programas são fechados.',
+    unavailable: 'Este servidor não tem computadores para as conversas.',
+    tryAgain: 'Tentar de novo',
+    watching: 'Assistindo',
+    controlling: 'Você está no controle',
+    takeControl: 'Assumir o controle',
+    release: 'Liberar',
+    agentKeepsWorking: 'O agente continua trabalhando enquanto você controla este computador.',
+  },
   remoteBrowser: {
     surface: 'Navegador no servidor',
     keyboard: 'Teclado do navegador no servidor',

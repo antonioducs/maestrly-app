@@ -5,6 +5,7 @@ export type { DrawerTab }
 
 export const DEFAULT_MAIN_ORDER: DrawerTab[] = [
   'browser',
+  'computer',
   'vscode',
   'terminal',
   'files',
@@ -23,9 +24,10 @@ const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'files', '
 
 /**
  * Whether a remote host serves one of the tools it offers only when it says so: its browser (streamed here,
- * RemoteHostInfo.browser) and its editor (RemoteHostInfo.editor).
+ * RemoteHostInfo.browser), its editor (RemoteHostInfo.editor) and its conversations' computers
+ * (RemoteHostInfo.computer).
  */
-export type RemoteToolHosts = (hostId: HostId, tab: 'browser' | 'vscode') => boolean
+export type RemoteToolHosts = (hostId: HostId, tab: 'browser' | 'vscode' | 'computer') => boolean
 const NO_REMOTE_TOOLS: RemoteToolHosts = () => false
 
 /** The remote host of a conversation, from the window's id of it; null for this computer's. */
@@ -43,6 +45,8 @@ export function tabAvailableInContext(
   remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): boolean {
   const remoteHost = remoteHostOf(conv)
+  // Only a conversation on a server's workspaces environment has a computer of its own.
+  if (tab === 'computer') return remoteHost !== null && remoteTools(remoteHost, 'computer')
   if (remoteHost !== null && !REMOTE_HOST_TABS.has(tab)) {
     // A remote host's browser and editor are shown here once the host says it serves them.
     if ((tab !== 'browser' && tab !== 'vscode') || !remoteTools(remoteHost, tab)) return false

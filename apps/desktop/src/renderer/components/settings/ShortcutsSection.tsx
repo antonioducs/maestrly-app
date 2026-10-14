@@ -28,6 +28,7 @@ const MOD_ORDER_BY_OS: Record<'mac' | 'pc', ShortcutMod[]> = {
 
 const TOOL_LABEL_KEY: Record<FloatTab, string> = {
   browser: 'drawer.tabBrowser',
+  computer: 'drawer.tabComputer',
   vscode: 'drawer.tabCode',
   terminal: 'drawer.tabTerminal',
   files: 'drawer.tabFiles',
