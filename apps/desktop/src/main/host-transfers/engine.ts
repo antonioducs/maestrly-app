@@ -51,6 +51,12 @@ export interface HostTransferEngineDeps {
   limits?: Partial<typeof DEFAULT_LIMITS>
 }
 
+interface SettleWaiter {
+  resolve: (view: HostTransferView) => void
+  reject: (error: Error) => void
+  onProgress?: (view: HostTransferView) => void
+}
+
 /** Runs `work` on the items, `width` at a time; the first failure stops the rest and is rethrown. */
 async function pool<T>(
   items: T[],
@@ -97,6 +103,7 @@ export class HostTransferEngine {
   private readonly inflight = new Map<string, Map<number, number>>()
   private readonly samples = new Map<string, Array<[number, number]>>()
   private readonly retries = new Map<string, { attempt: number; timer: NodeJS.Timeout | null }>()
+  private readonly waiters = new Map<string, Set<SettleWaiter>>()
   private emitTimer: NodeJS.Timeout | null = null
   private stopped = false
 
@@ -118,12 +125,22 @@ export class HostTransferEngine {
     await Promise.allSettled([...this.runs])
     if (this.emitTimer) clearTimeout(this.emitTimer)
     this.emitTimer = null
+    const stopped = new Error('The transfer engine stopped.')
+    for (const waiters of this.waiters.values()) for (const waiter of waiters) waiter.reject(stopped)
+    this.waiters.clear()
   }
 
-  async download(hostId: HostId, remotePath: string, purpose: 'save' | 'open' = 'save'): Promise<string> {
+  /** Queues a download; `directory` publishes it there instead of the downloads folder. */
+  async download(
+    hostId: HostId,
+    remotePath: string,
+    purpose: 'save' | 'open' = 'save',
+    options: { directory?: string } = {}
+  ): Promise<string> {
     const file = await this.deps.endpoint(hostId).json('hostFileStat', { body: { path: remotePath } })
     const id = randomUUID()
-    const directory = purpose === 'open' ? path.join(this.deps.openDir(), id) : this.deps.downloadsDir()
+    const directory =
+      options.directory ?? (purpose === 'open' ? path.join(this.deps.openDir(), id) : this.deps.downloadsDir())
     store.insertHostTransfer(
       {
         id,
@@ -271,6 +288,37 @@ export class HostTransferEngine {
 
   list(): HostTransferView[] {
     return store.listHostTransfers().map((record) => this.view(record))
+  }
+
+  /**
+   * Resolves with the transfer once it is done, failed or canceled, reporting its progress meanwhile; rejects when the
+   * transfer is unknown or the engine stops.
+   */
+  whenSettled(id: string, onProgress?: (view: HostTransferView) => void): Promise<HostTransferView> {
+    const record = store.getHostTransfer(id)
+    if (!record) return Promise.reject(new Error('Unknown transfer.'))
+    const view = this.view(record)
+    if (HOST_TRANSFER_FINAL_STATES.has(view.state)) return Promise.resolve(view)
+    if (this.stopped) return Promise.reject(new Error('The transfer engine stopped.'))
+    return new Promise((resolve, reject) => {
+      const waiters = this.waiters.get(id) ?? new Set<SettleWaiter>()
+      waiters.add({ resolve, reject, onProgress })
+      this.waiters.set(id, waiters)
+    })
+  }
+
+  private notifyWaiters(views: HostTransferView[]): void {
+    if (this.waiters.size === 0) return
+    const byId = new Map(views.map((view) => [view.id, view]))
+    for (const [id, waiters] of [...this.waiters]) {
+      const view = byId.get(id)
+      for (const waiter of waiters) {
+        if (!view) waiter.reject(new Error('The transfer was removed.'))
+        else if (HOST_TRANSFER_FINAL_STATES.has(view.state)) waiter.resolve(view)
+        else waiter.onProgress?.(view)
+      }
+      if (!view || HOST_TRANSFER_FINAL_STATES.has(view.state)) this.waiters.delete(id)
+    }
   }
 
   private schedule(): void {
@@ -583,7 +631,9 @@ export class HostTransferEngine {
     if (this.emitTimer) return
     this.emitTimer = setTimeout(() => {
       this.emitTimer = null
-      this.deps.emit(this.list())
+      const views = this.list()
+      this.deps.emit(views)
+      this.notifyWaiters(views)
     }, EMIT_EVERY_MS)
     this.emitTimer.unref?.()
   }

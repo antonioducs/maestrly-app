@@ -13,6 +13,11 @@ const text = (value: unknown): string => {
   return value
 }
 
+let engineInstance: HostTransferEngine | null = null
+
+/** This computer's transfer queue; null on a host, which has none, and before IPC is registered. */
+export const hostTransferEngine = (): HostTransferEngine | null => engineInstance
+
 /** This computer's transfer queue. A host has none: it is what other computers move files to and from. */
 export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindow: () => BrowserWindow | null }): void {
   if (isHeadlessInstance()) return
@@ -23,6 +28,7 @@ export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindo
     openPath: (file) => shell.openPath(file),
     emit: (transfers) => broadcast('transfers:changed', transfers),
   })
+  engineInstance = engine
   engine.start()
   powerMonitor.on('resume', () => engine.wake())
   onHostsChanged(() => engine.wake())

@@ -1,6 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import type http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
@@ -321,5 +330,58 @@ describe.skipIf(process.platform === 'win32')('host transfer engine', () => {
     const done = mine.map((item) => item.doneBytes)
     expect(done).toEqual([...done].sort((a, b) => a - b))
     expect(mine.some((item) => item.state === 'running' && item.bytesPerSecond !== null)).toBe(true)
+  })
+  it('downloads into an explicit directory', async () => {
+    const bytes = csv(300 * KiB)
+    writeFileSync(path.join(srv, 'move.pkg'), bytes)
+    const { engine: queue } = engine()
+    const staging = path.join(base, 'staging')
+    const id = await queue.download(HOST, path.join(srv, 'move.pkg'), 'save', { directory: staging })
+    const done = await queue.whenSettled(id)
+    expect(done).toMatchObject({ state: 'done', localPath: path.join(staging, 'move.pkg'), sha256: sha(bytes) })
+    expect(existsSync(downloads) ? readdirSync(downloads) : []).toEqual([])
+  })
+
+  it('settles a finished upload and download, reporting progress meanwhile', async () => {
+    const bytes = randomBytes(1.3 * MiB)
+    writeFileSync(path.join(local, 'up.bin'), bytes)
+    const { engine: queue } = engine()
+    const { queued } = await queue.upload(HOST, [path.join(local, 'up.bin')], srv)
+    const progress: number[] = []
+    const uploaded = await queue.whenSettled(queued[0], (view) => progress.push(view.doneBytes))
+    expect(uploaded).toMatchObject({ state: 'done', remotePath: path.join(srv, 'up.bin'), sha256: sha(bytes) })
+    expect(progress.every((done) => done <= bytes.length)).toBe(true)
+    // Already settled: answered at once.
+    expect((await queue.whenSettled(queued[0])).state).toBe('done')
+    const id = await queue.download(HOST, path.join(srv, 'up.bin'))
+    expect((await queue.whenSettled(id)).state).toBe('done')
+    await expect(queue.whenSettled('no-such-transfer')).rejects.toThrow(/Unknown transfer/)
+  })
+
+  it('settles a canceled transfer and rejects waiters when stopped', async () => {
+    writeFileSync(path.join(local, 'a.bin'), randomBytes(MiB))
+    writeFileSync(path.join(local, 'b.bin'), randomBytes(MiB))
+    let reached!: () => void
+    const started = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    // Every chunk hangs until its transfer is aborted, including one sent after the abort.
+    fault = async ({ key, init }) => {
+      if (key !== 'hostFileUploadChunk') return undefined
+      reached()
+      return new Promise<never>((_resolve, reject) => {
+        if (init.signal?.aborted) return reject(init.signal.reason)
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })
+    }
+    const { engine: queue } = engine({ limits: { rangeBytes: MiB, chunkBytes: 512 * KiB, activeTransfers: 1 } })
+    const { queued } = await queue.upload(HOST, [path.join(local, 'a.bin'), path.join(local, 'b.bin')], srv)
+    await started
+    const canceled = queue.whenSettled(queued[0])
+    await queue.cancel(queued[0])
+    expect((await canceled).state).toBe('canceled')
+    const waiting = queue.whenSettled(queued[1])
+    await queue.stop()
+    await expect(waiting).rejects.toThrow(/stopped/)
   })
 })

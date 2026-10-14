@@ -36,7 +36,8 @@ workspaces on one server is out of scope: the owner isolates by using separate s
 ## Non-goals
 
 - Mounting arbitrary host paths, Docker inside the host, or sudo.
-- Moving a local workspace or conversation to a server (a later migration feature can build on the bridge).
+- Moving a local workspace to a server. Moving a conversation is covered in
+  [remote-workspaces.md](../../remote-workspaces.md#move-a-conversation).
 - Sharing one conversation's native views (browser, editor) across hosts.
 - Offline use of a remote host: its section shows its connection state while unreachable.
 - Isolation between workspaces on one server (see Phases).

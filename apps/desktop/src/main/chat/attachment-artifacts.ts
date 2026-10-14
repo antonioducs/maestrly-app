@@ -46,6 +46,9 @@ function conversationDir(conversationId: string): string {
   return path.join(root(), conversationId)
 }
 
+/** A conversation's attachment folder, for moving it to another host. */
+export const attachmentConversationDir = conversationDir
+
 function artifactPath(conversationId: string, artifactId: string): string | null {
   if (!SAFE_ID.test(artifactId)) return null
   const dir = conversationDir(conversationId)

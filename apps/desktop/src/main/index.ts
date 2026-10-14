@@ -51,11 +51,21 @@ import {
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
-import { hostRegistry, registerHostsIpc } from './remote-host/client/ipc'
+import { hostRegistry, onHostEvent, registerHostsIpc } from './remote-host/client/ipc'
 import { RemoteEditors } from './remote-host/client/editor'
 import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
 import { setRemoteVSCodeHandlers } from './drawer/vscode'
-import { registerHostTransfersIpc } from './host-transfers/ipc'
+import { hostTransferEngine, registerHostTransfersIpc } from './host-transfers/ipc'
+import { createLocalMoveEndpoint, type MoveEndpoint } from './conversation-move/endpoint'
+import { registerConversationMoveEndpointIpc } from './conversation-move/endpoint-ipc'
+import { MoveError } from './conversation-move/errors'
+import { registerConversationMoveIpc } from './conversation-move/ipc'
+import { restoreMoveEndpointLeases } from './conversation-move/leases'
+import { createPackageRelay } from './conversation-move/relay'
+import { createRemoteMoveEndpoint } from './conversation-move/remote-endpoint'
+import { ConversationMoveService } from './conversation-move/service'
+import { moveStagingDirectory, removeMoveStaging, sweepMoveStaging } from './conversation-move/staging'
+import { LOCAL_HOST_ID, type HostId } from '../shared/host-key'
 import { conversationTabAllowed, isRemoteConversation, setRemoteEditorHosts } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
@@ -259,6 +269,8 @@ let mainWindow: BrowserWindow | null = null
 let chatWindowManager: ChatWindowManager | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
+let conversationMoveService: ConversationMoveService | null = null
+let disposeConversationMoveIpc: (() => void) | null = null
 
 /** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
 const sendToWindow = (channel: string, payload?: unknown): void => {
@@ -923,6 +935,7 @@ function registerIpc(): void {
   )
   app.once('before-quit', () => remoteEditors?.close())
   registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })
+  registerConversationMove(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -1032,6 +1045,10 @@ app.whenReady().then(async () => {
   registry.setSoundSettings(getSoundSettings())
 
   registerIpc()
+  // Before anything resumes a turn: a conversation an unfinished move holds stays leased.
+  restoreMoveEndpointLeases()
+  conversationMoveService?.markInterrupted()
+  void sweepMoveStaging().catch((error) => console.warn('[conversation-move] staging sweep failed:', error))
   const migrationRecoveries = await conversationMigrationService.recoverIncomplete()
   if (migrationRecoveries.length > 0) {
     console.warn(`[conversation-migration] ${migrationRecoveries.length} incomplete operation(s) recovered.`)
@@ -1225,6 +1242,46 @@ function shutdownConversationMigration(): void {
   const disposeIpc = disposeConversationMigrationIpc
   disposeConversationMigrationIpc = null
   disposeIpc?.()
+  disposeConversationMoveIpc?.()
+  disposeConversationMoveIpc = null
+}
+
+/**
+ * Every instance serves its move endpoint (a host to the computer coordinating a move); a computer with windows also
+ * coordinates moves, reaching its hosts' endpoints over their bridges and relaying packages through its transfer queue.
+ */
+function registerConversationMove(reg: IpcRegistrar): void {
+  const local = createLocalMoveEndpoint({ appVersion: () => app.getVersion() })
+  registerConversationMoveEndpointIpc(reg, local)
+  if (isHeadlessInstance()) return
+  const online = (hostId: HostId): boolean =>
+    hostId === LOCAL_HOST_ID || !!hostRegistry()?.list().some((host) => host.id === hostId && host.state === 'online')
+  const remote = (hostId: HostId): MoveEndpoint =>
+    createRemoteMoveEndpoint(hostId, {
+      call: (channel, input) => {
+        const registry = hostRegistry()
+        const origin = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null
+        if (!registry || origin === null) throw new MoveError('host-unavailable', 'No window can reach the host.')
+        return registry.use(hostId, origin, () => ({ role: 'main' })).invoke(origin, channel, [input])
+      },
+      onEvent: onHostEvent,
+    })
+  conversationMoveService = new ConversationMoveService({
+    endpoint: (hostId) => {
+      if (hostId === LOCAL_HOST_ID) return local
+      if (!online(hostId)) throw new MoveError('host-unavailable', 'The host is not connected.')
+      return remote(hostId)
+    },
+    hostOnline: online,
+    relay: createPackageRelay(hostTransferEngine),
+    localStagingDirectory: moveStagingDirectory,
+    removeLocalStaging: removeMoveStaging,
+  })
+  disposeConversationMoveIpc?.()
+  disposeConversationMoveIpc = registerConversationMoveIpc(reg, {
+    service: conversationMoveService,
+    emitChanged: (event) => broadcast('conversation-move:changed', event),
+  })
 }
 
 /** Share one quit confirmation between window close and application quit; cancellation keeps all work alive. */

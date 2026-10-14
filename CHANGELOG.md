@@ -13,6 +13,12 @@ User-visible changes by version. Downloads are on
   its own folder on the server, a name and a color in the sidebar's machine
   switcher, and optional CPU limit and stop when idle. Update the bot server to
   use it. See [several scopes on one server](docs/remote-workspaces.md#several-scopes-on-one-server).
+- Move a conversation between this computer and a remote workspaces host, either
+  way, from **Move to** in its menu. It keeps its history, attachments, notes,
+  unpushed commits and uncommitted changes; the destination clones the project
+  when it does not have it, and the source keeps the branch and a backup. A move
+  that stops halfway can be continued or undone. See
+  [remote workspaces](docs/remote-workspaces.md#move-a-conversation).
 - Maestrly for iOS and Android. Pair a phone with your bot server by scanning
   the QR code in **Settings → Bot server → Pair a phone**, then follow and
   direct your bots and the chats and workspaces of the server's workspaces
