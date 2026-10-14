@@ -1778,11 +1778,18 @@ export default {
     requestRevision: 'Request revision',
     reviewPlan: 'Review plan',
     reviewPlanHint:
-      'Independent read-only review of this plan against the code. Findings become comments you can edit before requesting a revision.',
-    reviewRunning: 'Reviewing the plan',
-    reviewApplied_one: 'Review: {{count}} finding added to your comments.',
-    reviewApplied_other: 'Review: {{count}} findings added to your comments.',
-    reviewClean: 'Review: no problems found in the plan.',
+      'Independent read-only review of this plan against the code, in the conversation. You decide each finding, and the ones you keep become comments on the plan.',
+    reviewLockRunning:
+      'Under review in the conversation. Plan decisions open again after you hand off or discard the review.',
+    reviewLockReady:
+      'The review waits for your decisions in the conversation. Plan decisions open again after you hand it off or discard it.',
+    reviewLockCode:
+      'A code review holds this conversation. Plan decisions open again after it is handed off or discarded.',
+    reviewLockCheck: 'The verifier is checking what a review sent. Plan decisions open again in a few seconds.',
+    reviewCheckResolved_one: 'Review: the comment is addressed in this revision.',
+    reviewCheckResolved_other: 'Review: all {{count}} comments are addressed in this revision.',
+    reviewCheckOpen_one: 'Review: {{count}} comment is still open in this revision. See the conversation.',
+    reviewCheckOpen_other: 'Review: {{count}} comments are still open in this revision. See the conversation.',
     discard: 'Discard plan',
   },
 

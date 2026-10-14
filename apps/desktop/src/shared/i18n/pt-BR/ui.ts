@@ -1803,11 +1803,18 @@ export default {
     requestRevision: 'Pedir revisão',
     reviewPlan: 'Revisar plano',
     reviewPlanHint:
-      'Revisão independente e só leitura deste plano contra o código. Os achados viram comentários que você pode editar antes de pedir a revisão.',
-    reviewRunning: 'Revisando o plano',
-    reviewApplied_one: 'Revisão: {{count}} achado adicionado aos seus comentários.',
-    reviewApplied_other: 'Revisão: {{count}} achados adicionados aos seus comentários.',
-    reviewClean: 'Revisão: nenhum problema encontrado no plano.',
+      'Revisão independente e só leitura deste plano contra o código, na conversa. Você decide cada achado, e os que mantiver viram comentários no plano.',
+    reviewLockRunning:
+      'Em revisão na conversa. As decisões do plano voltam depois que você entregar ou descartar a revisão.',
+    reviewLockReady:
+      'A revisão espera suas decisões na conversa. As decisões do plano voltam depois que você entregar ou descartar a revisão.',
+    reviewLockCode:
+      'Uma revisão de código está segurando esta conversa. As decisões do plano voltam depois que ela for entregue ou descartada.',
+    reviewLockCheck: 'O verificador está checando o que uma revisão enviou. As decisões do plano voltam em alguns segundos.',
+    reviewCheckResolved_one: 'Revisão: o comentário foi atendido nesta versão.',
+    reviewCheckResolved_other: 'Revisão: os {{count}} comentários foram atendidos nesta versão.',
+    reviewCheckOpen_one: 'Revisão: {{count}} comentário continua aberto nesta versão. Veja a conversa.',
+    reviewCheckOpen_other: 'Revisão: {{count}} comentários continuam abertos nesta versão. Veja a conversa.',
     discard: 'Descartar plano',
   },
 

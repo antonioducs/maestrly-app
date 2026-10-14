@@ -70,7 +70,7 @@ vi.mock('../../src/main/chat/credentials', () => ({
 
 vi.mock('../../src/main/chat/chat-store', () => ({
   getChatMessage: vi.fn(() => null),
-  listReviewReportsSinceLastUserMessage: vi.fn(() => []),
+  listUndeliveredReviewReports: vi.fn(() => []),
   chatHistoryStats: vi.fn(() => ({ lastUsage: null })),
   listChatMessages: h.listChatMessages,
 

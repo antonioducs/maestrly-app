@@ -12,7 +12,7 @@ import {
   Sparkles,
   SquarePlus,
   ScanSearch,
-  Loader2,
+  Lock,
   X,
 } from 'lucide-react'
 import type { PlanReceived, PlanDecision, PlanDecisionResponse } from '../../preload'
@@ -23,14 +23,8 @@ import { MarkdownViewer, type CommentCtx } from '@/components/MarkdownViewer'
 import { planDecisionError } from '@/lib/plan-decision'
 import { MaestroPlanProfileDialog } from '@/components/MaestroPlanProfileDialog'
 import { StandardPlanHandoffDialog } from '@/components/StandardPlanHandoffDialog'
-import { ReviewStartDialog } from '@/components/chat/ReviewStartDialog'
-import {
-  isReviewRunning,
-  mergePlanReviewFindings,
-  reviewErrorText,
-  reviewProgressText,
-  useConversationReview,
-} from '@/lib/review'
+import { useConversationReview } from '@/lib/review'
+import { reviewLocksConversation } from '../../shared/review'
 
 interface Props {
   plan: PlanReceived
@@ -64,12 +58,18 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const [draftReady, setDraftReady] = useState(false)
 
   const { t: tChat } = useTranslation('chat')
-  const { review, start: startReviewOf } = useConversationReview(api, plan.agentId)
-  const planReview = review?.target === 'plan' ? review : null
-  const reviewing = isReviewRunning(planReview)
-  const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
-  const [reviewOutcome, setReviewOutcome] = useState<{ reviewId: string; count: number } | null>(null)
-  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
+  const { review } = useConversationReview(api, plan.agentId)
+  // A review (of this plan or of the code) holds the conversation: the plan is decided from its hand-off.
+  const underReview = reviewLocksConversation(review)
+  const [dismissedCheck, setDismissedCheck] = useState<string | null>(null)
+  const planCheck =
+    review?.kind === 'check' &&
+    review.target === 'plan' &&
+    review.status === 'completed' &&
+    review.planVersion === plan.version &&
+    `${review.reviewId}:${review.finishedAt}` !== dismissedCheck
+      ? review
+      : null
 
   const hasPrev = !!plan.previousPlan && plan.version > 1
   const currentHash = planHash(plan.plan)
@@ -80,7 +80,6 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
     setDecisionError(null)
     setEditingLine(null)
     setDraftReady(false)
-    setReviewOutcome(null)
     void api.getPlanDraft(plan.agentId).then((raw) => {
       if (!alive) return
       const draft = raw as {
@@ -117,33 +116,6 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
     }
   }, [currentHash, plan.agentId, plan.plan, plan.previousPlan, plan.version, api])
 
-  // A finished review of this plan version becomes line comments and feedback the person can edit before revising.
-  useEffect(() => {
-    if (!draftReady || !planReview || planReview.status !== 'completed') return
-    if (planReview.planVersion !== plan.version || reviewOutcome?.reviewId === planReview.reviewId) return
-    const findings = planReview.findings ?? []
-    if (findings.length) {
-      const merged = mergePlanReviewFindings(tChat, plan.plan, findings, { lineComments, feedback })
-      setLineComments(merged.lineComments)
-      setFeedback(merged.feedback)
-      setMode((current) => (current === 'edit' ? current : 'read'))
-    }
-    setReviewOutcome({ reviewId: planReview.reviewId, count: findings.length })
-    void api.chatReviewDismiss(plan.agentId)
-  }, [api, draftReady, feedback, lineComments, plan.agentId, plan.plan, plan.version, planReview, reviewOutcome, tChat])
-
-  // The dialog chooses who reviews and reports why a review could not start.
-  const startReview = (reviewer?: Parameters<typeof startReviewOf>[1]) => {
-    setReviewOutcome(null)
-    return startReviewOf('plan', reviewer)
-  }
-  const failedReview =
-    planReview?.status === 'failed' &&
-    planReview.planVersion === plan.version &&
-    planReview.reviewId !== dismissedReviewId
-      ? planReview
-      : null
-
   const commentList = useMemo(
     () =>
       Object.entries(lineComments)
@@ -168,8 +140,6 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const decide = async (d: PlanDecision) => {
     setBusy(true)
     setDecisionError(null)
-    // A decision makes a review of this version pointless.
-    if (reviewing) void api.chatReviewCancel(plan.agentId)
     try {
       const result = await onDecide(d)
       const error = planDecisionError(result)
@@ -186,6 +156,12 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
       return false
     }
   }
+  // The review's hand-off merges the person's own comments and edits, so they are saved when the review takes over.
+  useEffect(() => {
+    if (underReview && draftReady) persistDraft()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [underReview])
+
   const prepareMemoryEviction = useCallback(
     () => preparePlanPanelMemoryEviction(busy, editingLine, persistDraft),
     [busy, editingLine, persistDraft]
@@ -213,9 +189,17 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   }, [])
 
   const commentCtx = useMemo<CommentCtx>(
-    () => ({ comments: lineComments, editingLine, onAddOrEdit, onSave, onCancel, onRemove }),
-    [lineComments, editingLine, onAddOrEdit, onSave, onCancel, onRemove]
+    () => ({
+      comments: lineComments,
+      editingLine: underReview ? null : editingLine,
+      onAddOrEdit: underReview ? () => undefined : onAddOrEdit,
+      onSave,
+      onCancel,
+      onRemove: underReview ? () => undefined : onRemove,
+    }),
+    [lineComments, editingLine, onAddOrEdit, onSave, onCancel, onRemove, underReview]
   )
+  const locked = busy || underReview
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -239,11 +223,12 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             size="sm"
             variant="ghost"
             className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            disabled={busy || reviewing}
+            disabled={locked}
             title={t('plan.reviewPlanHint')}
-            onClick={() => setReviewDialogOpen(true)}
+            data-testid="plan-review-button"
+            onClick={() => void api.chatReviewOpen(plan.agentId, 'plan')}
           >
-            {reviewing ? <Loader2 className="size-3.5 animate-spin" /> : <ScanSearch className="size-3.5" />}
+            <ScanSearch className="size-3.5" />
             {t('plan.reviewPlan')}
           </Button>
           <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-white/[0.04] p-0.5 ring-1 ring-white/[0.05]">
@@ -271,59 +256,53 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
         </div>
       </div>
 
-      {(reviewing || failedReview || reviewOutcome) && (
+      {underReview && review && (
         <div
-          role={failedReview ? 'alert' : 'status'}
+          role="status"
+          data-testid="plan-review-lock"
+          className="flex shrink-0 items-center gap-2 border-b border-amber-500/15 bg-amber-500/[0.06] px-3 py-1.5 text-[11px] text-amber-100"
+        >
+          <Lock className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {t(
+              review.kind === 'check'
+                ? 'plan.reviewLockCheck'
+                : review.status === 'ready'
+                  ? 'plan.reviewLockReady'
+                  : review.target === 'plan'
+                    ? 'plan.reviewLockRunning'
+                    : 'plan.reviewLockCode'
+            )}
+          </span>
+        </div>
+      )}
+      {!underReview && planCheck && (
+        <div
+          role="status"
           data-testid="plan-review-status"
           className={cn(
             'flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-[11px]',
-            failedReview
+            planCheck.checks?.some((result) => result.state !== 'resolved')
               ? 'border-amber-500/20 bg-amber-500/[0.06] text-amber-100'
-              : 'border-sky-500/15 bg-sky-500/[0.05] text-sky-100'
+              : 'border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-100'
           )}
         >
-          {reviewing && planReview ? (
-            <>
-              <Loader2 className="size-3.5 shrink-0 animate-spin" />
-              <span className="min-w-0 flex-1 truncate">
-                {[t('plan.reviewRunning'), reviewProgressText(tChat, planReview), planReview.model?.modelId]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-              <button
-                type="button"
-                onClick={() => void api.chatReviewCancel(plan.agentId)}
-                className="shrink-0 rounded px-1.5 py-0.5 font-medium hover:bg-white/[0.08]"
-              >
-                {tChat('review.cancel')}
-              </button>
-            </>
-          ) : (
-            <>
-              <ScanSearch className="size-3.5 shrink-0" />
-              <span className="min-w-0 flex-1">
-                {failedReview
-                  ? tChat('review.failed', { reason: reviewErrorText(tChat, failedReview.error) })
-                  : reviewOutcome && reviewOutcome.count > 0
-                    ? t('plan.reviewApplied', { count: reviewOutcome.count })
-                    : t('plan.reviewClean')}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setReviewOutcome(null)
-                  if (failedReview) {
-                    setDismissedReviewId(failedReview.reviewId)
-                    void api.chatReviewDismiss(plan.agentId)
-                  }
-                }}
-                className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
-                aria-label={tChat('view.dismiss')}
-              >
-                <X className="size-3.5" />
-              </button>
-            </>
-          )}
+          <ScanSearch className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {planCheck.checks?.some((result) => result.state !== 'resolved')
+              ? t('plan.reviewCheckOpen', {
+                  count: planCheck.checks.filter((result) => result.state !== 'resolved').length,
+                })
+              : t('plan.reviewCheckResolved', { count: planCheck.checks?.length ?? 0 })}
+          </span>
+          <button
+            type="button"
+            onClick={() => setDismissedCheck(`${planCheck.reviewId}:${planCheck.finishedAt}`)}
+            className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+            aria-label={tChat('view.dismiss')}
+          >
+            <X className="size-3.5" />
+          </button>
         </div>
       )}
 
@@ -333,6 +312,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
+            readOnly={underReview}
             spellCheck={false}
             className="h-full min-h-[280px] w-full resize-none rounded-lg border border-input bg-black/20 p-3 font-mono text-[12.5px] leading-relaxed text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
@@ -355,6 +335,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
         <textarea
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}
+          disabled={underReview}
           placeholder={t('plan.generalCommentPlaceholder')}
           className="h-14 w-full resize-none rounded-lg border border-input bg-black/20 px-3 py-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
         />
@@ -362,7 +343,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
           <Button
             size="sm"
             className="h-8 gap-1.5"
-            disabled={busy}
+            disabled={locked}
             onClick={() => decide({ action: 'approve', editedPlan: edited ? text : undefined })}
           >
             <Check className="size-4" /> {t('plan.approve')}
@@ -371,7 +352,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             size="sm"
             variant="secondary"
             className="h-8 gap-1.5 text-amber-200 hover:text-amber-100"
-            disabled={busy}
+            disabled={locked}
             title={t('plan.implementWithMaestroHint')}
             onClick={() => setMaestroProfileOpen(true)}
           >
@@ -381,7 +362,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             size="sm"
             variant="secondary"
             className="col-span-2 h-8 gap-1.5"
-            disabled={busy}
+            disabled={locked}
             title={t('plan.implementInNewConversationHint')}
             onClick={() => setStandardHandoffOpen(true)}
           >
@@ -392,7 +373,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
               size="sm"
               variant="secondary"
               className="h-8 flex-1 gap-1.5"
-              disabled={busy || !canRevise}
+              disabled={locked || !canRevise}
               title={canRevise ? t('plan.reviseHintEnabled') : t('plan.reviseHintDisabled')}
               onClick={() =>
                 decide({
@@ -409,7 +390,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
               size="sm"
               variant="ghost"
               className="h-8 gap-1.5 text-muted-foreground"
-              disabled={busy}
+              disabled={locked}
               title={t('plan.discard')}
               onClick={() => decide({ action: 'discard' })}
             >
@@ -431,13 +412,6 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             editedPlan: edited ? text : undefined,
           })
         }
-      />
-      <ReviewStartDialog
-        open={reviewDialogOpen}
-        conversationId={plan.agentId}
-        target="plan"
-        onOpenChange={setReviewDialogOpen}
-        onStart={startReview}
       />
       <StandardPlanHandoffDialog
         open={standardHandoffOpen}

@@ -67,6 +67,7 @@ vi.mock('../../src/main/chat/codex-subscription/manager', () => ({
 
 const h = vi.hoisted(() => ({
   listReviewReports: vi.fn((): unknown[] => []),
+  getChatMessage: vi.fn((_conversationId: string, _messageId: string): unknown => null),
   getMainWebContents: vi.fn(),
   sendToConversation: vi.fn(),
   sessionForConversation: vi.fn(() => null as unknown),
@@ -194,8 +195,8 @@ vi.mock('../../src/main/chat/credentials', () => ({
 }))
 
 vi.mock('../../src/main/chat/chat-store', () => ({
-  getChatMessage: vi.fn(() => null),
-  listReviewReportsSinceLastUserMessage: h.listReviewReports,
+  getChatMessage: h.getChatMessage,
+  listUndeliveredReviewReports: h.listReviewReports,
   listCompanionConversationMessages: vi.fn(() => []),
   chatHistoryStats: h.chatHistoryStats,
   listChatMessages: h.listChatMessages,
@@ -220,7 +221,9 @@ vi.mock('../../src/main/usage/usage-service', () => ({
 
 // Reviews run read-only subagents; here they finish without submitting anything.
 const reviewH = vi.hoisted(() => ({
-  executeSubagent: vi.fn(async () => ({ text: 'Nothing to report.' })),
+  executeSubagent: vi.fn(async (_input: { signal: AbortSignal }): Promise<{ text: string }> => ({
+    text: 'Nothing to report.',
+  })),
   setAppSetting: vi.fn(),
   resolveProfile: vi.fn(async (_input: unknown) => ({
     version: 1,
@@ -378,6 +381,8 @@ import {
   resolveNativeReasoningEffort,
   claudeRuntimeAxes,
   compactReserved,
+  isConversationUnderReview,
+  waitForChatConversationSlot,
 } from '../../src/main/chat/service'
 import { __resetCwdActivityForTests } from '../../src/main/cwd-activity-coordinator'
 import type { MessagePart } from '../../src/shared/chat'
@@ -640,6 +645,8 @@ describe('isolated internal turn service API', () => {
       findings: [
         { id: 'F1', severity: 'blocking', title: 'Lost update', details: 'Writers race.', lens: 'integration' },
       ],
+      decisions: { F1: 'fix' },
+      handoff: { state: 'sent', at: 3, message: 'fix F1' },
     },
     createdAt: 1,
   }
@@ -649,9 +656,12 @@ describe('isolated internal turn service API', () => {
       parts: MessagePart[]
     }
 
-  it("attaches pending code review reports to the person's next message", async () => {
+  it('attaches a code review the person sent to their message, and marks it delivered', async () => {
     h.projectEnvironmentLockFor.mockReturnValue(null)
     h.listReviewReports.mockReturnValue([pendingReport])
+    h.getChatMessage.mockImplementation((_conversationId, messageId) =>
+      messageId === 'review:r1' ? pendingReport : null
+    )
     const handlers = register()
     const sent = await handlers.get('chat:send')?.({ sender: wc }, { conversationId: 'conv-chat', text: 'fix F1' })
     expect(sent).toEqual({ ok: true })
@@ -662,7 +672,14 @@ describe('isolated internal turn service API', () => {
       | undefined
     expect(report?.hidden).toBe(true)
     expect(report?.data).toContain('## F1 [blocking] Lost update')
+    expect(report?.data).toContain('Decision: fix')
+    // The receipt is rewritten as delivered, so the next message does not carry it again.
+    const delivered = h.upsertChatMessage.mock.calls
+      .map(([message]) => message as { id: string; review?: { handoff?: { deliveredAt?: number } } })
+      .find((message) => message.id === 'review:r1')
+    expect(delivered?.review?.handoff?.deliveredAt).toEqual(expect.any(Number))
     h.listReviewReports.mockReturnValue([])
+    h.getChatMessage.mockReturnValue(null)
   })
 
   it("never spends the person's pending report on an internal job turn", async () => {
@@ -716,15 +733,20 @@ describe('isolated internal turn service API', () => {
     const last = { kind: 'model', providerId: 'provider-1', modelId: 'model-2', reasoning: 'low', fastMode: false }
     h.getAppSetting.mockImplementation((key: string) => (key === 'chat.review.reviewer' ? JSON.stringify(last) : null))
     const handlers = register()
-    expect(await handlers.get('chat:review:reviewer-options')?.({ sender: wc }, 'conv-chat')).toEqual({
-      conversation: {
-        providerId: 'provider-1',
-        modelId: 'model-1',
-        reasoning: 'high',
-        fastMode: true,
-        providerName: 'Provider',
+    expect(await handlers.get('chat:review:prepare')?.({ sender: wc }, 'conv-chat', 'plan')).toEqual({
+      ok: true,
+      scope: { kind: 'plan', version: 1, title: 'Plan', steps: ['Step'] },
+      reviewer: {
+        conversation: {
+          providerId: 'provider-1',
+          modelId: 'model-1',
+          reasoning: 'high',
+          fastMode: true,
+          providerName: 'Provider',
+        },
+        last,
       },
-      last,
+      lenses: ['feasibility', 'completeness'],
     })
 
     const finished = async () =>
@@ -771,6 +793,32 @@ describe('isolated internal turn service API', () => {
       })
     ).toEqual({ ok: false, error: 'reviewer-unsupported' })
     expect(reviewH.setAppSetting).not.toHaveBeenCalled()
+    h.getPendingPlan.mockReturnValue(null)
+  })
+
+  it('holds the conversation while a review runs: nothing is sent until it ends', async () => {
+    h.projectEnvironmentLockFor.mockReturnValue(null)
+    h.getConversation.mockReturnValue({ id: 'conv-chat', cwd, workspaceId: 'workspace-1', archived: 0 })
+    h.getPendingPlan.mockReturnValue({ agentId: 'conv-chat', cwd, plan: '# Plan\n- Step', version: 1 } as never)
+    reviewH.executeSubagent.mockImplementation(
+      ({ signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))))
+    )
+    const handlers = register()
+    expect(await handlers.get('chat:review:start')?.({ sender: wc }, 'conv-chat', { target: 'plan' })).toMatchObject({
+      ok: true,
+    })
+    expect(isConversationUnderReview('conv-chat')).toBe(true)
+    expect(await handlers.get('chat:send')?.({ sender: wc }, { conversationId: 'conv-chat', text: 'hello' })).toEqual({
+      ok: false,
+      error: 'review-active',
+    })
+    expect(await handlers.get('chat:review:cancel')?.({ sender: wc }, 'conv-chat')).toEqual({ ok: true })
+    await waitForChatConversationSlot('conv-chat')
+    expect(isConversationUnderReview('conv-chat')).toBe(false)
+    expect(await handlers.get('chat:send')?.({ sender: wc }, { conversationId: 'conv-chat', text: 'hello' })).toEqual({
+      ok: true,
+    })
+    reviewH.executeSubagent.mockImplementation(async () => ({ text: 'Nothing to report.' }))
     h.getPendingPlan.mockReturnValue(null)
   })
 

@@ -4,7 +4,7 @@ import { requestMainNavigation } from '@/lib/main-navigation'
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PanelRight, MessagesSquare, ScanSearch } from 'lucide-react'
+import { PanelRight, MessagesSquare } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import { setComposerPrefill } from '@/lib/composer-prefill'
 import type { Conversation, Workspace, FloatTab } from '../preload'
@@ -51,7 +51,7 @@ import { MigrationRecoveryGate } from '@/components/conversation-migration/Migra
 import { CHAT_VIEW_COLD_TTL_MS, pruneMountedChatViews } from '@/lib/conversation-mount-lru'
 import { useMemoryAutoReclaim } from '@/lib/use-memory-auto-reclaim'
 import { hostApi, HostProvider } from '@/lib/hosts/host-context'
-import { requestCodeReview } from '@/lib/review'
+import { ReviewHeaderButton } from '@/components/chat/review/ReviewHeaderButton'
 import { useHosts } from '@/lib/hosts/use-hosts'
 import { type RemoteHostShell, RemoteHostRuntime } from '@/lib/hosts/remote-host-runtime'
 import { hostOfKey, hostTarget, hostWorkspace, isRemoteKey, rawId, shellConversation } from '@/lib/hosts/shell-keys'
@@ -1009,16 +1009,9 @@ export function DesktopApp() {
                     {active && !activeRemote && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
                     {active?.botOrigin && <BotManagementControls conversation={active} />}
                     {active?.scope === 'project' && active.archived === 0 && !active.isMulti && !active.botOrigin && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 min-w-0 gap-1.5 px-2 text-[11px]"
-                        onClick={() => requestCodeReview({ conversationId: rawId(active.id), hostId: activeHostId })}
-                        title={t('review.headerHint', { ns: 'chat' })}
-                      >
-                        <ScanSearch className="size-3.5" />
-                        <span className="truncate">{t('review.headerButton', { ns: 'chat' })}</span>
-                      </Button>
+                      <HostProvider hostId={activeHostId}>
+                        <ReviewHeaderButton conversationId={rawId(active.id)} hostId={activeHostId} />
+                      </HostProvider>
                     )}
                     <Button
                       variant={drawerOpen ? 'secondary' : 'ghost'}
@@ -1053,6 +1046,11 @@ export function DesktopApp() {
                                 // A remote host's conversation is loaded again each time the host answers again.
                                 key={`${c.id}@${chatHost.epoch}`}
                                 conversationId={rawId(c.id)}
+                                conversationName={currentConversation.name}
+                                onOpenPlan={() => {
+                                  openDrawerTab(c.id, 'plan')
+                                  setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
+                                }}
                                 workspaceId={c.workspaceId === null ? null : rawId(c.workspaceId)}
                                 cwd={c.cwd}
                                 experience={c.experience}
@@ -1109,6 +1107,11 @@ export function DesktopApp() {
                               <ChatView
                                 key={c.id}
                                 conversationId={c.id}
+                                conversationName={currentConversation.name}
+                                onOpenPlan={() => {
+                                  openDrawerTab(c.id, 'plan')
+                                  setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
+                                }}
                                 workspaceId={c.workspaceId}
                                 cwd={c.cwd}
                                 experience={c.experience}

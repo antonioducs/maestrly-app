@@ -52,41 +52,59 @@ reopening saved conversations and does not change the stored tool input.
 ## Code and plan reviews
 
 **Review** in the header of a project conversation, or `/code-review` in the
-composer, starts an independent, read-only review of the conversation's current
+composer, opens an independent, read-only review of the conversation's current
 changes: the committed difference from the default branch, staged and unstaged
-changes, and new files. Three reviewers examine the changes in parallel — logic,
-integration (callers, contracts, stored data, state and cancellation), and
-security and tests — and a verifier keeps only the findings it can confirm in the
-code. Reviewers run read-only: they read and search the checkout but cannot
-change files.
+changes, and new files. In the Plan tab, **Review plan** opens a review of a
+plan that is waiting for your decision. Reviewers run read-only: they read and
+search the checkout but cannot change files.
 
-Before a review starts, a dialog asks who reviews: the conversation's own model,
-reasoning effort and Fast setting, or another model with its own effort and Fast
-setting. A different model tends to catch mistakes the conversation's model
-misses. ChatGPT Web cannot run reviewers. The choice is remembered for the next
-review and stored in the local database; the model that reviewed is shown while
-the review runs and on its report.
+A review takes over the conversation and moves through five stages:
 
-The report appears in the conversation as a card listing each finding's
-severity, location, evidence and suggestion. It changes nothing by itself:
-select findings and choose **Discuss with the model** or **Fix selected**, or
-write your own message. The model receives the report with your next message,
-whichever provider runs that turn. A code review uses up to four runs of the
-reviewing model, and its usage counts toward the conversation.
+1. **Scope** shows what will be reviewed (the changed files with their line
+   counts, or the plan's steps) and asks who reviews: the conversation's own
+   model, reasoning effort and Fast setting, or another model with its own
+   effort and Fast setting. ChatGPT Web cannot run reviewers. The choice is
+   remembered for the next review and stored in the local database. Nothing runs
+   until you choose **Start review**.
+2. **Investigate**: reviewers work in parallel, three for code (logic,
+   integration, and security and tests) and two for plans (feasibility and
+   completeness). Each one has a column with what it reads and searches as it
+   happens and the candidate findings it raises. An evidence map beside them
+   shows which files each reviewer read, inside and outside the change, and
+   where candidates point.
+3. **Verify**: a verifier rules on every candidate. It confirms it (possibly
+   with a corrected severity), discards it with a reason, or merges it into a
+   duplicate. Discarded and merged candidates stay visible with their reason.
+4. **Decide**: one finding at a time, with the code (or plan) lines it is
+   about, its evidence and a suggestion. For code, choose fix, discuss or dismiss
+   (with an optional reason); for plans, comment on the plan or dismiss. The
+   keyboard works too: `J`/`K` move, `F`, `D`, `C` and `X` decide.
+5. **Hand off**: for code, an editable message built from your decisions goes
+   to the agent with the full report attached, or you keep only the report. For
+   plans, your comments land on the plan lines (with your own comments from the
+   Plan tab) as a revision request, or you approve the plan as written.
 
-In the Plan tab, **Review plan** checks a plan that is waiting for your decision
-against the repository with two reviewers (feasibility and completeness) and the
-verifier, chosen in the same dialog. Findings are added to your line comments and general feedback, where
-you can edit or remove them before choosing **Request revision**. Findings about
-a plan that was approved, discarded or replaced while it was being reviewed are
-dropped.
+From **Start review** until you hand the result off or discard the review, the
+conversation is paused: no turn runs, nothing can be sent, and the plan cannot be
+decided. Messages from other conversations wait until the review ends. A code
+review uses up to four runs of the reviewing model and a plan review up to
+three; their usage counts toward the conversation, even when the review is
+discarded.
 
-One review runs per conversation at a time, and you can cancel it from the
-banner above the composer or from the Plan tab. Code reviews need a Git checkout
+The review then continues in the conversation as a receipt with its findings,
+your decisions and where the hand-off stands. When the agent has finished,
+**Check the fixes** (or **Check the revision**) runs one more verifier pass over
+what you sent: no new findings, only whether each fix or comment holds up. The
+conversation is paused for the few seconds it takes. A finding that is still
+open can be sent back to the agent from the receipt.
+
+One review runs per conversation at a time. Code reviews need a Git checkout
 with changes, so they are not offered in multi-repository or archived
-conversations. Reports are stored with the conversation in the local database.
-The earlier automatic review loop was removed; older conversations keep its
-messages as history.
+conversations. Receipts are stored with the conversation in the local database,
+outside the model's context; the report reaches the model only with the message
+you send it with. An open review that the app closes before it is handed off is
+lost, and the conversation is free again. The earlier automatic review loop was
+removed; older conversations keep its messages as history.
 
 ## Interactive answers
 

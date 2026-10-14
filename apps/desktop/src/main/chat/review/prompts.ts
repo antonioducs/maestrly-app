@@ -19,7 +19,7 @@ export const REVIEWER_SYSTEM_PROMPT = [
   '- Severity: blocking = breaks behavior, loses or corrupts data, opens a security hole, or breaks a contract other',
   '  code relies on; important = a real defect with narrower impact, or a risky change left untested; minor = a real',
   '  but low-impact defect. Prefer fewer, stronger findings; report at most 10.',
-  '- Finish by calling submit_findings exactly once. An empty list is a perfectly good result.',
+  '- Finish with the submission tool your task names. An empty result is a perfectly good result.',
 ].join('\n')
 
 const LENS_FOCUS: Record<ReviewLensId, string> = {
@@ -119,13 +119,17 @@ export function lensTask(lens: ReviewLensId, context: ReviewPromptContext): stri
 export function verifierTask(candidates: unknown, context: ReviewPromptContext): string {
   return [
     'You are the verifier. Several reviewers raised the candidate findings below independently. Check each one',
-    'yourself against the repository and decide whether it is real.',
+    'yourself against the repository and rule on it. The person watches your verdicts arrive and sees the reason',
+    'for every candidate you do not keep.',
     '',
-    '- Keep a candidate only if you confirm it from the code. Reject anything you cannot reproduce by reading the',
-    '  code, anything speculative, stylistic or out of scope, and anything the conversation shows was deliberate.',
-    '- Merge duplicates into one finding. Correct the severity, wording, path and line when they are off.',
-    '- Submit only the findings you kept, each with `candidate_id` set to the id of the candidate it confirms (for',
-    '  merged duplicates, use one of their ids). Keep the evidence concrete. An empty list is fine.',
+    '- confirmed: you reproduced it from the code. Correct the severity, title, details, evidence, suggestion, path',
+    '  or line when they are off; when you change the severity, say why in `reason`.',
+    '- discarded: you cannot reproduce it by reading the code, or it is speculative, stylistic, out of scope, or',
+    '  something the conversation shows was deliberate. Give the reason in one sentence.',
+    '- merged: it is a duplicate of another candidate with the same root cause. Set `merged_into` to the candidate',
+    '  you keep (which needs its own verdict) and give the reason.',
+    '- Call record_verdicts as you go, one or a few candidates per call, until every candidate has exactly one',
+    '  verdict. Work through them in order of severity.',
     '',
     targetBlock(context),
     '',
@@ -136,7 +140,58 @@ export function verifierTask(candidates: unknown, context: ReviewPromptContext):
     JSON.stringify(candidates, null, 2),
     '```',
     '',
-    `Write title, details, evidence and suggestion in ${context.language}.`,
-    'When you are done, call submit_findings exactly once.',
+    `Write reasons and any corrected wording in ${context.language}.`,
+  ].join('\n')
+}
+
+export interface CheckFinding {
+  id: string
+  severity: string
+  title: string
+  details: string
+  evidence?: string
+  suggestion?: string
+  path?: string
+  line?: number
+  planLine?: number
+  /** Plan reviews: the comment the person sent with it. */
+  comment?: string
+}
+
+/**
+ * Checks whether the fixes (code) or the plan revision (plan) the person asked for hold up. It looks only at these
+ * findings and never raises new ones.
+ */
+export function checkTask(findings: readonly CheckFinding[], context: ReviewPromptContext): string {
+  const intro =
+    context.target === 'code'
+      ? [
+          'You are the verifier, checking fixes. The person sent the review findings below to the agent to fix, and the',
+          'agent has worked on them. For each finding, check the current code and decide whether the problem is gone.',
+        ]
+      : [
+          'You are the verifier, checking a plan revision. The person sent the review findings below to the agent as',
+          'comments on its plan, and the agent revised the plan. For each finding, decide whether the revised plan',
+          'below addresses it.',
+        ]
+  return [
+    ...intro,
+    '',
+    '- resolved: the problem is gone (or the plan now handles it). Say in one sentence what changed.',
+    '- open: it is still there, partly fixed, or the fix introduced a related problem. Say concretely what remains,',
+    '  with the file and line when you can.',
+    '- Look only at these findings. Do not raise new ones.',
+    '- Call record_checks as you go until every finding has a result.',
+    '',
+    targetBlock(context),
+    '',
+    conversationBlock(context),
+    '',
+    '# Findings to check',
+    '```json',
+    JSON.stringify(findings, null, 2),
+    '```',
+    '',
+    `Write the notes in ${context.language}.`,
   ].join('\n')
 }

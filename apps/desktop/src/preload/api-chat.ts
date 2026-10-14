@@ -55,7 +55,17 @@ import type {
   SubagentSessionSummary,
   SubagentTranscriptPage,
 } from '../shared/chat'
-import type { ReviewJobInfo, ReviewReviewerOptions, ReviewStartInput, ReviewStartResult } from '../shared/review'
+import type {
+  ReviewDraftInput,
+  ReviewHandoffInput,
+  ReviewHandoffResult,
+  ReviewJobInfo,
+  ReviewPrepareResult,
+  ReviewSendReportResult,
+  ReviewStartInput,
+  ReviewStartResult,
+  ReviewTarget,
+} from '../shared/review'
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
 import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
@@ -791,19 +801,43 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatCompact: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:compact', conversationId),
 
-    /** Starts a read-only code or plan review of the conversation (one pass: parallel reviewers + verifier). */
+    /** What a code or plan review would look at and who can run it; nothing starts. */
+    chatReviewPrepare: (conversationId: string, target: ReviewTarget): Promise<ReviewPrepareResult> =>
+      ipcRenderer.invoke('chat:review:prepare', conversationId, target),
+    /** Starts a read-only review; the conversation is held until the review is handed off or discarded. */
     chatReviewStart: (conversationId: string, input: ReviewStartInput): Promise<ReviewStartResult> =>
       ipcRenderer.invoke('chat:review:start', conversationId, input),
+    /** Stops a running review or check. */
     chatReviewCancel: (conversationId: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:review:cancel', conversationId),
-    /** The conversation's running review, or its last finished one until dismissed. */
+    /** Ends a review without handing anything off. */
+    chatReviewDiscard: (conversationId: string, reviewId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:discard', conversationId, reviewId),
+    /** The conversation's open review or running check, or the last one that ended until dismissed. */
     chatReviewStatus: (conversationId: string): Promise<ReviewJobInfo | null> =>
       ipcRenderer.invoke('chat:review:status', conversationId),
+    /** Records decisions, dismissal notes and plan comments while the review is open. */
+    chatReviewDraft: (conversationId: string, input: ReviewDraftInput): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('chat:review:draft', conversationId, input),
+    /** Hands an open review off: stores its receipt and frees the conversation. */
+    chatReviewHandoff: (conversationId: string, input: ReviewHandoffInput): Promise<ReviewHandoffResult> =>
+      ipcRenderer.invoke('chat:review:handoff', conversationId, input),
+    /** Marks a saved code report as sent with this message; the caller then sends the message. */
+    chatReviewSendReport: (conversationId: string, messageId: string, message: string): Promise<ReviewSendReportResult> =>
+      ipcRenderer.invoke('chat:review:send-report', conversationId, messageId, message),
+    /** Checks whether the fixes or the plan revision a receipt asked for hold up. */
+    chatReviewCheck: (conversationId: string, messageId: string): Promise<ReviewStartResult> =>
+      ipcRenderer.invoke('chat:review:check', conversationId, messageId),
     chatReviewDismiss: (conversationId: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:review:dismiss', conversationId),
-    /** The conversation's own model and the reviewer used last time, for the review dialog. */
-    chatReviewReviewerOptions: (conversationId: string): Promise<ReviewReviewerOptions> =>
-      ipcRenderer.invoke('chat:review:reviewer-options', conversationId),
+    /** Asks the conversation's chat view to open a review (the Plan tab runs in its own renderer). */
+    chatReviewOpen: (conversationId: string, target: ReviewTarget): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:open', conversationId, target),
+    onChatReviewOpen: (cb: (request: { conversationId: string; target: ReviewTarget }) => void): (() => void) => {
+      const listener = (_event: unknown, request: { conversationId: string; target: ReviewTarget }) => cb(request)
+      ipcRenderer.on('chat:review:open', listener)
+      return () => ipcRenderer.removeListener('chat:review:open', listener)
+    },
     onChatReviewChanged: (cb: (review: ReviewJobInfo) => void): (() => void) => {
       const listener = (_event: unknown, review: ReviewJobInfo) => cb(review)
       ipcRenderer.on('chat:review:changed', listener)

@@ -12,6 +12,7 @@ const desktop = fileURLToPath(new URL('../..', import.meta.url))
 
 const PLAN_REQUEST = 'Plan the counter fix.'
 const FINDING = 'Counter loses concurrent updates'
+const REVISION_MARKER = '## Comments on specific passages'
 
 interface ModelRequest {
   model: string
@@ -22,12 +23,13 @@ interface ModelRequest {
 }
 
 /**
- * Code and plan reviews end to end against a scripted OpenAI-compatible model: the person picks another model to
- * review, reviewers run as read-only subagents that submit findings, a verifier confirms them, the code report lands
- * in the conversation and reaches the model with the next message, and the Plan tab turns plan findings into line
- * comments with the remembered reviewer.
+ * Code and plan reviews end to end against a scripted OpenAI-compatible model: the review room opens at its scope,
+ * the person picks another model to review, read-only reviewers read the checkout and submit candidates, the verifier
+ * rules on them, the conversation stays held while the person decides and hands off, the report reaches the model
+ * with the hand-off message, and the receipt checks the fixes. A plan review does the same from the Plan tab, sends
+ * its comments as a revision request and checks the revision.
  */
-test('reviews code and plans on the reviewer model the person chooses', async () => {
+test('reviews code and plans in the review room, hands them off and checks the fixes', async () => {
   test.setTimeout(240_000)
   await access(path.join(desktop, 'out/main/index.js'))
   const root = mkdtempSync(path.join(os.tmpdir(), 'maestrly-reviews-'))
@@ -112,18 +114,33 @@ test('reviews code and plans on the reviewer model the person chooses', async ()
     const tools = (input.tools ?? []).map((tool) => tool.function.name)
     requests.push({ model: input.model, system, lastUser, tools, toolResults })
     res.setHeader('content-type', 'text/event-stream')
+    const did = (id: string) => id in toolResults
 
     if (system.includes('independent senior reviewer')) {
-      if (Object.keys(toolResults).length) return end(res, 'Review submitted.')
-      if (lastUser.startsWith('You are the verifier')) {
-        return call(res, 'verify-1', 'submit_findings', { findings: [{ ...finding, candidate_id: 'C1' }] })
+      if (tools.includes('record_checks')) {
+        if (did('check-1')) return end(res, 'Checked.')
+        return call(res, 'check-1', 'record_checks', {
+          results: [{ finding_id: 'F1', state: 'resolved', note: 'The increment is atomic now.' }],
+        })
       }
-      // One lens of each review finds the problem; the others find nothing.
+      if (tools.includes('record_verdicts')) {
+        if (did('verify-1')) return end(res, 'Ruled.')
+        return call(res, 'verify-1', 'record_verdicts', { verdicts: [{ candidate_id: 'C1', verdict: 'confirmed' }] })
+      }
+      // One lens of each review reads the file and finds the problem; the others find nothing.
       const reports = lastUser.startsWith('Lens: correctness') || lastUser.startsWith('Lens: feasibility')
-      return call(res, 'lens-1', 'submit_findings', { findings: reports ? [finding] : [] })
+      if (reports && !did('read-1')) return call(res, 'read-1', 'read', { path: 'counter.js' })
+      if (!did('submit-1')) return call(res, 'submit-1', 'submit_findings', { findings: reports ? [finding] : [] })
+      return end(res, 'Review submitted.')
     }
     if (lastUser.includes(PLAN_REQUEST)) {
       return call(res, 'plan-1', 'review_plan', { title: 'Counter plan', plan: '## Steps\n1. Increment the counter' })
+    }
+    if (lastUser.includes(REVISION_MARKER) && lastUser.includes(FINDING)) {
+      return call(res, 'plan-2', 'review_plan', {
+        title: 'Counter plan',
+        plan: '## Steps\n1. Increment the counter atomically, under a lock',
+      })
     }
     end(res, 'OK')
   })
@@ -185,51 +202,86 @@ test('reviews code and plans on the reviewer model the person chooses', async ()
     await page.waitForFunction(() => Boolean((window as any).api))
     await page.locator('li.conv-item', { hasText: 'Counter' }).first().click()
 
-    // 1. Code review from the header, on a reviewer model other than the conversation's.
-    await page.getByRole('button', { name: 'Review', exact: true }).click()
-    const dialog = page.getByTestId('review-start-dialog')
-    await expect(dialog).toBeVisible()
-    const conversationChoice = dialog.getByRole('radio', { name: /This conversation's model/ })
+    // 1. The header opens the review room at its scope: what changed and who reviews. Nothing runs yet.
+    await page.getByTestId('review-header-button').click()
+    const room = page.getByTestId('review-room')
+    await expect(room).toHaveAttribute('data-stage', 'scope')
+    await expect(room).toContainText('counter.js')
+    await expect(room).toContainText('+1')
+    const conversationChoice = room.getByRole('radio', { name: /This conversation's model/ })
     await expect(conversationChoice).toHaveAttribute('aria-checked', 'true')
     await expect(conversationChoice).toContainText('Review fixture · review-primary')
-    await dialog.getByRole('radio', { name: /Another model/ }).click()
-    const settings = dialog.getByTestId('review-reviewer-settings')
+    expect(reviewerRequests()).toHaveLength(0)
+    await room.getByRole('radio', { name: /Another model/ }).click()
+    const settings = room.getByTestId('review-reviewer-settings')
     await settings.getByRole('button').first().click()
-    await dialog.getByRole('button', { name: /review-secondary/ }).click()
+    await page.getByRole('button', { name: /review-secondary/ }).click()
     await expect(settings).toContainText('review-secondary')
-    const start = dialog.getByRole('button', { name: 'Start review' })
+    const start = room.getByTestId('review-start')
     await expect(start).toBeEnabled({ timeout: 30_000 })
     await start.click()
-    await expect(dialog).toBeHidden()
 
-    const card = page.getByTestId('review-report-card')
-    await expect(card).toContainText(FINDING, { timeout: 90_000 })
-    await expect(card).toContainText('1 finding · 1 blocking')
-    await expect(card).toContainText('review-secondary')
+    // 2. Reviewers run and the verifier rules; then the room waits for decisions while holding the conversation.
+    await expect(room).toHaveAttribute('data-stage', 'decide', { timeout: 90_000 })
+    await expect(room).toContainText(FINDING)
+    await expect(room).toContainText('export const add = () => (count = count + 1)')
+    await expect(room).toContainText('Confirmed by the verifier.')
+    await expect(page.getByTestId('review-header-button')).toBeVisible()
+    expect(await api('chatSend', source.id, 'hello?')).toEqual({ ok: false, error: 'review-active' })
+    const status = await api('chatReviewStatus', source.id)
+    expect(status).toMatchObject({ status: 'ready', model: { modelId: 'review-secondary' } })
+    expect(status.activity.correctness).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'read', path: 'counter.js', status: 'done' })])
+    )
+    expect(status.verdicts).toEqual([{ candidateId: 'C1', verdict: 'confirmed', severity: 'blocking' }])
     const codeReviewers = reviewerRequests()
-    // Three lenses and the verifier, each a submission and a closing turn, all on the chosen model.
     expect(new Set(codeReviewers.map((request) => request.model))).toEqual(new Set(['review-secondary']))
-    expect(codeReviewers.filter((request) => request.lastUser.startsWith('Lens: ')).length).toBeGreaterThanOrEqual(3)
-    expect(codeReviewers.some((request) => request.lastUser.startsWith('You are the verifier'))).toBe(true)
     for (const request of codeReviewers) {
-      expect(request.tools).toEqual(expect.arrayContaining(['submit_findings', 'git_diff', 'read', 'grep', 'glob']))
+      expect(request.tools).toEqual(expect.arrayContaining(['read', 'grep', 'glob', 'git_diff']))
       expect(request.tools).not.toEqual(expect.arrayContaining(['bash']))
       expect(request.tools).not.toEqual(expect.arrayContaining(['edit']))
     }
 
-    // The report reaches the conversation's model with the person's next message, here the card's action.
-    await card.getByRole('button', { name: /Fix selected/ }).click()
+    // 3. Decide from the keyboard, then hand off: the message is built from the decisions.
+    await page.keyboard.press('f')
+    await expect(room).toContainText('1 of 1 decided')
+    await room.getByTestId('review-to-handoff').click()
+    await expect(room).toHaveAttribute('data-stage', 'handoff')
+    await expect(room.getByTestId('review-handoff-message')).toHaveValue(
+      /^Fix these review findings and verify the fixes:\n- F1 Counter loses concurrent updates \(counter\.js:2\)$/
+    )
+    await room.getByTestId('review-send').click()
+    await expect(room).toBeHidden()
+
+    // 4. The report reaches the conversation's model with the hand-off message, and the receipt follows it.
     await expect
-      .poll(() => requests.some((request) => request.lastUser.includes('Fix the review findings F1')), {
+      .poll(() => requests.some((request) => request.lastUser.includes('Fix these review findings')), {
         timeout: 60_000,
       })
       .toBe(true)
-    const fix = requests.find((request) => request.lastUser.includes('Fix the review findings F1'))!
+    const fix = requests.find((request) => request.lastUser.includes('Fix these review findings'))!
     expect(fix.model).toBe('review-primary')
     expect(fix.lastUser).toContain(`## F1 [blocking] ${FINDING}`)
+    expect(fix.lastUser).toContain('Decision: fix')
     await idle(source.id)
+    const receipt = page.getByTestId('review-receipt').last()
+    await expect(receipt).toContainText('Sent')
+    await expect(receipt).toContainText('review-secondary')
+    // The next message does not carry the report again.
+    expect((await api('chatSend', source.id, 'thanks')).ok).toBe(true)
+    await idle(source.id)
+    expect(requests.find((request) => request.lastUser.includes('thanks'))?.lastUser).not.toContain('Decision: fix')
 
-    // 2. Plan review in the Plan tab, which offers the remembered reviewer first.
+    // 5. Check the fixes: one verifier pass over what was sent.
+    const before = reviewerRequests().length
+    await receipt.getByRole('button', { name: 'Check the fixes' }).click()
+    await expect(receipt).toContainText('Holds up', { timeout: 60_000 })
+    await expect(receipt).toContainText('The fix holds up. This review is closed.')
+    const checker = reviewerRequests().slice(before)
+    expect(checker[0].lastUser).toContain('checking fixes')
+    expect(new Set(checker.map((request) => request.model))).toEqual(new Set(['review-secondary']))
+
+    // 6. Plan review from the Plan tab, a renderer of its own: the room opens in the conversation.
     expect((await api('chatSetMode', source.id, 'plan')).ok).toBe(true)
     expect((await api('chatSend', source.id, PLAN_REQUEST)).ok).toBe(true)
     await expect
@@ -237,7 +289,7 @@ test('reviews code and plans on the reviewer model the person chooses', async ()
       .toContain('Increment the counter')
     await idle(source.id)
     // Drawer panels are native views outside Playwright's page list; drive the panel document directly.
-    const panel = <T>(script: string) =>
+    const inPanel = <T>(body: string) =>
       app!.evaluate(
         ({ webContents }, { script, conversationId }) => {
           const view = webContents
@@ -245,57 +297,53 @@ test('reviews code and plans on the reviewer model the person chooses', async ()
             .find((item) => item.getURL().includes(`panel=plan&conv=${conversationId}`))
           return view ? view.executeJavaScript(script, true) : null
         },
-        { script, conversationId: source.id }
+        { script: `(() => { ${body} })()`, conversationId: source.id }
       ) as Promise<T | null>
-    const helpers = `
-      const byText = (selector, text) =>
-        [...document.querySelectorAll(selector)].find((element) => element.textContent.includes(text))
-      const dialog = () => document.querySelector('[data-testid="review-start-dialog"]')
-    `
-    const inPanel = <T>(body: string) => panel<T>(`(() => { ${helpers} ${body} })()`)
     await expect
-      .poll(() => inPanel<boolean>(`return document.body.textContent.includes('Increment the counter')`))
-      .toBe(true)
-    expect(await inPanel<boolean>(`const open = byText('button', 'Review plan'); open?.click(); return !!open`)).toBe(
-      true
-    )
-    await expect
-      .poll(
-        () =>
-          inPanel<boolean>(`
-            const other = byText('[data-testid="review-start-dialog"] [role="radio"]', 'Another model')
-            const settings = dialog()?.querySelector('[data-testid="review-reviewer-settings"]')
-            return other?.getAttribute('aria-checked') === 'true' && !!settings?.textContent.includes('review-secondary')`),
-        { timeout: 30_000 }
+      .poll(() =>
+        inPanel<boolean>(`
+          const button = document.querySelector('[data-testid="plan-review-button"]')
+          if (!button || button.disabled) return false
+          button.click()
+          return true`)
       )
       .toBe(true)
-    const before = reviewerRequests().length
+    await expect(room).toHaveAttribute('data-stage', 'scope')
+    await expect(room).toContainText('Plan review')
+    await expect(room).toContainText('Increment the counter')
+    // The reviewer chosen last time is offered first.
+    await expect(room.getByRole('radio', { name: /Another model/ })).toHaveAttribute('aria-checked', 'true')
+    await expect(room.getByTestId('review-reviewer-settings')).toContainText('review-secondary')
+    await expect(start).toBeEnabled({ timeout: 30_000 })
+    await start.click()
+    await expect(room).toHaveAttribute('data-stage', 'decide', { timeout: 90_000 })
+    // The Plan tab cannot decide the plan while the review holds it.
     await expect
-      .poll(
-        () =>
-          inPanel<boolean>(`
-            const start = byText('[data-testid="review-start-dialog"] button', 'Start review')
-            if (!start || start.disabled) return false
-            start.click()
-            return true`),
-        { timeout: 30_000 }
-      )
+      .poll(() => inPanel<boolean>(`return !!document.querySelector('[data-testid="plan-review-lock"]')`))
       .toBe(true)
+    expect(await api('decidePlan', source.id, { action: 'approve' })).toEqual({ ok: false, error: 'review-active' })
+
+    await page.keyboard.press('c')
+    await room.getByTestId('review-to-handoff').click()
+    await expect(room.locator('[data-comment="F1"]')).toHaveValue(new RegExp(FINDING))
+    await room.getByTestId('review-revise').click()
+    await expect(room).toBeHidden()
+
+    // 7. The comments become a revision request; the agent revises, and the receipt checks the revision.
+    await expect.poll(async () => (await api('getPendingPlan', source.id))?.version, { timeout: 60_000 }).toBe(2)
+    await idle(source.id)
+    const revision = requests.find((request) => request.lastUser.includes(REVISION_MARKER))!
+    expect(revision.lastUser).toContain(FINDING)
+    const planReceipt = page.getByTestId('review-receipt').last()
+    await expect(planReceipt).toContainText('Revision requested')
+    await planReceipt.getByRole('button', { name: 'Check the revision' }).click()
+    await expect(planReceipt).toContainText('The comment is addressed.', { timeout: 60_000 })
+    expect(reviewerRequests().at(-1)?.lastUser).toContain('checking a plan revision')
     await expect
-      .poll(
-        () =>
-          inPanel<boolean>(`return document.body.textContent.includes('Review: 1 finding added to your comments.')`),
-        {
-          timeout: 90_000,
-        }
+      .poll(() =>
+        inPanel<string>(`return document.querySelector('[data-testid="plan-review-status"]')?.textContent ?? ''`)
       )
-      .toBe(true)
-    // The finding became a line comment; compare in the test so no value is built into the panel script.
-    expect(await inPanel<string>(`return document.body.textContent`)).toContain(FINDING)
-    const planReviewers = reviewerRequests().slice(before)
-    expect(planReviewers.some((request) => request.lastUser.startsWith('Lens: feasibility'))).toBe(true)
-    expect(new Set(planReviewers.map((request) => request.model))).toEqual(new Set(['review-secondary']))
-    for (const request of planReviewers) expect(request.tools).not.toContain('git_diff')
+      .toContain('the comment is addressed in this revision')
   } finally {
     await app?.close().catch(() => undefined)
     await new Promise<void>((resolve) => model.close(() => resolve()))

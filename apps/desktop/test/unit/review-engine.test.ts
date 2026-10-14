@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   ReviewEngineError,
+  runReviewCheck,
   runReviewEngine,
+  type ReviewProgress,
   type ReviewerRunInput,
   type ReviewerRunResult,
 } from '../../src/main/chat/review/engine'
-import type { SubmittedFinding } from '../../src/main/chat/review/findings'
+import type { RecordedVerdict, SubmittedFinding } from '../../src/main/chat/review/findings'
 import type { ReviewPromptContext } from '../../src/main/chat/review/prompts'
 
 const context: ReviewPromptContext = { target: 'code', conversation: '[]', language: 'English' }
@@ -27,43 +29,52 @@ function usage(input: number) {
 }
 
 describe('review engine', () => {
-  it('runs every lens in parallel, then keeps only the findings the verifier confirms', async () => {
+  it('runs every lens in parallel, shows candidates as they are raised, and rules on each one', async () => {
     const started: string[] = []
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
+    const progress: ReviewProgress[] = []
     const runReviewer = vi.fn(async (input: ReviewerRunInput): Promise<ReviewerRunResult> => {
       if (input.stage === 'lens') {
-        started.push(input.lens!)
+        started.push(input.lens)
         // Every lens must have started before any finishes.
         if (started.length === 3) release()
         await gate
-        if (input.lens === 'correctness') return { submission: { findings: [finding()] }, usage: usage(10) }
-        if (input.lens === 'integration') {
-          return {
-            submission: { findings: [finding({ severity: 'blocking', title: 'Stored rows are not migrated' })] },
-            usage: usage(20),
-          }
-        }
-        return { submission: { findings: [finding({ severity: 'minor', title: 'Style nit' })] }, usage: usage(5) }
+        const findings =
+          input.lens === 'correctness'
+            ? [finding()]
+            : input.lens === 'integration'
+              ? [finding({ severity: 'blocking', title: 'Stored rows are not migrated' })]
+              : [finding({ severity: 'minor', title: 'Style nit' }), finding({ title: 'Same rows not migrated' })]
+        // Candidates show up the moment the reviewer submits, before its run ends.
+        input.onSubmission({ findings })
+        return { submission: { findings }, usage: usage(10) }
       }
-      expect(input.task).toContain('"id": "C1"')
-      expect(input.task).toContain('"id": "C3"')
-      // The verifier confirms C2 twice (merged duplicate) and C1, and drops C3.
-      return {
-        submission: {
-          findings: [
-            finding({ candidateId: 'C1', severity: 'minor', title: 'Off-by-one (narrower than reported)' }),
-            finding({ candidateId: 'C2', severity: 'blocking', title: 'Stored rows are not migrated' }),
-            finding({ candidateId: 'C2', title: 'Duplicate of C2' }),
-          ],
+      if (input.stage !== 'verifier') throw new Error('unexpected stage')
+      expect(input.candidateIds).toHaveLength(4)
+      const id = (title: string) => progress.at(-1)!.candidates.find((candidate) => candidate.title === title)!.id
+      const verdicts: RecordedVerdict[] = [
+        {
+          candidateId: id('Off-by-one in pagination'),
+          verdict: 'confirmed',
+          severity: 'minor',
+          reason: 'Only the last page.',
         },
-        usage: usage(30),
-        runtimeEstimatedCostUsd: 0.25,
-      }
+        { candidateId: id('Stored rows are not migrated'), verdict: 'confirmed' },
+        { candidateId: id('Style nit'), verdict: 'discarded', reason: 'Style, not a defect.' },
+        {
+          candidateId: id('Same rows not migrated'),
+          verdict: 'merged',
+          into: id('Stored rows are not migrated'),
+          reason: 'Same root cause.',
+        },
+      ]
+      input.onVerdicts(verdicts.slice(0, 2))
+      input.onVerdicts(verdicts.slice(2))
+      return { verdicts, usage: usage(30), runtimeEstimatedCostUsd: 0.25 }
     })
-    const progress = vi.fn()
 
     const result = await runReviewEngine({
       target: 'code',
@@ -71,21 +82,33 @@ describe('review engine', () => {
       context,
       signal: new AbortController().signal,
       runReviewer,
-      onProgress: progress,
+      onProgress: (value) => progress.push(value),
     })
 
     expect(started.sort()).toEqual(['correctness', 'integration', 'security'])
     expect(runReviewer).toHaveBeenCalledTimes(4)
-    expect(result.candidates).toBe(3)
+    expect(result.candidates).toHaveLength(4)
     expect(result.verification).toBe('done')
     expect(result.unverified).toBe(false)
-    expect(result.findings.map((item) => [item.id, item.severity, item.lens, item.title])).toEqual([
-      ['F1', 'blocking', 'integration', 'Stored rows are not migrated'],
-      ['F2', 'minor', 'correctness', 'Off-by-one (narrower than reported)'],
+    const merged = result.candidates.find((candidate) => candidate.title === 'Same rows not migrated')!.id
+    expect(
+      result.findings.map((item) => [item.id, item.severity, item.lens, item.title, item.fromSeverity, item.merged])
+    ).toEqual([
+      ['F1', 'blocking', 'integration', 'Stored rows are not migrated', undefined, [merged]],
+      ['F2', 'minor', 'correctness', 'Off-by-one in pagination', 'important', undefined],
     ])
-    expect(result.usage).toMatchObject({ input: 65, output: 4 })
+    expect(result.dropped.map((item) => [item.verdict, item.title, item.reason])).toEqual([
+      ['discarded', 'Style nit', 'Style, not a defect.'],
+      ['merged', 'Same rows not migrated', 'Same root cause.'],
+    ])
+    expect(result.usage).toMatchObject({ input: 60, output: 4 })
     expect(result.runtimeEstimatedCostUsd).toBe(0.25)
-    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ verification: 'done', candidates: 3 }))
+    // Candidates appeared lens by lens, and verdicts arrived in two batches.
+    expect(progress.some((item) => item.candidates.length > 0 && item.verification === 'pending')).toBe(true)
+    expect(progress.map((item) => item.verdicts.length).filter((count) => count > 0)).toEqual(
+      expect.arrayContaining([2, 4])
+    )
+    expect(progress.at(-1)).toMatchObject({ verification: 'done' })
   })
 
   it('skips verification when no lens raised anything', async () => {
@@ -98,7 +121,7 @@ describe('review engine', () => {
       runReviewer,
     })
     expect(runReviewer).toHaveBeenCalledTimes(2)
-    expect(result).toMatchObject({ findings: [], candidates: 0, verification: 'skipped', unverified: false })
+    expect(result).toMatchObject({ findings: [], candidates: [], verification: 'skipped', unverified: false })
   })
 
   it('tolerates a failed lens but fails when every lens fails', async () => {
@@ -109,8 +132,8 @@ describe('review engine', () => {
       signal: new AbortController().signal,
       runReviewer: async (input) =>
         input.stage === 'verifier'
-          ? { submission: { findings: [finding({ candidateId: 'C1' })] } }
-          : input.lens === 'security'
+          ? { verdicts: [{ candidateId: 'C1', verdict: 'confirmed' }] }
+          : input.stage === 'lens' && input.lens === 'security'
             ? { submission: null, error: 'model unavailable' }
             : { submission: { findings: [finding()] } },
     })
@@ -134,7 +157,25 @@ describe('review engine', () => {
     ).rejects.toMatchObject({ code: 'reviewers-failed', message: 'quota exhausted' })
   })
 
-  it('returns the unconfirmed candidates, marked as such, when the verifier fails', async () => {
+  it('keeps what a reviewer submitted even when its run fails afterwards', async () => {
+    const result = await runReviewEngine({
+      target: 'code',
+      lenses: ['correctness'],
+      context,
+      signal: new AbortController().signal,
+      runReviewer: async (input) => {
+        if (input.stage === 'lens') {
+          input.onSubmission({ findings: [finding()] })
+          return { error: 'stream closed' }
+        }
+        return { verdicts: [{ candidateId: 'C1', verdict: 'confirmed' }] }
+      },
+    })
+    expect(result.failedLenses).toEqual([])
+    expect(result.findings.map((item) => item.title)).toEqual(['Off-by-one in pagination'])
+  })
+
+  it('marks candidates the verifier never ruled on as unconfirmed, after the confirmed ones', async () => {
     const result = await runReviewEngine({
       target: 'code',
       lenses: ['correctness', 'integration'],
@@ -142,19 +183,36 @@ describe('review engine', () => {
       signal: new AbortController().signal,
       runReviewer: async (input) =>
         input.stage === 'verifier'
-          ? { submission: null, error: 'The reviewer finished without submitting findings.' }
+          ? { verdicts: [{ candidateId: 'C1', verdict: 'confirmed' }], error: 'stream closed' }
           : {
               submission: {
-                findings: [finding({ severity: input.lens === 'integration' ? 'blocking' : 'minor' })],
+                findings: [
+                  finding({ severity: input.stage === 'lens' && input.lens === 'integration' ? 'blocking' : 'minor' }),
+                ],
               },
             },
     })
     expect(result.unverified).toBe(true)
-    expect(result.verification).toBe('failed')
-    expect(result.findings.map((item) => [item.id, item.severity, item.lens])).toEqual([
-      ['F1', 'blocking', 'integration'],
-      ['F2', 'minor', 'correctness'],
+    expect(result.verification).toBe('done')
+    expect(result.findings.map((item) => [item.id, item.severity, item.unverified ?? false])).toEqual([
+      ['F1', 'minor', false],
+      ['F2', 'blocking', true],
     ])
+  })
+
+  it('returns every candidate unconfirmed when the verifier records nothing', async () => {
+    const result = await runReviewEngine({
+      target: 'code',
+      lenses: ['correctness'],
+      context,
+      signal: new AbortController().signal,
+      runReviewer: async (input) =>
+        input.stage === 'verifier'
+          ? { verdicts: [], error: 'The verifier finished without recording verdicts.' }
+          : { submission: { findings: [finding()] } },
+    })
+    expect(result).toMatchObject({ verification: 'failed', unverified: true })
+    expect(result.findings).toEqual([expect.objectContaining({ id: 'F1', unverified: true, candidateId: 'C1' })])
   })
 
   it('stops with a cancellation when the signal aborts', async () => {
@@ -172,5 +230,46 @@ describe('review engine', () => {
     controller.abort()
     await expect(run).rejects.toBeInstanceOf(ReviewEngineError)
     await expect(run).rejects.toMatchObject({ code: 'cancelled' })
+  })
+})
+
+describe('review check', () => {
+  const findings = [
+    { id: 'F1', severity: 'blocking', title: 'Buckets per worker', details: 'Doubles the limit.' },
+    { id: 'F2', severity: 'important', title: 'Header trusted', details: 'Spoofable key.' },
+  ]
+
+  it('reports each fix as it is checked and marks the ones it never got to as unknown', async () => {
+    const seen: number[] = []
+    const result = await runReviewCheck({
+      findings,
+      context,
+      signal: new AbortController().signal,
+      onResults: (results) => seen.push(results.length),
+      runReviewer: async (input) => {
+        if (input.stage !== 'check') throw new Error('unexpected stage')
+        expect(input.task).toContain('checking fixes')
+        expect(input.task).toContain('"id": "F2"')
+        input.onResults([{ findingId: 'F1', state: 'open', note: 'The key is still shared.' }])
+        return { results: [{ findingId: 'F1', state: 'open', note: 'The key is still shared.' }], usage: usage(7) }
+      },
+    })
+    expect(seen).toEqual([1])
+    expect(result.results).toEqual([
+      { findingId: 'F1', state: 'open', note: 'The key is still shared.' },
+      { findingId: 'F2', state: 'unknown' },
+    ])
+    expect(result.usage.input).toBe(7)
+  })
+
+  it('fails when the checker records nothing', async () => {
+    await expect(
+      runReviewCheck({
+        findings,
+        context,
+        signal: new AbortController().signal,
+        runReviewer: async () => ({ results: [], error: 'quota exhausted' }),
+      })
+    ).rejects.toMatchObject({ code: 'checker-failed', message: 'quota exhausted' })
   })
 })

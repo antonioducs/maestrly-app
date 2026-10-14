@@ -244,12 +244,13 @@ import {
   type ReviewerPreference,
   type ReviewJobInfo,
   type ReviewModelChoice,
+  type ReviewModelInfo,
   type ReviewReviewerOptions,
 } from '../../shared/review'
 import { executeSubagent } from './subagent-executor'
 import { resolveParentSubagentExecutionProfile } from './subagent-execution-profile'
-import { createReviewService, REVIEWER_AGENT, type ReviewService } from './review/service'
-import { pendingReviewReportParts, reviewReportMarkdown } from './review/report'
+import { createReviewService, REVIEWER_AGENT, type ReviewService, type ReviewSpend } from './review/service'
+import { reviewReportMarkdown, reviewReportPart } from './review/report'
 import { listEffectiveAgents } from './virtual-subagents'
 import {
   chatHistoryStats,
@@ -267,6 +268,7 @@ import {
   hasConversationContextMessages,
   listExecutionContextMessages,
   listPublicChatMessagesPage,
+  listUndeliveredReviewReports,
   recordChatUsageAttempt,
   reconcileInterruptedExecutionMessages,
   searchChatMessages,
@@ -3681,6 +3683,8 @@ async function startSend(
     // The job owning this internal turn was cancelled/ended before admission.
     return { ok: false, error: 'internal-turn-inactive' }
   }
+  // A review (or a check of the fixes it asked for) holds the conversation until it is handed off or ends.
+  if (reviewService?.lockFor(conversationId)) return { ok: false, error: 'review-active' }
 
   // Resolve provider/model. BYOK requires a key; the built-in provider requires a valid ChatGPT session in the
   // official runtime. If no model is chosen, both auto-select the default/first and persist it in the conversation.
@@ -4135,10 +4139,12 @@ async function startSend(
     for (const part of hiddenParts) {
       if (companionPersonalMemory !== 'off' || !isMemoryContextPart(part)) parts.push(part)
     }
-    // Code reviews stored since the person's last message reach the model with this one, whatever runs it.
-    if (!opts?.internal && !internalLoop && !opts?.dispatchSeed && !opts?.peerMessage) {
-      for (const part of pendingReviewReportParts(conversationId)) parts.push(part)
-    }
+    // A code review the person sent to the agent reaches the model with their message, once, whatever runs it.
+    const reviewDeliveries =
+      !opts?.internal && !internalLoop && !opts?.dispatchSeed && !opts?.peerMessage
+        ? listUndeliveredReviewReports(conversationId)
+        : []
+    for (const message of reviewDeliveries) if (message.review) parts.push(reviewReportPart(message.review))
     const turnMemory =
       opts?.internal ||
       internalLoop ||
@@ -4649,6 +4655,7 @@ async function startSend(
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
     operation.pendingMessage = undefined
+    markReviewReportsDelivered(conversationId, reviewDeliveries)
     // Provenance is decided here, at admission, from how the turn entered — never from transcript roles.
     if (isHumanTurnAdmission(opts)) {
       recordHumanTurnOrigin({
@@ -5910,7 +5917,12 @@ export async function runPlanRevision(
 async function waitForConversationSlot(conversationId: string): Promise<void> {
   const run = active.get(conversationId)
   const operation = pendingConversationOperations.get(conversationId)
-  await Promise.all([run?.done ?? Promise.resolve(), operation?.done ?? Promise.resolve()])
+  const review = reviewService?.lockFor(conversationId)
+  await Promise.all([
+    run?.done ?? Promise.resolve(),
+    operation?.done ?? Promise.resolve(),
+    review?.released ?? Promise.resolve(),
+  ])
 }
 
 /** Emits a conversation error when a plan decision turn (implement/revise) could not start. */
@@ -6064,6 +6076,8 @@ export async function stopChat(conversationId: string): Promise<void> {
   // router, or the tunnel and read-only cwd access survive after the conversation disappears.
   await chatGptWeb.endSession(conversationId)
   chatGptWeb.discardPlanReviews(conversationId)
+  // An open review or a running check ends with the conversation; nothing is handed off.
+  await reviewService?.close(conversationId)
 }
 
 /** Runtime barrier: confirms only after `active` and the admission operation exit through the actual finally. */
@@ -8841,7 +8855,7 @@ export function forceInternalTurnAgentMode(conversationId: string): void {
 }
 
 // ----------------------------------------------------------------------------
-// Code and plan reviews: one read-only pass by parallel reviewers plus a verifier (see ./review).
+// Code and plan reviews: parallel read-only reviewers and a verifier, followed live (see ./review).
 // ----------------------------------------------------------------------------
 
 /** Reviewers read and search the checkout; everything else, including paths outside it, is denied. */
@@ -8879,8 +8893,8 @@ function readReviewerPreference(): ReviewerPreference | null {
   }
 }
 
-function reviewerOptions(conversationId: unknown): ReviewReviewerOptions {
-  const conversation = typeof conversationId === 'string' ? conversationReviewSelection(conversationId) : null
+function reviewerOptions(conversationId: string): ReviewReviewerOptions {
+  const conversation = conversationReviewSelection(conversationId)
   const providerName = conversation ? getProvider(conversation.providerId)?.name : undefined
   return {
     conversation: conversation ? { ...conversation, ...(providerName ? { providerName } : {}) } : null,
@@ -8888,7 +8902,7 @@ function reviewerOptions(conversationId: unknown): ReviewReviewerOptions {
   }
 }
 
-/** A started review remembers its reviewer, so the dialog offers the same one next time. */
+/** A started review remembers its reviewer, so the next review offers the same one first. */
 async function startReview(conversationId: unknown, input: unknown) {
   const result = await reviews().start(conversationId, input)
   if (result.ok) {
@@ -8898,10 +8912,15 @@ async function startReview(conversationId: unknown, input: unknown) {
     try {
       setAppSetting(REVIEWER_PREFERENCE_KEY, JSON.stringify(preference))
     } catch {
-      // The review already runs; failing to remember the choice only affects the next dialog.
+      // The review already runs; failing to remember the choice only affects the next review.
     }
   }
   return result
+}
+
+/** A review or a check of its fixes holds the conversation: no turn starts and no plan is decided there. */
+export function isConversationUnderReview(conversationId: string): boolean {
+  return !!reviewService?.lockFor(conversationId)
 }
 
 function reviews(): ReviewService {
@@ -8924,6 +8943,7 @@ function reviews(): ReviewService {
       return pending ? { plan: pending.plan, version: pending.version } : null
     },
     selection: conversationReviewSelection,
+    reviewerOptions,
     resolveProfile: (selection, { chosen }) =>
       resolveParentSubagentExecutionProfile({
         agent: REVIEWER_AGENT,
@@ -8938,7 +8958,7 @@ function reviews(): ReviewService {
     reviewerProviderSupported: (providerId) => !isChatGptWebProvider(providerId),
     conversationContext: (conversationId) => JSON.stringify(getCompanionConversationContext(conversationId).messages),
     locale: () => getLocale(),
-    runReviewer: async ({ conversation, profile, task, tools, signal }) => {
+    runReviewer: async ({ conversation, profile, task, tools, signal, recorder }) => {
       reviewerBroker ??= new PermissionBroker({ rulesetFor: () => REVIEWER_RULESET })
       const run = await executeSubagent({
         conversationId: conversation.id,
@@ -8957,6 +8977,7 @@ function reviews(): ReviewService {
         broker: reviewerBroker,
         questionBroker: getQuestionBroker(),
         signal,
+        sessionRecorder: recorder,
       })
       return {
         text: run.text,
@@ -8965,8 +8986,10 @@ function reviews(): ReviewService {
         ...(run.runtimeEstimatedCostUsd !== undefined ? { runtimeEstimatedCostUsd: run.runtimeEstimatedCostUsd } : {}),
       }
     },
-    persistReport: ({ conversationId, report, usage, runtimeEstimatedCostUsd }) =>
-      persistReviewReport(conversationId, report, usage, runtimeEstimatedCostUsd),
+    persistReport: ({ conversationId, report, spend }) => persistReviewReport(conversationId, report, spend),
+    getReport: (conversationId, messageId) => getChatMessage(conversationId, messageId)?.review ?? null,
+    updateReport: updateReviewReport,
+    persistSpend: ({ conversationId, spend, model }) => persistReviewSpend(conversationId, spend, model),
     // The chat view lives in the main renderer; the Plan tab is a separate one (a drawer panel or floating window).
     onChange: (info: ReviewJobInfo) =>
       sendToConversation(info.conversationId, 'chat:review:changed', info, { panel: 'plan' }),
@@ -8974,47 +8997,85 @@ function reviews(): ReviewService {
   return reviewService
 }
 
-/** Stores a code review report as its own message, outside the model's context until the person's next message. */
-function persistReviewReport(
-  conversationId: string,
-  report: ChatReviewReport,
-  usage: { input: number; output: number; cacheRead: number; cacheCreate: number },
-  runtimeEstimatedCostUsd: number
-): string {
-  const messageId = `review:${report.reviewId}`
+function reviewUsage(spend: ReviewSpend) {
+  const { usage, runtimeEstimatedCostUsd } = spend
   const hasUsage = usage.input > 0 || usage.output > 0 || usage.cacheRead > 0 || usage.cacheCreate > 0
+  if (!hasUsage && runtimeEstimatedCostUsd <= 0) return undefined
+  return {
+    usageVersion: 2 as const,
+    input: usage.input,
+    output: usage.output,
+    ...(usage.cacheRead ? { cachedInput: usage.cacheRead } : {}),
+    ...(usage.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+    billingOnly: true,
+    ...(runtimeEstimatedCostUsd > 0 ? { runtimeEstimatedCostUsd } : {}),
+  }
+}
+
+function reviewReportParts(messageId: string, report: ChatReviewReport): MessagePart[] {
+  return [{ type: 'text', id: `${messageId}:text`, text: reviewReportMarkdown(report, tFor(getLocale(), 'prompts')) }]
+}
+
+/** Stores a review receipt as its own message, outside the model's context. */
+function persistReviewReport(conversationId: string, report: ChatReviewReport, spend: ReviewSpend): string {
+  const messageId = `review:${report.reviewId}`
+  const usage = reviewUsage(spend)
   upsertChatMessage({
     id: messageId,
     conversationId,
     role: 'assistant',
-    parts: [
-      {
-        type: 'text',
-        id: `${messageId}:text`,
-        text: reviewReportMarkdown(report, tFor(getLocale(), 'prompts')),
-      },
-    ],
+    parts: reviewReportParts(messageId, report),
     source: 'maestrly-review',
     executionScope: { kind: 'review-report', reviewId: report.reviewId },
     review: report,
     ...(report.model ? { model: { providerId: report.model.providerId, modelId: report.model.modelId } } : {}),
-    ...(hasUsage || runtimeEstimatedCostUsd > 0
-      ? {
-          usage: {
-            usageVersion: 2 as const,
-            input: usage.input,
-            output: usage.output,
-            ...(usage.cacheRead ? { cachedInput: usage.cacheRead } : {}),
-            ...(usage.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
-            billingOnly: true,
-            ...(runtimeEstimatedCostUsd > 0 ? { runtimeEstimatedCostUsd } : {}),
-          },
-        }
-      : {}),
+    ...(usage ? { usage } : {}),
     createdAt: Date.now(),
   })
   invalidateUnifiedUsageCache()
   return messageId
+}
+
+/** Rewrites a stored receipt in place: its usage, position and creation time stay. */
+function updateReviewReport(conversationId: string, messageId: string, report: ChatReviewReport): void {
+  const message = getChatMessage(conversationId, messageId)
+  if (!message?.review) return
+  upsertChatMessage({ ...message, parts: reviewReportParts(messageId, report), review: report })
+}
+
+/** Receipts whose report just reached the model with the person's message. */
+function markReviewReportsDelivered(conversationId: string, messages: readonly StoredChatMessage[]): void {
+  const deliveredAt = Date.now()
+  for (const message of messages) {
+    if (!message.review?.handoff) continue
+    try {
+      updateReviewReport(conversationId, message.id, {
+        ...message.review,
+        handoff: { ...message.review.handoff, deliveredAt },
+      })
+    } catch {
+      // A receipt that cannot be marked would be attached once more, never lost.
+    }
+  }
+}
+
+/** Bills a review that ended without a receipt, or a check of its fixes, on a hidden message. */
+function persistReviewSpend(conversationId: string, spend: ReviewSpend, model?: ReviewModelInfo): void {
+  const usage = reviewUsage(spend)
+  if (!usage || !getConversation(conversationId)) return
+  const messageId = `review-usage:${randomUUID()}`
+  upsertChatMessage({
+    id: messageId,
+    conversationId,
+    role: 'assistant',
+    parts: [],
+    ...(model ? { model: { providerId: model.providerId, modelId: model.modelId } } : {}),
+    usage,
+    internal: true,
+    executionScope: { kind: 'host', executionId: messageId },
+    createdAt: Date.now(),
+  })
+  invalidateUnifiedUsageCache()
 }
 
 /** Registers all `chat:*` channels. Called from `registerIpc()` in index.ts. */
@@ -10224,13 +10285,38 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (!botSharesConversation(conversationId)) pauseBotForHuman(conversationId)
     stop(conversationId)
   })
-  // Code and plan reviews: start, cancel, read and dismiss the conversation's review (renderer and remote hosts).
+  // Code and plan reviews (renderer and remote hosts): the review's stages, its hand-off, and checking the fixes.
+  deps.mhandle('chat:review:prepare', (_e, conversationId: unknown, target: unknown) =>
+    reviews().prepare(conversationId, target)
+  )
   deps.mhandle('chat:review:start', (_e, conversationId: unknown, input: unknown) => startReview(conversationId, input))
-  deps.mhandle('chat:review:reviewer-options', (_e, conversationId: unknown) => reviewerOptions(conversationId))
   deps.mhandle('chat:review:cancel', (_e, conversationId: unknown) => reviews().cancel(conversationId))
+  deps.mhandle('chat:review:discard', (_e, conversationId: unknown, reviewId: unknown) =>
+    reviews().discard(conversationId, reviewId)
+  )
   deps.mhandle('chat:review:status', (_e, conversationId: unknown) => reviews().status(conversationId))
+  deps.mhandle('chat:review:draft', (_e, conversationId: unknown, input: unknown) =>
+    reviews().updateDraft(conversationId, input)
+  )
+  deps.mhandle('chat:review:handoff', (_e, conversationId: unknown, input: unknown) =>
+    reviews().handoff(conversationId, input)
+  )
+  deps.mhandle('chat:review:send-report', (_e, conversationId: unknown, messageId: unknown, message: unknown) =>
+    reviews().sendReport(conversationId, messageId, message)
+  )
+  deps.mhandle('chat:review:check', (_e, conversationId: unknown, messageId: unknown) =>
+    reviews().check(conversationId, messageId)
+  )
   deps.mhandle('chat:review:dismiss', (_e, conversationId: unknown) => {
     if (typeof conversationId === 'string') reviews().forget(conversationId)
+    return { ok: true }
+  })
+  // The Plan tab is a separate renderer: it asks the conversation's chat view to open the review there.
+  deps.mhandle('chat:review:open', (_e, conversationId: unknown, target: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId || (target !== 'code' && target !== 'plan')) {
+      return { ok: false }
+    }
+    sendToConversation(conversationId, 'chat:review:open', { conversationId, target })
     return { ok: true }
   })
   deps.mhandle('chat:clear', async (_e, conversationId: string) => {

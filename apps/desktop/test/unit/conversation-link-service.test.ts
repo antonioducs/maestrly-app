@@ -249,6 +249,21 @@ describe('sending messages', () => {
     expect(listPeerMessagesInPhases(['delivered']).map((record) => record.body)).toEqual(['first', 'second'])
   })
 
+  it('queues a message for a conversation held by a review until the review lets go', async () => {
+    dispatch(source, child)
+    let release!: () => void
+    const slot = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { deps, service } = harness({ waitForSlot: vi.fn(() => slot) })
+    vi.mocked(deps.startPeerTurn).mockResolvedValueOnce({ ok: false, error: 'review-active' })
+    const queued = await service.send(human(), { conversationId: child, message: 'after the review' }, async () => true)
+    expect(queued).toMatchObject({ status: 'queued' })
+    release()
+    await service.idle()
+    expect(listPeerMessagesInPhases(['delivered']).map((record) => record.body)).toEqual(['after the review'])
+  })
+
   it('reports a delivery that cannot start and keeps it out of the links', async () => {
     const { deps, service } = harness()
     vi.mocked(deps.startPeerTurn).mockResolvedValueOnce({ ok: false, error: 'executor-active' })

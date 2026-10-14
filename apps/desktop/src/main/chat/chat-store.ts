@@ -811,22 +811,21 @@ export function listConversationContextMessages(conversationId: string): StoredC
 }
 
 /**
- * Code review reports stored after the last main-context user message, newest first. They have not reached the
- * model yet: the next message the person sends carries them.
+ * Code review receipts the person sent to the agent whose report has not reached the model yet, oldest first. The next
+ * message the person sends carries them, once.
  */
-export function listReviewReportsSinceLastUserMessage(conversationId: string, limit = 3): StoredChatMessage[] {
+export function listUndeliveredReviewReports(conversationId: string, limit = 3): StoredChatMessage[] {
   return (
     getDb()
       .prepare(
         `SELECT * FROM chat_messages
          WHERE conversation_id = @conversationId
-           AND seq > COALESCE(
-             (SELECT MAX(seq) FROM chat_messages
-              WHERE conversation_id = @conversationId AND role = 'user' AND ${CONVERSATION_CONTEXT_SQL}),
-             -1)
            AND json_valid(meta_json) = 1
            AND json_extract(meta_json, '$.executionScope.kind') = 'review-report'
-         ORDER BY seq DESC
+           AND json_extract(meta_json, '$.review.target') = 'code'
+           AND json_extract(meta_json, '$.review.handoff.state') = 'sent'
+           AND json_extract(meta_json, '$.review.handoff.deliveredAt') IS NULL
+         ORDER BY seq ASC
          LIMIT @limit`
       )
       .all({ conversationId, limit }) as any[]

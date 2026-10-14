@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   commentablePlanLines,
-  mergePlanReviewFindings,
   mergeReviewInfo,
+  planReviewRevision,
+  roomReview,
   snapToCommentableLine,
 } from '../../src/renderer/lib/review'
-import { tFor } from '../../src/shared/i18n'
 import type { ReviewFinding, ReviewJobInfo } from '../../src/shared/review'
 
 const plan = [
@@ -24,8 +24,6 @@ const plan = [
   '', // 13
   '> Note', // 14
 ].join('\n')
-
-const t = tFor('en', 'chat') as never
 
 function finding(overrides: Partial<ReviewFinding>): ReviewFinding {
   return {
@@ -52,34 +50,52 @@ describe('plan review findings', () => {
     expect(snapToCommentableLine(new Set(), 3)).toBeNull()
   })
 
-  it('adds findings to line comments and general feedback without losing the draft', () => {
-    const merged = mergePlanReviewFindings(
-      t,
+  it("turns commented findings into the revision request, keeping the person's own comments and feedback", () => {
+    const findings = [
+      finding({ planLine: 6 }),
+      finding({ id: 'F2', severity: 'blocking', title: 'Wrong API', planLine: 7 }),
+      finding({ id: 'F3', severity: 'minor', title: 'No tests planned' }),
+      finding({ id: 'F4', title: 'Dismissed one', planLine: 2 }),
+    ]
+    const revision = planReviewRevision(
       plan,
-      [
-        finding({ planLine: 6, suggestion: 'Add a backfill step.' }),
-        finding({ id: 'F2', severity: 'blocking', title: 'Wrong API', planLine: 7, path: 'src/api.ts', line: 9 }),
-        finding({ id: 'F3', severity: 'minor', title: 'No tests planned' }),
-      ],
+      findings,
+      {
+        decisions: { F1: 'comment', F2: 'comment', F3: 'comment', F4: 'dismiss' },
+        comments: { F1: 'Add a backfill step.', F2: '  ', F3: 'Plan a test.' },
+      },
       { lineComments: { 7: 'Mine.' }, feedback: 'Overall fine.' }
     )
-    expect(merged.lineComments[5]).toBe(
-      '[important] Missing migration\nStored rows keep the old shape.\nSuggestion: Add a backfill step.'
-    )
-    expect(merged.lineComments[7]).toBe('Mine.\n\n[blocking] Wrong API (src/api.ts:9)\nStored rows keep the old shape.')
-    expect(merged.feedback).toBe('Overall fine.\n\n[minor] No tests planned\nStored rows keep the old shape.')
+    expect(revision.lineComments).toEqual([
+      { line: 5, text: 'Add a backfill step.' },
+      // An emptied comment falls back to the finding's title.
+      { line: 7, text: 'Mine.\n\nWrong API' },
+    ])
+    expect(revision.feedback).toBe('Overall fine.\n\nF3: Plan a test.')
+    expect(planReviewRevision(plan, findings, { decisions: {}, comments: {} })).toEqual({
+      lineComments: [],
+      feedback: '',
+    })
   })
 })
 
 describe('review state from a start result', () => {
-  const info = (reviewId: string, status: ReviewJobInfo['status']): ReviewJobInfo => ({
+  const info = (
+    reviewId: string,
+    status: ReviewJobInfo['status'],
+    kind: ReviewJobInfo['kind'] = 'review'
+  ): ReviewJobInfo => ({
     reviewId,
     conversationId: 'conv',
+    kind,
     target: 'plan',
     status,
     startedAt: 0,
     lenses: [],
     verification: 'pending',
+    activity: {},
+    candidateList: [],
+    verdicts: [],
   })
 
   it('shows a review it just started, but never moves the same review backwards', () => {
@@ -90,5 +106,17 @@ describe('review state from a start result', () => {
     // A new review replaces the last finished one.
     expect(mergeReviewInfo(info('r1', 'completed'), info('r2', 'running'))?.reviewId).toBe('r2')
     expect(mergeReviewInfo(info('r1', 'failed'), null)?.reviewId).toBe('r1')
+    expect(mergeReviewInfo(info('r1', 'ready'), info('r1', 'verifying'))?.status).toBe('ready')
+    // A check of the same review is a different job.
+    expect(mergeReviewInfo(info('r1', 'completed'), info('r1', 'running', 'check'))?.kind).toBe('check')
+  })
+
+  it('shows the room for an open or failed review, never for a check', () => {
+    expect(roomReview(info('r1', 'running'), null)?.reviewId).toBe('r1')
+    expect(roomReview(info('r1', 'ready'), null)?.reviewId).toBe('r1')
+    expect(roomReview(info('r1', 'failed'), null)?.reviewId).toBe('r1')
+    expect(roomReview(info('r1', 'failed'), 'r1')).toBeNull()
+    expect(roomReview(info('r1', 'completed'), null)).toBeNull()
+    expect(roomReview(info('r1', 'running', 'check'), null)).toBeNull()
   })
 })

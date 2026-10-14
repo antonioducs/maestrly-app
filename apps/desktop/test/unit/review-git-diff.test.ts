@@ -3,7 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { formatGitSnapshot, readGitSnapshot, snapshotHasChanges } from '../../src/main/chat/review/git-diff'
+import {
+  formatGitSnapshot,
+  readDiffStats,
+  readGitSnapshot,
+  snapshotHasChanges,
+} from '../../src/main/chat/review/git-diff'
 
 let dir = ''
 
@@ -44,5 +49,33 @@ describe('review git snapshot', () => {
     const text = formatGitSnapshot(snapshot)
     expect(text).toContain('## Staged')
     expect(text).toContain('## Untracked\nc.txt')
+  })
+
+  it('counts the lines of every changed, staged, new and untracked file since the base', async () => {
+    expect(await readDiffStats(dir)).toEqual({ repository: false, branch: '', head: '', files: [] })
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.email', 'test@example.invalid')
+    git('config', 'user.name', 'Test')
+    writeFileSync(path.join(dir, 'a.txt'), 'one\ntwo\n')
+    writeFileSync(path.join(dir, 'gone.txt'), 'bye\n')
+    git('add', '-A')
+    git('commit', '-qm', 'init')
+    expect((await readDiffStats(dir)).files).toEqual([])
+
+    writeFileSync(path.join(dir, 'a.txt'), 'one\nthree\nfour\n')
+    rmSync(path.join(dir, 'gone.txt'))
+    writeFileSync(path.join(dir, 'staged.txt'), 'a\nb\n')
+    git('add', 'staged.txt')
+    writeFileSync(path.join(dir, 'new.txt'), 'x\ny\nz\n')
+    writeFileSync(path.join(dir, 'blob.bin'), Buffer.from([0, 1, 2, 0]))
+    const stats = await readDiffStats(dir)
+    expect(stats).toMatchObject({ repository: true, branch: 'main' })
+    expect(stats.files.sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: 'a.txt', added: 2, deleted: 1 },
+      { path: 'blob.bin', isNew: true },
+      { path: 'gone.txt', added: 0, deleted: 1 },
+      { path: 'new.txt', added: 3, deleted: 0, isNew: true },
+      { path: 'staged.txt', added: 2, deleted: 0, isNew: true },
+    ])
   })
 })

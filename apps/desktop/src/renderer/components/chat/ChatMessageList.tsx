@@ -36,7 +36,8 @@ import { GeneratedImageCard } from './GeneratedImageCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
 import { AttachmentImage } from './AttachmentImage'
 import { PdfAttachmentChip } from './PdfAttachmentChip'
-import { ReviewReportCard } from './ReviewReportCard'
+import { ReviewReceiptCard, type ReviewReceiptActions } from './review/ReviewReceiptCard'
+import type { ReviewJobInfo } from '../../../shared/review'
 import { CUT_FINISH_REASONS, estimatedCostOfUsageWithSubagents, toolOutputText } from '../../../shared/chat'
 import { formatResponseDuration, responseDurationMs } from '../../../shared/response-duration'
 import type { ChatMessage, ChatModelMeta, MessagePart } from '../../../shared/chat'
@@ -628,7 +629,7 @@ const Bubble = memo(function Bubble({
   onCancelEdit,
   onSubmitEdit,
   onRetrySteering,
-  onReviewAction,
+  reviewReceipt,
   onOpenMention,
   onOpenImage,
   onUiSend,
@@ -650,7 +651,7 @@ const Bubble = memo(function Bubble({
   onCancelEdit: () => void
   onSubmitEdit: (id: string, payload: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => void
   onRetrySteering?: (text: string) => void
-  onReviewAction?: (text: string) => void
+  reviewReceipt?: ReviewReceiptProps
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
   onOpenImage?: (src: string, name: string) => void
   /** Sends what a generated interface of this message asks to send as the user. */
@@ -793,7 +794,16 @@ const Bubble = memo(function Bubble({
   }
 
   if (message.review) {
-    return <ReviewReportCard report={message.review} onAction={onReviewAction} onOpenMention={onOpenMention} />
+    return (
+      <ReviewReceiptCard
+        messageId={message.id}
+        report={message.review}
+        check={reviewReceipt?.check}
+        busy={reviewReceipt?.busy}
+        actions={reviewReceipt?.actions}
+        onOpenFile={onOpenMention}
+      />
+    )
   }
 
   const wasCut = !message.error && message.finishReason != null && CUT_FINISH_REASONS.has(message.finishReason)
@@ -968,8 +978,15 @@ interface Props extends EditCtx {
   onRetrySteering?: (text: string) => void
   /** Sends what a generated interface asks to send as the user; absent where the person cannot write. */
   onUiSend?: (text: string) => void
-  /** Sends a code review card's action to the conversation's model. */
-  onReviewAction?: (text: string) => void
+  /** What review receipts need: a check that runs, whether the agent works, and their actions. */
+  reviewReceipt?: ReviewReceiptProps
+}
+
+/** Absent actions leave receipts read-only. */
+export interface ReviewReceiptProps {
+  check: ReviewJobInfo | null
+  busy: boolean
+  actions?: ReviewReceiptActions
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
@@ -993,11 +1010,15 @@ export const ChatMessageList = memo(function ChatMessageList({
   readOnly = false,
   onRetrySteering,
   onUiSend,
-  onReviewAction,
+  reviewReceipt,
 }: Props) {
   const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null)
+  const rowReviewReceipt = useMemo(
+    () => (readOnly && reviewReceipt ? { ...reviewReceipt, actions: undefined } : reviewReceipt),
+    [readOnly, reviewReceipt]
+  )
 
   const openImage = useCallback((src: string, name: string) => setLightbox({ src, name }), [])
   const closeImage = useCallback(() => setLightbox(null), [])
@@ -1205,7 +1226,7 @@ export const ChatMessageList = memo(function ChatMessageList({
             onCancelEdit={onCancelEdit}
             onSubmitEdit={onSubmitEdit}
             onRetrySteering={onRetrySteering}
-            onReviewAction={readOnly ? undefined : onReviewAction}
+            reviewReceipt={rowReviewReceipt}
             onOpenMention={onOpenMention}
             onOpenImage={openImage}
             onUiSend={readOnly ? undefined : onUiSend}

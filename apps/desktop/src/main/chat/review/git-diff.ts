@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { readFile, stat } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
 import { jsonSchema, tool, type Tool } from 'ai'
 
@@ -53,6 +55,19 @@ async function optionalGit(cwd: string, args: readonly string[], signal?: AbortS
 
 const firstLine = (value: string): string => value.split(/\r?\n/, 1)[0] ?? ''
 
+/** Merge base with origin's default branch, else with the upstream; empty when neither exists. */
+async function resolveMergeBase(
+  cwd: string,
+  originHead: string,
+  upstreamRaw: string,
+  signal?: AbortSignal
+): Promise<string> {
+  // Prefer the default branch: on a feature branch whose upstream is itself, the upstream hides committed work.
+  let base = originHead ? firstLine(await optionalGit(cwd, ['rev-parse', '--verify', originHead, '--'], signal)) : ''
+  if (!base) base = firstLine(upstreamRaw)
+  return base ? firstLine(await optionalGit(cwd, ['merge-base', base, 'HEAD', '--'], signal)) : ''
+}
+
 /**
  * Base-to-HEAD (merge base with the upstream, or with origin's default branch), staged and unstaged diffs, and
  * untracked paths. Never runs external diff or textconv drivers.
@@ -82,10 +97,7 @@ export async function readGitSnapshot(cwd: string, signal?: AbortSignal): Promis
   ])
   const branch = firstLine(branchRaw)
   const head = firstLine(headRaw)
-  // Prefer the default branch: on a feature branch whose upstream is itself, the upstream hides committed work.
-  let base = originHead ? firstLine(await optionalGit(cwd, ['rev-parse', '--verify', originHead, '--'], signal)) : ''
-  if (!base) base = firstLine(upstreamRaw)
-  const mergeBase = base ? firstLine(await optionalGit(cwd, ['merge-base', base, 'HEAD', '--'], signal)) : ''
+  const mergeBase = await resolveMergeBase(cwd, originHead, upstreamRaw, signal)
   const baseRaw =
     mergeBase && mergeBase !== head
       ? await optionalGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', `${mergeBase}..HEAD`, '--'], signal)
@@ -142,4 +154,90 @@ export function gitDiffTool(cwd: string): Tool {
     execute: async (_input: unknown, options?: { abortSignal?: AbortSignal }) =>
       formatGitSnapshot(await readGitSnapshot(cwd, options?.abortSignal)),
   })
+}
+
+export interface DiffStat {
+  path: string
+  /** Absent for binary files. */
+  added?: number
+  deleted?: number
+  isNew?: boolean
+}
+
+export interface DiffStats {
+  repository: boolean
+  branch: string
+  head: string
+  files: DiffStat[]
+}
+
+function numstat(raw: string): Map<string, { added?: number; deleted?: number }> {
+  const out = new Map<string, { added?: number; deleted?: number }>()
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.+)$/.exec(line)
+    if (!match) continue
+    out.set(match[3], match[1] === '-' ? {} : { added: Number(match[1]), deleted: Number(match[2]) })
+  }
+  return out
+}
+
+const UNTRACKED_COUNT_LIMIT = 1024 * 1024
+
+/** Lines in a small text file; undefined for binary, large or unreadable files. */
+async function countLines(cwd: string, file: string): Promise<number | undefined> {
+  try {
+    const full = path.join(cwd, file)
+    if ((await stat(full)).size > UNTRACKED_COUNT_LIMIT) return undefined
+    const text = await readFile(full, 'utf8')
+    if (text.includes('\0')) return undefined
+    if (!text) return 0
+    return text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Files changed since the same base the reviewers see (committed, staged and unstaged together) plus untracked files,
+ * with line counts. Read-only and bounded like the snapshot.
+ */
+export async function readDiffStats(cwd: string, signal?: AbortSignal): Promise<DiffStats> {
+  const inside = await optionalGit(cwd, ['rev-parse', '--is-inside-work-tree'], signal)
+  if (inside !== 'true') return { repository: false, branch: '', head: '', files: [] }
+  const [branchRaw, headRaw, upstreamRaw, originHead, untrackedRaw] = await Promise.all([
+    optionalGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], signal),
+    optionalGit(cwd, ['rev-parse', 'HEAD'], signal),
+    optionalGit(cwd, ['rev-parse', '--verify', '@{upstream}'], signal),
+    optionalGit(cwd, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], signal),
+    optionalGit(cwd, ['ls-files', '--others', '--exclude-standard', '--'], signal),
+  ])
+  const head = firstLine(headRaw)
+  const mergeBase = head ? await resolveMergeBase(cwd, originHead, upstreamRaw, signal) : ''
+  const against = mergeBase || (head ? 'HEAD' : '')
+  const diffArgs = (format: string) =>
+    against
+      ? ['diff', format, '--no-renames', '--no-ext-diff', '--no-textconv', against, '--']
+      : ['diff', format, '--no-renames', '--no-ext-diff', '--no-textconv', '--cached', '--']
+  const [statsRaw, statusRaw] = await Promise.all([
+    optionalGit(cwd, diffArgs('--numstat'), signal),
+    optionalGit(cwd, diffArgs('--name-status'), signal),
+  ])
+  const added = new Set(
+    statusRaw.split(/\r?\n/).flatMap((line) => {
+      const match = /^A\t(.+)$/.exec(line)
+      return match ? [match[1]] : []
+    })
+  )
+  const files: DiffStat[] = [...numstat(statsRaw)].map(([file, counts]) => ({
+    path: file,
+    ...counts,
+    ...(added.has(file) ? { isNew: true } : {}),
+  }))
+  const untracked = (untrackedRaw ? untrackedRaw.split(/\r?\n/).filter(Boolean) : []).slice(0, UNTRACKED_LIMIT)
+  const counts = await Promise.all(untracked.map((file) => countLines(cwd, file)))
+  untracked.forEach((file, index) => {
+    const lines = counts[index]
+    files.push({ path: file, ...(lines !== undefined ? { added: lines, deleted: 0 } : {}), isNew: true })
+  })
+  return { repository: true, branch: firstLine(branchRaw) || '(detached)', head: head || '(unknown)', files }
 }
