@@ -242,12 +242,18 @@ export function registerArtifactTools(
     },
     async ({ id, version }) => {
       try {
+        const service = resolveService()
         // A delegated worker opens the tab without taking the drawer's focus from the user.
-        const detail = await resolveService().openInConversation(convId, id, version, {
+        const detail = await service.openInConversation(convId, id, version, {
           checkScope: true,
           activate: !workerScope,
         })
-        return ok(t('returns.artifacts.opened', { title: detail.title, version: version ?? detail.currentVersion }))
+        return ok(
+          t(service.opensOnViewer ? 'returns.artifacts.openRequested' : 'returns.artifacts.opened', {
+            title: detail.title,
+            version: version ?? detail.currentVersion,
+          })
+        )
       } catch (error) {
         return failure(error)
       }

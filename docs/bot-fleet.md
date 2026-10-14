@@ -155,7 +155,9 @@ server has artifact hosting enabled; migrated bots start with it off. Enabled
 bots receive seven artifact tools, excluding `artifact_open`, and can work only
 with their own artifacts. The desktop's bot publication card opens the external
 viewer. Desktop conversations publish on the same server, which is the only place
-artifacts are hosted; **Settings → Artifacts** offers an artifact-only setup when
+artifacts are hosted, and so do the chats of a
+[workspaces environment](remote-workspaces.md), with a token the gateway gives
+that environment for artifacts only; **Settings → Artifacts** offers an artifact-only setup when
 no server is paired.
 
 Turning hosting off keeps its data. Disconnecting or unpairing this computer
@@ -285,9 +287,11 @@ Desktop apps from before environments can list, restore and delete an archived e
 
 **Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
-The gateway migrates schemas 5 to 10 to schema 11 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; and schema 11 whether an environment runs bots or hosts workspaces. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+The gateway migrates schemas 5 to 11 to schema 12 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; and schema 12 the token a workspaces environment publishes artifacts with. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Workspaces environments need the gateway's `workspaces-host` feature and a bot image that can host workspaces. The desktop app offers **Set up workspaces on this server** only with that feature. A desktop app from before it shows a workspaces environment as an environment with no bots; the gateway refuses to add a bot to it. On an image from before it, a workspaces environment fails to start with "This bot image cannot host workspaces. Update the server."
+
+Chats of a workspaces environment publish artifacts with a token the gateway passes to its container in `MAESTRLY_HOST_GATEWAY_TOKEN`; the host removes it from its own environment at startup, so the shells and agents it runs do not inherit it. A container created by an earlier gateway is created again with its token the next time it starts, restarts, or updates. Until then, and on a gateway from before this token, its agents are told that the server is too old to host artifacts.
 
 Environment default compaction models need the gateway's `environment-compaction` feature. Desktop apps without it keep choosing a model in each bot's **Settings**; they show a bot that uses its environment's default as that model, and saving it there makes it the bot's own. An environment on an image without the capability keeps working with its default, but choosing the default from the desktop app asks you to restart the environment first. The maximum context window needs the gateway's `context-limit` feature; desktop apps hide the field without it. An environment running an image without the capability keeps its models' windows, and its settings ask you to restart it.
 
@@ -316,7 +320,7 @@ Compose publishes only the gateway's public listener on the Docker host's loopba
 | Listener or display | Where | Reachable from |
 | --- | --- | --- |
 | Public API and screen proxy, port `7443` | Gateway container | Published by Compose on the Docker host's loopback (`MAESTRLY_GATEWAY_BIND`); the desktop app uses a local port or an SSH tunnel. For a server you manage, expose it privately, for example with Tailscale Serve. Clients on the fleet network are refused. |
-| Internal API, port `7444` | Gateway container | Fleet Docker network and loopback only. Each bot authenticates with its own gateway token. |
+| Internal API, port `7444` | Gateway container | Fleet Docker network and loopback only. Each bot authenticates with its own gateway token; a workspaces environment, with its own token, reaches only the artifact routes. |
 | Control server, port `7680` | Each environment container | Fleet Docker network. Every request needs that environment's control token, which only the gateway holds. |
 | Environment display `:0`, 3840×2400 | Each environment container | Inside the container. A 3×3 grid of 1280×800 tiles: tile 0 shows the environment screen (Maestrly's settings) and tile *k* the browser of the bot in slot *k*. |
 | Apps displays `:1` to `:8`, 1280×800 | Each environment container, one per bot slot | Inside the container. Each has its own window manager, taskbar, and session bus. |

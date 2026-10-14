@@ -31,7 +31,7 @@ import type {
   LegacyMoveState,
 } from '../../shared/artifacts'
 import type { FleetArtifactHost, FleetArtifactSettingsPatch } from '@maestrly/bot-fleet-protocol'
-import type { ArtifactServerStatus } from '../../shared/artifacts'
+import type { ArtifactOpenRequest, ArtifactServerStatus } from '../../shared/artifacts'
 import { serverUnavailable, type ArtifactSource, type ArtifactSources } from './sources'
 import type { ServerArtifacts } from './server-artifacts'
 import type { Conversation } from '../../shared/conversation'
@@ -61,6 +61,11 @@ export interface ArtifactsServiceDeps {
   resolveDirectory: (conversation: Conversation, relative: string) => Promise<string>
   openExternal: (url: string) => Promise<void>
   openInDrawer: (convId: string, url: string, activate: boolean) => void
+  /**
+   * On a workspaces host, whose browser cannot reach the viewer: asks the computer showing the conversation to open
+   * the artifact through its own connection to the server. The drawer is used when absent.
+   */
+  openOnViewer?: (convId: string, request: ArtifactOpenRequest) => void
   /** Asks for a preview image of a version; the capture runs later and may not happen. */
   requestThumbnail?: (id: string, version: number) => void
 }
@@ -587,8 +592,21 @@ export class ArtifactsService {
     const { source, admin, artifact } = options.checkScope
       ? await this.scoped(conversation, id)
       : await this.requiredAt(id)
+    if (this.deps.openOnViewer) {
+      this.deps.openOnViewer(conversation.id, {
+        conversationId: conversation.id,
+        artifactId: id,
+        version: version ?? artifact.currentVersion,
+      })
+      return artifact
+    }
     this.deps.openInDrawer(conversation.id, await this.ownerUrl(source, admin, id, version), options.activate ?? true)
     return artifact
+  }
+
+  /** Whether opening an artifact asks the computer showing the conversation to open it, rather than the drawer. */
+  get opensOnViewer(): boolean {
+    return !!this.deps.openOnViewer
   }
 
   async serverStatus(): Promise<ArtifactServerStatus> {

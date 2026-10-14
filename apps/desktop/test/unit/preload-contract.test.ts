@@ -317,7 +317,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(559)
+    expect(keys).toHaveLength(560)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1402,6 +1402,26 @@ describe('preload API — chat pagination (#559)', () => {
     listener({}, { conversationId: 'conv-completed' })
     expect(callback).toHaveBeenCalledWith({ conversationId: 'conv-completed' })
 
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
+  })
+
+  it('passes on only well-formed requests of a workspaces host to open an artifact', () => {
+    const callback = vi.fn()
+    const off = api.onChatArtifactOpen(callback) as () => void
+    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (...args: unknown[]) => void]
+    expect(channel).toBe('chat:artifact-open')
+    const request = { conversationId: 'conv-remote', artifactId: 'A'.repeat(22), version: 2 }
+    listener({}, request)
+    expect(callback).toHaveBeenCalledExactlyOnceWith(request)
+    for (const malformed of [
+      null,
+      { ...request, artifactId: '../a' },
+      { ...request, version: 0 },
+      { ...request, conversationId: '' },
+    ])
+      listener({}, malformed)
+    expect(callback).toHaveBeenCalledTimes(1)
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
   })

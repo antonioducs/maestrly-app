@@ -1,7 +1,7 @@
 import { FLEET_BOT_ENV, FLEET_PORTS, fleetEnvironmentIdSchema } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 
-const tokenSchema = z
+export const tokenSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/, 'Expected a 32-byte base64url token')
   .refine(

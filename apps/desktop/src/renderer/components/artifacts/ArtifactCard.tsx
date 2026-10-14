@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppWindow, ArrowUpRight, Loader2 } from 'lucide-react'
+import { useHostId } from '@/lib/hosts/host-context'
 import { parseArtifactToolResult, type ArtifactToolResult } from '../../../shared/artifacts'
+import { isRemoteHostId } from '../../../shared/host-key'
 import { toolOutputText, type MessagePart } from '../../../shared/chat'
 import { ToolCallCard } from '../chat/ToolCallCard'
 
@@ -22,6 +24,8 @@ export function ArtifactCard({
   onOpen?: () => Promise<unknown>
 }) {
   const { t } = useTranslation('chat')
+  // The browser of a workspaces host's conversation cannot reach the viewer: this computer opens the page itself.
+  const remote = isRemoteHostId(useHostId())
   const [failed, setFailed] = useState(false)
   if (part && (part.state.status === 'pending' || part.state.status === 'running')) {
     return (
@@ -43,7 +47,7 @@ export function ArtifactCard({
     const action =
       onOpen ??
       (() =>
-        conversationId
+        conversationId && !remote
           ? window.api.artifacts.openInConversation(conversationId, result.id, result.version)
           : window.api.artifacts.openExternal(result.id, result.version))
     void Promise.resolve()
