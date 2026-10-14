@@ -281,7 +281,12 @@ export interface PortableSummaryOptions {
   onCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
 }
 
-const SUMMARY_STEP_TIMEOUT_MS = 3 * 60_000
+/**
+ * Per-call ceiling that only catches stalled calls: healthy ~100k-token stages already take 2+ minutes on
+ * subscription models, so a tighter limit turned slow-but-progressing calls into compaction failures.
+ */
+export const PORTABLE_SUMMARY_STEP_TIMEOUT_MS = 10 * 60_000
+export const PORTABLE_SUMMARY_MAX_RETRIES = 3
 const SUMMARY_MIN_TOTAL_TIMEOUT_MS = 10 * 60_000
 const SUMMARY_MAX_TOTAL_TIMEOUT_MS = 60 * 60_000
 
@@ -375,8 +380,10 @@ export async function summarizePortableTranscript(
   const initialChunks = splitPortableTranscript(transcript, maxChunkBytes)
   if (initialChunks.length === 0) throw new Error('There is no portable transcript to compact')
 
-  const stepTimeoutMs = summaryTimeoutMs(options.stepTimeoutMs, SUMMARY_STEP_TIMEOUT_MS)
-  const maxRetries = Number.isFinite(options.maxRetries) ? Math.max(0, Math.floor(options.maxRetries!)) : 1
+  const stepTimeoutMs = summaryTimeoutMs(options.stepTimeoutMs, PORTABLE_SUMMARY_STEP_TIMEOUT_MS)
+  const maxRetries = Number.isFinite(options.maxRetries)
+    ? Math.max(0, Math.floor(options.maxRetries!))
+    : PORTABLE_SUMMARY_MAX_RETRIES
   const retryDelayMs = Number.isFinite(options.retryDelayMs) ? Math.max(0, Math.floor(options.retryDelayMs!)) : 0
   const maxSummaryTokens = Number.isFinite(options.maxSummaryTokens)
     ? Math.max(1, Math.floor(options.maxSummaryTokens!))

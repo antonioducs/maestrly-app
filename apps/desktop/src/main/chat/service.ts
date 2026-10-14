@@ -6806,6 +6806,7 @@ interface CompactOpts {
   summaryMaxTokens?: number
   summaryStepTimeoutMs?: number
   summaryRetryDelayMs?: number
+  summaryMaxRetries?: number
   summaryAttemptId?: () => string
   summaryResume?: PortableSummaryCheckpoint
   onSummaryCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
@@ -7557,6 +7558,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
       ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
       ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
+      ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
     })
     const summary = compacted.summary
     const usage = compacted.usage
@@ -7797,8 +7799,9 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
         contextWindow: input.contextWindow,
         signal: input.signal,
         summaryMaxTokens: input.maxSummaryTokens,
-        summaryStepTimeoutMs: 180_000,
-        summaryRetryDelayMs: 30_000,
+        summaryStepTimeoutMs: input.stepTimeoutMs,
+        summaryRetryDelayMs: input.retryDelayMs,
+        summaryMaxRetries: input.maxRetries,
         summaryResume: input.resume,
         onSummaryCheckpoint: input.onCheckpoint,
         beforeSummaryDispatch: (signal) => waitForBackgroundDispatch(input.selection.providerId, signal),

@@ -445,7 +445,7 @@ describe('service-owned compaction progress', () => {
     })
     const result = compact()
     await vi.waitFor(() => expect(signals).toHaveLength(2))
-    await vi.advanceTimersByTimeAsync(3 * 60_000)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
 
     expect((await result).ok).toBe(true)
     expect(signals[1].aborted).toBe(true)
