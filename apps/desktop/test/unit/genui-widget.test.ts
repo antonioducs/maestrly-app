@@ -145,9 +145,17 @@ describe('inline HTML frame styles', () => {
   })
 })
 
+/** The text from the first `<script>` to the last `closing` of a page this module wrote itself. */
+function scriptOf(html: string, closing = '</script>'): string {
+  const start = html.indexOf('<script>')
+  const end = html.lastIndexOf(closing)
+  if (start < 0 || end < start) throw new Error('No script element')
+  return html.slice(start + '<script>'.length, end)
+}
+
 /** Runs the frame page's script against a minimal window: its parent, listeners and the document it writes. */
 function runShell(extra: Record<string, unknown> = {}) {
-  const script = /<script>([\s\S]*)<\/script>/.exec(GENUI_WIDGET_FRAME_HTML)![1]
+  const script = scriptOf(GENUI_WIDGET_FRAME_HTML)
   const posted: unknown[] = []
   const parent = { postMessage: (data: unknown) => posted.push(data) }
   const listeners = new Map<string, (event: unknown) => void>()
@@ -268,7 +276,7 @@ function fakeImage(src: string, parentElement: FakeImage['parentElement'] = null
 function runBridge(page: { contentHeight?: (viewportHeight: number) => number; scrollbar?: number } = {}) {
   const frame = runShell()
   frame.dispatch({ source: frame.parent, data: render('') })
-  const bridge = /<script>([\s\S]*)<\/script><\/head>/.exec(frame.written())![1]
+  const bridge = scriptOf(frame.written(), '</script></head>')
   const posted: Record<string, unknown>[] = []
   const listeners = new Map<string, (event: unknown) => void>()
   const timers = new Map<number, () => void>()
