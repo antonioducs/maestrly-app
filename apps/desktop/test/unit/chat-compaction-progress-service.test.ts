@@ -841,4 +841,125 @@ describe('service-owned compaction progress', () => {
     expect(progressEvents().at(-1)?.status).toBe('completed')
     expect(listChatMessages(conversationId).filter((message) => message.usage?.billingOnly)).toHaveLength(1)
   })
+
+  describe('prepared summary reuse', () => {
+    const largeModel = () => ({ ...model, modelId: 'large-model' })
+    const prompts = () =>
+      h.generateText.mock.calls.map((call: unknown[]) => (call[0] as { prompt: string }).prompt).join('\n')
+    const compactionTexts = () =>
+      listChatMessages(conversationId)
+        .flatMap((message) => message.parts)
+        .flatMap((part) => (part.type === 'compaction' ? [part.text] : []))
+
+    async function prepare(): Promise<void> {
+      const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+      registerChatIpc({
+        mhandle: (channel, handler) => {
+          handlers.set(channel, handler)
+        },
+        mon: vi.fn(),
+        emitStatus: vi.fn(),
+      })
+      patchConvUiPrefs(conversationId, { chat: { ...largeModel(), reasoning: 'off', fastMode: false } })
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'user')!,
+        parts: [{ type: 'text', id: 'user-text', text: 'EARLY_SOURCE_MARKER' }],
+      })
+      upsertChatMessage({ ...getChatMessage(conversationId, 'assistant')!, finishReason: 'stop' })
+      for (let index = 0; index < 2; index++)
+        upsertChatMessage({
+          id: `block-${index}`,
+          conversationId,
+          role: 'assistant',
+          model: largeModel(),
+          createdAt: index + 3,
+          finishReason: 'stop',
+          parts: [{ type: 'text', id: `block-part-${index}`, text: 'x'.repeat(300_000) }],
+        })
+      h.generateText.mockResolvedValue(success('PREPARED_SUMMARY'))
+      await handlers.get('chat:background-compaction:set')!({ sender: wc } as never, {
+        enabled: true,
+        intervalTokens: 100_000,
+        selection: { providerId: model.providerId, modelId: 'background-helper', effort: 'off', fastMode: false },
+      })
+      chatRuntimeState(conversationId)
+      await vi.waitFor(
+        () => expect(new BackgroundCompactionStore().get(conversationId)?.ready?.boundary.messageId).toBe('block-1'),
+        { timeout: 5000 }
+      )
+      await vi.waitFor(() => expect(chatRuntimeState(conversationId).backgroundCompaction?.status).toBe('ready'))
+      h.generateText.mockClear()
+      h.generateText.mockResolvedValue(success('FOLDED_SUMMARY'))
+    }
+
+    function appendDelta(): void {
+      upsertChatMessage({
+        id: 'delta-user',
+        conversationId,
+        role: 'user',
+        createdAt: 10,
+        parts: [{ type: 'text', id: 'delta-user-text', text: 'DELTA_USER_MARKER' }],
+      })
+      upsertChatMessage({
+        id: 'delta-assistant',
+        conversationId,
+        role: 'assistant',
+        model: largeModel(),
+        createdAt: 11,
+        finishReason: 'stop',
+        parts: [{ type: 'text', id: 'delta-assistant-text', text: 'DELTA_ASSISTANT_MARKER' }],
+      })
+    }
+
+    function manualCompaction(): Promise<{ ok: boolean; error?: string }> {
+      return new Promise((resolve) => {
+        expect(startManualCompaction(conversationId, resolve)).toEqual({ ok: true })
+      })
+    }
+
+    it('folds the prepared summary with only the newer suffix on manual compaction', async () => {
+      await prepare()
+      appendDelta()
+      expect(await manualCompaction()).toMatchObject({ ok: true })
+      expect(prompts()).toContain('Previous summary:\nPREPARED_SUMMARY')
+      expect(prompts()).toContain('DELTA_USER_MARKER')
+      expect(prompts()).toContain('DELTA_ASSISTANT_MARKER')
+      expect(prompts()).not.toContain('EARLY_SOURCE_MARKER')
+      expect(prompts()).not.toContain('x'.repeat(1_000))
+      expect(compactionTexts()).toEqual(['FOLDED_SUMMARY'])
+      expect(new BackgroundCompactionStore().get(conversationId)?.ready).toBeNull()
+    })
+
+    it('commits the prepared summary without a model call when nothing follows its boundary', async () => {
+      await prepare()
+      expect(await manualCompaction()).toMatchObject({ ok: true })
+      expect(h.generateText).not.toHaveBeenCalled()
+      expect(compactionTexts()).toEqual(['PREPARED_SUMMARY'])
+      expect(new BackgroundCompactionStore().get(conversationId)?.ready).toBeNull()
+    })
+
+    it('folds from the prepared summary for automatic in-turn compaction without persisting a marker', async () => {
+      await prepare()
+      appendDelta()
+      expect(await compact({ contextWindow: 1_000_000, allowActive: true, persist: false })).toMatchObject({
+        ok: true,
+        summary: 'FOLDED_SUMMARY',
+      })
+      expect(prompts()).toContain('Previous summary:\nPREPARED_SUMMARY')
+      expect(prompts()).not.toContain('EARLY_SOURCE_MARKER')
+      expect(compactionTexts()).toEqual([])
+    })
+
+    it('falls back to the full active history when the prepared source changed', async () => {
+      await prepare()
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'user')!,
+        parts: [{ type: 'text', id: 'user-text', text: 'EDITED_SOURCE_MARKER' }],
+      })
+      appendDelta()
+      expect(await compact({ contextWindow: 1_000_000 })).toMatchObject({ ok: true })
+      expect(prompts()).toContain('EDITED_SOURCE_MARKER')
+      expect(prompts()).not.toContain('PREPARED_SUMMARY')
+    })
+  })
 })

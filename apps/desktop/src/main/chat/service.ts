@@ -454,6 +454,7 @@ import {
   summarizePortableTranscript,
   type PortableSummaryProgress,
   type PortableSummaryCheckpoint,
+  type PortableSummaryResult,
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { getCompactionSummarizer } from './compaction-summarizer'
@@ -493,7 +494,7 @@ import {
   ChatBackgroundCompactionCoordinator,
   parseBackgroundCompactionConfig,
 } from './background-compaction'
-import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
+import type { BackgroundCompactionAttemptHandle, BackgroundCompactionCandidate } from './background-compaction/types'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -7208,6 +7209,17 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
   if (opts.persist !== false && !opts.allowActive && activeContext.messages.length < 2) {
     return { ok: false, error: 'too-short' }
   }
+  // Background rounds (historyOverride) and isolated executions never fold a prepared base.
+  const preparedBase = opts.historyOverride || opts.executionId ? null : preparedCompactionBase(conversationId, history)
+  if (preparedBase) {
+    chatDiag({
+      kind: 'compaction-prepared-base',
+      conv: conversationId,
+      coveredTokens: preparedBase.candidate.coveredTokens,
+      deltaEmpty: preparedBase.deltaEmpty,
+      persist: opts.persist !== false,
+    })
+  }
   let observedClaudeUsage: NormalizedAiUsage | undefined
   let observedClaudeCost = 0
   let observedClaudeCostKnown = false
@@ -7231,7 +7243,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       if (!revalidated.ok) return { ok: false, error: revalidated.error }
     }
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(history, {
+    const transcript = renderTranscript(preparedBase?.history ?? history, {
       maxToolOutputChars: Number.POSITIVE_INFINITY,
       includeSkillBodies: true,
     })
@@ -7550,16 +7562,18 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         }
       }
     }
-    const compacted = await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
-      signal: compactSignal,
-      onProgress: opts.onProgress,
-      ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
-      ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
-      ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
-      ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
-      ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
-      ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
-    })
+    const compacted: PortableSummaryResult = preparedBase?.deltaEmpty
+      ? { summary: preparedBase.candidate.summary, calls: 0 }
+      : await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
+          signal: compactSignal,
+          onProgress: opts.onProgress,
+          ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
+          ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
+          ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
+          ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
+          ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
+          ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
+        })
     const summary = compacted.summary
     const usage = compacted.usage
     completedUsage = usage
@@ -7908,6 +7922,44 @@ async function maybeScheduleBackgroundCompaction(
     getBackgroundCoordinator().notify(conversationId, { conversationWindow: window, ...(boundary ? { boundary } : {}) })
   } catch {
     // Missing provider metadata never makes a foreground send fail.
+  }
+}
+
+interface PreparedCompactionBase {
+  candidate: BackgroundCompactionCandidate
+  /** Source history with the prepared summary inserted at its boundary: renders as "Previous summary" + suffix. */
+  history: StoredChatMessage[]
+  /** Nothing portable follows the boundary, so the prepared summary already covers the whole active context. */
+  deltaEmpty: boolean
+}
+
+/**
+ * Foreground compaction folds the prepared summary with only the suffix after its boundary instead of
+ * re-summarizing source the background already covered. Synchronous on purpose: the candidate is validated
+ * against the same history snapshot that assertHistoryUnchanged protects at commit.
+ */
+function preparedCompactionBase(
+  conversationId: string,
+  history: readonly StoredChatMessage[]
+): PreparedCompactionBase | null {
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return null
+  const candidate = getBackgroundCoordinator().getCandidate(conversationId)
+  if (!candidate) return null
+  const projected = previewPreparedActivation(
+    history,
+    {
+      messageId: candidate.boundary.messageId,
+      afterPartId: candidate.boundary.partId,
+      partId: `prepared-base:${candidate.id}`,
+    },
+    candidate.summary
+  )
+  if (!projected) return null
+  const suffix = activeChatContext(projected).messages
+  return {
+    candidate,
+    history: projected,
+    deltaEmpty: !renderTranscript(suffix, { maxToolOutputChars: Number.POSITIVE_INFINITY, includeSkillBodies: true }),
   }
 }
 
