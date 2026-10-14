@@ -31,7 +31,6 @@ import {
 } from 'lucide-react'
 import type { ChatGptWebSessionInfo, Conversation, PlanReceived } from '../../preload'
 import type { ChatGptWebCapabilitiesInfo } from '../../shared/chat'
-import { isReviewLoopConversationReserved } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -166,7 +165,6 @@ export function Drawer({
   const [chatGptAccessBusy, setChatGptAccessBusy] = useState(false)
   const chatGptSessionActive = chatGptSession !== null
   const chatGptPairingRequired = chatGptSession?.pairingRequired === true
-  const chatGptReviewLoopActive = isReviewLoopConversationReserved(chatGptSession?.reviewLoop?.status)
 
   const [restarting, setRestarting] = useState(false)
   // Closing a floating tab reattaches it first so the native view returns to the drawer slot.
@@ -294,14 +292,14 @@ export function Drawer({
   }
 
   const restartCompanionWithAccess = async (): Promise<void> => {
-    if (!convId || !chatGptCapabilities || chatGptAccessBusy || chatGptReviewLoopActive) return
+    if (!convId || !chatGptCapabilities || chatGptAccessBusy) return
     setChatGptAccessBusy(true)
     setChatGptError(null)
     let previousSessionEnded = false
     try {
       const capabilities = chatGptCapabilities.capabilities
 
-      const result = await restartChatGptWebCompanion(convId, capabilities, chatGptReviewLoopActive, {
+      const result = await restartChatGptWebCompanion(convId, capabilities, {
         chatGptWebCompanionStart: (conversationId) => api.chatGptWebCompanionStart(conversationId),
         chatGptWebCompanionCopyPrompt: (conversationId) => api.chatGptWebCompanionCopyPrompt(conversationId),
         chatGptWebCompanionOpen: (conversationId) => api.chatGptWebCompanionOpen(conversationId),
@@ -649,11 +647,6 @@ export function Drawer({
                   <Loader2 className="size-4 animate-spin" /> {t('drawer.chatgptAccessLoading')}
                 </div>
               )}
-              {chatGptReviewLoopActive && (
-                <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2 text-[11px] text-amber-200">
-                  {t('drawer.chatgptRestartBlockedByReview')}
-                </div>
-              )}
               {chatGptError && (
                 <div
                   role="alert"
@@ -665,7 +658,7 @@ export function Drawer({
               <div className="mt-4 flex justify-end">
                 <Button
                   className="gap-1.5 bg-violet-500 text-white hover:bg-violet-400"
-                  disabled={!chatGptCapabilities || chatGptAccessBusy || chatGptReviewLoopActive}
+                  disabled={!chatGptCapabilities || chatGptAccessBusy}
                   onClick={() => void restartCompanionWithAccess()}
                 >
                   {chatGptAccessBusy ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}

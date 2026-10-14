@@ -70,10 +70,8 @@ export interface ChatGptWebRestartOutcome extends ChatGptWebStartOutcome {
 export async function restartChatGptWebCompanion(
   conversationId: string,
   capabilities: ChatGptWebCapabilities,
-  reviewLoopActive: boolean,
   api: ChatGptWebCompanionLifecycleApi
 ): Promise<ChatGptWebRestartOutcome> {
-  if (reviewLoopActive) throw new Error('review-loop-active')
   const ended = await api.chatGptWebCompanionEnd(conversationId)
   if (!ended.ok) throw new Error('session-end-failed')
   const saved = await api.chatGptWebSetCapabilities(conversationId, capabilities)

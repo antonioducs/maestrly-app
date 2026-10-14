@@ -61,7 +61,7 @@ describe('check command allowlist', () => {
     expect(result.output).toContain('check-output')
   })
 
-  it('propagates failed exit codes for review evidence', async () => {
+  it('propagates failed exit codes', async () => {
     setChecksConfig('failure = node -e process.exit(3)')
     const result = await runCheck(repo, 'failure')
     expect(result.exitCode).toBe(3)

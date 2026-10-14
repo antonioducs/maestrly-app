@@ -3,7 +3,7 @@ import type fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { assertReviewerPathInside, defineTool, resolveInside, type ToolContext } from './util'
+import { defineTool, resolveInside, type ToolContext } from './util'
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.cache', 'coverage', '.turbo'])
 
@@ -56,7 +56,6 @@ async function* walk(root: string, base: string): AsyncGenerator<string> {
 async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<string[]> {
   const { abs: base, external } = resolveInside(ctx.cwd, args.path ?? '.')
   if (external) await ctx.ask('external_directory', [base], [base])
-  const effectiveBase = await assertReviewerPathInside(ctx, base)
   await ctx.ask('glob', [args.pattern])
   const limit = args.limit ?? 1000
   const out: string[] = []
@@ -65,7 +64,7 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<stri
   const globFn = (fsp as unknown as { glob?: (p: string, o?: object) => AsyncIterable<string> }).glob
   if (typeof globFn === 'function') {
     try {
-      for await (const rel of globFn(args.pattern, { cwd: effectiveBase })) {
+      for await (const rel of globFn(args.pattern, { cwd: base })) {
         if (rel.includes('node_modules') || rel.split(/[\\/]/).some((s) => SKIP_DIRS.has(s))) continue
         out.push(rel.replaceAll('\\', '/'))
         if (out.length >= limit) break
@@ -77,7 +76,7 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<stri
     }
   }
 
-  for await (const rel of walk(effectiveBase, effectiveBase)) {
+  for await (const rel of walk(base, base)) {
     if (out.length >= limit || ctx.signal.aborted) break
     if (matchGlob(args.pattern, rel)) out.push(rel)
   }
@@ -89,10 +88,6 @@ export const globTool = defineTool({
   name: 'glob',
   description: 'Lists project files matching a glob pattern (ignores .git/node_modules/dist).',
   parameters: params,
-  execute: async (args, ctx) => {
-    const result = await run(args, ctx)
-    ctx.reviewer?.recordEvidence('search')
-    return result
-  },
+  execute: run,
   toModelText: (_args, files) => (files.length === 0 ? 'No files found.' : files.join('\n')),
 })

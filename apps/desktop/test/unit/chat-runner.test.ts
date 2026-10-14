@@ -1014,45 +1014,6 @@ describe('runtime tool-image capability learning', () => {
     expect(request.tools).not.toHaveProperty('edit')
   })
 
-  it('BYOK reviewer exposes only the exact internal read-only tools and skips MCP/app surfaces', async () => {
-    mocks.streamText.mockReturnValue(fullStream([]) as never)
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(),
-      readExecutionContext: vi.fn(),
-    }
-    await runChat({
-      conversationId: 'c',
-      projectId: 'w',
-      cwd: '/tmp/w',
-      selection: { providerId: 'openai', modelId: 'gpt-test' },
-      broker: { assert: async () => undefined } as unknown as PermissionBroker,
-      questionBroker: {} as QuestionBroker,
-      emit: vi.fn(),
-      signal: new AbortController().signal,
-      assistantMessageId: 'reviewer-assistant',
-      assistantCreatedAt: 1,
-      responseStartedAt: 1,
-      modeOverride: 'ask',
-      ephemeralSession: true,
-      reviewerRuntime,
-    })
-
-    const enabled = mocks.buildTools.mock.calls[0]?.[0]?.enabled as Set<string>
-    expect([...enabled].sort()).toEqual([
-      'git_diff',
-      'glob',
-      'grep',
-      'read',
-      'read_execution_context',
-      'search_execution_context',
-      'submit_review',
-    ])
-    expect(mocks.buildMcpTools).not.toHaveBeenCalled()
-    expect(mocks.buildAppTools).not.toHaveBeenCalled()
-  })
-
   it('applies Fable behavior to BYOK without adding Anthropic-only beta or thinking parameters', async () => {
     mocks.streamText.mockReturnValue(fullStream([]) as never)
     await runChat({

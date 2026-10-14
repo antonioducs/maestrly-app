@@ -183,8 +183,8 @@ import { CLAUDE_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
 import {
   compactReserved,
   registerChatIpc,
-  revalidateReviewLoopSelection,
-  resolveReviewLoopSelection,
+  revalidateFrozenChatSelection,
+  resolveFrozenChatSelection,
   type ChatIpcDeps,
 } from '../../src/main/chat/service'
 import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
@@ -418,7 +418,7 @@ describe('Claude subscription service integration', () => {
       },
     })
 
-    const frozen = await resolveReviewLoopSelection(conversation.id)
+    const frozen = await resolveFrozenChatSelection(conversation.id)
     expect(frozen).toMatchObject({
       ok: true,
       selection: {
@@ -429,15 +429,15 @@ describe('Claude subscription service integration', () => {
     })
     if (!frozen.ok) throw new Error(frozen.error)
     expect(
-      await revalidateReviewLoopSelection({
+      await revalidateFrozenChatSelection({
         ...frozen.selection,
         resolvedModelId: 'claude-fable-5',
       })
     ).toEqual({ ok: false, error: 'executor-unavailable' })
 
     setAppFlag(flag, false)
-    expect(await revalidateReviewLoopSelection(frozen.selection)).toEqual({ ok: true })
-    const disabled = await resolveReviewLoopSelection(conversation.id)
+    expect(await revalidateFrozenChatSelection(frozen.selection)).toEqual({ ok: true })
+    const disabled = await resolveFrozenChatSelection(conversation.id)
     expect(disabled).toMatchObject({ ok: true, selection: { behaviorProfileId: null } })
   })
 
@@ -685,7 +685,7 @@ describe('Claude subscription service integration', () => {
       identityFingerprint: 'sha256:claude-account',
       identityEpoch: 2,
     }
-    expect(await revalidateReviewLoopSelection(frozen)).toEqual({ ok: true })
+    expect(await revalidateFrozenChatSelection(frozen)).toEqual({ ok: true })
 
     // Missing frozen efforts cannot fall back to another level.
     h.state.models = [
@@ -697,7 +697,7 @@ describe('Claude subscription service integration', () => {
         supportsFastMode: true,
       },
     ] as any[]
-    expect(await revalidateReviewLoopSelection(frozen)).toEqual({
+    expect(await revalidateFrozenChatSelection(frozen)).toEqual({
       ok: false,
       error: 'executor-unavailable',
     })
@@ -712,7 +712,7 @@ describe('Claude subscription service integration', () => {
         supportsFastMode: false,
       },
     ] as any[]
-    expect(await revalidateReviewLoopSelection(frozen)).toEqual({
+    expect(await revalidateFrozenChatSelection(frozen)).toEqual({
       ok: false,
       error: 'executor-unavailable',
     })

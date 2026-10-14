@@ -8,7 +8,13 @@ import { excludeFromGitInfo } from './git-service'
 import { commitPlanDecision, decidePlan, getPending as getPendingPlan, type PlanDecision } from './plan-broker'
 import { toForwardSlashes } from './platform'
 import { getConversation, type Conversation } from './store'
-import { runApprovedPlan, runPlanRevision, setChatMode, stopChatAndWait } from './chat/service'
+import {
+  isConversationUnderReview,
+  runApprovedPlan,
+  runPlanRevision,
+  setChatMode,
+  stopChatAndWait,
+} from './chat/service'
 import { botSharesConversation, pauseBotForHuman } from './bot/control'
 import { OPEN_FILE_FILE } from './vscode/vscode-ext-source'
 import type { IpcRegistrar } from './ipc-registrar'
@@ -105,6 +111,8 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
     ) {
       return { ok: false, error: 'plan-maestro-strategy-profile-invalid' }
     }
+    // The plan is being reviewed: it is decided from the review's hand-off, once the review lets go.
+    if (isConversationUnderReview(agentId)) return { ok: false, error: 'review-active' }
     // Prepare the decision, then commit immediately for local Chat or after external confirmation for Web.
     // Failed external confirmation preserves the visible pending plan for retry. Start a new turn when
     // applicable.

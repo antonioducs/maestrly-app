@@ -37,6 +37,7 @@ vi.mock('../../src/main/chat/service', () => ({
   runPlanRevision: h.runPlanRevision,
   setChatMode: h.setChatMode,
   stopChatAndWait: h.stopChatAndWait,
+  isConversationUnderReview: () => false,
 }))
 vi.mock('../../src/main/bot/control', () => ({
   pauseBotForHuman: h.pauseBotForHuman,

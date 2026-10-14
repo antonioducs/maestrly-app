@@ -317,7 +317,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(568)
+    expect(keys).toHaveLength(572)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1356,35 +1356,6 @@ describe('preload API — chat pagination (#559)', () => {
 
     api.chatGptWebBrowserReset()
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:browser-reset')
-  })
-
-  it('exposes the paired review loop contract and its sanitized event', () => {
-    api.chatReviewLoopCompatible('executor')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:compatible', 'executor')
-
-    const input = {
-      executorConversationId: 'executor',
-      reviewerConversationId: 'reviewer',
-      maxIterations: 5,
-      severityThreshold: 'important',
-    }
-    api.chatReviewLoopStart(input)
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:start', input)
-    api.chatReviewLoopStop('reviewer')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:stop', 'reviewer')
-    api.chatReviewLoopStatus('executor')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:status', 'executor')
-    api.chatReviewLoopStatuses()
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:status')
-
-    const callback = vi.fn()
-    const off = api.onChatReviewLoopChanged(callback) as () => void
-    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (...args: unknown[]) => void]
-    expect(channel).toBe('chat:review-loop:changed')
-    listener({}, [{ loopId: 'loop' }])
-    expect(callback).toHaveBeenCalledWith([{ loopId: 'loop' }])
-    off()
-    expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
   })
 
   it('queries native ChatGPT visibility by conversation', () => {

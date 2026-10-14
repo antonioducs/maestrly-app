@@ -18,9 +18,6 @@ import { questionTool } from './question'
 import { todoWriteTool } from './todo'
 import { reviewPlanTool } from './review-plan'
 import { generateImageTool } from './generate-image'
-import { gitDiffTool } from './git-diff'
-import { readExecutionContextTool, searchExecutionContextTool } from './execution-context'
-import { submitReviewTool } from './submit-review'
 import {
   createWorkspaceTool,
   findGithubRepositoriesTool,
@@ -62,10 +59,6 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   todoWriteTool,
   reviewPlanTool,
   generateImageTool,
-  gitDiffTool,
-  searchExecutionContextTool,
-  readExecutionContextTool,
-  submitReviewTool,
   listConversationModelsTool,
   listConversationWorkspacesTool,
   startConversationsTool,
@@ -90,25 +83,10 @@ const PLAN_TOOL_NAME = 'review_plan'
  * (generate_image requires imagegen toggle + connected ChatGPT subscription — see chat/image-gen.ts). */
 const OPT_IN_TOOL_NAMES = new Set<string>([
   'generate_image',
-  'git_diff',
-  'search_execution_context',
-  'read_execution_context',
-  'submit_review',
   // Only for a main turn admitted from text the person typed; runners add them via conversationDispatchRuntimeFor.
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
   // Only for a main turn typed by the person or started by another conversation (conversationLinkRuntimeFor).
   ...CONVERSATION_LINK_TOOL_NAMES,
-])
-
-/** Exact built-in surface for a technically read-only reviewer turn. */
-export const REVIEWER_READONLY_TOOL_NAMES = new Set([
-  'read',
-  'grep',
-  'glob',
-  'git_diff',
-  'search_execution_context',
-  'read_execution_context',
-  'submit_review',
 ])
 
 /** Capabilities that make an Agent subagent a worker instead of a read-only investigator. */

@@ -79,7 +79,7 @@ describe('adding a model is a folder', () => {
     expect(serializableReasoningEffort(harness.reasoning, 'high')).toBe('high')
     const policy = resolveCodexThreadPolicy(
       harness,
-      { eligibleChatGptSession: true, ephemeral: false, reviewer: false, ...facts },
+      { eligibleChatGptSession: true, ephemeral: false, ...facts },
       'high'
     )
     expect(policy).toMatchObject({ nativeCompactionFirst: true, reasoningEffort: 'high' })

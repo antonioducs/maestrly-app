@@ -39,7 +39,11 @@ and tools together as you plan, build, and review.
   GitHub Copilot, Cursor, Grok, Google AI (Antigravity), and ChatGPT Web
   integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,
-  review loops, permissions, and usage accounting.
+  permissions, and usage accounting.
+- **Code and plan reviews:** an independent, read-only review of a
+  conversation's changes or pending plan, with findings you decide on together
+  with the conversation's model. See
+  [code and plan reviews](docs/chat-context.md#code-and-plan-reviews).
 - **Workspaces:** conversations on the current branch or isolated Git worktrees,
   with project context and migration recovery.
 - **Developer tools:** native terminals, an embedded editor and browser,

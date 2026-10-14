@@ -904,7 +904,7 @@ export interface DescribeImagesArgs {
   /** Message parts NOT YET persisted — mutated in place before insert. */
   pendingParts: MessagePart[]
   signal: AbortSignal
-  /** Isolated review-loop: describe pending attachments only (never rewrite main conversation history). */
+  /** Isolated internal turn: describe pending attachments only (never rewrite main conversation history). */
   pendingOnly?: boolean
 }
 
@@ -1026,7 +1026,7 @@ async function describeConversationImagesInner(args: DescribeImagesArgs): Promis
  * rejects the next step. After learning `imagesUnsupported`, describe this turn's MESSAGE tool outputs
  * (the rejection-triggering bubble) in the background while ephemeral bytes remain,
  * so next `dropImages` replay receives TEXT rather than an omission note. Best-effort and scoped to
- * the supplied message (never rewrites other conversations/review-loop scopes); failures enter the
+ * the supplied message (never rewrites other conversations/isolated scopes); failures enter the
  * standard interpreter negative cache (no infinite retries).
  */
 export async function describePersistedToolImages(args: {

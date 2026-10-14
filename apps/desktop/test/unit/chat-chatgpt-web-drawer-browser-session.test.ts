@@ -51,7 +51,7 @@ describe('drawer browser companion session', () => {
     expect(second.map((tab) => tab.id)).toEqual(first.map((tab) => tab.id))
   })
 
-  it('attaches without ownership and creates an independent review lease for the same opaque tab', async () => {
+  it('attaches without taking ownership of the tab and releases only its own surface on detach', async () => {
     const getState = () => ({
       convId: 'conv-1',
       activeId: 'conv-1:b1',
@@ -75,16 +75,9 @@ describe('drawer browser companion session', () => {
 
     expect(await session.attach(browserId)).toBe(surfaces[0])
     expect(session.active()).toBe(surfaces[0])
-    const review = await session.createReviewSurface({
-      browserId,
-      signal: new AbortController().signal,
-      onStateChange: vi.fn(),
-    })
-    expect(review).toMatchObject({ url: 'http://localhost:5173/', ownership: 'attached' })
-    expect(review.browser).toBe(surfaces[1])
+    expect(await session.attach(browserId)).toBe(surfaces[0])
+    expect(createSurface).toHaveBeenCalledOnce()
 
-    await review.browser.dispose()
-    expect(session.active()).toBe(surfaces[0])
     await session.detach()
     expect(session.active()).toBeNull()
     expect(surfaces[0].dispose).toHaveBeenCalledOnce()

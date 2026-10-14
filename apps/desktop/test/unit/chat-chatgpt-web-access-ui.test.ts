@@ -81,18 +81,10 @@ describe('ChatGPT Web access UI policy', () => {
 
   it('revokes the frozen session before saving capabilities and starting a new pairing', async () => {
     const events: string[] = []
-    const result = await restartChatGptWebCompanion('conv', capabilities, false, lifecycleApi(events))
+    const result = await restartChatGptWebCompanion('conv', capabilities, lifecycleApi(events))
 
     expect(events).toEqual(['end', 'save:interact:read', 'start', 'copy', 'open'])
     expect(result).toMatchObject({ pairingRequired: true, promptCopied: true, capabilities: { capabilities } })
-  })
-
-  it('refuses to restart while a Review Loop owns the conversation', async () => {
-    const events: string[] = []
-    await expect(restartChatGptWebCompanion('conv', capabilities, true, lifecycleApi(events))).rejects.toThrow(
-      'review-loop-active'
-    )
-    expect(events).toEqual([])
   })
 
   it('does not persist a new policy when revoking the previous session fails', async () => {
@@ -103,7 +95,7 @@ describe('ChatGPT Web access UI policy', () => {
       return { ok: false }
     })
 
-    await expect(restartChatGptWebCompanion('conv', capabilities, false, api)).rejects.toThrow('session-end-failed')
+    await expect(restartChatGptWebCompanion('conv', capabilities, api)).rejects.toThrow('session-end-failed')
     expect(events).toEqual(['end'])
   })
 })

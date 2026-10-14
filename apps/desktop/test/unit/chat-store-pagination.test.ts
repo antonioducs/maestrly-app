@@ -1038,14 +1038,15 @@ describe('review-loop context isolation and billing in the store', () => {
     expect(reconcileInterruptedExecutionMessages(conv.id)).toBe(0)
   })
 
-  it('reconciles paired reviewer roles without resuming loops', () => {
+  it('reconciles rounds stored by the removed paired review loop as plain isolated executions', () => {
     const conv = chatConv()
     upsertChatMessage({
       id: 'paired-reviewer-open',
       conversationId: conv.id,
       role: 'assistant',
       parts: [{ type: 'text', id: 'paired-text', text: 'review in progress' }],
-      source: 'maestrly-review-loop',
+      // Shape written by the removed paired review loop; current code no longer produces it.
+      source: 'maestrly-review-loop' as never,
       executionScope: {
         kind: 'review-loop',
         executionId: 'paired-execution',
@@ -1055,18 +1056,26 @@ describe('review-loop context isolation and billing in the store', () => {
         role: 'reviewer',
         executorConversationId: 'executor',
         reviewerConversationId: conv.id,
-      },
+      } as never,
       createdAt: 1,
     })
 
     expect(reconcileInterruptedExecutionMessages(conv.id)).toBe(1)
     const recovered = getExecutionAssistantMessage(conv.id, 'paired-execution')
     expect(recovered).toMatchObject({
-      source: 'maestrly-review-loop',
       finishReason: 'interrupted',
       errorCode: 'review-loop-process-interrupted',
-      executionScope: { role: 'reviewer', executorConversationId: 'executor', reviewerConversationId: conv.id },
+      executionScope: {
+        kind: 'review-loop',
+        executionId: 'paired-execution',
+        loopId: 'paired-loop',
+        iteration: 1,
+        maxIterations: 5,
+      },
     })
+    expect(recovered?.source).toBeUndefined()
+    expect(recovered?.executionScope).not.toHaveProperty('role')
+    expect(listConversationContextMessages(conv.id).map((message) => message.id)).not.toContain('paired-reviewer-open')
     expect(reconcileInterruptedExecutionMessages(conv.id)).toBe(0)
   })
 
