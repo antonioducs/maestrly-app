@@ -1,9 +1,11 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { Animated, Platform, View } from 'react-native'
 import { useMarkdown } from 'react-native-marked'
+import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { useReducedMotion } from '../useReducedMotion'
+import { ReplyRenderer } from './markdown-renderer'
 
 function Caret() {
   const { palette } = useTheme()
@@ -36,8 +38,13 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   streaming: boolean
 }) {
   const { palette, scheme } = useTheme()
+  const { t } = useI18n()
   const options = useMemo(
     () => ({
+      renderer: new ReplyRenderer({
+        image: (name: string) => t('markdown.image', { name }),
+        opens: t('markdown.opens'),
+      }),
       colorScheme: scheme,
       theme: { colors: { code: palette.codeBg, link: palette.brass, text: palette.ink, border: palette.line } },
       styles: {
@@ -61,7 +68,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         h3: { fontFamily: fonts.bodySemi, fontSize: 17, color: palette.ink },
       },
     }),
-    [palette, scheme]
+    [palette, scheme, t]
   )
   const elements = useMarkdown(text, options)
   return (

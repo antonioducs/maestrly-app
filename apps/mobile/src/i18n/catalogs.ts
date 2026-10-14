@@ -578,6 +578,9 @@ export const en = {
   'details.compactError.busy': 'The bot is busy. Try again when its turn ends.',
   'details.compactError.notConfigured': 'The bot has no compaction model. Choose one in its settings on your computer.',
   'details.compactError.failed': "Couldn't start compacting. Try again.",
+
+  'markdown.image': 'Image: {name}',
+  'markdown.opens': 'Opens in the browser',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1165,4 +1168,7 @@ export const ptBR: Record<keyof typeof en, string> = {
   'details.compactError.notConfigured':
     'O bot não tem modelo de compactação. Escolha um nos ajustes dele no computador.',
   'details.compactError.failed': 'Não foi possível começar a compactar. Tente de novo.',
+
+  'markdown.image': 'Imagem: {name}',
+  'markdown.opens': 'Abre no navegador',
 }
