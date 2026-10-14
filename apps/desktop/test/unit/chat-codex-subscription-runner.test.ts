@@ -972,6 +972,7 @@ describe('Codex subscription runner', () => {
         const request = client.startThreadCalls[0] as {
           baseInstructions?: string
           developerInstructions: string
+          personality?: string
           config: Record<string, unknown>
           environments: unknown[]
           dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
@@ -986,10 +987,13 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          '760c532074302469142eb296ddad0d42e29ef60ef2e44d4d9329b7a21c7a23fc'
+          'e9883e64d9588ecef7bcf2600ee3b1f436df702891bf3eec25ed7b61366a3a21'
         )
         expect(request.baseInstructions).toBeUndefined()
+        expect(request.personality).toBe('friendly')
         expect(request.developerInstructions).toContain('general assistant')
+        expect(request.developerInstructions).toContain('# Conversation style')
+        expect(request.developerInstructions).toContain('# Style for requested work')
         expect(request.developerInstructions).toContain('when start_conversations is exposed')
         expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
         expect(request.developerInstructions).not.toContain('# Durable project memory')

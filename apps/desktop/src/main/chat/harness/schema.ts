@@ -59,6 +59,7 @@ const promptOverrides = z
     layout: z.enum(HARNESS_PROMPT_LAYOUTS).optional(),
     base: textRef.nullable().optional(),
     styleAndWork: textRef.nullable().optional(),
+    chatStyle: textRef.nullable().optional(),
     behaviorHeader: z.boolean().optional(),
     subagent: textRef.nullable().optional(),
     compaction: textRef.nullable().optional(),

@@ -15,6 +15,7 @@
         "prompts": {
           "layout": "maestrly-base",
           "styleAndWork": "style.md",
+          "chatStyle": "style.chat.md",
           "behaviorHeader": false,
           "environment": { "placement": "system", "transient": false }
         },
