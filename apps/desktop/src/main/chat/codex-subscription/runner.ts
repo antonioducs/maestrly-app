@@ -140,6 +140,8 @@ import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools, isParentOnlyConversationToolName } from '../tools/conversation-link'
+import { getWebSearchProvider, webSearchToolEnabled } from '../web-search/settings'
+import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import { reviewPlanTool } from '../tools/review-plan'
 import { createDeltaCoalescer } from '../delta-coalescer'
@@ -1769,6 +1771,23 @@ export function registerCodexSubagentRequestRoute(args: {
   return registerRequestRoute(args.client, '', route)
 }
 
+/**
+ * Codex native search never asks for approval; where it is off, the gated host tool replaces it.
+ * Both use the name web_search, so a thread never receives the two together.
+ */
+function codexNativeWebSearchEnabled(
+  args: Pick<RunCodexSubscriptionChatArgs, 'reviewerRuntime' | 'conversationId' | 'mode' | 'permMode'>
+): boolean {
+  return (
+    getWebSearchProvider() !== 'off' &&
+    !args.reviewerRuntime &&
+    !remoteChatPolicy(args.conversationId) &&
+    args.mode !== 'ask' &&
+    args.mode !== 'maestro' &&
+    args.permMode !== 'ask'
+  )
+}
+
 async function buildDynamicTools(
   args: RunCodexSubscriptionChatArgs,
   state: CodexRunnerState
@@ -1862,8 +1881,8 @@ async function buildDynamicTools(
       : { tools: {}, close: async () => {} }
 
   // Read-only classification depends on the host surface (app/MCP). The bridge surface (core built-ins)
-  // never changes the result: read/grep/glob/webfetch have verified read-only contracts, and bash/generate_image
-  // are already core mutators. This matches the classification children would see through rawTools.
+  // never changes the result: read/grep/glob/webfetch/web_search have verified read-only contracts, and
+  // bash/generate_image are already core mutators. This matches the classification children would see through rawTools.
   const hostSurface: ToolSet = { ...mcp.tools, ...app.tools }
   const hasReadOnlySubagent = agents.some((agent) => isSubagentReadOnly(args.mode, agent.tools, hostSurface))
 
@@ -1881,6 +1900,10 @@ async function buildDynamicTools(
           : new Set<string>()
     if (!args.reviewerRuntime && hasReadOnlySubagent) {
       for (const name of ['read', 'grep', 'glob', 'webfetch']) bridgeNames.add(name)
+    }
+    // Not part of the subagent readers above: bridgeNames become the parent thread's dynamic tools too.
+    if (!args.reviewerRuntime && !codexNativeWebSearchEnabled(args) && webSearchToolEnabled()) {
+      bridgeNames.add(WEB_SEARCH_TOOL_NAME)
     }
     if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       bridgeNames.add(GENERATE_IMAGE_TOOL_NAME)
@@ -2813,11 +2836,9 @@ export async function runCodexSubscriptionChat(
       ...(args.reviewerRuntime || capabilityMode !== 'agent' || args.permMode !== 'full'
         ? { 'features.shell_tool': false }
         : {}),
-      // Native web search never requests approval. Disable it in Ask to avoid bypassing the webfetch gate;
-      // MCP/app search tools remain available through Maestrly's broker.
-      ...(args.reviewerRuntime || args.mode === 'ask' || args.mode === 'maestro' || args.permMode === 'ask'
-        ? { web_search: 'disabled' }
-        : {}),
+      // Native web search never requests approval. Where it would bypass the permission gate (or the user turned
+      // web search off), disable it; the gated host web_search is bridged instead (buildDynamicTools).
+      ...(!codexNativeWebSearchEnabled(args) ? { web_search: 'disabled' } : {}),
       // The skills catalog ALWAYS belongs to Maestrly (use_skill + global/per-conversation state). Disable
       // native Codex discovery in all modes; otherwise a UI-disabled skill would remain
       // advertised/loadable by the Agent/Plan harness.

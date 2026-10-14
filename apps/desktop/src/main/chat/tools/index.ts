@@ -13,6 +13,7 @@ import { editTool } from './edit'
 import { grepTool } from './grep'
 import { globTool } from './glob'
 import { webfetchTool } from './webfetch'
+import { webSearchTool } from './web-search'
 import { questionTool } from './question'
 import { todoWriteTool } from './todo'
 import { reviewPlanTool } from './review-plan'
@@ -45,6 +46,8 @@ import {
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 } from '../tool-policy'
 import { OPENAI_APPLY_PATCH_TOOL_NAME, OPENAI_LOCAL_SHELL_TOOL_NAME } from '../openai/native-tools'
+import { webSearchToolEnabled } from '../web-search/settings'
+import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 
 export const ALL_TOOLS: ToolDef<any, any>[] = [
   readTool,
@@ -54,6 +57,7 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   writeTool,
   editTool,
   webfetchTool,
+  webSearchTool,
   questionTool,
   todoWriteTool,
   reviewPlanTool,
@@ -279,6 +283,7 @@ export function builtinToolNamesForMode(mode: ChatBehavior): Set<string> {
         ? new Set([...READ_ONLY_TOOL_NAMES, PLAN_TOOL_NAME])
         : new Set(READ_ONLY_TOOL_NAMES)
   if (isBotMode()) selected.delete(PLAN_TOOL_NAME)
+  if (!webSearchToolEnabled()) selected.delete(WEB_SEARCH_TOOL_NAME)
   return selected
 }
 
@@ -311,6 +316,8 @@ export function buildTools(opts: {
   const out: ToolSet = {}
   for (const def of ALL_TOOLS) {
     if (def.name === PLAN_TOOL_NAME && isBotMode()) continue
+    // The single gate for `off`: subagent surfaces also derive from READ_ONLY_TOOL_NAMES directly.
+    if (def.name === WEB_SEARCH_TOOL_NAME && !webSearchToolEnabled()) continue
     if (opts.enabled && !opts.enabled.has(def.name)) continue
     out[def.name] = toAiTool(def, opts.makeCtx)
   }

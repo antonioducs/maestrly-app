@@ -1194,6 +1194,21 @@ export default {
     imageGenHeading: 'Geração de imagem',
     imageGenDescription:
       'Permite que os modelos criem imagens no chat. O Codex usa o gerador nativo dele; os demais modelos (Claude, Copilot, provedores por API) ganham a ferramenta `generate_image`, que roda na assinatura do ChatGPT conectada — ou seja, exige uma conta ChatGPT conectada e consome ela.',
+    webSearchHeading: 'Busca na web',
+    webSearchDescription:
+      'Permite que os modelos pesquisem na web. As consultas são enviadas ao provedor escolhido. O modo Automático usa primeiro uma chave de API configurada, depois sua assinatura do ChatGPT e, por fim, o DuckDuckGo.',
+    webSearchProvider: {
+      auto: 'Automático',
+      tavily: 'Tavily (chave de API)',
+      brave: 'Brave Search (chave de API)',
+      chatgpt: 'Assinatura do ChatGPT',
+      duckduckgo: 'DuckDuckGo (sem chave, pode ser bloqueado)',
+      off: 'Desativada',
+    },
+    webSearchKeyLabel: { tavily: 'Chave de API do Tavily', brave: 'Chave de API do Brave Search' },
+    webSearchKeyPlaceholder: 'Cole a chave de API',
+    webSearchKeySave: 'Salvar',
+    webSearchKeyRemove: 'Remover',
     bashFiltersHeading: 'Saída compacta de comandos',
     bashFiltersDescription:
       'Filtra a saída verbosa de comandos bash suportados antes de enviá-la ao modelo, reduzindo o uso de tokens. Os pedidos de permissão continuam mostrando o comando original.',

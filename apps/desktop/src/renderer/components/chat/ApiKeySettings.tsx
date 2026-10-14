@@ -1,4 +1,5 @@
 import { ModelVisibilityCheckbox } from './ModelVisibilityCheckbox'
+import { WebSearchSettings } from './WebSearchSettings'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -1550,6 +1551,7 @@ export function ApiKeySettings({
             setEnabled={api.chatSetImageGen}
             onChanged={refresh}
           />
+          {config.webSearch && <WebSearchSettings webSearch={config.webSearch} onChanged={refresh} />}
           <FlagToggle
             headingKey="settings.bashFiltersHeading"
             descriptionKey="settings.bashFiltersDescription"

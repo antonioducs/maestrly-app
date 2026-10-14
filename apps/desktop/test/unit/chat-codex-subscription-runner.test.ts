@@ -987,7 +987,7 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          'e9883e64d9588ecef7bcf2600ee3b1f436df702891bf3eec25ed7b61366a3a21'
+          'a3eaf66873efb1399337099b79a5b6837520c2682371b36d79f1357bdc1acf51'
         )
         expect(request.baseInstructions).toBeUndefined()
         expect(request.personality).toBe('friendly')
@@ -1908,6 +1908,8 @@ describe('Codex subscription runner', () => {
         expect.objectContaining({ name: 'glob' }),
         expect.objectContaining({ name: 'grep' }),
         expect.objectContaining({ name: 'read' }),
+        // Native search is disabled here, so the permission-gated host tool replaces it.
+        expect.objectContaining({ name: 'web_search' }),
         expect.objectContaining({ name: 'webfetch' }),
       ],
     })
@@ -1975,14 +1977,14 @@ describe('Codex subscription runner', () => {
       kind: 'codex-subscription-tools-profile',
       mode: 'ask',
       model: 'gpt-5.6-sol',
-      tools: expect.objectContaining({ total: 4, eager: 4, deferred: 0 }),
+      tools: expect.objectContaining({ total: 5, eager: 5, deferred: 0 }),
     })
     expect(chatDiagMock).toHaveBeenCalledWith({
       kind: 'codex-subscription-initial-context',
       mode: 'ask',
       model: 'gpt-5.6-sol',
       contextInput: 40,
-      tools: expect.objectContaining({ total: 4, eager: 4, deferred: 0 }),
+      tools: expect.objectContaining({ total: 5, eager: 5, deferred: 0 }),
     })
     expect(getCodexThreadBinding(conversation.id)).toEqual({
       conversationId: conversation.id,
@@ -2347,6 +2349,30 @@ describe('Codex subscription runner', () => {
     )
   })
 
+  it('disables native search and omits the host tool when web search is turned off', async () => {
+    setAppSetting('chat.webSearch.provider', 'off')
+    for (const [mode, permMode] of [
+      ['agent', 'full'],
+      ['ask', 'ask'],
+    ] as const) {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, `user_off_${mode}`, 'Search the web', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({
+        turnId: `turn_off_${mode}`,
+        notifications: [completedNotification('thread_1', `turn_off_${mode}`)],
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = mode
+      args.permMode = permMode
+      await runCodexSubscriptionChat(args)
+      const start = client.startThreadCalls[0] as { config: Record<string, unknown>; dynamicTools: Array<{ name: string }> }
+      expect(start.config.web_search).toBe('disabled')
+      expect(start.dynamicTools.map((spec) => spec.name)).not.toContain('web_search')
+    }
+  })
+
   it('keeps delegation optional at xhigh without applying the prescriptive Ultra overlay', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -2391,6 +2417,9 @@ describe('Codex subscription runner', () => {
     const readers = start.dynamicTools.filter((spec) => ['read', 'grep', 'glob', 'webfetch'].includes(spec.name))
     expect(readers.map((spec) => spec.name).sort()).toEqual(['glob', 'grep', 'read', 'webfetch'])
     expect(readers.every((spec) => spec.deferLoading !== true)).toBe(true)
+    // Agent with full permission keeps Codex native search, so the same-named host tool is not bridged.
+    expect(start.config).not.toHaveProperty('web_search')
+    expect(start.dynamicTools.map((spec) => spec.name)).not.toContain('web_search')
     expect(client.startTurnCalls[0]).toMatchObject({
       effort: 'xhigh',
       collaborationMode: {
@@ -2455,6 +2484,7 @@ describe('Codex subscription runner', () => {
         expect.objectContaining({ name: 'glob' }),
         expect.objectContaining({ name: 'grep' }),
         expect.objectContaining({ name: 'read' }),
+        expect.objectContaining({ name: 'web_search' }),
         expect.objectContaining({ name: 'webfetch' }),
       ],
       config: {
@@ -3417,6 +3447,7 @@ describe('Codex subscription runner', () => {
       'grep',
       'read',
       'review_plan',
+      'web_search',
       'webfetch',
     ])
     expect(

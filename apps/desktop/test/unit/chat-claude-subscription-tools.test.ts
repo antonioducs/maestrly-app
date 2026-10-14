@@ -76,6 +76,7 @@ describe('Claude in-process MCP bridge', () => {
       ask_question: namedTool('Ask through the Maestrly question broker.'),
       use_skill: namedTool('Load a Maestrly skill.'),
       external_search: namedTool('Deferred external MCP search.'),
+      web_search: namedTool('Search the web through the Maestrly permission broker.'),
     }
 
     const bridge = await buildClaudeToolBridge(tools, new AbortController().signal)
@@ -87,6 +88,7 @@ describe('Claude in-process MCP bridge', () => {
       'mcp__maestrly__review_plan',
       'mcp__maestrly__task',
       'mcp__maestrly__use_skill',
+      'mcp__maestrly__web_search',
     ])
     expect(bridge.toolAliases).toMatchObject({
       Agent: 'mcp__maestrly__task',
@@ -95,7 +97,10 @@ describe('Claude in-process MCP bridge', () => {
       ExitPlanMode: 'mcp__maestrly__review_plan',
       Read: 'mcp__maestrly__read',
       Skill: 'mcp__maestrly__use_skill',
+      WebSearch: 'mcp__maestrly__web_search',
     })
+    // The alias only routes the name; Claude's own search stays disallowed.
+    expect(CLAUDE_DISALLOWED_NATIVE_TOOLS).toContain('WebSearch')
     expect(bridge.nameFromSdk('mcp__maestrly__external_search')).toBe('external_search')
     expect(CLAUDE_DISALLOWED_NATIVE_TOOLS).toEqual(
       expect.arrayContaining([

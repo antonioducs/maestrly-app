@@ -1,5 +1,6 @@
 import type { MemorySettings } from '../shared/memory'
 import type { AppToolGroup } from '../shared/app-tool-groups'
+import type { WebSearchKeyProvider, WebSearchProvider } from '../shared/web-search'
 import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import { ARTIFACT_OPEN_REQUEST_CHANNEL, type ArtifactOpenRequest, parseArtifactOpenRequest } from '../shared/artifacts'
@@ -516,6 +517,17 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:set-app-tool-group', group, enabled),
 
     chatSetImageGen: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-image-gen', enabled),
+
+    chatSetWebSearchProvider: (provider: WebSearchProvider): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-web-search-provider', provider),
+
+    chatSetWebSearchKey: (
+      provider: WebSearchKeyProvider,
+      key: string
+    ): Promise<{ ok: boolean; mode?: 'secure' | 'memory' }> => ipcRenderer.invoke('chat:set-web-search-key', provider, key),
+
+    chatClearWebSearchKey: (provider: WebSearchKeyProvider): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:clear-web-search-key', provider),
 
     chatSetBashFilters: (enabled: boolean): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:set-bash-filters', enabled),
