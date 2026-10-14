@@ -643,7 +643,8 @@ export class MobileApi {
   /**
    * The transcript items of messages, recording where each image they show comes from. Items are ordered by time, and
    * a turn's answer may be stamped a moment before the message it answers was saved: each message is given a time
-   * after the one before it in the history's order, and keeps it (`order`) while the conversation stays open.
+   * after the one before it in the history's order. A message keeps its time (`order`) while the conversation stays
+   * open, unless a message that comes before it shows up later, as the one an answer streamed ahead of.
    */
   private project(
     conversationId: string,
@@ -652,7 +653,7 @@ export class MobileApi {
   ): MobileChatItem[] {
     let previous = -Infinity
     const messages = raw.map((message) => {
-      const time = order?.get(message.id) ?? Math.max(message.createdAt, previous + 1)
+      const time = Math.max(order?.get(message.id) ?? message.createdAt, previous + 1)
       order?.set(message.id, time)
       previous = time
       // A transcript's user item holds at most FLEET_MESSAGE_TEXT_MAX characters; a longer paste would drop the item.

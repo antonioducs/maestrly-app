@@ -682,6 +682,27 @@ describe('mobile API of a workspaces host', () => {
     h.api.dispose()
   })
 
+  it('keeps a message before its answer when the answer streamed before the message was saved', async () => {
+    const h = setup()
+    h.state.messages = []
+    await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })
+    // The answer starts streaming, stamped before the message it answers, which the history has not saved yet.
+    h.push('chat:delta:c1', { kind: 'message-start', messageId: 'a1', createdAt: T0 + 10, responseStartedAt: T0 + 10 })
+    await vi.advanceTimersByTimeAsync(12)
+    h.state.messages = [user('u1', 'Hello', T0 + 20), answer('a1', 'Hi there', T0 + 10)]
+    await settle()
+    const sent = h.events
+      .filter(([channel]) => channel === 'mobile:v1:items')
+      .flatMap(([, payload]) => (payload as { items: Array<{ id: string; at: string }> }).items)
+    const at = (id: string) => sent.filter((item) => item.id.startsWith(id)).at(-1)?.at ?? ''
+    expect(at('u1') < at('a1:')).toBe(true)
+    const reopened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as {
+      page: { items: Array<{ kind: string }> }
+    }
+    expect(reopened.page.items.map((item) => item.kind)).toEqual(['user', 'tool', 'assistant'])
+    h.api.dispose()
+  })
+
   it('keeps a long message, and shows how a failed or stopped turn ended', async () => {
     const h = setup()
     h.state.messages = [
