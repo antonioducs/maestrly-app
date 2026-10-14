@@ -66,6 +66,23 @@ A second probe, on the same day, drove pixelflux 2.1.0 directly on the bot image
 - **The cursor callback** delivers `('png', bytes, hot_x, hot_y)` and fires again when the shape changes.
 - **python-xlib 0.33** offers XTEST input and XFixes selection notifications.
 
+The implementation was measured before release through the prototype's link proxy: one environment container of the
+local image, a Node client on the protocol package that acknowledges each frame as it arrives and decodes it with PyAV,
+and the proxy straight in front of the instance (no gateway). The page shows a long article and a square that each click
+flips. A click's latency runs from the click to the arrival of the first decoded frame that shows the flip. Each profile
+ran once, with 15 clicks on the still page and 10 while it scrolled 4 px per frame.
+
+| Link (simulated) | Click on a still page, median/p90 | Scrolling | Click while scrolling, median/p90 | Paint-over |
+| --- | --- | --- | --- | --- |
+| Same machine | 19/30 ms | 62 fps, 0.77 Mbit/s | 22/31 ms | on (5 ms per key frame) |
+| 30 ms, 20 Mbit/s | 57/70 ms | 62 fps, 0.76 Mbit/s | 56/60 ms | on (62 ms) |
+| 300 ms, 10 Mbit/s | 325/341 ms | 62 fps, 0.77 Mbit/s | 325/333 ms | on (117 ms) |
+| 300 ms, 1.5 Mbit/s | 336/405 ms | 62 fps, 0.77 Mbit/s | 339/350 ms | off |
+
+No click was missed, and the quality ladder stayed at level 0 on every link. The encoder used about a fifth of one core
+while scrolling at 60 fps. Before key frames left the window and paint-over followed the link, the 1.5 Mbit/s link took
+1.5–2 s per click on a still page and scrolled at 8 fps, and the 10 Mbit/s link scrolled at 20 fps.
+
 ## Architecture
 
 ```mermaid
