@@ -5,6 +5,7 @@ import { app } from 'electron'
 import { prepareProductionDatabasePath } from './database-path-migration'
 import { initializeBotCommandSchema } from '../bot/schema'
 import { initializeHostTransferSchema } from '../host-transfers/schema'
+import { initializeConversationMoveSchema } from '../conversation-move/schema'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -234,6 +235,7 @@ export function initStore(file?: string): void {
 function initializeSchema(): void {
   initializeBotCommandSchema(db)
   initializeHostTransferSchema(db)
+  initializeConversationMoveSchema(db)
   // Drop known ledger triggers before schema creation because IF NOT EXISTS would preserve an outdated
   // privacy implementation.
   db.exec(`
