@@ -37,6 +37,82 @@ export const moveResolveSchema = z.object({ operationId: uuid, action: z.enum(['
 export type MovePrepareInput = z.infer<typeof movePrepareSchema>
 export type MoveExecuteInput = z.input<typeof moveExecuteSchema>
 
+const oid = z.string().regex(/^[0-9a-f]{40,64}$/i)
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/i)
+const absolutePath = z.string().min(1).max(4096)
+const operation = { operationId: uuid }
+const workspacePlanSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('existing'),
+      workspaceId: nonEmpty.max(200),
+      name: z.string().max(400),
+      path: absolutePath,
+    })
+    .strict(),
+  z.object({ kind: z.literal('adopt'), path: absolutePath, name: z.string().max(400) }).strict(),
+  z
+    .object({
+      kind: z.literal('clone'),
+      parentPath: absolutePath,
+      name: nonEmpty.max(255),
+      remoteUrl: nonEmpty.max(4096),
+      defaultBranch: nonEmpty.max(240),
+    })
+    .strict(),
+])
+/** What each endpoint method accepts from the computer coordinating a move. */
+export const endpointInputSchemas = {
+  inspectSource: z.object({ conversationId: nonEmpty.max(200) }).strict(),
+  checkAncestry: z.object({ conversationId: nonEmpty.max(200), ancestorOid: oid }).strict(),
+  inspectTarget: z
+    .object({
+      conversationId: nonEmpty.max(200),
+      remoteUrl: nonEmpty.max(4096),
+      defaultBranch: nonEmpty.max(240),
+      branch: nonEmpty.max(240),
+      headOid: oid,
+    })
+    .strict(),
+  freezeSource: z
+    .object({ ...operation, conversationId: nonEmpty.max(200), fingerprint: z.string().max(200) })
+    .strict(),
+  exportSource: z
+    .object({
+      ...operation,
+      selectedIgnoredPaths: z.array(exactPath).max(1000),
+      confirmedSensitivePaths: z.array(exactPath).max(1000),
+    })
+    .strict(),
+  stagingDirectory: z.object(operation).strict(),
+  prepareTargetWorkspace: z
+    .object({ ...operation, conversationId: nonEmpty.max(200), workspace: workspacePlanSchema })
+    .strict(),
+  importTarget: z
+    .object({
+      ...operation,
+      packagePath: absolutePath,
+      sha256,
+      workspaceId: nonEmpty.max(200),
+      plan: z
+        .object({
+          workspace: workspacePlanSchema,
+          branch: nonEmpty.max(240),
+          branchAction: z.enum(['create', 'reuse', 'fast-forward']),
+          expectedTipOid: oid.optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  verifyTarget: z.object(operation).strict(),
+  releaseSource: z.object(operation).strict(),
+  commitTarget: z.object(operation).strict(),
+  discardTarget: z.object(operation).strict(),
+  thawSource: z.object(operation).strict(),
+  cleanup: z.object(operation).strict(),
+} as const
+export type MoveEndpointMethod = keyof typeof endpointInputSchemas
+
 export const movePhases = [
   'prepared',
   'freezing',

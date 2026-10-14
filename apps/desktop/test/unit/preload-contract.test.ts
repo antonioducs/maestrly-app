@@ -147,6 +147,22 @@ const KNOWN_MAIN_ONLY: string[] = [
   'editor:restart',
   'editor:navigate',
   'editor:snapshot',
+  // A host's conversation move endpoint: this computer's main process (the move coordinator) invokes it over the host
+  // bridge (conversation-move/remote-endpoint), never a renderer through the preload.
+  'conversation-move-endpoint:inspect-source',
+  'conversation-move-endpoint:check-ancestry',
+  'conversation-move-endpoint:inspect-target',
+  'conversation-move-endpoint:freeze-source',
+  'conversation-move-endpoint:export-source',
+  'conversation-move-endpoint:staging-directory',
+  'conversation-move-endpoint:prepare-target-workspace',
+  'conversation-move-endpoint:import-target',
+  'conversation-move-endpoint:verify-target',
+  'conversation-move-endpoint:release-source',
+  'conversation-move-endpoint:commit-target',
+  'conversation-move-endpoint:discard-target',
+  'conversation-move-endpoint:thaw-source',
+  'conversation-move-endpoint:cleanup',
 ]
 
 // Read sources without importing them to inventory channels and event emissions.
