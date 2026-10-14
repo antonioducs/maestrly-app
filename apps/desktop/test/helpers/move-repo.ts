@@ -36,7 +36,7 @@ export interface MoveRepo {
  * ahead of origin. `dirty()` then stages, edits, deletes and adds files the way a conversation leaves them.
  */
 export function makeRemoteRepo(prefix = 'maestrly-move-'): MoveRepo {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)))
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)))
   const remote = path.join(root, 'remote.git')
   const seed = path.join(root, 'seed')
   git(root, 'init', '-q', '--bare', '-b', 'main', remote)

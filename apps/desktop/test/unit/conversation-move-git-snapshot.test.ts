@@ -79,7 +79,8 @@ describe('conversation move git snapshot', () => {
     ).resolves.toEqual({ branchCreated: true, previousTipOid: null })
     expect(status(dest)).toBe(status(repo.work))
     expect(await readFile(path.join(dest, 'b.txt'), 'utf8')).toBe(await readFile(path.join(repo.work, 'b.txt'), 'utf8'))
-    expect((await stat(path.join(dest, 'f.sh'))).mode & 0o111).not.toBe(0)
+    // Windows has no execute bit to carry.
+    if (process.platform !== 'win32') expect((await stat(path.join(dest, 'f.sh'))).mode & 0o111).not.toBe(0)
     await expect(access(path.join(dest, '.env.local'))).rejects.toThrow()
     await expect(access(path.join(dest, '.agents/notes/p.md'))).rejects.toThrow()
     expect(git(dest, 'log', '-1', '--format=%s', 'HEAD')).toBe('feat work')

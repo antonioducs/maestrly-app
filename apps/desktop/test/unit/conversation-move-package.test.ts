@@ -117,7 +117,8 @@ describe('conversation move package', () => {
       const file = read.files.find((entry) => entry.relative === source.relative)!
       expect(await readFile(file.absolute)).toEqual(source.body)
       expect(file.absolute.startsWith(out)).toBe(true)
-      if (index === 2) expect((await stat(file.absolute)).mode & 0o777).toBe(0o640)
+      // Windows has no permission bits to carry.
+      if (index === 2 && process.platform !== 'win32') expect((await stat(file.absolute)).mode & 0o777).toBe(0o640)
     }
   })
 
