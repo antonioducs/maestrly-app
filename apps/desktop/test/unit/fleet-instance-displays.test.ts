@@ -9,6 +9,7 @@ import {
   ScreenMessageReader,
   decodeServerMessage,
   type ScreenServerEvent,
+  fleetEnvironmentTile,
 } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -152,9 +153,11 @@ class FakeSpawner {
       },
     }
     this.processes.push(child)
+    const pid = 999 + this.processes.length
     const response = this.respond(command, args)
     if (response !== 'run') child.exit(response)
     return {
+      pid,
       exited,
       kill: (signal = 'SIGTERM') => {
         child.killed = true
@@ -222,10 +225,78 @@ function setup(options: Partial<Pick<DisplayManagerDeps, 'decorate' | 'language'
     },
     ...options,
   }
-  return { clock, spawner, logs, mkdirs, decorations, deps, manager: new DisplayManager(deps) }
+  /** The arguments of the last process started with this command. */
+  const spawned = (command: string) => spawner.named(command).at(-1)?.args
+  return {
+    clock,
+    spawner,
+    logs,
+    mkdirs,
+    decorations,
+    deps,
+    manager: new DisplayManager(deps),
+    spawned,
+    get encoderArgs() {
+      return spawner.named(ENCODER).map((child) => child.args)
+    },
+  }
 }
 
 const environment: DisplaySurface = { kind: 'environment' }
+
+describe('DisplayManager desktops of any owner', () => {
+  it('starts a desktop on its own display number and folder', async () => {
+    const { manager, spawned, mkdirs } = setup()
+    const key = 'c' + 'a'.repeat(31)
+    const display = await manager.startDesktop({ key, slot: 3, display: 12, folder: 'maestrly-desktops' })
+    expect(display.display).toBe(':12')
+    expect(display.browserArea).toEqual(fleetEnvironmentTile(3))
+    expect(display.env.DISPLAY).toBe(':12')
+    expect(display.env.DBUS_SESSION_BUS_ADDRESS).toBe(`unix:path=${HOME}/.cache/maestrly-desktops/${key}/bus`)
+    expect(display.env.MAESTRLY_DESKTOP_SOCKET).toBe(`${HOME}/.cache/maestrly-desktops/${key}/desktop.sock`)
+    expect(display.env.MAESTRLY_BOT_BROWSER_PROFILE).toBe(`${HOME}/.config/maestrly-desktops/${key}/chromium`)
+    expect(mkdirs).toContain(`${HOME}/.cache/maestrly-desktops/${key}`)
+    expect(spawned('prepare-xvfb-display')).toEqual([':12', '/tmp/.X12-lock', '/tmp/.X11-unix/X12'])
+    expect(spawned('Xvfb')).toEqual([':12', '-screen', '0', '1280x800x24', '-nolisten', 'tcp', '-noreset'])
+    expect(spawned('maestrly-browser-presenter')).toContain(':0')
+    expect(manager.ownProcessIds(key).length).toBeGreaterThanOrEqual(5)
+    expect(manager.ownProcessIds('unknown')).toEqual([])
+  })
+
+  it('refuses display numbers out of range and two owners on one slot or display', async () => {
+    const { manager } = setup()
+    for (const display of [9, 4096, 10.5])
+      await expect(manager.startDesktop({ key: 'c1', slot: 1, display })).rejects.toThrow(RangeError)
+    await manager.startDesktop({ key: 'c1', slot: 1, display: 10, folder: 'maestrly-desktops' })
+    await expect(manager.startDesktop({ key: 'c2', slot: 1, display: 11 })).rejects.toThrow(/slot 1/)
+    await expect(manager.startDesktop({ key: 'c3', slot: 2, display: 10 })).rejects.toThrow(/:10/)
+  })
+
+  it('captures a tile of the environment display without an apps display', async () => {
+    const setupResult = setup()
+    const { manager } = setupResult
+    const lease = await manager.acquireScreen({ kind: 'tile', slot: 4 })
+    const t = fleetEnvironmentTile(4)
+    expect(setupResult.encoderArgs.at(-1)).toEqual([
+      '--display',
+      ':0',
+      '--region',
+      `${t.x},${t.y},${t.width},${t.height}`,
+    ])
+    lease.release()
+  })
+
+  it("keeps a conversation's tile streaming when its computer stops", async () => {
+    const { manager, spawner } = setup()
+    const key = 'c' + 'b'.repeat(31)
+    await manager.startDesktop({ key, slot: 2, display: 11, folder: 'maestrly-desktops' })
+    const tile = await manager.acquireScreen({ kind: 'tile', slot: 2 })
+    await manager.stopBot(key)
+    const t = fleetEnvironmentTile(2)
+    expect(spawner.encoders(':0', `${t.x},${t.y},${t.width},${t.height}`).map((child) => child.running)).toEqual([true])
+    tile.release()
+  })
+})
 
 describe('DisplayManager apps displays', () => {
   it('starts the apps display of slot 2 with its own bus, window manager, taskbar and browser profile', async () => {

@@ -794,6 +794,7 @@ export function productionDisplayDeps(
         child.once('exit', (code) => resolve(code))
       })
       return {
+        pid: child.pid,
         exited,
         kill: (signal = 'SIGTERM') => {
           if (child.exitCode === null && child.signalCode === null) child.kill(signal)
