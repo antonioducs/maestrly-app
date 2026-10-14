@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FetchLike } from '../src/gateway/client'
-import { pairWithServer, PairingError } from '../src/servers/pairing'
+import { pairWithServer, PairingError, serverName } from '../src/servers/pairing'
 
 const meta = {
   protocol: 1,
@@ -83,5 +83,11 @@ describe('pairing with a bot server', () => {
       expect(error).toBeInstanceOf(PairingError)
       expect(error.reason).toBe(reason)
     }
+  })
+
+  it('names a server at an IP address by the whole address', () => {
+    expect(serverName('http://127.0.0.1:7443')).toBe('127.0.0.1')
+    expect(serverName('https://[::1]:7443')).toBe('[::1]')
+    expect(serverName('https://bots.example.dev')).toBe('bots')
   })
 })

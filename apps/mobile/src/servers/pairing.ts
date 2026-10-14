@@ -34,6 +34,8 @@ function toPairingError(error: unknown): PairingError {
 /** A tailnet address names the machine before `.<tailnet>.ts.net`; any other host, its first label. */
 export function serverName(origin: string): string {
   const host = new URL(origin).hostname
+  // An IP address is a name only whole.
+  if (/^[\d.]+$/.test(host) || host.startsWith('[')) return host
   return host.replace(/\.[^.]+\.ts\.net$/, '').split('.')[0] || host
 }
 
