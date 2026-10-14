@@ -400,6 +400,35 @@ describe('environment routes', () => {
     ).toBe(401)
   })
 
+  it('issues screen tickets for the computers and browsers of workspaces conversations only', async () => {
+    const h = await harness(Date.now, { environments: true, videoScreens: true })
+    h.instance.provisioning.capabilities.push('workspaces-host', 'conversation-computers')
+    const created = h.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
+    for (let i = 0; i < 200 && h.lifecycle.environment(created.id)?.lifecycle !== 'running'; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    const conversation = randomUUID()
+    const route = (eid: string, cid = conversation) => `/v1/environments/${eid}/conversations/${cid}/screen-tickets`
+    for (const body of [
+      { mode: 'control', surface: 'apps' },
+      { mode: 'view', surface: 'apps' },
+      { mode: 'view', surface: 'browser' },
+    ]) {
+      const response = await h.request('POST', route(created.id), body)
+      expect(response.status).toBe(201)
+      expect((await response.json()).path).toMatch(/^\/v1\/screen\?ticket=/)
+    }
+    expect((await h.request('POST', route(created.id), { mode: 'control', surface: 'browser' })).status).toBe(400)
+    expect((await h.request('POST', route(created.id), { mode: 'view' })).status).toBe(400)
+    expect((await h.request('POST', route(created.id, 'a%20b'), { mode: 'view', surface: 'apps' })).status).toBe(400)
+    const bots = await h.request('POST', route('test'), { mode: 'view', surface: 'apps' })
+    expect(bots.status).toBe(409)
+    expect((await bots.json()).message).toBe('This environment does not host workspaces.')
+    expect((await h.request('POST', route('missing'), { mode: 'view', surface: 'apps' })).status).toBe(404)
+    expect(
+      (await h.request('POST', route(created.id), { mode: 'view', surface: 'apps' }, false, h.botHeaders())).status
+    ).toBe(401)
+  })
+
   it('keeps an environment that predates environments to its one bot and its original configuration', async () => {
     const h = await harness()
     expect((await h.request('GET', '/v1/environments/test/accounts')).status).toBe(200)

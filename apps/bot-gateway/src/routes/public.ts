@@ -25,6 +25,7 @@ import {
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_VIDEO_SCREENS_FEATURE,
   fleetFileIdSchema,
+  fleetHostConversationIdSchema,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
   normalizePairingCode,
@@ -457,6 +458,16 @@ export async function publicRoute(
     case 'archivedEnvironmentDelete':
       await ctx.lifecycle.purgeEnvironment(eid)
       return { status: 204 }
+    case 'conversationScreenTicket': {
+      requireEnvironment(ctx, eid)
+      const conversationId = fleetHostConversationIdSchema.safeParse(params.cid)
+      if (!conversationId.success) throw new GatewayError('INVALID_REQUEST', 'Invalid conversation id')
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return {
+        body: ctx.screen!.conversationTicket(eid, conversationId.data, device.id, body.mode, body.surface),
+        status: 201,
+      }
+    }
     case 'environmentScreenTicket': {
       requireEnvironment(ctx, eid)
       const device = ctx.auth.device(res.req?.headers.authorization)
