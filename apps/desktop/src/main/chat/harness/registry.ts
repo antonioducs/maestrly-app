@@ -63,6 +63,7 @@ function collectTextRefs(binding: HarnessBinding): string[] {
   const refs: (string | null | undefined)[] = [
     prompts?.base,
     prompts?.styleAndWork,
+    prompts?.chatStyle,
     prompts?.subagent,
     prompts?.compaction,
     prompts?.developerPrefix?.base,

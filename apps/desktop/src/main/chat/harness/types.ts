@@ -45,6 +45,8 @@ export interface HarnessPromptOverrides {
   base?: HarnessTextRef | null
   /** Style/work body replacing the default host style sections in the Maestrly layouts. */
   styleAndWork?: HarnessTextRef | null
+  /** Conversational voice for standalone chats; there the `# Style` of `styleAndWork` only governs requested work. */
+  chatStyle?: HarnessTextRef | null
   /** Emit the versioned behavioral-profile header before the style body. */
   behaviorHeader?: boolean
   subagent?: HarnessTextRef | null
@@ -182,6 +184,7 @@ export interface ResolvedHarnessPrompts {
   layout: HarnessPromptLayout
   base: string | null
   styleAndWork: string | null
+  chatStyle: string | null
   behaviorHeader: boolean
   subagent: string | null
   compaction: string | null

@@ -50,7 +50,8 @@ export function buildHarnessPrompt(input: BuildHarnessPromptInput): CompiledHarn
 
   if (input.scope === 'standalone') {
     const base = buildMaestrlyBasePrompt(input)
-    const stablePrefix = [base, standaloneProfileText(harness.prompts.base), input.skillsContext, input.agentsContext, input.ultraContext].filter(Boolean).join('\n\n')
+    const profileBase = standaloneProfileText(harness.prompts.base, { chatStyle: Boolean(harness.prompts.chatStyle?.trim()) })
+    const stablePrefix = [base, profileBase, input.skillsContext, input.agentsContext, input.ultraContext].filter(Boolean).join('\n\n')
     const volatileSuffix = transientContext ? '' : (input.envContext?.trim() ?? '')
     return {
       layout: harness.prompts.layout,

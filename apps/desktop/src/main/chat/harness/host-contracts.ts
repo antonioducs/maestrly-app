@@ -191,8 +191,11 @@ export interface MaestrlyBasePromptInput {
   hasNotesTab: boolean
 }
 
-/** Keep applicable profile behavior; project identity and automatic instruction discovery belong to the host. */
-export function standaloneProfileText(text: string | null | undefined): string {
+/**
+ * Keep applicable profile behavior; project identity and automatic instruction discovery belong to the host. With a
+ * chat style the profile's `# Style` is written for coding work, so it is scoped to the tasks the user requests.
+ */
+export function standaloneProfileText(text: string | null | undefined, options: { chatStyle?: boolean } = {}): string {
   return (text ?? '')
     .split(/\n\s*\n/)
     .filter(
@@ -201,7 +204,10 @@ export function standaloneProfileText(text: string | null | undefined): string {
           paragraph
         )
     )
-    .map((paragraph) => paragraph.replace(/^# Working on the project$/m, '# Working on requested tasks'))
+    .map((paragraph) => {
+      const scoped = paragraph.replace(/^# Working on the project$/m, '# Working on requested tasks')
+      return options.chatStyle ? scoped.replace(/^# Style$/m, '# Style for requested work') : scoped
+    })
     .join('\n\n')
 }
 
@@ -223,6 +229,7 @@ function standaloneCapabilities(mode: ChatBehavior): string {
 export function buildMaestrlyBasePrompt(input: MaestrlyBasePromptInput): string {
   if (input.scope === 'standalone') {
     const isBot = Boolean(botIdentityPrompt(input.cwd))
+    const chatStyle = input.harness.prompts.chatStyle?.trim() ?? ''
     const scopeLine = isBot
       ? `This is your persistent bot conversation, with no project or repository. Your durable memory is described in the "# Memory" section when present. The private working directory is ${input.cwd}.`
       : `This is a standalone conversation, with no project or repository. The private working directory is ${input.cwd}.`
@@ -234,9 +241,10 @@ export function buildMaestrlyBasePrompt(input: MaestrlyBasePromptInput): string 
 ${scopeLine}
 This directory is an execution location, not an operating-system sandbox. Answer ordinary conversation without requiring file inspection, tests or commits. Profile guidance about code applies only when the user requests work on files or code.
 ${discovery} Online research requires an actually available tool; webfetch reads URLs and is not a general search engine. Never claim to have searched without using an available search tool.`,
+      chatStyle,
       harnessBehaviorHeader(input.harness),
       botIdentityPrompt(input.cwd),
-      standaloneProfileText(input.harness.prompts.styleAndWork),
+      standaloneProfileText(input.harness.prompts.styleAndWork, { chatStyle: Boolean(chatStyle) }),
       HOST_USING_TOOLS,
       standaloneCapabilities(input.mode),
       HOST_RENDERING,
