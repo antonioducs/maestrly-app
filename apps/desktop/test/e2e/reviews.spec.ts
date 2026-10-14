@@ -290,7 +290,8 @@ test('reviews code and plans on the reviewer model the person chooses', async ()
         }
       )
       .toBe(true)
-    expect(await inPanel<boolean>(`return document.body.textContent.includes(${JSON.stringify(FINDING)})`)).toBe(true)
+    // The finding became a line comment; compare in the test so no value is built into the panel script.
+    expect(await inPanel<string>(`return document.body.textContent`)).toContain(FINDING)
     const planReviewers = reviewerRequests().slice(before)
     expect(planReviewers.some((request) => request.lastUser.startsWith('Lens: feasibility'))).toBe(true)
     expect(new Set(planReviewers.map((request) => request.model))).toEqual(new Set(['review-secondary']))
