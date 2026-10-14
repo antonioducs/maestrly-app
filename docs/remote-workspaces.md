@@ -134,6 +134,38 @@ Separate environments keep credentials from mixing by mistake. They still share 
 pairing: anyone with root on the server, or with a paired computer, reaches all of them. When a company requires its
 work to stay off a machine you share with other work, use a server of its own for it.
 
+## Move a conversation
+
+A conversation of a workspace can move between this computer and the server, either way, and keeps going there: same
+conversation, same history. Right-click it in the sidebar (or use its **⋯** menu), choose **Move to**, then the machine.
+Maestrly checks both sides first and shows what will happen; nothing moves until you choose **Move**.
+
+- **What goes with it:** its messages, attachments, generated images, notes, the branch's commits that are not on the
+  remote yet, and the changes you have not committed: staged, unstaged, and untracked. Files Git ignores (`.env`,
+  build output) go only if you select them in the dialog; a file that may hold a secret asks you to confirm it again.
+- **What stays behind:** the project's memory, terminals, the browser, queued messages, and usage history. The model
+  provider's session starts again at the destination from the conversation's history, so the first turn there sends
+  that history again.
+- **The project at the destination.** Maestrly looks for a workspace with the same `origin` remote. Without one, it
+  clones the repository into the destination's projects folder (on the server, its **Workspaces** folder) with the
+  destination's Git credentials: a private repository needs credentials set up on the server first. The commits the
+  remote already has come from the remote; only the others travel with the conversation.
+- **The branch.** The conversation keeps its branch name. When the destination already has that branch at an older
+  commit of it, the branch moves forward; when it is checked out there or went another way, the conversation gets
+  `<branch>-moved`, and you can type another name in the dialog.
+- **What the source keeps.** Once the destination holds a verified copy, the conversation leaves the source and its
+  worktree is removed. The branch stays, with the moved working tree saved as `refs/maestrly/moved/<id>`, and the
+  package that was sent stays for seven days in the profile's `conversation-moves` folder. A conversation that used
+  the project's main checkout leaves that checkout as it was.
+
+Moving stops the conversation first: wait for its turn to finish. If a move stops halfway (a lost connection, a clone
+that fails), the conversation stays held on both machines and Maestrly asks you to **Continue** or **Undo move**, also
+after a restart. Undo is available until the source lets the conversation go; after that, the destination already has
+it and the move can only go on.
+
+Plain chats, conversations across several repositories, bot conversations, and repositories without an `origin` remote
+cannot move. Both machines must run the same Maestrly version.
+
 ## Browser
 
 The **Browser** tab of the drawer, in a conversation on the server, shows the conversation's browser on the server: the
@@ -248,6 +280,8 @@ kept by the server: opening the conversation on one computer clears it on the ot
 - **Drawer tools stay docked** for those conversations: no floating windows and no pop-up shortcuts.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between
   folders, and workspace groups are for conversations of this computer.
+- **Moving plain chats and multi-repository conversations** between this computer and the server: only conversations
+  of a workspace with one repository move (see [Move a conversation](#move-a-conversation)).
 - **Several servers.** This computer pairs with one bot server, so it shows the chats and workspaces of that server's
   environments only.
 - **Isolation between workspaces of one environment.** They share one container, one user, and one set of accounts:
