@@ -134,7 +134,9 @@ describe('conversation move target', () => {
 
   it('matches an existing workspace by origin in another URL form', async () => {
     const other = repo.clone('other')
-    git(other, 'remote', 'set-url', 'origin', `file://${repo.remote}/`)
+    // Another spelling of the same remote. A Windows path is no file URL, so there only the suffixes differ.
+    const spelled = process.platform === 'win32' ? `${repo.remote.replace(/\.git$/, '')}/` : `file://${repo.remote}/`
+    git(other, 'remote', 'set-url', 'origin', spelled)
     const ws = makeWorkspace({ path: other, name: 'other' })
     expect((await inspection()).workspace).toEqual({ kind: 'existing', workspaceId: ws.id, name: 'other', path: other })
   })
