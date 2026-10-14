@@ -146,6 +146,28 @@ describe('conversation move rows and files', () => {
     expect(count('chat_messages')).toBe(0)
   })
 
+  it("keeps this machine's usage of messages that come back, and leaves new usage where it was spent", () => {
+    expect(count('chat_usage_ledger')).toBe(2)
+    // The conversation leaves (its usage stays in the ledger), gets a billed turn elsewhere, and comes back.
+    const rows = readConversationRows(conv.id)
+    getDb().prepare('DELETE FROM conversations WHERE id = ?').run(conv.id)
+    expect(count('chat_usage_ledger')).toBe(2)
+    const elsewhere = {
+      ...rows.tables.chat_messages[2],
+      id: 'm4',
+      seq: 4,
+      created_at: 400,
+      meta_json: JSON.stringify({ model: { providerId: 'p', modelId: 'm' }, usage: { input: 7, output: 7 } }),
+    }
+    rows.tables.chat_messages.push(elsewhere)
+    insertConversationRows(rows, { workspaceId: conv.workspaceId, branch: 'feat', cwd })
+    const ledger = getDb().prepare('SELECT message_id FROM chat_usage_ledger ORDER BY message_id').all() as Array<{
+      message_id: string
+    }>
+    expect(ledger.map((row) => row.message_id)).toEqual(['m2', 'm3'])
+    expect(count('chat_messages')).toBe(4)
+  })
+
   it('refuses an existing conversation id atomically', () => {
     const rows = readConversationRows(conv.id)
     expect(() => insertConversationRows(rows, { workspaceId: conv.workspaceId, branch: 'x', cwd: '/x' })).toThrow(

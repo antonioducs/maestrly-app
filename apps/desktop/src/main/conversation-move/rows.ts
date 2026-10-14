@@ -1,6 +1,6 @@
 import type { SQLInputValue } from 'node:sqlite'
 import type { ConversationExperience } from '../../shared/conversation-experience'
-import { forgetChatStoreCaches } from '../chat/chat-store'
+import { forgetChatStoreCaches, insertMovedChatMessages } from '../chat/chat-store'
 import { deleteConversation, getConversation, insertConversation } from '../store/conversations'
 import { getDb, transaction } from '../store/db'
 import { MoveError } from './errors'
@@ -96,6 +96,12 @@ export function readConversationRows(conversationId: string, now = Date.now()): 
 }
 
 const SQL_VALUE_TYPES = new Set(['string', 'number', 'bigint'])
+const OWNED_BY_CONVERSATION: ReadonlySet<MoveTable> = new Set([
+  'chat_messages',
+  'chat_tool_executions',
+  'chat_subagent_sessions',
+  'chat_maestro_runs',
+])
 function sqlValue(value: unknown, table: string, column: string): SQLInputValue {
   if (value === null || value === undefined) return null
   if (SQL_VALUE_TYPES.has(typeof value)) return value as SQLInputValue
@@ -136,26 +142,25 @@ export function insertConversationRows(
       const columns = new Set(
         (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name)
       )
-      for (const row of tableRows) {
+      const values = tableRows.map((row) => {
         if (!row || typeof row !== 'object') throw new MoveError('package-invalid', `A row of ${table} is malformed.`)
-        const names = Object.keys(row)
-        const unknown = names.find((name) => !columns.has(name))
+        const unknown = Object.keys(row).find((name) => !columns.has(name))
         if (unknown) throw new MoveError('package-invalid', `Schema mismatch: ${table}.${unknown}.`)
-        if (
-          (table === 'chat_messages' || table === 'chat_tool_executions' || table === 'chat_subagent_sessions') &&
-          row.conversation_id !== conversation.id
-        )
+        if (OWNED_BY_CONVERSATION.has(table) && row.conversation_id !== conversation.id)
           throw new MoveError('package-invalid', `A row of ${table} belongs to another conversation.`)
+        return Object.fromEntries(Object.entries(row).map(([name, value]) => [name, sqlValue(value, table, name)]))
+      })
+      // Messages go through the chat store, which keeps what it derives from them coherent.
+      if (table === 'chat_messages') {
+        insertMovedChatMessages(conversation.id, values)
+        continue
+      }
+      for (const row of values) {
+        const names = Object.keys(row)
         db.prepare(`INSERT INTO ${table} (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`).run(
-          ...names.map((name) => sqlValue(row[name], table, name))
+          ...names.map((name) => row[name])
         )
       }
-    }
-    // Usage stays attributed to the machine where it happened: undo what the insert trigger copied to the ledger.
-    const messageIds = rows.tables.chat_messages.map((row) => String(row.id))
-    for (let index = 0; index < messageIds.length; index += 500) {
-      const chunk = messageIds.slice(index, index + 500)
-      db.prepare(`DELETE FROM chat_usage_ledger WHERE message_id IN (${inList(chunk)})`).run(...chunk)
     }
   })
   forgetChatStoreCaches()
