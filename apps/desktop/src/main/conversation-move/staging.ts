@@ -3,6 +3,7 @@ import path from 'node:path'
 import { app } from 'electron'
 import { MOVE_BACKUP_RETENTION_MS } from '../../shared/conversation-move'
 import { hostFsRoots } from '../remote-host/host-fs'
+import { isServerMode } from '../remote-host/server/config'
 import { listActiveMoveEndpoints } from './endpoint-store'
 import { listIncompleteMoves } from './store'
 
@@ -23,10 +24,15 @@ async function real(target: string): Promise<string> {
 
 async function stagingRoot(): Promise<string> {
   const userData = path.join(app.getPath('userData'), STAGING_DIR)
-  const roots = await Promise.all(hostFsRoots().map((root) => real(root.path)))
+  // Only a host serves its files to another computer; a desktop reads its own staging directly.
+  if (!isServerMode()) return userData
+  const hostRoots = hostFsRoots()
+  const roots = await Promise.all(hostRoots.map((root) => real(root.path)))
   const parent = await real(app.getPath('userData'))
   if (roots.length === 0 || roots.some((root) => within(parent, root))) return userData
-  return path.join(roots[0], HOST_ROOT_STAGING_DIR)
+  // The workspaces folder the gateway mounts outlives the container; the home folder is the fallback.
+  const preferred = hostRoots.findIndex((root) => root.label === 'workspaces')
+  return path.join(roots[preferred >= 0 ? preferred : 0], HOST_ROOT_STAGING_DIR)
 }
 
 /** The move's staging folder on this host, created when missing. */
