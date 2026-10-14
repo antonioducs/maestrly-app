@@ -13,7 +13,7 @@ import { AppText } from '../primitives/Text'
 export function RoutineList({ bot }: { bot: FleetBot }) {
   const { palette } = useTheme()
   const text = useI18n()
-  const { t, locale } = text
+  const { t } = text
   const controller = useFleetController()
   const [routines, setRoutines] = useState<FleetRoutine[] | null>(null)
   const [running, setRunning] = useState<string | null>(null)
@@ -69,7 +69,7 @@ export function RoutineList({ bot }: { bot: FleetBot }) {
             <View style={{ flex: 1, minWidth: 0 }}>
               <AppText numberOfLines={1}>{routine.title}</AppText>
               <AppText variant="sub" tone="muted" numberOfLines={1}>
-                {formatSchedule(routine.schedule, text, locale)}
+                {formatSchedule(routine.schedule, text)}
               </AppText>
             </View>
             {routine.enabled ? null : (

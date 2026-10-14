@@ -581,6 +581,14 @@ export const en = {
 
   'markdown.image': 'Image: {name}',
   'markdown.opens': 'Opens in the browser',
+
+  'schedule.dayShort.1': 'Mon',
+  'schedule.dayShort.2': 'Tue',
+  'schedule.dayShort.3': 'Wed',
+  'schedule.dayShort.4': 'Thu',
+  'schedule.dayShort.5': 'Fri',
+  'schedule.dayShort.6': 'Sat',
+  'schedule.dayShort.7': 'Sun',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1171,4 +1179,12 @@ export const ptBR: Record<keyof typeof en, string> = {
 
   'markdown.image': 'Imagem: {name}',
   'markdown.opens': 'Abre no navegador',
+
+  'schedule.dayShort.1': 'seg',
+  'schedule.dayShort.2': 'ter',
+  'schedule.dayShort.3': 'qua',
+  'schedule.dayShort.4': 'qui',
+  'schedule.dayShort.5': 'sex',
+  'schedule.dayShort.6': 'sáb',
+  'schedule.dayShort.7': 'dom',
 }

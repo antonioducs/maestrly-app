@@ -1,5 +1,5 @@
 import type { FleetRoutineSchedule } from '@maestrly/bot-fleet-protocol'
-import type { Locale, MessageKey, Text } from '../i18n/translate'
+import type { MessageKey, Text } from '../i18n/translate'
 
 /** Token counts as the desktop shows them: 950, 64.0k, 1.2M. */
 export const formatTokens = (n: number): string =>
@@ -14,11 +14,7 @@ export const effortLabel = (effort: string, t: Text['t']): string =>
 export const formatCost = (usd: number): string =>
   usd >= 1 ? `$${usd.toFixed(2)}` : usd >= 0.01 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(4)}`
 
-// 2024-01-01 was a Monday: day n of the week (1 = Monday) is January n.
-const weekdayName = (day: number, locale: Locale) =>
-  new Intl.DateTimeFormat(locale, { weekday: 'short', timeZone: 'UTC' }).format(Date.UTC(2024, 0, day))
-
-export function formatSchedule(schedule: FleetRoutineSchedule, { t, plural }: Text, locale: Locale): string {
+export function formatSchedule(schedule: FleetRoutineSchedule, { t, plural }: Text): string {
   if (schedule.kind === 'interval') {
     const minutes = schedule.everyMinutes
     return minutes % 60 === 0 ? plural('schedule.hours', minutes / 60) : plural('schedule.minutes', minutes)
@@ -31,6 +27,6 @@ export function formatSchedule(schedule: FleetRoutineSchedule, { t, plural }: Te
   const names =
     days.length === 1
       ? t(`schedule.days.${days[0]}` as MessageKey)
-      : days.map((day) => weekdayName(day, locale).replace(/\.$/, '')).join(', ')
+      : days.map((day) => t(`schedule.dayShort.${day}` as MessageKey)).join(', ')
   return t('schedule.weekly', { days: names, time })
 }

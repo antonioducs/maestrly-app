@@ -26,9 +26,18 @@ export function translate(key: MessageKey, locale: Locale, values: Values = {}):
   return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in values ? String(values[name]) : match))
 }
 
+/**
+ * The plural form of a count, by CLDR's rules for the app's languages: English says "1 file", Portuguese also says
+ * "0 arquivo". Hermes, the engine the app runs on, has no `Intl.PluralRules`.
+ */
+export function pluralCategory(count: number, locale: Locale): 'one' | 'other' {
+  const whole = Math.trunc(Math.abs(count))
+  if (locale === 'pt-BR') return whole <= 1 ? 'one' : 'other'
+  return count === 1 ? 'one' : 'other'
+}
+
 export function pluralize(key: PluralKey, count: number, locale: Locale, values: Values = {}): string {
-  const rule = new Intl.PluralRules(locale).select(count)
-  const exact = `${key}.${rule}` as MessageKey
+  const exact = `${key}.${pluralCategory(count, locale)}` as MessageKey
   const catalog: Record<string, string> = locale === 'pt-BR' ? ptBR : en
   const chosen = exact in catalog ? exact : (`${key}.other` as MessageKey)
   return translate(chosen, locale, { count, ...values })
