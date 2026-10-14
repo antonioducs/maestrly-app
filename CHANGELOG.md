@@ -5,8 +5,19 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-14
+
 ### Added
 
+- Let the model search the web with a `web_search` tool, in every runtime.
+  **Settings → Tools → Web search** picks automatic selection, Tavily, Brave,
+  your ChatGPT subscription or DuckDuckGo (no key), or turns it off. Queries go
+  to the provider you pick. See [chat context](docs/chat-context.md).
+- Get answers with interactive interfaces. The model can write HTML, CSS and
+  JavaScript that render in an isolated frame in chats, projects and bot
+  conversations, and can preview an interface before showing it. Turn
+  **Interactive answers** off in Settings → Tools, or in a bot environment's
+  preferences. See [interactive answers](docs/chat-context.md#interactive-answers).
 - Publish artifacts from chats on a server's workspaces environment, with
   nothing to set up: they go to the server that runs the chat. **Open** on their
   cards, and the agent's `artifact_open`, open the page in your computer's
@@ -22,6 +33,21 @@ User-visible changes by version. Downloads are on
   ways. Update the desktop app and the bot server, and restart each environment
   onto the new image, to open its screens. See
   [screens of a bot](docs/bot-fleet.md#screens-of-a-bot).
+- Make standalone chats and bots answer in a conversational voice that matches
+  yours, instead of the terse style used for coding work. Project conversations
+  are unchanged, and existing conversations start a fresh provider session on
+  their next message.
+
+### Fixed
+
+- Make automatic compaction fail less: summary calls get more time and retries,
+  and compaction, including `/compact`, reuses the summary prepared in the
+  background instead of summarizing the whole history again.
+- Make menus, selects, popovers and other floating surfaces opaque, so the
+  content behind them no longer shows through.
+- Keep a conversation hidden from the sidebar while its deletion runs, instead
+  of showing it again until the deletion ends. Deleting several conversations
+  now continues past a failure.
 
 ## [0.17.0] - 2026-10-13
 
