@@ -48,6 +48,8 @@ const schema = z.object({
     .nullable(),
   timezone: z.string().min(1).refine(isValidTimeZone, 'Invalid time zone'),
   botSecurityOpt: z.array(z.string()),
+  push: z.enum(['expo', 'off']),
+  expoAccessToken: z.string().min(1).max(200).nullable(),
 })
 export type GatewayConfig = z.infer<typeof schema>
 
@@ -85,6 +87,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     gatewayContainer: env[FLEET_GATEWAY_ENV.container]?.trim() || null,
     timezone: env[FLEET_GATEWAY_ENV.timezone] ?? 'UTC',
     botSecurityOpt,
+    push: env[FLEET_GATEWAY_ENV.push]?.trim() || 'expo',
+    expoAccessToken: env[FLEET_GATEWAY_ENV.expoAccessToken]?.trim() || null,
   })
   mkdirSync(value.dataDir, { recursive: true, mode: 0o700 })
   chmodSync(value.dataDir, 0o700)

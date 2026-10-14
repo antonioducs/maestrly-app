@@ -440,6 +440,7 @@ export async function harness(
     runtimes?: boolean
     messageEdit?: boolean
     videoScreens?: boolean
+    pushOff?: boolean
   } = {}
 ) {
   const instance = await fake(
@@ -455,6 +456,7 @@ export async function harness(
     MAESTRLY_GATEWAY_DATA_DIR: dir,
     MAESTRLY_GATEWAY_PUBLIC_PORT: '1',
     MAESTRLY_GATEWAY_INTERNAL_PORT: '2',
+    ...(options.pushOff ? { MAESTRLY_GATEWAY_PUSH: 'off' } : {}),
   })
   const store = new Store(dir),
     docker = new FakeDockerDriver()

@@ -275,4 +275,62 @@ describe('remote UI hub', () => {
     expect(h.socket.closed).not.toBeNull()
     expect(h.hub.sessionCount()).toBe(0)
   })
+
+  describe('phones', () => {
+    const phoneHello: BridgeClientFrame = {
+      t: 'hello',
+      protocol: 1,
+      appVersion: '0.1.0',
+      client: { deviceName: 'iPhone', os: 'ios', locale: 'pt-BR', kind: 'mobile', mobileApi: 1 },
+    }
+
+    it('welcomes a phone of the same mobile API whatever its app version, keeping the host language', () => {
+      const h = setup()
+      h.frame(phoneHello)
+      expect(h.last()).toEqual({ t: 'welcome', protocol: 1, appVersion: '1.2.3', host: hostInfo, mobileApi: 1 })
+      expect(h.applyLocale).not.toHaveBeenCalled()
+      expect(h.socket.closed).toBeNull()
+    })
+
+    it('refuses a phone of another mobile API, and a hello whose device and kind disagree', () => {
+      const newer = setup()
+      newer.frame({ ...phoneHello, client: { ...phoneHello.client, mobileApi: 2 } } as BridgeClientFrame)
+      expect(newer.last()).toEqual({ t: 'refused', reason: 'mobile-api', hostVersion: '1.2.3' })
+      expect(newer.socket.closed?.[0]).toBe(REMOTE_BRIDGE_CLOSE.refused)
+
+      const mixed = setup()
+      mixed.frame({ ...hello, client: { ...hello.client, kind: 'mobile', mobileApi: 1 } } as BridgeClientFrame)
+      expect(mixed.socket.closed?.[0]).toBe(REMOTE_BRIDGE_CLOSE.badFrame)
+      const unlabeled = setup()
+      unlabeled.frame({
+        ...phoneHello,
+        client: { deviceName: 'iPhone', os: 'android', locale: 'en' },
+      } as BridgeClientFrame)
+      expect(unlabeled.socket.closed?.[0]).toBe(REMOTE_BRIDGE_CLOSE.badFrame)
+    })
+
+    it('lets a phone call the mobile API only, never the host IPC handlers', async () => {
+      const h = setup()
+      const secret = vi.fn(() => 'host secrets')
+      h.table.record('chat:key-set', 'invoke', secret)
+      h.table.record('conversation:list-standalone', 'invoke', () => [])
+      h.table.record('workspace:list', 'invoke', () => [])
+      h.frame(phoneHello)
+      h.frame({ t: 'open', origin: 1, role: 'main' })
+      h.frame({ t: 'invoke', id: 1, origin: 1, channel: 'chat:key-set', args: ['x'] })
+      h.frame({ t: 'send', origin: 1, channel: 'chat:key-set', args: ['x'] })
+      h.frame({ t: 'invoke', id: 2, origin: 1, channel: 'mobile:v1:lists', args: [{}] })
+      h.frame({ t: 'invoke', id: 3, origin: 9, channel: 'mobile:v1:lists', args: [{}] })
+      await h.settle()
+      await h.settle()
+      expect(secret).not.toHaveBeenCalled()
+      const results = h.frames().filter((frame) => frame.t === 'result')
+      expect(results.sort((a, b) => (a.t === 'result' && b.t === 'result' ? a.id - b.id : 0))).toEqual([
+        { t: 'result', id: 1, ok: false, error: { message: 'Unknown channel', code: 'unknown-channel' } },
+        { t: 'result', id: 2, ok: true, value: { workspaces: [], chats: [] } },
+        { t: 'result', id: 3, ok: false, error: { message: 'Unknown origin', code: 'unknown-origin' } },
+      ])
+      expect(isRemoteUiTarget).toBeDefined()
+    })
+  })
 })

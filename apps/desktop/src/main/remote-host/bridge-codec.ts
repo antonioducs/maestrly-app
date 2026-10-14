@@ -80,7 +80,13 @@ const clientFrame = z.discriminatedUnion('t', [
     t: z.literal('hello'),
     protocol: z.int(),
     appVersion: z.string().max(64),
-    client: z.object({ deviceName: z.string().max(128), os, locale: z.string().max(16) }),
+    client: z.object({
+      deviceName: z.string().max(128),
+      os: z.enum(['mac', 'win', 'linux', 'ios', 'android']),
+      locale: z.string().max(16),
+      kind: z.enum(['desktop', 'mobile']).optional(),
+      mobileApi: z.int().optional(),
+    }),
   }),
   z.object({
     t: z.literal('open'),
@@ -106,8 +112,14 @@ const hostInfo = z.object({
   browser: z.boolean(),
 })
 const hostFrame = z.union([
-  z.object({ t: z.literal('welcome'), protocol: z.int(), appVersion: z.string(), host: hostInfo }),
-  z.object({ t: z.literal('refused'), reason: z.enum(['protocol', 'version']), hostVersion: z.string() }),
+  z.object({
+    t: z.literal('welcome'),
+    protocol: z.int(),
+    appVersion: z.string(),
+    host: hostInfo,
+    mobileApi: z.int().optional(),
+  }),
+  z.object({ t: z.literal('refused'), reason: z.enum(['protocol', 'version', 'mobile-api']), hostVersion: z.string() }),
   z.object({ t: z.literal('result'), id, ok: z.literal(true), value: z.unknown().optional() }),
   z.object({
     t: z.literal('result'),

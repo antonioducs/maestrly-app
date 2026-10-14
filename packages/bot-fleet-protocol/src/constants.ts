@@ -105,6 +105,10 @@ export const FLEET_GATEWAY_ENV = {
   container: 'MAESTRLY_GATEWAY_CONTAINER',
   /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
   botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
+  /** `off` sends no push notifications to phones; `expo` (the default) sends them through Expo's push service. */
+  push: 'MAESTRLY_GATEWAY_PUSH',
+  /** An Expo access token, when the Expo account requires one for push notifications. */
+  expoAccessToken: 'MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN',
   timezone: 'TZ',
 } as const
 
@@ -318,3 +322,18 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
   inputBytesMax: 320 * 1024,
   resultBytesMax: 2 * 1024 * 1024,
 } as const
+
+/**
+ * Gateway feature: what phones need of the gateway. A paired device may create one-use pairing codes for another
+ * device, which the desktop shows as a QR code; a bridge ticket may name the Origin its WebSocket will send, which
+ * phones always send; and phones register for push notifications (`/v1/devices/self/push`). These ship together, so
+ * they are one feature, announced in `moreFeatures` of `/v1/meta`.
+ */
+export const FLEET_PHONES_FEATURE = 'phones'
+/** Unused, unexpired codes paired devices may have at once. The CLI is not limited. */
+export const FLEET_ACTIVE_PAIRINGS_MAX = 5
+/** Workspaces host capability: it speaks the mobile API (`mobile:v1:*` channels) to phones over the bridge. */
+export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
+
+/** A gateway reading an environment's events with this query set to 1 also gets `chat.attention` events. */
+export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'

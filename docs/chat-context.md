@@ -137,6 +137,8 @@ How they behave:
   than the answer, text cut off, a layout that grows with its own frame, script
   errors and blocked requests.
 - **Interface source** shows what the agent wrote.
+- The [mobile app](mobile.md) does not run interfaces: it shows each as a card,
+  with its source behind **Show code**. Use it in Maestrly on a computer.
 
 Interfaces cannot call tools, read files or fetch data, so they show only what
 the agent put in them. They may load images, video and audio from any web

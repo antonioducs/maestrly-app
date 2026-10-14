@@ -59,6 +59,8 @@ export function verificationSteps(options, platform = process.platform, env = pr
       ],
     })
     desktop('npm', ['run', 'test:e2e'])
+    // The mobile app's web build in headless Chromium, through its demo server.
+    npm('test:e2e:mobile')
   }
   if (options.package) {
     const script = { darwin: 'package', linux: 'package:linux', win32: 'package:win' }[platform]

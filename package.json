@@ -14,6 +14,7 @@
     "dev": "npm run dev:desktop",
     "dev:desktop": "npm run build:protocol && npm run build:fleet-protocol && npm run build:artifact-host && npm run dev --workspace @maestrly/desktop",
     "dev:bot-gateway": "npm run build:fleet-protocol && npm run build:artifact-host && npm run dev --workspace @maestrly/bot-gateway",
+    "dev:mobile": "npm run build:fleet-protocol && npm run start --workspace @maestrly/mobile",
     "build": "npm run build:desktop",
     "build:desktop": "npm run build:protocol && npm run build:fleet-protocol && npm run build:artifact-host && npm run build --workspace @maestrly/desktop",
     "build:fleet-protocol": "npm run build --workspace @maestrly/bot-fleet-protocol",
@@ -24,10 +25,11 @@
     "check:fleet-protocol": "npm run check --workspace @maestrly/bot-fleet-protocol",
     "check:artifact-host": "npm run check --workspace @maestrly/artifact-host",
     "check:bot-gateway": "npm run build:fleet-protocol && npm run build:artifact-host && npm run check --workspace @maestrly/bot-gateway",
+    "check:mobile": "npm run build:fleet-protocol && npm run check --workspace @maestrly/mobile",
     "check:protocol": "npm run check --workspace @maestrly/protocol",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:local-ml-toolchain": "node scripts/local-ml-toolchain.mjs",
-    "check": "npm run check:boundaries && npm run check:protocol && npm run check:fleet-protocol && npm run check:artifact-host && npm run check:bot-gateway && npm run check:desktop",
+    "check": "npm run check:boundaries && npm run check:protocol && npm run check:fleet-protocol && npm run check:artifact-host && npm run check:bot-gateway && npm run check:mobile && npm run check:desktop",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",
@@ -37,6 +39,7 @@
     "test:docs": "node scripts/check-markdown-links.mjs",
     "test:e2e": "npm run test:e2e --workspace @maestrly/desktop",
     "test:e2e:docker": "node scripts/test-e2e-docker.mjs",
+    "test:e2e:mobile": "npm run build:fleet-protocol && npm run test:web --workspace @maestrly/mobile",
     "package": "npm run package --workspace @maestrly/desktop",
     "package:linux": "npm run package:linux --workspace @maestrly/desktop",
     "package:win": "npm run package:win --workspace @maestrly/desktop",
@@ -80,6 +83,8 @@
     },
     "micromark-extension-math": {
       "katex": "^0.18.10"
-    }
+    },
+    "react-native-reanimated": "4.5.1",
+    "react-native-worklets": "0.10.1"
   }
 }

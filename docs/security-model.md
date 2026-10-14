@@ -402,6 +402,25 @@ the server's SSH host key as a SHA-256 fingerprint on first use and stops the
 tunnel if the key changes. A server you manage separately may use private HTTPS,
 such as Tailscale Serve.
 
+Pairing codes come from the gateway's `pair` command or from an already paired
+device (`POST /v1/pairings`), which the desktop app shows as a QR code for a
+phone. Paired devices may have at most five unused codes at once; the command
+line is not limited. This adds no authority: every paired device can already
+control the whole gateway, and the new device gets exactly that authority. Each
+code is one-use, expires after ten minutes, and is stored only as a hash.
+
+A phone is a paired device with the same authority. It registers for
+notifications with its own device token (`/v1/devices/self/push`): the gateway
+keeps its Expo push token, language and preferences, deletes them when the
+device unpairs or is revoked, and sends notifications through Expo's push
+service unless the server sets `MAESTRLY_GATEWAY_PUSH=off`. A notification
+carries only the bot's name or the chat's title, a fixed phrase in the phone's
+language, and the ids the app needs to open it, never what a bot, chat or person
+wrote; Expo and Apple or Google see that much. A phone opens an artifact as its
+owner with a single-use ticket it requests with its device token, only through
+the server's HTTPS public address, and shows the page in the system's browser
+view, outside the app.
+
 VPS setup accepts a password or private key for that job and generates a new
 ed25519 key for later access. This key grants root or passwordless `sudo`
 authority to the VPS: protect it as you would an administrator credential. The
@@ -518,6 +537,20 @@ one through a **bridge**: see [remote workspaces](remote-workspaces.md).
   without reading them. A device holds at most sixteen bridges. Revoking a
   device discards its tickets and closes its bridges; stopping or archiving
   the environment closes every bridge to it.
+- **A phone reaches only the mobile API.** A phone says it is one in its first
+  frame and then may call only the versioned `mobile:v1:*` channels
+  (`packages/bot-fleet-protocol/src/mobile-bridge.ts`): list, create, open,
+  rename and archive chats; send messages and attachments; answer permission
+  requests, questions and plans; change a chat's model, effort, Fast, mode,
+  permission mode, MCP servers and skills; compact; and read the images of what
+  it was sent. It never calls the host's IPC handlers directly: the host runs
+  them on its behalf through a window of its own that the phone cannot address,
+  so a phone cannot read files, open terminals, change accounts or change
+  settings. A phone does not change the host's language. A phone's WebSocket
+  always sends an `Origin` header, which the gateway refuses elsewhere: the
+  phone names that origin when it asks for the ticket (`phones`), the
+  upgrade may carry that one origin only, and the gateway strips it before the
+  host sees the handshake.
 - **The host refuses what belongs to a desktop.** For a computer's renderer it
   refuses channels that drive a window, native views, sound, updates, the bot
   fleet client and its installer, and the microphone, and channels whose

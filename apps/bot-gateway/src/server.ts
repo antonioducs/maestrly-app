@@ -4,6 +4,7 @@ import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { FleetNetwork } from './network.js'
 import {
+  type FleetGatewayEvent,
   FLEET_GATEWAY_ROUTES,
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
@@ -30,6 +31,7 @@ import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
+import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge } from './desktop-bridge.js'
 
@@ -107,6 +109,21 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   // A workspaces environment that a device uses through any of these is not idle.
   ctx.lifecycle.hostConnections = (id) => bridge.count(id) + hostFiles.count(id) + hostEditor.count(id)
+  // Phones hear of what waits on the owner even while no app streams events.
+  const push =
+    ctx.push ??
+    new PushNotifier({
+      store: ctx.store,
+      sender:
+        ctx.config.push === 'off'
+          ? disabledPushSender
+          : new ExpoPushSender({ accessToken: ctx.config.expoAccessToken }),
+      serverName: () => ctx.config.displayName ?? ctx.config.publicHost,
+      log: (message) => console.error(JSON.stringify({ component: 'push', level: 'warn', message })),
+    })
+  const observePush = (event: FleetGatewayEvent) => push.observe(event)
+  ctx.events.observers.add(observePush)
+  ctx.lifecycle.onChatAttention = (conversationId, name, kind) => void push.chat(conversationId, name, kind)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -139,6 +156,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   const activeCtx: GatewayContext = {
     ...ctx,
+    push,
     ownerMemory,
     peers,
     routines,
@@ -298,9 +316,10 @@ export function createGatewayServers(ctx: GatewayContext) {
     let error: GatewayError = new GatewayError('NOT_FOUND', 'Route not found')
     try {
       if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
-      if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const { pathname, search } = new URL(req.url ?? '/', 'http://gateway')
+      // A bridge ticket says which Origin, if any, its upgrade may carry (`phones`).
       if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
+      if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       // The editor's WebSockets authenticate with the device token, as its requests do.
       const editor = parseFleetGatewayEditorPath(pathname)
       if (editor) {
@@ -364,6 +383,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       bridge.close()
       hostFiles.close()
       hostEditor.close()
+      ctx.events.observers.delete(observePush)
       ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(

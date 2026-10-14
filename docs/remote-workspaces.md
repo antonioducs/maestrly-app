@@ -287,6 +287,16 @@ kept by the server: opening the conversation on one computer clears it on the ot
 - **Isolation between workspaces of one environment.** They share one container, one user, and one set of accounts:
   use another environment for work that must stay apart.
 
+## On a phone
+
+The [mobile app](mobile.md) shows the same chats and workspaces of the server, and opens new chats on it. A phone uses
+a smaller, versioned API of the host instead of a computer's full access: it reads and writes chats, answers what
+they ask, and changes their setup, but it never reaches the server's files, terminals, accounts or settings. It does
+not need the same app version as the server, only the same mobile API, so it keeps working while the server updates.
+On a server with several workspaces environments, the phone shows the chats of one of them: the first that runs and
+speaks to phones. To use another scope from the phone, stop the others for now. While the app is open, its
+connection keeps that environment from stopping when idle, as a computer's does.
+
 ## Security
 
 Pairing this computer with a bot server already lets it control every environment of that server. For the workspaces
@@ -340,6 +350,9 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   stop, isolation, and their names and colors in the machine switcher. `remote-host-artifacts.spec.ts` has an agent on the host publish and open an artifact through a
   stand-in for the gateway's internal API, and checks that the client opens it and that the host's environment no
   longer holds the token.
+- `apps/desktop/test/e2e/mobile-bridge.spec.ts` runs the built app in server mode and drives it with the mobile
+  bridge client of `@maestrly/bot-fleet-protocol`, as a phone does: lists, a new chat, a streamed answer, a resend
+  that is not sent twice, and the chat's setup and models.
 - `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, its own
   mounted folder and network, a second environment out of reach of the first, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
   streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the

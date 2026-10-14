@@ -11,6 +11,11 @@ import { parseServerModeConfig } from './config'
 import { HostEditor } from './host-editor'
 import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
+import { setHostModelOptions } from './mobile-api'
+import { watchChatAttention } from './chat-attention'
+import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
+import { getConversation } from '../../store'
+import { getPending as getPendingPlan } from '../../plan-broker'
 
 /** What server mode needs from the main process. */
 export interface ServerHostDeps {
@@ -22,6 +27,8 @@ export interface ServerHostDeps {
   closeConversation(conversationId: string): Promise<void>
   /** Deletes a conversation with its messages and files. */
   purgeConversation(conversationId: string): Promise<void>
+  /** Follows the status of the host's conversations; returns how to stop. */
+  watchStatuses(listener: (conversationId: string, status: string) => void): () => void
 }
 
 /**
@@ -47,6 +54,17 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
   })
   try {
     await runtime.start()
+    // Phones choose a chat's model from what the host's accounts offer, listed as for bots.
+    setHostModelOptions(async () => (await runtime.selections()).options)
+    // What the chats need from the owner goes to the gateway, which notifies the owner's phones.
+    const stopAttention = watchChatAttention({
+      permissions: getChatPermissionBroker(),
+      questions: getChatQuestionBroker(),
+      watchStatuses: deps.watchStatuses,
+      conversation: (id) => getConversation(id),
+      hasPendingPlan: (id) => getPendingPlan(id) !== null,
+      publish: (event) => runtime.events.publish({ type: 'chat.attention', botId: null, ...event }),
+    })
     // Computers move files of the host's folders, and read the copies it makes of PDF attachments for them.
     const hostFiles = new HostFiles({
       roots: () => hostFsRoots().map((root) => root.path),
@@ -75,6 +93,7 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       })
     })
     window.on('closed', async () => {
+      stopAttention()
       deps.hub.closeAll()
       editor.closeAll()
       server.close()

@@ -1152,6 +1152,11 @@ app.whenReady().then(async () => {
         busy: () => activeChatRunCount() > 0,
         closeConversation: (id) => stopConversationLive(id),
         purgeConversation: (id) => deleteConversation(id),
+        watchStatuses: (listener) => {
+          const onStatus = ({ agentId, status }: { agentId: string; status: string }) => listener(agentId, status)
+          registry.on('status', onStatus)
+          return () => registry.off('status', onStatus)
+        },
       })
     } catch (error) {
       console.error(

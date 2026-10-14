@@ -77,6 +77,37 @@ The complete license and attribution are distributed with the `ws` package in
 `node_modules/ws/LICENSE`, inside the gateway image and inside the packaged
 desktop app.
 
+## uqr
+
+The desktop app includes [uqr](https://github.com/unjs/uqr) 0.1.3 to draw the QR
+code that pairs a phone with the bot server. It is licensed under the MIT
+License, Copyright (c) Project Nayuki and Copyright (c) 2023 Anthony Fu. The
+complete license is distributed with the package in `node_modules/uqr/LICENSE`.
+
+## Mobile app
+
+The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 57
+(`expo` 57.0.28 and the `expo-*` modules, Expo Router 57.0.26) and
+[React Native](https://reactnative.dev) 0.86.3, both under the MIT License. It
+also includes, under the MIT License,
+[react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2
+with [marked](https://github.com/markedjs/marked) 18.0.14,
+[react-native-svg](https://github.com/software-mansion/react-native-svg) 15.15.4,
+[AsyncStorage](https://github.com/react-native-async-storage/async-storage)
+2.2.0, and
+[expo-speech-recognition](https://github.com/jamsch/expo-speech-recognition)
+57.1.1 (Copyright (c) 2024 jamsch). Their complete licenses are distributed with
+each package.
+
+The app bundles three font families through `@expo-google-fonts` (MIT): Bricolage
+Grotesque (Copyright 2022 The Bricolage Grotesque Project Authors), Instrument
+Sans (Copyright 2022 The Instrument Sans Project Authors) and JetBrains Mono
+(Copyright 2020 The JetBrains Mono Project Authors). The fonts are licensed under
+the SIL Open Font License 1.1; the licenses are in
+[`BricolageGrotesque-OFL.txt`](apps/mobile/assets/licenses/BricolageGrotesque-OFL.txt),
+[`InstrumentSans-OFL.txt`](apps/mobile/assets/licenses/InstrumentSans-OFL.txt), and
+[`JetBrainsMono-OFL.txt`](apps/mobile/assets/licenses/JetBrainsMono-OFL.txt).
+
 ## ssh2
 
 The desktop app includes [ssh2](https://github.com/mscdex/ssh2) 1.17.0 to install

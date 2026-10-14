@@ -11,6 +11,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
+  FLEET_CHAT_ATTENTION_QUERY,
   FLEET_REASONING_QUERY,
   fleetImageMediaTypeSchema,
   buildPath,
@@ -595,7 +596,7 @@ export class InstanceClient {
     let response: Response
     try {
       // The gateway reads `reasoning` items and passes them on only to devices that ask for them.
-      const query = { since, [FLEET_REASONING_QUERY]: 1 }
+      const query = { since, [FLEET_REASONING_QUERY]: 1, [FLEET_CHAT_ATTENTION_QUERY]: 1 }
       response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.events.path, {}, query), {
         headers: {
           [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),

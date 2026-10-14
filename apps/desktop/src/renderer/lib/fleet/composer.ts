@@ -3,8 +3,6 @@ import {
   FLEET_FILE_LIMITS,
   FLEET_IMAGE_MEDIA_TYPES,
   type FleetCompactionConfig,
-  type FleetSelection,
-  type FleetSelectionOption,
   type FleetUsage,
 } from '@maestrly/bot-fleet-protocol'
 
@@ -67,27 +65,7 @@ export function validateAttachments(existing: ComposerFile[], incoming: Composer
   return null
 }
 
-export function selectionPatch(
-  current: FleetSelection | null,
-  change: { model?: FleetSelectionOption | null; reasoning?: string | null; fastMode?: boolean }
-): FleetSelection | null {
-  if ('model' in change) {
-    if (!change.model) return null
-    const model = change.model
-    const sameModel = current?.providerId === model.providerId && current.modelId === model.modelId
-    return {
-      providerId: model.providerId,
-      modelId: model.modelId,
-      reasoning:
-        sameModel && current?.reasoning && model.efforts.includes(current.reasoning)
-          ? current.reasoning
-          : (model.efforts[0] ?? null),
-      fastMode: sameModel && model.fastMode ? current.fastMode : false,
-    }
-  }
-  if (!current) return null
-  return { ...current, ...change }
-}
+export { selectionPatch } from '@maestrly/bot-fleet-protocol'
 
 export const formatFleetTokens = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)

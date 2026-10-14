@@ -46,6 +46,7 @@ import {
   fleetUiOpenRequestSchema,
 } from '../src/index.js'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   FLEET_ERROR_STATUS,
   FLEET_GATEWAY_ROUTES,
@@ -882,6 +883,19 @@ describe('bot provisioning contracts', () => {
     expect(fleetBotSchema.parse(bot).capabilities).toEqual([])
     expect(fleetInstanceStatusSchema.parse(status).capabilities).toEqual([])
     expect(fleetActivityKindSchema.options).toContain('bot_configured')
+  })
+  it('announces features past those installed desktops read in a list they drop', () => {
+    const features = Array.from({ length: provisioning.FLEET_META_FEATURES_LEGACY_MAX }, (_, index) => `f${index}`)
+    const meta = { protocol: 1, gatewayVersion: '1', botImage: 'i', botImageVersion: null, features }
+    const answer = { ...meta, moreFeatures: ['phones', 'f0'] }
+    // What a desktop up to 0.18 parses: at most 20 features, and no field it does not know.
+    const legacy = provisioning.fleetMetaResponseSchema.omit({ moreFeatures: true }).extend({
+      features: z.array(z.string()).max(provisioning.FLEET_META_FEATURES_LEGACY_MAX),
+    })
+    expect(legacy.parse(answer)).toEqual(meta)
+    const parsed = provisioning.fleetMetaResponseSchema.parse(answer)
+    expect(provisioning.fleetMetaFeatures(parsed)).toEqual([...features, 'phones'])
+    expect(provisioning.fleetMetaResponseSchema.parse(meta).moreFeatures).toEqual([])
   })
   it('allows only provider sign-in URLs and extracts loopback redirects', () => {
     for (const [kind, url] of [

@@ -15,6 +15,7 @@ function files(directory) {
 
 for (const scope of [
   'apps/bot-gateway/src',
+  'apps/mobile/src',
   'packages/protocol/src',
   'packages/bot-fleet-protocol/src',
   'packages/artifact-host/src',

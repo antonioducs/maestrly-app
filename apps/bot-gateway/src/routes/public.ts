@@ -5,6 +5,7 @@ import { once } from 'node:events'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_PHONES_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -345,6 +346,9 @@ export async function publicRoute(
             FLEET_MESSAGE_EDIT_FEATURE,
             FLEET_VIDEO_SCREENS_FEATURE,
           ],
+          // Past the 20 features installed desktops read (`FLEET_META_FEATURES_LEGACY_MAX`). `phones` is announced
+          // also when push is off: a phone then hears from the push routes that this server sends none.
+          moreFeatures: [FLEET_PHONES_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },
@@ -353,6 +357,29 @@ export async function publicRoute(
       const normalized = normalizePairingCode(body.code)
       if (!normalized) throw new GatewayError('INVALID_REQUEST', 'Invalid pairing code')
       return { body: ctx.auth.pair(normalized, body.deviceName, res.req?.socket.remoteAddress ?? 'unknown') }
+    }
+    case 'pairingsCreate':
+      return { body: ctx.auth.createPairing({ limitActive: true }), status: 201 }
+    case 'devicePushGet': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: { registration: ctx.store.pushRegistration(device.id) } }
+    }
+    case 'devicePushSet': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      if (ctx.config.push === 'off') throw new GatewayError('CONFLICT', 'This server sends no push notifications.')
+      return { body: ctx.store.savePushRegistration(device.id, body) }
+    }
+    case 'devicePushDelete': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      ctx.store.deletePushRegistration(device.id)
+      return { status: 204 }
+    }
+    case 'devicePushTest': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      if (ctx.config.push === 'off' || !ctx.push)
+        throw new GatewayError('CONFLICT', 'This server sends no push notifications.')
+      await ctx.push.test(device.id)
+      return { body: { sent: true } }
     }
     case 'devicesSelfDelete': {
       const device = ctx.auth.device(res.req?.headers.authorization)
@@ -441,7 +468,7 @@ export async function publicRoute(
       if (environment.kind !== 'workspaces')
         throw new GatewayError('CONFLICT', 'This environment does not host workspaces.')
       if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
-      return { body: ctx.bridge!.ticket(eid, device.id), status: 201 }
+      return { body: ctx.bridge!.ticket(eid, device.id, body.origin ?? null), status: 201 }
     }
     case 'environmentUiOpen':
       requireEnvironment(ctx, eid)

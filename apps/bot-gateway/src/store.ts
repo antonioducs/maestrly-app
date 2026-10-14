@@ -5,6 +5,9 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   fleetErrorCodeSchema,
+  fleetPushRegistrationSchema,
+  type FleetPushRegistration,
+  type FleetPushRegistrationRequest,
   type FleetRoutineRun,
   type FleetOwnerMemoryEntry,
   type FleetActivityEntry,
@@ -136,6 +139,17 @@ function sameJson(a: unknown, b: unknown): boolean {
 const environmentCreating: FleetEnvironmentSetup = { step: 'container', error: null, errorMessage: null }
 const botCreating: FleetBotSetup = { step: 'container', error: null, errorMessage: null }
 const botInstalling: FleetBotSetup = { step: 'profile', error: null, errorMessage: null }
+function pushRegistrationRow(row: Row): FleetPushRegistration {
+  return fleetPushRegistrationSchema.parse({
+    provider: row.provider,
+    token: row.token,
+    platform: row.platform,
+    locale: row.locale,
+    preferences: JSON.parse(String(row.preferences_json)),
+    updatedAt: row.updated_at,
+  })
+}
+
 export class Store {
   readonly db: DatabaseSync
   private depth = 0
@@ -194,7 +208,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 13) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 14) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -268,6 +282,13 @@ export class Store {
     if (version <= 10) this.migrateEnvironmentKinds()
     if (version <= 11) this.migrateHostSecrets()
     if (version <= 12) this.migrateEnvironmentScopes()
+    if (version <= 13) {
+      // Schema 14: the push token and notification preferences of each phone.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS push_registrations (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, provider TEXT NOT NULL, token TEXT NOT NULL, platform TEXT NOT NULL, locale TEXT NOT NULL, preferences_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      `)
+      this.db.prepare("UPDATE meta SET value='14' WHERE key='schema_version'").run()
+    }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -542,6 +563,13 @@ export class Store {
   addPairing(hash: string, expiresAt: string) {
     this.db.prepare('INSERT INTO pairing_codes(code_sha256,expires_at) VALUES(?,?)').run(hash, expiresAt)
   }
+  /** Codes that can still pair a device: not used, not expired, not locked by failed attempts. */
+  activePairings(now = new Date().toISOString()): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM pairing_codes WHERE used_at IS NULL AND expires_at > ? AND attempts < 5')
+      .get(now) as { n: number }
+    return Number(row.n)
+  }
   consumePairing(hash: string, device: Device, tokenHash: string): void {
     this.transaction(() => {
       const row = this.db.prepare('SELECT * FROM pairing_codes WHERE code_sha256=?').get(hash) as Row | undefined
@@ -596,11 +624,53 @@ export class Store {
     this.db.prepare('UPDATE devices SET last_seen_at=? WHERE id=?').run(new Date().toISOString(), id)
   }
   revokeDevice(id: string) {
-    return (
+    const revoked =
       this.db
         .prepare('UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL')
         .run(new Date().toISOString(), id).changes > 0
-    )
+    // A removed phone gets no more notifications, and its push token is not kept.
+    this.deletePushRegistration(id)
+    return revoked
+  }
+  pushRegistration(deviceId: string): FleetPushRegistration | null {
+    const row = this.db.prepare('SELECT * FROM push_registrations WHERE device_id=?').get(deviceId) as Row | undefined
+    return row ? pushRegistrationRow(row) : null
+  }
+  savePushRegistration(deviceId: string, request: FleetPushRegistrationRequest): FleetPushRegistration {
+    const at = new Date().toISOString()
+    this.db
+      .prepare(
+        'INSERT INTO push_registrations(device_id,provider,token,platform,locale,preferences_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET provider=excluded.provider, token=excluded.token, platform=excluded.platform, locale=excluded.locale, preferences_json=excluded.preferences_json, updated_at=excluded.updated_at'
+      )
+      .run(
+        deviceId,
+        request.provider,
+        request.token,
+        request.platform,
+        request.locale,
+        JSON.stringify(request.preferences),
+        at,
+        at
+      )
+    return this.pushRegistration(deviceId)!
+  }
+  deletePushRegistration(deviceId: string): boolean {
+    return this.db.prepare('DELETE FROM push_registrations WHERE device_id=?').run(deviceId).changes > 0
+  }
+  /** The registrations of phones still paired. */
+  activePushRegistrations(): { deviceId: string; registration: FleetPushRegistration }[] {
+    const rows = this.db
+      .prepare(
+        'SELECT push_registrations.* FROM push_registrations JOIN devices ON devices.id = push_registrations.device_id WHERE devices.revoked_at IS NULL'
+      )
+      .all() as Row[]
+    return rows.flatMap((row) => {
+      try {
+        return [{ deviceId: String(row.device_id), registration: pushRegistrationRow(row) }]
+      } catch {
+        return []
+      }
+    })
   }
   device(id: string): Device | null {
     const row = this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) as Row | undefined

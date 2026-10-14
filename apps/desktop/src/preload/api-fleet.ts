@@ -1,4 +1,8 @@
-import type { FleetLoginAttempt, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetLoginAttempt,
+  FleetLoginStartRequest,
+  FleetPairingCodeResponse,
+} from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
 import type {
   FleetCreateWorkspacesInput,
@@ -221,6 +225,8 @@ export const fleetApi = {
   fleetConnect: (input: { url: string; code: string; deviceName?: string }): Promise<FleetConnectionView> =>
     ipcRenderer.invoke('fleet:connect', input),
   fleetDisconnect: (): Promise<void> => ipcRenderer.invoke('fleet:disconnect'),
+  /** A one-use code that pairs another device (a phone) with this computer's bot server. */
+  fleetCreatePairing: (): Promise<FleetPairingCodeResponse> => ipcRenderer.invoke('fleet:createPairing'),
   fleetGetSnapshot: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:getSnapshot'),
   fleetRefresh: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:refresh'),
   fleetGetHost: (): Promise<FleetHostInfo> => ipcRenderer.invoke('fleet:getHost'),

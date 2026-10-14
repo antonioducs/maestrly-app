@@ -555,24 +555,26 @@ const transcriptBase = { id: fleetIdSchema, at: fleetTimestampSchema }
 const routineRef = z.object({ id: fleetIdSchema, title: z.string() })
 const peerRef = z.object({ botId: fleetBotIdSchema, name: z.string() })
 
+export const fleetUserTranscriptItemSchema = z.object({
+  ...transcriptBase,
+  kind: z.literal('user'),
+  // Empty when the owner sent only images.
+  text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
+  source: z.enum(['owner', 'routine', 'peer', 'continuation']),
+  routine: routineRef.optional(),
+  peer: peerRef.optional(),
+  queued: z.boolean(),
+  attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
+  memories: z
+    .array(z.object({ id: z.string(), title: z.string() }))
+    .max(10)
+    .default([]),
+  images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
+  files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
+})
+
 export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
-  z.object({
-    ...transcriptBase,
-    kind: z.literal('user'),
-    // Empty when the owner sent only images.
-    text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
-    source: z.enum(['owner', 'routine', 'peer', 'continuation']),
-    routine: routineRef.optional(),
-    peer: peerRef.optional(),
-    queued: z.boolean(),
-    attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
-    memories: z
-      .array(z.object({ id: z.string(), title: z.string() }))
-      .max(10)
-      .default([]),
-    images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
-    files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
-  }),
+  fleetUserTranscriptItemSchema,
   z.object({ ...transcriptBase, kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
   /**
    * The model's reasoning (`transcript-reasoning`): sent only to readers that ask for it, cut at

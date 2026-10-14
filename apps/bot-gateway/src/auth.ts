@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { formatPairingCode, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
+import { FLEET_ACTIVE_PAIRINGS_MAX, formatPairingCode, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 import type { Store, Device } from './store.js'
 
@@ -13,7 +13,10 @@ export function token(): string {
 export class Auth {
   private attempts = new Map<string, number[]>()
   constructor(readonly store: Store) {}
-  createPairing(): { code: string; expiresAt: string } {
+  createPairing(options: { limitActive?: boolean } = {}): { code: string; expiresAt: string } {
+    // A paired device may create codes for other devices; the CLI, run by whoever administers the server, is not limited.
+    if (options.limitActive && this.store.activePairings() >= FLEET_ACTIVE_PAIRINGS_MAX)
+      throw new GatewayError('RATE_LIMITED', 'Too many unused pairing codes; wait for one to expire')
     let raw = ''
     for (const byte of randomBytes(8)) raw += alphabet[byte & 31]
     const expiresAt = new Date(Date.now() + 600_000).toISOString()

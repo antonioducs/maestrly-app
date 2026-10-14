@@ -1,5 +1,6 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
+import { MOBILE_API_VERSION } from '@maestrly/bot-fleet-protocol'
 import { WebSocketServer } from 'ws'
 import { remoteChannelRefusal } from '../../../shared/host-channels'
 import {
@@ -13,6 +14,7 @@ import {
 import { registerRemoteUiTarget } from '../../remote-ui-targets'
 import { BridgeFrameError, decodeClientFrame, encodeBridgeFrame } from '../bridge-codec'
 import type { IpcHandlerTable, RecordedHandler } from '../ipc-handler-table'
+import { MobileApi } from './mobile-api'
 import { VirtualSender } from './virtual-sender'
 
 /** What the hub needs from a bridge socket; a `ws` WebSocket in production. */
@@ -45,9 +47,14 @@ function failure(error: unknown): ResultError {
 const text = (data: unknown): string =>
   typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : String(data)
 
-/** One connected computer: its origins, each with the virtual sender the IPC handlers talk to. */
+/**
+ * One connected computer or phone. A computer's origins each have the virtual sender the IPC handlers talk to; a
+ * phone's origin has the mobile API instead, the only channels it may call.
+ */
 class Session {
   private welcomed = false
+  private mobile = false
+  private readonly mobileOrigins = new Map<number, MobileApi>()
   private ended = false
   private lastSeen = Date.now()
   private pingCount = 0
@@ -86,11 +93,13 @@ class Session {
     if (this.ended) return
     this.ended = true
     clearInterval(this.keepalive)
-    for (const origin of [...this.origins.keys()]) this.closeOrigin(origin)
+    for (const origin of new Set([...this.origins.keys(), ...this.mobileOrigins.keys()])) this.closeOrigin(origin)
     this.onEnded(this)
   }
 
   private closeOrigin(origin: number): void {
+    this.mobileOrigins.get(origin)?.dispose()
+    this.mobileOrigins.delete(origin)
     const entry = this.origins.get(origin)
     if (!entry) return
     this.origins.delete(origin)
@@ -151,6 +160,32 @@ class Session {
   private hello(frame: Extract<BridgeClientFrame, { t: 'hello' }>): void {
     if (this.welcomed) return this.close(REMOTE_BRIDGE_CLOSE.badFrame, 'hello-twice')
     const { appVersion } = this.deps
+    const phone = frame.client.os === 'ios' || frame.client.os === 'android'
+    if (phone !== (frame.client.kind === 'mobile')) return this.close(REMOTE_BRIDGE_CLOSE.badFrame, 'bad-hello')
+    if (frame.client.kind === 'mobile') {
+      // A phone is released on its own schedule: it needs the same mobile API, not the same build. It speaks only the
+      // versioned mobile channels, and leaves this host's language alone.
+      const reason =
+        frame.protocol !== REMOTE_BRIDGE_PROTOCOL
+          ? 'protocol'
+          : frame.client.mobileApi !== MOBILE_API_VERSION
+            ? 'mobile-api'
+            : null
+      if (reason) {
+        this.write({ t: 'refused', reason, hostVersion: appVersion })
+        return this.close(REMOTE_BRIDGE_CLOSE.refused, reason)
+      }
+      this.welcomed = true
+      this.mobile = true
+      this.write({
+        t: 'welcome',
+        protocol: REMOTE_BRIDGE_PROTOCOL,
+        appVersion,
+        host: this.deps.hostInfo(),
+        mobileApi: MOBILE_API_VERSION,
+      })
+      return
+    }
     // The renderer on the other computer calls this host's handlers directly, so both must be the same build.
     const reason =
       frame.protocol !== REMOTE_BRIDGE_PROTOCOL ? 'protocol' : frame.appVersion !== appVersion ? 'version' : null
@@ -164,8 +199,20 @@ class Session {
   }
 
   private open(frame: Extract<BridgeClientFrame, { t: 'open' }>): void {
-    if (this.origins.has(frame.origin)) return
+    if (this.origins.has(frame.origin) || this.mobileOrigins.has(frame.origin)) return
     const { origin } = frame
+    if (this.mobile) {
+      if (frame.role !== 'main') return
+      this.mobileOrigins.set(
+        origin,
+        new MobileApi({
+          table: this.deps.table,
+          emit: (channel, payload) => this.write({ t: 'event', origin, channel, args: [payload] }),
+          log: this.deps.log,
+        })
+      )
+      return
+    }
     const sender = new VirtualSender((channel, args) => this.write({ t: 'event', origin, channel, args }))
     const unregister = registerRemoteUiTarget(
       sender,
@@ -197,6 +244,21 @@ class Session {
   }
 
   private invoke(frame: Extract<BridgeClientFrame, { t: 'invoke' }>): void {
+    if (this.mobile) {
+      const api = this.mobileOrigins.get(frame.origin)
+      if (!api)
+        return this.write({
+          t: 'result',
+          id: frame.id,
+          ok: false,
+          error: { message: 'Unknown origin', code: 'unknown-origin' },
+        })
+      api.invoke(frame.channel, frame.args).then(
+        (value) => this.write({ t: 'result', id: frame.id, ok: true, value }),
+        (error) => this.write({ t: 'result', id: frame.id, ok: false, error: failure(error) })
+      )
+      return
+    }
     const target = this.resolve(frame, 'invoke')
     if ('error' in target) return this.write({ t: 'result', id: frame.id, ok: false, error: target.error })
     Promise.resolve()
@@ -208,6 +270,8 @@ class Session {
   }
 
   private send(frame: Extract<BridgeClientFrame, { t: 'send' }>): void {
+    // The mobile API has calls only.
+    if (this.mobile) return
     const target = this.resolve(frame, 'send')
     if ('error' in target) return
     try {

@@ -1,4 +1,10 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
+import { fleetBridgeOrigin } from './helpers.js'
+import {
+  fleetChatAttentionKindSchema,
+  fleetPushRegistrationRequestSchema,
+  fleetPushRegistrationSchema,
+} from './push.js'
 import {
   fleetHostFileDigestRequestSchema,
   fleetHostFileDigestSchema,
@@ -229,14 +235,23 @@ const hasContent = (value: { text: string; attachments: unknown[] }) =>
 
 export const fleetFeaturesSchema = z.array(z.string().max(40)).max(40).default([])
 
+/** How many `features` desktops up to 0.18 accept in `/v1/meta`; they refuse the whole answer past it. */
+export const FLEET_META_FEATURES_LEGACY_MAX = 20
 export const fleetMetaResponseSchema = z.object({
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
   gatewayVersion: z.string(),
   botImage: z.string(),
   botImageVersion: z.string().nullable(),
+  /** At most `FLEET_META_FEATURES_LEGACY_MAX`, so that every desktop can read the answer. */
   features: fleetFeaturesSchema,
+  /** The features past those: desktops up to 0.18 drop this field. Read both lists with `fleetMetaFeatures`. */
+  moreFeatures: fleetFeaturesSchema,
 })
 export type FleetMetaResponse = z.infer<typeof fleetMetaResponseSchema>
+/** Every feature a gateway announces, from both lists of `/v1/meta`. */
+export function fleetMetaFeatures(meta: { features?: string[]; moreFeatures?: string[] }): string[] {
+  return [...new Set([...(meta.features ?? []), ...(meta.moreFeatures ?? [])])]
+}
 
 export const fleetPairRequestSchema = z.object({
   code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{8}$/),
@@ -245,6 +260,11 @@ export const fleetPairRequestSchema = z.object({
 export type FleetPairRequest = z.infer<typeof fleetPairRequestSchema>
 export const fleetPairResponseSchema = z.object({ deviceId: fleetIdSchema, token: fleetIdSchema })
 export type FleetPairResponse = z.infer<typeof fleetPairResponseSchema>
+export const fleetPairingCodeResponseSchema = z.object({
+  code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/),
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetPairingCodeResponse = z.infer<typeof fleetPairingCodeResponseSchema>
 
 export const fleetBotsResponseSchema = z.object({ bots: z.array(fleetBotSchema) })
 export type FleetBotsResponse = z.infer<typeof fleetBotsResponseSchema>
@@ -608,6 +628,20 @@ export const fleetScreenTicketResponseSchema = z.object({
   expiresAt: fleetTimestampSchema,
 })
 export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
+/**
+ * A bridge ticket request. A phone names the `origin` its WebSocket sends (React Native always sends one); the gateway
+ * then accepts that one Origin on the upgrade (`phones`). Computers send no Origin and leave it out.
+ */
+export const fleetBridgeTicketRequestSchema = z
+  .object({
+    origin: z
+      .string()
+      .max(300)
+      .refine((value) => fleetBridgeOrigin(value) === value, 'Invalid origin')
+      .optional(),
+  })
+  .strict()
+export type FleetBridgeTicketRequest = z.infer<typeof fleetBridgeTicketRequestSchema>
 /** A one-use ticket to open the bridge of a workspaces environment. */
 export const fleetBridgeTicketResponseSchema = z.object({
   ticket: fleetIdSchema,
@@ -869,6 +903,14 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
     summary: z.string().nullable(),
   }),
   z.object({ ...instanceEventBase, type: z.literal('reset') }),
+  /** A workspaces host's chat needs the owner (`chatAttention` readers only); the gateway turns it into a push. */
+  z.object({
+    ...instanceEventBase,
+    type: z.literal('chat.attention'),
+    conversationId: z.string().min(1).max(200),
+    name: z.string().max(200),
+    kind: fleetChatAttentionKindSchema,
+  }),
 ])
 export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
 export const fleetInstanceHealthSchema = z.object({
@@ -1145,6 +1187,13 @@ export const FLEET_GATEWAY_ROUTES = {
 
   meta: { method: 'GET', path: '/v1/meta', body: null, response: fleetMetaResponseSchema },
   pair: { method: 'POST', path: '/v1/pair', body: fleetPairRequestSchema, response: fleetPairResponseSchema },
+  /** A paired device creates a one-use code for another device; the CLI `pair` command is the other way. */
+  pairingsCreate: {
+    method: 'POST',
+    path: '/v1/pairings',
+    body: z.object({}).strict(),
+    response: fleetPairingCodeResponseSchema,
+  },
   devicesSelfDelete: { method: 'DELETE', path: '/v1/devices/self', body: null, response: null },
   host: { method: 'GET', path: '/v1/host', body: null, response: fleetHostInfoSchema },
   botsList: { method: 'GET', path: '/v1/bots', body: null, response: fleetBotsResponseSchema },
@@ -1455,10 +1504,30 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetScreenTicketResponseSchema,
   },
   screen: { method: 'GET', path: '/v1/screen', body: null, response: null },
+  devicePushGet: {
+    method: 'GET',
+    path: '/v1/devices/self/push',
+    body: null,
+    response: z.object({ registration: fleetPushRegistrationSchema.nullable() }),
+  },
+  devicePushSet: {
+    method: 'PUT',
+    path: '/v1/devices/self/push',
+    body: fleetPushRegistrationRequestSchema,
+    response: fleetPushRegistrationSchema,
+  },
+  devicePushDelete: { method: 'DELETE', path: '/v1/devices/self/push', body: null, response: null },
+  /** Sends this phone a test notification. */
+  devicePushTest: {
+    method: 'POST',
+    path: '/v1/devices/self/push/test',
+    body: z.object({}).strict(),
+    response: z.object({ sent: z.literal(true) }),
+  },
   environmentBridgeTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/bridge-tickets',
-    body: z.object({}).strict(),
+    body: fleetBridgeTicketRequestSchema,
     response: fleetBridgeTicketResponseSchema,
   },
   /** The bridge itself: a WebSocket upgrade with a ticket, passed through to the workspaces environment. */

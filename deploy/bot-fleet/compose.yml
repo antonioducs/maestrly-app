@@ -25,6 +25,10 @@ services:
       MAESTRLY_GATEWAY_WORKSPACES_ROOT: ${MAESTRLY_GATEWAY_WORKSPACES_ROOT:-}
       # This container's name, which joins each workspaces environment's network; empty: found by its own address.
       MAESTRLY_GATEWAY_CONTAINER: ${MAESTRLY_GATEWAY_CONTAINER:-}
+      # Notifications to paired phones through Expo's push service (`expo`), or none (`off`). The token is needed only
+      # when the app's Expo project requires access tokens for push.
+      MAESTRLY_GATEWAY_PUSH: ${MAESTRLY_GATEWAY_PUSH:-expo}
+      MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN: ${MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN:-}
       MAESTRLY_GATEWAY_DOCKER_SOCKET: /var/run/docker.sock
       TZ: ${TZ:-Etc/UTC}
     volumes:

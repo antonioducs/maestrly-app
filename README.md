@@ -53,6 +53,9 @@ and tools together as you plan, build, and review.
   [voice dictation](docs/chat-context.md#voice-dictation).
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
+- **Mobile app:** follow and direct your bots, and the chats and workspaces of
+  your bot server, from iOS or Android, with notifications when they need you.
+  See [mobile app](docs/mobile.md).
 
 ## Download
 
@@ -114,6 +117,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Context usage and compaction](docs/chat-context.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
+- [Mobile app](docs/mobile.md)
 - [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
 - [Changelog](CHANGELOG.md)
 

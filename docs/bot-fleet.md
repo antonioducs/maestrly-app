@@ -223,6 +223,8 @@ Installer setups start with the private-network switch off: **Let bots reach thi
    | `MAESTRLY_GATEWAY_BOT_EGRESS` | `open` permits private network access; `public` guards it | `open` |
    | `MAESTRLY_GATEWAY_WORKSPACES_ROOT` | Absolute path of a host directory, owned by uid 1000, under which each workspaces environment gets a folder of its own (`<path>/<environment id>`), mounted at the same path | Empty: files stay in each environment's home volume |
    | `MAESTRLY_GATEWAY_CONTAINER` | Name or id of the gateway's own container, which joins the network of each workspaces environment | Empty: the gateway finds its container on the fleet network |
+   | `MAESTRLY_GATEWAY_PUSH` | `expo` sends [notifications](mobile.md#notifications) to paired phones through Expo's push service; `off` sends none | `expo` |
+   | `MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN` | Expo access token for push, needed only when the app's Expo project requires one | Empty |
 
 3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
 
@@ -239,7 +241,7 @@ Installer setups start with the private-network switch off: **Let bots reach thi
    docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
    ```
 
-5. In the desktop app, open **Settings → Bot server** and choose **I already have a server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every environment and bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
+5. In the desktop app, open **Settings → Bot server** and choose **I already have a server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. Once paired, a computer can also create codes for other devices: **Settings → Bot server → Pair a phone** shows one as a QR code for the mobile app. A paired device can control every environment and bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
 
 ### Updates, backups, and removal
 
@@ -288,7 +290,7 @@ Desktop apps from before environments can list, restore and delete an archived e
 
 **Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
-The gateway migrates schemas 5 to 12 to schema 13 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; and schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+The gateway migrates schemas 5 to 13 to schema 14 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; and schema 14 the push token and notification choices of each phone. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Workspaces environments need the gateway's `workspaces-host` feature and a bot image that can host workspaces. The desktop app offers **Set up workspaces on this server** only with that feature. A desktop app from before it shows a workspaces environment as an environment with no bots; the gateway refuses to add a bot to it. On an image from before it, a workspaces environment fails to start with "This bot image cannot host workspaces. Update the server."
 
@@ -875,7 +877,7 @@ approved, denied, or expired.
 
 ## Security and data
 
-Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. For a manually managed server, tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
+Pairing codes are one-use and expire after ten minutes. Any paired device can create pairing codes for other devices (at most five unused at once); a new device gets the same authority as every other paired device. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. For a manually managed server, tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
 
 The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores environment and bot profiles, routines and prompts, routine runs, owner memory, activity, peer messages, device token hashes, and **plaintext** secrets needed to restart containers: a control token and keyring password per environment and a gateway token per bot. Host root can read them. API keys pass through the gateway when added but are **not stored** there; the environment stores them in its own encrypted credential store inside its home volume. Each environment's keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Secrets flow only from your computer through the gateway to the environment and are never returned. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot or environment names or error text.
 

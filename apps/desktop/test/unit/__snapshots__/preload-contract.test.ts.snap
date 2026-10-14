@@ -248,6 +248,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "fleetConnect",
   "fleetConversationCall",
   "fleetCreateBot",
+  "fleetCreatePairing",
   "fleetCreateRoutine",
   "fleetCreateWorkspaces",
   "fleetDeleteArchivedBot",

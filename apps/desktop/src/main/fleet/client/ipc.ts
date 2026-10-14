@@ -4,6 +4,7 @@ import { validateAttachmentBytes } from '../instance/incoming-attachments'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
+  FLEET_PHONES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
@@ -128,6 +129,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:getConnection', () => fleet.getConnection())
   reg.mhandle('fleet:connect', (_event, input: unknown) => fleet.connect(connectInput.parse(input)))
   reg.mhandle('fleet:disconnect', () => fleet.disconnect())
+  // A one-use code for another device (a phone), shown as a QR code; older gateways cannot create one.
+  reg.mhandle('fleet:createPairing', async () => {
+    if (!fleet.hasFeature(FLEET_PHONES_FEATURE))
+      throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Update the bot server to pair a phone')
+    return fleet.call('pairingsCreate', { body: {} })
+  })
   reg.handle('fleet:getSnapshot', () => fleet.getSnapshot())
   reg.mhandle('fleet:refresh', () => fleet.refresh())
   reg.handle('fleet:getHost', () => fleet.call('host'))

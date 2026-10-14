@@ -36,6 +36,8 @@ test('baseline preserves all workspace checks; full adds CI suites and platform-
     )
   )
   assert.ok(steps.some((step) => step.command === 'go' && step.args.includes('--log-opts=HEAD')))
+  assert.ok(steps.some((step) => step.command === 'npm' && step.args[1] === 'test:e2e:mobile'))
+  assert.ok(!baseline.some((step) => step.args[1] === 'test:e2e:mobile'))
   assert.deepEqual(
     steps.filter((step) => step.command === 'xvfb-run').map((step) => step.args.at(-1)),
     [

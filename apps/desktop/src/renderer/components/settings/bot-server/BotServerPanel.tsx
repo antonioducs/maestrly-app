@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { panelState } from '@/lib/fleet/installer'
+import { FLEET_PHONES_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { PairPhoneDialog } from './PairPhoneDialog'
 import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 
 export function BotServerPanel({
@@ -40,6 +42,8 @@ export function BotServerPanel({
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pairPhone, setPairPhone] = useState(false)
+  const canPairPhone = connection.state === 'connected' && connection.features.includes(FLEET_PHONES_FEATURE)
   const cancelDisconnect = useCallback(() => setConfirmDisconnect(false), [])
   const runConfirmed = async (action: () => Promise<void>) => {
     setBusy(true)
@@ -146,6 +150,11 @@ export function BotServerPanel({
         </p>
       )}
       <div className="flex flex-wrap gap-2">
+        {canPairPhone && (
+          <Button variant="outline" onClick={() => setPairPhone(true)}>
+            {t('botServer.pairPhone.button')}
+          </Button>
+        )}
         <Button variant="outline" disabled={busy || panel.busy} onClick={() => setConfirmDisconnect(true)}>
           {record ? t('botServer.panel.disconnect') : t('settings.disconnect')}
         </Button>
@@ -163,6 +172,7 @@ export function BotServerPanel({
           </Button>
         )}
       </div>
+      {pairPhone && <PairPhoneDialog serverUrl={connection.url} onClose={() => setPairPhone(false)} />}
       {confirmDisconnect && (
         <ConfirmDialog
           title={record ? t('botServer.panel.disconnect') : t('settings.disconnect')}
