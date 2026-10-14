@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
-import { Animated, Easing, PanResponder, Pressable, useWindowDimensions, View } from 'react-native'
+import { Animated, Easing, Keyboard, PanResponder, Pressable, useWindowDimensions, View } from 'react-native'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { useReducedMotion } from '../useReducedMotion'
@@ -46,6 +46,8 @@ export function Drawer({
 
   useEffect(() => {
     settleRef.current(open)
+    // The keyboard of the message field would otherwise stay up over the menu and take its taps.
+    if (open) Keyboard.dismiss()
   }, [open])
 
   const responder = useMemo(
