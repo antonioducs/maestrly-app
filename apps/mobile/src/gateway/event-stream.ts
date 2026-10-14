@@ -58,22 +58,28 @@ export function openEventStream(o: EventStreamOptions): { close(): void; reconne
   async function connect(): Promise<void> {
     retry = null
     if (closed) return
-    controller = new AbortController()
+    const mine = new AbortController()
+    controller = mine
+    // Closing, or a newer connection, ends this one: nothing it reads afterwards reaches the app.
+    const current = () => !closed && controller === mine
     o.onState('connecting')
     arm()
+    let reader: StreamReader | null = null
     try {
-      const response = await o.fetch(o.url, { headers: o.headers, signal: controller.signal })
+      const response = await o.fetch(o.url, { headers: o.headers, signal: mine.signal })
+      if (!current()) return
       if (response.status === 401) return stop('unauthorized')
       if (response.status === 426) return stop('incompatible')
       if (response.status !== 200 || !response.body) throw new Error(`HTTP ${response.status}`)
-      const reader = response.body.getReader()
+      reader = response.body.getReader()
       const decoder = o.createDecoder()
       const parser = new SseParser()
       for (;;) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done || !current()) break
         arm()
         for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
+          if (!current()) break
           if (frame.event !== 'fleet') continue
           // Newer gateways may send event types this app does not know yet.
           const parsed = fleetGatewayEventSchema.safeParse(json(frame.data))
@@ -87,9 +93,12 @@ export function openEventStream(o: EventStreamOptions): { close(): void; reconne
       }
     } catch {
       // Network errors, aborts and bad statuses all end in a retry below.
+    } finally {
+      // Releases the connection even where aborting the request does not end the body's stream.
+      reader?.cancel().catch(() => {})
     }
+    if (!current()) return
     if (watchdog) clearTimeout(watchdog)
-    if (closed) return
     const delay = retryDelay(attempt++, random)
     o.onState('retrying', { retryInMs: delay })
     retry = setTimeout(() => void connect(), delay)

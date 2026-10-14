@@ -161,4 +161,49 @@ describe('fleet controller', () => {
     answer = null
     expect(await issue()).toBe('failed')
   })
+
+  it('opens no stream when stopped while it was starting', async () => {
+    const f = fakeSource()
+    const controller = createFleetController(f.source, memoryStores().kv)
+    const starting = controller.start()
+    controller.stop()
+    await starting
+    controller.foreground()
+    expect(f.opened).not.toHaveBeenCalled()
+  })
+
+  it('keeps removals, the inbox and transcript items that arrive while their lists load', async () => {
+    const f = fakeSource()
+    const atlas = botRecord({ id: 'atlas', name: 'Atlas' })
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    f.responses.botsList = () => gate.then(() => ({ bots: [juno, atlas] }))
+    const item = (text: string) => ({ id: 'i1', at, kind: 'assistant' as const, text, streaming: false })
+    let answerPage: (value: unknown) => void = () => {}
+    f.responses.botTranscript = () =>
+      new Promise((resolve) => {
+        answerPage = resolve
+      })
+    const controller = createFleetController(f.source, memoryStores().kv)
+    await controller.start()
+    f.open()
+    await vi.waitFor(() => expect(f.keys()).toContain('botsList'))
+    f.emit({ type: 'bot.removed', at, botId: 'atlas' })
+    const request = { botId: 'juno', interaction: { kind: 'question' as const, id: 'q1', at, itemId: 'x' } }
+    f.emit({ type: 'inbox.updated', at, items: [request] as never })
+    release()
+    await vi.waitFor(() => expect(controller.store.getState().loaded).toBe(true))
+    expect(controller.store.getState().bots.map((bot) => bot.id)).toEqual(['juno'])
+    expect(controller.store.getState().inbox).toHaveLength(1)
+
+    const opening = controller.openBot('juno')
+    f.emit({ type: 'transcript.upsert', at, botId: 'juno', item: item('the newer text') })
+    answerPage({ items: [item('the older text')], before: null })
+    await opening
+    expect(
+      controller.store.getState().transcripts.juno?.items.map((entry) => entry.kind === 'assistant' && entry.text)
+    ).toEqual(['the newer text'])
+  })
 })

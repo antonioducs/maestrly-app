@@ -1,6 +1,6 @@
 import type { FleetGatewayEvent, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it } from 'vitest'
-import { botRecord } from '../src/fleet/factories'
+import { botRecord, environmentRecord } from '../src/fleet/factories'
 import { fleetReducer, initialFleetState, type FleetState } from '../src/fleet/state'
 
 const at = (second: number) => `2026-10-12T12:00:${String(second).padStart(2, '0')}.000Z`
@@ -127,5 +127,48 @@ describe('fleet state', () => {
     state = fleetReducer(state, { type: 'snapshot', bots: [juno], environments: [], inbox: [] })
     expect(state.transcripts.juno.items).toHaveLength(1)
     expect(state.outbox).toHaveLength(1)
+  })
+
+  it('keeps what events said while a list was loading when the list is older', () => {
+    const newer = { ...juno, status: 'working' as const, updatedAt: at(30) }
+    let state = fleetReducer(initialFleetState, event({ type: 'bot.updated', bot: newer }))
+    state = fleetReducer(state, {
+      type: 'snapshot',
+      bots: [{ ...juno, updatedAt: at(10) }, atlas],
+      environments: [],
+      inbox: [],
+    })
+    expect(state.bots.map((bot) => [bot.id, bot.status])).toEqual([
+      ['juno', 'working'],
+      ['atlas', 'idle'],
+    ])
+    state = fleetReducer(state, {
+      type: 'snapshot',
+      bots: [{ ...juno, updatedAt: at(40) }],
+      environments: [],
+      inbox: [],
+    })
+    expect(state.bots.map((bot) => bot.status)).toEqual(['idle'])
+  })
+
+  it('removes the bots of an environment that goes away, with their transcripts and requests', () => {
+    const studio = environmentRecord({ id: 'studio', name: 'studio', botIds: ['atlas'] })
+    let state = fleetReducer(initialFleetState, {
+      type: 'snapshot',
+      bots: [juno, { ...atlas, environmentId: 'studio' }],
+      environments: [studio],
+      inbox: [permission],
+    })
+    state = loaded(state, 'atlas', [assistant('a1', 1, 'hi')])
+    const removed = fleetReducer(state, event({ type: 'environment.removed', environmentId: 'studio' }))
+    expect(removed.bots.map((bot) => bot.id)).toEqual(['juno'])
+    expect(removed.environments).toEqual([])
+    expect(removed.inbox).toEqual([])
+    expect(removed.transcripts.atlas).toBeUndefined()
+    const archived = fleetReducer(
+      state,
+      event({ type: 'environment.updated', environment: { ...studio, lifecycle: 'archived' } })
+    )
+    expect(archived.bots.map((bot) => bot.id)).toEqual(['juno'])
   })
 })

@@ -77,7 +77,10 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   }, [registry])
 
   useEffect(() => {
-    void reload().finally(() => setReady(true))
+    // Storage that cannot be read leaves the app on its first screen rather than on a blank one.
+    void reload()
+      .catch(() => {})
+      .finally(() => setReady(true))
   }, [reload])
 
   const active = servers.find((server) => server.id === activeId) ?? null
@@ -96,7 +99,17 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     let unsubscribe: (() => void) | null = null
     void (async () => {
       const demo = active.id === DEMO_SERVER.id
-      const token = demo ? 'demo' : ((await registry.token(active.id)) ?? '')
+      let token = 'demo'
+      // The Keychain can refuse reads for a moment, such as right after the phone restarts: try again until it answers.
+      for (let attempt = 0; !demo; attempt++) {
+        try {
+          token = (await registry.token(active.id)) ?? ''
+          break
+        } catch {
+          await new Promise<void>((resolve) => setTimeout(resolve, Math.min(30_000, 1_000 * 2 ** attempt)))
+          if (cancelled) return
+        }
+      }
       if (cancelled) return
       const fleet = createFleetController(demo ? createDemoSource() : createHttpSource(active, token), kv, {
         uuid: Crypto.randomUUID,

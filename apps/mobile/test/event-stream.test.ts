@@ -151,4 +151,59 @@ describe('gateway event stream', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     expect(h.fetch).toHaveBeenCalledTimes(2)
   })
+
+  it('reports nothing once closed, even from a request or a body that ignores the abort', async () => {
+    let answer: (value: Awaited<ReturnType<StreamingFetch>>) => void = () => {}
+    const states: StreamState[] = []
+    const events: FleetGatewayEvent[] = []
+    const cancel = vi.fn(async () => {})
+    let chunks = [new TextEncoder().encode(hello)]
+    const stream = openEventStream({
+      url: 'https://g.example/v1/events',
+      headers: {},
+      fetch: () =>
+        new Promise((resolve) => {
+          answer = resolve
+        }),
+      createDecoder: () => new TextDecoder(),
+      onEvent: (event) => events.push(event),
+      onState: (state) => states.push(state),
+      random: () => 0.5,
+    })
+    await flush()
+    stream.close()
+    answer({ status: 401, body: null })
+    await flush()
+    expect(states).toEqual(['connecting', 'closed'])
+
+    const second = openEventStream({
+      url: 'https://g.example/v1/events',
+      headers: {},
+      fetch: async () => ({
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              const value = chunks.shift()
+              if (!value) await new Promise(() => {})
+              return { done: false, value }
+            },
+            cancel,
+          }),
+        },
+      }),
+      createDecoder: () => new TextDecoder(),
+      onEvent: (event) => {
+        events.push(event)
+        second.close()
+        chunks = [new TextEncoder().encode(hello)]
+      },
+      onState: () => {},
+      random: () => 0.5,
+    })
+    await flush()
+    await flush()
+    expect(events).toHaveLength(1)
+    expect(cancel).toHaveBeenCalled()
+  })
 })

@@ -78,6 +78,17 @@ describe('gateway client', () => {
     ).rejects.toMatchObject({ code: 'TIMEOUT', retryable: true })
   })
 
+  it('times out a server that answers the headers and then stalls the body', async () => {
+    const stalled: FetchLike = async () => ({ ok: true, status: 200, json: () => new Promise(() => {}) })
+    await expect(
+      createGatewayClient({ origin, token: 't', fetch: stalled }).call('host', { timeoutMs: 5 })
+    ).rejects.toMatchObject({ code: 'TIMEOUT' })
+    const failing: FetchLike = async () => ({ ok: false, status: 503, json: () => new Promise(() => {}) })
+    await expect(
+      createGatewayClient({ origin, token: 't', fetch: failing }).call('host', { timeoutMs: 5 })
+    ).rejects.toMatchObject({ code: 'TIMEOUT' })
+  })
+
   it('refuses a response that does not match the contract', async () => {
     const { fetch } = fakeFetch(() => ({ status: 200, json: { items: 'nope' } }))
     await expect(

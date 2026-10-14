@@ -2,6 +2,7 @@ import {
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   type FleetBot,
+  type FleetGatewayEvent,
   type FleetInteractionResolution,
   type FleetPatchBotRequest,
 } from '@maestrly/bot-fleet-protocol'
@@ -63,6 +64,18 @@ export function createFleetController(
   // Each hello may follow missed events: a transcript loaded before the latest hello is reloaded, a newer one is not.
   let hellos = 0
   const loadedAtHello = new Map<string, number>()
+  let stopped = false
+  /**
+   * What events said while a list or a page was loading, which the loaded copy may predate: removals and the inbox
+   * for a refresh, transcript items for a bot's latest page.
+   */
+  type Watch = { bots: Set<string>; environments: Set<string>; inbox: boolean; items: Map<string, FleetGatewayEvent[]> }
+  const watches = new Set<Watch>()
+  const watch = (): Watch => {
+    const value: Watch = { bots: new Set(), environments: new Set(), inbox: false, items: new Map() }
+    watches.add(value)
+    return value
+  }
 
   const dispatch = (action: FleetAction) => {
     state = fleetReducer(state, action)
@@ -100,6 +113,7 @@ export function createFleetController(
   }
 
   async function refresh() {
+    const seen = watch()
     try {
       const [meta, bots, environments, inbox] = await Promise.all([
         source.call('meta').catch(() => null),
@@ -111,10 +125,20 @@ export function createFleetController(
         dispatch({ type: 'features', features: meta.features })
         options.onFeatures?.(meta.features)
       }
-      dispatch({ type: 'snapshot', bots: bots.bots, environments: environments.environments, inbox: inbox.items })
+      dispatch({
+        type: 'snapshot',
+        bots: bots.bots.filter(
+          (bot) => !seen.bots.has(bot.id) && !(bot.environmentId && seen.environments.has(bot.environmentId))
+        ),
+        environments: environments.environments.filter((item) => !seen.environments.has(item.id)),
+        inbox: seen.inbox ? state.inbox : inbox.items,
+      })
     } catch {
       // The stream reconnects and says hello again, which refreshes again.
+    } finally {
+      watches.delete(seen)
     }
+    if (stopped) return
     if (openBotId && (loadedAtHello.get(openBotId) ?? -1) < hellos) void loadLatest(openBotId)
     void flush()
   }
@@ -128,11 +152,16 @@ export function createFleetController(
   async function loadLatest(botId: string) {
     loadedAtHello.set(botId, hellos)
     dispatch({ type: 'transcript-loading', botId })
+    const seen = watch()
     try {
       const page = await source.call('botTranscript', { params: { id: botId }, query: transcriptQuery() })
       dispatch({ type: 'transcript-page', botId, page, mode: 'latest' })
+      // Items that changed while the page was on its way are newer than the page's copies.
+      for (const event of seen.items.get(botId) ?? []) dispatch({ type: 'event', event })
     } catch {
       dispatch({ type: 'transcript-failed', botId })
+    } finally {
+      watches.delete(seen)
     }
   }
 
@@ -141,6 +170,16 @@ export function createFleetController(
       dispatch({ type: 'connection', state: next, retryAt: detail ? now() + detail.retryInMs : null })
     },
     onEvent(event) {
+      for (const seen of watches) {
+        if (event.type === 'bot.removed') seen.bots.add(event.botId)
+        else if (event.type === 'bot.updated' && event.bot.lifecycle === 'archived') seen.bots.add(event.bot.id)
+        else if (event.type === 'environment.removed') seen.environments.add(event.environmentId)
+        else if (event.type === 'environment.updated' && event.environment.lifecycle === 'archived')
+          seen.environments.add(event.environment.id)
+        else if (event.type === 'inbox.updated') seen.inbox = true
+        else if (event.type === 'transcript.upsert')
+          seen.items.set(event.botId, [...(seen.items.get(event.botId) ?? []), event])
+      }
       dispatch({ type: 'event', event })
       if (event.type === 'hello') {
         hellos++
@@ -215,9 +254,11 @@ export function createFleetController(
     },
     async start() {
       await loadOutbox()
-      if (!stream) openStream()
+      // Stopped while the stored messages were loading: the app moved to another server.
+      if (!stream && !stopped) openStream()
     },
     stop() {
+      stopped = true
       stream?.close()
       stream = null
       if (retryTimer) clearTimeout(retryTimer)
@@ -225,6 +266,7 @@ export function createFleetController(
     },
     /** The app came back to the screen: reconnect at once rather than wait for the backoff. */
     foreground() {
+      if (stopped) return
       if (!stream) openStream()
       else stream.reconnectNow()
     },

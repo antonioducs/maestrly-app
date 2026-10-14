@@ -63,33 +63,42 @@ export function createGatewayClient(options: { origin: string; token: string | n
     }
     const url = options.origin + buildPath(route.path, o.params, o.query)
     const controller = new AbortController()
+    const tooLong = () => new GatewayError('TIMEOUT', 0, 'The server took too long to answer')
+    // The time limit covers the body too: a server can answer the headers and then stall.
+    const timedOut = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener('abort', () => reject(tooLong()))
+    })
+    timedOut.catch(() => {})
     const timer = setTimeout(() => controller.abort(), o.timeoutMs ?? SLOW[key] ?? 15_000)
-    let response: Awaited<ReturnType<FetchLike>>
     try {
-      response = await options.fetch(url, {
-        method: route.method,
-        headers: requestHeaders,
-        body,
-        signal: controller.signal,
-      })
-    } catch (error) {
-      throw controller.signal.aborted
-        ? new GatewayError('TIMEOUT', 0, 'The server took too long to answer')
-        : new GatewayError('NETWORK', 0, error instanceof Error ? error.message : 'Network error')
+      let response: Awaited<ReturnType<FetchLike>>
+      try {
+        response = await options.fetch(url, {
+          method: route.method,
+          headers: requestHeaders,
+          body,
+          signal: controller.signal,
+        })
+      } catch (error) {
+        throw controller.signal.aborted
+          ? tooLong()
+          : new GatewayError('NETWORK', 0, error instanceof Error ? error.message : 'Network error')
+      }
+      const read = <T>(fallback: T) => Promise.race([response.json().catch(() => fallback), timedOut])
+      if (!response.ok) {
+        const envelope = fleetErrorEnvelopeSchema.safeParse(await read(null))
+        if (envelope.success) throw new GatewayError(envelope.data.code, response.status, envelope.data.message)
+        const code: FleetErrorCode =
+          response.status === 401 ? 'UNAUTHORIZED' : response.status === 426 ? 'PROTOCOL_INCOMPATIBLE' : 'INTERNAL'
+        throw new GatewayError(code, response.status, `Request failed (${response.status})`)
+      }
+      if (!route.response) return undefined as RouteResponse<K>
+      const parsed = route.response.safeParse(await read(undefined))
+      if (!parsed.success) throw new GatewayError('BAD_RESPONSE', response.status, 'Unexpected server response')
+      return parsed.data as RouteResponse<K>
     } finally {
       clearTimeout(timer)
     }
-    if (!response.ok) {
-      const envelope = fleetErrorEnvelopeSchema.safeParse(await response.json().catch(() => null))
-      if (envelope.success) throw new GatewayError(envelope.data.code, response.status, envelope.data.message)
-      const code: FleetErrorCode =
-        response.status === 401 ? 'UNAUTHORIZED' : response.status === 426 ? 'PROTOCOL_INCOMPATIBLE' : 'INTERNAL'
-      throw new GatewayError(code, response.status, `Request failed (${response.status})`)
-    }
-    if (!route.response) return undefined as RouteResponse<K>
-    const parsed = route.response.safeParse(await response.json().catch(() => undefined))
-    if (!parsed.success) throw new GatewayError('BAD_RESPONSE', response.status, 'Unexpected server response')
-    return parsed.data as RouteResponse<K>
   }
   return { origin: options.origin, headers, call }
 }

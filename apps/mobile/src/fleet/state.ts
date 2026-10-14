@@ -72,14 +72,34 @@ function upsertById<T extends { id: string }>(list: T[], value: T): T[] {
   return next
 }
 
-function withoutBot(state: FleetState, botId: string): FleetState {
-  const { [botId]: _removed, ...transcripts } = state.transcripts
+function withoutBots(state: FleetState, gone: (bot: Pick<FleetBot, 'id' | 'environmentId'>) => boolean): FleetState {
+  const ids = new Set(state.bots.filter(gone).map((bot) => bot.id))
+  if (ids.size === 0) return state
   return {
     ...state,
-    bots: state.bots.filter((bot) => bot.id !== botId),
-    inbox: state.inbox.filter((item) => item.botId !== botId),
-    transcripts,
+    bots: state.bots.filter((bot) => !ids.has(bot.id)),
+    inbox: state.inbox.filter((item) => !ids.has(item.botId)),
+    transcripts: Object.fromEntries(Object.entries(state.transcripts).filter(([botId]) => !ids.has(botId))),
   }
+}
+const withoutBot = (state: FleetState, botId: string) => withoutBots(state, (bot) => bot.id === botId)
+/** An environment that goes away takes its bots with it; the server sends no event for each of them. */
+const withoutEnvironment = (state: FleetState, environmentId: string): FleetState =>
+  withoutBots(
+    { ...state, environments: state.environments.filter((item) => item.id !== environmentId) },
+    (bot) => bot.environmentId === environmentId
+  )
+
+/**
+ * The listed copies, except where the phone already holds a newer one: events that arrive while a list is loading
+ * describe a later state than the list.
+ */
+function newest<T extends { id: string; updatedAt: string }>(current: T[], listed: T[]): T[] {
+  const known = new Map(current.map((item) => [item.id, item]))
+  return listed.map((item) => {
+    const mine = known.get(item.id)
+    return mine && Date.parse(mine.updatedAt) > Date.parse(item.updatedAt) ? mine : item
+  })
 }
 
 function applyEvent(state: FleetState, event: FleetGatewayEvent): FleetState {
@@ -93,10 +113,10 @@ function applyEvent(state: FleetState, event: FleetGatewayEvent): FleetState {
       return withoutBot(state, event.botId)
     case 'environment.updated':
       return event.environment.lifecycle === 'archived'
-        ? { ...state, environments: state.environments.filter((item) => item.id !== event.environment.id) }
+        ? withoutEnvironment(state, event.environment.id)
         : { ...state, environments: upsertById(state.environments, event.environment) }
     case 'environment.removed':
-      return { ...state, environments: state.environments.filter((item) => item.id !== event.environmentId) }
+      return withoutEnvironment(state, event.environmentId)
     case 'inbox.updated':
       return { ...state, inbox: event.items }
     case 'transcript.upsert': {
@@ -123,7 +143,13 @@ function applyEvent(state: FleetState, event: FleetGatewayEvent): FleetState {
 export function fleetReducer(state: FleetState, action: FleetAction): FleetState {
   switch (action.type) {
     case 'snapshot':
-      return { ...state, loaded: true, bots: action.bots, environments: action.environments, inbox: action.inbox }
+      return {
+        ...state,
+        loaded: true,
+        bots: newest(state.bots, action.bots),
+        environments: newest(state.environments, action.environments),
+        inbox: action.inbox,
+      }
     case 'event':
       return applyEvent(state, action.event)
     case 'connection':
