@@ -108,6 +108,7 @@ function quitHarness() {
       order.push('chat')
     },
     disposeConversationMigrationIpc: null,
+    disposeConversationMoveIpc: null,
     releaseInstanceLock: cleanup,
     floatingManager: { flushPendingFloatPersists: vi.fn(), disposeAll: vi.fn() },
     chatWindowManager: { dispose: vi.fn() },

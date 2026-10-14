@@ -46,6 +46,8 @@ const LOCAL_TABLES = [
   'conversation_dispatches',
   'conversation_memory_state',
   'conversation_migrations',
+  'conversation_move_endpoints',
+  'conversation_moves',
   'conversation_peer_messages',
   'conversation_repos',
   'conversations',
