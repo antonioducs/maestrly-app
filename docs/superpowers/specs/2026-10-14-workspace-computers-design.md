@@ -51,6 +51,23 @@ with 15 clicks on the still page and 10 while it scrolled. The video columns are
 - **Verdict.** The switch is worth it on every remote link, including the tailnet: there the JPEG fills 20 Mbit/s at
   19 fps and doubles the click latency.
 
+The implementation was measured the same way on 2026-10-14, with the same page, links and clicks, against a server-mode
+container of the local image. The Browser tab asked for video and sent its clicks over the bridge, as the app does; its
+pictures came from the conversation's tile through the instance's conversation screen route, decoded with PyAV and
+cropped to the page's area. The Computer tab showed Chromium with the page full screen on the conversation's computer,
+clicked through its screen's control connection. Each profile ran once; no click was missed.
+
+| Link (simulated) | Browser tab on video: click, still / scrolling (median/p90) | Scrolling | Computer tab: click, still / scrolling | Scrolling |
+| --- | --- | --- | --- | --- |
+| Same machine | 35/41 / 64/73 ms | 61 fps, 0.76 Mbit/s | 27/48 / 36/54 ms | 62 fps, 0.77 Mbit/s |
+| 30 ms, 20 Mbit/s | 61/73 / 73/93 ms | 62 fps, 0.77 Mbit/s | 53/61 / 86/99 ms | 61 fps, 0.77 Mbit/s |
+| 300 ms, 10 Mbit/s | 328/340 / 358/368 ms | 62 fps, 0.76 Mbit/s | 327/367 / 367/393 ms | 61 fps, 0.76 Mbit/s |
+| 300 ms, 1.5 Mbit/s | 338/400 / 378/433 ms | 61 fps, 0.76 Mbit/s | 346/456 / 406/457 ms | 61 fps, 0.75 Mbit/s |
+
+Against the JPEG frames above, the Browser tab keeps about 61 fps on every link instead of 19, 5.6 and 3, and its
+clicks while scrolling take 73 instead of 215 ms on the tailnet and 378 instead of 1064 ms on the narrow link, using
+under 1 Mbit/s.
+
 ## Architecture
 
 ```mermaid
