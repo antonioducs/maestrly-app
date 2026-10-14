@@ -25,7 +25,6 @@ import {
   setConversationPinned,
 } from './store'
 import { disposeShellTerminals } from './terminal-manager'
-import { lookupReviewLoopByConversation } from './chat/review-loop/registry'
 import {
   createConversation,
   createSiblingConversation,
@@ -39,12 +38,6 @@ export interface ConversationIpcDeps {
   resumeBackgroundCompaction?: (id: string) => void
   /** Tells every window, on this computer and connected ones, that the conversation's attention mark changed. */
   emitAttention?: (conversationId: string, attention: boolean) => void
-}
-
-function assertReviewLoopMutationAllowed(conversationId: string): void {
-  if (lookupReviewLoopByConversation(conversationId)) {
-    throw new Error('The conversation is reserved by an active review loop.')
-  }
 }
 
 export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpcDeps): void {
@@ -68,7 +61,6 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   reg.mhandle(
     'conversation:createSibling',
     (_e, args: { sourceConversationId: string; experience?: ConversationExperience }) => {
-      assertReviewLoopMutationAllowed(args.sourceConversationId)
       assertConversationMigrationMutationAllowed(args.sourceConversationId, 'Create sibling conversation')
       if (args.experience !== undefined && args.experience !== 'standard' && args.experience !== 'maestro') {
         throw new Error('Invalid conversation experience.')
@@ -114,7 +106,6 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     if (clearConversationAttention(conversationId)) deps.emitAttention?.(conversationId, false)
   })
   reg.mhandle('conversation:archive', async (_e, id: string, archived: boolean) => {
-    assertReviewLoopMutationAllowed(id)
     assertConversationMigrationMutationAllowed(id, archived ? 'Archive conversation' : 'Unarchive conversation')
     if (archived) {
       // Stop streams and invalidate late callbacks before destroying views. stopChat retires active
@@ -132,7 +123,6 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     if (!archived) deps.resumeBackgroundCompaction?.(id)
   })
   reg.mhandle('conversation:delete', async (_e, id: string) => {
-    assertReviewLoopMutationAllowed(id)
     assertConversationMigrationMutationAllowed(id, 'Delete conversation')
     // Permanent deletion stops the agent and drawer terminals, releases views, and removes worktree/store
     // state.

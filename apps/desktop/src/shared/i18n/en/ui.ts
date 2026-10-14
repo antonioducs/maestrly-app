@@ -1562,7 +1562,6 @@ export default {
       'Prepare the next policy below. Applying it revokes this session and creates a new pairing with the selected scopes.',
     chatgptRestartToApply: 'Restart to apply',
     chatgptRestarting: 'Restarting…',
-    chatgptRestartBlockedByReview: 'Stop the active Review Loop before changing companion access.',
     chatgptRestartError: 'Could not restart the companion: {{error}}',
     chatgptRestartAfterEndError:
       'The previous session was ended, but the new companion could not start: {{error}}. Review the access settings and start it again.',
@@ -1777,6 +1776,13 @@ export default {
     reviseHintEnabled: 'Send feedback for Claude to revise',
     reviseHintDisabled: 'Comment on a section, edit the plan, or write a general comment',
     requestRevision: 'Request revision',
+    reviewPlan: 'Review plan',
+    reviewPlanHint:
+      'Independent read-only review of this plan against the code. Findings become comments you can edit before requesting a revision.',
+    reviewRunning: 'Reviewing the plan',
+    reviewApplied_one: 'Review: {{count}} finding added to your comments.',
+    reviewApplied_other: 'Review: {{count}} findings added to your comments.',
+    reviewClean: 'Review: no problems found in the plan.',
     discard: 'Discard plan',
   },
 

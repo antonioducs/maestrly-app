@@ -591,10 +591,10 @@ describe('conversation dispatch wiring across runtimes', () => {
     'codex-subscription/runner.ts',
     'github-copilot/runner.ts',
     'cursor-subscription/runner.ts',
-  ])('%s offers the same guarded tools only in its main, non-reviewer context', (file) => {
+  ])('%s offers the same guarded tools only in its main context', (file) => {
     const source = read(file)
     expect(source).toContain('enableConversationDispatchTools(')
-    expect(source).toMatch(/const conversationDispatch = args\.reviewerRuntime\s*\?\s*undefined/)
+    expect(source).toMatch(/const conversationDispatch = enableConversationDispatchTools\(/)
     expect(source).toContain('...(conversationDispatch ? { conversationDispatch } : {})')
   })
 

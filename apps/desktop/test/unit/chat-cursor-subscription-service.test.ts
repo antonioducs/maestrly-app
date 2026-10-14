@@ -91,8 +91,8 @@ vi.mock('../../src/main/chat/runner', async (importOriginal) => ({
 import { CursorServiceAuth } from '../../src/main/chat/cursor-subscription/service-auth'
 import {
   registerChatIpc,
-  resolveReviewLoopSelection,
-  revalidateReviewLoopSelection,
+  resolveFrozenChatSelection,
+  revalidateFrozenChatSelection,
   listChatExecutionModels,
   type ChatIpcDeps,
 } from '../../src/main/chat/service'
@@ -288,12 +288,12 @@ describe('Cursor service integration', () => {
   })
   it('freezes Cursor model parameters and rejects later changes', async () => {
     const conv = conversation()
-    const frozen = await resolveReviewLoopSelection(conv.id)
+    const frozen = await resolveFrozenChatSelection(conv.id)
     expect(frozen.ok).toBe(true)
     if (!frozen.ok) throw new Error(frozen.error)
     expect(frozen.selection.cursorModelSelection).toEqual({ modelId: 'composer-2.5', params: [] })
     h.managerFor(null).resolveModelSelection.mockResolvedValueOnce({ modelId: 'different', params: [] })
-    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({
+    await expect(revalidateFrozenChatSelection(frozen.selection)).resolves.toEqual({
       ok: false,
       error: 'executor-unavailable',
     })
@@ -382,6 +382,6 @@ describe('Cursor service integration', () => {
     )
   })
   it('requires an explicit model for a frozen Cursor execution', async () => {
-    await expect(resolveReviewLoopSelection(conversation('').id)).resolves.toEqual({ ok: false, error: 'no-model' })
+    await expect(resolveFrozenChatSelection(conversation('').id)).resolves.toEqual({ ok: false, error: 'no-model' })
   })
 })

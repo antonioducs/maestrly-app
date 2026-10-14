@@ -66,6 +66,7 @@ vi.mock('../../src/main/chat/codex-subscription/manager', () => ({
 }))
 
 const h = vi.hoisted(() => ({
+  listReviewReports: vi.fn((): unknown[] => []),
   getMainWebContents: vi.fn(),
   sendToConversation: vi.fn(),
   sessionForConversation: vi.fn(() => null as unknown),
@@ -95,7 +96,6 @@ const h = vi.hoisted(() => ({
   runCodex: vi.fn(async (_args: any) => ({ planSubmitted: false, threadId: 'thread-review-loop' })),
   runChat: vi.fn(),
   fetchModels: vi.fn(),
-  reviewLoopLockFor: vi.fn((_conversationId: string) => null),
   projectEnvironmentLockFor: vi.fn((_conversationId: string): string | null => null),
   stopReviewLoop: vi.fn(),
   setChatGptWebHooks: vi.fn(),
@@ -195,6 +195,7 @@ vi.mock('../../src/main/chat/credentials', () => ({
 
 vi.mock('../../src/main/chat/chat-store', () => ({
   getChatMessage: vi.fn(() => null),
+  listReviewReportsSinceLastUserMessage: h.listReviewReports,
   chatHistoryStats: h.chatHistoryStats,
   listChatMessages: h.listChatMessages,
 
@@ -286,7 +287,6 @@ vi.mock('../../src/main/chat/chatgpt-web/manager', () => ({
   setChatGptWebHooks: h.setChatGptWebHooks,
   sessionForConversation: h.sessionForConversation,
   onChatGptWebChange: h.onChatGptWebChange,
-  reviewLoopLockFor: h.reviewLoopLockFor,
   projectEnvironmentLockFor: h.projectEnvironmentLockFor,
   stopReviewLoop: h.stopReviewLoop,
   endSession: h.endSession,
@@ -345,18 +345,16 @@ import {
   startInternalChatTurn,
   cancelInternalChatTurn,
   pendingInternalTurnsCount,
-  persistReviewLoopSummary,
-  validateReviewLoopStart,
-  forceReviewLoopAgentMode,
-  resolveReviewLoopSelection,
-  revalidateReviewLoopSelection,
+  validateInternalTurnStart,
+  forceInternalTurnAgentMode,
+  resolveFrozenChatSelection,
+  revalidateFrozenChatSelection,
   turnReasoning,
   resolveNativeReasoningEffort,
   claudeRuntimeAxes,
   compactReserved,
 } from '../../src/main/chat/service'
 import { __resetCwdActivityForTests } from '../../src/main/cwd-activity-coordinator'
-import { __resetReviewLoopRegistryForTests, reserveReviewLoop } from '../../src/main/chat/review-loop/registry'
 import type { MessagePart } from '../../src/shared/chat'
 
 const wc = { isDestroyed: vi.fn(() => false), send: vi.fn() }
@@ -371,12 +369,11 @@ function register() {
 
 const SELECTION = { providerId: 'provider-1', modelId: 'model-1', fastMode: false }
 
-describe('review loop internal service API', () => {
+describe('isolated internal turn service API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     __resetCwdActivityForTests()
-    __resetReviewLoopRegistryForTests()
-    cwd = mkdtempSync(path.join(os.tmpdir(), 'review-loop-service-'))
+    cwd = mkdtempSync(path.join(os.tmpdir(), 'internal-turn-service-'))
     h.getMainWebContents.mockReturnValue(wc)
     h.sessionForConversation.mockReturnValue(null)
     h.getConversation.mockReturnValue({ id: 'conv-chat', cli: 'chat', cwd, workspaceId: 'workspace-1' })
@@ -389,9 +386,8 @@ describe('review loop internal service API', () => {
     h.runCodex.mockReset()
     h.runCodex.mockResolvedValue({ planSubmitted: false, threadId: 'thread-review-loop' })
     h.fetchModels.mockResolvedValue(['model-1'])
-    // Active owner loop rl_1: internal turns with this loop_id pass through the lock.
-    h.reviewLoopLockFor.mockReturnValue('rl_1' as never)
-    h.projectEnvironmentLockFor.mockReturnValue(null)
+    // Active owner job rl_1: internal turns with this loop_id pass through the lock.
+    h.projectEnvironmentLockFor.mockReturnValue('rl_1')
     h.getPendingPlan.mockReturnValue(null)
 
     register() // savedDeps = deps (startInternalChatTurn and related functions require service registration).
@@ -441,7 +437,6 @@ describe('review loop internal service API', () => {
         },
       ],
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -487,61 +482,12 @@ describe('review loop internal service API', () => {
     )
   })
 
-  it('forwards paired reviewer policy and lease provenance', async () => {
-    reserveReviewLoop({
-      loopId: 'rl_1',
-      driver: 'maestrly-pair',
-      cwd,
-      participants: { executor: 'executor', reviewer: 'conv-chat' },
-    })
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(),
-      readExecutionContext: vi.fn(),
-      decision: vi.fn(() => ({ result: 'clean' as const, summary: 'clean' })),
-    }
-    const started = await startInternalChatTurn({
-      conversationId: 'conv-chat',
-      prompt: 'Review the current checkout.',
-      selection: SELECTION,
-      source: 'maestrly-review-loop',
-      role: 'reviewer',
-      turnPolicy: 'reviewer-readonly',
-      cwdActivityOwner: 'review-loop:rl_1:reviewer',
-      reviewerRuntime,
-      executorConversationId: 'executor',
-      reviewerConversationId: 'conv-chat',
-      loopId: 'rl_1',
-      iteration: 1,
-      maxIterations: 5,
-      signal: new AbortController().signal,
-    })
-    expect(started.ok).toBe(true)
-    expect(h.runChat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        behaviorOverride: 'ask',
-        reviewerRuntime,
-        messageMeta: expect.objectContaining({
-          source: 'maestrly-review-loop',
-          executionScope: expect.objectContaining({
-            role: 'reviewer',
-            executorConversationId: 'executor',
-            reviewerConversationId: 'conv-chat',
-          }),
-        }),
-      })
-    )
-  })
-
-  it('admits bootstrap-owner internal turns without active review loops', async () => {
-    h.reviewLoopLockFor.mockReturnValue(null)
+  it('admits turns owned by the project-environment job', async () => {
     h.projectEnvironmentLockFor.mockReturnValue('pej_1')
     const started = await startInternalChatTurn({
       conversationId: 'conv-chat',
       prompt: 'Siga a skill habilitada e suba o ambiente.',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'pej_1',
       iteration: 1,
       maxIterations: 1,
@@ -558,7 +504,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -576,7 +521,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -605,7 +549,7 @@ describe('review loop internal service API', () => {
         fastMode: false,
       },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('expected a valid Codex selection')
 
     h.runCodex.mockImplementationOnce(async (args: any) => {
@@ -619,7 +563,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'corrija os findings',
       selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -644,7 +587,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -657,30 +599,85 @@ describe('review loop internal service API', () => {
     void release
   })
 
-  it('blocks manual turns while admitting loop owners', async () => {
-    h.reviewLoopLockFor.mockReturnValue('rl_1' as never)
+  const pendingReport = {
+    id: 'review:r1',
+    conversationId: 'conv-chat',
+    role: 'assistant',
+    parts: [],
+    source: 'maestrly-review',
+    executionScope: { kind: 'review-report', reviewId: 'r1' },
+    review: {
+      reviewId: 'r1',
+      target: 'code',
+      candidates: 1,
+      startedAt: 1,
+      finishedAt: 2,
+      findings: [{ id: 'F1', severity: 'blocking', title: 'Lost update', details: 'Writers race.', lens: 'integration' }],
+    },
+    createdAt: 1,
+  }
+  const userParts = () =>
+    (
+      h.upsertChatMessage.mock.calls.find(([message]) => (message as { role: string }).role === 'user')?.[0] as {
+        internal?: boolean
+        parts: MessagePart[]
+      }
+    )
+
+  it("attaches pending code review reports to the person's next message", async () => {
+    h.projectEnvironmentLockFor.mockReturnValue(null)
+    h.listReviewReports.mockReturnValue([pendingReport])
+    const handlers = register()
+    const sent = await handlers.get('chat:send')?.({ sender: wc }, { conversationId: 'conv-chat', text: 'fix F1' })
+    expect(sent).toEqual({ ok: true })
+    const message = userParts()
+    expect(message.internal).toBeUndefined()
+    const report = message.parts.find((part) => part.type === 'file' && part.name === 'code-review.md') as
+      | { hidden?: boolean; data?: string }
+      | undefined
+    expect(report?.hidden).toBe(true)
+    expect(report?.data).toContain('## F1 [blocking] Lost update')
+    h.listReviewReports.mockReturnValue([])
+  })
+
+  it("never spends the person's pending report on an internal job turn", async () => {
+    h.listReviewReports.mockReturnValue([pendingReport])
+    const internal = await startInternalChatTurn({
+      conversationId: 'conv-chat',
+      prompt: 'round',
+      selection: SELECTION,
+      loopId: 'rl_1',
+      iteration: 1,
+      maxIterations: 1,
+      signal: new AbortController().signal,
+    })
+    expect(internal).toMatchObject({ ok: true })
+    expect(userParts().parts.some((part) => part.type === 'file' && part.name === 'code-review.md')).toBe(false)
+    h.listReviewReports.mockReturnValue([])
+  })
+
+  it('blocks manual turns while admitting job owners', async () => {
+    h.projectEnvironmentLockFor.mockReturnValue('rl_1')
     const handlers = register()
     // Manual chat:send is blocked.
     const manual = await handlers.get('chat:send')?.({ sender: wc }, { conversationId: 'conv-chat', text: 'hello' })
-    expect(manual).toEqual({ ok: false, error: 'review-loop-active' })
+    expect(manual).toEqual({ ok: false, error: 'project-environment-active' })
     // Internal turn with the WRONG loop_id is blocked.
     const wrong = await startInternalChatTurn({
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_outro',
       iteration: 1,
       maxIterations: 5,
       signal: new AbortController().signal,
     })
-    expect(wrong).toEqual({ ok: false, error: 'review-loop-active' })
-    // The loop owner's turn passes.
+    expect(wrong).toEqual({ ok: false, error: 'project-environment-active' })
+    // The job owner's turn passes.
     const owner = await startInternalChatTurn({
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -694,7 +691,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: { providerId: 'provider-1', modelId: '', fastMode: false },
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -705,21 +701,22 @@ describe('review loop internal service API', () => {
   })
 
   it('rejects pending plans and accepts chat-domain conversations', async () => {
-    expect(await validateReviewLoopStart('conv-chat')).toEqual({ ok: true })
+    // Validation happens before a job owns the conversation.
+    h.projectEnvironmentLockFor.mockReturnValue(null)
+    expect(await validateInternalTurnStart('conv-chat')).toEqual({ ok: true })
     h.getPendingPlan.mockReturnValue({ agentId: 'conv-chat', cwd, plan: 'x', version: 1, previousPlan: null } as never)
-    expect(await validateReviewLoopStart('conv-chat')).toEqual({ ok: false, error: 'pending-plan' })
+    expect(await validateInternalTurnStart('conv-chat')).toEqual({ ok: false, error: 'pending-plan' })
     h.getPendingPlan.mockReturnValue(null)
     h.getConversation.mockReturnValue({ id: 'conv-migrated', cwd, workspaceId: 'w' })
-    expect(await validateReviewLoopStart('conv-migrated')).toEqual({ ok: true })
+    expect(await validateInternalTurnStart('conv-migrated')).toEqual({ ok: true })
 
     h.getConversation.mockReturnValue({ id: 'conv-maestro', cwd, workspaceId: 'w', experience: 'maestro' })
-    expect(await validateReviewLoopStart('conv-maestro')).toEqual({ ok: false, error: 'maestro-experience' })
+    expect(await validateInternalTurnStart('conv-maestro')).toEqual({ ok: false, error: 'maestro-experience' })
     await expect(
       startInternalChatTurn({
         conversationId: 'conv-maestro',
         prompt: 'legacy executor turn',
         selection: SELECTION,
-        source: 'chatgpt-web-review-loop',
         loopId: 'rl-maestro',
         iteration: 1,
         maxIterations: 1,
@@ -728,15 +725,14 @@ describe('review loop internal service API', () => {
     ).resolves.toEqual({ ok: false, error: 'maestro-experience' })
   })
 
-  it('rejects standalone code review before runtime admission', async () => {
+  it('rejects standalone conversations before runtime admission', async () => {
     h.getConversation.mockReturnValue({ id: 'chat', scope: 'standalone', workspaceId: null, cwd })
-    expect(await validateReviewLoopStart('chat')).toEqual({ ok: false, error: 'project-required' })
+    expect(await validateInternalTurnStart('chat')).toEqual({ ok: false, error: 'project-required' })
     expect(
       await startInternalChatTurn({
         conversationId: 'chat',
         prompt: 'review',
         selection: SELECTION,
-        source: 'chatgpt-web-review-loop',
         loopId: 'loop',
         iteration: 1,
         maxIterations: 1,
@@ -745,71 +741,11 @@ describe('review loop internal service API', () => {
     ).toEqual({ ok: false, error: 'project-required' })
   })
 
-  it('persists final summaries with stable loop IDs and Agent mode', async () => {
-    const first = await persistReviewLoopSummary({
-      conversationId: 'conv-chat',
-      loopId: 'rl_abc',
-      markdown: '## Review encerrado\n- resultado: limpo',
-    })
-    expect(first).toEqual({ ok: true, messageId: 'review-loop-summary:rl_abc' })
-    const saved = h.upsertChatMessage.mock.calls.find(
-      ([m]) => (m as { source?: string }).source === 'chatgpt-web-review-loop'
-    )
-    expect(saved).toBeTruthy()
-    expect(saved?.[0]).toMatchObject({
-      id: 'review-loop-summary:rl_abc',
-      conversationId: 'conv-chat',
-      role: 'assistant',
-      source: 'chatgpt-web-review-loop',
-      // Audit scope remains visible but outside inference and resume boundaries.
-      executionScope: { kind: 'review-summary', loopId: 'rl_abc' },
-    })
-    // Without round metadata, summaries remain summaries in the renderer.
-    expect((saved![0] as { reviewLoop?: unknown }).reviewLoop).toBeUndefined()
-    expect((saved![0] as { internal?: boolean }).internal).toBeUndefined()
-    // Retrying the SAME loopId uses the same messageId (upsert without duplication).
-    const retry = await persistReviewLoopSummary({
-      conversationId: 'conv-chat',
-      loopId: 'rl_abc',
-      markdown: '## Review encerrado\n- resultado: limpo',
-    })
-    expect(retry).toEqual({ ok: true, messageId: 'review-loop-summary:rl_abc' })
-    const sameId = h.upsertChatMessage.mock.calls.filter(
-      ([m]) => (m as { id?: string }).id === 'review-loop-summary:rl_abc'
-    )
-    expect(sameId).toHaveLength(2) // Two upserts with the SAME id.
-
-    // Force Agent mode and notify the renderer.
+  it('forces Agent mode for internal jobs and notifies the renderer', async () => {
     h.getConvUiPrefs.mockReturnValue({ chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'plan' } })
-    forceReviewLoopAgentMode('conv-chat')
+    forceInternalTurnAgentMode('conv-chat')
     expect(wc.send).toHaveBeenCalledWith('chat:mode:conv-chat', 'agent')
-    expect(h.upsertChatMessage).toBeDefined()
     void cancelInternalChatTurn
-  })
-
-  it('uses deterministic paired-summary role IDs and neutral provenance', async () => {
-    const result = await persistReviewLoopSummary({
-      conversationId: 'conv-chat',
-      loopId: 'rl_pair',
-      role: 'reviewer',
-      executorConversationId: 'executor',
-      reviewerConversationId: 'conv-chat',
-      markdown: '# Paired review',
-    })
-    expect(result).toEqual({ ok: true, messageId: 'review-loop-summary:rl_pair:reviewer' })
-    expect(h.upsertChatMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'review-loop-summary:rl_pair:reviewer',
-        source: 'maestrly-review-loop',
-        executionScope: {
-          kind: 'review-summary',
-          loopId: 'rl_pair',
-          role: 'reviewer',
-          executorConversationId: 'executor',
-          reviewerConversationId: 'conv-chat',
-        },
-      })
-    )
   })
 
   it('cancels preflight without admission or persisted messages', async () => {
@@ -826,7 +762,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -842,7 +777,7 @@ describe('review loop internal service API', () => {
     expect(pendingInternalTurnsCount()).toBe(0)
   })
 
-  it('rejects loops whose locks disappear during preflight', async () => {
+  it('rejects jobs whose locks disappear during preflight', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
       release = resolve
@@ -851,21 +786,20 @@ describe('review loop internal service API', () => {
       await gate
       return null
     })
-    h.reviewLoopLockFor.mockReturnValue('rl_1' as never)
+    h.projectEnvironmentLockFor.mockReturnValue('rl_1')
     const started = startInternalChatTurn({
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
       signal: new AbortController().signal,
     })
     await vi.waitFor(() => expect(h.getModelMeta).toHaveBeenCalled())
-    h.reviewLoopLockFor.mockReturnValue(null) // Loop ended during preflight.
+    h.projectEnvironmentLockFor.mockReturnValue(null) // Job ended during preflight.
     release()
-    expect(await started).toEqual({ ok: false, error: 'review-loop-inactive' })
+    expect(await started).toEqual({ ok: false, error: 'internal-turn-inactive' })
     expect(h.runChat).not.toHaveBeenCalled()
     expect(pendingInternalTurnsCount()).toBe(0)
   })
@@ -875,7 +809,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop' as const,
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -939,7 +872,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -959,7 +891,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: { providerId: 'provider-1', modelId: 'model-1', fastMode: true },
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -981,7 +912,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round 1',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -995,7 +925,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round 2',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 2,
       maxIterations: 5,
@@ -1023,7 +952,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1048,7 +976,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: SELECTION,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1066,7 +993,7 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent' },
     })
-    const def = await resolveReviewLoopSelection('conv-chat')
+    const def = await resolveFrozenChatSelection('conv-chat')
     if ('error' in def) throw new Error('esperava ok')
     expect(def.selection.reasoning).toBe('off')
 
@@ -1074,7 +1001,7 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent', reasoning: 'off' },
     })
-    const off = await resolveReviewLoopSelection('conv-chat')
+    const off = await resolveFrozenChatSelection('conv-chat')
     if ('error' in off) throw new Error('esperava ok')
     expect(off.selection.reasoning).toBe('off')
 
@@ -1083,7 +1010,7 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent', reasoning: 'high' },
     })
-    const high = await resolveReviewLoopSelection('conv-chat')
+    const high = await resolveFrozenChatSelection('conv-chat')
     if ('error' in high) throw new Error('esperava ok')
     expect(high.selection.reasoning).toBe('high')
     // Frozen EFFECT: the value that WILL be sent (same as raw; no Ultra here).
@@ -1095,26 +1022,26 @@ describe('review loop internal service API', () => {
       chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent', reasoning: 'high' },
     })
     // Offline metadata (mock defaults to null).
-    const offline = await resolveReviewLoopSelection('conv-chat')
+    const offline = await resolveFrozenChatSelection('conv-chat')
     expect(offline).toEqual({ ok: false, error: 'no-model' })
     // Model without reasoning in metadata.
     h.getProviderModelMeta.mockResolvedValue({ reasoning: false, reasoningEfforts: [] } as never)
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
     // Empty effort lists provide no strict fallback evidence.
     h.getProviderModelMeta.mockResolvedValue({ reasoning: true, reasoningEfforts: [] } as never)
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
     // A level outside the supported list.
     h.getProviderModelMeta.mockResolvedValue({ reasoning: true, reasoningEfforts: ['low'] } as never)
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
     // Supported levels freeze their actual transport effect.
     h.getProviderModelMeta.mockResolvedValue({ reasoning: true, reasoningEfforts: ['low', 'high'] } as never)
-    const ok = await resolveReviewLoopSelection('conv-chat')
+    const ok = await resolveFrozenChatSelection('conv-chat')
     if ('error' in ok) throw new Error('esperava ok')
     expect(ok.selection.reasoningEffort).toBe('high')
   })
 
   it('a round with frozen reasoning off overrides conflicting BYOK runner preferences', async () => {
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     expect(frozen.selection.reasoning).toBe('off') // prefs default no freeze
     // Live effort changes do not override frozen off.
@@ -1125,7 +1052,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1146,7 +1072,7 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent', reasoning: 'high' },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     expect(frozen.selection.reasoning).toBe('high')
     expect(frozen.selection.reasoningEffort).toBe('high')
@@ -1158,7 +1084,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1199,7 +1124,7 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'builtin_codex_subscription@acc_1', modelId: 'gpt-5.6-sol', mode: 'agent' },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     // Slot fingerprints and epochs are independent of the default account epoch.
     expect(frozen.selection.identityFingerprint).toMatch(/^chatgpt:/)
@@ -1213,17 +1138,17 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'builtin_codex_subscription@acc_1', modelId: 'gpt-5.6-sol', mode: 'agent' },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
 
     // Same slot fingerprint (same CODEX_HOME) revalidates even when the GLOBAL epoch has moved
     // (simulated by a legacy freeze carrying the old epoch; the guard ignores it for additional slots).
     const legacyWithGlobalEpoch = { ...frozen.selection, identityEpoch: 0 }
-    expect(await revalidateReviewLoopSelection(legacyWithGlobalEpoch)).toEqual({ ok: true })
+    expect(await revalidateFrozenChatSelection(legacyWithGlobalEpoch)).toEqual({ ok: true })
 
     // Selected SLOT identity changed (account switch in its CODEX_HOME): executor_unavailable.
     codexH.setStatus('acc_1', 'other@example.com')
-    expect(await revalidateReviewLoopSelection(legacyWithGlobalEpoch)).toEqual({
+    expect(await revalidateFrozenChatSelection(legacyWithGlobalEpoch)).toEqual({
       ok: false,
       error: 'executor-unavailable',
     })
@@ -1234,13 +1159,13 @@ describe('review loop internal service API', () => {
     h.getConvUiPrefs.mockReturnValue({
       chat: { providerId: 'builtin_codex_subscription', modelId: 'gpt-5.6-sol', mode: 'agent' },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     // Default accounts freeze the global epoch.
     expect(typeof frozen.selection.identityEpoch).toBe('number')
-    expect(await revalidateReviewLoopSelection(frozen.selection)).toEqual({ ok: true })
+    expect(await revalidateFrozenChatSelection(frozen.selection)).toEqual({ ok: true })
     // Changed default epochs make executors unavailable.
-    expect(await revalidateReviewLoopSelection({ ...frozen.selection, identityEpoch: 999 })).toEqual({
+    expect(await revalidateFrozenChatSelection({ ...frozen.selection, identityEpoch: 999 })).toEqual({
       ok: false,
       error: 'executor-unavailable',
     })
@@ -1428,14 +1353,13 @@ describe('review loop internal service API', () => {
         fastMode: true,
       },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     expect(frozen.selection.fastMode).toBe(true)
     const handle = await startInternalChatTurn({
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1461,7 +1385,7 @@ describe('review loop internal service API', () => {
         fastMode: false,
       },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     expect(frozen.selection.reasoningEffort).toBe('high')
     // If high disappears from the catalog, do not run with default or omitted effort.
@@ -1472,7 +1396,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1497,7 +1420,7 @@ describe('review loop internal service API', () => {
         fastMode: false,
       },
     })
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
   })
 
   it('rejects changed Codex Ultra effort lists after freeze', async () => {
@@ -1523,7 +1446,7 @@ describe('review loop internal service API', () => {
         fastMode: false,
       },
     })
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     // Raw sentinel and frozen max differ; live catalogs cannot change the frozen effect.
     expect(frozen.selection.reasoning).toBe('ultra')
@@ -1543,7 +1466,6 @@ describe('review loop internal service API', () => {
       conversationId: 'conv-chat',
       prompt: 'round',
       selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
       loopId: 'rl_1',
       iteration: 1,
       maxIterations: 5,
@@ -1566,13 +1488,13 @@ describe('review loop internal service API', () => {
     })
     // Empty effort lists fail start closed.
     copilotH.models = [{ id: 'gpt-5.6-sol' }]
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
     // The list declares max, but the official runner ONLY serializes low/medium/high/xhigh: start fails closed.
     copilotH.models = [{ id: 'gpt-5.6-sol', supportedReasoningEfforts: ['low', 'medium', 'max'] }]
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
     // Unsupported levels fail start closed.
     copilotH.models = [{ id: 'gpt-5.6-sol', supportedReasoningEfforts: ['low', 'medium'] }]
-    expect(await resolveReviewLoopSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
+    expect(await resolveFrozenChatSelection('conv-chat')).toEqual({ ok: false, error: 'no-model' })
     // Freeze only supported serializable transport values.
     h.getConvUiPrefs.mockReturnValue({
       chat: {
@@ -1584,7 +1506,7 @@ describe('review loop internal service API', () => {
       },
     })
     copilotH.models = [{ id: 'gpt-5.6-sol', supportedReasoningEfforts: ['low', 'medium', 'xhigh'] }]
-    const ok = await resolveReviewLoopSelection('conv-chat')
+    const ok = await resolveFrozenChatSelection('conv-chat')
     if ('error' in ok) throw new Error('esperava ok')
     expect(ok.selection.reasoningEffort).toBe('xhigh')
   })
@@ -1600,13 +1522,13 @@ describe('review loop internal service API', () => {
       },
     })
     copilotH.models = [{ id: 'gpt-5.6-sol', supportedReasoningEfforts: ['low', 'high'] }]
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     expect(frozen.selection.reasoningEffort).toBe('high')
 
     // Official runners cannot omit frozen efforts when capabilities disappear.
     copilotH.models = [{ id: 'gpt-5.6-sol', supportedReasoningEfforts: ['low', 'medium'] }]
-    expect(await revalidateReviewLoopSelection(frozen.selection)).toEqual({
+    expect(await revalidateFrozenChatSelection(frozen.selection)).toEqual({
       ok: false,
       error: 'executor-unavailable',
     })
@@ -1716,13 +1638,13 @@ describe('review loop internal service API', () => {
       chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent', reasoning: 'high', fastMode: false },
     })
     h.getProviderModelMeta.mockResolvedValue({ reasoning: true, reasoningEfforts: ['low', 'high'] } as never)
-    const frozen = await resolveReviewLoopSelection('conv-chat')
+    const frozen = await resolveFrozenChatSelection('conv-chat')
     if ('error' in frozen) throw new Error('esperava ok')
     expect(frozen.selection.reasoningEffort).toBe('high')
 
     // Changed catalogs cannot silently omit or substitute frozen effort.
     h.getProviderModelMeta.mockResolvedValue({ reasoning: true, reasoningEfforts: ['low', 'medium'] } as never)
-    expect(await revalidateReviewLoopSelection(frozen.selection)).toEqual({
+    expect(await revalidateFrozenChatSelection(frozen.selection)).toEqual({
       ok: false,
       error: 'executor-unavailable',
     })

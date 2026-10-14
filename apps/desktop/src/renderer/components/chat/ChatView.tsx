@@ -21,6 +21,7 @@ import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { isRemoteHostId } from '../../../shared/host-key'
+import { REVIEW_CODE_EVENT, useConversationReview, type ReviewCodeEventDetail } from '@/lib/review'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
@@ -30,7 +31,6 @@ import {
   findPendingChatQuestion,
   isMaestrlyUltraEffort,
   isChatProviderConnected,
-  isReviewLoopConversationReserved,
   MAESTRLY_ULTRA_EFFORT,
   mergePendingChatQuestions,
   nextQuickReasoningEffort,
@@ -55,7 +55,6 @@ import type {
   ChatConfig,
   ChatUserPrompt,
   MessagePart,
-  ReviewLoopInfo,
   SubagentSessionSummary,
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
@@ -107,8 +106,8 @@ import { contextMeterReading, sameContextModel, selectContextObservation } from 
 import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
-import { ReviewLoopBanner } from './ReviewLoopBanner'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
+import { ReviewStatusBanner } from './ReviewStatusBanner'
 import { MaestroControl } from './MaestroControl'
 import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
 import type { DelegatePart } from './OrchestrationRun'
@@ -263,13 +262,10 @@ export function ChatView({
   const [companionStarting, setCompanionStarting] = useState(false)
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
+  const review = useConversationReview(api, conversationId)
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
+  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
   const [chatProviders, setChatProviders] = useState<ChatConfig['providers']>([])
-  const [reviewLoop, setReviewLoop] = useState<ReviewLoopInfo | null>(null)
-  const reviewLoopActive =
-    reviewLoop != null &&
-    (reviewLoop.driver === 'chatgpt-web'
-      ? isReviewLoopConversationReserved(reviewLoop.status)
-      : reviewLoop.status !== 'finished' && reviewLoop.status !== 'cancelled' && reviewLoop.status !== 'interrupted')
   // A conversation opened for a purpose (such as a suggested request) starts with that text in the composer.
   const [draft, setDraft] = useState(() => peekComposerPrefill(conversationId) ?? '')
   useEffect(() => clearComposerPrefill(conversationId), [conversationId])
@@ -514,10 +510,6 @@ export function ChatView({
     () => api.onChatGptWebDelivery(conversationId, () => void reloadLatestPage()),
     [api, conversationId, reloadLatestPage]
   )
-  useEffect(
-    () => api.onChatReviewLoopDelivery(conversationId, () => void reloadLatestPage()),
-    [api, conversationId, reloadLatestPage]
-  )
 
   // Load older messages on demand and return the number prepended.
 
@@ -759,17 +751,15 @@ export function ChatView({
             ? t('view.errAccountDeleting')
             : subscriptionExhaustionMessageKey(error)
               ? t(subscriptionExhaustionMessageKey(error)!)
-              : error === 'review-loop-active'
-                ? t('view.errReviewLoopActive')
-                : error === 'context-overflow'
-                  ? t('view.errContextOverflow')
-                  : error === 'context-compaction-failed'
-                    ? t('view.errContextCompactionFailed')
-                    : error === 'invalid-attachment'
-                      ? t('view.errInvalidAttachment')
-                      : error === 'pdf-unreadable'
-                        ? t('view.errPdfUnreadable')
-                        : t('view.errSendFailed')
+              : error === 'context-overflow'
+                ? t('view.errContextOverflow')
+                : error === 'context-compaction-failed'
+                  ? t('view.errContextCompactionFailed')
+                  : error === 'invalid-attachment'
+                    ? t('view.errInvalidAttachment')
+                    : error === 'pdf-unreadable'
+                      ? t('view.errPdfUnreadable')
+                      : t('view.errSendFailed')
 
   const pushAssistantError = useCallback(
     (text: string) => {
@@ -906,6 +896,40 @@ export function ChatView({
       return res
     },
     [api, conversationId, pushAssistantError, reloadLatestPage, subagents]
+  )
+
+  // Code review: one read-only pass by independent reviewers; the report lands in this conversation.
+  const startCodeReview = useCallback(async () => {
+    setReviewNotice(null)
+    try {
+      const result = await api.chatReviewStart(conversationId, { target: 'code' })
+      if (!result.ok && result.error !== 'review-active') setReviewNotice(result.error)
+    } catch (error) {
+      setReviewNotice(error instanceof Error ? error.message : String(error))
+    }
+  }, [api, conversationId])
+  useEffect(() => {
+    const onReview = (event: Event) => {
+      const detail = (event as CustomEvent<ReviewCodeEventDetail>).detail
+      if (detail?.conversationId === conversationId && detail.hostId === hostId) void startCodeReview()
+    }
+    window.addEventListener(REVIEW_CODE_EVENT, onReview)
+    return () => window.removeEventListener(REVIEW_CODE_EVENT, onReview)
+  }, [conversationId, hostId, startCodeReview])
+  const reviewReportId = review?.target === 'code' && review.status === 'completed' ? review.messageId : undefined
+  useEffect(() => {
+    if (reviewReportId) void reloadLatestPage()
+  }, [reviewReportId, reloadLatestPage])
+  // A report card's action is an ordinary message from the person; while a turn runs it waits in the queue.
+  const sendReviewAction = useCallback(
+    (text: string) => {
+      if (streamingRef.current || compactingRef.current) {
+        setQueueState((current) => [...current, { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] }])
+        return
+      }
+      void doSend(text, [])
+    },
+    [doSend, setQueueState]
   )
 
   const finishTurn = useCallback(
@@ -1275,15 +1299,6 @@ export function ChatView({
   }, [api])
 
   useEffect(() => {
-    const ownsConversation = (loop: ReviewLoopInfo) =>
-      loop.participants.executor.conversationId === conversationId ||
-      loop.participants.reviewer?.conversationId === conversationId
-    const refresh = () => void api.chatReviewLoopStatus(conversationId).then(setReviewLoop)
-    void refresh()
-    return api.onChatReviewLoopChanged((loops) => setReviewLoop(loops.find(ownsConversation) ?? null))
-  }, [api, conversationId])
-
-  useEffect(() => {
     if (!selModelId) {
       setModelMeta(null)
       return
@@ -1645,6 +1660,7 @@ export function ChatView({
     () => [
       { name: 'clear', description: t('view.cmdClear'), kind: 'action', action: 'clear' },
       { name: 'compact', description: t('view.cmdCompact'), kind: 'action', action: 'compact' },
+      { name: 'code-review', description: t('view.cmdCodeReview'), kind: 'action', action: 'code-review' },
       ...remoteCmds.skills.map((s) => ({
         name: s.name,
         description: s.description,
@@ -1721,6 +1737,10 @@ export function ChatView({
           setDraft('')
           setDraftMentions([])
           runCompact()
+        } else if (cmd.action === 'code-review') {
+          setDraft('')
+          setDraftMentions([])
+          void startCodeReview()
         }
         return
       }
@@ -1733,7 +1753,7 @@ export function ChatView({
       setDraft((cmd.content ?? '').replace(/\$ARGUMENTS/g, '').trim())
       setDraftMentions([])
     },
-    [api, conversationId, runCompact, setQueueState]
+    [api, conversationId, runCompact, setQueueState, startCodeReview]
   )
 
   useEffect(
@@ -2022,7 +2042,6 @@ export function ChatView({
   const experienceTransitionDisabled =
     streaming ||
     compacting ||
-    reviewLoopActive ||
     queue.length > 0 ||
     maestroPostPending > 0 ||
     pending.length > 0 ||
@@ -2079,6 +2098,7 @@ export function ChatView({
                       { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] },
                     ])
                   }
+                  onReviewAction={sendReviewAction}
                   onOpenMention={openMention}
                   onUiSend={sendUiMessage}
                   scrollContainerRef={scrollRef}
@@ -2211,9 +2231,18 @@ export function ChatView({
 
             <ChatGptWebSessionBanner conversationId={conversationId} starting={companionStarting} />
             <ConversationDispatchBanner conversationId={conversationId} />
-            {reviewLoopActive && reviewLoop?.driver === 'maestrly-pair' && (
-              <ReviewLoopBanner conversationId={conversationId} loop={reviewLoop} />
-            )}
+            <ReviewStatusBanner
+              review={review && review.reviewId !== dismissedReviewId ? review : null}
+              notice={reviewNotice}
+              onCancel={() => void api.chatReviewCancel(conversationId)}
+              onDismiss={() => {
+                setReviewNotice(null)
+                if (review?.status === 'failed') {
+                  setDismissedReviewId(review.reviewId)
+                  void api.chatReviewDismiss(conversationId)
+                }
+              }}
+            />
 
             {failoverNotice && (
               <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
@@ -2275,7 +2304,7 @@ export function ChatView({
                 streaming={streaming}
                 sendWhileStreaming={maestroLiveActive || midTurnSteering}
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
-                disabled={keyMissing || reviewLoopActive || botBlocked}
+                disabled={keyMissing || botBlocked}
                 disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
                 onSend={submitDraft}
                 onStop={stop}
@@ -2293,7 +2322,7 @@ export function ChatView({
                   <ChatMicButton
                     onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
                     onAutoSend={(t) => {
-                      if (keyMissing || reviewLoopActive || botBlocked) return false
+                      if (keyMissing || botBlocked) return false
                       submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
                       return true
                     }}

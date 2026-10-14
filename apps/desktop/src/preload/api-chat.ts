@@ -50,15 +50,12 @@ import type {
   ChatSubscriptionUsage,
   CodexSubscriptionAuthStatus,
   CodexSubscriptionLoginResult,
-  ReviewLoopInfo,
-  ReviewLoopParticipantInfo,
-  StartPairedReviewLoopInput,
-  StartPairedReviewLoopResult,
   SubagentSessionChangedEvent,
   SubagentSessionOrigin,
   SubagentSessionSummary,
   SubagentTranscriptPage,
 } from '../shared/chat'
+import type { ReviewJobInfo, ReviewStartInput, ReviewStartResult } from '../shared/review'
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
 import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
@@ -308,36 +305,9 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatGptWebCompanionOpen: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:chatgpt-web:companion-open', { conversationId }),
 
-    chatGptWebReviewLoopStop: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:review-loop:stop', conversationId),
-
-    chatGptWebReviewLoopShowPreview: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:review-loop:show-preview', conversationId),
-
     chatGptWebBrowserReset: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:chatgpt-web:browser-reset'),
 
     chatGptWebLogs: (): Promise<string[]> => ipcRenderer.invoke('chat:chatgpt-web:logs'),
-    /** Compatible regular Maestrly conversations sharing the executor's canonical checkout. */
-    chatReviewLoopCompatible: (executorConversationId: string): Promise<ReviewLoopParticipantInfo[]> =>
-      ipcRenderer.invoke('chat:review-loop:compatible', executorConversationId),
-    chatReviewLoopStart: (input: StartPairedReviewLoopInput): Promise<StartPairedReviewLoopResult> =>
-      ipcRenderer.invoke('chat:review-loop:start', input),
-    chatReviewLoopStop: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:review-loop:stop', conversationId),
-    chatReviewLoopStatus: (conversationId: string): Promise<ReviewLoopInfo | null> =>
-      ipcRenderer.invoke('chat:review-loop:status', conversationId),
-    chatReviewLoopStatuses: (): Promise<ReviewLoopInfo[]> => ipcRenderer.invoke('chat:review-loop:status'),
-    onChatReviewLoopChanged: (cb: (loops: ReviewLoopInfo[]) => void): (() => void) => {
-      const listener = (_event: unknown, loops: ReviewLoopInfo[]) => cb(loops)
-      ipcRenderer.on('chat:review-loop:changed', listener)
-      return () => ipcRenderer.removeListener('chat:review-loop:changed', listener)
-    },
-    onChatReviewLoopDelivery: (conversationId: string, cb: () => void): (() => void) => {
-      const channel = `chat:review-loop:delivery:${conversationId}`
-      const listener = () => cb()
-      ipcRenderer.on(channel, listener)
-      return () => ipcRenderer.removeListener(channel, listener)
-    },
 
     onChatGptWebStatus: (cb: (status: ChatGptWebStatusPayload) => void): (() => void) => {
       const listener = (_event: unknown, status: ChatGptWebStatusPayload) => cb(status)
@@ -820,6 +790,22 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
 
     chatCompact: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:compact', conversationId),
+
+    /** Starts a read-only code or plan review of the conversation (one pass: parallel reviewers + verifier). */
+    chatReviewStart: (conversationId: string, input: ReviewStartInput): Promise<ReviewStartResult> =>
+      ipcRenderer.invoke('chat:review:start', conversationId, input),
+    chatReviewCancel: (conversationId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:cancel', conversationId),
+    /** The conversation's running review, or its last finished one until dismissed. */
+    chatReviewStatus: (conversationId: string): Promise<ReviewJobInfo | null> =>
+      ipcRenderer.invoke('chat:review:status', conversationId),
+    chatReviewDismiss: (conversationId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:dismiss', conversationId),
+    onChatReviewChanged: (cb: (review: ReviewJobInfo) => void): (() => void) => {
+      const listener = (_event: unknown, review: ReviewJobInfo) => cb(review)
+      ipcRenderer.on('chat:review:changed', listener)
+      return () => ipcRenderer.removeListener('chat:review:changed', listener)
+    },
 
     chatSetKey: (providerId: string, key: string): Promise<{ ok: boolean; mode?: string; present?: boolean }> =>
       ipcRenderer.invoke('chat:key-set', providerId, key),

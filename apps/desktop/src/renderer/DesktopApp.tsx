@@ -2,20 +2,17 @@ import { PersonalMemoryView } from '@/components/PersonalMemoryView'
 import { requestMainNavigation } from '@/lib/main-navigation'
 /** Local desktop shell. Keep live conversations mounted while project panels replace the main view.
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PanelRight, MessagesSquare, ScanSearch } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import { setComposerPrefill } from '@/lib/composer-prefill'
-import type { Conversation, Workspace, FloatTab, ReviewLoopInfo } from '../preload'
+import type { Conversation, Workspace, FloatTab } from '../preload'
 import { cn } from '@/lib/utils'
-import { findActivePairedReviewLoop } from '@/lib/review-loop-split'
 import { Sidebar, type SidebarHostSection } from '@/components/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { ChatWindowButton, ChatWindowHost } from '@/components/chat/ChatWindowHost'
 import { useDetachedChatKeys } from '@/lib/chat-windows'
-import { ReviewLoopPickerDialog } from '@/components/chat/ReviewLoopPickerDialog'
-import { ReviewLoopSplitView } from '@/components/chat/ReviewLoopSplitView'
 import { ConversationBranchChip } from '@/components/ConversationBranchChip'
 import { BotConversationBadge, BotManagementControls } from '@/components/bot/BotConversationBadge'
 import { NewConversationDialog } from '@/components/NewConversationDialog'
@@ -54,6 +51,7 @@ import { MigrationRecoveryGate } from '@/components/conversation-migration/Migra
 import { CHAT_VIEW_COLD_TTL_MS, pruneMountedChatViews } from '@/lib/conversation-mount-lru'
 import { useMemoryAutoReclaim } from '@/lib/use-memory-auto-reclaim'
 import { hostApi, HostProvider } from '@/lib/hosts/host-context'
+import { requestCodeReview } from '@/lib/review'
 import { useHosts } from '@/lib/hosts/use-hosts'
 import { type RemoteHostShell, RemoteHostRuntime } from '@/lib/hosts/remote-host-runtime'
 import { hostOfKey, hostTarget, hostWorkspace, isRemoteKey, rawId, shellConversation } from '@/lib/hosts/shell-keys'
@@ -65,10 +63,6 @@ export function DesktopApp() {
   const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
   const [active, setActive] = useState<Conversation | null>(null)
-  const [reviewLoops, setReviewLoops] = useState<ReviewLoopInfo[]>([])
-  const [reviewPickerOpen, setReviewPickerOpen] = useState(false)
-  const [dismissedSplitLoopId, setDismissedSplitLoopId] = useState<string | null>(null)
-  const [reviewSplitRatio, setReviewSplitRatio] = useState(50)
   const mainRef = useRef<HTMLElement>(null)
 
   const [mountedConvs, setMountedConvs] = useState<Conversation[]>([])
@@ -216,58 +210,14 @@ export function DesktopApp() {
       return refreshed && refreshed.name !== current.name ? { ...current, name: refreshed.name } : current
     })
   }, [standaloneConversations])
-  const pairedLoopForActive = useMemo(() => findActivePairedReviewLoop(reviewLoops, active?.id), [active, reviewLoops])
-  const runningReviewLoopForActive = useMemo(
-    () =>
-      active
-        ? (reviewLoops.find(
-            (loop) =>
-              (loop.participants.executor.conversationId === active.id ||
-                loop.participants.reviewer?.conversationId === active.id) &&
-              (loop.driver === 'chatgpt-web' ||
-                (loop.status !== 'finished' && loop.status !== 'cancelled' && loop.status !== 'interrupted'))
-          ) ?? null)
-        : null,
-    [active, reviewLoops]
-  )
-  const splitReviewLoop =
-    pairedLoopForActive && pairedLoopForActive.loopId !== dismissedSplitLoopId ? pairedLoopForActive : null
-  const protectedReviewIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (splitReviewLoop) {
-      ids.add(splitReviewLoop.participants.executor.conversationId)
-      if (splitReviewLoop.participants.reviewer) ids.add(splitReviewLoop.participants.reviewer.conversationId)
-    }
-    return ids
-  }, [splitReviewLoop])
   const protectedChatIds = useMemo(() => {
-    const ids = new Set(protectedReviewIds)
+    const ids = new Set<string>()
     for (const key of detachedChatKeys) {
       if (key.startsWith('conversation:')) ids.add(key.slice('conversation:'.length))
     }
     return ids
-  }, [protectedReviewIds, detachedChatKeys])
+  }, [detachedChatKeys])
 
-  useEffect(() => {
-    void api.chatReviewLoopStatuses().then(setReviewLoops)
-    return api.onChatReviewLoopChanged(setReviewLoops)
-  }, [api])
-
-  // Materialize and pin both existing ChatViews while a paired split is visible.
-  useEffect(() => {
-    if (!splitReviewLoop) return
-    const wanted = new Set([
-      splitReviewLoop.participants.executor.conversationId,
-      splitReviewLoop.participants.reviewer?.conversationId ?? '',
-    ])
-    const participants = allConversations.filter((conversation) => wanted.has(conversation.id))
-    if (participants.length === 0) return
-    setMountedConvs((current) => {
-      const byId = new Map(current.map((conversation) => [conversation.id, conversation]))
-      for (const conversation of participants) byId.set(conversation.id, conversation)
-      return [...byId.values()]
-    })
-  }, [allConversations, splitReviewLoop])
   // One project setup at a time, on the host it was asked for; its workspaces keep that host's own ids.
   const [projectHost, setProjectHost] = useState<HostId>(LOCAL_HOST_ID)
   const projectHostRef = useRef<HostId>(LOCAL_HOST_ID)
@@ -531,12 +481,9 @@ export function DesktopApp() {
     (conv: Conversation) => {
       if (isRemoteKey(conv.id)) remoteRef.current[hostOfKey(conv.id)]?.actions.acknowledgeConversation(conv.id)
       else acknowledgeConversation(conv.id)
-      if (findActivePairedReviewLoop(reviewLoops, conv.id)) {
-        setDismissedSplitLoopId(null)
-      }
       handleSelect(conv)
     },
-    [acknowledgeConversation, handleSelect, reviewLoops]
+    [acknowledgeConversation, handleSelect]
   )
   const onChatEvictionSafetyChange = useCallback((conversationId: string, safeToEvict: boolean) => {
     setUnsafeChatIds((previous) => {
@@ -741,46 +688,6 @@ export function DesktopApp() {
       }
     },
     [refreshWorkspaces, handleSelect, api]
-  )
-
-  const handleReviewLoopStarted = useCallback(
-    (loop: ReviewLoopInfo) => {
-      setReviewLoops((current) => [loop, ...current.filter((item) => item.loopId !== loop.loopId)])
-      setDismissedSplitLoopId(null)
-      const ids = new Set([loop.participants.executor.conversationId, loop.participants.reviewer?.conversationId ?? ''])
-      setMountedConvs((current) => {
-        const byId = new Map(current.map((conversation) => [conversation.id, conversation]))
-        for (const conversation of allConversations)
-          if (ids.has(conversation.id)) byId.set(conversation.id, conversation)
-        return [...byId.values()]
-      })
-      const executor = allConversations.find(
-        (conversation) => conversation.id === loop.participants.executor.conversationId
-      )
-      if (executor) handleSelect(executor)
-    },
-    [allConversations, handleSelect]
-  )
-
-  const handleReviewerCreated = useCallback(
-    async (conversation: Conversation) => {
-      setMountedConvs((current) => {
-        const index = current.findIndex((item) => item.id === conversation.id)
-        return index < 0
-          ? [...current, conversation]
-          : current.map((item, itemIndex) => (itemIndex === index ? conversation : item))
-      })
-      await refreshWorkspaces()
-    },
-    [refreshWorkspaces]
-  )
-
-  const focusReviewPane = useCallback(
-    (conversationId: string) => {
-      const conversation = allConversations.find((item) => item.id === conversationId)
-      if (conversation) handleSelect(conversation)
-    },
-    [allConversations, handleSelect]
   )
 
   const retryHost = useCallback((hostId: HostId) => void window.api.hostsRetry(hostId), [])
@@ -1101,24 +1008,18 @@ export function DesktopApp() {
                   <div className="no-drag flex min-w-0 items-center gap-2">
                     {active && !activeRemote && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
                     {active?.botOrigin && <BotManagementControls conversation={active} />}
-                    {active?.scope === 'project' &&
-                      active.archived === 0 &&
-                      !active.isMulti &&
-                      !active.botOrigin &&
-                      // A paired review runs two conversations of this computer side by side.
-                      !activeRemote &&
-                      !runningReviewLoopForActive && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 min-w-0 gap-1.5 px-2 text-[11px]"
-                          onClick={() => setReviewPickerOpen(true)}
-                          title={t('reviewLoop.openPicker', { ns: 'chat' })}
-                        >
-                          <ScanSearch className="size-3.5" />
-                          <span className="truncate">{t('reviewLoop.openPicker', { ns: 'chat' })}</span>
-                        </Button>
-                      )}
+                    {active?.scope === 'project' && active.archived === 0 && !active.isMulti && !active.botOrigin && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 min-w-0 gap-1.5 px-2 text-[11px]"
+                        onClick={() => requestCodeReview({ conversationId: rawId(active.id), hostId: activeHostId })}
+                        title={t('review.headerHint', { ns: 'chat' })}
+                      >
+                        <ScanSearch className="size-3.5" />
+                        <span className="truncate">{t('review.headerButton', { ns: 'chat' })}</span>
+                      </Button>
+                    )}
                     <Button
                       variant={drawerOpen ? 'secondary' : 'ghost'}
                       size="icon"
@@ -1132,32 +1033,8 @@ export function DesktopApp() {
                 </header>
 
                 <div className="relative min-h-0 flex-1">
-                  {splitReviewLoop?.participants.reviewer && (
-                    <ReviewLoopSplitView
-                      loop={splitReviewLoop}
-                      ratio={reviewSplitRatio}
-                      onRatioChange={setReviewSplitRatio}
-                      onFocus={focusReviewPane}
-                      onDismiss={() => setDismissedSplitLoopId(splitReviewLoop.loopId)}
-                    />
-                  )}
-
                   {mountedConvs.map((c) => {
                     const currentConversation = allConversations.find((conversation) => conversation.id === c.id) ?? c
-                    const splitRole = splitReviewLoop
-                      ? splitReviewLoop.participants.executor.conversationId === c.id
-                        ? 'executor'
-                        : splitReviewLoop.participants.reviewer?.conversationId === c.id
-                          ? 'reviewer'
-                          : null
-                      : null
-                    const style: CSSProperties = splitReviewLoop
-                      ? splitRole === 'executor'
-                        ? { top: 28, bottom: 0, left: 0, right: `${100 - reviewSplitRatio}%` }
-                        : splitRole === 'reviewer'
-                          ? { top: 28, bottom: 0, left: `${reviewSplitRatio}%`, right: 0 }
-                          : { display: 'none' }
-                      : { display: active?.id === c.id ? undefined : 'none' }
                     const chatHostId = hostOfKey(c.id)
                     const chatHost = chatHostId === LOCAL_HOST_ID ? null : (hostViews.get(chatHostId) ?? null)
                     return (
@@ -1166,11 +1043,7 @@ export function DesktopApp() {
                       <div
                         key={c.id}
                         className="absolute inset-0"
-                        style={style}
-                        data-review-loop-pane={splitRole ?? undefined}
-                        onMouseDownCapture={() => {
-                          if (splitRole && active?.id !== c.id) focusReviewPane(c.id)
-                        }}
+                        style={{ display: active?.id === c.id ? undefined : 'none' }}
                       >
                         {chatHost ? (
                           // Only this computer's conversations open in windows of their own.
@@ -1189,7 +1062,7 @@ export function DesktopApp() {
                                 onExperienceChange={(id, experience) =>
                                   handleConversationExperienceChange(hostKey(chatHostId, id), experience)
                                 }
-                                visible={(splitRole !== null || active?.id === c.id) && !mainOverride}
+                                visible={active?.id === c.id && !mainOverride}
                                 status={statuses[c.id] ?? c.status}
                                 onEvictionSafetyChange={(id, safe) =>
                                   onChatEvictionSafetyChange(hostKey(chatHostId, id), safe)
@@ -1243,7 +1116,7 @@ export function DesktopApp() {
                                 botConversation={c.botOrigin ? c : undefined}
                                 botName={c.botOrigin?.botName}
                                 onExperienceChange={handleConversationExperienceChange}
-                                visible={detached || ((splitRole !== null || active?.id === c.id) && !mainOverride)}
+                                visible={detached || (active?.id === c.id && !mainOverride)}
                                 status={statuses[c.id] ?? c.status}
                                 onEvictionSafetyChange={onChatEvictionSafetyChange}
                               />
@@ -1341,14 +1214,6 @@ export function DesktopApp() {
                 }
               />
             </HostProvider>
-
-            <ReviewLoopPickerDialog
-              executor={active}
-              open={reviewPickerOpen}
-              onOpenChange={setReviewPickerOpen}
-              onStarted={handleReviewLoopStarted}
-              onReviewerCreated={handleReviewerCreated}
-            />
 
             <HostProvider hostId={projectHost}>
               <ProjectSetupDialog

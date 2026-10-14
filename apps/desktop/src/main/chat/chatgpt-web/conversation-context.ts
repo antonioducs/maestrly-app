@@ -82,10 +82,6 @@ function companionConversationRevision(rows: readonly CompanionConversationMessa
   return createHash('sha256').update(JSON.stringify(visibleProjection)).digest('hex')
 }
 
-export function getCompanionConversationRevision(conversationId: string): string {
-  return companionConversationRevision(listCompanionConversationMessages(conversationId))
-}
-
 function clipMiddle(text: string, maxChars: number): { text: string; truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false }
   if (maxChars <= 1) return { text: '…'.slice(0, maxChars), truncated: true }

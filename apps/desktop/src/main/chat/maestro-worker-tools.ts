@@ -19,14 +19,9 @@ import { buildModelSkillRuntime } from './skill-runtime'
 const MAESTRO_WORKER_PARENT_ONLY_TOOLS = new Set<string>([
   'ask_question',
   'delegate',
-  // Internal review-loop evidence requires a reviewer runtime that Pool workers do not own.
-  'git_diff',
   'task',
   'review_plan',
   'todo_write',
-  'search_execution_context',
-  'read_execution_context',
-  'submit_review',
   // Pure UI focus has no worker-local meaning and must not disturb the user's active terminal.
   'terminal_focus',
   'wait_delegation',

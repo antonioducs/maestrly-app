@@ -897,7 +897,7 @@ export async function listConversationDispatchWorkspaces(): Promise<Conversation
 }
 
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
-  const [store, chat, workspace, git, windowIpc, i18n, migration, reviewLoop, settings, dispatchStore] =
+  const [store, chat, workspace, git, windowIpc, i18n, migration, chatGptWeb, settings, dispatchStore] =
     await Promise.all([
       import('./store'),
       import('./chat/service'),
@@ -906,7 +906,7 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
       import('./window-ipc'),
       import('./i18n'),
       import('./conversation-migration/store'),
-      import('./chat/review-loop/registry'),
+      import('./chat/chatgpt-web/manager'),
       import('./conversation-dispatch-settings'),
       import('./conversation-dispatch-store'),
     ])
@@ -919,7 +919,7 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
         describeModel: chat.describeChatModelForDispatch,
         validateSelection: async (conversationId, selected) => {
           try {
-            const result = await chat.resolveReviewLoopSelection(conversationId, {
+            const result = await chat.resolveFrozenChatSelection(conversationId, {
               providerId: selected.providerId,
               modelId: selected.modelId,
               effort: selected.reasoning,
@@ -985,7 +985,7 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     openConversation: (conversation, focus) => windowIpc.broadcast('conversation:open', { conversation, focus }),
     notifyChanged: (conversationId) => windowIpc.broadcast('conversation-dispatch:changed', { conversationId }),
     reportStartFailure: chat.reportConversationDispatchStartFailure,
-    isReserved: (conversationId) => !!reviewLoop.lookupReviewLoopByConversation(conversationId),
+    isReserved: (conversationId) => !!chatGptWeb.projectEnvironmentLockFor(conversationId),
     isMigrating: (conversationId) => !!migration.incompleteMigrationForConversation(conversationId),
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
   })

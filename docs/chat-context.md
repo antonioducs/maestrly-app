@@ -49,6 +49,38 @@ or incomplete task data is omitted instead of interrupting the chat interface;
 valid entries appear when the agent supplies them. This also applies when
 reopening saved conversations and does not change the stored tool input.
 
+## Code and plan reviews
+
+**Review** in the header of a project conversation, or `/code-review` in the
+composer, starts an independent, read-only review of the conversation's current
+changes: the committed difference from the default branch, staged and unstaged
+changes, and new files. Three reviewers examine the changes in parallel — logic,
+integration (callers, contracts, stored data, state and cancellation), and
+security and tests — and a verifier keeps only the findings it can confirm in the
+code. Reviewers use the conversation's model, reasoning effort and Fast setting,
+and run read-only: they read and search the checkout but cannot change files.
+
+The report appears in the conversation as a card listing each finding's
+severity, location, evidence and suggestion. It changes nothing by itself:
+select findings and choose **Discuss with the model** or **Fix selected**, or
+write your own message. The model receives the report with your next message,
+whichever provider runs that turn. A code review uses four model runs, or three
+when no reviewer finds anything, and its usage counts toward the conversation.
+
+In the Plan tab, **Review plan** checks a plan that is waiting for your decision
+against the repository with two reviewers (feasibility and completeness) and the
+verifier. Findings are added to your line comments and general feedback, where
+you can edit or remove them before choosing **Request revision**. Findings about
+a plan that was approved, discarded or replaced while it was being reviewed are
+dropped.
+
+One review runs per conversation at a time, and you can cancel it from the
+banner above the composer or from the Plan tab. Code reviews need a Git checkout
+with changes, so they are not offered in multi-repository or archived
+conversations. Reports are stored with the conversation in the local database.
+The earlier automatic review loop was removed; older conversations keep its
+messages as history.
+
 ## Interactive answers
 
 In chats, project conversations and bot conversations, an agent can answer with
@@ -331,8 +363,8 @@ Starting conversations is available in Agent/Design mode in local standalone
 and project chats. It is unavailable in Plan and Maestro modes,
 bot conversations, archived
 conversations, conversations with an unfinished migration and multi-repository
-conversations, and the app gives the reason. A review loop blocks only the
-**Same checkout** option. Missing or unknown workspace IDs, invalid or existing
+conversations, and the app gives the reason. A running ChatGPT Web
+project-environment job blocks only the **Same checkout** option. Missing or unknown workspace IDs, invalid or existing
 branch names, unresolved base branches, and targets combined with **Same
 checkout** are reported as errors rather than silently choosing another target.
 Results identify the destination workspace and resolved base revision.

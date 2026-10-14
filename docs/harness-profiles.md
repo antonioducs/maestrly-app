@@ -77,7 +77,7 @@ and `null` only disables a reference or option that accepts it. There is no `ext
 | Field | Meaning |
 | --- | --- |
 | `identity.harnessProfileId` | Versioned identity persisted by the OpenAI transports |
-| `identity.behaviorProfileId` | Behavioral identity frozen in review loops and session handles |
+| `identity.behaviorProfileId` | Behavioral identity frozen in isolated internal turns and session handles |
 | `identity.compatibilityGroup` | Group used by the compatibility snapshot |
 | `identity.promptIdentity` | Prompt template identity, independent from transport |
 | `prompts.layout` | `maestrly-base`, `openai-codex-port` or `openai-astra` |
@@ -113,7 +113,7 @@ guidance, Maestro policy and account identity.
 ## Flags
 
 `featureFlag` is read once per execution at admission (`flags.ts`), for every profile in the catalog.
-A later toggle never changes a running turn, and a frozen review-loop execution keeps its recorded
+A later toggle never changes a running turn, and a frozen isolated execution keeps its recorded
 profile regardless of the live flag.
 
 ## Versioning and compatibility

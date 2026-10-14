@@ -137,12 +137,12 @@ import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
 import { conversationShellEnv } from '../conversation-env'
-import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
+import { buildTools, isSubagentReadOnly, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools, isParentOnlyConversationToolName } from '../tools/conversation-link'
 import { getWebSearchProvider, webSearchToolEnabled } from '../web-search/settings'
 import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
-import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
+import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
 import { reviewPlanTool } from '../tools/review-plan'
 import { createDeltaCoalescer } from '../delta-coalescer'
 import {
@@ -372,7 +372,7 @@ export interface RunCodexSubscriptionChatArgs {
     prepared?: PreparedBackgroundCompaction
   } | null>
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
-  /** Isolated review loop: do not resume the conversation binding; transcript = execution. */
+  /** Isolated internal turn: do not resume the conversation binding; transcript = execution. */
   ephemeralSession?: boolean
   messageMeta?: {
     source?: import('../../../shared/chat').ChatMessageSource
@@ -381,8 +381,6 @@ export interface RunCodexSubscriptionChatArgs {
     reviewLoop?: import('../../../shared/chat').ChatReviewLoopMeta
   }
   executionScope?: import('../../../shared/chat').ChatExecutionScope
-  /** Isolated review turns receive only the fixed host-owned read-only surface. */
-  reviewerRuntime?: ReviewerToolRuntime
   /** Resolve the next physical Codex target after a confirmed quota failure. */
   resolveNextTarget?: (
     failure: {
@@ -1779,11 +1777,10 @@ export function registerCodexSubagentRequestRoute(args: {
  * Both use the name web_search, so a thread never receives the two together.
  */
 function codexNativeWebSearchEnabled(
-  args: Pick<RunCodexSubscriptionChatArgs, 'reviewerRuntime' | 'conversationId' | 'mode' | 'permMode'>
+  args: Pick<RunCodexSubscriptionChatArgs, 'conversationId' | 'mode' | 'permMode'>
 ): boolean {
   return (
     getWebSearchProvider() !== 'off' &&
-    !args.reviewerRuntime &&
     !remoteChatPolicy(args.conversationId) &&
     args.mode !== 'ask' &&
     args.mode !== 'maestro' &&
@@ -1806,16 +1803,13 @@ async function buildDynamicTools(
   close: () => Promise<void>
 }> {
   const capabilityMode = capabilityBehaviorFor(args.mode)
-  const physicalAgents = args.reviewerRuntime
-    ? []
-    : await listEffectiveAgents({
-        cwd: args.cwd,
-        conversationId: args.conversationId,
-        mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
-      })
-  const agents = args.reviewerRuntime
-    ? []
-    : args.mode === 'maestro' && args.maestro
+  const physicalAgents = await listEffectiveAgents({
+    cwd: args.cwd,
+    conversationId: args.conversationId,
+    mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+  })
+  const agents =
+    args.mode === 'maestro' && args.maestro
       ? maestroAgentsFromTurn(args.maestro, physicalAgents)
       : capabilityMode === 'agent'
         ? physicalAgents
@@ -1836,12 +1830,12 @@ async function buildDynamicTools(
     })
   }
 
-  const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
+  const prefs = getConvUiPrefs(args.conversationId).chat?.tools
   const appAccess = resolveAppToolAccess(args.conversationId)
-  const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
+  const appToolsEnabled = appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp =
-    !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro')
+    capabilityMode === 'agent' || args.mode === 'maestro'
       ? await buildMcpTools({
           signal: args.signal,
           mode: args.mode,
@@ -1859,9 +1853,8 @@ async function buildDynamicTools(
         })
       : { tools: {}, close: async () => {} }
   const app =
-    !args.reviewerRuntime &&
-    (((capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled) ||
-      hasPersonalMemoryTools(args.conversationId))
+    ((capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled) ||
+    hasPersonalMemoryTools(args.conversationId)
       ? await buildAppTools({
           only:
             appToolsEnabled && (capabilityMode === 'agent' || args.mode === 'maestro')
@@ -1894,31 +1887,26 @@ async function buildDynamicTools(
     // remove native shell and offer existing host bash, whose ctx.ask passes through the broker.
     // Plan/Ask use explicit readers only (no shell/apply_patch), preserving Maestrly's current semantics:
     // Ask may inspect real code without gaining mutation tools.
-    const bridgeNames = args.reviewerRuntime
-      ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-      : capabilityMode === 'agent' && args.permMode !== 'full'
+    const bridgeNames =
+      capabilityMode === 'agent' && args.permMode !== 'full'
         ? new Set(['bash'])
         : args.mode === 'plan' || args.mode === 'ask' || args.mode === 'maestro'
           ? new Set(['read', 'grep', 'glob', 'webfetch'])
           : new Set<string>()
-    if (!args.reviewerRuntime && hasReadOnlySubagent) {
+    if (hasReadOnlySubagent) {
       for (const name of ['read', 'grep', 'glob', 'webfetch']) bridgeNames.add(name)
     }
     // Not part of the subagent readers above: bridgeNames become the parent thread's dynamic tools too.
-    if (!args.reviewerRuntime && !codexNativeWebSearchEnabled(args) && webSearchToolEnabled()) {
+    if (!codexNativeWebSearchEnabled(args) && webSearchToolEnabled()) {
       bridgeNames.add(WEB_SEARCH_TOOL_NAME)
     }
-    if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
+    if (await generateImageToolEnabled(args.conversationId, args.mode)) {
       bridgeNames.add(GENERATE_IMAGE_TOOL_NAME)
     }
-    // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
-    const conversationDispatch = args.reviewerRuntime
-      ? undefined
-      : enableConversationDispatchTools(bridgeNames, args.conversationId, args.mode)
+    // Starting other conversations: only in a main turn admitted from text the person typed.
+    const conversationDispatch = enableConversationDispatchTools(bridgeNames, args.conversationId, args.mode)
     // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
-    const conversationLink = args.reviewerRuntime
-      ? undefined
-      : enableConversationLinkTools(bridgeNames, args.conversationId, args.mode)
+    const conversationLink = enableConversationLinkTools(bridgeNames, args.conversationId, args.mode)
     const bridgeTools = bridgeNames.size
       ? buildTools({
           executorReport: true,
@@ -1931,13 +1919,8 @@ async function buildDynamicTools(
             toolCallId,
             cwd: args.cwd,
             signal,
-            ask: (action, resources, save) => {
-              if (args.reviewerRuntime) {
-                return action === 'read' || action === 'grep' || action === 'glob'
-                  ? Promise.resolve()
-                  : Promise.reject(new Error(`Reviewer read-only boundary denied ${action}`))
-              }
-              return args.broker.assert({
+            ask: (action, resources, save) =>
+              args.broker.assert({
                 conversationId: args.conversationId,
                 projectId: args.projectId,
                 permissionScope: args.permissionScope,
@@ -1947,8 +1930,7 @@ async function buildDynamicTools(
                 toolName: action,
                 toolCallId,
                 signal,
-              })
-            },
+              }),
             askQuestion: (questions) =>
               args.questionBroker.ask({
                 conversationId: args.conversationId,
@@ -1963,23 +1945,6 @@ async function buildDynamicTools(
               state.generateImage(prompt, generationSignal, onUsage),
             ...(conversationDispatch ? { conversationDispatch } : {}),
             ...(conversationLink ? { conversationLink } : {}),
-            ...(args.reviewerRuntime
-              ? {
-                  reviewer: {
-                    recordEvidence: (kind) => args.reviewerRuntime!.recordEvidence(kind),
-                    searchExecutionContext: (input) => args.reviewerRuntime!.searchExecutionContext(input),
-                    readExecutionContext: (input) => args.reviewerRuntime!.readExecutionContext(input),
-                    submitReview: (decision) => {
-                      const result = args.reviewerRuntime!.submitReview(decision)
-                      if (result.ok) {
-                        state.planSubmitted = true
-                        state.requestTurnStop()
-                      }
-                      return result
-                    },
-                  } satisfies ReviewerToolRuntime,
-                }
-              : {}),
           }),
         })
       : {}
@@ -1987,7 +1952,7 @@ async function buildDynamicTools(
     // Skills are ordinary host tools too. Keeping them in this raw set means nested runtimes can share the
     // exact same capability adaptation as MCP/app outputs instead of inheriting the parent's image policy.
     const skills =
-      args.reviewerRuntime || args.mode === 'ask'
+      args.mode === 'ask'
         ? []
         : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
     const skillTools: ToolSet = skills.length
@@ -2062,7 +2027,7 @@ async function buildDynamicTools(
     }
     // ALL Maestrly skills (`.agents` + `.claude`) enter the same host-owned ToolSet above. Codex's
     // NATIVE catalog is disabled in all modes (`skills.include_instructions: false`).
-    if (!isBotMode() && !args.reviewerRuntime && args.mode !== 'ask' && args.mode !== 'maestro') {
+    if (!isBotMode() && args.mode !== 'ask' && args.mode !== 'maestro') {
       const schema = asSchema(reviewPlanTool.parameters)
       runtimes.push({
         spec: {
@@ -2327,7 +2292,6 @@ export async function runCodexSubscriptionChat(
       runtimeReasoningEfforts: model?.supportedReasoningEfforts?.map((entry) => entry.reasoningEffort),
       eligibleChatGptSession,
       ephemeral: Boolean(args.ephemeralSession),
-      reviewer: Boolean(args.reviewerRuntime),
       standalone: args.projectId === null,
       requestUserInputAsyncAvailable: session?.requestUserInputAsync === true,
       turnSteerAvailable: session?.turnSteer,
@@ -2790,7 +2754,7 @@ export async function runCodexSubscriptionChat(
     await retireCodexThread(args.conversationId, existingThreadId, existingAccountId)
   }
   let baseline = canResume ? existing.usage : { ...EMPTY_USAGE }
-  const approval = approvalConfig(args.reviewerRuntime ? 'ask' : args.mode, args.permMode)
+  const approval = approvalConfig(args.mode, args.permMode)
   const threadOptions = {
     model: currentModelId,
     serviceTier: currentServiceTier,
@@ -2839,9 +2803,7 @@ export async function runCodexSubscriptionChat(
       ...nativeSubagentSuppressionConfig(),
       // Plan receives Maestrly readers; controlled Ask/Agent receive no native shell. This avoids
       // the internal `UnlessTrusted` safelist, which would execute `cat`/`rg` without consulting Maestrly's broker.
-      ...(args.reviewerRuntime || capabilityMode !== 'agent' || args.permMode !== 'full'
-        ? { 'features.shell_tool': false }
-        : {}),
+      ...(capabilityMode !== 'agent' || args.permMode !== 'full' ? { 'features.shell_tool': false } : {}),
       // Native web search never requests approval. Where it would bypass the permission gate (or the user turned
       // web search off), disable it; the gated host web_search is bridged instead (buildDynamicTools).
       ...(!codexNativeWebSearchEnabled(args) ? { web_search: 'disabled' } : {}),
@@ -2851,7 +2813,7 @@ export async function runCodexSubscriptionChat(
       'features.skill_search': false,
       'features.skill_mcp_dependency_install': false,
       'skills.include_instructions': false,
-      ...(args.reviewerRuntime || args.mode === 'ask' || args.mode === 'maestro'
+      ...(args.mode === 'ask' || args.mode === 'maestro'
         ? {
             'features.apps': false,
             'features.plugins': false,
@@ -3027,8 +2989,7 @@ export async function runCodexSubscriptionChat(
           {
             threadId: existing.threadId,
             ...threadOptions,
-            ...(args.reviewerRuntime ? { environments: [] } : {}),
-          } as Parameters<CodexAppServerClient['resumeThread']>[0] & { environments?: [] },
+          } as Parameters<CodexAppServerClient['resumeThread']>[0],
           { timeoutMs: 0 }
         )
         void resumeRequest.catch(() => {})
@@ -3107,7 +3068,7 @@ export async function runCodexSubscriptionChat(
           ...threadOptions,
           // Empty is the official contract to disable environment access: removes shell/apply_patch/view_image.
           // Plan and Ask continue investigating only through the gated dynamic readers above.
-          ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+          ...(capabilityMode === 'agent' ? {} : { environments: [] }),
           ephemeral: Boolean(args.ephemeralSession),
           dynamicTools: registrations,
         } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -5419,7 +5380,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' ? {} : { environments: [] }),
             ephemeral: false,
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -5819,7 +5780,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' ? {} : { environments: [] }),
             ephemeral: Boolean(args.ephemeralSession),
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {

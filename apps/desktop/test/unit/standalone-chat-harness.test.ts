@@ -139,7 +139,6 @@ describe('standalone conversation style', () => {
     const facts = {
       eligibleChatGptSession: true,
       ephemeral: false,
-      reviewer: false,
       requestUserInputAsyncAvailable: true,
     }
     const policy = (model: string, standalone: boolean) =>

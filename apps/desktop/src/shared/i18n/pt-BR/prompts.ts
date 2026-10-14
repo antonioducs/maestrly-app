@@ -72,48 +72,17 @@ export default {
       'Não foi possível iniciar esta conversa ({{reason}}). A tarefa foi preservada — use “Tentar iniciar de novo” acima do campo de mensagem.',
   },
 
-  // ---- review-loop.ts (turno interno + resumo auditável do review loop automático) ----
-  reviewLoop: {
-    pairedReviewerRound:
-      'Revise de forma fresca o estado atual do checkout de código. Use git_diff, ao menos um grep ou glob e ' +
-      'read antes de chamar submit_review exatamente uma vez. Permaneça read-only e não deixe a decisão em texto livre.',
-    pairedImplementFindings:
-      'Implemente os findings estruturados do review para a correção {{iteration}} de {{max}}. Não crie um plano; ' +
-      'aplique os findings diretamente, rode os checks relevantes e verifique as mudanças antes de concluir.',
-    implementFindings:
-      'Implemente agora os findings da rodada {{iteration}}/{{max}} do review automático, anexados como ' +
-      'review-loop-findings.md. Trate-os como a especificação desta rodada: implemente diretamente os ' +
-      'findings acionáveis; NÃO gere plano nem chame review_plan; inspecione a implementação e os contratos ' +
-      'relacionados antes de alterar; faça mudanças mínimas e completas; rode as verificações relevantes ' +
-      'disponíveis (testes/lint/typecheck); se um finding for inválido, não force alteração — explique com ' +
-      'evidência no resumo final; não faça commit, push nem mudanças fora do escopo dos findings; finalize ' +
-      'com um resumo das alterações e validações.',
-    findingsHeading: 'Review loop — rodada {{iteration}}/{{max}}',
-    findingsSection: 'Findings ({{count}})',
-    reviewerNotes: 'Notas do reviewer',
-    summaryHeading: 'Review automático encerrado',
-    summaryResult: 'Resultado',
-    summaryRounds: 'Ciclos executados',
-    summaryDuration: 'Duração',
-    summaryBaseline: 'Fingerprint inicial (workspace)',
-    summaryFinal: 'Fingerprint final (workspace)',
-    summaryStopReason: 'Motivo de parada',
-    summaryReviewer: 'Resumo do reviewer',
-    summaryRemaining: 'Findings restantes',
-    summaryRemainingCount:
-      '{{total}} no total ({{blocking}} blocking, {{important}} important, {{optional}} optional):',
-    summaryRemainingNone: 'Nenhum informado.',
-    summaryChecks: 'Verificações executadas via bridge',
-    summaryChecksNone: 'Nenhuma.',
-    resultClean: 'limpo',
-    resultMaxIterations: 'limite de iterações atingido',
-    resultNoProgress: 'sem progresso',
-    resultFailed: 'falhou',
-    resultCancelled: 'cancelado',
-    reasonExecutorUnavailable: 'executor indisponível',
-    reasonWorkspaceChanged: 'workspace alterado externamente',
-    reasonSessionEnded: 'sessão encerrada',
-    reasonInterrupted: 'interrompido',
+  // ---- review/report.ts (relatório da revisão de código guardado na conversa) ----
+  review: {
+    reportHeading_one: 'Revisão de código: {{count}} achado',
+    reportHeading_other: 'Revisão de código: {{count}} achados',
+    reportClean: 'Revisão de código: nenhum problema encontrado.',
+    reportUnverified: 'A verificação não terminou, então estes achados não foram confirmados.',
+    severityBlocking: 'bloqueante',
+    severityImportant: 'importante',
+    severityMinor: 'menor',
+    evidence: 'Evidência',
+    suggestion: 'Sugestão',
   },
 
   // ---- memory-service.ts (wrapper/cabeçalho legado mantido por compatibilidade) ----

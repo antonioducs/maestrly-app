@@ -31,7 +31,6 @@ import { unwatchNotes, unwatchProject } from './notes/notes-service'
 import { unwatchMemory } from './memory-service'
 import type { IpcRegistrar } from './ipc-registrar'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
-import { lookupReviewLoopByConversation } from './chat/review-loop/registry'
 
 export interface WorkspaceIpcDeps {
   getMainWindow: () => BrowserWindow | null
@@ -61,12 +60,7 @@ export function registerWorkspaceIpc(reg: IpcRegistrar, deps: WorkspaceIpcDeps):
     // Stop in-memory PTYs, buffers, and views, then delete each conversation through deleteConversation so
     // worktrees, multi-repository aggregators, and store rows are cleaned together.
     const conversations = listConversations(id, true)
-    for (const c of conversations) {
-      if (lookupReviewLoopByConversation(c.id)) {
-        throw new Error('The workspace contains a conversation reserved by an active review loop.')
-      }
-      assertConversationMigrationMutationAllowed(c.id, 'Remover workspace')
-    }
+    for (const c of conversations) assertConversationMigrationMutationAllowed(c.id, 'Remover workspace')
     for (const c of conversations) {
       clearPlan(c.id)
       await deps.stopChat(c.id)

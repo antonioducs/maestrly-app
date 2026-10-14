@@ -2,7 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { preparePlanPanelMemoryEviction, usePanelMemoryEviction } from '@/lib/panel-memory-eviction'
 import { useTranslation } from 'react-i18next'
 import { diffLines } from 'diff'
-import { Check, MessageSquarePlus, Trash2, Pencil, BookOpen, GitCompare, Sparkles, SquarePlus } from 'lucide-react'
+import {
+  Check,
+  MessageSquarePlus,
+  Trash2,
+  Pencil,
+  BookOpen,
+  GitCompare,
+  Sparkles,
+  SquarePlus,
+  ScanSearch,
+  Loader2,
+  X,
+} from 'lucide-react'
 import type { PlanReceived, PlanDecision, PlanDecisionResponse } from '../../preload'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -11,6 +23,13 @@ import { MarkdownViewer, type CommentCtx } from '@/components/MarkdownViewer'
 import { planDecisionError } from '@/lib/plan-decision'
 import { MaestroPlanProfileDialog } from '@/components/MaestroPlanProfileDialog'
 import { StandardPlanHandoffDialog } from '@/components/StandardPlanHandoffDialog'
+import {
+  isReviewRunning,
+  mergePlanReviewFindings,
+  reviewErrorText,
+  reviewProgressText,
+  useConversationReview,
+} from '@/lib/review'
 
 interface Props {
   plan: PlanReceived
@@ -40,6 +59,16 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
 
   const [lineComments, setLineComments] = useState<Record<number, string>>({})
   const [editingLine, setEditingLine] = useState<number | null>(null)
+  // The saved draft loads asynchronously; review findings merge into it only after it has loaded.
+  const [draftReady, setDraftReady] = useState(false)
+
+  const { t: tChat } = useTranslation('chat')
+  const review = useConversationReview(api, plan.agentId)
+  const planReview = review?.target === 'plan' ? review : null
+  const reviewing = isReviewRunning(planReview)
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
+  const [reviewOutcome, setReviewOutcome] = useState<{ reviewId: string; count: number } | null>(null)
+  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
 
   const hasPrev = !!plan.previousPlan && plan.version > 1
   const currentHash = planHash(plan.plan)
@@ -49,6 +78,8 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
     setBusy(false)
     setDecisionError(null)
     setEditingLine(null)
+    setDraftReady(false)
+    setReviewOutcome(null)
     void api.getPlanDraft(plan.agentId).then((raw) => {
       if (!alive) return
       const draft = raw as {
@@ -70,6 +101,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
               ? 'diff'
               : 'read'
         )
+        setDraftReady(true)
         return
       }
       api.savePlanDraft(plan.agentId, null)
@@ -77,11 +109,44 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
       setFeedback('')
       setLineComments({})
       setMode(plan.previousPlan && plan.version > 1 ? 'diff' : 'read')
+      setDraftReady(true)
     })
     return () => {
       alive = false
     }
   }, [currentHash, plan.agentId, plan.plan, plan.previousPlan, plan.version, api])
+
+  // A finished review of this plan version becomes line comments and feedback the person can edit before revising.
+  useEffect(() => {
+    if (!draftReady || !planReview || planReview.status !== 'completed') return
+    if (planReview.planVersion !== plan.version || reviewOutcome?.reviewId === planReview.reviewId) return
+    const findings = planReview.findings ?? []
+    if (findings.length) {
+      const merged = mergePlanReviewFindings(tChat, plan.plan, findings, { lineComments, feedback })
+      setLineComments(merged.lineComments)
+      setFeedback(merged.feedback)
+      setMode((current) => (current === 'edit' ? current : 'read'))
+    }
+    setReviewOutcome({ reviewId: planReview.reviewId, count: findings.length })
+    void api.chatReviewDismiss(plan.agentId)
+  }, [api, draftReady, feedback, lineComments, plan.agentId, plan.plan, plan.version, planReview, reviewOutcome, tChat])
+
+  const startReview = async () => {
+    setReviewNotice(null)
+    setReviewOutcome(null)
+    try {
+      const result = await api.chatReviewStart(plan.agentId, { target: 'plan' })
+      if (!result.ok && result.error !== 'review-active') setReviewNotice(result.error)
+    } catch (error) {
+      setReviewNotice(error instanceof Error ? error.message : String(error))
+    }
+  }
+  const failedReview =
+    planReview?.status === 'failed' &&
+    planReview.planVersion === plan.version &&
+    planReview.reviewId !== dismissedReviewId
+      ? planReview
+      : null
 
   const commentList = useMemo(
     () =>
@@ -107,6 +172,8 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const decide = async (d: PlanDecision) => {
     setBusy(true)
     setDecisionError(null)
+    // A decision makes a review of this version pointless.
+    if (reviewing) void api.chatReviewCancel(plan.agentId)
     try {
       const result = await onDecide(d)
       const error = planDecisionError(result)
@@ -171,29 +238,99 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
           )}
           {edited && <span className="shrink-0 text-[10px] text-primary">• {t('plan.edited')}</span>}
         </div>
-        <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-white/[0.04] p-0.5 ring-1 ring-white/[0.05]">
-          <ModeBtn
-            icon={<BookOpen className="size-3.5" />}
-            label={t('plan.modeRead')}
-            active={mode === 'read'}
-            onClick={() => setMode('read')}
-          />
-          <ModeBtn
-            icon={<Pencil className="size-3.5" />}
-            label={t('plan.modeEdit')}
-            active={mode === 'edit'}
-            onClick={() => setMode('edit')}
-          />
-          {hasPrev && (
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            disabled={busy || reviewing}
+            title={t('plan.reviewPlanHint')}
+            onClick={() => void startReview()}
+          >
+            {reviewing ? <Loader2 className="size-3.5 animate-spin" /> : <ScanSearch className="size-3.5" />}
+            {t('plan.reviewPlan')}
+          </Button>
+          <div className="flex shrink-0 items-center gap-0.5 rounded-md bg-white/[0.04] p-0.5 ring-1 ring-white/[0.05]">
             <ModeBtn
-              icon={<GitCompare className="size-3.5" />}
-              label={t('plan.modeDiff')}
-              active={mode === 'diff'}
-              onClick={() => setMode('diff')}
+              icon={<BookOpen className="size-3.5" />}
+              label={t('plan.modeRead')}
+              active={mode === 'read'}
+              onClick={() => setMode('read')}
             />
-          )}
+            <ModeBtn
+              icon={<Pencil className="size-3.5" />}
+              label={t('plan.modeEdit')}
+              active={mode === 'edit'}
+              onClick={() => setMode('edit')}
+            />
+            {hasPrev && (
+              <ModeBtn
+                icon={<GitCompare className="size-3.5" />}
+                label={t('plan.modeDiff')}
+                active={mode === 'diff'}
+                onClick={() => setMode('diff')}
+              />
+            )}
+          </div>
         </div>
       </div>
+
+      {(reviewing || failedReview || reviewNotice || reviewOutcome) && (
+        <div
+          role={failedReview || reviewNotice ? 'alert' : 'status'}
+          data-testid="plan-review-status"
+          className={cn(
+            'flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-[11px]',
+            failedReview || reviewNotice
+              ? 'border-amber-500/20 bg-amber-500/[0.06] text-amber-100'
+              : 'border-sky-500/15 bg-sky-500/[0.05] text-sky-100'
+          )}
+        >
+          {reviewing && planReview ? (
+            <>
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              <span className="min-w-0 flex-1 truncate">
+                {t('plan.reviewRunning')} · {reviewProgressText(tChat, planReview)}
+              </span>
+              <button
+                type="button"
+                onClick={() => void api.chatReviewCancel(plan.agentId)}
+                className="shrink-0 rounded px-1.5 py-0.5 font-medium hover:bg-white/[0.08]"
+              >
+                {tChat('review.cancel')}
+              </button>
+            </>
+          ) : (
+            <>
+              <ScanSearch className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                {failedReview
+                  ? tChat('review.failed', { reason: reviewErrorText(tChat, failedReview.error) })
+                  : reviewNotice
+                    ? tChat('review.startFailed', { reason: reviewErrorText(tChat, reviewNotice) })
+                    : reviewOutcome && reviewOutcome.count > 0
+                      ? t('plan.reviewApplied', { count: reviewOutcome.count })
+                      : t('plan.reviewClean')}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setReviewNotice(null)
+                  setReviewOutcome(null)
+                  if (failedReview) {
+                    setDismissedReviewId(failedReview.reviewId)
+                    void api.chatReviewDismiss(plan.agentId)
+                  }
+                }}
+                className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+                aria-label={tChat('view.dismiss')}
+              >
+                <X className="size-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto p-3">

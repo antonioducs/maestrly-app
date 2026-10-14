@@ -1575,7 +1575,6 @@ export default {
       'Prepare a próxima política abaixo. Ao aplicar, esta sessão será revogada e um novo pareamento será criado com os escopos escolhidos.',
     chatgptRestartToApply: 'Reiniciar para aplicar',
     chatgptRestarting: 'Reiniciando…',
-    chatgptRestartBlockedByReview: 'Pare o Review Loop ativo antes de alterar o acesso do companion.',
     chatgptRestartError: 'Não foi possível reiniciar o companion: {{error}}',
     chatgptRestartAfterEndError:
       'A sessão anterior foi encerrada, mas o novo companion não iniciou: {{error}}. Revise os acessos e inicie novamente.',
@@ -1802,6 +1801,13 @@ export default {
     reviseHintEnabled: 'Enviar feedback para o Claude revisar',
     reviseHintDisabled: 'Comente em um trecho, edite o plano ou escreva um comentário geral',
     requestRevision: 'Pedir revisão',
+    reviewPlan: 'Revisar plano',
+    reviewPlanHint:
+      'Revisão independente e só leitura deste plano contra o código. Os achados viram comentários que você pode editar antes de pedir a revisão.',
+    reviewRunning: 'Revisando o plano',
+    reviewApplied_one: 'Revisão: {{count}} achado adicionado aos seus comentários.',
+    reviewApplied_other: 'Revisão: {{count}} achados adicionados aos seus comentários.',
+    reviewClean: 'Revisão: nenhum problema encontrado no plano.',
     discard: 'Descartar plano',
   },
 

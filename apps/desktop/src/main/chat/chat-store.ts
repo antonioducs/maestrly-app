@@ -25,6 +25,7 @@ import type {
   MessagePart,
 } from '../../shared/chat'
 import { totalTokensOf, toolOutputImages } from '../../shared/chat'
+import { parseChatReviewReport } from '../../shared/review'
 import { deleteConversationGeneratedImages, deleteGeneratedImages } from './generated-images'
 import { deleteAttachmentImages, deleteConversationAttachmentImages } from './attachment-artifacts'
 import { clipPersistedToolOutput, isPortableCompactionMarker, parseParts } from './message'
@@ -98,6 +99,8 @@ interface MetaJson {
   internal?: boolean
   /** Execution scope; absent = main conversation (legacy). */
   executionScope?: ChatExecutionScope
+  /** Code review report carried by a `review-report` message. */
+  review?: unknown
   memoryContext?: ChatMessage['memoryContext']
   steering?: ChatMessage['steering']
   contextSnapshot?: ChatMessage['contextSnapshot']
@@ -141,20 +144,14 @@ function parseExecutionScope(raw: unknown): ChatExecutionScope | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const scope = raw as Record<string, unknown>
   if (scope.kind === 'conversation') return { kind: 'conversation' }
-  // Final loop summary: outside main context and resume boundary. Deliberately lenient —
-  // degrading to main-context (undefined) would reintroduce contamination; kind alone suffices for exclusion.
+  // Summary of a removed review loop (older conversations) and code review reports: outside main context and the
+  // resume boundary. Deliberately lenient — degrading to main-context (undefined) would reintroduce contamination;
+  // kind alone suffices for exclusion.
   if (scope.kind === 'review-summary') {
-    return {
-      kind: 'review-summary',
-      loopId: typeof scope.loopId === 'string' ? scope.loopId : '',
-      ...(scope.role === 'executor' || scope.role === 'reviewer' ? { role: scope.role } : {}),
-      ...(typeof scope.executorConversationId === 'string'
-        ? { executorConversationId: scope.executorConversationId }
-        : {}),
-      ...(typeof scope.reviewerConversationId === 'string'
-        ? { reviewerConversationId: scope.reviewerConversationId }
-        : {}),
-    }
+    return { kind: 'review-summary', loopId: typeof scope.loopId === 'string' ? scope.loopId : '' }
+  }
+  if (scope.kind === 'review-report') {
+    return { kind: 'review-report', reviewId: typeof scope.reviewId === 'string' ? scope.reviewId : '' }
   }
   if (scope.kind === 'host') {
     return typeof scope.executionId === 'string' && scope.executionId
@@ -171,20 +168,7 @@ function parseExecutionScope(raw: unknown): ChatExecutionScope | undefined {
       ? Math.floor(scope.maxIterations)
       : 0
   if (!executionId || !loopId || iteration < 1 || maxIterations < 1) return undefined
-  return {
-    kind: 'review-loop',
-    executionId,
-    loopId,
-    iteration,
-    maxIterations,
-    ...(scope.role === 'executor' || scope.role === 'reviewer' ? { role: scope.role } : {}),
-    ...(typeof scope.executorConversationId === 'string'
-      ? { executorConversationId: scope.executorConversationId }
-      : {}),
-    ...(typeof scope.reviewerConversationId === 'string'
-      ? { reviewerConversationId: scope.reviewerConversationId }
-      : {}),
-  }
+  return { kind: 'review-loop', executionId, loopId, iteration, maxIterations }
 }
 
 function reviewLoopMetaOf(scope: ChatExecutionScope | undefined): ChatReviewLoopMeta | undefined {
@@ -194,9 +178,6 @@ function reviewLoopMetaOf(scope: ChatExecutionScope | undefined): ChatReviewLoop
     executionId: scope.executionId,
     iteration: scope.iteration,
     maxIterations: scope.maxIterations,
-    ...(scope.role ? { role: scope.role } : {}),
-    ...(scope.executorConversationId ? { executorConversationId: scope.executorConversationId } : {}),
-    ...(scope.reviewerConversationId ? { reviewerConversationId: scope.reviewerConversationId } : {}),
   }
 }
 
@@ -205,7 +186,7 @@ export function isConversationContextMessage(message: Pick<StoredChatMessage, 'e
   return !message.executionScope || message.executionScope.kind === 'conversation'
 }
 
-/** Isolated review-loop execution messages. */
+/** Isolated internal execution messages. */
 export function isExecutionContextMessage(
   message: Pick<StoredChatMessage, 'executionScope'>,
   executionId: string
@@ -411,12 +392,13 @@ function rowToMessage(r: any): StoredChatMessage {
   const source =
     meta.source === 'chatgpt-web' ||
     meta.source === 'chatgpt-web-review-loop' ||
-    meta.source === 'maestrly-review-loop' ||
+    meta.source === 'maestrly-review' ||
     meta.source === 'conversation-dispatch' ||
     meta.source === 'conversation-message'
       ? meta.source
       : undefined
   const peer = source === 'conversation-message' ? parsePeerOrigin(meta.peer) : undefined
+  const review = source === 'maestrly-review' ? parseChatReviewReport(meta.review) : undefined
   return {
     id: r.id,
     conversationId: r.conversation_id,
@@ -440,6 +422,7 @@ function rowToMessage(r: any): StoredChatMessage {
     ...(meta.internal ? { internal: true } : {}),
     ...(executionScope ? { executionScope } : {}),
     ...(reviewLoop ? { reviewLoop } : {}),
+    ...(review ? { review } : {}),
     ...(memoryContext ? { memoryContext } : {}),
     ...(meta.steering?.status === 'queued' || meta.steering?.status === 'failed'
       ? { steering: { status: meta.steering.status } }
@@ -473,11 +456,9 @@ function metaOf(m: StoredChatMessage): string {
       loopId: m.reviewLoop.loopId,
       iteration: m.reviewLoop.iteration,
       maxIterations: m.reviewLoop.maxIterations,
-      ...(m.reviewLoop.role ? { role: m.reviewLoop.role } : {}),
-      ...(m.reviewLoop.executorConversationId ? { executorConversationId: m.reviewLoop.executorConversationId } : {}),
-      ...(m.reviewLoop.reviewerConversationId ? { reviewerConversationId: m.reviewLoop.reviewerConversationId } : {}),
     }
   }
+  if (m.review) meta.review = m.review
   if (m.steering?.status === 'queued' || m.steering?.status === 'failed') meta.steering = m.steering
   const memoryContext = parseMemoryContext(m.memoryContext)
   if (memoryContext) {
@@ -779,7 +760,7 @@ export function listChatMessages(conversationId: string): StoredChatMessage[] {
 
 /**
  * SQL predicate: MAIN-context message (legacy without executionScope OR kind=conversation).
- * Excludes isolated review-loop messages. NULL/invalid meta_json DEGRADES to legacy main-context — store
+ * Excludes isolated internal-turn messages. NULL/invalid meta_json DEGRADES to legacy main-context — store
  * parses corruption defensively, so SQL predicates must not throw `malformed JSON`.
  */
 const CONVERSATION_CONTEXT_SQL = `(json_valid(meta_json) <> 1
@@ -826,6 +807,29 @@ export function listConversationContextMessages(conversationId: string): StoredC
          ORDER BY seq ASC`
       )
       .all(conversationId) as any[]
+  ).map(rowToMessage)
+}
+
+/**
+ * Code review reports stored after the last main-context user message, newest first. They have not reached the
+ * model yet: the next message the person sends carries them.
+ */
+export function listReviewReportsSinceLastUserMessage(conversationId: string, limit = 3): StoredChatMessage[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT * FROM chat_messages
+         WHERE conversation_id = @conversationId
+           AND seq > COALESCE(
+             (SELECT MAX(seq) FROM chat_messages
+              WHERE conversation_id = @conversationId AND role = 'user' AND ${CONVERSATION_CONTEXT_SQL}),
+             -1)
+           AND json_valid(meta_json) = 1
+           AND json_extract(meta_json, '$.executionScope.kind') = 'review-report'
+         ORDER BY seq DESC
+         LIMIT @limit`
+      )
+      .all({ conversationId, limit }) as any[]
   ).map(rowToMessage)
 }
 

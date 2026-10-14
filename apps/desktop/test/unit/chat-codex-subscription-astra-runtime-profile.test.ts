@@ -10,7 +10,6 @@ interface LegacyAstraInput {
   astraHarnessEnabled: boolean
   eligibleChatGptSession: boolean
   ephemeral: boolean
-  reviewer: boolean
   requestUserInputAsyncAvailable: boolean
   reasoningEffort?: string
 }
@@ -30,7 +29,6 @@ const buildAstraCodexThreadProfile = (input: LegacyAstraInput): CodexThreadHarne
     runtimeReasoningEfforts: input.model?.supportedReasoningEfforts?.map((entry) => entry.reasoningEffort),
     eligibleChatGptSession: input.eligibleChatGptSession,
     ephemeral: input.ephemeral,
-    reviewer: input.reviewer,
     requestUserInputAsyncAvailable: input.requestUserInputAsyncAvailable,
     ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
   })
@@ -78,7 +76,6 @@ const build = (patch: Partial<Parameters<typeof buildAstraCodexThreadProfile>[0]
     astraHarnessEnabled: true,
     eligibleChatGptSession: true,
     ephemeral: false,
-    reviewer: false,
     requestUserInputAsyncAvailable: false,
     reasoningEffort: 'ultra',
     ...patch,
@@ -101,7 +98,6 @@ describe('Astra Codex runtime profile', () => {
     expect(build({ model: astra({ supportsExperimentalContext: false }) }).experimentalContextEnabled).toBe(false)
     expect(build({ eligibleChatGptSession: false }).experimentalContextEnabled).toBe(false)
     expect(build({ ephemeral: true }).experimentalContextEnabled).toBe(false)
-    expect(build({ reviewer: true }).experimentalContextEnabled).toBe(false)
   })
 
   it('conditions async guidance on actual session tool availability', () => {
