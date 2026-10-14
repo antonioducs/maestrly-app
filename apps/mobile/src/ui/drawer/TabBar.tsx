@@ -31,6 +31,7 @@ export function TabBar({ tabs, value, onChange }: { tabs: Tab[]; value: string; 
             aria-selected={selected}
             accessibilityLabel={tab.badge ? `${tab.label}, ${tab.badgeLabel ?? tab.badge}` : tab.label}
             onPress={() => onChange(tab.id)}
+            hitSlop={{ top: 4, bottom: 4 }}
             style={{
               flex: 1,
               minHeight: 36,

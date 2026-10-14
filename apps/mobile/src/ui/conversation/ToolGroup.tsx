@@ -52,6 +52,7 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
           summary: headline ? `${headline.verb} ${headline.target ?? ''}`.trim() : [summary, ...extras].join(', '),
         })}
         onPress={() => setOpen((value) => !value)}
+        hitSlop={{ top: 6, bottom: 6 }}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32 }}
       >
         {headline ? (

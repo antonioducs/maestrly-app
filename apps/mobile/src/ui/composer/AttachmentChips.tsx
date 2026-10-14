@@ -34,7 +34,7 @@ export function AttachmentChips({
               accessibilityRole="button"
               accessibilityLabel={t('attach.remove', { name: attachment.name })}
               onPress={() => onRemove(attachment.uri)}
-              hitSlop={10}
+              hitSlop={11}
               style={{
                 position: 'absolute',
                 top: -6,

@@ -153,6 +153,13 @@ notifications, install a `preview` build from EAS (see [Release](#release)).
   `adb reverse tcp:7443 tcp:7443` first.
 - **Checks:** `npm run check:mobile` type checks, runs the unit tests and bundles
   both platforms with `expo export`.
+- **Web flows:** `npm run test:e2e:mobile` builds the web version and goes
+  through the demo server in Chromium at a phone's size: talking to a bot,
+  dictation, compaction, an approval, a published page, a new chat, its setup,
+  the settings and the dark theme. It fails on any console error, and on any
+  control without a name for screen readers. It needs Playwright's Chromium
+  (`npx playwright install chromium`) and runs in CI with the platform's
+  end-to-end tests.
 - **Icons:** `npm run icons --workspace @maestrly/mobile` renders the app icon,
   Android's adaptive and monochrome icons, the splash, the notification icon and
   the favicon from the mark in `src/ui/BrandMark.tsx`. It needs Playwright's

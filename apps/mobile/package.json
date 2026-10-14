@@ -20,6 +20,7 @@
     "test": "vitest run",
     "build": "node scripts/export.mjs",
     "icons": "node scripts/icons.mjs",
+    "test:web": "node scripts/web-e2e.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

@@ -19,6 +19,7 @@ export function ReasoningBlock({ item }: { item: Extract<FleetTranscriptItem, { 
         aria-expanded={open}
         accessibilityLabel={label}
         onPress={() => setOpen((value) => !value)}
+        hitSlop={{ top: 7, bottom: 7 }}
         style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 30 }}
       >
         <Icon name="brain" size={16} color={palette.muted} />
