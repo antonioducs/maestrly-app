@@ -20,7 +20,10 @@ export type RemoteOs = 'mac' | 'win' | 'linux'
 export type RemoteClientOs = RemoteOs | 'ios' | 'android'
 export type RemoteClientKind = 'desktop' | 'mobile'
 
-/** What a host tells a client about itself; `desktopEffects`, `editor` and `browser` gate the UI that needs them. */
+/**
+ * What a host tells a client about itself; `desktopEffects`, `editor`, `browser` and `computer` gate the UI that needs
+ * them.
+ */
 export interface RemoteHostInfo {
   os: RemoteOs
   hostName: string
@@ -31,6 +34,8 @@ export interface RemoteHostInfo {
   desktopEffects: boolean
   editor: boolean
   browser: boolean
+  /** Whether the host gives its conversations computers of their own (a workspaces host on the bot image). */
+  computer: boolean
 }
 
 /** Which of this computer's renderers an origin is: the main window, or a drawer panel of one conversation. */

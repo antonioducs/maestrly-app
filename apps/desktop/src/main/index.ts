@@ -128,7 +128,10 @@ import {
   setFloatFocuser,
   ensureViewFor,
   focusBrowserPopup,
+  getPlacement,
 } from './drawer-manager'
+import { placeConversationBrowser } from './drawer/conversation-tile'
+import { serverComputers } from './remote-host/server/computers-registry'
 import {
   startVSCodeServer,
   restartVSCodeServer,
@@ -1133,10 +1136,12 @@ app.whenReady().then(async () => {
         homeDir: os.homedir(),
         roots: hostFsRoots().map((root) => root.path),
         // Nobody sees this host's desktop. Its browser is streamed to the computer that shows it (drawer/browser-stream),
-        // and that computer opens its editor through the control server (remote-host/server/host-editor).
+        // and that computer opens its editor through the control server (remote-host/server/host-editor) and its
+        // conversations' computers through the gateway (remote-host/server/computers).
         desktopEffects: false,
         editor: true,
         browser: true,
+        computer: serverComputers() !== null,
       }),
       // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
       // language of the computer that connected last.
@@ -1150,13 +1155,28 @@ app.whenReady().then(async () => {
       await startServerHostMode(mainWindow, {
         hub,
         busy: () => activeChatRunCount() > 0,
-        closeConversation: (id) => stopConversationLive(id),
-        purgeConversation: (id) => deleteConversation(id),
+        // A conversation's computer goes before its browser views and terminals do.
+        closeConversation: async (id) => {
+          await serverComputers()?.close(id)
+          await stopConversationLive(id)
+        },
+        purgeConversation: async (id) => {
+          await serverComputers()?.close(id)
+          await deleteConversation(id)
+        },
         watchStatuses: (listener) => {
           const onStatus = ({ agentId, status }: { agentId: string; status: string }) => listener(agentId, status)
           registry.on('status', onStatus)
           return () => registry.off('status', onStatus)
         },
+        placeBrowser: (id, placement) =>
+          placeConversationBrowser(id, placement, {
+            detach: (convId) => floatingManager.detach(convId, 'browser', { focus: false }),
+            setPinned: (convId) => floatingManager.setPinned(convId, 'browser', true),
+            reattach: (convId) => floatingManager.reattach(convId, 'browser'),
+            floatWindow: (convId) => floatingManager.getFloatWin(convId, 'browser'),
+            placement: (convId) => getPlacement(convId, 'browser'),
+          }),
       })
     } catch (error) {
       console.error(

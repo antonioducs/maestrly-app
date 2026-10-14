@@ -47,6 +47,7 @@ import { getConversation, patchConvUiPrefs, type FloatingBounds, type FloatTab }
 import { receiveMemoryEvictionReady } from './window-ipc'
 import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
+import { openComputerForViewer } from './remote-host/server/computers-registry'
 import {
   acknowledgeBrowserFrame,
   chooseBrowserStreamOption,
@@ -185,6 +186,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   reg.mon('drawer:browser-popup-close', (e, convId: unknown, streamId: unknown) =>
     closeBrowserStreamPopup(e.sender, convId, streamId)
   )
+  // The conversation's computer on a workspaces host, which another computer's Computer tab opens.
+  reg.mhandle('drawer:computer-open', (e, convId: unknown) => openComputerForViewer(e.sender, convId))
   // loadVSCodeFolder owns serve-web startup, settings, URL, and the loading page (#318), allowing
   // popup-manager to reuse the flow when opening a cold editor and resolving cwd itself.
   reg.mhandle('drawer:load-vscode', async (_e, convId: string, folder: string) => {

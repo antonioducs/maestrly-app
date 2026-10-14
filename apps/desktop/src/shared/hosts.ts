@@ -37,6 +37,8 @@ export interface HostView {
   desktopEffects: boolean
   editor: boolean
   browser: boolean
+  /** Whether the host's conversations have computers (a Computer tab). */
+  computer: boolean
   environment: HostEnvironmentView | null
   /** The app version of a host that refused this computer's, when it said so. */
   hostVersion: string | null

@@ -6,6 +6,7 @@ import {
   type ScreenMode,
   fleetEnvironmentTile,
 } from '@maestrly/bot-fleet-protocol'
+import type { ComputerOpenResult } from '../../../shared/conversation-computer'
 import { setConversationShellEnv } from '../../chat/conversation-env'
 import { type ScreenArea, setConversationScreen, setPresentedBrowserSize } from '../../conversation-screen'
 import type { BotDesktopHooks } from '../../fleet/instance/desktop/bot-desktop'
@@ -23,10 +24,7 @@ export type BrowserPlacement =
   | { kind: 'tile'; tile: ScreenArea }
   | { kind: 'none' }
 
-export type ComputerOpenResult =
-  | { ok: true; display: string; started: boolean }
-  | { ok: false; reason: 'busy'; holders: string[] }
-  | { ok: false; reason: 'unavailable' }
+export type { ComputerOpenResult }
 
 /** A conversation's hold on its tile, for its Browser tab's video; `release` gives it back once. */
 export type TileLease = { tile: ScreenArea; release(): void }

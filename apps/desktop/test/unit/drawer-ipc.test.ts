@@ -190,6 +190,7 @@ describe('registerDrawerIpc', () => {
       'drawer:browser-copy',
       'drawer:browser-stream-start',
       'drawer:clear-cache',
+      'drawer:computer-open',
       'drawer:load-vscode',
       'drawer:omnibox-overlay',
       'drawer:omnibox-query',

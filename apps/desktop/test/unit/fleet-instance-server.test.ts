@@ -35,8 +35,8 @@ import {
   InstanceHttpError,
   type InstanceBot,
   type InstanceEnvironment,
+  type InstanceScreenSurface,
 } from '../../src/main/fleet/instance/server'
-import type { DisplaySurface } from '../../src/main/fleet/instance/displays'
 import type { ScreenPeer, ScreenSession } from '../../src/main/fleet/instance/screen-session'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 
@@ -177,7 +177,7 @@ function fakeEnvironment() {
   ])
   const screen = { delayMs: 0, fail: false }
   const session = fakeSession()
-  const leases: Array<{ surface: DisplaySurface; mode: ScreenMode; release: ReturnType<typeof vi.fn> }> = []
+  const leases: Array<{ surface: InstanceScreenSurface; mode: ScreenMode; release: ReturnType<typeof vi.fn> }> = []
   const environment = {
     events,
     health: vi.fn(() => ({
@@ -225,7 +225,7 @@ function fakeEnvironment() {
     uninstallBot: vi.fn(async (botId: string, _options: { purge: boolean }) => {
       bots.delete(botId)
     }),
-    acquireScreen: vi.fn(async (surface: DisplaySurface, mode: ScreenMode) => {
+    acquireScreen: vi.fn(async (surface: InstanceScreenSurface, mode: ScreenMode) => {
       if (screen.delayMs) await new Promise((resolve) => setTimeout(resolve, screen.delayMs))
       if (screen.fail) throw new Error('The apps display of bot alpha is not running.')
       const release = vi.fn()
@@ -1047,6 +1047,43 @@ describe('instance screen tunnels', () => {
       expect(session.attachments.every((attachment) => attachment.detached)).toBe(true)
     })
     expect(leases[2].release).toHaveBeenCalledOnce()
+  })
+
+  it("serves a workspaces conversation's computer and browser tile, with no takeover", async () => {
+    const { port, leases } = await setup()
+    const id = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
+    const apps = `/v1/conversations/${id}/screen/apps`
+    const views = []
+    for (let i = 0; i < 4; i++) views.push(await upgrade(port, apps + '/view'))
+    expect(views.map((result) => result.status)).toEqual([101, 101, 101, 101])
+    const fifth = await upgrade(port, apps + '/view')
+    expect(fifth.status).toBe(409)
+    expect(JSON.parse(fifth.body!)).toMatchObject({ code: 'CONFLICT', message: 'Screen tunnel limit reached.' })
+    const control = await upgrade(port, apps + '/control')
+    expect(control.status).toBe(101)
+    await echoes(control, [9])
+    expect((await upgrade(port, apps + '/control')).status).toBe(409)
+    // Its computer has a display of its own: the environment display stays free to control.
+    expect((await upgrade(port, '/v1/screen/environment/control')).status).toBe(101)
+    const browser = await upgrade(port, `/v1/conversations/${id}/screen/browser/view`)
+    expect(browser.status).toBe(101)
+    const browserControl = await upgrade(port, `/v1/conversations/${id}/screen/browser/control`)
+    expect(browserControl.status).toBe(400)
+    expect(JSON.parse(browserControl.body!)).toMatchObject({ code: 'INVALID_REQUEST' })
+    for (const path of [
+      '/v1/conversations/a%2Fb/screen/apps/view',
+      `/v1/conversations/${id}/screen/desktop/view`,
+      `/v1/conversations/-${id}/screen/apps/view`,
+    ])
+      expect((await upgrade(port, path)).status, path).toBe(404)
+    expect(
+      leases.filter(({ surface }) => surface.kind === 'conversation').map(({ surface, mode }) => [surface, mode])
+    ).toEqual([
+      ...Array.from({ length: 4 }, () => [{ kind: 'conversation', conversationId: id, surface: 'apps' }, 'view']),
+      [{ kind: 'conversation', conversationId: id, surface: 'apps' }, 'control'],
+      [{ kind: 'conversation', conversationId: id, surface: 'browser' }, 'view'],
+    ])
+    for (const result of [...views, control, browser]) result.socket!.destroy()
   })
 
   it('rejects the old RFB upgrade', async () => {

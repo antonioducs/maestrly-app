@@ -12,6 +12,7 @@ import type {
   BrowserStreamSource,
   BrowserStreamStarted,
 } from '../shared/browser-stream'
+import type { ComputerOpenResult } from '../shared/conversation-computer'
 import type { OmniboxQueryResult } from '../shared/browser-omnibox'
 
 /** Main asks the browser chrome hosted at `placement` to focus and select its address bar. */
@@ -236,6 +237,8 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       ipcRenderer.send('drawer:browser-stream-ack', convId, streamId, seq),
     browserStreamStop: (convId: string, streamId: string) =>
       ipcRenderer.send('drawer:browser-stream-stop', convId, streamId),
+    /** Starts the conversation's computer on a workspaces host, or keeps it running; only a remote host has one. */
+    computerOpen: (convId: string): Promise<ComputerOpenResult> => ipcRenderer.invoke('drawer:computer-open', convId),
     browserStreamInput: (convId: string, streamId: string, input: BrowserStreamInput) =>
       ipcRenderer.send('drawer:browser-input', convId, streamId, input),
     /** Copies (or cuts) the page's selection; resolves with its text, or null when nothing was copied. */

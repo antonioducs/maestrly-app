@@ -46,6 +46,9 @@ export default {
     exitOk: 'The shell ended.',
     exitFailed: 'The shell ended with code {{code}}. Press any key to close this window.',
   },
+  remoteComputer: {
+    untitled: 'Untitled conversation',
+  },
   floating: {
     browser: 'Browser',
     vscode: 'Code',

@@ -191,6 +191,7 @@ const host = (patch: Partial<HostView>): HostView => ({
   desktopEffects: false,
   editor: true,
   browser: true,
+  computer: false,
   environment: { id: 'workspaces', lifecycle: 'running', updateAvailable: false },
   hostVersion: null,
   ...patch,

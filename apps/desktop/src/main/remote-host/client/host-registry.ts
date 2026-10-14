@@ -105,6 +105,7 @@ export class HostRegistry {
       desktopEffects: true,
       editor: true,
       browser: true,
+      computer: false,
       environment: null,
       hostVersion: null,
     }
@@ -127,6 +128,7 @@ export class HostRegistry {
       desktopEffects: info?.desktopEffects ?? false,
       editor: info?.editor ?? false,
       browser: info?.browser ?? false,
+      computer: info?.computer ?? false,
       environment: environment && {
         id: environment.id,
         lifecycle: environment.lifecycle,

@@ -44,6 +44,7 @@ class FakeSocket extends EventEmitter {
         desktopEffects: false,
         editor: false,
         browser: false,
+        computer: false,
       },
     })
   }
@@ -136,6 +137,7 @@ describe('host registry', () => {
         desktopEffects: true,
         editor: true,
         browser: true,
+        computer: false,
         environment: null,
         hostVersion: null,
       },
@@ -180,10 +182,45 @@ describe('host registry', () => {
       desktopEffects: false,
       editor: false,
       browser: false,
+      computer: false,
       environment: { id: 'workspaces', lifecycle: 'running', updateAvailable: false },
       hostVersion: null,
     })
     expect(h.changes.at(-1)).toEqual(h.registry.list())
+  })
+
+  it('offers a Computer tab only for a host that says it has computers', async () => {
+    const welcome = (host: Record<string, unknown>) =>
+      ({
+        t: 'welcome',
+        protocol: 1,
+        appVersion: '1.2.3',
+        host: {
+          os: 'linux',
+          hostName: 'vps',
+          homeDir: '/home/bot',
+          roots: ['/home/bot'],
+          desktopEffects: false,
+          editor: true,
+          browser: true,
+          ...host,
+        },
+      }) as BridgeHostFrame
+    const current = setup()
+    current.fleet.change({ ...paired, environments: [environment()] })
+    await vi.waitFor(() => expect(current.sockets).toHaveLength(1))
+    current.sockets[0].emit('open', {})
+    current.sockets[0].answer(welcome({ computer: true }))
+    expect(current.remote()?.computer).toBe(true)
+    expect(current.registry.list()[0].computer).toBe(false)
+
+    // A host from before computers does not say.
+    const older = setup()
+    older.fleet.change({ ...paired, environments: [environment()] })
+    await vi.waitFor(() => expect(older.sockets).toHaveLength(1))
+    older.sockets[0].emit('open', {})
+    older.sockets[0].answer(welcome({}))
+    expect(older.remote()).toMatchObject({ state: 'online', computer: false })
   })
 
   it('uses a secure socket for a server reached over HTTPS and refuses a ticket path it does not expect', async () => {
