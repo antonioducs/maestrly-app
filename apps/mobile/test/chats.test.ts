@@ -384,7 +384,7 @@ describe('bridge socket', () => {
         : { ticket: 't1', path: '/v1/bridge?ticket=t1', expiresAt: '2026-10-13T12:00:30.000Z' }
     )
     const create = vi.fn(() => ({}) as never)
-    await openBridgeSocket(server, { call } as never, () => ['mobile-bridge'], create)
+    await openBridgeSocket(server, { call } as never, () => ['phones'], create)
     expect(call).toHaveBeenLastCalledWith('environmentBridgeTicket', {
       params: { eid: 'w' },
       body: { origin: 'https://bots.example.dev' },
@@ -396,19 +396,17 @@ describe('bridge socket', () => {
     const list = (environments: unknown[]) => ({ call: async () => ({ environments }) }) as never
     const code = (promise: Promise<unknown>) => promise.catch((error: MobileBridgeError) => error.code)
     expect(await code(openBridgeSocket(server, list([workspaces()]), () => [], vi.fn()))).toBe('UNSUPPORTED')
-    expect(await code(openBridgeSocket(server, list([]), () => ['mobile-bridge'], vi.fn()))).toBe('UNAVAILABLE')
+    expect(await code(openBridgeSocket(server, list([]), () => ['phones'], vi.fn()))).toBe('UNAVAILABLE')
     expect(
-      await code(
-        openBridgeSocket(server, list([workspaces({ lifecycle: 'stopped' })]), () => ['mobile-bridge'], vi.fn())
-      )
+      await code(openBridgeSocket(server, list([workspaces({ lifecycle: 'stopped' })]), () => ['phones'], vi.fn()))
     ).toBe('UNAVAILABLE')
     expect(
-      await code(openBridgeSocket(server, list([workspaces({ capabilities: [] })]), () => ['mobile-bridge'], vi.fn()))
+      await code(openBridgeSocket(server, list([workspaces({ capabilities: [] })]), () => ['phones'], vi.fn()))
     ).toBe('UNSUPPORTED')
     const removed = {
       call: async () => Promise.reject(new GatewayError('UNAUTHORIZED', 401, 'Device token required')),
     } as never
-    expect(await code(openBridgeSocket(server, removed, () => ['mobile-bridge'], vi.fn()))).toBe('UNAUTHORIZED')
+    expect(await code(openBridgeSocket(server, removed, () => ['phones'], vi.fn()))).toBe('UNAUTHORIZED')
   })
 })
 

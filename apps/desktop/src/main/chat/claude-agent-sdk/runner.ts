@@ -63,6 +63,7 @@ import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 import { builtinToolNamesForMode, buildTools, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -130,6 +131,7 @@ import { renderDesignUltraGuidance } from '../design-mode-prompt'
 import { harnessFor } from '../harness/execution'
 import { captureHarnessFlags } from '../harness/flags'
 import { buildMaestrlyBasePrompt, harnessEnvironmentContext, harnessUltraGuidance } from '../harness/host-contracts'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import { createHarnessSnapshot } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
@@ -577,6 +579,7 @@ async function prepareRuntime(
       : {}),
     ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
     ...(conversationDispatch ? { conversationDispatch } : {}),
+    ...(conversationLink ? { conversationLink } : {}),
   })
   const enabledBuiltins = args.reviewerRuntime
     ? new Set(REVIEWER_READONLY_TOOL_NAMES)
@@ -585,6 +588,10 @@ async function prepareRuntime(
   const conversationDispatch = args.reviewerRuntime
     ? undefined
     : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+  // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+  const conversationLink = args.reviewerRuntime
+    ? undefined
+    : enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even here, in a conversation running on Claude).
   if (
@@ -794,6 +801,7 @@ async function prepareRuntime(
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: Boolean(getConversation(args.conversationId)),
+        generatedInterfaces: generatedInterfacesEnabled(),
       }),
       '# Active runtime\nYou are running through the official Anthropic Claude Agent SDK. Maestrly owns the system prompt, tools, permissions, skills, subagents, plans, questions and persistence. Use only the supplied Maestrly MCP tools; native Claude Code extensions are disabled.',
       projectContext,
@@ -919,11 +927,9 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     maestrlyUltra: currentTarget.maestrlyUltra,
   }
   const attemptedProviderIds = new Set([currentTarget.providerId])
-  const failoverEnabled =
-    !args.ephemeralSession &&
-    !args.frozenResolvedModelId &&
-    (args.failoverChain?.length ?? 0) > 1 &&
-    !!args.resolveNextTarget
+  // The host passes a multi-account chain with a resolver only where switching is allowed: a frozen loop round only
+  // within the route frozen at its start, where the resolver pins `frozenResolvedModelId` on every account.
+  const failoverEnabled = (args.failoverChain?.length ?? 0) > 1 && !!args.resolveNextTarget
   let accountAttemptSettled = false
   const settleAccountAttempt = (outcome: 'success' | 'quota' | 'other', info?: MarkExhaustedInfo): void => {
     if (accountAttemptSettled) return

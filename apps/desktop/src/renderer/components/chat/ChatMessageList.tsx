@@ -1,4 +1,4 @@
-import { useChatOwnerWindow } from '@/lib/chat-window-context'
+import { useChatOwnerWindow, useChatSourceFocus } from '@/lib/chat-window-context'
 import { subscriptionExhaustionMessageKey } from './subscription-failover-route'
 import {
   Fragment,
@@ -15,6 +15,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, ChevronRight } from 'lucide-react'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
+import { GenUiContext, type GenUiHost } from '@/genui/context'
+import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -23,7 +25,7 @@ import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
 import { SharedToolImages, ToolCallCard } from './ToolCallCard'
-import { ConversationDispatchCard } from './ConversationDispatchCard'
+import { ConversationDispatchCard, openConversationById } from './ConversationDispatchCard'
 import { WorkspaceCreationCard } from './WorkspaceCreationCard'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { SubagentCard } from './SubagentCard'
@@ -73,6 +75,29 @@ function CopyButton({ text }: { text: string }) {
       className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
     >
       {done ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+/** Which conversation sent a message, report or result; its name opens that conversation. */
+function PeerMessageOrigin({ peer }: { peer: NonNullable<ChatMessage['peer']> }) {
+  const { t } = useTranslation('chat')
+  const focusSource = useChatSourceFocus()
+  const key = peer.kind === 'report' ? 'link.reportFrom' : peer.kind === 'result' ? 'link.resultFrom' : 'link.messageFrom'
+  const label = t(key, { name: peer.fromConversationName })
+  return (
+    <button
+      type="button"
+      data-testid="conversation-message-origin"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        openConversationById(peer.fromConversationId)
+        focusSource()
+      }}
+      className="w-fit rounded border border-violet-400/25 bg-violet-400/[0.08] px-2 py-0.5 text-left text-[10px] text-violet-200 hover:bg-violet-400/[0.16]"
+    >
+      {label}
     </button>
   )
 }
@@ -613,6 +638,7 @@ const Bubble = memo(function Bubble({
   onRetrySteering,
   onOpenMention,
   onOpenImage,
+  onUiSend,
   searchQuery,
   currentSearchMatch,
 }: {
@@ -633,11 +659,15 @@ const Bubble = memo(function Bubble({
   onRetrySteering?: (text: string) => void
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
   onOpenImage?: (src: string, name: string) => void
+  /** Sends what a generated interface of this message asks to send as the user. */
+  onUiSend?: (text: string) => void
   searchQuery?: string
   currentSearchMatch?: boolean
 }) {
   const { t } = useTranslation('chat')
   const { openSettings } = useSettings()
+  const previews = useMemo(() => genUiPreviewsOf(message.parts), [message.parts])
+  const genUiHost = useMemo<GenUiHost>(() => ({ live, send: onUiSend, previews }), [live, onUiSend, previews])
   const isUser = message.role === 'user'
   const text = plainText(message)
   const bodyText = textOnly(message)
@@ -689,6 +719,9 @@ const Bubble = memo(function Bubble({
           >
             {t('dispatch.startedFrom')}
           </span>
+        )}
+        {message.source === 'conversation-message' && message.peer && (
+          <PeerMessageOrigin peer={message.peer} />
         )}
         {message.botName && (
           <span
@@ -904,7 +937,7 @@ const Bubble = memo(function Bubble({
           onToggle={isReviewLoopRound ? () => setRoundCollapsed((v) => !v) : undefined}
         />
       )}
-      {showRoundBody && body}
+      {showRoundBody && <GenUiContext.Provider value={genUiHost}>{body}</GenUiContext.Provider>}
     </div>
   )
 })
@@ -935,6 +968,8 @@ interface Props extends EditCtx {
 
   currentSearchHitId?: string | null
   onRetrySteering?: (text: string) => void
+  /** Sends what a generated interface asks to send as the user; absent where the person cannot write. */
+  onUiSend?: (text: string) => void
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
@@ -957,6 +992,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   currentSearchHitId,
   readOnly = false,
   onRetrySteering,
+  onUiSend,
 }: Props) {
   const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
@@ -1170,6 +1206,7 @@ export const ChatMessageList = memo(function ChatMessageList({
             onRetrySteering={onRetrySteering}
             onOpenMention={onOpenMention}
             onOpenImage={openImage}
+            onUiSend={readOnly ? undefined : onUiSend}
             searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
             currentSearchMatch={currentSearchHitId === m.id}
           />

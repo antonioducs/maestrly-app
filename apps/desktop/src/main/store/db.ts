@@ -43,6 +43,8 @@ const RETIRED_EXTERNAL_AGENT_TABLES = [
   'platform_delegation_workspaces',
 ] as const
 
+const RETIRED_PLATFORM_TABLES = ['platform_chat_outbox', 'platform_chat_turns', 'platform_chat_sessions'] as const
+
 function tableExists(name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name)
 }
@@ -172,6 +174,35 @@ function purgeRetiredExternalAgentSchema(): void {
 }
 
 /**
+ * Remove the retired Kanban platform connection: web project-chat projections, connections, encrypted platform
+ * credentials, workspace links and executor settings. Conversations that were projected stay as local chats.
+ */
+function purgeRetiredPlatformSchema(): void {
+  for (const table of RETIRED_PLATFORM_TABLES) db.exec(`DROP TABLE IF EXISTS ${table};`)
+  if (!tableExists('app_settings')) return
+  retireExecutorLoginItem()
+  db.exec("DELETE FROM app_settings WHERE key LIKE 'platform.%';")
+}
+
+/** The executor registered an OS login item; with its setting gone nothing else could ever remove it. */
+function retireExecutorLoginItem(): void {
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'platform.desktop-executor.v1'").get() as
+    | { value: string }
+    | undefined
+  if (!row || !app.isPackaged) return
+  try {
+    if (JSON.parse(row.value)?.autoStart !== true) return
+    // Windows matches the login item by its arguments.
+    app.setLoginItemSettings({
+      openAtLogin: false,
+      ...(process.platform === 'win32' ? { args: ['--maestrly-login-launch'] } : {}),
+    })
+  } catch {
+    /* A corrupt setting or an unavailable login item API must not block startup. */
+  }
+}
+
+/**
  * Open/create SQLite and ensure schema, migrations, and backfills. Tests may inject paths for real
  * WAL/FK behavior. Production resolves its userData database after a consistent legacy snapshot
  * migration; explicit test paths never enter that migration.
@@ -203,20 +234,6 @@ export function initStore(file?: string): void {
 function initializeSchema(): void {
   initializeBotCommandSchema(db)
   initializeHostTransferSchema(db)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS platform_chat_sessions (
-      instance_id TEXT NOT NULL, session_id TEXT NOT NULL, conversation_id TEXT NOT NULL UNIQUE,
-      PRIMARY KEY(instance_id, session_id)
-    );
-    CREATE TABLE IF NOT EXISTS platform_chat_turns (
-      turn_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, lease_id TEXT NOT NULL,
-      state TEXT NOT NULL, completion TEXT
-    );
-    CREATE TABLE IF NOT EXISTS platform_chat_outbox (
-      seq INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, event_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS platform_chat_outbox_turn ON platform_chat_outbox(turn_id,seq);
-  `)
   // Drop known ledger triggers before schema creation because IF NOT EXISTS would preserve an outdated
   // privacy implementation.
   db.exec(`
@@ -225,6 +242,7 @@ function initializeSchema(): void {
   `)
   purgeLegacyProjectManagementSchema()
   purgeRetiredExternalAgentSchema()
+  purgeRetiredPlatformSchema()
   const usageLedgerCols = db.prepare('PRAGMA table_info(chat_usage_ledger)').all() as Array<{ name: string }>
   if (usageLedgerCols.length > 0 && !usageLedgerCols.some((column) => column.name === 'conversation_id')) {
     // The ledger deliberately has no FK: this optional owner key keeps per-conversation billing history after
@@ -1069,6 +1087,35 @@ function initializeSchema(): void {
       UPDATE conversation_dispatches SET phase='deleted', updated_at=CAST(unixepoch('subsec') * 1000 AS INTEGER)
       WHERE conversation_id=OLD.id AND phase <> 'discarded';
     END;
+  `)
+  const dispatchCols = db.prepare('PRAGMA table_info(conversation_dispatches)').all() as Array<{ name: string }>
+  if (!dispatchCols.some((column) => column.name === 'report_back')) {
+    // The source asked for the destination's first final answer to be delivered back to it.
+    db.exec('ALTER TABLE conversation_dispatches ADD COLUMN report_back INTEGER NOT NULL DEFAULT 0;')
+  }
+  // Messages between conversations: sent by an agent, reported back to the conversation that gave the work, or a
+  // final answer brought back on request. The journal makes a repeated send replay instead of delivering twice, keeps
+  // queued deliveries across restarts, and links the two conversations for later turns.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_peer_messages (
+      message_id TEXT PRIMARY KEY,
+      from_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      to_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      origin_key TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('message','report','result')),
+      body TEXT NOT NULL,
+      hop INTEGER NOT NULL,
+      report_back INTEGER NOT NULL DEFAULT 0,
+      result_status TEXT CHECK(result_status IN ('success','error','cancelled')),
+      phase TEXT NOT NULL CHECK(phase IN ('queued','delivered','reported','failed')),
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(from_conversation_id, origin_key, dedupe_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_peer_messages_to ON conversation_peer_messages(to_conversation_id, phase, created_at);
+    CREATE INDEX IF NOT EXISTS idx_peer_messages_from ON conversation_peer_messages(from_conversation_id, to_conversation_id);
   `)
   // Projects created or cloned from a chat turn. Keyed like conversation dispatches so a repeated call replays the
   // registered workspace instead of cloning again; a failed attempt can be retried with the same key.

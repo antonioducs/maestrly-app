@@ -15,8 +15,10 @@ export function nextSidebarTab(current: SidebarTab, key: string): SidebarTab | n
   const index = sidebarTabs.indexOf(current)
   if (key === 'Home') return sidebarTabs[0]
   if (key === 'End') return sidebarTabs[sidebarTabs.length - 1]
-  if (key === 'ArrowRight') return sidebarTabs[(index + 1) % sidebarTabs.length]
-  if (key === 'ArrowLeft') return sidebarTabs[(index - 1 + sidebarTabs.length) % sidebarTabs.length]
+  // The tabs are a vertical rail; the horizontal arrows keep working for people used to the old tab row.
+  if (key === 'ArrowDown' || key === 'ArrowRight') return sidebarTabs[(index + 1) % sidebarTabs.length]
+  if (key === 'ArrowUp' || key === 'ArrowLeft')
+    return sidebarTabs[(index - 1 + sidebarTabs.length) % sidebarTabs.length]
   return null
 }
 

@@ -42,11 +42,20 @@ artifacts** for the bot to let it use them on the server. A bot can read, update
 reply to, and resolve comments only on its own artifacts. **Open** on a bot
 publication card in the desktop opens the external viewer.
 
+Chats on a server's [workspaces environment](remote-workspaces.md) publish on
+that server with all eight tools and nothing to set up. The gateway gives the
+environment a token of its own, which works only for these tools and only on
+the environment's own artifacts. Their scope is the same as on this computer:
+their own project, or their own standalone conversation. The server's browser
+cannot reach the viewer, so `artifact_open` and **Open** on their cards open the
+page in the default browser of the computer that shows the conversation. The
+Artifacts center shows these artifacts as **Other computer**.
+
 ## Opening artifacts
 
 - **In the chat**: each publication shows a card with the title and version.
   **Open** shows the page in the conversation's browser drawer.
-- **In the Artifacts center**: **Artifacts**, in the sidebar footer, shows every
+- **In the Artifacts center**: **Artifacts**, at the bottom of the sidebar's icon rail, shows every
   artifact as a card with a preview of its page. The sheets stacked behind a
   preview show that earlier versions exist. Each card names the project and the
   conversation it came from (or "Deleted conversation" and its last title) and

@@ -74,3 +74,7 @@ jobs:
       - name: Test Electron on desktop
         if: runner.os != 'Linux'
         run: npm run test:e2e
+      # The phone app's web build, through its demo server, in the Chromium installed above.
+      - name: Test the mobile app's web build
+        if: runner.os == 'Linux'
+        run: npm run test:e2e:mobile

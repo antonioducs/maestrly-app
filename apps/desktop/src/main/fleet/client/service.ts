@@ -1,7 +1,8 @@
 import type { ArtifactHostEvent } from '@maestrly/artifact-host'
 import { disposeBotLogins } from './provisioning/logins'
 import os from 'node:os'
-import { shell } from 'electron'
+import path from 'node:path'
+import { app, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import {
   FLEET_ENVIRONMENTS_FEATURE,
@@ -31,6 +32,10 @@ import { FleetScreenBridge } from './screen-bridge'
 import { isHeadlessInstance } from '../../remote-host/server/config'
 import { saveFleetFile } from './downloads'
 import { findFleetDownload, fleetDownloadPath, rememberFleetDownload } from './download-history'
+import { FleetMediaCache, type FleetMediaEntry } from './media-cache'
+import { FleetMediaUrls, type FleetMediaRequest } from './media-protocol'
+import { FleetActiveDownloads, type FleetSettledDownload } from './active-downloads'
+import type { FleetDownloadProgress } from '../../../shared/fleet-downloads'
 
 export type FleetConnectionView = {
   features: string[]
@@ -67,9 +72,21 @@ export class FleetClientService {
   private snapshot: FleetSnapshot = emptySnapshot()
   private generation = 0
   private downloads = new AbortController()
+  private readonly mediaUrls = new FleetMediaUrls()
+  readonly media = new FleetMediaCache({
+    root: () => path.join(app.getPath('userData'), 'fleet-media-cache'),
+    onProgress: (progress) => broadcast('fleet:mediaProgress', progress),
+  })
+  private readonly transfers = new FleetActiveDownloads({
+    emit: (event) => broadcast('fleet:download', event),
+    settled: (download) =>
+      this.onDownloadSettled?.(download, this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null),
+  })
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
+  /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
+  onDownloadSettled: ((download: FleetSettledDownload, botName: string | null) => void) | null = null
   private readonly listeners = new Set<() => void>()
 
   /** Calls back after the connection or what is known of the server changed; returns the function that stops it. */
@@ -162,17 +179,60 @@ export class FleetClientService {
     return this.requireApi().getImage(botId, imageId)
   }
 
-  async downloadFile(botId: string, fileId: string): Promise<string> {
-    const api = this.requireApi()
+  /** Saves a bot file to Downloads and resolves with its receipt; joins the transfer already running for it. */
+  downloadFile(botId: string, fileId: string): Promise<string> {
+    return this.transfers.run(botId, fileId, this.downloads.signal, async ({ signal, onProgress }) => {
+      const api = this.requireApi()
+      const deviceId = this.connection.deviceId
+      if (!deviceId) throw new Error('Fleet is not paired')
+      if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+      const bot = await api.call('botGet', { params: { id: botId }, signal })
+      signal.throwIfAborted()
+      if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+      const destination = await saveFleetFile(api, botId, fileId, { signal, onProgress })
+      return { path: destination, receipt: rememberFleetDownload(deviceId, botId, fileId, destination) }
+    })
+  }
+
+  getActiveDownload(botId: string, fileId: string): FleetDownloadProgress | null {
+    return this.transfers.get(botId, fileId)
+  }
+
+  cancelDownload(botId: string, fileId: string): void {
+    this.transfers.cancel(botId, fileId)
+  }
+
+  private mediaFile(deviceId: string, botId: string, fileId: string): Promise<FleetMediaEntry> {
+    return this.media.prepare(
+      deviceId,
+      botId,
+      fileId,
+      (signal) => {
+        if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+        return this.requireApi().openFile(botId, fileId, signal)
+      },
+      this.downloads.signal
+    )
+  }
+
+  /** Copies a shared video to the cache and names it for `<video>`; a cached copy plays even while offline. */
+  async prepareMedia(botId: string, fileId: string): Promise<string> {
     const deviceId = this.connection.deviceId
     if (!deviceId) throw new Error('Fleet is not paired')
-    const signal = this.downloads.signal
-    if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-    const bot = await api.call('botGet', { params: { id: botId }, signal })
-    signal.throwIfAborted()
-    if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-    const destination = await saveFleetFile(api, botId, fileId, { signal })
-    return rememberFleetDownload(deviceId, botId, fileId, destination)
+    await this.mediaFile(deviceId, botId, fileId)
+    return this.mediaUrls.url(deviceId, botId, fileId)
+  }
+
+  /** The cached video a `maestrly-media:` URL names, fetched again if the cache let it go since. */
+  async mediaEntry(request: FleetMediaRequest): Promise<FleetMediaEntry | null> {
+    const deviceId = this.connection.deviceId
+    if (!deviceId || !this.mediaUrls.verify(deviceId, request)) return null
+    try {
+      return await this.mediaFile(deviceId, request.botId, request.fileId)
+    } catch (error) {
+      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND')) return null
+      throw error
+    }
   }
 
   getDownload(botId: string, fileId: string): Promise<string | null> {
@@ -268,6 +328,8 @@ export class FleetClientService {
       /* Local disconnect still takes effect. */
     }
     clearFleetCredentials()
+    // A new pairing gets a new device id, so nothing cached under this one could be reached again.
+    await this.media.clear().catch(() => undefined)
     this.snapshot = emptySnapshot()
     this.setConnection({
       features: [],
@@ -331,6 +393,8 @@ export class FleetClientService {
         break
       case 'bot.removed':
         this.snapshot.bots = this.snapshot.bots.filter((bot) => bot.id !== event.botId)
+        if (this.connection.deviceId)
+          void this.media.purgeBot(this.connection.deviceId, event.botId).catch(() => undefined)
         break
       case 'environment.updated':
         // Like bots, an archived environment is never listed whatever the event order, and neither are its bots.

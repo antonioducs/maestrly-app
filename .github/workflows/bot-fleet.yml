@@ -14,6 +14,8 @@ on:
       - .nvmrc
       - scripts/bot-fleet-images.mjs
       - scripts/test-bot-fleet-e2e.mjs
+      - scripts/test-bot-fleet-focus.mjs
+      - scripts/fleet-screen-client.mjs
       - .github/workflows/bot-fleet.yml
   push:
     branches: [main]
@@ -28,6 +30,8 @@ on:
       - .nvmrc
       - scripts/bot-fleet-images.mjs
       - scripts/test-bot-fleet-e2e.mjs
+      - scripts/test-bot-fleet-focus.mjs
+      - scripts/fleet-screen-client.mjs
       - .github/workflows/bot-fleet.yml
   schedule:
     - cron: '17 6 * * 1'

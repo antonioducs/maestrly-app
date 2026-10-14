@@ -44,6 +44,7 @@ it('discovers provisioning on the gateway and the live bot', async () => {
   expect((await (await h.request('GET', '/v1/meta')).json()).features).toEqual([
     'files',
     'environment-settings-v1',
+    'account-failover',
     'artifacts',
     'artifacts-gateway-viewer',
     'artifacts-transfer',
@@ -58,9 +59,9 @@ it('discovers provisioning on the gateway and the live bot', async () => {
     'workspaces-host',
     'host-files',
     'host-editor',
-    'device-pairing',
-    'mobile-bridge',
-    'push-notifications',
+    'message-edit',
+    'video-screens',
+    'phones',
   ])
   expect((await (await h.request('GET', '/v1/bots/' + h.bot.id)).json()).capabilities).toEqual(['provisioning'])
 })

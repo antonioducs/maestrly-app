@@ -210,10 +210,9 @@ export const fleetAttachmentInputSchema = z
   })
 export type FleetAttachmentInput = z.infer<typeof fleetAttachmentInputSchema>
 
-const fleetAttachmentsSchema = z
+const fleetAttachmentListSchema = z
   .array(fleetAttachmentInputSchema)
   .max(FLEET_FILE_LIMITS.attachmentsMax)
-  .default([])
   .refine(
     (items) =>
       items.reduce((sum, item) => sum + base64DecodedBytes(item.dataBase64), 0) <=
@@ -224,6 +223,7 @@ const fleetAttachmentsSchema = z
     (items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax,
     'too many PDF attachments'
   )
+const fleetAttachmentsSchema = fleetAttachmentListSchema.default([])
 
 /** A message needs text or at least one image. */
 const hasContent = (value: { text: string; attachments: unknown[] }) =>
@@ -567,6 +567,16 @@ export const fleetSendMessageRequestSchema = z
   })
   .refine(hasContent, 'a message needs text or an image')
 export type FleetSendMessageRequest = z.infer<typeof fleetSendMessageRequestSchema>
+/**
+ * The owner's last message, edited (`message-edit`): the bot's conversation is cut from that message and the new text
+ * runs as a new turn. Without `attachments` the message keeps the ones it had; with them, they replace those.
+ */
+export const fleetEditMessageRequestSchema = z.object({
+  text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
+  idempotencyKey: fleetIdempotencyKeySchema,
+  attachments: fleetAttachmentListSchema.optional(),
+})
+export type FleetEditMessageRequest = z.infer<typeof fleetEditMessageRequestSchema>
 export const fleetInputReceiptSchema = z.object({ inputId: fleetIdSchema, itemId: fleetIdSchema, queued: z.boolean() })
 export type FleetInputReceipt = z.infer<typeof fleetInputReceiptSchema>
 export const fleetTakeoverReleaseRequestSchema = z.object({ note: fleetNoteSchema.nullable(), continue: z.boolean() })
@@ -588,7 +598,7 @@ export const fleetScreenTicketResponseSchema = z.object({
 export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
 /**
  * A bridge ticket request. A phone names the `origin` its WebSocket sends (React Native always sends one); the gateway
- * then accepts that one Origin on the upgrade (`mobile-bridge`). Computers send no Origin and leave it out.
+ * then accepts that one Origin on the upgrade (`phones`). Computers send no Origin and leave it out.
  */
 export const fleetBridgeTicketRequestSchema = z
   .object({
@@ -1078,6 +1088,18 @@ export const FLEET_GATEWAY_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setPreferences.input,
     response: FLEET_SETTINGS_OPERATIONS.setPreferences.response,
   },
+  settingsFailover: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/failover',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+  },
+  settingsSetFailoverRoute: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/failover/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
+    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+  },
   artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
   artifactHostPatch: {
     method: 'PATCH',
@@ -1423,6 +1445,13 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetInputReceiptSchema,
   },
   botMessageDelete: { method: 'DELETE', path: '/v1/bots/:id/messages/:inputId', body: null, response: null },
+  /** Feature `message-edit`: the owner's last message only, while the bot is idle with nothing queued. */
+  botMessageEdit: {
+    method: 'POST',
+    path: '/v1/bots/:id/messages/:inputId/edit',
+    body: fleetEditMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
   botInteractionResolve: {
     method: 'POST',
     path: '/v1/bots/:id/interactions/:interactionId',
@@ -1795,6 +1824,18 @@ export const FLEET_INSTANCE_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setPreferences.input,
     response: FLEET_SETTINGS_OPERATIONS.setPreferences.response,
   },
+  settingsFailover: {
+    method: 'GET',
+    path: '/v1/settings/failover',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+  },
+  settingsSetFailoverRoute: {
+    method: 'PUT',
+    path: '/v1/settings/failover/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
+    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+  },
   memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
   memoryPatch: {
     method: 'PATCH',
@@ -1869,6 +1910,12 @@ export const FLEET_INSTANCE_ROUTES = {
   image: { method: 'GET', path: '/v1/images/:imageId', body: null, response: null },
   inputSend: { method: 'POST', path: '/v1/inputs', body: fleetInstanceInputSchema, response: fleetInputReceiptSchema },
   inputDelete: { method: 'DELETE', path: '/v1/inputs/:inputId', body: null, response: null },
+  inputEdit: {
+    method: 'POST',
+    path: '/v1/inputs/:inputId/edit',
+    body: fleetEditMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
   turnCancel: { method: 'POST', path: '/v1/turn/cancel', body: null, response: null },
   interactionResolve: {
     method: 'POST',
@@ -1891,8 +1938,6 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetConversationCallResponseSchema,
   },
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
-  screenView: { method: 'GET', path: '/v1/screen/view', body: null, response: null },
-  screenControl: { method: 'GET', path: '/v1/screen/control', body: null, response: null },
 
   // An environment instance (capability `environments`) hosts several bots: their routes live under /v1/bots/:botId,
   // with the bodies and responses of the unprefixed routes above, which keep serving gateways without the capability.
@@ -1956,6 +2001,13 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetInputReceiptSchema,
   },
   botInputDelete: { method: 'DELETE', path: '/v1/bots/:botId/inputs/:inputId', body: null, response: null },
+  /** Capability `message-edit`. */
+  botInputEdit: {
+    method: 'POST',
+    path: '/v1/bots/:botId/inputs/:inputId/edit',
+    body: fleetEditMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
   botTurnCancel: { method: 'POST', path: '/v1/bots/:botId/turn/cancel', body: null, response: null },
   botInteractionResolve: {
     method: 'POST',

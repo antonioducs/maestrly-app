@@ -38,4 +38,7 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
     ipcRenderer.invoke('fleet:settings:setRuntimeAutomatic', environmentId, input),
   preferences: (environmentId, input) => ipcRenderer.invoke('fleet:settings:preferences', environmentId, input),
   setPreferences: (environmentId, input) => ipcRenderer.invoke('fleet:settings:setPreferences', environmentId, input),
+  failover: (environmentId, input) => ipcRenderer.invoke('fleet:settings:failover', environmentId, input),
+  setFailoverRoute: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setFailoverRoute', environmentId, input),
 }

@@ -173,7 +173,9 @@ it.each([
   const request = h.stream.mock.calls[0][0]
   await assertScope(request.system)
   assertHistory(request.messages)
-  for (const tool of ['bash', 'write', 'edit', 'web_search']) expect(request.tools).not.toHaveProperty(tool)
+  for (const tool of ['bash', 'write', 'edit']) expect(request.tools).not.toHaveProperty(tool)
+  // Maestrly's own web_search, gated by the Ask permission policy; no provider-native search is requested.
+  expect(request.tools).toHaveProperty('web_search')
 })
 it('executes standalone Copilot with native discovery disabled', async () => {
   const send = vi.fn(async (_input: unknown) => undefined)
@@ -278,6 +280,7 @@ it('executes standalone Codex without Git initialization or native web search', 
   assertHistory(startTurn.mock.calls)
   expect(config.cwd).toBe(cwd)
   expect(config.config.web_search).toBe('disabled')
+  expect(config.dynamicTools.map((spec: { name: string }) => spec.name)).toContain('web_search')
   expect(config.baseInstructions).toBeUndefined()
 })
 it('builds standalone Cursor context without project material', async () => {

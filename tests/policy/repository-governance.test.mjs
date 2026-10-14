@@ -197,6 +197,7 @@ test('CI is read-only and exposes stable platform names', () => {
   assert.match(suites, /run: npm run check$/m)
   assert.match(suites, /run: xvfb-run -a npm run test:e2e/)
   assert.match(suites, /if: runner\.os != 'Linux'\n {8}run: npm run test:e2e/)
+  assert.match(suites, /if: runner\.os == 'Linux'\n {8}run: npm run test:e2e:mobile/)
 })
 
 test('contribution policy preserves truthful authorship and standard commit metadata', () => {

@@ -30,20 +30,6 @@ and tools together as you plan, build, and review.
 
 ![Maestrly desktop with integrated developer tools](docs/images/desktop-chat.png)
 
-The repository is also a modular platform with five independently buildable products:
-
-| Product | Purpose |
-| --- | --- |
-| `apps/desktop` | Existing local-first Electron workspace; platform connection is optional |
-| `apps/web` | Browser board, automations, approvals, executions, runners, and reports |
-| `apps/server` | Versioned API, Better Auth, PostgreSQL persistence, RLS, audit, and durable job claims |
-| `apps/runner` | Headless Node runner with leases, recovery, Codex, and Claude Agent adapters |
-| `apps/mobile` | iOS and Android app for following and directing your bots ([mobile app](docs/mobile.md)) |
-
-Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
-`packages/runner-core`; there is no generic shared package. See
-[self-hosting](docs/self-hosting.md) and [platform security](docs/platform-security.md).
-
 ## Capabilities
 
 - **Standalone chats:** start a conversation from **Chats → New chat** without
@@ -63,6 +49,9 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
   [voice dictation](docs/chat-context.md#voice-dictation).
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
+- **Mobile app:** follow and direct your bots, and the chats and workspaces of
+  your bot server, from iOS or Android, with notifications when they need you.
+  See [mobile app](docs/mobile.md).
 
 ## Download
 
@@ -87,8 +76,6 @@ cd maestrly-app
 npm ci
 npm run dev
 ```
-
-Platform entry points: `npm run dev:web`, `npm run dev:server`, and `npm run dev:runner`.
 
 Development runs in a separate profile. Back up application data and project
 repositories separately; see [Local data and recovery](docs/local-data.md).
@@ -125,18 +112,10 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Artifacts](docs/artifacts.md)
 - [Context usage and compaction](docs/chat-context.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
-- [Changelog](CHANGELOG.md)
-
-- [Self-hosting](docs/self-hosting.md)
-- [Kanban workflows](docs/kanban-workflows.md)
-- [Personal devices](docs/personal-devices.md)
-- [Runner operations](docs/runner-operations.md)
-- [Platform protocol](docs/platform-protocol.md)
-- [Platform security](docs/platform-security.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
 - [Mobile app](docs/mobile.md)
 - [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
-- [Backup and restore](docs/backup-restore.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

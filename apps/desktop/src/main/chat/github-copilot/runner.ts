@@ -73,6 +73,7 @@ import {
   selectSubagentToolNames,
 } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -85,6 +86,7 @@ import { harnessFor } from '../harness/execution'
 import { captureHarnessFlags } from '../harness/flags'
 import { buildMaestrlyBasePrompt, harnessUltraGuidance } from '../harness/host-contracts'
 import { buildHarnessPrompt } from '../harness/prompt-builder'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import type { ResolvedHarness } from '../harness/types'
 import { resolveSubagentExecutionProfile } from '../subagent-execution-profile'
 import { namespaceSubagentToolSet, type NormalizedAiUsage } from '../subagent-runner'
@@ -537,6 +539,7 @@ async function prepareRuntime(
       : {}),
     ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
     ...(conversationDispatch ? { conversationDispatch } : {}),
+    ...(conversationLink ? { conversationLink } : {}),
   })
 
   const enabledBuiltins = args.reviewerRuntime
@@ -546,6 +549,10 @@ async function prepareRuntime(
   const conversationDispatch = args.reviewerRuntime
     ? undefined
     : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+  // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+  const conversationLink = args.reviewerRuntime
+    ? undefined
+    : enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even when the conversation runs on Copilot).
   if (
@@ -755,6 +762,7 @@ async function prepareRuntime(
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: notes,
+        generatedInterfaces: generatedInterfacesEnabled(),
       }) +
       runtimeOverlay +
       projectContext +
@@ -781,6 +789,7 @@ async function prepareRuntime(
         envContext: env,
         ultraContext: ultra,
         nativeTools: { localShell: false, applyPatch: false },
+        generatedInterfaces: generatedInterfacesEnabled(),
       }).instructions
     }
 

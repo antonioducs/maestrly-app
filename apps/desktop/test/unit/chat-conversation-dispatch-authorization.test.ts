@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   assertConversationDispatchGrantCurrent,
   clearHumanTurnOrigin,
+  conversationDispatchDenialMessage,
   currentHumanTurnOrigin,
   detectConversationDispatchIntent,
   evaluateConversationDispatchGrant,
@@ -119,6 +120,17 @@ describe('detectConversationDispatchIntent', () => {
       detectConversationDispatchIntent('Não precisa analisar mais nada, abra uma conversa para cada card.')
     ).toEqual({ explicit: true, maxConversations: null })
   })
+
+  it('does not recognize loosely worded requests, which the tool then confirms with the person', () => {
+    expect(detectConversationDispatchIntent('Manda outro agent revisar o PROJ-1 em paralelo.').explicit).toBe(false)
+  })
+})
+
+describe('conversationDispatchDenialMessage', () => {
+  it('tells the agent not to retry after the person declines', () => {
+    expect(conversationDispatchDenialMessage('declined')).toMatch(/declined/)
+    expect(conversationDispatchDenialMessage('declined')).toMatch(/Do not start them or retry/)
+  })
 })
 
 describe('isHumanTurnAdmission', () => {
@@ -131,9 +143,10 @@ describe('isHumanTurnAdmission', () => {
     ['approved plan / revision / guard continuation', { internal: true }],
     ['review loop', { internalLoop: {} }],
     ['bot command', { botAdmission: {} }],
-    ['Kanban web chat', { remoteAdmission: true }],
+    ['remote bot chat', { remoteAdmission: true }],
     ['unattended executor', { runnerAdmission: () => undefined, runnerSignal: new AbortController().signal }],
     ['seeded child conversation', { dispatchSeed: { dispatchId: 'd', sourceConversationId: 's' } }],
+    ['message from another conversation', { peerMessage: {} }],
     ['host-attached findings', { hiddenParts: [{ type: 'text' }] }],
   ])('never treats a %s turn as human', (_label, opts) => {
     expect(isHumanTurnAdmission(opts)).toBe(false)

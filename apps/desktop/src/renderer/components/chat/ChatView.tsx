@@ -1,4 +1,3 @@
-import { WorkspaceKanbanLink } from '../platform/WorkspaceKanbanLink'
 /** Conversation host for provider streams, queued turns, draft attachments, and paginated history.
  * Bound hidden rendering work while preserving session state and reconciling on visibility changes. */
 import {
@@ -20,7 +19,8 @@ import { X, Pencil, ArrowDown } from 'lucide-react'
 import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPrefill } from '@/lib/composer-prefill'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { isRemoteHostId } from '../../../shared/host-key'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
@@ -186,6 +186,16 @@ export function ChatView({
     const frame = requestAnimationFrame(() => composerRef.current?.focus())
     return () => cancelAnimationFrame(frame)
   }, [conversationId, visible, workspaceId])
+  const hostId = useHostId()
+  // An agent on a workspaces host cannot show an artifact in its browser: this computer, which shows the conversation,
+  // opens it through its own connection to the server.
+  useEffect(() => {
+    if (!visible || !isRemoteHostId(hostId)) return
+    return api.onChatArtifactOpen((request) => {
+      if (request.conversationId !== conversationId) return
+      void window.api.artifacts.openExternal(request.artifactId, request.version).catch(() => undefined)
+    })
+  }, [api, conversationId, hostId, visible])
   const maestroPanelHostId = `chat-maestro-panel-${conversationId}`
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [subagentSessions, setSubagentSessions] = useState<SubagentSessionSummary[]>([])
@@ -1046,6 +1056,11 @@ export function ChatView({
       setLiveReasoningReset(event.liveReasoningReset)
       return
     }
+    if (event.kind === 'questions-pending') {
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState(event.questions)
+      return
+    }
     if (event.kind === 'steering-accepted') {
       if (!hidden) {
         setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))
@@ -1427,6 +1442,22 @@ export function ChatView({
     }
     return result
   }, [api, conversationId, onExperienceChange])
+
+  // A generated interface sends as the user without touching the draft; a busy chat queues it like the composer.
+  const sendUiMessage = useCallback(
+    (text: string) => {
+      const enqueue = () =>
+        setQueueState((q) => [...q, { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] }])
+      if (streamingRef.current || compactingRef.current) {
+        enqueue()
+        return
+      }
+      void doSend(text, []).then((result) => {
+        if (result?.error === 'busy') enqueue()
+      })
+    },
+    [doSend, setQueueState]
+  )
 
   const submitDraft = useCallback(
     ({ text: rawText, agentMentions }: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => {
@@ -2019,7 +2050,6 @@ export function ChatView({
         >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col">
-              {workspaceId && <WorkspaceKanbanLink workspaceId={workspaceId} />}
               {searchOpen && (
                 <ChatSearchBar
                   query={searchQuery}
@@ -2050,6 +2080,7 @@ export function ChatView({
                     ])
                   }
                   onOpenMention={openMention}
+                  onUiSend={sendUiMessage}
                   scrollContainerRef={scrollRef}
                   onLoadOlder={loadOlder}
                   hasMore={hasMore}
@@ -2065,7 +2096,7 @@ export function ChatView({
                   type="button"
                   onClick={scrollToBottom}
                   title={t('messages.goToBottom')}
-                  className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f]/95 text-foreground shadow-lg backdrop-blur transition hover:bg-[#26262d]"
+                  className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f] text-foreground shadow-lg transition hover:bg-[#26262d]"
                 >
                   <ArrowDown className="h-4 w-4" />
                 </button>

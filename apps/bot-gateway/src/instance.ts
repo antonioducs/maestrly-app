@@ -17,6 +17,7 @@ import {
   buildPath,
   fleetInstanceEventSchema,
   type FleetBotMemoryPatchRequest,
+  type FleetEditMessageRequest,
   type FleetInstanceBotInstall,
   type FleetInstanceEnvironmentStatus,
   type FleetInstanceInput,
@@ -360,6 +361,25 @@ export class InstanceClient {
       await this.call('settingsSetPreferences', {}, undefined, input, 30000)
     )
   }
+  async settingsFailover(input: FleetSettingsInput<'failover'>): Promise<FleetSettingsOutput<'failover'>> {
+    FLEET_SETTINGS_OPERATIONS.failover.input.parse(input)
+    return FLEET_SETTINGS_OPERATIONS.failover.response.parse(
+      await this.call('settingsFailover', {}, undefined, undefined, 30000)
+    )
+  }
+  async settingsSetFailoverRoute(
+    input: FleetSettingsInput<'setFailoverRoute'>
+  ): Promise<FleetSettingsOutput<'setFailoverRoute'>> {
+    return FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response.parse(
+      await this.call(
+        'settingsSetFailoverRoute',
+        { kind: input.kind, slot: input.slot ?? 'default' },
+        undefined,
+        input,
+        30000
+      )
+    )
+  }
   // instance.ts
   memoriesList(status: 'active' | 'archived' | 'superseded' | 'all' = 'active') {
     return this.botCall('memoriesList', 'botMemoriesList', {}, { status })
@@ -549,6 +569,10 @@ export class InstanceClient {
   }
   deleteInput(inputId: string) {
     return this.botCall('inputDelete', 'botInputDelete', { inputId })
+  }
+  /** Capability `message-edit`. The cut retires the runtimes' saved sessions, which may take longer than a call. */
+  editInput(inputId: string, body: FleetEditMessageRequest) {
+    return this.botCall('inputEdit', 'botInputEdit', { inputId }, undefined, body, 30000)
   }
   cancelTurn() {
     return this.botCall('turnCancel', 'botTurnCancel')

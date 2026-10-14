@@ -216,7 +216,7 @@ export function FilesPanel({ conv }: { conv: string }) {
       <TransferList transfers={transfers} />
 
       {dragging && (
-        <div className="pointer-events-none absolute inset-1 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80 p-4 text-center text-xs">
+        <div className="pointer-events-none absolute inset-1 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-popover p-4 text-center text-xs">
           {t('files.dropHere', { folder: current ?? '' })}
         </div>
       )}

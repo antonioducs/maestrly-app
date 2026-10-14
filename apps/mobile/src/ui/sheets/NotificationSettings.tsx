@@ -1,4 +1,4 @@
-import { FLEET_PUSH_FEATURE, type FleetPushCategory } from '@maestrly/bot-fleet-protocol'
+import { FLEET_PHONES_FEATURE, type FleetPushCategory } from '@maestrly/bot-fleet-protocol'
 import { useState } from 'react'
 import { AccessibilityInfo, Switch, View } from 'react-native'
 import { DEMO_SERVER } from '../../demo/demo-source'
@@ -24,7 +24,7 @@ export function NotificationSettings() {
   const server = active?.name ?? ''
   const granted = notifications.permission === 'granted'
   const demo = active?.id === DEMO_SERVER.id
-  const supported = demo || !!active?.features.includes(FLEET_PUSH_FEATURE)
+  const supported = demo || !!active?.features.includes(FLEET_PHONES_FEATURE)
   const result = active ? notifications.results[active.id] : undefined
 
   if (!notifications.available)

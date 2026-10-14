@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { FleetRoutine, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import {
+  editableMessageId,
   formatUptime,
   latestTodoItemId,
   visibleTranscriptItems,
@@ -107,6 +108,40 @@ describe('fleet forms', () => {
     }
     const owner = { ...continuation, id: 'o', source: 'owner' as const }
     expect(visibleTranscriptItems([continuation, owner])).toEqual([owner])
+  })
+  it("offers to edit only the owner's message the bot received last, and none while one waits", () => {
+    const user = (
+      id: string,
+      source: 'owner' | 'routine' | 'peer' | 'continuation' = 'owner',
+      extra: Partial<Extract<FleetTranscriptItem, { kind: 'user' }>> = {}
+    ): FleetTranscriptItem => ({
+      kind: 'user',
+      id,
+      at: '2026-09-23T12:34:56Z',
+      text: id,
+      source,
+      queued: false,
+      memories: [],
+      images: [],
+      ...extra,
+    })
+    const reply: FleetTranscriptItem = {
+      kind: 'assistant',
+      id: 'reply:0',
+      at: '2026-09-23T12:35:00Z',
+      text: 'Done',
+      streaming: false,
+    }
+    expect(editableMessageId([user('input:a'), reply, user('input:b'), reply])).toBe('input:b')
+    expect(editableMessageId([])).toBeNull()
+    // A routine, a peer or a continuation after it.
+    for (const source of ['routine', 'peer', 'continuation'] as const)
+      expect(editableMessageId([user('input:a'), reply, user('input:b', source)])).toBeNull()
+    // Something waits in the queue, or never reached the bot.
+    expect(editableMessageId([user('input:a'), user('input:b', 'owner', { queued: true })])).toBeNull()
+    expect(editableMessageId([user('input:a', 'owner', { attachmentError: 'invalid-attachment' })])).toBeNull()
+    // A message the owner typed on the bot's own computer has no input to edit.
+    expect(editableMessageId([user('input:a'), reply, user('native:0')])).toBeNull()
   })
   it('keeps pending permissions and hides approved, denied and expired requests from the conversation', () => {
     const permission = (state: 'pending' | 'approved' | 'denied' | 'expired'): FleetTranscriptItem => ({

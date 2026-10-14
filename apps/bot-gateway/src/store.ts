@@ -187,7 +187,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 12) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 13) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -259,12 +259,13 @@ export class Store {
       this.db.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
     }
     if (version <= 10) this.migrateEnvironmentKinds()
-    if (version <= 11) {
-      // Schema 12: the push token and notification preferences of each phone.
+    if (version <= 11) this.migrateHostSecrets()
+    if (version <= 12) {
+      // Schema 13: the push token and notification preferences of each phone.
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS push_registrations (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, provider TEXT NOT NULL, token TEXT NOT NULL, platform TEXT NOT NULL, locale TEXT NOT NULL, preferences_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       `)
-      this.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
+      this.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -364,6 +365,16 @@ export class Store {
       "ALTER TABLE environments ADD COLUMN kind TEXT NOT NULL DEFAULT 'bots' CHECK (kind IN ('bots','workspaces'))"
     )
     this.db.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 12: the token a workspaces environment publishes artifacts with. Environments get one when their container
+   * is next created.
+   */
+  private migrateHostSecrets() {
+    this.db.exec(
+      'CREATE TABLE IF NOT EXISTS host_secrets (environment_id TEXT PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE, gateway_token TEXT NOT NULL, gateway_token_sha256 TEXT NOT NULL UNIQUE)'
+    )
+    this.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     return {
@@ -806,6 +817,40 @@ export class Store {
     const row = this.db.prepare('SELECT * FROM environment_secrets WHERE environment_id=?').get(id) as Row | undefined
     return row ? { controlToken: String(row.control_token), keyringPassword: String(row.keyring_password) } : null
   }
+  /** The token a workspaces environment publishes artifacts with, or null until its container is created with one. */
+  hostGatewaySecrets(environmentId: string): BotGatewaySecrets | null {
+    const row = this.db.prepare('SELECT * FROM host_secrets WHERE environment_id=?').get(environmentId) as
+      | Row
+      | undefined
+    return row
+      ? { gatewayToken: String(row.gateway_token), gatewayTokenSha256: String(row.gateway_token_sha256) }
+      : null
+  }
+  /** Gives a workspaces environment its token, unless it already has one; returns the token it keeps. */
+  ensureHostGatewaySecrets(environmentId: string, secrets: BotGatewaySecrets): BotGatewaySecrets {
+    return this.transaction(() => {
+      const environment = this.activeEnvironment(environmentId)
+      if (environment.kind !== 'workspaces') throw new Error('Only a workspaces environment has a host token')
+      this.db
+        .prepare(
+          'INSERT INTO host_secrets(environment_id,gateway_token,gateway_token_sha256) VALUES(?,?,?) ON CONFLICT(environment_id) DO NOTHING'
+        )
+        .run(environmentId, secrets.gatewayToken, secrets.gatewayTokenSha256)
+      return this.hostGatewaySecrets(environmentId)!
+    })
+  }
+  /** The active workspaces environment a host token belongs to; an archived one's token is refused. */
+  hostByGatewayHash(hash: string): string | null {
+    let row: Row | undefined
+    for (const item of this.db
+      .prepare(
+        "SELECT s.environment_id,s.gateway_token_sha256 FROM host_secrets s JOIN environments e ON e.id=s.environment_id WHERE e.kind='workspaces' AND e.archived_at IS NULL"
+      )
+      .all() as Row[]) {
+      if (this.digestMatches(hash, item.gateway_token_sha256)) row = item
+    }
+    return row ? String(row.environment_id) : null
+  }
   /**
    * Archives an active environment with its active bots, which are flagged so that restoring the environment brings
    * them back. Returns their ids.
@@ -886,6 +931,7 @@ export class Store {
       if (ownerMemoriesDeleted) this.bumpOwnerMemoryRevision()
       this.db.prepare('DELETE FROM activity WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environment_secrets WHERE environment_id=?').run(id)
+      this.db.prepare('DELETE FROM host_secrets WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environments WHERE id=?').run(id)
       return { botIds, ownerMemoriesDeleted }
     })
@@ -1159,9 +1205,10 @@ export class Store {
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db
-        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?)')
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?)')
         .run(
           'botMessageSend:' + id,
+          'botMessageEdit:' + id,
           'routineCreate:' + id,
           'botRoutineCreate:' + id,
           'botOwnerMemorySave:' + id,

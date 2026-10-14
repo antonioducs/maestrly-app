@@ -6,6 +6,7 @@ import { preparePanelMemoryEviction, registerPanelTarget, sendToPanel, unregiste
 import { resolvePreload } from '../resolve-preload'
 import { attachHotkeyCapture } from '../hotkeys'
 import { attachTerminalHotkeyCapture } from '../terminal-hotkeys'
+import { attachBrowserHotkeyCapture } from '../browser-hotkeys'
 import {
   activeConvId,
   convHasPopup,
@@ -220,6 +221,7 @@ export function ensureBrowserChrome(d: ConvDrawer, convId: string): WebContentsV
   registerPanelTarget(v.webContents, { convId, panel: 'browser', resourceId: 'browser-chrome' })
   registerThrottleTarget('panel', convId, 'browser-chrome', v.webContents)
   attachHotkeyCapture(v.webContents) // #328
+  attachBrowserHotkeyCapture(v.webContents, () => convId)
   loadPanel(v, 'browser', convId)
   return v
 }

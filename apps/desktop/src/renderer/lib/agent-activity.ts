@@ -69,6 +69,8 @@ const CATEGORY_BY_NAME: Record<string, ActivityCategory> = {
   web_fetch: 'web_fetch',
   browser_screenshot: 'screenshot',
   computer_screenshot: 'screenshot',
+  // Its screenshots stay in the step's details, where the person sees what the model judged.
+  preview_interface: 'screenshot',
   task: 'subagent',
   delegate: 'subagent',
   generate_image: 'image',

@@ -1,5 +1,5 @@
 import {
-  FLEET_MOBILE_BRIDGE_FEATURE,
+  FLEET_PHONES_FEATURE,
   FLEET_MOBILE_HOST_FEATURE,
   fleetBridgeOrigin,
   MobileBridgeClient,
@@ -37,7 +37,7 @@ export async function openBridgeSocket(
   features: () => string[],
   createSocket: (url: string, origin: string) => MobileBridgeSocket
 ): Promise<MobileBridgeSocket> {
-  if (!features().includes(FLEET_MOBILE_BRIDGE_FEATURE))
+  if (!features().includes(FLEET_PHONES_FEATURE))
     throw new MobileBridgeError('UNSUPPORTED', 'The bot server predates phones on the bridge')
   const origin = fleetBridgeOrigin(server.origin)
   if (!origin) throw new MobileBridgeError('UNSUPPORTED', 'The server address cannot carry a bridge')

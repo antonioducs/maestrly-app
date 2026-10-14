@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { opaqueIdSchema, utcDateTimeSchema } from './identity.js'
-import { chatPartSchema, chatQuestionSchema } from './project-chat.js'
+import { chatPartSchema, chatQuestionSchema } from './chat-parts.js'
 
 /**
  * Conversations a bot runs in the projects of a computer.

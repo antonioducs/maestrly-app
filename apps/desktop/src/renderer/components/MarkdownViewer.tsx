@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, memo, useContext, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import type { Components, Options } from 'react-markdown'
@@ -6,10 +6,14 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { FileCode, Folder, MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { MermaidBlock } from '@/components/MermaidBlock'
+import { useGenUiHost } from '@/genui/context'
+import { isFenceClosed, isPendingFence, isWidgetFence } from '@/genui/fences'
+import { HtmlWidgetBlock, PendingFence } from '@/genui/HtmlWidgetBlock'
 import { i18n } from '@/lib/i18n'
 import { rehypeChatMentions, rehypeMarkdownSearchHighlight } from '@/lib/markdown-search-highlight'
 import { cn } from '@/lib/utils'
 import { parseLocalFileReference } from '../../shared/file-reference'
+import { expandGenUiPreviews } from '../../shared/genui-widget'
 
 export interface CommentCtx {
   comments: Record<number, string>
@@ -49,8 +53,14 @@ export const MarkdownViewer = memo(function MarkdownViewer({
   searchQuery,
   currentSearchMatch,
 }: Props) {
+  // An answer shows an interface it previewed by naming the preview; the message holds its HTML.
+  const { previews } = useGenUiHost()
+  const source = useMemo(() => (previews ? expandGenUiPreviews(markdown, previews) : markdown), [markdown, previews])
+  // Fences read the source to tell a closed block from one still streaming; the ref spares rebuilding components.
+  const sourceRef = useRef(source)
+  sourceRef.current = source
   const components = useMemo<Components>(
-    () => buildComponents(onOpenFile, ctx, onOpenMention),
+    () => buildComponents(sourceRef, onOpenFile, ctx, onOpenMention),
     [onOpenFile, ctx, onOpenMention]
   )
   const rehypePlugins = useMemo<NonNullable<Options['rehypePlugins']>>(
@@ -69,7 +79,7 @@ export const MarkdownViewer = memo(function MarkdownViewer({
         components={components}
         urlTransform={markdownUrlTransform}
       >
-        {markdown}
+        {source}
       </ReactMarkdown>
     </div>
   )
@@ -84,6 +94,7 @@ function hastText(node: any): string {
   return ''
 }
 function buildComponents(
+  sourceRef: RefObject<string>,
   onOpenFile?: OpenFileReference,
   ctx?: CommentCtx,
   onOpenMention?: OpenFileReference
@@ -180,6 +191,15 @@ function buildComponents(
         ? codeNode.properties.className.join(' ')
         : String(codeNode?.properties?.className ?? '')
       if (/\blanguage-mermaid\b/.test(cls)) return <MermaidBlock code={hastText(codeNode)} />
+      const code = hastText(codeNode)
+      if (isWidgetFence(cls)) {
+        const start = node?.position?.start?.offset
+        const end = node?.position?.end?.offset
+        const complete =
+          typeof start === 'number' && typeof end === 'number' && isFenceClosed(sourceRef.current.slice(start, end))
+        return <HtmlWidgetBlock code={code} complete={complete} />
+      }
+      if (isPendingFence(cls, code)) return <PendingFence>{children}</PendingFence>
       return <pre>{children}</pre>
     },
     code: ({ className, children }: any) => (

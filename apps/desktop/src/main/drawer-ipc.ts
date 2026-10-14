@@ -26,16 +26,21 @@ import {
   applyLayout,
   captureSlotView,
   navigateBrowser,
+  queryOmnibox,
+  removeBrowserHistoryEntry,
   reorderBrowserTab,
   reloadAllVSCode,
   setLayout,
   setDialogSuppressionOwners,
+  setOmniboxOverlay,
   showVSCodeLoadingAll,
   switchBrowserTab,
   toggleBrowserDevTools,
   type Bounds,
   type PanelTab,
 } from './drawer-manager'
+import { setBrowserKeyboardFocus } from './browser-hotkeys'
+import type { OmniboxQueryResult } from '../shared/browser-omnibox'
 import { getMergedSettingsJson, getVSCodeUrl, restartVSCodeServer, waitForEditorReady } from './vscode/vscode-server'
 import { setVisibleConversation } from './selection-bridge'
 import { getConversation, patchConvUiPrefs, type FloatingBounds, type FloatTab } from './store'
@@ -53,6 +58,8 @@ import {
   startBrowserStream,
   stopBrowserStream,
 } from './drawer/browser-stream'
+
+const EMPTY_OMNIBOX_RESULT: OmniboxQueryResult = { history: [], tabs: [], searchSuggestions: [] }
 
 export interface DrawerIpcDeps {
   loadVSCodeFolder: (convId: string, folder: string) => Promise<void>
@@ -112,7 +119,32 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   reg.mon('drawer:tab-close', (_e, convId: string, id: string) => closeBrowserTab(convId, id))
   reg.mon('drawer:tab-switch', (_e, convId: string, id: string) => switchBrowserTab(convId, id))
   reg.mon('drawer:tab-reorder', (_e, convId: string, from: number, to: number) => reorderBrowserTab(convId, from, to))
-  reg.mon('drawer:navigate', (_e, convId: string, url: string) => navigateBrowser(convId, url))
+  reg.mon('drawer:navigate', (_e, convId: string, url: string, options?: { typed?: unknown }) =>
+    navigateBrowser(convId, url, { typed: options?.typed === true })
+  )
+  // Address bar: history and tab candidates, optionally with Google suggestions (network egress, so guarded).
+  reg.mhandle('drawer:omnibox-query', (event, convId: unknown, text: unknown, options: unknown) => {
+    if (typeof convId !== 'string' || typeof text !== 'string') return EMPTY_OMNIBOX_RESULT
+    const opts = options && typeof options === 'object' ? (options as { search?: unknown; locale?: unknown }) : {}
+    return queryOmnibox(
+      convId,
+      text,
+      { search: opts.search === true, ...(typeof opts.locale === 'string' ? { locale: opts.locale } : {}) },
+      event.sender.id
+    )
+  })
+  // Suggestions over the native page: frozen frame, then the page moves offscreen until closed.
+  reg.mhandle('drawer:omnibox-overlay', (event, convId: unknown, mode: unknown) => {
+    if (typeof convId !== 'string' || (mode !== 'prepare' && mode !== 'open' && mode !== 'close')) return null
+    return setOmniboxOverlay(convId, mode, event.sender)
+  })
+  reg.mon('drawer:history-remove', (_e, url: unknown) => {
+    if (typeof url === 'string') removeBrowserHistoryEntry(url)
+  })
+  // The main window catches Cmd/Ctrl+T and W only while its renderer reports the keyboard in a browser.
+  reg.mon('drawer:browser-keyboard-focus', (event, focused: unknown) => {
+    setBrowserKeyboardFocus(event.sender, focused === true)
+  })
   reg.mon('drawer:back', (_e, convId: string) => browserBack(convId))
   reg.mon('drawer:forward', (_e, convId: string) => browserForward(convId))
   reg.mon('drawer:reload', (_e, convId: string) => browserReload(convId))

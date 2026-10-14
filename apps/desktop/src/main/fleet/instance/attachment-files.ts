@@ -13,7 +13,8 @@ export async function readConversationFile(
   for (const message of messages) {
     if (message.conversationId !== conversationId || message.role !== 'user') continue
     for (const part of message.parts) {
-      if (part.type !== 'file' || part.kind === 'image' || imageId('a', message.id, part.id) !== fileId) continue
+      if (part.type !== 'file' || part.hidden || part.kind === 'image' || imageId('a', message.id, part.id) !== fileId)
+        continue
       let bytes: Uint8Array
       if (part.kind === 'pdf') {
         if (!part.artifactId) return null

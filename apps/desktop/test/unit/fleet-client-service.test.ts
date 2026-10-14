@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,9 +16,11 @@ const state = vi.hoisted(() => ({
   broadcasts: [] as { channel: string; payload: unknown }[],
   download: vi.fn(),
   reveal: vi.fn(),
+  userData: '',
 }))
 vi.mock('electron', async (original) => ({
   ...(await original<typeof import('electron')>()),
+  app: { getPath: () => state.userData },
   shell: { showItemInFolder: state.reveal },
 }))
 vi.mock('../../src/main/fleet/client/downloads', () => ({ saveFleetFile: state.download }))
@@ -65,6 +67,8 @@ vi.mock('../../src/main/fleet/client/events', () => ({
 }))
 
 import { FleetClientService } from '../../src/main/fleet/client/service'
+import { FleetClientError } from '../../src/main/fleet/client/api'
+import { parseFleetMediaUrl } from '../../src/main/fleet/client/media-protocol'
 import { readFleetSettings } from '../../src/main/fleet/client/settings'
 
 const host = {
@@ -178,6 +182,128 @@ describe('fleet client service', () => {
     service.stop()
     await expect(saving).rejects.toThrow()
     expect(state.download.mock.calls[0][3].signal.aborted).toBe(true)
+  })
+
+  it('names prepared videos with capability URLs, plays cached ones offline and forgets a removed bot', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'fleet-media-service-'))
+    try {
+      const bytes = Buffer.from('synthetic video bytes')
+      const ref = { id: 'f-clip', name: 'clip.mp4', mediaType: 'video/mp4', byteSize: bytes.length }
+      const openFile = vi.fn(async () => ({ ref, response: new Response(new Uint8Array(bytes)) }))
+      state.userData = directory
+      const service = new FleetClientService()
+      Object.assign(service, {
+        api: { openFile },
+        connection: { features: ['files'], deviceId: 'device-1' },
+      })
+      const url = await service.prepareMedia('bot', 'f-clip')
+      const request = parseFleetMediaUrl(url)!
+      expect(request).toMatchObject({ botId: 'bot', fileId: 'f-clip' })
+      expect(state.broadcasts.filter((item) => item.channel === 'fleet:mediaProgress').at(-1)?.payload).toEqual({
+        botId: 'bot',
+        fileId: 'f-clip',
+        received: bytes.length,
+        total: bytes.length,
+      })
+      expect(await service.mediaEntry({ ...request, capability: '0'.repeat(32) })).toBeNull()
+      expect(await service.mediaEntry({ ...request, fileId: 'f-other' })).toBeNull()
+      // Offline, a cached copy still plays.
+      Object.assign(service, { api: null })
+      expect(await service.mediaEntry(request)).toMatchObject({ ref, mediaType: 'video/mp4' })
+      expect(openFile).toHaveBeenCalledTimes(1)
+      // Another pairing cannot use this URL.
+      Object.assign(service, { connection: { features: ['files'], deviceId: 'device-2' } })
+      expect(await service.mediaEntry(request)).toBeNull()
+      Object.assign(service, { connection: { features: [], deviceId: 'device-1' }, api: { openFile } })
+      await expect(service.prepareMedia('bot', 'f-new')).rejects.toThrow('FLEET_FILES_UNSUPPORTED')
+      Object.assign(service, { connection: { features: ['files'], deviceId: 'device-1' } })
+      // A file the bot no longer has is a 404 for the player, not a failure.
+      const urls = (service as unknown as { mediaUrls: { url: (...ids: string[]) => string } }).mediaUrls
+      const missing = parseFleetMediaUrl(urls.url('device-1', 'bot', 'f-gone'))!
+      openFile.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'gone'))
+      expect(await service.mediaEntry(missing)).toBeNull()
+      openFile.mockRejectedValueOnce(new FleetClientError('INTERNAL', 500, 'down'))
+      await expect(service.mediaEntry(missing)).rejects.toThrow('down')
+      const cached = async () =>
+        (await readdir(join(directory, 'fleet-media-cache'))).filter((name) => name.endsWith('.media'))
+      expect(await cached()).toHaveLength(1)
+      ;(service as unknown as { applyEvent: (event: unknown) => void }).applyEvent({
+        type: 'bot.removed',
+        botId: 'bot',
+      })
+      await vi.waitFor(async () => expect(await cached()).toEqual([]))
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('runs one transfer per file, reports its progress to every window, and names the bot in its notice', async () => {
+    const service = new FleetClientService()
+    const settled = vi.fn()
+    service.onDownloadSettled = settled
+    Object.assign(service, {
+      api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+      connection: { features: ['files'], deviceId: 'device-1' },
+      snapshot: { bots: [{ id: 'bot', name: 'Scout' }] },
+    })
+    let finish!: (path: string) => void
+    state.download.mockImplementation(
+      (_api, _botId, _fileId, options: { onProgress: (progress: unknown) => void }) =>
+        new Promise((resolve) => {
+          options.onProgress({ name: 'big.zip', receivedBytes: 0, totalBytes: 2048 })
+          finish = resolve
+        })
+    )
+    const first = service.downloadFile('bot', 'f-file')
+    // Leaving the chat and coming back asks again: it joins the running transfer.
+    const second = service.downloadFile('bot', 'f-file')
+    await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
+    expect(service.getActiveDownload('bot', 'f-file')).toMatchObject({ receivedBytes: 0, totalBytes: 2048 })
+    const progress = state.broadcasts.filter((event) => event.channel === 'fleet:download')
+    expect(progress.at(-1)?.payload).toMatchObject({
+      type: 'progress',
+      botId: 'bot',
+      fileId: 'f-file',
+      totalBytes: 2048,
+    })
+    finish('/downloads/big.zip')
+    const receipt = await first
+    expect(await second).toBe(receipt)
+    expect(service.getActiveDownload('bot', 'f-file')).toBeNull()
+    expect(state.broadcasts.at(-1)).toEqual({
+      channel: 'fleet:download',
+      payload: { type: 'saved', botId: 'bot', fileId: 'f-file', receipt },
+    })
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ outcome: 'saved', name: 'big.zip', path: '/downloads/big.zip', receipt }),
+      'Scout'
+    )
+  })
+
+  it('cancels one transfer on request and marks a file the gateway no longer has', async () => {
+    const service = new FleetClientService()
+    const settled = vi.fn()
+    service.onDownloadSettled = settled
+    Object.assign(service, {
+      api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+      connection: { features: ['files'], deviceId: 'device-1' },
+    })
+    state.download.mockImplementation(
+      (_api, _botId, _fileId, { signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    )
+    const saving = service.downloadFile('bot', 'f-file')
+    await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
+    service.cancelDownload('bot', 'f-file')
+    await expect(saving).rejects.toThrow('FLEET_DOWNLOAD_CANCELED')
+    expect(state.broadcasts.at(-1)?.payload).toEqual({ type: 'canceled', botId: 'bot', fileId: 'f-file' })
+    expect(settled).not.toHaveBeenCalled()
+    state.download.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'File expired'))
+    await expect(service.downloadFile('bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ outcome: 'failed', error: 'FLEET_FILE_NOT_FOUND' }),
+      null
+    )
   })
 
   it('never starts saving a file if the connection changed during metadata checks', async () => {

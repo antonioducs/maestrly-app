@@ -3,9 +3,35 @@ import { describe, expect, it, vi } from 'vitest'
 import { toolOutputImages } from '../../src/shared/chat'
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
-import { linkedBoardCatalog } from '../../src/main/platform/board-tool-catalog'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { z } from 'zod'
+
+const id = z.string().uuid()
+/** Zod schemas round-tripped through JSON Schema, with the strict, nullable, enum and pattern shapes MCP must keep. */
+const zodCatalog = Object.entries({
+  catalog_empty: z.object({}).strict(),
+  catalog_lookup: z.object({ itemId: id, scope: id.optional() }).strict(),
+  catalog_update: z
+    .object({
+      itemId: id,
+      expectedVersion: z.number().int().positive(),
+      parentId: id.nullable(),
+      priority: z.enum(['low', 'medium', 'high']).optional(),
+      labels: z.array(z.string().min(1).max(80)).max(100).optional(),
+      settings: z.object({ enabled: z.boolean(), limit: z.number().int().min(1).max(50).nullable() }).strict(),
+      idempotencyKey: z
+        .string()
+        .min(8)
+        .max(128)
+        .regex(/^[A-Za-z0-9_-]+$/),
+    })
+    .strict(),
+}).map(([name, schema]) => ({
+  name,
+  description: `Synthetic ${name} tool.`,
+  schema: z.fromJSONSchema(z.toJSONSchema(schema)) as z.ZodObject<z.ZodRawShape>,
+}))
 
 function namedTool(description: string) {
   return tool({
@@ -21,9 +47,9 @@ function namedTool(description: string) {
 }
 
 describe('Claude in-process MCP bridge', () => {
-  it('publishes the board catalog through the actual SDK MCP tools/list transport', async () => {
+  it('publishes a Zod catalog through the actual SDK MCP tools/list transport', async () => {
     const tools: ToolSet = Object.fromEntries(
-      linkedBoardCatalog.map(({ name, description, schema }) => [
+      zodCatalog.map(({ name, description, schema }) => [
         name,
         tool({ description, inputSchema: schema, execute: async () => 'ok' }),
       ])
@@ -35,7 +61,7 @@ describe('Claude in-process MCP bridge', () => {
       await bridge.server.instance.connect(serverTransport)
       await client.connect(clientTransport)
       const listed = await client.listTools()
-      expect(listed.tools.map(({ name }) => name).sort()).toEqual(linkedBoardCatalog.map(({ name }) => name).sort())
+      expect(listed.tools.map(({ name }) => name).sort()).toEqual(zodCatalog.map(({ name }) => name).sort())
     } finally {
       await client.close()
       await bridge.server.instance.close()
@@ -50,6 +76,7 @@ describe('Claude in-process MCP bridge', () => {
       ask_question: namedTool('Ask through the Maestrly question broker.'),
       use_skill: namedTool('Load a Maestrly skill.'),
       external_search: namedTool('Deferred external MCP search.'),
+      web_search: namedTool('Search the web through the Maestrly permission broker.'),
     }
 
     const bridge = await buildClaudeToolBridge(tools, new AbortController().signal)
@@ -61,6 +88,7 @@ describe('Claude in-process MCP bridge', () => {
       'mcp__maestrly__review_plan',
       'mcp__maestrly__task',
       'mcp__maestrly__use_skill',
+      'mcp__maestrly__web_search',
     ])
     expect(bridge.toolAliases).toMatchObject({
       Agent: 'mcp__maestrly__task',
@@ -69,7 +97,10 @@ describe('Claude in-process MCP bridge', () => {
       ExitPlanMode: 'mcp__maestrly__review_plan',
       Read: 'mcp__maestrly__read',
       Skill: 'mcp__maestrly__use_skill',
+      WebSearch: 'mcp__maestrly__web_search',
     })
+    // The alias only routes the name; Claude's own search stays disallowed.
+    expect(CLAUDE_DISALLOWED_NATIVE_TOOLS).toContain('WebSearch')
     expect(bridge.nameFromSdk('mcp__maestrly__external_search')).toBe('external_search')
     expect(CLAUDE_DISALLOWED_NATIVE_TOOLS).toEqual(
       expect.arrayContaining([

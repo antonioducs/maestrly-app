@@ -308,15 +308,23 @@ describe('resetLocalAppData', () => {
     }
   )
 
-  it('removes attachment images, tool output and artifacts, including orphaned files', async () => {
-    for (const root of ['chat-attachment-images', 'chat-tool-output', 'artifacts']) {
+  it('removes attachment images, tool output, bot videos and artifacts, including orphaned files', async () => {
+    for (const root of ['chat-attachment-images', 'chat-tool-output', 'fleet-media-cache', 'artifacts']) {
       mkdirSync(path.join(h.userData, root), { recursive: true })
       writeFileSync(path.join(h.userData, root, 'orphan'), 'sensitive content')
     }
     await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
     expect(existsSync(path.join(h.userData, 'chat-attachment-images'))).toBe(false)
     expect(existsSync(path.join(h.userData, 'chat-tool-output'))).toBe(false)
+    expect(existsSync(path.join(h.userData, 'fleet-media-cache'))).toBe(false)
     expect(existsSync(path.join(h.userData, 'artifacts'))).toBe(false)
+  })
+
+  it('forgets the drawer browser history', async () => {
+    const historyFile = path.join(h.userData, 'browser-history.json')
+    writeFileSync(historyFile, JSON.stringify({ version: 1, entries: [], icons: {} }))
+    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
+    expect(existsSync(historyFile)).toBe(false)
   })
 
   it('reports database cleanup failures and rolls back owners without removing their files', async () => {

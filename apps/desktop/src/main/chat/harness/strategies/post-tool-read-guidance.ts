@@ -1,4 +1,13 @@
-const READ_TOOLS = new Set(['read', 'grep', 'glob', 'webfetch', 'memory_search', 'memory_list', 'memory_read'])
+const READ_TOOLS = new Set([
+  'read',
+  'grep',
+  'glob',
+  'webfetch',
+  'web_search',
+  'memory_search',
+  'memory_list',
+  'memory_read',
+])
 
 function canonicalToolName(value: string): string {
   const unqualified = value.startsWith('mcp__maestrly__') ? value.slice('mcp__maestrly__'.length) : value

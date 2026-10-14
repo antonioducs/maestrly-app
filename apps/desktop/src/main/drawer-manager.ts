@@ -93,7 +93,15 @@ export {
   getBrowserStateForScope,
   toggleBrowserDevTools,
   focusBrowserPopup,
+  type NavigateBrowserOptions,
+  focusBrowserAddressBar,
+  openBrowserTabFromShortcut,
+  closeActiveBrowserTabFromShortcut,
+  queryOmnibox,
+  setOmniboxOverlay,
+  type OmniboxOverlayMode,
 } from './drawer/browser'
+export { clearBrowserHistory, flushBrowserHistory, removeBrowserHistoryEntry } from './drawer/browser-history'
 export {
   showVSCodeLoading,
   showVSCodeLoadingAll,

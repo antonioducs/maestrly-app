@@ -7,6 +7,7 @@ import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 import type { AppToolGroupState } from './app-tool-groups'
+import type { WebSearchConfig } from './web-search'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -931,12 +932,25 @@ export interface ChatReviewLoopMeta {
   reviewerConversationId?: string
 }
 
-/** `conversation-dispatch`: first message of a conversation started from another conversation (host-generated). */
+/**
+ * `conversation-dispatch`: first message of a conversation started from another conversation (host-generated).
+ * `conversation-message`: a message, report or result sent by the agent of another conversation (see `peer`).
+ */
 export type ChatMessageSource =
   | 'chatgpt-web'
   | 'chatgpt-web-review-loop'
   | 'maestrly-review-loop'
   | 'conversation-dispatch'
+  | 'conversation-message'
+
+/** Sender of a message that came from another conversation; the name is captured when it was delivered. */
+export interface ChatMessagePeerOrigin {
+  /** Journal id of the delivered message. */
+  messageId: string
+  fromConversationId: string
+  fromConversationName: string
+  kind: import('./conversation-link').ConversationPeerMessageKind
+}
 
 /** Last observed occupancy of this message's runtime, independent of billing and next-request estimates. */
 export interface ChatContextSnapshot {
@@ -975,6 +989,8 @@ export interface ChatMessage {
   model?: ChatModelRef
 
   source?: ChatMessageSource
+  /** Present with source `conversation-message`. */
+  peer?: ChatMessagePeerOrigin
   /** Trusted bot identity captured when this particular message was admitted by main. */
   botName?: string
   createdAt: number
@@ -1094,6 +1110,11 @@ export type ChatStreamEvent =
       activeHarnessProfile: ChatActiveHarnessProfile | null
     }
   | { kind: 'steering-accepted'; message: ChatMessage }
+  /**
+   * Questions a running tool is waiting on, replacing the previous list. ask_question cards come from their tool
+   * part; this also covers confirmations asked from inside other tools (for example starting conversations).
+   */
+  | { kind: 'questions-pending'; questions: PendingChatQuestion[] }
   | {
       kind: 'message-start'
       messageId: string
@@ -1235,8 +1256,6 @@ export type ChatGptWebCapabilityScope = 'off' | 'read' | 'write'
 export type ChatGptWebBrowserCapability = 'off' | 'inspect' | 'interact'
 
 export interface ChatGptWebCapabilities {
-  /** Linked Kanban project. Read by default; mutations require explicit write access. */
-  kanban?: ChatGptWebCapabilityScope
   git: 'off' | 'read'
   gh: 'off' | 'read'
   /** Read-only access to the visible main Maestrly conversation. Missing values fail closed to off. */
@@ -1378,6 +1397,19 @@ export interface FrozenChatSelection {
   identityEpoch?: number
 
   providerFingerprint?: string
+
+  /**
+   * Physical accounts the frozen execution may use, in failover order, each with the identity it had at freeze.
+   * Present only for a Claude/Codex account whose fallback route was enabled; the first entry is `providerId`.
+   * Accounts switch only on quota or unavailability; one re-logged as another identity ends the execution.
+   */
+  failoverRoute?: ReadonlyArray<FrozenFailoverAccount>
+}
+
+export interface FrozenFailoverAccount {
+  providerId: string
+  identityFingerprint?: string
+  identityEpoch?: number
 }
 
 export type FrozenChatExecutionProfile = FrozenChatSelection
@@ -1725,6 +1757,14 @@ export interface ChatConfig {
   appToolGroups?: AppToolGroupState
 
   imageGenEnabled: boolean
+  /** Generated interfaces: the inline HTML instructions in the prompt and the preview tool. Default on. */
+  generatedInterfacesEnabled: boolean
+
+  /**
+   * Selected provider and whether each key is stored; never the keys themselves. Absent on hosts that predate web
+   * search, whose settings then omit the section.
+   */
+  webSearch?: WebSearchConfig
 
   bashFiltersEnabled: boolean
 

@@ -9,7 +9,7 @@ import {
 } from '../src/notifications/push'
 import { memoryStores, type PairedServer } from '../src/servers/registry'
 
-const server = (id: string, features: string[] = ['push-notifications']): PairedServer => ({
+const server = (id: string, features: string[] = ['phones']): PairedServer => ({
   id,
   origin: `https://${id}.example.dev`,
   name: id,

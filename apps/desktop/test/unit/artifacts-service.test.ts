@@ -196,6 +196,50 @@ describe('ArtifactsService', () => {
     expect(
       (await errorOf(service.openInConversation(outsider.id, detail.id, undefined, { checkScope: true }))).code
     ).toBe('not_found')
+    expect(service.opensOnViewer).toBe(false)
+  })
+
+  it('on a workspaces host, asks the computer showing the conversation to open it, within the same scope', async () => {
+    const openOnViewer = vi.fn()
+    const owner: ArtifactSource = {
+      key: 'server',
+      owner: { kind: 'device', id: 'workspaces' },
+      ready: () => true,
+      admin: async () => host.admin,
+      // The host's browser cannot reach the viewer.
+      viewerBase: () => null,
+      publicBase: () => null,
+      linkExpiryDays: () => null,
+    }
+    const onHost = new ArtifactsService({
+      sources: { publishTarget: () => owner, forConversation: () => [owner], managed: () => [owner] },
+      vault,
+      getConversation,
+      workspaceName: () => undefined,
+      resolveDirectory: deps.resolveDirectory,
+      openExternal: deps.openExternal,
+      openInDrawer: deps.openInDrawer,
+      openOnViewer,
+    })
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await onHost.create(conversation.id, { title: 'Remote page', files: page })
+    expect(onHost.opensOnViewer).toBe(true)
+    expect(await onHost.openInConversation(conversation.id, detail.id, undefined, { checkScope: true })).toMatchObject({
+      id: detail.id,
+    })
+    expect(openOnViewer).toHaveBeenCalledWith(conversation.id, {
+      conversationId: conversation.id,
+      artifactId: detail.id,
+      version: 1,
+    })
+    await onHost.openInConversation(conversation.id, detail.id, 1, { checkScope: true })
+    expect(openOnViewer).toHaveBeenLastCalledWith(conversation.id, expect.objectContaining({ version: 1 }))
+    expect(deps.openInDrawer).not.toHaveBeenCalled()
+    const outsider = makeConversation(makeWorkspace().id)
+    expect(
+      (await errorOf(onHost.openInConversation(outsider.id, detail.id, undefined, { checkScope: true }))).code
+    ).toBe('not_found')
+    expect(openOnViewer).toHaveBeenCalledTimes(2)
   })
 
   it('publishes a folder as a full replacement', async () => {

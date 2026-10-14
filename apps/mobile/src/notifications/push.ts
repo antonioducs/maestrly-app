@@ -1,6 +1,6 @@
 import {
   FLEET_PUSH_DEFAULTS,
-  FLEET_PUSH_FEATURE,
+  FLEET_PHONES_FEATURE,
   fleetPushDataSchema,
   fleetPushPreferencesSchema,
   type FleetPushPreferences,
@@ -57,7 +57,7 @@ export async function registerWithServers(input: {
   await Promise.all(
     input.servers.map(async (server) => {
       if (input.skip?.(server)) return
-      if (!server.features.includes(FLEET_PUSH_FEATURE)) {
+      if (!server.features.includes(FLEET_PHONES_FEATURE)) {
         results[server.id] = 'unsupported'
         return
       }

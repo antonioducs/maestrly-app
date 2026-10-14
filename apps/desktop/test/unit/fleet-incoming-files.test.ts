@@ -197,4 +197,27 @@ describe('incoming fleet documents', () => {
       projectChatMessages([{ ...message, parts: [{ type: 'text', id: 'text', text: '' }, ...message.parts] }])
     ).toMatchObject([{ ...expected, id: 'native:0' }])
   })
+  it('does not list hidden memory parts as owner files', () => {
+    const [item] = projectChatMessages([
+      {
+        id: 'native',
+        conversationId: 'conversation',
+        role: 'user',
+        createdAt: Date.now(),
+        parts: [
+          { type: 'text', id: 'text', text: 'hello' },
+          {
+            type: 'file',
+            id: 'recall',
+            name: 'maestrly-memory-recall',
+            kind: 'text',
+            mediaType: 'text/markdown',
+            data: '<maestrly-memory kind="recall"></maestrly-memory>',
+            hidden: true,
+          },
+        ],
+      },
+    ])
+    expect(item).toMatchObject({ kind: 'user', text: 'hello', files: [] })
+  })
 })

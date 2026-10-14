@@ -2,7 +2,6 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
 import type { ToolSet } from 'ai'
 import { APP_TOOL_POLICY } from './tool-policy'
-import { getDb } from '../store'
 import type { ChatMode, ChatPermMode } from '../../shared/chat'
 
 export interface RemoteChatPolicy {
@@ -28,13 +27,6 @@ export function withRemoteChatPolicy<T>(policy: RemoteChatPolicy, fn: () => T): 
 export function registerRemoteChatPolicy(policy: RemoteChatPolicy) {
   active.set(policy.conversationId, policy)
   return () => active.delete(policy.conversationId)
-}
-export function isWebManagedConversation(id: string): boolean {
-  try {
-    return !!getDb().prepare('select 1 from platform_chat_sessions where conversation_id=?').get(id)
-  } catch {
-    return false
-  }
 }
 export function assertRemoteChatPermission(
   policy: RemoteChatPolicy,
@@ -70,7 +62,7 @@ export function assertRemoteChatPermission(
     if (!policy.allowPush && input.resources.some((r) => /\bgit\s+(?:-[^\s]+\s+)*push\b/.test(r))) deny('git push')
     return policy.permMode === 'full' ? 'read' : 'ask'
   }
-  if (input.action === 'webfetch') {
+  if (input.action === 'webfetch' || input.action === 'web_search') {
     if (!policy.allowWeb) deny('web access')
     return protectedEffect()
   }

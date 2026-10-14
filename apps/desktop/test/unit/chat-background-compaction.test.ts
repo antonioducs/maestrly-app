@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { BackgroundCompactionStore } from '../../src/main/chat/background-compaction/store'
+import { BACKGROUND_COMPACTION_PERSISTENCE_VERSION } from '../../src/main/chat/background-compaction/types'
 import {
   backgroundCompactionConfigIdentity,
   parseBackgroundCompactionConfig,
@@ -42,6 +43,49 @@ describe('background configuration and durable accounting', () => {
       ready: null,
       work: null,
     })
+  })
+
+  it('persists the frozen fallback route of an in-flight summary and drops a malformed one', () => {
+    const store = new BackgroundCompactionStore()
+    const failoverRoute = [
+      { providerId: 'builtin_claude_subscription', identityFingerprint: 'account-A', identityEpoch: 2 },
+      { providerId: 'builtin_claude_subscription@acc_b', identityFingerprint: 'account-B', identityEpoch: 7 },
+    ]
+    const work = (route: unknown) => ({
+      version: BACKGROUND_COMPACTION_PERSISTENCE_VERSION,
+      id: 'work-1',
+      generation: 1,
+      configIdentity: 'identity',
+      boundary: { messageId: 'm', partId: 'p', partIndex: 0 },
+      sourceHash: 'hash',
+      selection: {
+        providerId: 'builtin_claude_subscription',
+        modelId: 'sonnet',
+        fastMode: false,
+        failoverRoute: route,
+      } as never,
+      coveredTokens: 0,
+      newTokens: 10,
+      intervalTokens: 100000,
+      conversationWindow: 200000,
+      contextWindow: 200000,
+      maxSummaryTokens: 4000,
+      attemptSequence: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    store.write(conversationId, { generation: 1, status: 'running', ready: null, work: work(failoverRoute) })
+    restartDb()
+    expect(store.get(conversationId)?.work?.selection.failoverRoute).toEqual(failoverRoute)
+
+    store.write(conversationId, {
+      generation: 1,
+      status: 'running',
+      ready: null,
+      work: work([{ providerId: 42 }]),
+    })
+    restartDb()
+    expect(store.get(conversationId)?.work).toBeNull()
   })
 
   it('keeps billed attempts after preparation cleanup and never counts them as chat turns', async () => {

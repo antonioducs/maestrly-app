@@ -16,8 +16,16 @@ import {
   type FleetTodo,
 } from '@maestrly/bot-fleet-protocol'
 import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
+import { expandGenUiPreviews, genUiPreviewsOf } from '../../../shared/genui-widget'
 import type { PermissionRequest } from '../../chat/permission'
-import { appendSettledLog, promptForInput, readSettledLog, settledLog, type QueuedInput } from './queue'
+import {
+  appendSettledLog,
+  promptForInput,
+  readSettledLog,
+  rewriteSettledLog,
+  settledLog,
+  type QueuedInput,
+} from './queue'
 import { imageId } from './images'
 import { publishedFileRefs } from './attachment-files'
 import { fleetImageMediaTypeSchema } from '@maestrly/bot-fleet-protocol'
@@ -183,7 +191,8 @@ function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
 function ownerFileRefs(message: ChatMessage): FleetFileRef[] {
   return message.parts
     .flatMap((entry): FleetFileRef[] => {
-      if (entry.type !== 'file') return []
+      // Hidden parts (memory recall, referenced context) are for the model, not attachments of the owner.
+      if (entry.type !== 'file' || entry.hidden) return []
       if (entry.kind === 'pdf' && entry.artifactId && entry.byteSize !== undefined)
         return [
           {
@@ -263,6 +272,8 @@ export function projectMessages(
           ))
         : undefined
     if (linked) claimed.add(linked.id)
+    // An answer shows an interface it previewed by naming the preview: readers get the block with its HTML.
+    const previews = message.role === 'assistant' ? genUiPreviewsOf(message.parts) : null
     for (const [index, part] of message.parts.entries()) {
       const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
       const time = at(message.createdAt)
@@ -313,7 +324,7 @@ export function projectMessages(
             kind: 'assistant',
             id,
             at: time,
-            text: part.text,
+            text: previews ? expandGenUiPreviews(part.text, previews) : part.text,
             streaming: !message.finishReason && !message.error,
           })
         }
@@ -457,18 +468,45 @@ export class InstanceTranscriptExtras {
     const contents = rewrite ? JSON.stringify(this.pending) : null
     const write = this.writeTail.then(async () => {
       await appendSettledLog(settledLog(this.file), logged)
-      if (contents === null) return
-      await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
-      const temporary = this.file + '.' + randomUUID() + '.tmp'
-      try {
-        await fs.writeFile(temporary, contents, { mode: 0o600 })
-        await fs.rename(temporary, this.file)
-      } finally {
-        await fs.rm(temporary, { force: true }).catch(() => undefined)
-      }
+      if (contents !== null) await this.writePending(contents)
     })
     this.writeTail = write.catch(() => undefined)
     return write
+  }
+  private async writePending(contents: string): Promise<void> {
+    await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
+    const temporary = this.file + '.' + randomUUID() + '.tmp'
+    try {
+      await fs.writeFile(temporary, contents, { mode: 0o600 })
+      await fs.rename(temporary, this.file)
+    } finally {
+      await fs.rm(temporary, { force: true }).catch(() => undefined)
+    }
+  }
+  /**
+   * Removes the items from `time` on, and those that stand in a removed message's place: a conversation cut there for an
+   * edit no longer holds what came after the cut, so its notes and interactions leave too. A question takes the id and
+   * time of its tool call's message, which may be stamped before the cut. The log and the file are written again without
+   * them; returns how many left.
+   */
+  async pruneFrom(time: number, removedMessageIds: ReadonlySet<string> = new Set()): Promise<number> {
+    const keep = (item: FleetTranscriptItem) =>
+      Date.parse(item.at) < time && !removedMessageIds.has(item.id.slice(0, item.id.lastIndexOf(':')))
+    const settled = this.settled.filter(keep)
+    const pending = this.pending.filter(keep)
+    const removed = this.settled.length - settled.length + (this.pending.length - pending.length)
+    if (!removed) return 0
+    this.settled = settled
+    this.pending = pending
+    this.questions = null
+    const contents = JSON.stringify(pending)
+    const write = this.writeTail.then(async () => {
+      await rewriteSettledLog(settledLog(this.file), settled)
+      await this.writePending(contents)
+    })
+    this.writeTail = write.catch(() => undefined)
+    await write
+    return removed
   }
   async upsert(item: FleetTranscriptItem): Promise<void> {
     const valid = fleetTranscriptItemSchema.parse(item)

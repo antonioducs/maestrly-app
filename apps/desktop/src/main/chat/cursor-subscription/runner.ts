@@ -36,6 +36,7 @@ import { renderSkillContext } from '../skills'
 import { findEffectiveSkill } from '../skill-state'
 import { builtinToolNamesForMode, buildTools, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -470,6 +471,7 @@ async function runCursorSubscriptionChatInScope(
         : {}),
       ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
       ...(conversationDispatch ? { conversationDispatch } : {}),
+      ...(conversationLink ? { conversationLink } : {}),
     })
 
     const enabledBuiltins = args.reviewerRuntime
@@ -479,6 +481,10 @@ async function runCursorSubscriptionChatInScope(
     const conversationDispatch = args.reviewerRuntime
       ? undefined
       : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+    // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+    const conversationLink = args.reviewerRuntime
+      ? undefined
+      : enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
     if (
       !args.reviewerRuntime &&
       state.emitGeneratedImage &&

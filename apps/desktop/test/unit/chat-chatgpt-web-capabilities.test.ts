@@ -41,7 +41,6 @@ describe('ChatGPT Web capability policy', () => {
         git: 'read',
         gh: 'read',
         memory: 'read',
-        kanban: 'write',
         conversation: 'read',
         browser: 'interact',
         mcp: { jira: 'write' },
@@ -53,7 +52,6 @@ describe('ChatGPT Web capability policy', () => {
       git: 'off',
       gh: 'off',
       memory: 'off',
-      kanban: 'off',
       browser: 'interact',
       conversation: 'read',
       mcp: { jira: 'write' },
@@ -62,7 +60,6 @@ describe('ChatGPT Web capability policy', () => {
 
   it('defaults to read-only and never grants a globally disabled server', () => {
     expect(resolveChatGptWebCapabilities(undefined, servers)).toEqual({
-      kanban: 'read',
       git: 'read',
       gh: 'read',
       conversation: 'off',

@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import {
   FLEET_PROTOCOL_HEADER,
+  FLEET_SCREEN_UPGRADE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   fleetInstanceBotInstallSchema,
   fleetInstanceHoldRequestSchema,
   fleetInstanceProfileSchema,
@@ -98,7 +100,7 @@ type Installed = {
  * A synthetic environment instance. With the `environments` capability it serves the environment routes and every bot
  * under `/v1/bots/:botId`; without it, it is a Maestrly from before environments: one bot on the unprefixed routes.
  */
-async function environmentInstance(environmentId: string, capable = true) {
+async function environmentInstance(environmentId: string, capable = true, extra: string[] = []) {
   const requests: Array<{ method: string; path: string; body: unknown }> = []
   const installed = new Map<string, Installed>()
   const streams = new Set<ServerResponse>()
@@ -107,7 +109,7 @@ async function environmentInstance(environmentId: string, capable = true) {
   /** Synthetic failures by method and path: an error answer, or none (`drop` closes the connection, `hang` waits). */
   const failures: Array<{ method: string; path: string; status: number; code: string; transport?: 'drop' | 'hang' }> =
     []
-  const capabilities = capable ? ['provisioning', 'environments'] : ['provisioning']
+  const capabilities = [...(capable ? ['provisioning', 'environments'] : ['provisioning']), ...extra]
   let seq = 0
   // Screens connect with the environment's real control token, which the gateway keeps.
   let tunnelToken = 'control'
@@ -275,11 +277,11 @@ async function environmentInstance(environmentId: string, capable = true) {
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
     upgrades.push(req.url ?? '')
-    if (req.headers.authorization !== 'Bearer ' + tunnelToken || req.headers.upgrade !== 'maestrly-rfb') {
+    if (req.headers.authorization !== 'Bearer ' + tunnelToken || req.headers.upgrade !== FLEET_SCREEN_UPGRADE) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n')
       return
     }
-    socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: maestrly-rfb\r\n\r\n')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: ${FLEET_SCREEN_UPGRADE}\r\n\r\n`)
     if (head.length) socket.write(head)
     socket.on('data', (bytes) => socket.write(bytes))
   })
@@ -383,8 +385,9 @@ function fixture(env: Record<string, string> = {}) {
     lifecycle,
     events,
     factory,
-    async instance(id: string, capable = true) {
-      const fake = await environmentInstance(id, capable)
+    /** `extra` capabilities join the instance's own, such as `video-screens` for an image that streams its screens. */
+    async instance(id: string, capable = true, extra: string[] = []) {
+      const fake = await environmentInstance(id, capable, extra)
       fakes.set(id, fake)
       return fake
     },
@@ -1506,7 +1509,7 @@ describe('environment screens', () => {
 
   it('binds tickets to a surface and gives one control session the environment display at a time', async () => {
     const f = fixture()
-    const work = await f.instance('work')
+    const work = await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE])
     const {
       ids: [ads, scout],
     } = await environment(f, 'Work', ['Ads', 'Scout'])
@@ -1556,23 +1559,42 @@ describe('environment screens', () => {
     expect(() => screen.environmentTicket('work', 'one', 'view')).toThrow()
   })
 
-  it('offers only the browser area of an environment that predates environments', async () => {
+  it('refuses every screen of an image without video screens', async () => {
     const f = fixture()
+    // An image from before environments, and one with environments from before video screens.
     const solo = await f.instance('solo', false)
+    const old = await f.instance('old')
     const {
-      ids: [bot],
+      ids: [soloBot],
     } = await environment(f, 'Solo', ['Solo'])
-    const { screen, base } = await screens(f, solo, 'solo')
-    expect(() => screen.ticket(bot, 'one', 'view', 'apps')).toThrow(
-      'Restart this environment to update it before opening this screen.'
-    )
-    expect(() => screen.environmentTicket('solo', 'one', 'view')).toThrow(
-      'Restart this environment to update it before opening this screen.'
-    )
-    const view = await connect(base + screen.ticket(bot, 'one', 'view').path)
-    expect(view.readyState).toBe(WebSocket.OPEN)
-    await until(() => solo.upgrades.length > 0)
-    expect(solo.upgrades).toEqual(['/v1/screen/view'])
+    const {
+      ids: [oldBot],
+    } = await environment(f, 'Old', ['Veteran'])
+    const restart = 'Restart this environment to update it before opening this screen.'
+    for (const [fake, environmentId, bot] of [
+      [solo, 'solo', soloBot],
+      [old, 'old', oldBot],
+    ] as const) {
+      const { screen } = await screens(f, fake, environmentId)
+      for (const surface of ['browser', 'apps'] as const)
+        expect(() => screen.ticket(bot, 'one', 'view', surface)).toThrow(restart)
+      expect(() => screen.environmentTicket(environmentId, 'one', 'view')).toThrow(restart)
+      expect(fake.upgrades).toEqual([])
+    }
+  })
+
+  it('refuses a ticket at use once its environment runs an image without video screens', async () => {
+    const f = fixture()
+    const work = await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE])
+    await environment(f, 'Work', ['Ads'])
+    const { screen, base } = await screens(f, work, 'work')
+    const ticket = screen.environmentTicket('work', 'one', 'view')
+    // The environment restarted onto an older image between the ticket and its use.
+    ;(f.lifecycle as unknown as { instances: Map<string, { capabilities: string[] }> }).instances.get(
+      'work'
+    )!.capabilities = ['provisioning', 'environments']
+    expect(await rejected(base + ticket.path)).toBe(4003)
+    expect(work.upgrades).toEqual([])
   })
 })
 

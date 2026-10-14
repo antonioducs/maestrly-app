@@ -3,9 +3,6 @@ out/
 dist/
 apps/desktop/out/
 apps/desktop/dist/
-apps/web/dist/
-apps/server/dist/
-apps/runner/dist/
 packages/*/dist/
 packages/artifact-host/build/
 packages/artifact-host/src/generated/

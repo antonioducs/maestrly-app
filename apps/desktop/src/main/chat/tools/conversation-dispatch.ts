@@ -26,6 +26,7 @@ import {
 import type { ChatQuestion } from '../../../shared/chat'
 import {
   assertConversationDispatchGrantCurrent,
+  conversationDispatchDenialMessage,
   currentHumanTurnOrigin,
   evaluateConversationDispatchGrant,
   evaluateHumanTurnGrant,
@@ -41,7 +42,12 @@ type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
 export interface ConversationDispatchToolRuntime {
   listWorkspaces(): Promise<ConversationDispatchWorkspaceOption[]>
   listModels(): Promise<{ models: ConversationDispatchModelOption[]; current: ConversationDispatchSettings | null }>
-  startConversations(batch: ConversationDispatchBatch, signal: AbortSignal): Promise<ConversationDispatchBatchResult>
+  /** `askQuestion` lets the person confirm a request the message did not state explicitly. */
+  startConversations(
+    batch: ConversationDispatchBatch,
+    signal: AbortSignal,
+    askQuestion: AskQuestion
+  ): Promise<ConversationDispatchBatchResult>
   findGithubRepositories(input: FindGithubRepositoriesInput, signal: AbortSignal): Promise<GithubRepositoriesResult>
   /** `askQuestion` lets the person confirm what cannot be undone, such as publishing a repository. */
   createWorkspace(
@@ -73,6 +79,55 @@ async function confirmPublicRepository(askQuestion: AskQuestion, repo: string): 
   return 'cancel'
 }
 
+/** Request keys the person confirmed per admitted turn; replays of the same batch do not ask again. */
+const confirmedKeys = new WeakMap<object, Set<string>>()
+
+/** Name of a batch destination for the confirmation question; never fails the request. */
+async function destinationLabel(workspaceId: string | undefined, thisProject: string): Promise<string> {
+  if (!workspaceId) return thisProject
+  try {
+    const { listConversationDispatchWorkspaces } = await import('../../conversation-dispatch-service')
+    const workspaces = await listConversationDispatchWorkspaces()
+    return workspaces?.find((workspace) => workspace.workspaceId === workspaceId)?.name ?? workspaceId
+  } catch {
+    return workspaceId
+  }
+}
+
+/**
+ * Ask the person in the chat to start conversations their message did not ask for in so many words. A dismissed or
+ * unavailable question starts nothing.
+ */
+async function confirmConversationBatch(askQuestion: AskQuestion, batch: ConversationDispatchBatch): Promise<boolean> {
+  const { tMain } = await import('../../i18n')
+  const t = tMain('main')
+  const labels = { start: t('conversationDispatch.confirmStart'), cancel: t('conversationDispatch.confirmCancel') }
+  const thisProject = t('conversationDispatch.confirmThisProject')
+  const list = await Promise.all(
+    batch.tasks.map(async (task) =>
+      t('conversationDispatch.confirmItem', {
+        title: task.title,
+        workspace: await destinationLabel(task.target?.workspaceId ?? batch.target?.workspaceId, thisProject),
+      })
+    )
+  )
+  try {
+    const answers = await askQuestion([
+      {
+        header: t('conversationDispatch.confirmHeader'),
+        question: t('conversationDispatch.confirmQuestion', {
+          count: String(batch.tasks.length),
+          list: list.join('\n'),
+        }),
+        options: [{ label: labels.start }, { label: labels.cancel }],
+      },
+    ])
+    return answers[0]?.[0] === labels.start
+  } catch {
+    return false
+  }
+}
+
 /**
  * Runtime for the turn currently admitted in `conversationId`, or undefined when the tools must not be offered:
  * Plan/Maestro modes and turns the person did not start. Ask receives it too: creating a project is judged by the
@@ -100,19 +155,36 @@ export function conversationDispatchRuntimeFor(
         current: chat.conversationExecutionSettings(conversationId),
       }
     },
-    async startConversations(batch, signal) {
+    async startConversations(batch, signal, askQuestion) {
       const evaluated = evaluateConversationDispatchGrant(origin)
       let grant: ConversationDispatchGrant
       if (evaluated.ok) grant = evaluated.grant
       else {
-        // Working in a project created for the person in this turn needs no separate request for a conversation:
-        // one conversation per created project. An explicit "do not open conversations" still wins.
+        // An explicit "do not open conversations" always wins.
         const turn = evaluateHumanTurnGrant(origin)
         if (!turn.ok || evaluated.code === 'negated') return { ok: false, error: evaluated.message, items: [] }
+        // Working in a project created for the person in this turn needs no separate request for a conversation:
+        // one conversation per created project.
         const { createdWorkspaceIdsForTurn } = await import('../../workspace-creation-service')
         const created = createdWorkspaceIdsForTurn(turn.grant.conversationId, turn.grant.originKey)
-        if (!created.length) return { ok: false, error: evaluated.message, items: [] }
-        grant = { ...turn.grant, maxConversations: created.length, onlyWorkspaceIds: created }
+        const inCreated = (task: ConversationDispatchBatch['tasks'][number]) => {
+          const workspaceId = task.target?.workspaceId ?? batch.target?.workspaceId
+          return !!workspaceId && created.includes(workspaceId)
+        }
+        if (created.length && batch.tasks.every(inCreated)) {
+          grant = { ...turn.grant, maxConversations: created.length, onlyWorkspaceIds: created }
+        } else {
+          // The agent judged that the person wants these conversations, but the message does not say so in a way the
+          // host can verify: the person confirms in the chat. Content the agent read can never answer for them.
+          const confirmed = confirmedKeys.get(origin.token) ?? new Set<string>()
+          if (!batch.tasks.every((task) => confirmed.has(task.requestKey))) {
+            if (!(await confirmConversationBatch(askQuestion, batch)))
+              return { ok: false, error: conversationDispatchDenialMessage('declined'), items: [] }
+            for (const task of batch.tasks) confirmed.add(task.requestKey)
+            confirmedKeys.set(origin.token, confirmed)
+          }
+          grant = { ...turn.grant, maxConversations: null }
+        }
       }
       const { getConversationDispatchService } = await import('../../conversation-dispatch-service')
       const service = await getConversationDispatchService()
@@ -142,10 +214,6 @@ export function conversationDispatchRuntimeFor(
       })
     },
   }
-}
-
-export function isConversationDispatchToolName(name: string): boolean {
-  return (CONVERSATION_DISPATCH_TOOL_NAMES as readonly string[]).includes(name)
 }
 
 /**
@@ -249,7 +317,7 @@ export const startConversationsTool = defineTool<typeof conversationDispatchBatc
   execute: async (args, ctx) => {
     if (!ctx.conversationDispatch) return { ok: false, error: UNAVAILABLE, items: [] }
     try {
-      return await ctx.conversationDispatch.startConversations(args, ctx.signal)
+      return await ctx.conversationDispatch.startConversations(args, ctx.signal, ctx.askQuestion)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error), items: [] }
     }

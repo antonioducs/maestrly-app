@@ -1,13 +1,11 @@
 import { environmentSettingsRoute } from './environment-settings.js'
-import { FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { FLEET_ACCOUNT_FAILOVER_FEATURE, FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
-  FLEET_DEVICE_PAIRING_FEATURE,
-  FLEET_MOBILE_BRIDGE_FEATURE,
-  FLEET_PUSH_FEATURE,
+  FLEET_PHONES_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -23,6 +21,8 @@ import {
   FLEET_IMAGE_LIMITS,
   FLEET_FILES_FEATURE,
   FLEET_FILE_LIMITS,
+  FLEET_MESSAGE_EDIT_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   fleetFileIdSchema,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
@@ -33,6 +33,7 @@ import {
   type FleetPatchBotRequest,
   type FleetPatchEnvironmentRequest,
   type FleetSendMessageRequest,
+  type FleetEditMessageRequest,
   type FleetAddApiKeyAccountRequest,
   type FleetConversationCallRequest,
   type FleetDesktopCallResult,
@@ -47,6 +48,38 @@ import type { InstanceClient } from '../instance.js'
 
 type Result = { body?: unknown; status?: number; stream?: boolean }
 const pendingMessages = new Map<string, { hash: string; promise: Promise<unknown> }>()
+/**
+ * Delivers an owner message to the bot once per idempotency key: a retry gets the saved receipt, and one that arrives
+ * while the first is still on its way waits for it. A key used with another request is a conflict.
+ */
+async function ownerMessage(
+  ctx: GatewayContext,
+  id: string,
+  scope: string,
+  key: string,
+  hash: string,
+  deliver: () => Promise<unknown>
+): Promise<Result> {
+  const prior = ctx.store.priorIdempotency(scope, key, hash)
+  if (prior) return { body: prior.response, status: prior.status }
+  const pendingKey = scope + ':' + key
+  const pending = pendingMessages.get(pendingKey)
+  if (pending && pending.hash !== hash)
+    throw new GatewayError('CONFLICT', 'Idempotency key used with different request')
+  if (pending) return { body: await pending.promise, status: 201 }
+  const promise = (async () => {
+    const response = await deliver()
+    ctx.store.saveIdempotency(scope, key, hash, response, 201)
+    ctx.store.markOwnerMessage(id)
+    return response
+  })()
+  pendingMessages.set(pendingKey, { hash, promise })
+  try {
+    return { body: await promise, status: 201 }
+  } finally {
+    pendingMessages.delete(pendingKey)
+  }
+}
 /** Accounts, subscriptions, sign-ins, skills and MCP servers: an environment's, reached through its bots' routes too. */
 const PROVISIONING = new Set([
   'AccountsList',
@@ -219,10 +252,11 @@ export async function publicRoute(
         'settingsTestMcpServer',
         'settingsRuntimes',
         'settingsPreferences',
+        'settingsFailover',
       ].includes(key)
     )
       recordConfiguration(ctx, eid, res, {
-        accounts: key.includes('Account') || key.includes('Subscription') ? 1 : 0,
+        accounts: key.includes('Account') || key.includes('Subscription') || key.includes('Failover') ? 1 : 0,
         skills: key.includes('Skill') ? 1 : 0,
         mcpServers: key.includes('Mcp') ? 1 : 0,
         models: key.includes('Model') ? 1 : 0,
@@ -291,6 +325,7 @@ export async function publicRoute(
           features: [
             FLEET_FILES_FEATURE,
             FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+            FLEET_ACCOUNT_FAILOVER_FEATURE,
             FLEET_ARTIFACTS_FEATURE,
             FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
             FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -305,10 +340,10 @@ export async function publicRoute(
             FLEET_WORKSPACES_HOST_FEATURE,
             FLEET_HOST_FILES_FEATURE,
             FLEET_HOST_EDITOR_FEATURE,
-            FLEET_DEVICE_PAIRING_FEATURE,
-            FLEET_MOBILE_BRIDGE_FEATURE,
+            FLEET_MESSAGE_EDIT_FEATURE,
+            FLEET_VIDEO_SCREENS_FEATURE,
             // Also when push is off: a phone then hears from the push routes that this server sends none.
-            FLEET_PUSH_FEATURE,
+            FLEET_PHONES_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -633,34 +668,29 @@ export async function publicRoute(
         }),
       }
       const hash = createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex')
-      const prior = ctx.store.priorIdempotency(scope, input.idempotencyKey, hash)
-      if (prior) return { body: prior.response, status: prior.status }
-      const pendingKey = scope + ':' + input.idempotencyKey
-      const pending = pendingMessages.get(pendingKey)
-      if (pending && pending.hash !== hash)
-        throw new GatewayError('CONFLICT', 'Idempotency key used with different request')
-      if (pending) return { body: await pending.promise, status: 201 }
-      const promise = (async () => {
-        const response = await ctx.lifecycle.instanceFor(id).postInput({
+      return ownerMessage(ctx, id, scope, input.idempotencyKey, hash, () =>
+        ctx.lifecycle.instanceFor(id).postInput({
           text: input.text,
           attachments: input.attachments,
           idempotencyKey: input.idempotencyKey,
           source: 'owner',
         })
-        ctx.store.saveIdempotency(scope, input.idempotencyKey, hash, response, 201)
-        ctx.store.markOwnerMessage(id)
-        return response
-      })()
-      pendingMessages.set(pendingKey, { hash, promise })
-      try {
-        return { body: await promise, status: 201 }
-      } finally {
-        pendingMessages.delete(pendingKey)
-      }
+      )
     }
     case 'botMessageDelete':
       await ctx.lifecycle.instanceFor(id).deleteInput(params.inputId)
       return { status: 204 }
+    case 'botMessageEdit': {
+      const input = body as FleetEditMessageRequest
+      if (!ctx.lifecycle.statuses.get(id)?.capabilities.includes(FLEET_MESSAGE_EDIT_FEATURE))
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to edit messages')
+      const hash = createHash('sha256')
+        .update(JSON.stringify({ inputId: params.inputId, ...input }))
+        .digest('hex')
+      return ownerMessage(ctx, id, 'botMessageEdit:' + id, input.idempotencyKey, hash, () =>
+        ctx.lifecycle.instanceFor(id).editInput(params.inputId, input)
+      )
+    }
     case 'botInteractionResolve':
       await ctx.lifecycle.instanceFor(id).resolveInteraction(params.interactionId, body)
       return { status: 204 }

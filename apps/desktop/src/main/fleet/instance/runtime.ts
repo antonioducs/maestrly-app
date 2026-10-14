@@ -28,6 +28,9 @@ import {
   type FleetConversationCallRequest,
   type FleetCompactionState,
   type FleetFileRef,
+  type FleetEditMessageRequest,
+  type FleetAttachmentInput,
+  fleetAttachmentInputSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { LocalMemory } from '../../../shared/memory'
 import type { BackgroundCompactionConfig } from '../../../shared/background-compaction'
@@ -43,7 +46,12 @@ import {
   forgetLocalMemory,
 } from '../../memory/local-memory-service'
 import { OwnerMemoryClient } from './owner-memory'
-import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
+import {
+  estimatedCostOfUsage,
+  usageMetaForModel,
+  type ChatAttachmentInput,
+  type ChatStreamEvent,
+} from '../../../shared/chat'
 import { sameContextModel, selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
@@ -70,6 +78,8 @@ import {
   resumeConversationBackgroundCompaction,
   retryBackgroundCompaction,
   startManualCompaction,
+  truncateConversationForResend,
+  type ChatConversationSlot,
 } from '../../chat/service'
 import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
 import {
@@ -80,7 +90,9 @@ import {
 import {
   chatHistoryStats,
   getChatMessage,
+  getChatMessagesWithSeq,
   latestMeasuredContextSnapshot,
+  listChatMessagesAfter,
   listChatMessagesPage,
 } from '../../chat/chat-store'
 import { listProviders } from '../../chat/catalog'
@@ -91,6 +103,7 @@ import { setConversationShellEnv, type ConversationShellEnv } from '../../chat/c
 import { setConversationScreen, type ScreenArea } from '../../conversation-screen'
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents, type InstanceFile } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
+import { START_RETRY_MIN_MS, startRetry } from './turn-retry'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } from './transcript'
 import { LiveTranscript } from './live-transcript'
@@ -100,6 +113,7 @@ import type { GatewayConfig } from './gateway-client'
 import { FleetImageStore } from './images'
 import { FleetFileStore } from './files'
 import { readConversationFile } from './attachment-files'
+import { validateAttachmentBytes } from './incoming-attachments'
 import { botToolsPatchRefusal, validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
 import {
   botPaths,
@@ -201,6 +215,32 @@ function assistantText(conversationId: string, messageId: string | null): string
     .slice(0, FLEET_ROUTINE_RUN_LIMITS.finalTextMax)
 }
 
+/**
+ * An attachment an edited message keeps, as the queue takes it again: null when its bytes are gone or no longer valid,
+ * as an edit in a local chat drops the ones it cannot read.
+ */
+export function queuedAttachment(attachment: ChatAttachmentInput): FleetAttachmentInput | null {
+  const bytes = attachment.bytes
+    ? Buffer.from(attachment.bytes)
+    : attachment.kind === 'text' && attachment.data !== undefined
+      ? Buffer.from(attachment.data, 'utf8')
+      : null
+  if (!bytes) return null
+  const parsed = fleetAttachmentInputSchema.safeParse({
+    kind: attachment.kind,
+    name: attachment.name,
+    mediaType: attachment.mediaType,
+    dataBase64: bytes.toString('base64'),
+  })
+  if (!parsed.success) return null
+  try {
+    validateAttachmentBytes(parsed.data, bytes)
+  } catch {
+    return null
+  }
+  return parsed.data
+}
+
 function toFleetBotMemory(memory: LocalMemory): FleetBotMemory {
   return {
     id: memory.id,
@@ -284,6 +324,9 @@ export class BotRuntime {
   private turnInputId: string | null = null
   private turnSettled: Promise<void> = Promise.resolve()
   private retryAt = 0
+  /** Turns that could not start in a row, and the kind of failure last reported among them. */
+  private startFailures = 0
+  private reportedStartFailure: string | null = null
   private activeTool: { tool: string; target: string | null } | null = null
   private lastSummary: string | null = null
   private lastTurnAt: string | null = null
@@ -299,6 +342,8 @@ export class BotRuntime {
   private readonly presentOnCompletion = new Map<string, PresentationRequest>()
   private permissionAt = new Map<string, string>()
   private questionAt = new Map<string, string>()
+  /** The transcript item id of each question asked, by tool call. */
+  private questionItems = new Map<string, string>()
   /** The tool of each pending permission request, once its call was found: it never changes. */
   private permissionTools = new Map<string, ReturnType<typeof permissionTool>>()
   private usage: FleetUsage | null = null
@@ -309,6 +354,8 @@ export class BotRuntime {
   /** Set by an install: the conversation resumes (an uninstall suspended it) once the bot's own settings apply. */
   private resumePending = false
   private manualCompacting = false
+  /** An edit of the owner's last message is cutting the conversation: no turn starts until it is done. */
+  private editing = false
   private disposed = false
   /** The conversation whose hooks (memory, identity, gate, screen) this runtime registered. */
   private registeredConversation: { id: string; cwd: string | null } | null = null
@@ -815,7 +862,7 @@ export class BotRuntime {
         id: entry.toolCallId,
         at: this.questionAt.get(entry.toolCallId) ?? new Date().toISOString(),
         questions: fleetQuestions(entry.questions),
-        itemId: 'question:' + entry.toolCallId,
+        itemId: this.questionItems.get(entry.toolCallId) ?? 'question:' + entry.toolCallId,
       }))
     return [...permissions, ...questions, ...this.help.pending()]
   }
@@ -1026,6 +1073,8 @@ export class BotRuntime {
     if ((value.source === 'routine' && !value.routine) || (value.source === 'peer' && !value.peer))
       throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Input source metadata is missing.')
     const result = await this.queue.enqueue(value)
+    // The owner writing again is the moment to check at once whether a turn that could not start now can.
+    if (value.source === 'owner') this.retryAt = 0
     const item = this.queue.all().find((candidate) => candidate.id === result.inputId)
     if (item && !item.started)
       this.publish({
@@ -1054,6 +1103,89 @@ export class BotRuntime {
     await this.queue.cleanup(id)
     this.publish({ type: 'reset' })
     this.changed()
+  }
+  /**
+   * The owner edits their last message: the conversation is cut from it, with everything after it (the bot's answer,
+   * its notes and interactions), and the edited text runs as a new turn. Only while the bot is idle and nothing waits,
+   * so no turn or other input ever sees a conversation half cut.
+   */
+  async editInput(inputId: string, value: FleetEditMessageRequest): Promise<FleetInputReceipt> {
+    if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+    // A retried edit gets the receipt of the input it made: the message it edited is gone by now.
+    const prior = this.queue.receipt(value.idempotencyKey)
+    if (prior) return prior
+    const conversationId = this.primaryConversationId
+    const record = this.queue.all().find((item) => item.id === inputId)
+    if (!conversationId || !record) throw new InstanceHttpError(404, 'NOT_FOUND', 'Input not found.')
+    if (record.input.source !== 'owner')
+      throw new InstanceHttpError(409, 'CONFLICT', 'Only a message of the owner can be edited.')
+    if (
+      this.editing ||
+      this.turning ||
+      this.manualCompacting ||
+      this.holdManager.state.state !== 'none' ||
+      this.queue.list().length > 0 ||
+      this.queue.transcriptInputs().unmapped.length > 0 ||
+      this.pending().length > 0
+    )
+      throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+    const native = record.nativeMessageId
+      ? getChatMessagesWithSeq(conversationId, [record.nativeMessageId])[0]
+      : undefined
+    if (!native) throw new InstanceHttpError(409, 'CONFLICT', 'The message is no longer in the conversation.')
+    if (
+      listChatMessagesAfter(conversationId, native.seq).some(
+        (row) => row.message.role === 'user' && !row.message.internal
+      )
+    )
+      throw new InstanceHttpError(409, 'CONFLICT', 'Only the last message can be edited.')
+    const keepsFiles = native.message.parts.some((part) => part.type === 'file' && !part.hidden)
+    if (!value.text.trim() && !(value.attachments ? value.attachments.length > 0 : keepsFiles))
+      throw new InstanceHttpError(400, 'INVALID_REQUEST', 'A message needs text or an attachment.')
+    this.editing = true
+    let slot: ChatConversationSlot | null = null
+    let truncated = false
+    let receipt: FleetInputReceipt
+    try {
+      slot = await acquireChatConversationSlot(conversationId, new AbortController().signal, 0).catch(() => null)
+      if (!slot || this.disposed) throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+      const removed = new Set([
+        native.message.id,
+        ...listChatMessagesAfter(conversationId, native.seq).map((row) => row.message.id),
+      ])
+      const cut = await truncateConversationForResend(conversationId, native.message.id, slot.operation)
+      if (!cut) throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+      truncated = true
+      // What the cut removed leaves the transcript too, before any new turn can add to it.
+      await this.extras.pruneFrom(native.message.createdAt, removed)
+      await this.queue.forget([record.id])
+      // Seqs are given again after a cut: the transcript reads from the conversation as it is now.
+      this.live.anchor()
+      receipt = await this.queue.enqueue({
+        source: 'owner',
+        text: value.text,
+        idempotencyKey: value.idempotencyKey,
+        attachments:
+          value.attachments ??
+          cut.attachments.flatMap((attachment) => {
+            const kept = queuedAttachment(attachment)
+            return kept ? [kept] : []
+          }),
+      })
+    } finally {
+      this.editing = false
+      slot?.release()
+      // Readers load the transcript again, even when the edited message could not be queued after the cut.
+      if (truncated) {
+        this.publish({ type: 'reset' })
+        this.changed()
+        void this.refreshUsage()
+      }
+    }
+    // The owner writing again, as a new message does: the edited turn does not wait out an earlier failure's delay.
+    this.retryAt = 0
+    void this.tick()
+    return receipt
   }
   async transcript(before: string | null, limit: number, reasoning = false) {
     return this.live.page(before, limit, reasoning)
@@ -1127,7 +1259,7 @@ export class BotRuntime {
       !canDispatch(
         this.ready,
         this.accountOptions.length > 0,
-        this.turning || this.manualCompacting,
+        this.turning || this.manualCompacting || this.editing,
         this.holdManager.state.state,
         this.compactionProblem === null
       )
@@ -1175,6 +1307,8 @@ export class BotRuntime {
         signal: this.turnAbort.signal,
         slot,
       })
+      this.startFailures = 0
+      this.reportedStartFailure = null
       await this.queue.cleanup(item.id)
       release = null
       try {
@@ -1223,19 +1357,27 @@ export class BotRuntime {
       })
       void this.refreshUsage()
     } catch (error) {
-      this.retryAt = Date.now() + 5_000
+      const cancelled = this.turnAbort?.signal.aborted === true
+      const attachment =
+        !cancelled &&
+        error instanceof Error &&
+        (error.message === 'invalid-attachment' || error.message === 'pdf-unreadable')
+          ? error.message
+          : null
+      // The input stays queued: it starts again later, after its accounts' usage limit or a growing delay.
+      const retry =
+        cancelled || attachment
+          ? null
+          : startRetry(error, ++this.startFailures, () => this.currentSelection()?.providerId ?? null)
+      this.retryAt = retry?.at ?? Date.now() + START_RETRY_MIN_MS
       await this.queue
         .reconcile(this.nativeUsersForQueue())
         .then(async () => {
           // Back in the queue when its native message was never saved: shown queued again, as pages show it.
           const requeued = this.live.queuedItem(item.id)
           if (requeued) this.publish({ type: 'transcript.upsert', item: requeued })
-          if (
-            !this.turnAbort?.signal.aborted &&
-            error instanceof Error &&
-            (error.message === 'invalid-attachment' || error.message === 'pdf-unreadable')
-          ) {
-            await this.queue.failAttachment(item.id, error.message)
+          if (attachment) {
+            await this.queue.failAttachment(item.id, attachment)
             this.retryAt = 0
             this.publish({ type: 'reset' })
           }
@@ -1243,20 +1385,24 @@ export class BotRuntime {
         .catch(() => {
           console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Input recovery failed' }))
         })
-      const cancelled = this.turnAbort?.signal.aborted === true
-      await this.system(
-        cancelled ? 'turn_cancelled' : 'turn_failed',
-        cancelled ? null : error instanceof Error ? error.message.slice(0, 400) : 'Turn failed.',
-        null
-      )
-      this.publish({
-        type: 'turn.finished',
-        inputId: item.id,
-        text: null,
-        source: item.input.source,
-        outcome: cancelled ? 'cancelled' : 'failed',
-        summary: null,
-      })
+      // Each failure alerts the owner's devices: one that repeats the last one reported waits quietly instead.
+      const repeated = retry !== null && retry.key === this.reportedStartFailure
+      if (retry) this.reportedStartFailure = retry.key
+      if (!repeated) {
+        await this.system(
+          cancelled ? 'turn_cancelled' : 'turn_failed',
+          cancelled ? null : (retry?.text ?? (error instanceof Error ? error.message.slice(0, 400) : 'Turn failed.')),
+          null
+        )
+        this.publish({
+          type: 'turn.finished',
+          inputId: item.id,
+          text: null,
+          source: item.input.source,
+          outcome: cancelled ? 'cancelled' : 'failed',
+          summary: null,
+        })
+      }
     } finally {
       release?.()
       this.turning = false
@@ -1380,7 +1526,7 @@ export class BotRuntime {
         break
       case 'chatCompact':
         if (this.compactionProblem !== null) result = { ok: false, error: 'not-configured' }
-        else if (this.turning || this.manualCompacting) result = { ok: false, error: 'busy' }
+        else if (this.turning || this.manualCompacting || this.editing) result = { ok: false, error: 'busy' }
         else {
           const started = startManualCompaction(id, () => {
             this.manualCompacting = false
@@ -1471,17 +1617,32 @@ export class BotRuntime {
     if (!pending) return
     const at = new Date().toISOString()
     this.questionAt.set(event.toolCallId, at)
+    // In the place of its tool call, as the native question would be: with the time it was asked, the item sorted after
+    // every item of its message, below whatever the turn wrote after the answer.
+    const anchor = this.questionAnchor(event.toolCallId) ?? { id: 'question:' + event.toolCallId, at }
+    this.questionItems.set(event.toolCallId, anchor.id)
+    for (const oldest of this.questionItems.keys()) {
+      if (this.questionItems.size <= 200) break
+      this.questionItems.delete(oldest)
+    }
     void this.extras
       .upsert({
         kind: 'question',
-        id: 'question:' + event.toolCallId,
-        at,
+        id: anchor.id,
+        at: anchor.at,
         toolCallId: event.toolCallId,
         questions: fleetQuestions(pending.questions),
         state: 'pending',
         answers: null,
       })
       .then(() => this.changed())
+  }
+  /** The id and time `projectMessages` gives the question's tool part, once its message holds it. */
+  private questionAnchor(toolCallId: string): { id: string; at: string } | null {
+    const message = this.live.messageWithToolCall(toolCallId)
+    if (message?.role !== 'assistant') return null
+    const index = message.parts.findIndex((part) => part.type === 'tool' && part.toolCallId === toolCallId)
+    return index < 0 ? null : { id: `${message.id}:${index}`, at: new Date(message.createdAt).toISOString() }
   }
   questionAnswered(event: { conversationId: string; toolCallId: string }): void {
     if (this.disposed || event.conversationId !== this.primaryConversationId) return

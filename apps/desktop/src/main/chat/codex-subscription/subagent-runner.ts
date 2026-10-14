@@ -1,5 +1,7 @@
 import { autonomousPolicy } from '../autonomous'
 import { remoteChatPolicy } from '../remote-policy'
+import { getWebSearchProvider } from '../web-search/settings'
+import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 import { randomUUID } from 'node:crypto'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
@@ -483,6 +485,10 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
               }
             : {}),
           ...(args.readOnly ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
+          // Turned off by the user, or the gated host web_search is inherited: it shares the native tool's name.
+          ...(getWebSearchProvider() === 'off' || providedDynamicToolNames.has(WEB_SEARCH_TOOL_NAME)
+            ? { web_search: 'disabled' }
+            : {}),
         },
         developerInstructions: [
           args.definition.prompt,
@@ -800,4 +806,98 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
     model,
   }
   return args.resume ? { ...settled, resumed, ...(resumeReason ? { resumeReason } : {}) } : settled
+}
+
+export function mergeSubagentCheckpoints(
+  previous: CodexSubagentCheckpoint | undefined,
+  next: CodexSubagentCheckpoint | undefined
+): CodexSubagentCheckpoint | undefined {
+  if (!previous && !next) return undefined
+  const merge = (a?: string[], b?: string[]): string[] | undefined => {
+    const out = [...(a ?? []), ...(b ?? [])].map((entry) => entry.trim()).filter(Boolean)
+    const unique = [...new Set(out)].slice(0, 40)
+    return unique.length ? unique : undefined
+  }
+  const mergeDynamicTools = (
+    a?: CodexDynamicToolCheckpoint[],
+    b?: CodexDynamicToolCheckpoint[]
+  ): CodexDynamicToolCheckpoint[] | undefined => {
+    const out: CodexDynamicToolCheckpoint[] = []
+    for (const entry of [...(a ?? []), ...(b ?? [])]) {
+      if (!entry?.tool || out.some((existing) => sameCodexDynamicToolCheckpoint(existing, entry))) continue
+      if (out.length >= 40) break
+      out.push(entry)
+    }
+    return out.length ? out : undefined
+  }
+  const checkpoint: CodexSubagentCheckpoint = {}
+  const commands = merge(previous?.commands, next?.commands)
+  const statusLines = merge(previous?.statusLines, next?.statusLines)
+  const filesChanged = merge(previous?.filesChanged, next?.filesChanged)
+  const completedDynamicTools = mergeDynamicTools(previous?.completedDynamicTools, next?.completedDynamicTools)
+  const inFlightDynamicTools = mergeDynamicTools(previous?.inFlightDynamicTools, next?.inFlightDynamicTools)?.filter(
+    (entry) => !completedDynamicTools?.some((completed) => sameCodexDynamicToolCheckpoint(completed, entry))
+  )
+  if (commands) checkpoint.commands = commands
+  if (statusLines) checkpoint.statusLines = statusLines
+  if (filesChanged) checkpoint.filesChanged = filesChanged
+  if (completedDynamicTools) checkpoint.completedDynamicTools = completedDynamicTools
+  if (inFlightDynamicTools?.length) checkpoint.inFlightDynamicTools = inFlightDynamicTools
+  return checkpoint.commands ||
+    checkpoint.statusLines ||
+    checkpoint.filesChanged ||
+    checkpoint.completedDynamicTools ||
+    checkpoint.inFlightDynamicTools
+    ? checkpoint
+    : undefined
+}
+
+function formatDynamicToolCheckpoint(entry: CodexDynamicToolCheckpoint): string {
+  const identity = [
+    `tool=${entry.tool}`,
+    entry.itemId ? `itemId=${entry.itemId}` : '',
+    entry.callId ? `callId=${entry.callId}` : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
+  return entry.argumentsSummary ? `${identity}; ${entry.argumentsSummary}` : identity
+}
+
+function formatSubagentCheckpoint(checkpoint: CodexSubagentCheckpoint): string {
+  const sections: string[] = []
+  if (checkpoint.commands?.length) sections.push(`Commands already run:\n- ${checkpoint.commands.join('\n- ')}`)
+  if (checkpoint.filesChanged?.length) {
+    sections.push(`Files already changed:\n- ${checkpoint.filesChanged.join('\n- ')}`)
+  }
+  if (checkpoint.completedDynamicTools?.length) {
+    sections.push(
+      `Dynamic tools already completed (same tool may have other calls):\n- ${checkpoint.completedDynamicTools
+        .map(formatDynamicToolCheckpoint)
+        .join('\n- ')}`
+    )
+  }
+  if (checkpoint.inFlightDynamicTools?.length) {
+    sections.push(
+      `Dynamic tools with uncertain completion (verify state before repeating side effects; do not assume they completed):\n- ${checkpoint.inFlightDynamicTools
+        .map(formatDynamicToolCheckpoint)
+        .join('\n- ')}`
+    )
+  }
+  if (checkpoint.statusLines?.length) {
+    sections.push(`Progress observed:\n- ${checkpoint.statusLines.join('\n- ')}`)
+  }
+  return sections.join('\n\n')
+}
+
+const CONTINUE_WITH_CHECKPOINT_INSTRUCTION = `IMPORTANT — account failover continuation:
+A previous attempt on another Codex subscription account hit a usage/quota limit. Continue the SAME task from the checkpoint below.
+1. Inspect the workspace first; do not assume prior state without checking files and command outputs.
+2. Do NOT repeat side effects confirmed complete (commands already run, files already changed, or the exact dynamic tool calls listed as completed). For operations with uncertain completion, inspect and verify their state before repeating any side effect; do not assume they completed.
+3. Briefly list what was already done, then finish only the remaining work.
+4. Return a concise final result for the parent when the task is complete.`
+
+export function buildSubagentContinuationPrompt(task: string, checkpoint?: CodexSubagentCheckpoint): string {
+  if (!checkpoint) return task
+  const formatted = formatSubagentCheckpoint(checkpoint)
+  return `${task}\n\n${CONTINUE_WITH_CHECKPOINT_INSTRUCTION}${formatted ? `\n\nCheckpoint:\n${formatted}` : ''}`
 }

@@ -14,16 +14,11 @@ function files(directory) {
 }
 
 for (const scope of [
-  'apps/server/src',
-  'apps/runner/src',
   'apps/bot-gateway/src',
-  'apps/web/src',
   'apps/mobile/src',
   'packages/protocol/src',
   'packages/bot-fleet-protocol/src',
   'packages/artifact-host/src',
-  'packages/client-sdk/src',
-  'packages/runner-core/src',
 ]) {
   for (const file of files(path.join(root, scope))) {
     const source = readFileSync(file, 'utf8')
@@ -41,18 +36,10 @@ for (const scope of ['packages/protocol/src', 'packages/bot-fleet-protocol/src']
   }
 }
 
-const runnerManifest = JSON.parse(readFileSync(path.join(root, 'apps/runner/package.json'), 'utf8'))
-const serverManifest = JSON.parse(readFileSync(path.join(root, 'apps/server/package.json'), 'utf8'))
 const gatewayManifest = JSON.parse(readFileSync(path.join(root, 'apps/bot-gateway/package.json'), 'utf8'))
-for (const [name, manifest] of [
-  ['runner', runnerManifest],
-  ['server', serverManifest],
-  ['bot-gateway', gatewayManifest],
-]) {
-  const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
-  if (dependencies.electron) failures.push(`${name} declares Electron`)
-  if (dependencies['@maestrly/desktop']) failures.push(`${name} declares desktop`)
-}
+const gatewayDependencies = { ...gatewayManifest.dependencies, ...gatewayManifest.devDependencies }
+if (gatewayDependencies.electron) failures.push('bot-gateway declares Electron')
+if (gatewayDependencies['@maestrly/desktop']) failures.push('bot-gateway declares desktop')
 
 const desktopBuilder = readFileSync(path.join(root, 'apps/desktop/electron-builder.yml'), 'utf8')
 if (!/^appId: io\.github\.antonioducs\.maestrly$/m.test(desktopBuilder)) failures.push('desktop appId changed')
@@ -66,4 +53,4 @@ if (failures.length > 0) {
   process.stderr.write(`${failures.map((failure) => `- ${failure}`).join('\n')}\n`)
   process.exit(1)
 }
-process.stdout.write('[boundaries] five products and focused packages are isolated.\n')
+process.stdout.write('[boundaries] products and focused packages are isolated.\n')

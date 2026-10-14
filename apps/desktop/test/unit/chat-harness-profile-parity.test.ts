@@ -290,6 +290,8 @@ describe('harness parity: prompt layouts', () => {
     envContext: 'OS: macOS.',
     ultraContext: 'ULTRA',
     nativeTools: { localShell: true, applyPatch: true },
+    // The baselines freeze the profile composition; generated-interface wiring has its own tests.
+    generatedInterfaces: false,
   }
 
   it('reproduces the recorded Sol baseline', () => {

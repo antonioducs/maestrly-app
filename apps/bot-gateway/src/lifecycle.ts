@@ -44,6 +44,8 @@ const environmentLabel = 'org.maestrly.fleet.environment-id'
 const egressLabel = 'org.maestrly.fleet.egress'
 /** The host directory a workspaces environment's container was created with; empty when none. */
 const workspacesRootLabel = 'org.maestrly.fleet.workspaces-root'
+/** Set on a workspaces environment's container created with the token it publishes artifacts with. */
+const hostTokenLabel = 'org.maestrly.fleet.host-token'
 /** Shown on a workspaces environment whose container runs an image from before workspaces hosts. */
 const WORKSPACES_UNSUPPORTED = 'This bot image cannot host workspaces. Update the server.'
 const runtimeUpdatesLabel = 'org.maestrly.fleet.runtime-updates'
@@ -830,6 +832,16 @@ export class Lifecycle {
     await this.docker.start(container)
     await this.ready(environmentId)
   }
+  /** The token a workspaces environment publishes artifacts with: the one it has, or a new one. */
+  private hostGatewayToken(environmentId: string): string {
+    const existing = this.store.hostGatewaySecrets(environmentId)
+    if (existing) return existing.gatewayToken
+    const gatewayToken = token()
+    return this.store.ensureHostGatewaySecrets(environmentId, {
+      gatewayToken,
+      gatewayTokenSha256: sha256(gatewayToken),
+    }).gatewayToken
+  }
   /**
    * The container carries its environment: bots arrive through the control API with their own token. An image from
    * before environments reads its one bot from the container instead, and refuses to start without that bot's gateway
@@ -846,10 +858,13 @@ export class Lifecycle {
     const soleToken = sole ? this.store.botGatewaySecrets(sole.id)?.gatewayToken : undefined
     const workspaces = environment.kind === 'workspaces'
     const root = workspaces ? this.config.workspacesRoot : null
+    // The owner's chats there publish artifacts on this server with it; it is kept, so a new container reuses it.
+    const hostToken = workspaces ? this.hostGatewayToken(environmentId) : null
     const env = {
       // A workspaces environment runs Maestrly in server mode; the image's entrypoint then leaves bot mode unset.
       [workspaces ? FLEET_BOT_ENV.serverMode : FLEET_BOT_ENV.mode]: '1',
       ...(root ? { [FLEET_BOT_ENV.workspacesRoot]: root } : {}),
+      ...(hostToken ? { [FLEET_BOT_ENV.hostGatewayToken]: hostToken } : {}),
       [FLEET_BOT_ENV.environmentId]: environmentId,
       [FLEET_BOT_ENV.controlHost]: '0.0.0.0',
       [FLEET_BOT_ENV.controlPort]: String(FLEET_PORTS.instanceControl),
@@ -872,7 +887,7 @@ export class Lifecycle {
         [environmentLabel]: environmentId,
         [egressLabel]: this.config.botEgress,
         [runtimeUpdatesLabel]: this.config.botRuntimeUpdates,
-        ...(workspaces ? { [workspacesRootLabel]: root ?? '' } : {}),
+        ...(workspaces ? { [workspacesRootLabel]: root ?? '', [hostTokenLabel]: '1' } : {}),
       },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
       network: this.config.network,
@@ -911,10 +926,12 @@ export class Lifecycle {
     // Containers from before this setting update on their own, as `auto` does.
     const runtimeUpdatesChanged = (container.labels[runtimeUpdatesLabel] ?? 'auto') !== this.config.botRuntimeUpdates
     // A workspaces environment is created with its host directory: a server that gained or moved one replaces it.
+    const workspaces = this.store.getEnvironment(environmentId)?.kind === 'workspaces'
     const rootChanged =
-      this.store.getEnvironment(environmentId)?.kind === 'workspaces' &&
-      (container.labels[workspacesRootLabel] ?? '') !== (this.config.workspacesRoot ?? '')
-    if (imageId && (imageChanged || egressChanged || runtimeUpdatesChanged || rootChanged)) {
+      workspaces && (container.labels[workspacesRootLabel] ?? '') !== (this.config.workspacesRoot ?? '')
+    // A container created before host tokens cannot publish artifacts: it is created again with its token.
+    const hostTokenMissing = workspaces && container.labels[hostTokenLabel] !== '1'
+    if (imageId && (imageChanged || egressChanged || runtimeUpdatesChanged || rootChanged || hostTokenMissing)) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
       this.instances.delete(environmentId)

@@ -64,6 +64,8 @@ const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
   settingsSetRuntimeAutomatic: 35_000,
   settingsPreferences: 35_000,
   settingsSetPreferences: 35_000,
+  settingsFailover: 35_000,
+  settingsSetFailoverRoute: 35_000,
   artifactUpload: 300_000,
   artifactAdmin: 60_000,
   botLoginStart: 35_000,

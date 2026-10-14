@@ -51,6 +51,7 @@ import {
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_ROUTES,
   FLEET_SCREEN_UPGRADE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   FLEET_INTERNAL_ROUTES,
   FLEET_ROUTINE_LIMITS,
   FLEET_COMPACTION_LIMITS,
@@ -466,9 +467,8 @@ describe('routes and helpers', () => {
     expect(FLEET_GATEWAY_ROUTES.botMessageDelete.response).toBeNull()
     expect(FLEET_INTERNAL_ROUTES.peerMessageSend.path).toBe('/internal/v1/peers/messages')
     expect(FLEET_INSTANCE_ROUTES.interactionResolve.path).toBe('/v1/interactions/:id/resolve')
-    expect(FLEET_INSTANCE_ROUTES.screenView.path).toBe('/v1/screen/view')
-    expect(FLEET_INSTANCE_ROUTES.screenControl.path).toBe('/v1/screen/control')
-    expect(FLEET_SCREEN_UPGRADE).toBe('maestrly-rfb')
+    expect(FLEET_SCREEN_UPGRADE).toBe('maestrly-video')
+    expect(FLEET_VIDEO_SCREENS_FEATURE).toBe('video-screens')
     expect(
       buildPath(FLEET_GATEWAY_ROUTES.botRoutineRun.path, { id: 'bot one', rid: 'r/1' }, { limit: 20, before: null })
     ).toBe('/v1/bots/bot%20one/routines/r%2F1/run?limit=20')
@@ -1513,6 +1513,7 @@ describe('environment contracts', () => {
       'image',
       'inputSend',
       'inputDelete',
+      'inputEdit',
       'turnCancel',
       'interactionResolve',
       'hold',
@@ -1560,8 +1561,9 @@ describe('environment contracts', () => {
       fleetInstanceStatusSchema
     )
     expectRoute(FLEET_INSTANCE_ROUTES.status, 'GET', '/v1/status', null, fleetInstanceStatusSchema)
-    expectRoute(FLEET_INSTANCE_ROUTES.screenView, 'GET', '/v1/screen/view', null, null)
-    expectRoute(FLEET_INSTANCE_ROUTES.screenControl, 'GET', '/v1/screen/control', null, null)
+    // Screens stream as video only from environment images: the single-bot screen routes are gone.
+    expect('screenView' in FLEET_INSTANCE_ROUTES).toBe(false)
+    expect('screenControl' in FLEET_INSTANCE_ROUTES).toBe(false)
   })
 
   it('reaches exactly one route of its method from every concrete path, in every route family', () => {
@@ -1773,4 +1775,35 @@ it('supports Google browser sign-in without accepting Google credential imports'
   ]) {
     expect(provisioning.fleetLoginUrlAllowed('antigravity', url)).toBe(false)
   }
+})
+
+describe('message edits', () => {
+  it('names the feature and routes an edit to the input it replaces, on the gateway and on a bot', () => {
+    expect(provisioning.FLEET_MESSAGE_EDIT_FEATURE).toBe('message-edit')
+    const edit = { body: provisioning.fleetEditMessageRequestSchema, response: provisioning.fleetInputReceiptSchema }
+    expect(FLEET_GATEWAY_ROUTES.botMessageEdit).toEqual({
+      method: 'POST',
+      path: '/v1/bots/:id/messages/:inputId/edit',
+      ...edit,
+    })
+    expect(FLEET_INSTANCE_ROUTES.inputEdit).toEqual({ method: 'POST', path: '/v1/inputs/:inputId/edit', ...edit })
+    expect(FLEET_INSTANCE_ROUTES.botInputEdit).toEqual({
+      method: 'POST',
+      path: '/v1/bots/:botId/inputs/:inputId/edit',
+      ...edit,
+    })
+  })
+
+  it('keeps the attachments unless the edit replaces them', () => {
+    const schema = provisioning.fleetEditMessageRequestSchema
+    expect(schema.parse({ text: 'Edited', idempotencyKey: key })).toEqual({ text: 'Edited', idempotencyKey: key })
+    expect(schema.parse({ text: '', idempotencyKey: key, attachments: [] }).attachments).toEqual([])
+    const image = { kind: 'image', name: 'pixel.png', mediaType: 'image/png', dataBase64: 'iVBORw0KGgo=' }
+    expect(schema.parse({ text: '', idempotencyKey: key, attachments: [image] }).attachments).toEqual([image])
+    expect(schema.safeParse({ text: 'Edited' }).success).toBe(false)
+    expect(schema.safeParse({ text: 'x'.repeat(16_001), idempotencyKey: key }).success).toBe(false)
+    expect(
+      schema.safeParse({ text: '', idempotencyKey: key, attachments: Array.from({ length: 9 }, () => image) }).success
+    ).toBe(false)
+  })
 })

@@ -45,7 +45,11 @@ function PreferencesEditor({
   const revision = useRef(initial.revision)
   const savedName = useRef(environment.name)
   const editor = useSettingsDraft(
-    { name: environment.name, imageGenEnabled: initial.imageGenEnabled },
+    {
+      name: environment.name,
+      imageGenEnabled: initial.imageGenEnabled,
+      generatedInterfacesEnabled: initial.generatedInterfacesEnabled,
+    },
     async (draft) => {
       if (draft.name !== savedName.current) {
         const updated = await window.api.fleetPatchEnvironment(environment.id, {
@@ -61,6 +65,10 @@ function PreferencesEditor({
       const updated = await source.setPreferences({
         expectedRevision: revision.current,
         imageGenEnabled: draft.imageGenEnabled,
+        // An environment that did not report the setting predates it, and refuses unknown fields.
+        ...(draft.generatedInterfacesEnabled === undefined
+          ? {}
+          : { generatedInterfacesEnabled: draft.generatedInterfacesEnabled }),
       })
       revision.current = updated.revision
     },
@@ -82,7 +90,11 @@ function PreferencesEditor({
           .then((updated) => {
             revision.current = updated.revision
             savedName.current = environment.name
-            editor.reset({ name: environment.name, imageGenEnabled: updated.imageGenEnabled })
+            editor.reset({
+              name: environment.name,
+              imageGenEnabled: updated.imageGenEnabled,
+              generatedInterfacesEnabled: updated.generatedInterfacesEnabled,
+            })
           })
           .catch(() => {})
       }}
@@ -108,6 +120,22 @@ function PreferencesEditor({
           onChange={() => editor.setDraft((d) => ({ ...d, imageGenEnabled: !d.imageGenEnabled }))}
         />
       </div>
+      {editor.draft.generatedInterfacesEnabled !== undefined && (
+        <div className="flex items-center justify-between gap-3 border-b border-border py-3">
+          <div>
+            <h3 className="text-xs font-medium">{t('environmentSettings.generatedInterfaces')}</h3>
+            <p className="text-xs text-muted-foreground">{t('environmentSettings.generatedInterfacesNote')}</p>
+          </div>
+          <SettingsSwitch
+            checked={editor.draft.generatedInterfacesEnabled}
+            disabled={editor.busy}
+            label={t('environmentSettings.generatedInterfaces')}
+            onChange={() =>
+              editor.setDraft((d) => ({ ...d, generatedInterfacesEnabled: !d.generatedInterfacesEnabled }))
+            }
+          />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 border-b border-border py-3">
         <div>
           <h3 className="text-xs font-medium">{t('environmentSettings.appTools')}</h3>

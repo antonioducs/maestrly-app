@@ -30,6 +30,30 @@ it('preserves exact bytes and existing files, including empty downloads', async 
   expect((await readFile(empty)).length).toBe(0)
   expect((await readdir(path)).some((name) => name.endsWith('.partial'))).toBe(false)
 })
+it('reports the announced size before any byte, then the bytes on disk after every chunk', async () => {
+  const path = await directory()
+  const chunks = [new Uint8Array([1, 2]), new Uint8Array([3])]
+  const source = {
+    openFile: async () => ({
+      ref,
+      response: new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks) controller.enqueue(chunk)
+            controller.close()
+          },
+        })
+      ),
+    }),
+  }
+  const onProgress = vi.fn()
+  await saveFleetFile(source, 'bot', 'file', { downloadsPath: () => path, onProgress })
+  expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+    { name: 'report.pdf', receivedBytes: 0, totalBytes: 3 },
+    { name: 'report.pdf', receivedBytes: 2, totalBytes: 3 },
+    { name: 'report.pdf', receivedBytes: 3, totalBytes: 3 },
+  ])
+})
 it.each([1, 5])('removes partial files on byte mismatch (%s)', async (size) => {
   const path = await directory()
   await expect(

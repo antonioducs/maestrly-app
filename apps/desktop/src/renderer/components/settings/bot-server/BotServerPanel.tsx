@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { panelState } from '@/lib/fleet/installer'
-import { FLEET_DEVICE_PAIRING_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { FLEET_PHONES_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { PairPhoneDialog } from './PairPhoneDialog'
 import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 
@@ -43,7 +43,7 @@ export function BotServerPanel({
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [pairPhone, setPairPhone] = useState(false)
-  const canPairPhone = connection.state === 'connected' && connection.features.includes(FLEET_DEVICE_PAIRING_FEATURE)
+  const canPairPhone = connection.state === 'connected' && connection.features.includes(FLEET_PHONES_FEATURE)
   const cancelDisconnect = useCallback(() => setConfirmDisconnect(false), [])
   const runConfirmed = async (action: () => Promise<void>) => {
     setBusy(true)

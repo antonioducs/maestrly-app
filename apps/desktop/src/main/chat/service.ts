@@ -16,13 +16,15 @@ import {
 } from './stream-subscribers'
 
 export { subscribeChatStream, unsubscribeChatStream } from './stream-subscribers'
-import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
+import { remoteChatPolicy } from './remote-policy'
 import {
   clearHumanTurnOrigin,
   isHumanTurnAdmission,
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
+import { clearLinkedTurnOrigin, recordLinkedTurnOrigin } from './conversation-link-authorization'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
+import type { ConversationPeerMessageKind, ConversationTurnResultStatus } from '../../shared/conversation-link'
 import {
   assertBotTurnAdmission,
   botBlocksManualSend,
@@ -289,6 +291,15 @@ import { releaseTurnDelegationRuntimes } from './subagent-resume'
 import { registerPerformanceCache } from '../performance/metrics'
 import { builtinToolNamesForMode } from './tools'
 import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled, imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
+import { GENERATED_INTERFACES_FLAG, generatedInterfacesEnabled } from './generated-interfaces'
+import {
+  clearWebSearchKey,
+  getWebSearchProvider,
+  setWebSearchKey,
+  setWebSearchProvider,
+  webSearchKeysPresent,
+} from './web-search/settings'
+import { isWebSearchKeyProvider, isWebSearchProvider } from '../../shared/web-search'
 import { supportsChatToolImages } from './tool-capabilities'
 import {
   getAppFlag,
@@ -390,6 +401,7 @@ import type {
   CodexSubscriptionAuthStatus,
   ChatExecutionScope,
   FrozenChatSelection,
+  FrozenFailoverAccount,
   InternalTurnHandle,
   InternalTurnOutcome,
   MessagePart,
@@ -443,6 +455,7 @@ import {
   summarizePortableTranscript,
   type PortableSummaryProgress,
   type PortableSummaryCheckpoint,
+  type PortableSummaryResult,
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { getCompactionSummarizer } from './compaction-summarizer'
@@ -482,7 +495,7 @@ import {
   ChatBackgroundCompactionCoordinator,
   parseBackgroundCompactionConfig,
 } from './background-compaction'
-import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
+import type { BackgroundCompactionAttemptHandle, BackgroundCompactionCandidate } from './background-compaction/types'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -2140,6 +2153,8 @@ function buildConfig(): ChatConfig {
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),
     imageGenEnabled: getAppFlag(IMAGE_GEN_FLAG, true),
+    generatedInterfacesEnabled: generatedInterfacesEnabled(),
+    webSearch: { provider: getWebSearchProvider(), keys: webSearchKeysPresent() },
     bashFiltersEnabled: getAppFlag('chat.bashFilters', true),
     openAIHarnessEnabled: getAppFlag('chat.openAIHarness', true),
     astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
@@ -2468,7 +2483,7 @@ function toRequestPayload(req: PermissionRequest): Extract<ChatPermissionEvent, 
       action: req.action,
       title: req.title,
       resources: req.resources,
-      ...(req.save?.length && !remoteChatPolicy(req.conversationId) && !isWebManagedConversation(req.conversationId)
+      ...(req.save?.length && !remoteChatPolicy(req.conversationId)
         ? { allowAlways: true }
         : {}),
     },
@@ -2727,14 +2742,22 @@ export function getChatPermissionBroker(): PermissionBroker {
 export function getChatQuestionBroker(): QuestionBroker {
   if (!questionBroker) {
     questionBroker = new QuestionBroker()
+    // Questions asked from inside a tool other than ask_question have no card of their own: publish the list.
+    const publishPending = (conversationId: string) =>
+      active.get(conversationId)?.send(`chat:delta:${conversationId}`, {
+        kind: 'questions-pending',
+        questions: questionBroker!.pendingQuestionsFor(conversationId),
+      } satisfies ChatStreamEvent)
     questionBroker.on('asked', ({ conversationId }: { conversationId: string }) => {
       if (active.has(conversationId)) savedDeps?.emitStatus(conversationId, 'asking')
+      publishPending(conversationId)
     })
     questionBroker.on('answered', ({ conversationId }: { conversationId: string }) => {
       // Return to 'working' only when NO other question is pending in this conversation.
       if (active.has(conversationId) && questionBroker!.pendingFor(conversationId).length === 0) {
         savedDeps?.emitStatus(conversationId, 'working')
       }
+      publishPending(conversationId)
     })
   }
   return questionBroker
@@ -3634,7 +3657,21 @@ interface StartSendOpts {
   /** Review-turn callback; releases the reservation if no v2 is accepted. */
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
-  dispatchSeed?: { dispatchId: string; sourceConversationId: string }
+  dispatchSeed?: { dispatchId: string; sourceConversationId: string; reportBack?: boolean }
+  /**
+   * Message, report or result sent by the agent of another conversation: a visible, attributed bubble that starts a
+   * linked (never human) turn. Framing for the model travels in hiddenParts.
+   */
+  peerMessage?: {
+    messageId: string
+    fromConversationId: string
+    fromConversationName: string
+    kind: ConversationPeerMessageKind
+    hop: number
+    reportBack: boolean
+  }
+  /** Structured outcome of this admitted turn, on every terminal path. Not called when admission fails. */
+  onOutcome?: (outcome: InternalTurnOutcome) => void
 }
 
 async function startSend(
@@ -3674,8 +3711,6 @@ async function startSend(
   // COMPANION AUTOMATION LOCK (central guard): while review/bootstrap is active, only its owning internal turn
   // passes. Covers chat:send, resend, plans, and server-side starts — all enter here.
   if (opts?.runnerSignal?.aborted) return { ok: false, error: 'cancelled' }
-  if (isWebManagedConversation(conversationId) && !opts?.remoteAdmission)
-    return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
   if (opts?.botAdmission) {
     try {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
@@ -3735,10 +3770,12 @@ async function startSend(
   let githubCopilotModelAtAdmission: GitHubCopilotModelInfo | undefined
   let claudeIdentityAtAdmission: ClaudeSubscriptionAccountIdentity | undefined
   let claudeModelAtAdmission: ClaudeModelInfo | undefined
+  // A loop round runs on the fallback route frozen with its profile (its own account when it had none). It never
+  // reads the live route: a route edited mid-loop must not add accounts the loop did not start with.
+  const loopFailoverChain = internalLoop ? frozenFailoverChain(internalLoop.selectionOverride) : null
+  const loopRouted = (loopFailoverChain?.length ?? 0) > 1
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? internalLoop
-      ? [selection.providerId]
-      : freezeFailoverChain(selection.providerId)
+    ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
     : []
   const claudeRequestedEffort =
     internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning
@@ -3823,7 +3860,7 @@ async function startSend(
       )
         return { ok: false, error: 'busy' }
       // With a failover chain, the logical account may be unavailable; resolveCodexRuntimeTarget decides.
-      const earlyChain = freezeFailoverChain(selection.providerId)
+      const earlyChain = loopFailoverChain ?? freezeFailoverChain(selection.providerId)
       if (!status.authenticated && earlyChain.length <= 1) return { ok: false, error: 'no-key' }
     } else if (useGitHubCopilot) {
       if (!selectionAccountId && (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)) {
@@ -4114,11 +4151,17 @@ async function startSend(
 
     // Freeze all runtime-selection inputs for this admission. Revalidation may change only the physical
     // account selected from this chain; it must not observe a concurrent model/effort preference change.
-    const codexFastMode = useCodexSubscription && getConvUiPrefs(conversationId).chat?.fastMode === true
+    const codexFastMode =
+      useCodexSubscription &&
+      (internalLoop
+        ? internalLoop.selectionOverride.fastMode === true
+        : getConvUiPrefs(conversationId).chat?.fastMode === true)
     const codexRequestedEffort = useCodexSubscription
       ? (internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning)
       : undefined
-    const frozenCodexChain = useCodexSubscription ? freezeFailoverChain(selection.providerId) : null
+    const frozenCodexChain = useCodexSubscription
+      ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+      : null
     try {
       parts.push(
         ...(await admitChatAttachments({
@@ -4151,7 +4194,12 @@ async function startSend(
       if (companionPersonalMemory !== 'off' || !isMemoryContextPart(part)) parts.push(part)
     }
     const turnMemory =
-      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory || companionPersonalMemory === 'off'
+      opts?.internal ||
+      internalLoop ||
+      opts?.dispatchSeed ||
+      opts?.peerMessage ||
+      opts?.skipMemory ||
+      companionPersonalMemory === 'off'
         ? null
         : await prepareTurnMemory({
             conversationId,
@@ -4456,7 +4504,8 @@ async function startSend(
     // the lease before compacting, lower the validated ceiling monotonically, and admit again. The frozen chain
     // bounds churn; no half-open lease is held while compactReserved/preflightContext runs.
     let admittedCodexTarget: CodexRuntimeTarget | undefined
-    if (useCodexSubscription && !isolated) {
+    // An isolated round has no preflighted window, so its routed admission takes the first eligible target.
+    if (useCodexSubscription && (!isolated || loopRouted)) {
       const maxAdmissionAttempts = Math.max(2, (frozenCodexChain?.length ?? 1) + 1)
       for (let attempt = 0; attempt < maxAdmissionAttempts; attempt += 1) {
         const admissionResolution = await resolveCodexTargetForStart(true)
@@ -4483,11 +4532,17 @@ async function startSend(
       // Failing closed is safer than starting with a target whose context ceiling was never validated.
       if (!admittedCodexTarget) return { ok: false, error: 'unavailable' }
     }
-    if (useCodexSubscription && !isolated && !admittedCodexTarget) {
+    if (useCodexSubscription && (!isolated || loopRouted) && !admittedCodexTarget) {
       throw new Error('Codex runtime target was not resolved before start')
     }
 
-    if (useClaudeSubscription && !isolated) {
+    if (useClaudeSubscription && isolated && loopRouted) {
+      // The isolated preflight never compacts, so there is no window to re-check: admit the first eligible target.
+      const result = await resolveClaudeTargetForStart(true)
+      if (!result.ok) return result
+      claudeIdentityAtAdmission = result.target.accountIdentity
+      claudeModelAtAdmission = result.target.model
+    } else if (useClaudeSubscription && !isolated) {
       let admitted = false
       for (let attempt = 0; attempt < Math.max(2, claudeFailoverChain.length + 1); attempt++) {
         const result = await resolveClaudeTargetForStart(true)
@@ -4606,6 +4661,19 @@ async function startSend(
     }
     internalLoop?.onAdmitted(run)
     opts?.runnerAdmission?.(run)
+    if (opts?.onOutcome) {
+      const onOutcome = opts.onOutcome
+      void run.outcome.then(
+        (outcome) => {
+          try {
+            onOutcome(outcome)
+          } catch {
+            // Observers never alter the turn.
+          }
+        },
+        () => undefined
+      )
+    }
     // The BYOK runner received a preallocated response ID from main; signal early so compaction
     // and mention reads count toward duration too. The Codex adapter still governs its own message.
     if (!useOfficialSubscription) {
@@ -4631,6 +4699,17 @@ async function startSend(
       ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
+      ...(opts?.peerMessage
+        ? {
+            source: 'conversation-message' as const,
+            peer: {
+              messageId: opts.peerMessage.messageId,
+              fromConversationId: opts.peerMessage.fromConversationId,
+              fromConversationName: opts.peerMessage.fromConversationName,
+              kind: opts.peerMessage.kind,
+            },
+          }
+        : {}),
       ...(reviewLoopMessageMeta ?? {}),
       ...(turnMemory?.memoryContext ? { memoryContext: turnMemory.memoryContext } : {}),
       createdAt: Date.now(),
@@ -4648,10 +4727,22 @@ async function startSend(
         text: typeof text === 'string' ? text : '',
         signal: controller.signal,
       })
+    } else if (opts?.peerMessage || opts?.dispatchSeed) {
+      // Started by another conversation: it may answer and follow up with linked conversations, within the hop limit.
+      recordLinkedTurnOrigin({
+        token: run,
+        conversationId,
+        messageId: userMessageId,
+        peerConversationId: opts.peerMessage?.fromConversationId ?? opts.dispatchSeed!.sourceConversationId,
+        hop: opts.peerMessage?.hop ?? 1,
+        reportBack: opts.peerMessage?.reportBack ?? opts.dispatchSeed?.reportBack ?? false,
+        signal: controller.signal,
+      })
     }
     if (
       conv.scope === 'standalone' &&
       !opts?.internal &&
+      !opts?.peerMessage &&
       !reviewLoopMessageMeta &&
       nameStandaloneConversationFromText(conversationId, text)
     ) {
@@ -4851,7 +4942,8 @@ async function startSend(
       : {}
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
-    if (useCodexSubscription && isolated) {
+    // A routed loop round takes the admitted-target branch below, which reproduces the frozen axes on each account.
+    if (useCodexSubscription && isolated && !loopRouted) {
       const selectedModelId = selection!.modelId
       const logicalProviderId = selection!.providerId
       turnPromise = (async () => {
@@ -5289,7 +5381,7 @@ async function startSend(
         const promise = runClaudeChat({
           ...(claudeRuntimeTarget ? { initialTarget: claudeRuntimeTarget } : {}),
           failoverChain: claudeFailoverChain,
-          ...(!isolated
+          ...(!isolated || loopRouted
             ? {
                 resolveNextTarget: async (input: { attemptedProviderIds: ReadonlySet<string>; admit?: boolean }) => {
                   const resolved = await resolveClaudeRuntimeTarget({
@@ -5739,6 +5831,7 @@ async function startSend(
         }
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
+        clearLinkedTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
         if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {
           scheduleMemoryExtraction(conversationId)
@@ -5789,6 +5882,7 @@ async function startSend(
   } catch (error) {
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
     if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
+    if (admittedRun) clearLinkedTurnOrigin(conversationId, admittedRun)
     releaseCwdActivityOnce()
     if (admittedRun) {
       admittedRun.maestroLive?.finish(admittedRun.controller.signal.aborted ? 'aborted' : 'error')
@@ -6715,6 +6809,7 @@ interface CompactOpts {
   summaryMaxTokens?: number
   summaryStepTimeoutMs?: number
   summaryRetryDelayMs?: number
+  summaryMaxRetries?: number
   summaryAttemptId?: () => string
   summaryResume?: PortableSummaryCheckpoint
   onSummaryCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
@@ -7036,21 +7131,37 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       }
     : selectionFor(conversationId)
   if (!selection?.providerId || !selection.modelId) return { ok: false, error: 'no-model' }
+  // A frozen profile (loop round, background compaction, a bot's compaction model) carries the fallback route its
+  // account had at freeze; the summary rotates across that route like any helper, with the frozen axes.
+  const frozenRouteChain =
+    frozen != null &&
+    (isClaudeSubscriptionProvider(selection.providerId) || isCodexSubscriptionProvider(selection.providerId)) &&
+    frozenFailoverChain(frozen).length > 1
+      ? frozenFailoverChain(frozen)
+      : null
+  const pinnedToFrozenAccount = frozen != null && !frozenRouteChain
   const compactClaudeChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? frozen
-      ? [selection.providerId]
-      : (opts.claudeFailoverChain ?? freezeFailoverChain(selection.providerId))
+    ? (frozenRouteChain ??
+      (frozen ? [selection.providerId] : (opts.claudeFailoverChain ?? freezeFailoverChain(selection.providerId))))
     : []
   let compactResolvedModelId = opts.resolvedModelId ?? frozen?.resolvedModelId
   let compactClaudeTarget: ClaudeRuntimeTarget | undefined
-  if (isClaudeSubscriptionProvider(selection.providerId) && !frozen) {
+  if (isClaudeSubscriptionProvider(selection.providerId) && !pinnedToFrozenAccount) {
     const prefs = getConvUiPrefs(conversationId).chat
     const resolved = await resolveClaudeRuntimeTarget({
       logicalProviderId: selection.providerId,
       modelId: selection.modelId,
       runtimeModelId: compactResolvedModelId,
-      reasoningEffort: opts.claudeExecutionAxes ? opts.claudeExecutionAxes.reasoningEffort : prefs?.reasoning,
-      fastMode: opts.claudeExecutionAxes ? opts.claudeExecutionAxes.fastMode : prefs?.fastMode === true,
+      reasoningEffort: frozen
+        ? frozen.reasoningEffort
+        : opts.claudeExecutionAxes
+          ? opts.claudeExecutionAxes.reasoningEffort
+          : prefs?.reasoning,
+      fastMode: frozen
+        ? frozen.fastMode
+        : opts.claudeExecutionAxes
+          ? opts.claudeExecutionAxes.fastMode
+          : prefs?.fastMode === true,
       chain: compactClaudeChain,
       attemptedProviderIds: new Set(),
       admit: false,
@@ -7100,6 +7211,17 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
   if (opts.persist !== false && !opts.allowActive && activeContext.messages.length < 2) {
     return { ok: false, error: 'too-short' }
   }
+  // Background rounds (historyOverride) and isolated executions never fold a prepared base.
+  const preparedBase = opts.historyOverride || opts.executionId ? null : preparedCompactionBase(conversationId, history)
+  if (preparedBase) {
+    chatDiag({
+      kind: 'compaction-prepared-base',
+      conv: conversationId,
+      coveredTokens: preparedBase.candidate.coveredTokens,
+      deltaEmpty: preparedBase.deltaEmpty,
+      persist: opts.persist !== false,
+    })
+  }
   let observedClaudeUsage: NormalizedAiUsage | undefined
   let observedClaudeCost = 0
   let observedClaudeCostKnown = false
@@ -7123,7 +7245,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       if (!revalidated.ok) return { ok: false, error: revalidated.error }
     }
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(history, {
+    const transcript = renderTranscript(preparedBase?.history ?? history, {
       maxToolOutputChars: Number.POSITIVE_INFINITY,
       includeSkillBodies: true,
     })
@@ -7156,7 +7278,14 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       summarize = (prompt, _phase, stageSignal = compactSignal) =>
         runCodexEphemeralWithFailover({
           logicalProviderId: selection.providerId,
-          ...(frozen ? { chain: [selection.providerId] } : {}),
+          ...(frozenRouteChain
+            ? {
+                chain: frozenRouteChain,
+                ...(frozen?.reasoningEffort ? { reasoningEffort: frozen.reasoningEffort } : {}),
+              }
+            : pinnedToFrozenAccount
+              ? { chain: [selection.providerId] }
+              : {}),
           modelId: selection.modelId,
           signal: stageSignal,
           scope: 'helper',
@@ -7215,7 +7344,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           ...(frozen?.reasoningEffort ? { effort: frozen.reasoningEffort } : {}),
         })
     } else if (isClaudeSubscriptionProvider(selection.providerId)) {
-      if (!frozen) {
+      if (!pinnedToFrozenAccount) {
         const chain = compactClaudeChain
         summarize = (prompt, _phase, stageSignal = compactSignal) =>
           runClaudeEphemeralWithFailover({
@@ -7435,15 +7564,18 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         }
       }
     }
-    const compacted = await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
-      signal: compactSignal,
-      onProgress: opts.onProgress,
-      ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
-      ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
-      ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
-      ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
-      ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
-    })
+    const compacted: PortableSummaryResult = preparedBase?.deltaEmpty
+      ? { summary: preparedBase.candidate.summary, calls: 0 }
+      : await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
+          signal: compactSignal,
+          onProgress: opts.onProgress,
+          ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
+          ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
+          ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
+          ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
+          ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
+          ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
+        })
     const summary = compacted.summary
     const usage = compacted.usage
     completedUsage = usage
@@ -7552,7 +7684,39 @@ function publishBackgroundCompactionStatus(conversationId: string, state: Backgr
   else emitChatHost(conversationId, channel, event)
 }
 
+/** Snapshot-only identity of a route account: null when signed out or not yet read. */
+function routeAccountIdentitySnapshot(providerId: string): { fingerprint: string; epoch?: number } | null {
+  const account = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = getCodexSubscriptionManager(account).getStatusSnapshot()
+    if (!status?.authenticated) return null
+    return {
+      fingerprint: codexAccountFingerprint(toCodexAuthStatus(status, account)),
+      ...(account ? {} : { epoch: codexAccountUpdateEpoch }),
+    }
+  }
+  const status = getClaudeSubscriptionManager(account).getStatusSnapshot()
+  return status?.authenticated && status.accountFingerprint
+    ? { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+    : null
+}
+
 function backgroundIdentityCurrent(frozen: FrozenChatSelection): boolean {
+  if (frozen.failoverRoute && frozen.failoverRoute.length > 1) {
+    try {
+      // Same rule as revalidation: any re-logged account invalidates the selection, signed-out ones are skipped.
+      let usable = false
+      for (const account of frozen.failoverRoute) {
+        const live = routeAccountIdentitySnapshot(account.providerId)
+        if (!live) continue
+        if (routeAccountIdentityChanged(account, live)) return false
+        usable = true
+      }
+      return usable
+    } catch {
+      return false
+    }
+  }
   try {
     const account = subscriptionAccountId(frozen.providerId)
     if (isCodexSubscriptionProvider(frozen.providerId)) {
@@ -7651,8 +7815,9 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
         contextWindow: input.contextWindow,
         signal: input.signal,
         summaryMaxTokens: input.maxSummaryTokens,
-        summaryStepTimeoutMs: 180_000,
-        summaryRetryDelayMs: 30_000,
+        summaryStepTimeoutMs: input.stepTimeoutMs,
+        summaryRetryDelayMs: input.retryDelayMs,
+        summaryMaxRetries: input.maxRetries,
         summaryResume: input.resume,
         onSummaryCheckpoint: input.onCheckpoint,
         beforeSummaryDispatch: (signal) => waitForBackgroundDispatch(input.selection.providerId, signal),
@@ -7759,6 +7924,44 @@ async function maybeScheduleBackgroundCompaction(
     getBackgroundCoordinator().notify(conversationId, { conversationWindow: window, ...(boundary ? { boundary } : {}) })
   } catch {
     // Missing provider metadata never makes a foreground send fail.
+  }
+}
+
+interface PreparedCompactionBase {
+  candidate: BackgroundCompactionCandidate
+  /** Source history with the prepared summary inserted at its boundary: renders as "Previous summary" + suffix. */
+  history: StoredChatMessage[]
+  /** Nothing portable follows the boundary, so the prepared summary already covers the whole active context. */
+  deltaEmpty: boolean
+}
+
+/**
+ * Foreground compaction folds the prepared summary with only the suffix after its boundary instead of
+ * re-summarizing source the background already covered. Synchronous on purpose: the candidate is validated
+ * against the same history snapshot that assertHistoryUnchanged protects at commit.
+ */
+function preparedCompactionBase(
+  conversationId: string,
+  history: readonly StoredChatMessage[]
+): PreparedCompactionBase | null {
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return null
+  const candidate = getBackgroundCoordinator().getCandidate(conversationId)
+  if (!candidate) return null
+  const projected = previewPreparedActivation(
+    history,
+    {
+      messageId: candidate.boundary.messageId,
+      afterPartId: candidate.boundary.partId,
+      partId: `prepared-base:${candidate.id}`,
+    },
+    candidate.summary
+  )
+  if (!projected) return null
+  const suffix = activeChatContext(projected).messages
+  return {
+    candidate,
+    history: projected,
+    deltaEmpty: !renderTranscript(suffix, { maxToolOutputChars: Number.POSITIVE_INFINITY, includeSkillBodies: true }),
   }
 }
 
@@ -7974,6 +8177,70 @@ export async function validateReviewLoopStart(
   return { ok: true }
 }
 
+type LiveRouteAccountIdentity = { authenticated: false } | { authenticated: true; fingerprint: string; epoch?: number }
+
+/** Identity a frozen route compares against; only the default Codex account also carries the global epoch. */
+async function liveRouteAccountIdentity(providerId: string): Promise<LiveRouteAccountIdentity> {
+  const accountId = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = await codexAuthStatus(false, undefined, accountId)
+    if (!status.authenticated) return { authenticated: false }
+    return {
+      authenticated: true,
+      fingerprint: codexAccountFingerprint(status),
+      ...(accountId ? {} : { epoch: codexAccountUpdateEpoch }),
+    }
+  }
+  const status = await getClaudeSubscriptionManager(accountId).status({ refresh: false })
+  if (!status.authenticated || !status.accountFingerprint) return { authenticated: false }
+  return { authenticated: true, fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+}
+
+function routeAccountIdentityChanged(
+  account: FrozenFailoverAccount,
+  live: { fingerprint: string; epoch?: number }
+): boolean {
+  return (
+    (account.identityFingerprint != null && live.fingerprint !== account.identityFingerprint) ||
+    (typeof account.identityEpoch === 'number' && live.epoch !== account.identityEpoch)
+  )
+}
+
+/**
+ * The enabled fallback route of a Claude/Codex account, with each account's identity at freeze. An account signed
+ * out right now has no identity to hold it to, so it stays out: a later sign-in must not join a frozen execution.
+ */
+async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<FrozenFailoverAccount[] | undefined> {
+  if (!isClaudeSubscriptionProvider(primary.providerId) && !isCodexSubscriptionProvider(primary.providerId)) {
+    return undefined
+  }
+  const chain = freezeFailoverChain(primary.providerId)
+  if (chain.length <= 1 || chain[0] !== primary.providerId) return undefined
+  const route: FrozenFailoverAccount[] = [primary]
+  for (const providerId of chain.slice(1)) {
+    if (!getProvider(providerId)) continue
+    try {
+      const live = await liveRouteAccountIdentity(providerId)
+      if (!live.authenticated) continue
+      route.push({
+        providerId,
+        identityFingerprint: live.fingerprint,
+        ...(live.epoch !== undefined ? { identityEpoch: live.epoch } : {}),
+      })
+    } catch {
+      // An account whose status cannot be read stays out of the frozen route.
+    }
+  }
+  return route.length > 1 ? route : undefined
+}
+
+/** Physical accounts a frozen selection may run on: its frozen fallback route, or only its own account. */
+export function frozenFailoverChain(frozen: FrozenChatSelection): string[] {
+  return frozen.failoverRoute && frozen.failoverRoute.length > 1
+    ? frozen.failoverRoute.map((account) => account.providerId)
+    : [frozen.providerId]
+}
+
 /** Resolves the CURRENT profile (provider+model+reasoning+fastMode+identity) to FREEZE for the loop. No silent fallback. */
 export async function resolveReviewLoopSelection(
   conversationId: string,
@@ -8170,6 +8437,11 @@ export async function resolveReviewLoopSelection(
     resolvedModelId,
     flags: captureHarnessFlags(),
   })
+  const failoverRoute = await freezeFailoverRoute({
+    providerId: selection.providerId,
+    ...(identityFingerprint ? { identityFingerprint } : {}),
+    ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
+  })
   return {
     ok: true,
     selection: {
@@ -8186,6 +8458,7 @@ export async function resolveReviewLoopSelection(
       ...(identityFingerprint ? { identityFingerprint } : {}),
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
+      ...(failoverRoute ? { failoverRoute } : {}),
     },
   }
 }
@@ -8282,8 +8555,43 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
 /**
  * Revalidates FROZEN profile identity/availability between rounds.
  * Any fingerprint/epoch change → executor_unavailable (never silently switch model/account).
+ * A frozen fallback route applies the same rule to every account in it: one re-logged as another identity ends
+ * the execution, while a signed-out account is only skipped. At least one account must still reproduce the frozen
+ * profile; the turn's resolver then picks among them by quota.
  */
 export async function revalidateReviewLoopSelection(
+  frozen: FrozenChatSelection
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!frozen.failoverRoute || frozen.failoverRoute.length <= 1) return revalidateFrozenAccount(frozen)
+  const signedIn: FrozenFailoverAccount[] = []
+  for (const account of frozen.failoverRoute) {
+    let live: LiveRouteAccountIdentity
+    try {
+      live = await liveRouteAccountIdentity(account.providerId)
+    } catch {
+      continue
+    }
+    if (!live.authenticated) continue
+    if (routeAccountIdentityChanged(account, live)) return { ok: false, error: 'executor-unavailable' }
+    signedIn.push(account)
+  }
+  if (signedIn.length === 0) return { ok: false, error: 'no-key' }
+  let firstFailure: { ok: false; error: string } | undefined
+  for (const account of signedIn) {
+    const result = await revalidateFrozenAccount({
+      ...frozen,
+      providerId: account.providerId,
+      identityFingerprint: account.identityFingerprint,
+      identityEpoch: account.identityEpoch,
+      failoverRoute: undefined,
+    })
+    if (result.ok) return result
+    firstFailure ??= result
+  }
+  return firstFailure!
+}
+
+async function revalidateFrozenAccount(
   frozen: FrozenChatSelection
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const behaviorResolution = resolveHarnessContract(providerKindOf(frozen.providerId), frozen.modelId, {
@@ -9449,8 +9757,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // never the bot's: a manual send is a new turn, not an instruction slipped into the bot's.
       if (activeTurnIsBotOwned(conversationId))
         return { ok: false, error: 'The bot is running this turn; wait for it to finish.' }
-      if (isWebManagedConversation(conversationId))
-        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       const text = typeof rawText === 'string' ? rawText : ''
       const clientUserMessageId = typeof rawClientUserMessageId === 'string' ? rawClientUserMessageId : ''
       if (
@@ -10054,6 +10360,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // and finally by the USER filter (models hidden in Settings). `includeHidden` returns the full
   // list — consumed by the filter management screen itself.
 
+  // Usable accounts and models per provider; bots offer them as the providers a desktop grant may use.
+  deps.mhandle('chat:execution-providers', () =>
+    listChatExecutionModels({ refreshSubscriptionAuth: true, subscriptionProviderTimeoutMs: 8000 })
+  )
+
   deps.mhandle('chat:models', (_e, providerId: string, force?: boolean, includeHidden?: boolean) =>
     typeof providerId === 'string'
       ? listChatProviderModels(providerId, { force: force === true, includeHidden: includeHidden === true })
@@ -10530,6 +10841,27 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     setAppFlag(IMAGE_GEN_FLAG, enabled === true)
     return { ok: true }
   })
+  // Generated interfaces (prompt section + preview_interface) — GLOBAL toggle, default ON. Applies from the next turn.
+  deps.mhandle('chat:set-generated-interfaces', (_e, enabled: boolean) => {
+    setAppFlag(GENERATED_INTERFACES_FLAG, enabled === true)
+    return { ok: true }
+  })
+  // Web search provider and keys. The renderer only learns whether each key is set.
+  deps.mhandle('chat:set-web-search-provider', (_e, provider: unknown) => {
+    if (!isWebSearchProvider(provider)) return { ok: false }
+    setWebSearchProvider(provider)
+    notifyChatRunnerCapabilityChanges(false)
+    return { ok: true }
+  })
+  deps.mhandle('chat:set-web-search-key', (_e, provider: unknown, key: unknown) => {
+    if (!isWebSearchKeyProvider(provider) || typeof key !== 'string' || !key.trim()) return { ok: false }
+    return { ok: true, mode: setWebSearchKey(provider, key) }
+  })
+  deps.mhandle('chat:clear-web-search-key', (_e, provider: unknown) => {
+    if (!isWebSearchKeyProvider(provider)) return { ok: false }
+    clearWebSearchKey(provider)
+    return { ok: true }
+  })
   // Bash output filters (token savings, experimental) — toggle.
   deps.mhandle('chat:set-bash-filters', (_e, enabled: boolean) => {
     setAppFlag('chat.bashFilters', enabled === true)
@@ -10724,40 +11056,18 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // A released chat may be edited while it is idle; the reservation below keeps a running turn safe.
       if (botBlocksManualSend(conversationId))
         return { ok: false, error: 'Release this chat for your own messages before editing here.' }
-      if (isWebManagedConversation(conversationId))
-        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       if (typeof conversationId !== 'string' || typeof fromMessageId !== 'string')
         return { ok: false, error: 'invalid-input' }
       const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
       if (!operation) return { ok: false, error: 'busy' }
       try {
-        // Preserve original ATTACHMENTS (editing changes text only) — otherwise images/files disappear on resend.
-        // Exclude `hidden` parts (@file mention content): reinject them when reparsing text.
-        // COPY BYTES of images with artifactId here, BEFORE truncation: deleteChatMessagesFrom
-        // below removes the old message's sidecars — reusing artifactId would point the new message to
-        // deleted files. startSend writes NEW artifacts from the copied bytes.
-        const original = getChatMessage(conversationId, fromMessageId)
-        const attachments: ChatAttachmentInput[] = await preserveResendAttachments(
-          conversationId,
-          (original?.parts ?? []).filter(
-            (p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden
-          )
-        )
-        await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
-          preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
-        })
-        if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
+        const cut = await truncateConversationForResend(conversationId, fromMessageId, operation)
+        if (!cut) return { ok: false, error: 'busy' }
         // The EDITOR's `#agent` selection (occurrences with id/range) goes to startSend — SAME host-side
         // validation as chat:send (buildAgentMentionParts). Old agent-mention parts from the original
         // message are NOT automatically preserved: the user may have removed the chip in the editor.
         const agentMentions = Array.isArray(payload?.agentMentions) ? payload.agentMentions : undefined
-        const seq = getMessageSeq(fromMessageId)
-        if (seq != null) {
-          cancelBackgroundJob(conversationId, false)
-          deleteChatMessagesFrom(conversationId, seq)
-          publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
-        }
-        return await startSend(deps, event.sender, conversationId, text, attachments, { operation }, agentMentions)
+        return await startSend(deps, event.sender, conversationId, text, cut.attachments, { operation }, agentMentions)
       } finally {
         releaseConversationOperation(conversationId, operation)
       }
@@ -10768,14 +11078,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   deps.mon(
     'chat:permission-respond',
     (_e, requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
-      for (const conversationId of active.keys())
-        if (
-          isWebManagedConversation(conversationId) &&
-          getBroker()
-            .pendingFor(conversationId)
-            .some((p) => p.id === requestId)
-        )
-          return
       if (typeof requestId !== 'string' || !['once', 'always', 'reject'].includes(reply)) return
       try {
         getBroker().reply({ requestId, reply, message })
@@ -10788,8 +11090,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   )
   // ask_question (mark X): user answers (string[][]) → resolve the tool's blocked execute.
   deps.mon('chat:question-respond', (_e, toolCallId: string, answers: string[][]) => {
-    const owner = getQuestionBroker().conversationFor(toolCallId)
-    if (owner && isWebManagedConversation(owner)) return
     if (typeof toolCallId === 'string') getQuestionBroker().reply(toolCallId, Array.isArray(answers) ? answers : [])
   })
 }
@@ -11033,19 +11333,152 @@ export async function startConversationDispatchTurn(input: {
   dispatchId: string
   sourceConversationId: string
   visible: boolean
+  /** Deliver this first turn's final answer back to the source when it ends. */
+  reportBack?: boolean
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
   const wc = getMainWebContents()
   if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  const reportBack = input.reportBack === true
   try {
     const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
       ...(input.visible ? {} : { internal: true }),
-      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId },
+      ...(reportBack
+        ? {
+            hiddenParts: [
+              conversationLinkFramingPart(tFor(getLocale(), 'prompts')('conversationLink.seedReportBack')),
+            ],
+            // Lazy: the link service depends on this module.
+            onOutcome: (outcome: InternalTurnOutcome) =>
+              void import('../conversation-link-service')
+                .then(({ getConversationLinkService }) => getConversationLinkService())
+                .then((service) =>
+                  service.relayDispatchResult({
+                    dispatchId: input.dispatchId,
+                    sourceConversationId: input.sourceConversationId,
+                    conversationId: input.conversationId,
+                    outcome,
+                  })
+                )
+                .catch(() => undefined),
+          }
+        : {}),
+      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId, reportBack },
     })
     return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+}
+
+/** Model-only framing for a turn started by another conversation; the bubble shows only what the agent wrote. */
+function conversationLinkFramingPart(text: string): MessagePart {
+  return {
+    type: 'file',
+    id: randomUUID(),
+    name: 'conversation-message.md',
+    mediaType: 'text/markdown',
+    kind: 'text',
+    data: text,
+    hidden: true,
+  }
+}
+
+export interface ConversationPeerTurnInput {
+  conversationId: string
+  /** Journal id of the message being delivered. */
+  messageId: string
+  fromConversationId: string
+  fromConversationName: string
+  kind: ConversationPeerMessageKind
+  body: string
+  hop: number
+  /** The sender wants this turn's final answer (messages only). */
+  reportBack: boolean
+  resultStatus?: ConversationTurnResultStatus
+  onOutcome?: (outcome: InternalTurnOutcome) => void
+}
+
+/**
+ * Deliver a message from another conversation as a turn here. It is a visible user bubble attributed to the sender,
+ * not `internal`, so every guard of a manual send still applies (bot chats, Kanban web chats, executors, busy). The
+ * turn is linked, never human: it cannot start conversations and talks only to linked conversations.
+ */
+export async function startConversationPeerTurn(
+  input: ConversationPeerTurnInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
+  const wc = getMainWebContents()
+  if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  const t = tFor(getLocale(), 'prompts')
+  const params = { from: input.fromConversationName, fromId: input.fromConversationId }
+  const framing =
+    input.kind === 'message'
+      ? t('conversationLink.message', {
+          ...params,
+          reply: t(input.reportBack ? 'conversationLink.replyAutomatic' : 'conversationLink.replyManual'),
+        })
+      : input.kind === 'report'
+        ? t('conversationLink.report', params)
+        : t('conversationLink.result', { ...params, status: input.resultStatus ?? 'success' })
+  try {
+    const result = await startSend(savedDeps, wc, input.conversationId, input.body, undefined, {
+      hiddenParts: [conversationLinkFramingPart(framing)],
+      peerMessage: {
+        messageId: input.messageId,
+        fromConversationId: input.fromConversationId,
+        fromConversationName: input.fromConversationName,
+        kind: input.kind,
+        hop: input.hop,
+        reportBack: input.kind === 'message' && input.reportBack,
+      },
+      ...(input.onOutcome ? { onOutcome: input.onOutcome } : {}),
+    })
+    return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** Resolves once the conversation's current turn and pending operation (if any) have settled. */
+export function waitForChatConversationSlot(conversationId: string): Promise<void> {
+  return waitForConversationSlot(conversationId)
+}
+
+export function isChatConversationRunning(conversationId: string): boolean {
+  return active.has(conversationId) || pendingConversationOperations.has(conversationId)
+}
+
+/**
+ * Cuts a conversation for an edit of one of its messages (edit + resend): keeps that message's attachments (an edit
+ * changes its text only), retires the runtimes' resumable state and removes the message and everything after it.
+ *
+ * Attachments are copied as BYTES before the cut, which deletes the old message's sidecars: reusing an `artifactId`
+ * would point the new message to deleted files, so `startSend` writes new artifacts from the copies. `hidden` parts
+ * (@file mention content) are left out: they come back when the text is parsed again. The caller holds the slot
+ * `operation`; null when the slot was lost meanwhile, before anything was removed.
+ */
+export async function truncateConversationForResend(
+  conversationId: string,
+  fromMessageId: string,
+  operation: PendingConversationOperation
+): Promise<{ attachments: ChatAttachmentInput[] } | null> {
+  const original = getChatMessage(conversationId, fromMessageId)
+  const attachments = await preserveResendAttachments(
+    conversationId,
+    (original?.parts ?? []).filter((p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden)
+  )
+  await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
+    preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
+  })
+  if (!conversationOperationIsCurrent(conversationId, operation)) return null
+  const seq = getMessageSeq(fromMessageId)
+  if (seq != null) {
+    cancelBackgroundJob(conversationId, false)
+    deleteChatMessagesFrom(conversationId, seq)
+    publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
+  }
+  return { attachments }
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */

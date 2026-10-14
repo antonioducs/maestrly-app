@@ -39,6 +39,19 @@ describe('conversation dispatch destination schema', () => {
     for (const target of [{ workspaceId: 'repo' }, { branch: 'feature' }, { baseBranch: 'main' }])
       expect(conversationDispatchFingerprintInput({ ...input, target })).not.toBe(legacy)
   })
+  it('accepts reportBack on the batch and per task, and fingerprints it only when set', () => {
+    const parsed = conversationDispatchBatchSchema.parse({
+      reportBack: true,
+      tasks: [{ ...task, reportBack: false }, { ...task, requestKey: 'B' }],
+    })
+    expect(parsed.reportBack).toBe(true)
+    expect(parsed.tasks[0].reportBack).toBe(false)
+    expect(conversationDispatchBatchSchema.safeParse({ tasks: [{ ...task, reportBack: 'yes' }] }).success).toBe(false)
+    const input = { title: 'Task', prompt: 'Implement it', placement: 'worktree' as const, settings: {} }
+    const legacy = '["Task","Implement it","worktree",null,null,null,null,null,null]'
+    expect(conversationDispatchFingerprintInput({ ...input, reportBack: false })).toBe(legacy)
+    expect(conversationDispatchFingerprintInput({ ...input, reportBack: true })).not.toBe(legacy)
+  })
   it('retains destination provenance in result parsing', () => {
     expect(
       parseConversationDispatchBatchResult(

@@ -37,11 +37,13 @@ export interface CodexEligibilityFacts {
   reviewer: boolean
   experimentalContextFallbackDisabled?: boolean
   requestUserInputAsyncAvailable: boolean
+  /** A standalone chat, with no project: a conversation rather than a coding session. */
+  standalone?: boolean
 }
 
 export interface CodexThreadPolicy {
   promptVersion: string
-  personality: 'pragmatic' | undefined
+  personality: 'pragmatic' | 'friendly' | undefined
   nativeCompactionFirst: boolean
   experimentalContextEnabled: boolean
   asyncQuestionGuidance: boolean
@@ -65,9 +67,11 @@ export function resolveCodexThreadPolicy(
     !facts.reviewer &&
     !facts.experimentalContextFallbackDisabled
   const serializable = serializableReasoningEffort(harness.reasoning, reasoningEffort)
+  // A profile without a personality keeps none; one that takes the coding personality talks as a friend in chats.
+  const personality = harness.runtime.personality ? (facts.standalone ? 'friendly' : harness.runtime.personality) : undefined
   return {
     promptVersion: harness.runtime.codexPromptVersion,
-    personality: harness.runtime.personality ?? undefined,
+    personality,
     nativeCompactionFirst: harness.runtime.nativeCompactionFirst && harness.capabilities.compaction,
     experimentalContextEnabled,
     asyncQuestionGuidance: harness.capabilities.asyncTools && facts.requestUserInputAsyncAvailable,

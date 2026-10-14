@@ -50,7 +50,7 @@ that isolation is required.
 | Main process to AI providers | Prompt, context, tool results, attachments, account state | User-enabled provider, host-owned tools, permission modes, redaction, bounded context |
 | Main process to Local ML | Model/runtime archive and inference payload | Target manifest, critical-file verification, utility process, package checks |
 | Loopback clients to local services | Editor or ChatGPT Web bridge requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
-| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; loopback-only VNC; screen tickets and takeover |
+| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; screens streamed only through the authenticated control server; screen tickets and takeover |
 
 ## Renderer and IPC boundary
 
@@ -68,6 +68,39 @@ sessions with stricter origin and permission controls.
 
 New renderer APIs should expose one domain operation, not a generic IPC sender,
 SQL executor, filesystem primitive, process launcher, or credential accessor.
+
+Interactive answers (`inline-html` blocks) never run in an app page. Each one
+is framed from the `maestrly-widget://frame/` scheme with
+`sandbox="allow-scripts"` and no `allow-same-origin`: the frame has an opaque
+origin and no access to the app, its storage, cookies, IPC or preload. Its page
+receives the block through `postMessage` and writes it under its own policy
+(`sandbox allow-scripts; default-src 'none'`): scripts may be inline or come
+from the artifact CDN allowlist, `connect-src`, `frame-src`, `form-action` and
+`object-src` are `'none'`, and images and media load from any `https` URL. That
+last point is a deliberate trade-off for showing pictures from the web: a block
+can reveal what it writes in those URLs to their hosts. The app's own policy
+allows framing only its own pages and that scheme, detached chat windows allow
+frame navigation only to that URL, and the permission handler grants the frame
+nothing. The host accepts a fixed set of validated messages from the frame
+(ready, loaded, size, issue, send, open); an issue is one of a fixed list of
+kinds with a short text, shown as plain text under the block. Sending a message
+as the person and opening an `http(s)` URL require transient user activation in
+the app window, at most once per second. Activation comes from any recent
+interaction with that window, not only from a click inside the frame.
+
+The `preview_interface` app tool renders a block for the model before it shows
+it. The block runs in the same frame page and policy, framed by a host page in
+an offscreen window of the in-memory `genui-previews` session. That window is
+sandboxed with context isolation and no Node integration; its session denies
+every permission and download, serves only the host and frame pages, and is
+cleared after each preview. The window opens no other window and navigates
+nowhere else. Previews run one at a time, for at most 15 seconds each, on the
+machine that runs the agent (for bots, their environment), which loads the
+images and CDN files the block asks for. The model receives the screenshot and
+the validated messages of the frame, never data from the app. An answer shows a
+preview by naming it (`inline-html preview=<id>`, where the id is a hash of the
+HTML); the renderer, or a bot environment building its transcript, replaces the
+name with the HTML of a completed preview of the same message.
 
 ## Local data and migrations
 
@@ -439,10 +472,14 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   Docker bridge network. The `public` egress guard does not filter traffic
   between containers: a service a bot starts on a network port can be reached
   from other environments. The gateway's public API refuses fleet-network
-  clients, every control-server request needs the environment's control token, and VNC servers
-  start on demand and listen only on each container's loopback.
+  clients, every control-server request needs the environment's control token, and screens
+  have no port of their own: each streams through the control server from a screen encoder
+  that talks to Maestrly over pipes and starts only while the screen is open.
 - **Screens.** Takeover holds exactly one bot, and control of a bot's browser
-  area or apps screen requires that device's takeover. The environment screen
+  area or apps screen requires that device's takeover. The environment, not
+  the app, drops a watching connection's input, and a controller's pointer is
+  held to its own screen's region of the display. Clipboard text crosses only
+  while a controller is connected, CLIPBOARD only, up to 1 MiB each way. The environment screen
   shows only Maestrly's settings, so a paired device can control it without a
   takeover. The browser areas and the environment screen share one display, and
   the gateway allows one control session on it per environment at a time. While
@@ -511,7 +548,7 @@ bots. A paired computer drives it through a **bridge**: see
   so a phone cannot read files, open terminals, change accounts or change
   settings. A phone does not change the host's language. A phone's WebSocket
   always sends an `Origin` header, which the gateway refuses elsewhere: the
-  phone names that origin when it asks for the ticket (`mobile-bridge`), the
+  phone names that origin when it asks for the ticket (`phones`), the
   upgrade may carry that one origin only, and the gateway strips it before the
   host sees the handshake.
 - **The host refuses what belongs to a desktop.** For a computer's renderer it

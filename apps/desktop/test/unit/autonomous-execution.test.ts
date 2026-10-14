@@ -58,6 +58,12 @@ describe('unattended execution boundaries', () => {
         /git push/
       )
       expect(() => assertAutonomousPermission(policy, { action: 'read', resources: ['../secret'] })).toThrow(/outside/)
+      for (const action of ['webfetch', 'web_search']) {
+        expect(() => assertAutonomousPermission(policy, { action, resources: ['electron vibrancy'] })).not.toThrow()
+        expect(() =>
+          assertAutonomousPermission({ ...policy, allowWeb: false }, { action, resources: ['electron vibrancy'] })
+        ).toThrow(/web access/)
+      }
       expect(() => assertAutonomousPermission(policy, { action: 'read', resources: ['.env'] })).toThrow(/secrets/)
     } finally {
       release()

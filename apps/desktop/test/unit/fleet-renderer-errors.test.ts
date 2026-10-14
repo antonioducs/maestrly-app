@@ -17,6 +17,7 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
 } from '../../src/shared/fleet-targets'
 import en from '../../src/shared/i18n/en/fleet'
 import pt from '../../src/shared/i18n/pt-BR/fleet'
@@ -101,6 +102,7 @@ describe('fleet renderer errors', () => {
       [FLEET_ENVIRONMENTS_UNSUPPORTED, 'provisioning.updateServer'],
       [FLEET_SCREEN_CONFLICT, 'screen.conflict'],
       [FLEET_SCREEN_RESTART_REQUIRED, 'screen.restartEnvironment'],
+      [FLEET_SCREEN_UPDATE_REQUIRED, 'screen.updateServer'],
       [FLEET_SCREEN_OFFLINE, 'errors.screenOffline'],
     ]
     for (const catalog of [en, pt]) {

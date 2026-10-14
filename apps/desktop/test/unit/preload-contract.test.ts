@@ -23,7 +23,6 @@ import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
-import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
@@ -71,8 +70,6 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['chatApi', chatApi],
   ['chatLocalApi', chatLocalApi],
   ['chatWindowApi', chatWindowApi],
-  ['platformApi', platformApi],
-  ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
@@ -320,7 +317,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(567)
+    expect(keys).toHaveLength(565)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -427,6 +424,36 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-status-get')
     api.rebuildPersonalMemoryIndex()
     expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-rebuild')
+  })
+
+  it('drawer address-bar wrappers keep their channels and argument order', () => {
+    api.drawerOmniboxQuery('conv', 'text', { search: true, locale: 'en' })
+    api.drawerOmniboxOverlay('conv', 'prepare')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['drawer:omnibox-query', 'conv', 'text', { search: true, locale: 'en' }],
+      ['drawer:omnibox-overlay', 'conv', 'prepare'],
+    ])
+    api.drawerNavigate('conv', 'example.com', { typed: true })
+    api.drawerRemoveHistoryEntry('https://example.com/')
+    api.drawerBrowserKeyboardFocus(true)
+    expect(sendSpy.mock.calls).toEqual([
+      ['drawer:navigate', 'conv', 'example.com', { typed: true }],
+      ['drawer:history-remove', 'https://example.com/'],
+      ['drawer:browser-keyboard-focus', true],
+    ])
+    for (const [method, channel, payload] of [
+      ['onBrowserFocusUrl', 'drawer:browser-focus-url', { convId: 'conv', placement: 'slot' }],
+      ['onBrowserShortcut', 'drawer:browser-shortcut', 'close-tab'],
+    ] as const) {
+      const callback = vi.fn()
+      const off = api[method](callback) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1] as Fn
+      expect(onSpy).toHaveBeenLastCalledWith(channel, listener)
+      listener({}, payload)
+      expect(callback).toHaveBeenCalledWith(payload)
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, listener)
+    }
   })
 
   it('runtime assets preserve IDs and explicit channels', () => {
@@ -1375,6 +1402,26 @@ describe('preload API — chat pagination (#559)', () => {
     listener({}, { conversationId: 'conv-completed' })
     expect(callback).toHaveBeenCalledWith({ conversationId: 'conv-completed' })
 
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
+  })
+
+  it('passes on only well-formed requests of a workspaces host to open an artifact', () => {
+    const callback = vi.fn()
+    const off = api.onChatArtifactOpen(callback) as () => void
+    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (...args: unknown[]) => void]
+    expect(channel).toBe('chat:artifact-open')
+    const request = { conversationId: 'conv-remote', artifactId: 'A'.repeat(22), version: 2 }
+    listener({}, request)
+    expect(callback).toHaveBeenCalledExactlyOnceWith(request)
+    for (const malformed of [
+      null,
+      { ...request, artifactId: '../a' },
+      { ...request, version: 0 },
+      { ...request, conversationId: '' },
+    ])
+      listener({}, malformed)
+    expect(callback).toHaveBeenCalledTimes(1)
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
   })

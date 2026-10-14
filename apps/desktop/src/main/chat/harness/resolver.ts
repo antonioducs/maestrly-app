@@ -157,6 +157,7 @@ function resolvePrompts(
     layout: prompts.layout ?? 'maestrly-base',
     base: text(profile, fallback, prompts.base),
     styleAndWork: text(profile, fallback, prompts.styleAndWork),
+    chatStyle: text(profile, fallback, prompts.chatStyle),
     behaviorHeader: prompts.behaviorHeader === true,
     subagent: text(profile, fallback, prompts.subagent),
     compaction: text(profile, fallback, prompts.compaction),

@@ -13,6 +13,7 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetInstallerStatus } from '../shared/fleet-installer'
 import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
+import type { FleetDownloadEvent, FleetDownloadFileKey, FleetDownloadProgress } from '../shared/fleet-downloads'
 import { ipcRenderer } from 'electron'
 import type {
   FleetOwnerMemory,
@@ -126,6 +127,8 @@ export type FleetOutgoingAttachment = {
 }
 /** Bytes of a bot image (a FleetImageRef from the transcript). */
 export type FleetImageData = { mediaType: FleetImageMediaType; data: Uint8Array }
+/** How much of a shared video main has copied to its cache so far. */
+export type FleetMediaProgress = { botId: string; fileId: string; received: number; total: number }
 export type FleetScreenState = {
   channelId: string
   state: 'connecting' | 'open' | 'closed' | 'error'
@@ -299,13 +302,32 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
   fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
     ipcRenderer.invoke('fleet:getImage', botId, imageId),
+  /** Resolves with a receipt; joins the transfer already running for the file instead of starting another. */
   fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
     ipcRenderer.invoke('fleet:downloadFile', botId, fileId),
+  fleetCancelDownload: (botId: string, fileId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:cancelDownload', botId, fileId),
+  fleetGetActiveDownload: (botId: string, fileId: string): Promise<FleetDownloadProgress | null> =>
+    ipcRenderer.invoke('fleet:getActiveDownload', botId, fileId),
+  /** The bot files this window shows, replacing its previous list: they finish without a system notification. */
+  fleetAttendDownloads: (files: FleetDownloadFileKey[]): Promise<void> =>
+    ipcRenderer.invoke('fleet:attendDownloads', files),
+  onFleetDownload: (cb: (event: FleetDownloadEvent) => void): (() => void) => subscribe('fleet:download', cb),
   fleetRevealDownload: (receipt: string): Promise<void> => ipcRenderer.invoke('fleet:revealDownload', receipt),
   fleetGetDownload: (botId: string, fileId: string): Promise<string | null> =>
     ipcRenderer.invoke('fleet:getDownload', botId, fileId),
+  /** A `maestrly-media:` URL that plays a shared video once main has it in its cache. */
+  fleetPrepareMedia: (botId: string, fileId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:prepareMedia', botId, fileId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
+  /** Edits the owner's last message (feature `message-edit`): the conversation is cut there and runs again. */
+  fleetEditMessage: (
+    botId: string,
+    inputId: string,
+    text: string
+  ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
+    ipcRenderer.invoke('fleet:editMessage', botId, inputId, text),
   fleetResolveInteraction: (
     botId: string,
     interactionId: string,
@@ -378,6 +400,8 @@ export const fleetApi = {
   onFleetDesktopAccess: (cb: (payload: { botId: string }) => void): (() => void) =>
     subscribe('fleet:desktop-access', cb),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
+  onFleetMediaProgress: (cb: (progress: FleetMediaProgress) => void): (() => void) =>
+    subscribe('fleet:mediaProgress', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),

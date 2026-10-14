@@ -1,4 +1,15 @@
-import { maestroStrategyGuidance } from '@maestrly/protocol'
+import type { MaestroStrategy, MaestroTurnSnapshotV1 } from '../../shared/maestro'
+
+export function maestroStrategyGuidance(strategy: MaestroStrategy): string {
+  return strategy === 'best-quality'
+    ? 'Prefer the strongest suitable agents and execution candidates. Non-trivial changes require independent review; important findings require a delegated fix followed by another review.'
+    : strategy === 'fast'
+      ? 'Favor fast suitable agents, aggressive safe decomposition, and parallel independent delegations. Keep critical review; do not trade away required validation.'
+      : strategy === 'economy'
+        ? 'Prefer economical suitable agents and candidates. Escalate only for specialty, failure, uncertainty, or an important finding, and make escalation visible.'
+        : 'Balance quality, speed, and economy. Favor lighter agents for exploration/tests and specialty/quality for complex implementation; review adaptively.'
+}
+
 /** Shared behavioral spec. Runtimes may wrap it, but must not fork its contract. */
 export const MAESTRO_SYSTEM_SPEC = `# Maestro orchestration contract
 You coordinate work; you do not execute mutations yourself.
@@ -23,8 +34,6 @@ message received while workers were running: apply it to all work that has not a
 selectedAgents responsibility, and make the effect visible in your next update. Never claim that an already-running
 worker saw or followed an update unless you explicitly dispatch follow-up work after receiving it.
 Finish only after every delegation is terminal and the requirements and selected Strategy are satisfied, or clearly report a real blocker.`
-
-import type { MaestroTurnSnapshotV1 } from '../../shared/maestro'
 
 export function renderMaestroTurnPolicy(turn: MaestroTurnSnapshotV1): string {
   const preset = maestroStrategyGuidance(turn.strategy)

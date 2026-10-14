@@ -20,6 +20,7 @@ import { getGrokSubscriptionManager } from '../chat/grok-subscription/manager'
 import { listSubscriptionAccounts, removeSubscriptionAccount } from '../chat/catalog'
 import { clearEphemeralToolImages } from '../chat/tool-output'
 import { forgetChatStoreCaches } from '../chat/chat-store'
+import { clearBrowserHistory } from '../drawer/browser-history'
 
 export interface LocalDataResetDeps {
   stopConversation: (id: string) => void | Promise<void>
@@ -142,6 +143,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
         'bot_command_receipts',
         'bot_question_bindings',
         'bot_conversation_allocations',
+        'conversation_peer_messages',
         'conversation_dispatches',
         'workspace_creations',
         'chat_usage_ledger',
@@ -164,9 +166,11 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     'chat-generated-images',
     'chat-attachment-images',
     'chat-tool-output',
+    'fleet-media-cache',
     'artifacts',
   ]) {
     await attempt(() => fsp.rm(path.join(app.getPath('userData'), directory), { recursive: true, force: true }))
   }
+  await attempt(() => clearBrowserHistory())
   assertComplete('Local data cleanup was incomplete.')
 }

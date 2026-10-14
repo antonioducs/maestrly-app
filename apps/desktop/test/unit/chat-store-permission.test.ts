@@ -378,6 +378,21 @@ describe('PermissionBroker (port of permission.ts)', () => {
     await expect(promise).resolves.toBeUndefined()
   })
 
+  it('asks before searching the web under default BYOK rules', async () => {
+    const broker = new PermissionBroker({ rulesetFor: () => BYOK_DEFAULT_RULESET })
+    const { promise, req } = pendingAsk(broker, {
+      conversationId: 'c',
+      projectId: 'w',
+      action: 'web_search',
+      resources: ['electron vibrancy'],
+      save: ['*'],
+    })
+    expect(req()?.action).toBe('web_search')
+    expect(req()?.title).toBe('Search the web: electron vibrancy')
+    broker.reply({ requestId: req()!.id, reply: 'once' })
+    await expect(promise).resolves.toBeUndefined()
+  })
+
   it('allows one-time shell permission decisions', async () => {
     const broker = new PermissionBroker({ rulesetFor: () => BYOK_DEFAULT_RULESET })
     const { promise, req } = pendingAsk(broker, {
@@ -473,6 +488,9 @@ describe('PermissionBroker (port of permission.ts)', () => {
     ).resolves.toBeUndefined()
     await expect(
       broker.assert({ conversationId: 'c', projectId: 'w', action: 'webfetch', resources: ['https://x'] })
+    ).resolves.toBeUndefined()
+    await expect(
+      broker.assert({ conversationId: 'c', projectId: 'w', action: 'web_search', resources: ['electron vibrancy'] })
     ).resolves.toBeUndefined()
     // bash continua pedindo
     const a = pendingAsk(broker, { conversationId: 'c', projectId: 'w', action: 'bash', resources: ['ls'] })

@@ -6,6 +6,9 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
+  FLEET_EDIT_CONFLICT,
+  FLEET_EDIT_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
 
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
@@ -58,6 +61,16 @@ export function isScreenOffline(cause: unknown): boolean {
   return fleetErrorMessage(cause).includes(FLEET_SCREEN_OFFLINE)
 }
 
+/** The bot refused an edit: it is busy, or the message is no longer its last one. */
+export function isEditConflict(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_EDIT_CONFLICT)
+}
+
+/** The server or the bot predates message edits. */
+export function isEditUnsupported(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_EDIT_UNSUPPORTED)
+}
+
 export function isOwnerMemoryFull(cause: unknown): boolean {
   return /^Owner memory is full\s*\(/.test(fleetErrorMessage(cause))
 }
@@ -83,6 +96,7 @@ const KNOWN_REFUSALS: KnownRefusal[] = [
   { matches: exactly('Start the environment to update it'), key: 'errors.environmentNotRunning' },
   { matches: marked(FLEET_SCREEN_CONFLICT), key: 'screen.conflict' },
   { matches: marked(FLEET_SCREEN_RESTART_REQUIRED), key: 'screen.restartEnvironment' },
+  { matches: marked(FLEET_SCREEN_UPDATE_REQUIRED), key: 'screen.updateServer' },
   { matches: marked(FLEET_SCREEN_OFFLINE), key: 'errors.screenOffline' },
   {
     matches: exactly('Restart this environment to update it before opening this screen.'),

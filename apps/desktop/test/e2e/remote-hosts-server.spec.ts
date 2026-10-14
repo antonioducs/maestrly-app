@@ -289,9 +289,9 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     })
     expect(connection.features).toContain('workspaces-host')
 
-    // A server with bots only adds no host: the sidebar has no headings.
+    // A server with bots only adds no host: the sidebar has no host switcher.
     expect(await local('hostsList')).toHaveLength(1)
-    await expect(page.locator('[data-host-section-header]')).toHaveCount(0)
+    await expect(page.locator('[data-host-switcher]')).toHaveCount(0)
 
     // The Server page offers to set up workspaces, apart from the environments bots run in.
     await page.getByRole('tab', { name: 'Bots' }).click()
@@ -358,10 +358,14 @@ test('server page sets up workspaces, and the sidebar follows the host through t
 
     await page.getByRole('tab', { name: 'Chats' }).click()
     const chats = page.locator('#sidebar-panel-chats')
-    const remoteHeader = chats.locator(`[data-host-section-header="${hostId}"]`)
-    await expect(remoteHeader).toContainText('fleet-workspaces-host')
-    await expect(chats.locator('[data-host-section-header="local"]')).toContainText('This computer')
-    await chats.getByRole('button', { name: 'New chat on fleet-workspaces-host' }).click()
+    // The sidebar lists one machine at a time: this computer until the host is chosen.
+    const switcher = page.locator('[data-host-switcher]')
+    await expect(switcher).toHaveAttribute('data-host-switcher', 'local')
+    await expect(switcher).toContainText('This computer')
+    await page.locator(`[data-host-shortcut="${hostId}"]`).click()
+    await expect(switcher).toHaveAttribute('data-host-switcher', hostId)
+    await expect(switcher).toContainText('fleet-workspaces-host')
+    await page.getByRole('button', { name: 'New chat on fleet-workspaces-host', exact: true }).click()
     const remoteChats = () =>
       page.evaluate((id) => (window as any).api.hostApi(id).listStandaloneConversations(true), hostId)
     await expect.poll(async () => (await remoteChats()).length).toBe(1)
@@ -383,12 +387,12 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     await page.getByRole('tab', { name: 'Chats' }).click()
     await chats.locator(`[data-host-section="${hostId}"] .conv-item`).click()
     await local('fleetEnvironmentAction', 'workspaces', 'stop')
-    await expect(remoteHeader.locator('[data-host-status]')).toHaveAttribute('data-host-status', 'stopped')
+    await expect(switcher.locator('[data-host-status]')).toHaveAttribute('data-host-status', 'stopped')
     await expect(page.locator('[data-host-overlay="stopped"]')).toBeVisible()
     await expect(chats.locator(`[data-host-section="${hostId}"] .conv-item`)).toHaveCount(1)
     await page.locator('[data-host-overlay="stopped"]').getByRole('button', { name: 'Start' }).click()
     await expect.poll(() => gateway.requests.filter((item) => item.key === 'environmentStart').length).toBe(1)
-    await expect(remoteHeader.locator('[data-host-status]')).toHaveCount(0)
+    await expect(switcher.locator('[data-host-status]')).toHaveCount(0)
     await expect(page.locator('[data-host-overlay]')).toHaveCount(0)
     const [, again] = await local('hostsList')
     expect(again).toMatchObject({ id: hostId, state: 'online', epoch: 2 })
@@ -397,7 +401,7 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     // Disconnecting the server removes its host from the window.
     await local('fleetDisconnect')
     await expect.poll(async () => (await local('hostsList')).length).toBe(1)
-    await expect(page.locator('[data-host-section-header]')).toHaveCount(0)
+    await expect(page.locator('[data-host-switcher]')).toHaveCount(0)
     await expect(page.locator('.conv-item')).toHaveCount(0)
   } finally {
     await client?.close().catch(() => undefined)

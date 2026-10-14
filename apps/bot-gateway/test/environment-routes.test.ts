@@ -73,6 +73,7 @@ describe('environment routes', () => {
     expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
       'files',
       'environment-settings-v1',
+      'account-failover',
       'artifacts',
       'artifacts-gateway-viewer',
       'artifacts-transfer',
@@ -87,9 +88,9 @@ describe('environment routes', () => {
       'workspaces-host',
       'host-files',
       'host-editor',
-      'device-pairing',
-      'mobile-bridge',
-      'push-notifications',
+      'message-edit',
+      'video-screens',
+      'phones',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)
@@ -378,7 +379,7 @@ describe('environment routes', () => {
   })
 
   it('issues screen tickets for bot surfaces and for the environment screen without a takeover', async () => {
-    const h = await harness(Date.now, { environments: true })
+    const h = await harness(Date.now, { environments: true, videoScreens: true })
     for (const body of [{ mode: 'view' }, { mode: 'view', surface: 'browser' }, { mode: 'view', surface: 'apps' }]) {
       const response = await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, body)
       expect(response.status).toBe(201)

@@ -81,6 +81,7 @@ describe('bot autonomy table', () => {
     edit: [['edit', 'src/notes.md']],
     web: [
       ['webfetch', 'https://example.com/prices'],
+      ['web_search', 'electron vibrancy'],
       ['mcp', 'fixture-mcp_search'],
     ],
     commands: [['bash', 'ls -la']],

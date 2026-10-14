@@ -8,7 +8,6 @@ import { memoryCoreForPrompt } from '../memory/core'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getWorkspace } from '../store'
-import { platformProjectBindings } from '../platform/project-bindings'
 
 const PROJECT_INSTRUCTION_FILES = ['AGENTS.override.md', 'AGENTS.md', 'CLAUDE.md']
 const PROJECT_INSTRUCTION_BYTES = 32 * 1024
@@ -142,15 +141,6 @@ async function discoverProjectInstructions(workspaceId: string, cwd: string): Pr
  */
 async function projectInstructionsContext(workspaceId: string, cwd: string): Promise<string> {
   const sections: string[] = []
-  try {
-    const binding = platformProjectBindings.forWorkspace(workspaceId)
-    if (binding)
-      sections.push(
-        `## Linked Kanban project\n${JSON.stringify({ project: binding.projectName ?? binding.projectId, projectId: binding.projectId, boardId: binding.boardId })}\nUse get_linked_kanban and board_* tools to work with this project. The link is inherited by this workspace's conversations and worktrees. Ask/Plan are read-only; board mutations require account permissions. Read current versions before updates. Never mark cards done merely because your response ended.`
-      )
-  } catch {
-    /* Local chat remains usable without a platform link. */
-  }
   try {
     const instructions = await discoverProjectInstructions(workspaceId, cwd)
     for (const instruction of instructions) {

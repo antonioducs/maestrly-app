@@ -71,6 +71,8 @@ export interface ConversationDispatchServiceDeps {
     dispatchId: string
     sourceConversationId: string
     visible: boolean
+    /** Deliver the first turn's final answer back to the source. */
+    reportBack: boolean
   }): Promise<{ ok: true } | { ok: false; error: string }>
   /** A seeded turn persists its first message at admission; used to reconcile an uncertain start. */
   hasPersistedMessages(conversationId: string): boolean
@@ -79,7 +81,6 @@ export interface ConversationDispatchServiceDeps {
   reportStartFailure(conversationId: string, error: string): void
   isReserved(conversationId: string): boolean
   isMigrating(conversationId: string): boolean
-  isWebManaged(conversationId: string): boolean
   text(key: string, params?: Record<string, string>): string
 }
 
@@ -88,7 +89,6 @@ export type ConversationDispatchErrorCode =
   | 'source-not-found'
   | 'project-required'
   | 'bot-conversation'
-  | 'web-managed'
   | 'source-archived'
   | 'conversation-migrating'
   | 'unsupported-layout'
@@ -131,6 +131,8 @@ export interface PrepareDispatchInput {
   resolved?: { settings: ConversationDispatchSettings; inherited: string[] }
   /** Pinned base revision for isolated placement, shared by a batch. */
   baseRevision?: string
+  /** Deliver the first turn's final answer back to the source (fingerprinted). */
+  reportBack?: boolean
   signal?: AbortSignal
   /** Rechecked right before each mutation (e.g. the authorizing turn is still live). */
   assertCurrent?: () => void
@@ -159,6 +161,7 @@ function fingerprintOf(input: PrepareDispatchInput): string {
         settings: input.settings,
         source: input.sourceRef,
         target: input.target,
+        reportBack: input.reportBack,
       })
     )
     .update(`\0${input.kind}`)
@@ -197,8 +200,6 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
         'bot-conversation',
         'Bot conversations own their worktree exclusively and cannot start other conversations.'
       )
-    if (deps.isWebManaged(sourceConversationId))
-      throw new ConversationDispatchError('web-managed', 'This conversation is managed in the Kanban web chat.')
     if (source.archived === 1)
       throw new ConversationDispatchError(
         'source-archived',
@@ -385,6 +386,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
           prompt: input.prompt,
           placement: input.placement,
           sourceRef: input.sourceRef ?? null,
+          reportBack: input.reportBack ?? false,
           ...next,
         })
         if (!reserved.created) return prepareOnce(input)
@@ -531,6 +533,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
         dispatchId,
         sourceConversationId: record.sourceConversationId,
         visible: record.kind === 'task',
+        reportBack: record.reportBack,
       })
     } catch (error) {
       result = { ok: false, error: errorText(error) }
@@ -660,6 +663,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       placement: task.placement ?? defaultPlacement,
       settings: { ...(batch.defaults ?? {}), ...(task.settings ?? {}) },
       target: { ...batch.target, ...task.target },
+      reportBack: task.reportBack ?? batch.reportBack ?? false,
     }))
     try {
       for (const task of tasks) assertSource(sourceId, task.placement, task.target)
@@ -792,6 +796,7 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
           ...(task.source ? { sourceRef: task.source } : {}),
           ...(resolved.has(task.requestKey) ? { resolved: resolved.get(task.requestKey) } : {}),
           target: task.target,
+          reportBack: task.reportBack,
           destination: destinations.get(task.requestKey),
           signal: input.signal,
           assertCurrent: input.assertCurrent,
@@ -892,7 +897,7 @@ export async function listConversationDispatchWorkspaces(): Promise<Conversation
 }
 
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
-  const [store, chat, workspace, git, windowIpc, i18n, migration, reviewLoop, remote, settings, dispatchStore] =
+  const [store, chat, workspace, git, windowIpc, i18n, migration, reviewLoop, settings, dispatchStore] =
     await Promise.all([
       import('./store'),
       import('./chat/service'),
@@ -902,7 +907,6 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
       import('./i18n'),
       import('./conversation-migration/store'),
       import('./chat/review-loop/registry'),
-      import('./chat/remote-policy'),
       import('./conversation-dispatch-settings'),
       import('./conversation-dispatch-store'),
     ])
@@ -983,7 +987,6 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     reportStartFailure: chat.reportConversationDispatchStartFailure,
     isReserved: (conversationId) => !!reviewLoop.lookupReviewLoopByConversation(conversationId),
     isMigrating: (conversationId) => !!migration.incompleteMigrationForConversation(conversationId),
-    isWebManaged: remote.isWebManagedConversation,
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
   })
 }

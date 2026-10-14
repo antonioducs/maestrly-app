@@ -21,7 +21,7 @@ fi
 
 # The environment display :0 is a 3x3 grid of 1280x800 tiles: tile 0 shows the environment screen (Maestrly's
 # settings) and tile k the browser of the bot in slot k. openbox places the windows. Maestrly's display manager runs
-# each bot's apps display (:1 to :8) and every VNC server.
+# each bot's apps display (:1 to :8) and every screen encoder.
 readonly environment_screen=3840x2400x24
 readonly electron=/opt/maestrly/node_modules/electron/dist/electron
 readonly exit_wait_tenths=80
@@ -31,7 +31,7 @@ app_pid=''
 sleep_pid=''
 
 # Stops what a Maestrly process left running in its own session after it exited: the bots' apps displays (Xvfb, their
-# D-Bus buses, openbox and tint2), the VNC servers and the other programs it started. Its replacement can then start
+# D-Bus buses, openbox and tint2), the screen encoders and the other programs it started. Its replacement can then start
 # the same displays again. The environment display, its window manager, the keyring and the environment's bus run in
 # this script's session and are never touched.
 stop_app_session() {

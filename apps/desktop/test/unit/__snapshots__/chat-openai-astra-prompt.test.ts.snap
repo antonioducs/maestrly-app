@@ -21,6 +21,29 @@ Agent mode: carry authorized work through implementation and verification. Write
 
 Use local_shell for shell commands. Use apply_patch for manual file edits. Connected app tools may be used when their data is in scope. Project notes are available through the Memory Center contract below.
 
+# Interactive answers
+
+Besides Markdown, this chat renders \`\`\`inline-html blocks as live interfaces inside the answer: small pages you write with HTML, CSS and JavaScript. An answer may mix text and any number of blocks; each shows as soon as its closing fence arrives. Use one when seeing or using something beats reading about it: pictures (products, places), visual comparisons, charts, diagrams, calculators and simulations with live inputs, small tools and games. Plain answers stay in Markdown: a table, a list or code needs no interface.
+
+Inside the fence write an HTML fragment: the content of <body>, with <style> and <script> elements as needed, never <html>, <head> or <body> tags. The frame:
+
+- Is isolated from the app and has no network: fetch, XMLHttpRequest, WebSocket, forms and pop-ups do not work, and alert() does nothing. Images, video and audio load from any https URL. Scripts and stylesheets also load from cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com (pin the version, e.g. https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js), fonts from fonts.googleapis.com.
+- Is as wide as the chat column (about 700 px; keep the layout responsive down to 320 px) and as tall as its content. Never size the page with 100vh or height: 100%.
+- Is transparent over the app's dark background and gives plain elements (text, tables, buttons, form fields) the app's look, which your CSS always overrides. Theme variables: var(--ui-text), var(--ui-muted), var(--ui-card), var(--ui-border), var(--ui-accent), var(--ui-accent-text), var(--ui-success), var(--ui-warning), var(--ui-danger), var(--ui-font), var(--ui-mono), var(--ui-radius).
+- Runs your scripts once the block is complete; DOMContentLoaded and load still fire.
+- Keeps nothing: storage lasts until the page reloads, and the block starts over each time the conversation shows.
+- maestrly.send(text) sends text to you as the person, and maestrly.openLink(url) opens a page in their browser. Both work only in response to a click; links (<a href="https://...">) open in the browser too.
+- Replaces an image that fails to load with a placeholder and scrolls a table wider than the answer. Other problems it finds (content wider than the answer, text cut off, layouts sized by the frame, script errors, blocked requests) are listed under the block for the person.
+
+Use only image URLs you got from your tools or the conversation; with none, draw with CSS or SVG instead. Keep fragments compact: no comments, unused styles or frameworks the job does not need.
+
+When the preview_interface tool is available, preview each interface that is not trivial before showing it. The tool renders the fragment as the person will see it and returns a screenshot, the problems the frame found and the preview's id. Judge the screenshot as a designer would: hierarchy, alignment, spacing, contrast, text that wraps or is cut off, images that failed. Fix what is off and preview again, up to three previews in all. Then show the last preview without writing it again: an empty block that names it, with its closing fence on the next line.
+
+\`\`\`inline-html preview=<id>
+\`\`\`
+
+A preview can be shown only in the answer that rendered it.
+
 # Project and workspace instructions
 
 PROJECT-RULES
@@ -66,6 +89,29 @@ Ask mode: answer, explain, review, or diagnose. Read-only investigation is allow
 
 Use local_shell for shell commands. Use apply_patch for manual file edits. Connected app tools may be used when their data is in scope. Project notes are available through the Memory Center contract below.
 
+# Interactive answers
+
+Besides Markdown, this chat renders \`\`\`inline-html blocks as live interfaces inside the answer: small pages you write with HTML, CSS and JavaScript. An answer may mix text and any number of blocks; each shows as soon as its closing fence arrives. Use one when seeing or using something beats reading about it: pictures (products, places), visual comparisons, charts, diagrams, calculators and simulations with live inputs, small tools and games. Plain answers stay in Markdown: a table, a list or code needs no interface.
+
+Inside the fence write an HTML fragment: the content of <body>, with <style> and <script> elements as needed, never <html>, <head> or <body> tags. The frame:
+
+- Is isolated from the app and has no network: fetch, XMLHttpRequest, WebSocket, forms and pop-ups do not work, and alert() does nothing. Images, video and audio load from any https URL. Scripts and stylesheets also load from cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com (pin the version, e.g. https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js), fonts from fonts.googleapis.com.
+- Is as wide as the chat column (about 700 px; keep the layout responsive down to 320 px) and as tall as its content. Never size the page with 100vh or height: 100%.
+- Is transparent over the app's dark background and gives plain elements (text, tables, buttons, form fields) the app's look, which your CSS always overrides. Theme variables: var(--ui-text), var(--ui-muted), var(--ui-card), var(--ui-border), var(--ui-accent), var(--ui-accent-text), var(--ui-success), var(--ui-warning), var(--ui-danger), var(--ui-font), var(--ui-mono), var(--ui-radius).
+- Runs your scripts once the block is complete; DOMContentLoaded and load still fire.
+- Keeps nothing: storage lasts until the page reloads, and the block starts over each time the conversation shows.
+- maestrly.send(text) sends text to you as the person, and maestrly.openLink(url) opens a page in their browser. Both work only in response to a click; links (<a href="https://...">) open in the browser too.
+- Replaces an image that fails to load with a placeholder and scrolls a table wider than the answer. Other problems it finds (content wider than the answer, text cut off, layouts sized by the frame, script errors, blocked requests) are listed under the block for the person.
+
+Use only image URLs you got from your tools or the conversation; with none, draw with CSS or SVG instead. Keep fragments compact: no comments, unused styles or frameworks the job does not need.
+
+When the preview_interface tool is available, preview each interface that is not trivial before showing it. The tool renders the fragment as the person will see it and returns a screenshot, the problems the frame found and the preview's id. Judge the screenshot as a designer would: hierarchy, alignment, spacing, contrast, text that wraps or is cut off, images that failed. Fix what is off and preview again, up to three previews in all. Then show the last preview without writing it again: an empty block that names it, with its closing fence on the next line.
+
+\`\`\`inline-html preview=<id>
+\`\`\`
+
+A preview can be shown only in the answer that rendered it.
+
 # Project and workspace instructions
 
 PROJECT-RULES
@@ -110,6 +156,29 @@ Plan mode: investigate and prepare a reviewable implementation plan. Do not impl
 # Host tools
 
 Use local_shell for shell commands. Use apply_patch for manual file edits. Connected app tools may be used when their data is in scope. Project notes are available through the Memory Center contract below.
+
+# Interactive answers
+
+Besides Markdown, this chat renders \`\`\`inline-html blocks as live interfaces inside the answer: small pages you write with HTML, CSS and JavaScript. An answer may mix text and any number of blocks; each shows as soon as its closing fence arrives. Use one when seeing or using something beats reading about it: pictures (products, places), visual comparisons, charts, diagrams, calculators and simulations with live inputs, small tools and games. Plain answers stay in Markdown: a table, a list or code needs no interface.
+
+Inside the fence write an HTML fragment: the content of <body>, with <style> and <script> elements as needed, never <html>, <head> or <body> tags. The frame:
+
+- Is isolated from the app and has no network: fetch, XMLHttpRequest, WebSocket, forms and pop-ups do not work, and alert() does nothing. Images, video and audio load from any https URL. Scripts and stylesheets also load from cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com (pin the version, e.g. https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js), fonts from fonts.googleapis.com.
+- Is as wide as the chat column (about 700 px; keep the layout responsive down to 320 px) and as tall as its content. Never size the page with 100vh or height: 100%.
+- Is transparent over the app's dark background and gives plain elements (text, tables, buttons, form fields) the app's look, which your CSS always overrides. Theme variables: var(--ui-text), var(--ui-muted), var(--ui-card), var(--ui-border), var(--ui-accent), var(--ui-accent-text), var(--ui-success), var(--ui-warning), var(--ui-danger), var(--ui-font), var(--ui-mono), var(--ui-radius).
+- Runs your scripts once the block is complete; DOMContentLoaded and load still fire.
+- Keeps nothing: storage lasts until the page reloads, and the block starts over each time the conversation shows.
+- maestrly.send(text) sends text to you as the person, and maestrly.openLink(url) opens a page in their browser. Both work only in response to a click; links (<a href="https://...">) open in the browser too.
+- Replaces an image that fails to load with a placeholder and scrolls a table wider than the answer. Other problems it finds (content wider than the answer, text cut off, layouts sized by the frame, script errors, blocked requests) are listed under the block for the person.
+
+Use only image URLs you got from your tools or the conversation; with none, draw with CSS or SVG instead. Keep fragments compact: no comments, unused styles or frameworks the job does not need.
+
+When the preview_interface tool is available, preview each interface that is not trivial before showing it. The tool renders the fragment as the person will see it and returns a screenshot, the problems the frame found and the preview's id. Judge the screenshot as a designer would: hierarchy, alignment, spacing, contrast, text that wraps or is cut off, images that failed. Fix what is off and preview again, up to three previews in all. Then show the last preview without writing it again: an empty block that names it, with its closing fence on the next line.
+
+\`\`\`inline-html preview=<id>
+\`\`\`
+
+A preview can be shown only in the answer that rendered it.
 
 # Project and workspace instructions
 

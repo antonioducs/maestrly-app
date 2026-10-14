@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { validateHarnessCatalog } from './build/harness-catalog'
+import { NOVNC_KEYBOARD, novncKeyboardPath } from './build/novnc-keyboard'
 
 // Same validator as the main build: an invalid harness profile fails the test run before any suite.
 validateHarnessCatalog()
@@ -36,6 +37,7 @@ export default defineConfig({
       'node-pty': here('./test/stubs/node-pty.ts'),
       '@xenova/transformers': here('./test/stubs/transformers.ts'),
       '@xterm/headless': here('./test/stubs/xterm-headless.ts'),
+      [NOVNC_KEYBOARD]: novncKeyboardPath(here('./package.json')),
     },
   },
 })

@@ -201,7 +201,11 @@ export function createGatewayServers(ctx: GatewayContext) {
         req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION)
       )
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
-      const caller = internal ? ctx.auth.internalBot(req.headers.authorization) : null
+      const internalCaller = internal ? ctx.auth.internalCaller(req.headers.authorization) : null
+      // A workspaces environment's token publishes its chats' artifacts and reaches nothing else of the internal API.
+      if (internalCaller && 'environmentId' in internalCaller && !match.key.startsWith('artifact'))
+        throw new GatewayError('FORBIDDEN', 'Host token is limited to artifacts')
+      const caller = internalCaller && 'botId' in internalCaller ? internalCaller.botId : null
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
       // Host-file bodies are streamed to the workspaces host as they arrive; the gateway never buffers or parses them.
       if (!internal && isHostFileRoute(match.key))
@@ -221,7 +225,7 @@ export function createGatewayServers(ctx: GatewayContext) {
                 ? FLEET_ARTIFACT_BODY_MAX
                 : !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
                   ? FLEET_SKILL_BODY_MAX
-                  : !internal && match.key === 'botMessageSend'
+                  : !internal && (match.key === 'botMessageSend' || match.key === 'botMessageEdit')
                     ? FLEET_MESSAGE_BODY_MAX
                     : !internal && match.key === 'desktopCallResult'
                       ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
@@ -230,7 +234,7 @@ export function createGatewayServers(ctx: GatewayContext) {
           )
         : undefined
       if (match.key.startsWith('artifact')) {
-        const identity = internal ? { botId: caller! } : { deviceId: ctx.auth.device(req.headers.authorization).id }
+        const identity = internal ? internalCaller! : { deviceId: ctx.auth.device(req.headers.authorization).id }
         const result = await artifactRoute(activeCtx, match.key, body, identity)
         return send(res, 200, match.route.response?.parse(result) ?? result)
       }
@@ -309,7 +313,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
       const { pathname, search } = new URL(req.url ?? '/', 'http://gateway')
-      // A bridge ticket says which Origin, if any, its upgrade may carry (`mobile-bridge`).
+      // A bridge ticket says which Origin, if any, its upgrade may carry (`phones`).
       if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       // The editor's WebSockets authenticate with the device token, as its requests do.

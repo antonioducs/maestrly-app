@@ -1,13 +1,14 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
-import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import os from 'node:os'
-import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
-import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import { isHeadlessInstance, isServerMode, takeHostGatewayAccess } from './remote-host/server/config'
+import { createHostSources } from './remote-host/server/host-artifacts'
+import { ARTIFACT_OPEN_REQUEST_CHANNEL } from '../shared/artifacts'
+import { saveHeadlessDownloads } from './headless-downloads'
 import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
 import { startServerHostMode } from './remote-host/server/start'
 import { isSupportedLocale } from '../shared/locale'
@@ -38,7 +39,15 @@ import {
   setTerminalFloatFocuser,
   setTerminalPopupFocuser,
 } from './terminal-manager'
-import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
+import {
+  safeWindowSend,
+  setBroadcastMainWindow,
+  broadcast,
+  guardHandle,
+  guardOn,
+  focusMainWindow,
+  sendToConversation,
+} from './window-ipc'
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
@@ -55,6 +64,7 @@ import { setMainLocale, tMain } from './i18n'
 import * as floatingManager from './floating-manager'
 import * as popupManager from './popup-manager'
 import { setHotkeyHandler, attachHotkeyCapture } from './hotkeys'
+import { attachMainWindowBrowserHotkeys, setBrowserShortcutHandlers } from './browser-hotkeys'
 import { AgentRegistry } from './agent-registry'
 
 import { initMemoryService, disposeMemory, migrateAllLegacyMemories } from './memory-service'
@@ -90,6 +100,9 @@ import { initPlanBroker, clearPlan } from './plan-broker'
 import {
   initDrawer,
   flushPendingBrowserPersists,
+  flushBrowserHistory,
+  openBrowserTabFromShortcut,
+  closeActiveBrowserTabFromShortcut,
   hardenBrowserSession,
   loadVSCode,
   navigateFocusedBrowser,
@@ -187,7 +200,6 @@ import {
 import { cleanupToolOutputs } from './chat/tool-output-store'
 import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
-import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
@@ -198,6 +210,12 @@ import { createDesktopSources, serverUnavailable } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
+import { handleFleetMediaProtocol } from './fleet/client/media-scheme'
+import { appPolicyHeaders } from './content-security-policy'
+import { isGenUiWidgetUrl } from '../shared/genui-widget'
+import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
+import { registerPrivilegedSchemes } from './privileged-schemes'
+import { noticeFleetDownload } from './fleet/client/download-notices'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
 import { playSound } from './platform'
@@ -212,13 +230,14 @@ import { createConversationFileScope } from './conversation-file-scope'
 import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
-import { embeddedRunnerHost } from './platform/runner-host'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !!process.env.ELECTRON_RENDERER_URL
 
 // Isolate the application profile before acquiring locks or opening persistent stores.
 applyChannelIdentity()
+// Privileged schemes can only be declared before the app is ready.
+registerPrivilegedSchemes()
 
 // Disable hardware acceleration for the Linux configurations affected by Chromium GPU startup loops.
 const isWaylandSession = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
@@ -289,15 +308,19 @@ function initArtifacts(): void {
       onChanged: () => broadcast('artifacts:changed'),
     })
   }
+  // A workspaces host is not paired with the server it runs on: it publishes there with the token the gateway gave it.
+  const hostAccess = takeHostGatewayAccess()
   const sources = isBotMode()
     ? createBotSources((id) => {
         const bot = botRuntimeForConversation(id)
         return bot?.artifactsEnabled ? botArtifactSource(bot) : null
       })
-    : createDesktopSources({
-        server: () => server.source(),
-        unavailable: () => server.unavailable() ?? serverUnavailable(),
-      })
+    : isServerMode()
+      ? createHostSources(hostAccess)
+      : createDesktopSources({
+          server: () => server.source(),
+          unavailable: () => server.unavailable() ?? serverUnavailable(),
+        })
   const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
   if (!isBotMode())
     fleetClientService.onArtifactEvent = (event) => {
@@ -308,7 +331,7 @@ function initArtifacts(): void {
   const service = new ArtifactsService({
     sources,
     emitChanged: () => broadcast('artifacts:changed'),
-    server: isBotMode() ? undefined : server,
+    server: isHeadlessInstance() ? undefined : server,
     legacy: legacyArtifacts ?? undefined,
     botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
     vault,
@@ -322,6 +345,10 @@ function initArtifacts(): void {
       createBrowserTab(convId, url, { activate })
       if (activate) focusBrowserDrawer(convId)
     },
+    // Only the main window of a computer showing the conversation acts on it; panels do not listen.
+    openOnViewer: isServerMode()
+      ? (convId, request) => sendToConversation(convId, ARTIFACT_OPEN_REQUEST_CHANNEL, request)
+      : undefined,
   })
   setArtifactsService(service)
   thumbnails = new ThumbnailQueue({
@@ -510,22 +537,20 @@ function broadcastStatus(payload: { agentId: string; status: string }): void {
 }
 
 function setupSessionPermissions(): void {
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) =>
-    cb(permission === 'media' || permission === 'clipboard-sanitized-write')
+  // Inline HTML answers get no permission at all, whatever their frame asks.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) =>
+    cb(
+      !isGenUiWidgetUrl(details.requestingUrl ?? '') &&
+        (permission === 'media' || permission === 'clipboard-sanitized-write')
+    )
   )
 }
 
 function applyProdCsp(): void {
   if (isDev) return
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
-    cb({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-        ],
-      },
-    })
+    const responseHeaders = appPolicyHeaders(details.url, details.responseHeaders)
+    cb(responseHeaders ? { responseHeaders } : {})
   })
 }
 
@@ -553,15 +578,10 @@ function setupApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-// Set once at startup and consumed by the first window; later windows come from explicit reveals.
-let startHiddenAtLogin = false
-
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
-  const startHidden = startHiddenAtLogin
-  startHiddenAtLogin = false
   mainWindow = new BrowserWindow({
-    show: !isHeadlessInstance() && !startHidden,
+    show: !isHeadlessInstance(),
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -667,6 +687,8 @@ async function createWindow(): Promise<void> {
     },
   })
   attachHotkeyCapture(mainWindow.webContents)
+  setBrowserShortcutHandlers({ newTab: openBrowserTabFromShortcut, closeTab: closeActiveBrowserTabFromShortcut })
+  attachMainWindowBrowserHotkeys(mainWindow.webContents)
   attachWindowNavigation(mainWindow, (direction) => {
     const convId = popupManager.getVisibleConvId()
     return !!convId && (navigateFocusedVSCode(convId, direction) || navigateFocusedBrowser(convId, direction))
@@ -675,11 +697,6 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('close', (e) => {
     if (isHeadlessInstance() && !backgroundQuit) {
-      e.preventDefault()
-      mainWindow?.hide()
-      return
-    }
-    if (executorSettings().background && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -808,6 +825,11 @@ function registerIpc(): void {
   void getConversationDispatchService()
     .then((service) => service.reconcile())
     .catch((error) => console.warn('[conversation-dispatch] reconciliation failed:', error))
+  // Messages queued for busy conversations are delivered again; results lost with the previous run are not.
+  void import('./conversation-link-service')
+    .then(({ getConversationLinkService }) => getConversationLinkService())
+    .then((service) => service.reconcile())
+    .catch((error) => console.warn('[conversation-link] reconciliation failed:', error))
 
   registerUsageIpc({ mhandle })
   registerMemoryIpc(reg)
@@ -839,10 +861,10 @@ function registerIpc(): void {
   registerPerformanceIpc(reg)
   registerSoundIpc(reg)
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
-  registerPlatformIpc(reg)
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
+  fleetClientService.onDownloadSettled = noticeFleetDownload
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(reg, fleetClientService)
@@ -920,6 +942,8 @@ app.on('child-process-gone', (_e, details) => {
 })
 
 app.whenReady().then(async () => {
+  // Before any session exists, so that every session of a headless instance saves its downloads without a dialog.
+  if (isHeadlessInstance()) saveHeadlessDownloads()
   fixPathForGuiApp()
   if (process.env.MAESTRLY_PACKAGED_LOCAL_ML_SMOKE === '1') {
     try {
@@ -986,6 +1010,8 @@ app.whenReady().then(async () => {
   setupSessionPermissions()
   hardenBrowserSession()
   applyProdCsp()
+  handleFleetMediaProtocol(fleetClientService)
+  handleGenUiWidgetProtocol()
   registry.on('status', broadcastStatus)
   registry.setSoundSettings(getSoundSettings())
 
@@ -995,7 +1021,6 @@ app.whenReady().then(async () => {
     console.warn(`[conversation-migration] ${migrationRecoveries.length} incomplete operation(s) recovered.`)
   }
   setupApplicationMenu()
-  startHiddenAtLogin = !isBotMode() && shouldStartHidden(executorSettings(), wasLaunchedAtLogin())
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
@@ -1020,23 +1045,18 @@ app.whenReady().then(async () => {
           .resize({ width: process.platform === 'win32' ? 16 : 22, height: process.platform === 'win32' ? 16 : 22 })
   if (!trayIcon.isEmpty()) {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
-    executorTray = new Tray(trayIcon)
-    executorTray.setToolTip('Maestrly')
+    appTray = new Tray(trayIcon)
+    appTray.setToolTip('Maestrly')
     const reveal = () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show()
         mainWindow.focus()
-        mainWindow.webContents.send('executor:open')
       } else void createWindow()
     }
-    executorTray.on('click', reveal)
-    executorTray.setContextMenu(
+    appTray.on('click', reveal)
+    appTray.setContextMenu(
       Menu.buildFromTemplate([
         { label: 'Maestrly', click: reveal },
-        {
-          label: getLocale().startsWith('pt') ? 'Pausar executor' : 'Pause executor',
-          click: () => void embeddedRunnerHost.stop(),
-        },
         { type: 'separator' },
         { label: getLocale().startsWith('pt') ? 'Sair' : 'Quit', click: () => app.quit() },
       ])
@@ -1117,9 +1137,6 @@ app.whenReady().then(async () => {
       return
     }
   }
-  recoverDesktopExecutions()
-  const executor = executorSettings()
-  if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   void botHost.restore()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1129,9 +1146,13 @@ app.whenReady().then(async () => {
   })
 })
 
+// History writes are debounced; persist the last visits in every mode, bots included.
+app.on('will-quit', () => flushBrowserHistory())
+
 app.on('window-all-closed', () => {
   if (isHeadlessInstance()) return
   flushPendingBrowserPersists()
+  flushBrowserHistory()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()
   popupManager.disposeAll()
@@ -1176,10 +1197,10 @@ let shutdownComplete = false
 
 let chatDisposed = false
 let chatDisposing = false
-let platformRunnerStopped = false
-let platformRunnerStopping = false
+let backgroundServicesStopped = false
+let backgroundServicesStopping = false
 
-let executorTray: Tray | null = null
+let appTray: Tray | null = null
 let backgroundQuit = false
 let quitConfirmed = false
 let quitDialogOpen = false
@@ -1236,13 +1257,13 @@ app.on('before-quit', (e) => {
     return
   }
 
-  if (!platformRunnerStopped) {
+  if (!backgroundServicesStopped) {
     e.preventDefault()
-    if (!platformRunnerStopping) {
-      platformRunnerStopping = true
-      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop(), artifactHost?.stop()]).finally(() => {
-        platformRunnerStopped = true
-        platformRunnerStopping = false
+    if (!backgroundServicesStopping) {
+      backgroundServicesStopping = true
+      void Promise.allSettled([botHost.stop(), artifactHost?.stop()]).finally(() => {
+        backgroundServicesStopped = true
+        backgroundServicesStopping = false
         app.quit()
       })
     }

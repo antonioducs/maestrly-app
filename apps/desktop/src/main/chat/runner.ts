@@ -65,6 +65,7 @@ import {
   selectSubagentToolNames,
 } from './tools'
 import { enableConversationDispatchTools } from './tools/conversation-dispatch'
+import { enableConversationLinkTools } from './tools/conversation-link'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -133,6 +134,7 @@ import type { PermissionBroker } from './permission'
 import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
 import { buildHarnessPrompt } from './harness/prompt-builder'
 import { buildMaestrlyBasePrompt, harnessUltraGuidance } from './harness/host-contracts'
+import { generatedInterfacesEnabled } from './generated-interfaces'
 import { openAINativeToolsPromptOverlay } from './harness/strategies/prompt-layout'
 import { withEnvironmentOnLastUserMessage } from './harness/strategies/environment'
 import { captureHarnessFlags } from './harness/flags'
@@ -618,6 +620,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const conversationDispatch = args.reviewerRuntime
     ? undefined
     : enableConversationDispatchTools(enabledNames, conversationId, mode)
+  // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+  const conversationLink = args.reviewerRuntime
+    ? undefined
+    : enableConversationLinkTools(enabledNames, conversationId, mode)
 
   if (autonomousPolicy(conversationId))
     for (const name of enabledNames) {
@@ -758,6 +764,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             emitGeneratedImagePart(apply, assistantId, toolCallId, image),
           onGeneratedImageUsage: recordGeneratedImageUsage,
           ...(conversationDispatch ? { conversationDispatch } : {}),
+          ...(conversationLink ? { conversationLink } : {}),
         }),
   })
   // generate_image is OPT-IN: requires global/conversation imagegen toggle and connected ChatGPT
@@ -1431,6 +1438,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     disabledAppToolGroups: appAccess.disabledGroups,
     mode,
     hasNotesTab,
+    generatedInterfaces: generatedInterfacesEnabled(),
   })
   const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
@@ -1465,6 +1473,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
         hasNotesTab,
+        generatedInterfaces: generatedInterfacesEnabled(),
         projectContext,
         skillsContext: skillsCatalog,
         agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${

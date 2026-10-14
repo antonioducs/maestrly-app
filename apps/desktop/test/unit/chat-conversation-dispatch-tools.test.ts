@@ -89,6 +89,7 @@ const BATCH = {
 afterEach(() => {
   for (const origin of recorded.splice(0)) clearHumanTurnOrigin(origin.conversationId, origin.token)
   vi.clearAllMocks()
+  h.createdWorkspaceIdsForTurn.mockReturnValue([])
 })
 
 describe('conversation dispatch tool surface', () => {
@@ -159,13 +160,133 @@ describe('conversation dispatch tool surface', () => {
     expect(h.getConversationDispatchService).not.toHaveBeenCalled()
   })
 
-  it('denies a non-explicit request before any conversation work', async () => {
+  it('asks the person before a request that is not explicit and starts nothing without an answer', async () => {
     humanTurn('Analise esses cards do Jira e me diga o que falta.')
     const runtime = conversationDispatchRuntimeFor('source', 'agent')!
-    const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime }))
+    const askQuestion = vi.fn(async (_questions: unknown) => [] as string[][])
+    const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion }))
+    expect(askQuestion).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({ ok: false, items: [] })
-    expect(result.error).toMatch(/does not explicitly ask/)
+    expect(result.error).toMatch(/declined/)
     expect(h.getConversationDispatchService).not.toHaveBeenCalled()
+  })
+
+  describe('confirmation of loosely worded requests', () => {
+    const LOOSE = 'Manda outro agent revisar o PROJ-1 em paralelo.'
+    const ask = (answer: string[][]) => vi.fn(async (_questions: unknown) => answer)
+    const ready = () => {
+      h.dispatchBatch.mockResolvedValue({ ok: true, items: [] })
+      h.getConversationDispatchService.mockResolvedValue({ dispatchBatch: h.dispatchBatch })
+    }
+
+    it('starts the conversations the person confirms in the chat', async () => {
+      ready()
+      humanTurn(LOOSE)
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([['Start']])
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).toHaveBeenCalledTimes(1)
+      const [question] = confirm.mock.calls[0][0] as Array<{ header: string; question: string; options: unknown }>
+      expect(question.header).toBe('New conversations')
+      expect(question.options).toEqual([{ label: 'Start' }, { label: "Don't start" }])
+      expect(question.question).toContain('PROJ-1')
+      expect(question.question).toContain('this project')
+      const grant = h.dispatchBatch.mock.calls[0][0].grant
+      expect(grant.maxConversations).toBeNull()
+      expect(grant.onlyWorkspaceIds).toBeUndefined()
+      expect(grant.originKey).toBe('message:msg-1')
+    })
+
+    it('names the target workspace in the question', async () => {
+      ready()
+      humanTurn(LOOSE)
+      h.listConversationDispatchWorkspaces.mockResolvedValue([
+        { workspaceId: 'ws-1', name: 'Example', path: '/example', defaultBranch: 'main', branches: ['main'] },
+      ])
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([['Start']])
+      const batch = { ...BATCH, target: { workspaceId: 'ws-1' } }
+      await startConversationsTool.execute(batch, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      const [question] = confirm.mock.calls[0][0] as Array<{ question: string }>
+      expect(question.question).toContain('(Example)')
+    })
+
+    it.each([
+      ['declines', ask([["Don't start"]])],
+      ['dismisses the question', ask([])],
+      ['cannot be asked', vi.fn(async (_questions: unknown): Promise<string[][]> => {
+        throw new Error('Interactive questions are unavailable in an unattended turn.')
+      })],
+    ])('starts nothing when the person %s', async (_label, askQuestion) => {
+      ready()
+      humanTurn(LOOSE)
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion }))
+      expect(result).toMatchObject({ ok: false, items: [] })
+      expect(result.error).toMatch(/declined/)
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+
+    it('respects an explicit negation without asking', async () => {
+      humanTurn('Não abra conversas novas, só analise.')
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([['Start']])
+      const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).not.toHaveBeenCalled()
+      expect(result.error).toMatch(/asked NOT/)
+      expect(h.getConversationDispatchService).not.toHaveBeenCalled()
+    })
+
+    it('does not ask when the message is explicit', async () => {
+      ready()
+      humanTurn('Abra duas conversas novas, uma para cada card.')
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([['Start']])
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).not.toHaveBeenCalled()
+      expect(h.dispatchBatch.mock.calls[0][0].grant.maxConversations).toBe(2)
+    })
+
+    it('asks once per turn for the same confirmed request keys', async () => {
+      ready()
+      humanTurn(LOOSE)
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([['Start']])
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(h.dispatchBatch).toHaveBeenCalledTimes(2)
+      // A different key is a different request and is confirmed again.
+      const other = { tasks: [{ ...BATCH.tasks[0], requestKey: 'PROJ-2' }] }
+      await startConversationsTool.execute(other, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).toHaveBeenCalledTimes(2)
+      // A later turn starts over.
+      humanTurn(LOOSE)
+      const next = conversationDispatchRuntimeFor('source', 'agent')!
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: next, askQuestion: confirm }))
+      expect(confirm).toHaveBeenCalledTimes(3)
+    })
+
+    it('skips the question for a project created in the turn, but not for another workspace', async () => {
+      ready()
+      humanTurn('clona o acme/api e já começa o export')
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([['Start']])
+      h.createdWorkspaceIdsForTurn.mockReturnValue(['ws-new'])
+      await startConversationsTool.execute(
+        { ...BATCH, target: { workspaceId: 'ws-new' } },
+        context({ conversationDispatch: runtime, askQuestion: confirm })
+      )
+      expect(confirm).not.toHaveBeenCalled()
+      expect(h.dispatchBatch.mock.calls[0][0].grant).toMatchObject({ maxConversations: 1, onlyWorkspaceIds: ['ws-new'] })
+
+      await startConversationsTool.execute(
+        { tasks: [{ ...BATCH.tasks[0], requestKey: 'OTHER', target: { workspaceId: 'ws-other' } }] },
+        context({ conversationDispatch: runtime, askQuestion: confirm })
+      )
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(h.dispatchBatch.mock.calls[1][0].grant.onlyWorkspaceIds).toBeUndefined()
+    })
   })
 
   it('passes an explicit request to the dispatch service bound to the admitted turn', async () => {
@@ -315,10 +436,10 @@ describe('conversation dispatch tool surface', () => {
 
     humanTurn('clona o acme/api e já começa o export')
     const runtime = conversationDispatchRuntimeFor('source', 'agent')!
-    // Nothing created yet: the conversation gate still applies.
+    // Nothing created yet: the person must confirm, and an unanswered question starts nothing.
     expect(await startConversationsTool.execute(batch, context({ conversationDispatch: runtime }))).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/does not explicitly ask/),
+      error: expect.stringMatching(/declined/),
     })
     expect(h.getConversationDispatchService).not.toHaveBeenCalled()
 
@@ -484,10 +605,10 @@ describe('conversation dispatch wiring across runtimes', () => {
     'cursor-subscription/subagent-runner.ts',
     'maestro-worker-tools.ts',
   ])('%s never forwards the tools to children', (file) => {
-    expect(read(file)).toContain('...CONVERSATION_DISPATCH_TOOL_NAMES')
+    expect(read(file)).toContain('...PARENT_ONLY_CONVERSATION_TOOL_NAMES')
   })
 
   it('Codex child tool runtimes exclude the tools by name', () => {
-    expect(read('codex-subscription/runner.ts').match(/!isConversationDispatchToolName\(/g)).toHaveLength(3)
+    expect(read('codex-subscription/runner.ts').match(/!isParentOnlyConversationToolName\(/g)).toHaveLength(3)
   })
 })

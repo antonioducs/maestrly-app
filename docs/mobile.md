@@ -158,8 +158,8 @@ notifications, install a `preview` build from EAS (see [Release](#release)).
   dictation, compaction, an approval, a published page, a new chat, its setup,
   the settings and the dark theme. It fails on any console error, and on any
   control without a name for screen readers. It needs Playwright's Chromium
-  (`npx playwright install chromium`) and runs in CI with the platform's
-  end-to-end tests.
+  (`npx playwright install chromium`). CI runs it on Linux with the desktop's
+  end-to-end tests, and `npm run verify:pr -- --full` runs it too.
 - **Android build on this computer:** with JDK 17 and the Android SDK
   (`ANDROID_HOME`), run `npx expo prebuild --platform android` in `apps/mobile`,
   then `./gradlew assembleRelease` in `apps/mobile/android`, and install the APK
@@ -172,7 +172,7 @@ notifications, install a `preview` build from EAS (see [Release](#release)).
   the favicon from the mark in `src/ui/BrandMark.tsx`. It needs Playwright's
   Chromium (`npx playwright install chromium`); the images are committed.
 - **React version:** the app uses the React version Expo SDK 57 renders with,
-  which differs from the web and desktop apps. `metro.config.cjs` resolves
+  which differs from the desktop app's. `metro.config.cjs` resolves
   `react` and `react-dom` from the app wherever npm hoisted `react-native`;
   `test/react-pin.test.ts` checks both.
 
@@ -218,7 +218,7 @@ For App Review and the stores:
 | You see | Check |
 | --- | --- |
 | **Can’t reach** the server | The address is `https://`, the phone reaches it (Tailscale running on both, same tailnet), and the phone's clock is right. |
-| **Update the bot server to pair a phone** on the computer | The server predates the `device-pairing` feature. Update it, or use `maestrly-bot-gateway pair`. |
+| **Update the bot server to pair a phone** on the computer | The server predates the `phones` feature. Update it, or use `maestrly-bot-gateway pair`. |
 | **This code has expired** | Codes last ten minutes and work once. Create a new one. |
 | **This phone was removed** | The phone was revoked or unpaired elsewhere. Pair it again. |
 | **This server runs a version this app can’t use** | Update the bot server and the app. |

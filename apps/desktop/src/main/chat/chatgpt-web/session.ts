@@ -27,7 +27,6 @@ export interface SessionOptions {
   bridge?: Pick<
     BridgeOptions,
     | 'projectContext'
-    | 'kanban'
     | 'listSkills'
     | 'readSkill'
     | 'listChecks'

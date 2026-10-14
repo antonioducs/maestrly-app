@@ -3,6 +3,7 @@ import {
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   type FLEET_GATEWAY_ROUTES,
   fleetBotIdSchema,
   fleetEnvironmentIdSchema,
@@ -15,6 +16,7 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
   type FleetProvisioningTarget,
   type FleetScreenTarget,
 } from '../../../shared/fleet-targets'
@@ -32,6 +34,11 @@ export function requireEnvironments(fleet: FleetFeatures): void {
 export function requireEnvironmentUpdates(fleet: FleetFeatures): void {
   if (!fleet.hasFeature(FLEET_ENVIRONMENT_UPDATES_FEATURE))
     throw new FleetClientError('INVALID_REQUEST', 400, FLEET_UPDATES_UNSUPPORTED)
+}
+/** Screens stream as video only through gateways that relay it; older ones relay the RFB this app no longer speaks. */
+export function requireVideoScreens(fleet: FleetFeatures): void {
+  if (!fleet.hasFeature(FLEET_VIDEO_SCREENS_FEATURE))
+    throw new FleetClientError('INVALID_REQUEST', 400, FLEET_SCREEN_UPDATE_REQUIRED)
 }
 /** Runtime checks exist only on gateways that relay the environments' runtimes. */
 export function requireRuntimeUpdates(fleet: FleetFeatures): void {
@@ -99,11 +106,12 @@ const screenTargetSchema = z.union([
 ])
 
 /**
- * Validates a renderer's screen target. Older gateways ignore the surface and serve the browser area, so the apps
- * area and the environment screen need a gateway with environments: never show one screen as another.
+ * Validates a renderer's screen target. Screens need a gateway that streams them as video; the apps area and the
+ * environment screen also need one with environments, which every such gateway has.
  */
 export function resolveScreenTarget(fleet: FleetFeatures, raw: unknown): FleetScreenTarget {
   const target = screenTargetSchema.parse(raw)
+  requireVideoScreens(fleet)
   if ('environmentId' in target || target.surface !== 'browser') requireEnvironments(fleet)
   return target
 }

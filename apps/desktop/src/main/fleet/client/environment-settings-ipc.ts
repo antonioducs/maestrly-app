@@ -1,4 +1,5 @@
 import {
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   fleetEnvironmentIdSchema,
@@ -14,13 +15,16 @@ interface SettingsClient {
 import { FleetClientError } from './api'
 
 export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: SettingsClient): void {
-  function target(raw: unknown): string {
+  function target(raw: unknown, feature: string = FLEET_ENVIRONMENT_SETTINGS_FEATURE): string {
     const id = fleetEnvironmentIdSchema.parse(raw)
-    if (!fleet.hasFeature(FLEET_ENVIRONMENT_SETTINGS_FEATURE))
+    if (!fleet.hasFeature(FLEET_ENVIRONMENT_SETTINGS_FEATURE) || !fleet.hasFeature(feature))
       throw new FleetClientError('CONFLICT', 409, 'Gateway does not support environment settings.')
     const environment = fleet.getSnapshot().environments.find((value) => value.id === id)
     if (!environment) throw new FleetClientError('NOT_FOUND', 404, 'Environment not found.')
-    if (!environment.capabilities.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE))
+    if (
+      !environment.capabilities.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE) ||
+      !environment.capabilities.includes(feature)
+    )
       throw new FleetClientError('CONFLICT', 409, 'Environment does not support settings. Restart it to update.')
     return id
   }
@@ -230,6 +234,21 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
     const input = FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(rawInput ?? {})
     return FLEET_SETTINGS_OPERATIONS.setPreferences.response.parse(
       await fleet.call('settingsSetPreferences', { params: { eid }, body: input })
+    )
+  })
+  reg.handle('fleet:settings:failover', async (_event, rawId: unknown, rawInput: unknown) => {
+    const eid = target(rawId, FLEET_ACCOUNT_FAILOVER_FEATURE)
+    FLEET_SETTINGS_OPERATIONS.failover.input.parse(rawInput ?? {})
+    return FLEET_SETTINGS_OPERATIONS.failover.response.parse(await fleet.call('settingsFailover', { params: { eid } }))
+  })
+  reg.mhandle('fleet:settings:setFailoverRoute', async (_event, rawId: unknown, rawInput: unknown) => {
+    const eid = target(rawId, FLEET_ACCOUNT_FAILOVER_FEATURE)
+    const input = FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input.parse(rawInput ?? {})
+    return FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response.parse(
+      await fleet.call('settingsSetFailoverRoute', {
+        params: { eid, kind: input.kind, slot: input.slot ?? 'default' },
+        body: input,
+      })
     )
   })
 }

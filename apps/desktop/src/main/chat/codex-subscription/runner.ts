@@ -1,6 +1,6 @@
 import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { isBotMode } from '../../fleet/instance/config'
-import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE } from '../harness/host-contracts'
+import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE, hostGenUiSection } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, AUTONOMOUS_INSTRUCTIONS, withAutonomousPolicy } from '../autonomous'
 import { remoteChatPolicy, withRemoteChatPolicy } from '../remote-policy'
@@ -138,7 +138,10 @@ import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
 import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
-import { enableConversationDispatchTools, isConversationDispatchToolName } from '../tools/conversation-dispatch'
+import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
+import { enableConversationLinkTools, isParentOnlyConversationToolName } from '../tools/conversation-link'
+import { getWebSearchProvider, webSearchToolEnabled } from '../web-search/settings'
+import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import { reviewPlanTool } from '../tools/review-plan'
 import { createDeltaCoalescer } from '../delta-coalescer'
@@ -161,6 +164,7 @@ import { generateImageForConversation } from './image-generation'
 import { getCodexSubscriptionManager, type CodexSubscriptionModel } from './manager'
 import { buildCodexThreadHarness, type CodexThreadHarness } from '../harness/adapters/codex'
 import { buildHarnessDeveloperInstructions } from '../harness/prompt-builder'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { serializableReasoningEffort } from '../harness/policies'
 import { captureHarnessFlags } from '../harness/flags'
 import { createHarnessSnapshot, snapshotAllowsResume } from '../harness/compatibility'
@@ -211,10 +215,10 @@ import {
   type CodexUsageTotals,
 } from './thread-store'
 import {
+  buildSubagentContinuationPrompt,
   CodexSubagentQuotaError,
+  mergeSubagentCheckpoints,
   runCodexSubagent,
-  sameCodexDynamicToolCheckpoint,
-  type CodexDynamicToolCheckpoint,
   type CodexSubagentCheckpoint,
 } from './subagent-runner'
 
@@ -450,100 +454,6 @@ function addNormalizedSubagentUsage(target: NormalizedAiUsage, next?: Normalized
   target.cacheCreate += next.cacheCreate
   target.totalInput += next.totalInput
   return target
-}
-
-function mergeSubagentCheckpoints(
-  previous: CodexSubagentCheckpoint | undefined,
-  next: CodexSubagentCheckpoint | undefined
-): CodexSubagentCheckpoint | undefined {
-  if (!previous && !next) return undefined
-  const merge = (a?: string[], b?: string[]): string[] | undefined => {
-    const out = [...(a ?? []), ...(b ?? [])].map((entry) => entry.trim()).filter(Boolean)
-    const unique = [...new Set(out)].slice(0, 40)
-    return unique.length ? unique : undefined
-  }
-  const mergeDynamicTools = (
-    a?: CodexDynamicToolCheckpoint[],
-    b?: CodexDynamicToolCheckpoint[]
-  ): CodexDynamicToolCheckpoint[] | undefined => {
-    const out: CodexDynamicToolCheckpoint[] = []
-    for (const entry of [...(a ?? []), ...(b ?? [])]) {
-      if (!entry?.tool || out.some((existing) => sameCodexDynamicToolCheckpoint(existing, entry))) continue
-      if (out.length >= 40) break
-      out.push(entry)
-    }
-    return out.length ? out : undefined
-  }
-  const checkpoint: CodexSubagentCheckpoint = {}
-  const commands = merge(previous?.commands, next?.commands)
-  const statusLines = merge(previous?.statusLines, next?.statusLines)
-  const filesChanged = merge(previous?.filesChanged, next?.filesChanged)
-  const completedDynamicTools = mergeDynamicTools(previous?.completedDynamicTools, next?.completedDynamicTools)
-  const inFlightDynamicTools = mergeDynamicTools(previous?.inFlightDynamicTools, next?.inFlightDynamicTools)?.filter(
-    (entry) => !completedDynamicTools?.some((completed) => sameCodexDynamicToolCheckpoint(completed, entry))
-  )
-  if (commands) checkpoint.commands = commands
-  if (statusLines) checkpoint.statusLines = statusLines
-  if (filesChanged) checkpoint.filesChanged = filesChanged
-  if (completedDynamicTools) checkpoint.completedDynamicTools = completedDynamicTools
-  if (inFlightDynamicTools?.length) checkpoint.inFlightDynamicTools = inFlightDynamicTools
-  return checkpoint.commands ||
-    checkpoint.statusLines ||
-    checkpoint.filesChanged ||
-    checkpoint.completedDynamicTools ||
-    checkpoint.inFlightDynamicTools
-    ? checkpoint
-    : undefined
-}
-
-function formatDynamicToolCheckpoint(entry: CodexDynamicToolCheckpoint): string {
-  const identity = [
-    `tool=${entry.tool}`,
-    entry.itemId ? `itemId=${entry.itemId}` : '',
-    entry.callId ? `callId=${entry.callId}` : '',
-  ]
-    .filter(Boolean)
-    .join(', ')
-  return entry.argumentsSummary ? `${identity}; ${entry.argumentsSummary}` : identity
-}
-
-function formatSubagentCheckpoint(checkpoint: CodexSubagentCheckpoint): string {
-  const sections: string[] = []
-  if (checkpoint.commands?.length) sections.push(`Commands already run:\n- ${checkpoint.commands.join('\n- ')}`)
-  if (checkpoint.filesChanged?.length) {
-    sections.push(`Files already changed:\n- ${checkpoint.filesChanged.join('\n- ')}`)
-  }
-  if (checkpoint.completedDynamicTools?.length) {
-    sections.push(
-      `Dynamic tools already completed (same tool may have other calls):\n- ${checkpoint.completedDynamicTools
-        .map(formatDynamicToolCheckpoint)
-        .join('\n- ')}`
-    )
-  }
-  if (checkpoint.inFlightDynamicTools?.length) {
-    sections.push(
-      `Dynamic tools with uncertain completion (verify state before repeating side effects; do not assume they completed):\n- ${checkpoint.inFlightDynamicTools
-        .map(formatDynamicToolCheckpoint)
-        .join('\n- ')}`
-    )
-  }
-  if (checkpoint.statusLines?.length) {
-    sections.push(`Progress observed:\n- ${checkpoint.statusLines.join('\n- ')}`)
-  }
-  return sections.join('\n\n')
-}
-
-const CONTINUE_WITH_CHECKPOINT_INSTRUCTION = `IMPORTANT — account failover continuation:
-A previous attempt on another Codex subscription account hit a usage/quota limit. Continue the SAME task from the checkpoint below.
-1. Inspect the workspace first; do not assume prior state without checking files and command outputs.
-2. Do NOT repeat side effects confirmed complete (commands already run, files already changed, or the exact dynamic tool calls listed as completed). For operations with uncertain completion, inspect and verify their state before repeating any side effect; do not assume they completed.
-3. Briefly list what was already done, then finish only the remaining work.
-4. Return a concise final result for the parent when the task is complete.`
-
-function buildSubagentContinuationPrompt(task: string, checkpoint?: CodexSubagentCheckpoint): string {
-  if (!checkpoint) return task
-  const formatted = formatSubagentCheckpoint(checkpoint)
-  return `${task}\n\n${CONTINUE_WITH_CHECKPOINT_INSTRUCTION}${formatted ? `\n\nCheckpoint:\n${formatted}` : ''}`
 }
 
 function failoverAccountLabel(providerId: string): string {
@@ -816,7 +726,7 @@ export function maestrlyDeveloperInstructions(
   mode: ChatBehavior,
   skills: readonly ChatSkill[],
   agents: readonly ChatAgent[],
-  options: { conversationId?: string; maestro?: MaestroTurnSnapshotV1 } = {}
+  options: { conversationId?: string; maestro?: MaestroTurnSnapshotV1; generatedInterfaces?: boolean } = {}
 ): string {
   const conversationId = options.conversationId ?? ''
   const designPrompt = renderDesignModePrompt(mode)
@@ -825,6 +735,7 @@ export function maestrlyDeveloperInstructions(
     'instructions and tool discipline. Maestrly renders GitHub-flavored Markdown and fenced `mermaid` diagrams. ' +
     'Dynamic tools supplied by the host are real Maestrly app/MCP tools; use them when relevant. Use the native ' +
     'request_user_input interaction when a decision from the user is genuinely required.' +
+    hostGenUiSection(options.generatedInterfaces) +
     maestrlySkillCatalog(skills) +
     (mode === 'maestro' && options.maestro
       ? `\n\n${renderMaestroAgentCatalog(options.maestro)}`
@@ -859,11 +770,11 @@ export function maestrlyDeveloperInstructions(
   )
 }
 
-function maestrlyAstraHostInstructions(
+export function maestrlyAstraHostInstructions(
   mode: ChatBehavior,
   skills: readonly ChatSkill[],
   agents: readonly ChatAgent[],
-  options: { conversationId: string; maestro?: MaestroTurnSnapshotV1 }
+  options: { conversationId: string; maestro?: MaestroTurnSnapshotV1; generatedInterfaces?: boolean }
 ): string {
   const modeBoundary =
     mode === 'plan'
@@ -877,6 +788,7 @@ function maestrlyAstraHostInstructions(
             : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
   return (
     modeBoundary +
+    hostGenUiSection(options.generatedInterfaces) +
     maestrlySkillCatalog(skills) +
     (mode === 'maestro' && options.maestro
       ? `\n\n${renderMaestroAgentCatalog(options.maestro)}\n\n${renderMaestroTurnPolicy(options.maestro)}`
@@ -1862,6 +1774,23 @@ export function registerCodexSubagentRequestRoute(args: {
   return registerRequestRoute(args.client, '', route)
 }
 
+/**
+ * Codex native search never asks for approval; where it is off, the gated host tool replaces it.
+ * Both use the name web_search, so a thread never receives the two together.
+ */
+function codexNativeWebSearchEnabled(
+  args: Pick<RunCodexSubscriptionChatArgs, 'reviewerRuntime' | 'conversationId' | 'mode' | 'permMode'>
+): boolean {
+  return (
+    getWebSearchProvider() !== 'off' &&
+    !args.reviewerRuntime &&
+    !remoteChatPolicy(args.conversationId) &&
+    args.mode !== 'ask' &&
+    args.mode !== 'maestro' &&
+    args.permMode !== 'ask'
+  )
+}
+
 async function buildDynamicTools(
   args: RunCodexSubscriptionChatArgs,
   state: CodexRunnerState
@@ -1955,8 +1884,8 @@ async function buildDynamicTools(
       : { tools: {}, close: async () => {} }
 
   // Read-only classification depends on the host surface (app/MCP). The bridge surface (core built-ins)
-  // never changes the result: read/grep/glob/webfetch have verified read-only contracts, and bash/generate_image
-  // are already core mutators. This matches the classification children would see through rawTools.
+  // never changes the result: read/grep/glob/webfetch/web_search have verified read-only contracts, and
+  // bash/generate_image are already core mutators. This matches the classification children would see through rawTools.
   const hostSurface: ToolSet = { ...mcp.tools, ...app.tools }
   const hasReadOnlySubagent = agents.some((agent) => isSubagentReadOnly(args.mode, agent.tools, hostSurface))
 
@@ -1975,6 +1904,10 @@ async function buildDynamicTools(
     if (!args.reviewerRuntime && hasReadOnlySubagent) {
       for (const name of ['read', 'grep', 'glob', 'webfetch']) bridgeNames.add(name)
     }
+    // Not part of the subagent readers above: bridgeNames become the parent thread's dynamic tools too.
+    if (!args.reviewerRuntime && !codexNativeWebSearchEnabled(args) && webSearchToolEnabled()) {
+      bridgeNames.add(WEB_SEARCH_TOOL_NAME)
+    }
     if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       bridgeNames.add(GENERATE_IMAGE_TOOL_NAME)
     }
@@ -1982,6 +1915,10 @@ async function buildDynamicTools(
     const conversationDispatch = args.reviewerRuntime
       ? undefined
       : enableConversationDispatchTools(bridgeNames, args.conversationId, args.mode)
+    // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+    const conversationLink = args.reviewerRuntime
+      ? undefined
+      : enableConversationLinkTools(bridgeNames, args.conversationId, args.mode)
     const bridgeTools = bridgeNames.size
       ? buildTools({
           executorReport: true,
@@ -2025,6 +1962,7 @@ async function buildDynamicTools(
             generateImage: (prompt, generationSignal, onUsage) =>
               state.generateImage(prompt, generationSignal, onUsage),
             ...(conversationDispatch ? { conversationDispatch } : {}),
+            ...(conversationLink ? { conversationLink } : {}),
             ...(args.reviewerRuntime
               ? {
                   reviewer: {
@@ -2390,6 +2328,7 @@ export async function runCodexSubscriptionChat(
       eligibleChatGptSession,
       ephemeral: Boolean(args.ephemeralSession),
       reviewer: Boolean(args.reviewerRuntime),
+      standalone: args.projectId === null,
       requestUserInputAsyncAvailable: session?.requestUserInputAsync === true,
       turnSteerAvailable: session?.turnSteer,
       turnSettingsUpdateAvailable: session?.turnSettingsUpdate,
@@ -2728,7 +2667,7 @@ export async function runCodexSubscriptionChat(
             runtime.spec.name !== 'task' &&
             runtime.spec.name !== 'delegate' &&
             runtime.spec.name !== 'review_plan' &&
-            !isConversationDispatchToolName(runtime.spec.name)
+            !isParentOnlyConversationToolName(runtime.spec.name)
         )
         .map((runtime) => [
           runtime.spec.name,
@@ -2776,6 +2715,7 @@ export async function runCodexSubscriptionChat(
           appToolsEnabled: dynamic.appToolsEnabled,
           disabledAppToolGroups: dynamic.disabledAppToolGroups,
           hasNotesTab: true,
+          generatedInterfaces: generatedInterfacesEnabled(),
         }) +
         maestrlySkillCatalog(dynamic.skills, false) +
         subagentCatalog(dynamic.agents, args.conversationId, capabilityMode !== 'agent')
@@ -2789,10 +2729,12 @@ export async function runCodexSubscriptionChat(
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
           conversationId: args.conversationId,
           maestro: args.maestro,
+          generatedInterfaces: generatedInterfacesEnabled(),
         })
       : maestrlyDeveloperInstructions(args.mode, dynamic.skills, dynamic.agents, {
           conversationId: args.conversationId,
           maestro: args.maestro,
+          generatedInterfaces: generatedInterfacesEnabled(),
         })
     return (
       buildHarnessDeveloperInstructions(base, profile.harness, { asyncTools: profile.asyncQuestionGuidance }) +
@@ -2900,11 +2842,9 @@ export async function runCodexSubscriptionChat(
       ...(args.reviewerRuntime || capabilityMode !== 'agent' || args.permMode !== 'full'
         ? { 'features.shell_tool': false }
         : {}),
-      // Native web search never requests approval. Disable it in Ask to avoid bypassing the webfetch gate;
-      // MCP/app search tools remain available through Maestrly's broker.
-      ...(args.reviewerRuntime || args.mode === 'ask' || args.mode === 'maestro' || args.permMode === 'ask'
-        ? { web_search: 'disabled' }
-        : {}),
+      // Native web search never requests approval. Where it would bypass the permission gate (or the user turned
+      // web search off), disable it; the gated host web_search is bridged instead (buildDynamicTools).
+      ...(!codexNativeWebSearchEnabled(args) ? { web_search: 'disabled' } : {}),
       // The skills catalog ALWAYS belongs to Maestrly (use_skill + global/per-conversation state). Disable
       // native Codex discovery in all modes; otherwise a UI-disabled skill would remain
       // advertised/loadable by the Agent/Plan harness.
@@ -3808,7 +3748,7 @@ export async function runCodexSubscriptionChat(
                       spec.name !== 'task' &&
                       spec.name !== 'delegate' &&
                       spec.name !== 'review_plan' &&
-                      !isConversationDispatchToolName(spec.name) &&
+                      !isParentOnlyConversationToolName(spec.name) &&
                       childToolNames.has(spec.name)
                   )
                   const childRuntimes = allChildRuntimes.filter(
@@ -3816,7 +3756,7 @@ export async function runCodexSubscriptionChat(
                       runtime.spec.name !== 'task' &&
                       runtime.spec.name !== 'delegate' &&
                       runtime.spec.name !== 'review_plan' &&
-                      !isConversationDispatchToolName(runtime.spec.name) &&
+                      !isParentOnlyConversationToolName(runtime.spec.name) &&
                       childToolNames.has(runtime.spec.name)
                   )
                   const classifySubagentQuota = async (error: unknown, physicalProviderId: string) => {

@@ -25,39 +25,7 @@ const policy = (allowedInPlanAsk: boolean, readOnly: boolean, parallelSafe: bool
 
 /** Exhaustive product policy for the app-tool universe registered by buildServer. */
 export const APP_TOOL_POLICY = {
-  board_automation_catalog: policy(true, true, true),
-  board_column_config: policy(true, true, true),
-  board_set_column_agent: policy(false, false, false),
-  board_column_automation_history: policy(true, true, true),
-  board_restore_column_automation: policy(false, false, false),
-  board_preview_automation: policy(true, true, true),
-  board_card_automation: policy(true, true, true),
-  board_set_card_automation_override: policy(false, false, false),
-  board_run_card: policy(false, false, false),
-  board_release_card_automation: policy(false, false, false),
-  board_set_automation_limits: policy(false, false, false),
-  board_define_fixed_columns: policy(false, false, false),
-  board_execution_events: policy(true, true, true),
-  board_list_members: policy(true, true, true),
-  get_linked_kanban: policy(true, true, true),
-  board_card_events: policy(true, true, true),
-  board_update_comment: policy(false, false, false),
-  board_card_lifecycle: policy(false, false, false),
-  board_restore_description: policy(false, false, false),
-  board_create_board: policy(false, false, false),
-  board_update_board: policy(false, false, false),
-  board_manage_columns: policy(false, false, false),
-  board_list_cards: policy(true, true, true),
-  board_list_boards: policy(true, true, true),
-  board_get_board: policy(true, true, true),
-  board_search_cards: policy(true, true, true),
-  board_card_history: policy(true, true, true),
-  board_create_card: policy(false, false, false),
-  board_get_card: policy(true, true, true),
-  board_create_subtask: policy(false, false, false),
-  board_update_card: policy(false, false, false),
-  board_comment: policy(false, false, false),
-  board_move_card: policy(false, false, false),
+  preview_interface: policy(true, true, false),
   browser_navigate: policy(true, false, false),
   browser_back: policy(true, false, false),
   browser_forward: policy(true, false, false),
@@ -219,6 +187,7 @@ export const PARALLEL_SAFE_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
   'grep',
   'read',
   'use_skill',
+  'web_search',
   'webfetch',
 ])
 
@@ -266,3 +235,24 @@ export const CONVERSATION_DISPATCH_TOOL_NAMES = [
 export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
   return mode === 'ask' || (mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent')
 }
+
+/**
+ * Built-in, parent-only tools for reading and messaging other existing conversations. Sending starts turns elsewhere,
+ * so like the dispatch tools they stay out of Plan, Maestro, subagents and workers. Runners add them for a turn the
+ * person typed or one started by another conversation (see conversation-link-authorization).
+ */
+export const CONVERSATION_LINK_TOOL_NAMES = [
+  'list_conversations',
+  'read_conversation',
+  'wait_conversation',
+  'send_to_conversation',
+  'report_to_source',
+] as const
+
+/** Every tool that starts, reads or messages other conversations; children never receive them. */
+export const PARENT_ONLY_CONVERSATION_TOOL_NAMES = [
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...CONVERSATION_LINK_TOOL_NAMES,
+] as const
+
+export const conversationLinkToolsAllowed = conversationDispatchToolsAllowed

@@ -13,7 +13,7 @@ import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
 import { isClaudeSubscriptionProvider, isCodexSubscriptionProvider } from './catalog'
 import { generateImageToolEnabled, GENERATE_IMAGE_TOOL_NAME } from './image-gen'
 import { ALL_TOOL_NAMES, buildTools } from './tools'
-import { CONVERSATION_DISPATCH_TOOL_NAMES } from './tool-policy'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from './tool-policy'
 import { buildModelSkillRuntime } from './skill-runtime'
 
 const MAESTRO_WORKER_PARENT_ONLY_TOOLS = new Set<string>([
@@ -33,8 +33,8 @@ const MAESTRO_WORKER_PARENT_ONLY_TOOLS = new Set<string>([
   'list_delegations',
   'inspect_subagent',
   'cancel_delegation',
-  // Workers never start persistent conversations: only the person's own request in a main turn can.
-  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  // Workers never start, read or message persistent conversations: only a main turn can.
+  ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 ])
 
 export function isMaestroWorkerOperationalToolName(name: string): boolean {
