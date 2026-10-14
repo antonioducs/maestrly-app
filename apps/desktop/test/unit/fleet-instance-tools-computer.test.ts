@@ -641,6 +641,22 @@ describe('computer tools on a workspaces host', () => {
     expect((vi.mocked(spawn).mock.calls.at(-1)?.[2] as SpawnOptions | undefined)?.env?.DISPLAY).toBe(':10')
   })
 
+  it("fails a call when the server's computers cannot start one, never falling back to the primary screen", async () => {
+    const fake = computers()
+    fake.open.mockResolvedValue({ ok: false, reason: 'unavailable' })
+    const tools = await client(fake)
+    const result = await tools.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(texts(result).join('\n')).toContain('This server has no computers.')
+    // Opened but stopped before the call ran.
+    fake.open.mockResolvedValue({ ok: true, display: ':10', started: false })
+    const stopped = await tools.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } })
+    expect(stopped.isError).toBe(true)
+    expect(texts(stopped).join('\n')).toContain("This conversation's computer stopped")
+    expect(spawn).not.toHaveBeenCalled()
+    expect(capture.getSources).not.toHaveBeenCalled()
+  })
+
   it('fails a call while every computer of the server is in use, naming who uses them', async () => {
     const tools = await client(computers(['A', 'B']))
     const result = await tools.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } })
