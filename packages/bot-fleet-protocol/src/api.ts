@@ -1878,8 +1878,6 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetConversationCallResponseSchema,
   },
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
-  screenView: { method: 'GET', path: '/v1/screen/view', body: null, response: null },
-  screenControl: { method: 'GET', path: '/v1/screen/control', body: null, response: null },
 
   // An environment instance (capability `environments`) hosts several bots: their routes live under /v1/bots/:botId,
   // with the bodies and responses of the unprefixed routes above, which keep serving gateways without the capability.
