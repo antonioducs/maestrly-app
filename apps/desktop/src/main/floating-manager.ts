@@ -40,6 +40,7 @@ import {
   conversationScreen,
   onConversationScreenChange,
   presentedBrowserSize,
+  presentsBrowserInArea,
   type ConversationScreen,
   type ScreenArea,
 } from './conversation-screen'
@@ -208,24 +209,28 @@ function clampBounds(saved?: FloatingBounds, area?: ScreenArea): FloatingBounds 
  * browser its desktop presents sits at the top left of its area at the presented size.
  */
 function floatingBounds(
+  convId: string,
   tab: FloatTab,
   saved: FloatingBounds | undefined,
   area: ScreenArea | undefined,
   presented: PresentedSize | null = null
 ) {
-  if (area && presented && fillsScreenArea(tab, isBotMode())) return presentedBrowserBounds(area, presented)
+  const presents = presentsBrowserInArea(convId)
+  if (area && presented && fillsScreenArea(tab, presents)) return presentedBrowserBounds(area, presented)
   return clampBounds(
-    initialFloatingBounds<FloatingBounds>(tab, isBotMode(), area ?? screen.getPrimaryDisplay().workArea, saved),
+    initialFloatingBounds<FloatingBounds>(tab, presents, area ?? screen.getPrimaryDisplay().workArea, saved),
     area
   )
 }
 
 function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   // The bot browser fills its screen area exactly and has no window manager frame: openbox would draw its title bar
-  // and borders around those bounds, outside the area, and move a frame that starts above the display down.
-  const frameless = fillsScreenArea(tab, isBotMode())
+  // and borders around those bounds, outside the area, and move a frame that starts above the display down. So does
+  // the browser of a workspaces conversation whose computer runs.
+  const frameless = fillsScreenArea(tab, presentsBrowserInArea(convId))
   const win = new BrowserWindow({
     ...floatingBounds(
+      convId,
       tab,
       getConvUiPrefs(convId).floating?.[tab],
       conversationScreen(convId)?.windowArea,
@@ -375,7 +380,9 @@ export function setFloatBounds(convId: string, tab: FloatTab, bounds: FloatingBo
 function placeConversationWindows(convId: string, registered: ConversationScreen | null): void {
   for (const [tab, en] of floats.get(convId) ?? []) {
     if (en.win.isDestroyed()) continue
-    en.win.setBounds(floatingBounds(tab, en.win.getBounds(), registered?.windowArea, presentedBrowserSize(convId)))
+    en.win.setBounds(
+      floatingBounds(convId, tab, en.win.getBounds(), registered?.windowArea, presentedBrowserSize(convId))
+    )
     layoutFloatingTab(convId, tab, en.win)
   }
 }

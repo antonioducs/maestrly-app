@@ -16,8 +16,8 @@ import { attachHotkeyCapture } from '../hotkeys'
 import { attachBrowserHotkeyCapture } from '../browser-hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
-import { conversationScreen, presentedBrowserSize } from '../conversation-screen'
-import { isHeadlessInstance } from '../remote-host/server/config'
+import { conversationBrowserArea, presentedBrowserSize } from '../conversation-screen'
+import { isHeadlessInstance, isServerMode } from '../remote-host/server/config'
 import { centerInArea, clampToArea, insideWindowFrame, popupArea } from '../fleet/instance/window-bounds'
 import { refocusScreen, setScreenFocusOwner, showWindow } from '../screen-focus'
 import {
@@ -511,7 +511,7 @@ export function hardenBrowserSession(): void {
 
 /** Where a conversation's popups stay: inside its presented browser, or its whole screen area; none without one. */
 function popupWindowArea(convId: string) {
-  const area = conversationScreen(convId)?.windowArea
+  const area = conversationBrowserArea(convId)
   return area ? popupArea(area, presentedBrowserSize(convId)) : undefined
 }
 
@@ -612,6 +612,9 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       const area = popupWindowArea(convId)
       if (area) child.setBounds(centerInArea(child.getBounds(), insideWindowFrame(area)))
       else child.center()
+      // A workspaces conversation's browser window in its tile stays above other windows: so do its popups, which its
+      // tile's screen shows too.
+      if (area && isServerMode()) child.setAlwaysOnTop(true)
       showWindow(child)
     } catch {
       /* The window may already be closed. */

@@ -87,6 +87,9 @@ interface Stream {
   streamId: string
   viewer: StreamViewer
   onViewerGone: () => void
+  /** The size of the viewer's surface, as it last asked. */
+  requested: { width: number; height: number }
+  /** The size the page is presented at. */
   size: { width: number; height: number }
   sourceSeq: number
   source: Source | null
@@ -461,7 +464,8 @@ export function startBrowserStream(
   releaseTimers.delete(convId)
 
   ensureBrowser(convId)
-  const size = presentBrowserForStream(convId, { width: Number(width), height: Number(height) })
+  const requested = { width: Number(width), height: Number(height) }
+  const size = presentBrowserForStream(convId, requested)
   const stream: Stream = {
     convId,
     streamId: randomBytes(18).toString('base64url'),
@@ -471,6 +475,7 @@ export function startBrowserStream(
       end(stream, null)
       scheduleRelease(convId)
     },
+    requested,
     size,
     sourceSeq: 0,
     source: null,
@@ -500,9 +505,26 @@ export function resizeBrowserStream(
 ): void {
   const stream = viewerStream(sender, convId, streamId)
   if (!stream) return
-  const size = presentBrowserForStream(stream.convId, { width: Number(width), height: Number(height) })
+  stream.requested = { width: Number(width), height: Number(height) }
+  const size = presentBrowserForStream(stream.convId, stream.requested)
   if (size.width === stream.size.width && size.height === stream.size.height) return
   stream.size = size
+  restartScreencast(stream)
+}
+
+/**
+ * Presents a streamed browser again after the window that holds it changed: a workspaces conversation took or gave
+ * back a tile, or its computer started or stopped. The screencast restarts, so the next frame shows the new window.
+ */
+export function refreshBrowserStream(convId: string): void {
+  const stream = streams.get(convId)
+  if (!stream) return
+  try {
+    stream.size = presentBrowserForStream(convId, stream.requested)
+  } catch {
+    end(stream, 'unavailable')
+    return
+  }
   restartScreencast(stream)
 }
 

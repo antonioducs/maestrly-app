@@ -7,7 +7,7 @@ import {
   fleetEnvironmentTile,
 } from '@maestrly/bot-fleet-protocol'
 import { setConversationShellEnv } from '../../chat/conversation-env'
-import { type ScreenArea, setConversationScreen } from '../../conversation-screen'
+import { type ScreenArea, setConversationScreen, setPresentedBrowserSize } from '../../conversation-screen'
 import type { BotDesktopHooks } from '../../fleet/instance/desktop/bot-desktop'
 import type { BotDisplay, DisplayManager, ScreenLease } from '../../fleet/instance/displays'
 import type { BotDesktopHandle, BotDesktopTarget } from '../../fleet/instance/environment'
@@ -381,6 +381,8 @@ export class ConversationComputers {
     entry.number = null
     setConversationScreen(conversationId, null)
     setConversationShellEnv(conversationId, null)
+    // The size its desktop presented the browser at: a stream window of the browser takes the viewer's size again.
+    setPresentedBrowserSize(conversationId, null)
     await computer.handle.dispose().catch((error: unknown) => this.deps.log(describeError(error)))
     await this.deps.displays.stopBot(computer.key).catch((error: unknown) => this.deps.log(describeError(error)))
     this.deps.log(`The computer of conversation ${conversationId} on ${computer.display.display} was given back.`)

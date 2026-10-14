@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { FLEET_SCREEN, fleetEnvironmentTile } from '@maestrly/bot-fleet-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { conversationShellEnv, setConversationShellEnv } from '../../src/main/chat/conversation-env'
-import { conversationScreen, setConversationScreen } from '../../src/main/conversation-screen'
+import {
+  conversationScreen,
+  presentedBrowserSize,
+  setConversationScreen,
+  setPresentedBrowserSize,
+} from '../../src/main/conversation-screen'
 import type { BotDesktopHooks } from '../../src/main/fleet/instance/desktop/bot-desktop'
 import type { BotDisplay, DesktopOwner, DisplayScreen, ScreenLease } from '../../src/main/fleet/instance/displays'
 import type { BotDesktopTarget } from '../../src/main/fleet/instance/environment'
@@ -163,6 +168,7 @@ describe('ConversationComputers', () => {
     const t = setup()
     const a = conversation()
     await t.computers.open(a, 'owner')
+    setPresentedBrowserSize(a, { width: 1120, height: 640 })
     await t.advance(55_000)
     expect(t.stopped).toEqual([])
     await t.advance(10_000)
@@ -170,6 +176,7 @@ describe('ConversationComputers', () => {
     expect(t.disposed).toEqual([a])
     expect(conversationShellEnv(a)).toEqual({})
     expect(conversationScreen(a)).toBeNull()
+    expect(presentedBrowserSize(a)).toBeNull()
     expect(t.placementsOf(a).at(-1)).toEqual({ kind: 'none' })
     expect(t.computers.computer(a)).toBeNull()
     const c = conversation()
