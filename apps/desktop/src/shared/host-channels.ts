@@ -99,6 +99,7 @@ export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
   'drawer:browser-paste',
   'drawer:browser-select-choose',
   'drawer:browser-popup-close',
+  'drawer:browser-stream-transport',
   'drawer:computer-open',
 ])
 

@@ -4,7 +4,7 @@ import { clampPresentedSize, type PresentedSize } from '../fleet/instance/window
 import { refreshUnthrottledBrowserRendering } from './browser-rendering'
 import { setPlacement } from './layout'
 import { setDrawerPlacementPerformance } from './performance'
-import { OFFSCREEN, drawers, getPlacement, streamWinByConv, win } from './state'
+import { OFFSCREEN, drawers, fkey, floatWinByKey, getPlacement, streamWinByConv, win } from './state'
 
 /**
  * The window that presents a conversation's browser while another computer watches it (see drawer/browser-stream).
@@ -120,6 +120,14 @@ function createStreamWindow(convId: string, size: PresentedSize): BrowserWindow 
 export function streamWindowOf(convId: string): BrowserWindow | null {
   const host = streamWinByConv.get(convId)
   return host && !host.isDestroyed() ? host : null
+}
+
+/** The window that holds the conversation's browser on this display: its stream window, or its computer's window. */
+export function browserHostWindow(convId: string): BrowserWindow | null {
+  const stream = streamWindowOf(convId)
+  if (stream) return stream
+  const floating = floatWinByKey.get(fkey(convId, 'browser'))
+  return floating && !floating.isDestroyed() ? floating : null
 }
 
 /** Positions the conversation's tabs in its stream window: the active one fills it, the others wait offscreen. */

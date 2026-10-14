@@ -5,7 +5,9 @@ import {
   browserStreamCursor,
   isBrowserStreamId,
   parseBrowserStreamInput,
+  parseBrowserStreamOptions,
   type BrowserSelectRequest,
+  type BrowserStreamArea,
   type BrowserStreamCursor,
   type BrowserStreamEndReason,
   type BrowserStreamEnded,
@@ -14,6 +16,7 @@ import {
   type BrowserStreamNotice,
   type BrowserStreamSource,
   type BrowserStreamStarted,
+  type BrowserStreamTransport,
 } from '../../shared/browser-stream'
 import {
   dispatchPresentedKey,
@@ -22,12 +25,15 @@ import {
   insertPresentedText,
   setPresentedFocusEmulation,
 } from '../browser-control'
+import { conversationBrowserArea, onConversationScreenChange } from '../conversation-screen'
 import { isRemoteUiTarget } from '../remote-ui-targets'
+import type { TileLease } from '../remote-host/server/computers'
+import { serverComputers } from '../remote-host/server/computers-registry'
 import { isServerMode } from '../remote-host/server/config'
 import { getConversation } from '../store'
 import { ensureBrowser, onBrowserPopupsChange, onBrowserStateChange, presentedBrowserViews } from './browser'
 import { chooseSelectOption, interceptSelects, readPageSelection, type PageSelectRequest } from './browser-stream-page'
-import { onStreamWindowClosed, presentBrowserForStream, releaseBrowserStream } from './stream-window'
+import { browserHostWindow, onStreamWindowClosed, presentBrowserForStream, releaseBrowserStream } from './stream-window'
 
 /**
  * The browser of a conversation on a workspaces host, streamed to the window of the computer that watches it (see
@@ -36,6 +42,10 @@ import { onStreamWindowClosed, presentBrowserForStream, releaseBrowserStream } f
  * acknowledged to Chromium only once the window acknowledged a frame, so at most two frames are on their way and a
  * slow link lowers the frame rate instead of filling the bridge. Input from the window goes to the page's DevTools
  * session; nothing touches the host's display.
+ *
+ * A window that plays video gets the `video` transport while the host has a tile of its environment display for the
+ * conversation: the page is shown in that tile, whose screen the window watches through the gateway, and this stream
+ * only tells it where the page is in the tile. It switches to frames when the window asks.
  */
 
 /** What the stream needs of a renderer of another computer (a remote-host VirtualSender). */
@@ -82,10 +92,15 @@ interface InFlight {
   sessionId: number
 }
 
+type Area = BrowserStreamArea['area']
+
 interface Stream {
   convId: string
   streamId: string
   viewer: StreamViewer
+  transport: BrowserStreamTransport
+  /** The page's place in the tile, as the window was last told; video only. */
+  area: Area | null
   onViewerGone: () => void
   /** The size of the viewer's surface, as it last asked. */
   requested: { width: number; height: number }
@@ -112,6 +127,8 @@ interface ScreencastFrameParams {
 
 const streams = new Map<string, Stream>()
 const releaseTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** The tile a conversation's browser streams from as video; kept through the release grace, like its window. */
+const tiles = new Map<string, TileLease>()
 let clipboardTail: Promise<unknown> = Promise.resolve()
 let listening = false
 
@@ -132,7 +149,60 @@ function listen(): void {
     releaseTimers.delete(convId)
     const stream = streams.get(convId)
     if (stream) end(stream, 'unavailable')
+    releaseTile(convId)
   })
+  // The computer's desktop resized the window that holds the browser.
+  onConversationScreenChange((convId) => {
+    const stream = streams.get(convId)
+    if (stream) emitArea(stream)
+  })
+}
+
+/** Gives back the tile a conversation's browser streamed from. */
+function releaseTile(convId: string): void {
+  const tile = tiles.get(convId)
+  if (!tile) return
+  tiles.delete(convId)
+  tile.release()
+}
+
+/** Where the page, or the sign-in window above it, is in the conversation's tile; null without a tile or a page. */
+function streamArea(stream: Stream): Area | null {
+  const tile = conversationBrowserArea(stream.convId)
+  if (!tile) return null
+  const source = stream.source
+  let rect: Area | null = null
+  if (source?.kind === 'popup' && source.popup && !source.popup.isDestroyed()) rect = source.popup.getContentBounds()
+  else {
+    const page = presentedBrowserViews(stream.convId).page
+    const host = browserHostWindow(stream.convId)
+    if (page && host && !host.isDestroyed()) {
+      const content = host.getContentBounds()
+      const view = page.getBounds()
+      rect = { x: content.x + view.x, y: content.y + view.y, width: view.width, height: view.height }
+    }
+  }
+  if (!rect) return null
+  const x = Math.min(Math.max(Math.round(rect.x - tile.x), 0), tile.width - 1)
+  const y = Math.min(Math.max(Math.round(rect.y - tile.y), 0), tile.height - 1)
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(Math.round(rect.width), tile.width - x)),
+    height: Math.max(1, Math.min(Math.round(rect.height), tile.height - y)),
+  }
+}
+
+/** Tells a video viewer where the page is in the tile, when that changed. */
+function emitArea(stream: Stream): void {
+  if (streams.get(stream.convId) !== stream || stream.transport !== 'video') return
+  const area = streamArea(stream)
+  if (!area) return
+  const last = stream.area
+  if (last && last.x === area.x && last.y === area.y && last.width === area.width && last.height === area.height) return
+  stream.area = area
+  const event: BrowserStreamArea = { convId: stream.convId, streamId: stream.streamId, area }
+  notify(stream, 'drawer:browser-stream-area', event)
 }
 
 const sendCdp = (wc: WebContents, method: string, params?: Record<string, unknown>): Promise<unknown> =>
@@ -197,7 +267,8 @@ async function startScreencast(stream: Stream, source: Source): Promise<void> {
   stream.held = null
   await sendCdp(source.wc, 'Page.stopScreencast').catch(() => {})
   if (stream.source !== source || source.epoch !== epoch) return
-  await sendCdp(source.wc, 'Page.startScreencast', screencastParams(stream))
+  // The video transport shows the page through its tile's screen: Chromium sends no frames.
+  if (stream.transport === 'jpeg') await sendCdp(source.wc, 'Page.startScreencast', screencastParams(stream))
   // A page that does not change paints no new frame by itself: the viewer still needs its current picture.
   if (!source.wc.isDestroyed()) source.wc.invalidate()
 }
@@ -287,6 +358,7 @@ function syncSource(stream: Stream): void {
     return
   }
   attachSource(stream, target)
+  emitArea(stream)
 }
 
 function attachSource(
@@ -402,7 +474,9 @@ function scheduleRelease(convId: string): void {
   if (previous) clearTimeout(previous)
   const timer = setTimeout(() => {
     releaseTimers.delete(convId)
-    if (!streams.has(convId)) releaseBrowserStream(convId)
+    if (streams.has(convId)) return
+    releaseBrowserStream(convId)
+    releaseTile(convId)
   }, STREAM_RELEASE_GRACE_MS)
   timer.unref?.()
   releaseTimers.set(convId, timer)
@@ -445,13 +519,15 @@ function viewerStream(sender: unknown, convId: unknown, streamId: unknown): Stre
 
 /**
  * Starts streaming the conversation's browser to `sender`, a renderer of another computer, at the size of its
- * surface. A viewer that was watching the same browser is told it was taken over.
+ * surface. A viewer that was watching the same browser is told it was taken over. A viewer that plays video gets the
+ * `video` transport when the host has a tile for the conversation, and frames otherwise.
  */
 export function startBrowserStream(
   sender: unknown,
   convId: unknown,
   width: unknown,
-  height: unknown
+  height: unknown,
+  options?: unknown
 ): BrowserStreamStarted {
   const viewer = checkViewer(sender)
   if (typeof convId !== 'string' || !convId || convId.length > 200 || !getConversation(convId))
@@ -464,12 +540,21 @@ export function startBrowserStream(
   releaseTimers.delete(convId)
 
   ensureBrowser(convId)
+  // A tile held for the previous stream goes to this one when it plays video, and back otherwise.
+  if (parseBrowserStreamOptions(options).video !== true) releaseTile(convId)
+  else if (!tiles.has(convId)) {
+    const tile = serverComputers()?.leaseTile(convId) ?? null
+    if (tile) tiles.set(convId, tile)
+  }
+  const transport: BrowserStreamTransport = tiles.has(convId) ? 'video' : 'jpeg'
   const requested = { width: Number(width), height: Number(height) }
   const size = presentBrowserForStream(convId, requested)
   const stream: Stream = {
     convId,
     streamId: randomBytes(18).toString('base64url'),
     viewer,
+    transport,
+    area: null,
     onViewerGone: () => {
       if (streams.get(convId) !== stream) return
       end(stream, null)
@@ -492,8 +577,11 @@ export function startBrowserStream(
   viewer.once('destroyed', stream.onViewerGone)
   // The answer reaches the window before the stream's first event: both go over the same bridge, and the answer is
   // written as soon as this returns.
-  setImmediate(() => syncSource(stream))
-  return { streamId: stream.streamId }
+  setImmediate(() => {
+    syncSource(stream)
+    emitArea(stream)
+  })
+  return { streamId: stream.streamId, transport }
 }
 
 export function resizeBrowserStream(
@@ -506,10 +594,31 @@ export function resizeBrowserStream(
   const stream = viewerStream(sender, convId, streamId)
   if (!stream) return
   stream.requested = { width: Number(width), height: Number(height) }
+  // While the conversation's computer runs, its desktop sets the browser's size: the request changes nothing.
   const size = presentBrowserForStream(stream.convId, stream.requested)
-  if (size.width === stream.size.width && size.height === stream.size.height) return
-  stream.size = size
-  restartScreencast(stream)
+  if (size.width !== stream.size.width || size.height !== stream.size.height) {
+    stream.size = size
+    restartScreencast(stream)
+  }
+  emitArea(stream)
+}
+
+/**
+ * The window could not play the tile's video (its ticket was refused, or its stream failed): the stream gives the tile
+ * back and sends frames from now on. Only `jpeg` is accepted.
+ */
+export function setBrowserStreamTransport(
+  sender: unknown,
+  convId: unknown,
+  streamId: unknown,
+  transport: unknown
+): void {
+  const stream = viewerStream(sender, convId, streamId)
+  if (!stream || transport !== 'jpeg' || stream.transport === 'jpeg') return
+  stream.transport = 'jpeg'
+  stream.area = null
+  releaseTile(stream.convId)
+  refreshBrowserStream(stream.convId)
 }
 
 /**
@@ -526,6 +635,7 @@ export function refreshBrowserStream(convId: string): void {
     return
   }
   restartScreencast(stream)
+  emitArea(stream)
 }
 
 /** The window drew (or dropped) frame `seq`: Chromium may send the next one. */
@@ -718,6 +828,7 @@ export function closeBrowserStreamPopup(sender: unknown, convId: unknown, stream
 /** Test seam: forget every stream and timer. */
 export function resetBrowserStreamsForTest(): void {
   for (const stream of [...streams.values()]) end(stream, null)
+  for (const convId of [...tiles.keys()]) releaseTile(convId)
   for (const timer of releaseTimers.values()) clearTimeout(timer)
   releaseTimers.clear()
   clipboardTail = Promise.resolve()

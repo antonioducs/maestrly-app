@@ -56,6 +56,7 @@ import {
   inputBrowserStream,
   pasteBrowserStream,
   resizeBrowserStream,
+  setBrowserStreamTransport,
   startBrowserStream,
   stopBrowserStream,
 } from './drawer/browser-stream'
@@ -159,8 +160,11 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
   // The browser streamed to a remote viewer (drawer/browser-stream): each call checks that it comes from the
   // viewer's renderer through the host bridge, and the stream it names is that viewer's.
-  reg.mhandle('drawer:browser-stream-start', (e, convId: unknown, width: unknown, height: unknown) =>
-    startBrowserStream(e.sender, convId, width, height)
+  reg.mhandle('drawer:browser-stream-start', (e, convId: unknown, width: unknown, height: unknown, options: unknown) =>
+    startBrowserStream(e.sender, convId, width, height, options)
+  )
+  reg.mon('drawer:browser-stream-transport', (e, convId: unknown, streamId: unknown, transport: unknown) =>
+    setBrowserStreamTransport(e.sender, convId, streamId, transport)
   )
   reg.mon('drawer:browser-stream-resize', (e, convId: unknown, streamId: unknown, width: unknown, height: unknown) =>
     resizeBrowserStream(e.sender, convId, streamId, width, height)
