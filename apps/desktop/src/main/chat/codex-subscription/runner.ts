@@ -162,6 +162,7 @@ import { generateImageForConversation } from './image-generation'
 import { getCodexSubscriptionManager, type CodexSubscriptionModel } from './manager'
 import { buildCodexThreadHarness, type CodexThreadHarness } from '../harness/adapters/codex'
 import { buildHarnessDeveloperInstructions } from '../harness/prompt-builder'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { serializableReasoningEffort } from '../harness/policies'
 import { captureHarnessFlags } from '../harness/flags'
 import { createHarnessSnapshot, snapshotAllowsResume } from '../harness/compatibility'
@@ -723,7 +724,7 @@ export function maestrlyDeveloperInstructions(
   mode: ChatBehavior,
   skills: readonly ChatSkill[],
   agents: readonly ChatAgent[],
-  options: { conversationId?: string; maestro?: MaestroTurnSnapshotV1 } = {}
+  options: { conversationId?: string; maestro?: MaestroTurnSnapshotV1; generatedInterfaces?: boolean } = {}
 ): string {
   const conversationId = options.conversationId ?? ''
   const designPrompt = renderDesignModePrompt(mode)
@@ -732,7 +733,7 @@ export function maestrlyDeveloperInstructions(
     'instructions and tool discipline. Maestrly renders GitHub-flavored Markdown and fenced `mermaid` diagrams. ' +
     'Dynamic tools supplied by the host are real Maestrly app/MCP tools; use them when relevant. Use the native ' +
     'request_user_input interaction when a decision from the user is genuinely required.' +
-    hostGenUiSection() +
+    hostGenUiSection(options.generatedInterfaces) +
     maestrlySkillCatalog(skills) +
     (mode === 'maestro' && options.maestro
       ? `\n\n${renderMaestroAgentCatalog(options.maestro)}`
@@ -767,11 +768,11 @@ export function maestrlyDeveloperInstructions(
   )
 }
 
-function maestrlyAstraHostInstructions(
+export function maestrlyAstraHostInstructions(
   mode: ChatBehavior,
   skills: readonly ChatSkill[],
   agents: readonly ChatAgent[],
-  options: { conversationId: string; maestro?: MaestroTurnSnapshotV1 }
+  options: { conversationId: string; maestro?: MaestroTurnSnapshotV1; generatedInterfaces?: boolean }
 ): string {
   const modeBoundary =
     mode === 'plan'
@@ -785,6 +786,7 @@ function maestrlyAstraHostInstructions(
             : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
   return (
     modeBoundary +
+    hostGenUiSection(options.generatedInterfaces) +
     maestrlySkillCatalog(skills) +
     (mode === 'maestro' && options.maestro
       ? `\n\n${renderMaestroAgentCatalog(options.maestro)}\n\n${renderMaestroTurnPolicy(options.maestro)}`
@@ -2690,6 +2692,7 @@ export async function runCodexSubscriptionChat(
           appToolsEnabled: dynamic.appToolsEnabled,
           disabledAppToolGroups: dynamic.disabledAppToolGroups,
           hasNotesTab: true,
+          generatedInterfaces: generatedInterfacesEnabled(),
         }) +
         maestrlySkillCatalog(dynamic.skills, false) +
         subagentCatalog(dynamic.agents, args.conversationId, capabilityMode !== 'agent')
@@ -2703,10 +2706,12 @@ export async function runCodexSubscriptionChat(
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
           conversationId: args.conversationId,
           maestro: args.maestro,
+          generatedInterfaces: generatedInterfacesEnabled(),
         })
       : maestrlyDeveloperInstructions(args.mode, dynamic.skills, dynamic.agents, {
           conversationId: args.conversationId,
           maestro: args.maestro,
+          generatedInterfaces: generatedInterfacesEnabled(),
         })
     return (
       buildHarnessDeveloperInstructions(base, profile.harness, { asyncTools: profile.asyncQuestionGuidance }) +

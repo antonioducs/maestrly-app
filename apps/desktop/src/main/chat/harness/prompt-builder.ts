@@ -22,7 +22,10 @@ export interface BuildHarnessPromptInput {
   agentsContext?: string | null
   envContext?: string | null
   ultraContext?: string | null
-  /** Teach the generated-interface language; on unless the output never reaches a person. */
+  /**
+   * Teach generated interfaces. Callers pass the person's setting (generatedInterfacesEnabled); delegated subagents
+   * pass false, since their output never reaches a person.
+   */
   generatedInterfaces?: boolean
 }
 

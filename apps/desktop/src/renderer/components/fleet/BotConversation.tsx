@@ -29,28 +29,21 @@ import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { searchTranscriptSegments, transcriptSegmentKey } from '@/lib/fleet/transcript-search'
 import { cn } from '@/lib/utils'
 
-/** A bot's answer: its generated interfaces stay read-only while it streams and keep what the owner changes. */
+/** A bot's answer: each generated interface renders once its block is complete, and sends through the bot. */
 function BotAnswer({
-  botId,
-  itemId,
   text,
   streaming,
   onInterfaceSend,
   searchQuery,
   currentSearchMatch,
 }: {
-  botId: string
-  itemId: string
   text: string
   streaming: boolean
   onInterfaceSend?: (text: string) => void
   searchQuery?: string
   currentSearchMatch?: boolean
 }) {
-  const host = useMemo<GenUiHost>(
-    () => ({ live: streaming, send: onInterfaceSend, stateKey: `fleet:${botId}:${itemId}` }),
-    [botId, itemId, onInterfaceSend, streaming]
-  )
+  const host = useMemo<GenUiHost>(() => ({ live: streaming, send: onInterfaceSend }), [onInterfaceSend, streaming])
   return (
     <GenUiContext.Provider value={host}>
       <MarkdownViewer markdown={text} searchQuery={searchQuery} currentSearchMatch={currentSearchMatch} />
@@ -316,8 +309,6 @@ function TranscriptRow({
     return (
       <div className="max-w-[90%] text-sm">
         <BotAnswer
-          botId={bot.id}
-          itemId={item.id}
           text={item.text}
           streaming={!!item.streaming}
           onInterfaceSend={onInterfaceSend}

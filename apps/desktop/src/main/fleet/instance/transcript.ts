@@ -16,6 +16,7 @@ import {
   type FleetTodo,
 } from '@maestrly/bot-fleet-protocol'
 import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
+import { expandGenUiPreviews, genUiPreviewsOf } from '../../../shared/genui-widget'
 import type { PermissionRequest } from '../../chat/permission'
 import {
   appendSettledLog,
@@ -271,6 +272,8 @@ export function projectMessages(
           ))
         : undefined
     if (linked) claimed.add(linked.id)
+    // An answer shows an interface it previewed by naming the preview: readers get the block with its HTML.
+    const previews = message.role === 'assistant' ? genUiPreviewsOf(message.parts) : null
     for (const [index, part] of message.parts.entries()) {
       const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
       const time = at(message.createdAt)
@@ -321,7 +324,7 @@ export function projectMessages(
             kind: 'assistant',
             id,
             at: time,
-            text: part.text,
+            text: previews ? expandGenUiPreviews(part.text, previews) : part.text,
             streaming: !message.finishReason && !message.error,
           })
         }

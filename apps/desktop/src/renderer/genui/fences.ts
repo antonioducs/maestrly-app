@@ -1,25 +1,18 @@
 import { GENUI_WIDGET_FENCE } from '../../shared/genui-widget'
 
-// Fences of a message that render as interfaces: ```openui-lang (native components) and ```inline-html (a frame).
-
-export const OPENUI_FENCE = 'openui-lang'
-const INTERFACE_FENCES = [OPENUI_FENCE, GENUI_WIDGET_FENCE]
+// Fences of a message that render as interfaces: ```inline-html, shown in an isolated frame.
 
 const fenceLanguage = (className: string): string | undefined => /\blanguage-([\w-]+)/.exec(className)?.[1]
-
-export const isGenUiFence = (className: string): boolean => fenceLanguage(className) === OPENUI_FENCE
 
 export const isWidgetFence = (className: string): boolean => fenceLanguage(className) === GENUI_WIDGET_FENCE
 
 /**
- * A fence that may still turn into an interface: its language is being streamed (`ope` of `openui-lang`) or it has
+ * A fence that may still turn into an interface: its language is being streamed (`inl` of `inline-html`) or it has
  * no content yet. Showing it as code would flash a code block for a moment.
  */
 export function isPendingFence(className: string, code: string): boolean {
   const language = fenceLanguage(className)
-  return (
-    code === '' || (!!language && INTERFACE_FENCES.some((fence) => language !== fence && fence.startsWith(language)))
-  )
+  return code === '' || (!!language && language !== GENUI_WIDGET_FENCE && GENUI_WIDGET_FENCE.startsWith(language))
 }
 
 /**

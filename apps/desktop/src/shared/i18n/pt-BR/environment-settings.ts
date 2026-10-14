@@ -87,6 +87,9 @@ export default {
   skillReadOnly: 'Esta habilidade é gerenciada ou somente leitura e não pode ser editada aqui.',
   imageGen: 'Geração de imagens',
   imageGenNote: 'Disponibilidade padrão da geração de imagens para bots neste ambiente.',
+  generatedInterfaces: 'Respostas interativas',
+  generatedInterfacesNote:
+    'Permite que os bots deste ambiente respondam com interfaces como fotos, gráficos e calculadoras, vendo uma prévia antes. Desligado economiza cerca de 850 tokens por conversa, além dos prints das prévias.',
   appTools: 'Ferramentas de aplicativos',
   appToolsLocked: 'As ferramentas de aplicativos ficam ativadas em ambientes remotos.',
   failover: {

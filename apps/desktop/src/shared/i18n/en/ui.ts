@@ -496,10 +496,9 @@ export default {
     close: 'Close (Esc)',
   },
   genUi: {
-    loading: 'Loading interface…',
     source: 'Interface source',
-    invalid: 'This interface could not be rendered. Its source is shown instead.',
     building: 'Building interface…',
+    missing: 'This interface is missing: the answer names a preview it did not render.',
     tooLong: 'This interface is too large to show. Its source is below.',
     frameTitle: 'Interactive answer',
     issues: {
@@ -511,10 +510,6 @@ export default {
       viewport: 'The layout grows with the height of its frame (100vh or height: 100%), so its height was capped.',
       script: 'Script error: {{detail}}',
       blocked: 'Blocked by the interface policy: {{detail}}',
-      invalid: 'Dropped from the program: {{detail}}',
-      undefined: 'Used but never defined: {{detail}}',
-      unused: 'Defined but never shown: {{detail}}',
-      runtime: 'Could not compute: {{detail}}',
     },
   },
   localData: {

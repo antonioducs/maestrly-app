@@ -25,6 +25,7 @@ const policy = (allowedInPlanAsk: boolean, readOnly: boolean, parallelSafe: bool
 
 /** Exhaustive product policy for the app-tool universe registered by buildServer. */
 export const APP_TOOL_POLICY = {
+  preview_interface: policy(true, true, false),
   browser_navigate: policy(true, false, false),
   browser_back: policy(true, false, false),
   browser_forward: policy(true, false, false),

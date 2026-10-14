@@ -90,23 +90,6 @@ paths, and Maestrly-specific modifications are distributed in
 [`apps/desktop/resources/licenses/openai-codex-apache-2.0.txt`](apps/desktop/resources/licenses/openai-codex-apache-2.0.txt).
 The remainder of Maestrly is not relicensed by this notice.
 
-## OpenUI-derived source
-
-The openui-lang language core behind generated interfaces in chat
-(`apps/desktop/src/renderer/genui/lang/`), an error boundary of its renderer and
-adapted unit tests derive from [OpenUI](https://github.com/thesysdev/openui)
-(`@openuidev/lang-core` and `@openuidev/react-lang` 1.0.0, commit `f7109dd`).
-Maestrly removed tool access and telemetry, hardened evaluation of
-model-written programs, and replaced the React runtime.
-
-Copyright (c) 2011-2024 Thesys Inc.
-
-Licensed under the MIT License.
-
-The complete license, the pinned source, the derived files, and the
-Maestrly-specific modifications are distributed in
-[`apps/desktop/resources/licenses/openui-MIT.txt`](apps/desktop/resources/licenses/openui-MIT.txt).
-
 ## OpenAI Codex runtime
 
 The optional Codex subscription integration downloads the pinned, unmodified

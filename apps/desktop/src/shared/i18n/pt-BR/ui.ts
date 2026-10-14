@@ -502,10 +502,9 @@ export default {
     close: 'Fechar (Esc)',
   },
   genUi: {
-    loading: 'Carregando interface…',
     source: 'Código da interface',
-    invalid: 'Não foi possível montar esta interface. O código dela aparece no lugar.',
     building: 'Montando interface…',
+    missing: 'Esta interface está faltando: a resposta cita uma prévia que não gerou.',
     tooLong: 'Esta interface é grande demais para exibir. O código dela está abaixo.',
     frameTitle: 'Resposta interativa',
     issues: {
@@ -517,10 +516,6 @@ export default {
       viewport: 'O layout cresce com a altura do quadro (100vh ou height: 100%), por isso a altura foi limitada.',
       script: 'Erro de script: {{detail}}',
       blocked: 'Bloqueado pela política da interface: {{detail}}',
-      invalid: 'Removido do programa: {{detail}}',
-      undefined: 'Usado, mas nunca definido: {{detail}}',
-      unused: 'Definido, mas nunca exibido: {{detail}}',
-      runtime: 'Não foi possível calcular: {{detail}}',
     },
   },
   localData: {

@@ -134,6 +134,7 @@ import type { PermissionBroker } from './permission'
 import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
 import { buildHarnessPrompt } from './harness/prompt-builder'
 import { buildMaestrlyBasePrompt, harnessUltraGuidance } from './harness/host-contracts'
+import { generatedInterfacesEnabled } from './generated-interfaces'
 import { openAINativeToolsPromptOverlay } from './harness/strategies/prompt-layout'
 import { withEnvironmentOnLastUserMessage } from './harness/strategies/environment'
 import { captureHarnessFlags } from './harness/flags'
@@ -1437,6 +1438,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     disabledAppToolGroups: appAccess.disabledGroups,
     mode,
     hasNotesTab,
+    generatedInterfaces: generatedInterfacesEnabled(),
   })
   const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
@@ -1471,6 +1473,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
         hasNotesTab,
+        generatedInterfaces: generatedInterfacesEnabled(),
         projectContext,
         skillsContext: skillsCatalog,
         agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${

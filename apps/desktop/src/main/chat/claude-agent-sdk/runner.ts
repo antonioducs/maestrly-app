@@ -131,6 +131,7 @@ import { renderDesignUltraGuidance } from '../design-mode-prompt'
 import { harnessFor } from '../harness/execution'
 import { captureHarnessFlags } from '../harness/flags'
 import { buildMaestrlyBasePrompt, harnessEnvironmentContext, harnessUltraGuidance } from '../harness/host-contracts'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import { createHarnessSnapshot } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
@@ -800,6 +801,7 @@ async function prepareRuntime(
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: Boolean(getConversation(args.conversationId)),
+        generatedInterfaces: generatedInterfacesEnabled(),
       }),
       '# Active runtime\nYou are running through the official Anthropic Claude Agent SDK. Maestrly owns the system prompt, tools, permissions, skills, subagents, plans, questions and persistence. Use only the supplied Maestrly MCP tools; native Claude Code extensions are disabled.',
       projectContext,

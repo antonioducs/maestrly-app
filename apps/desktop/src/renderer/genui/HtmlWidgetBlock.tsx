@@ -1,16 +1,16 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   GENUI_WIDGET_FRAME_URL,
   GENUI_WIDGET_MAX_CHARS,
   type GenUiWidgetTheme,
+  genUiWidgetHash,
   parseGenUiWidgetMessage,
 } from '../../shared/genui-widget'
 import { useGenUiHost } from './context'
 import { GenUiIssues } from './GenUiIssues'
 import { GenUiSource } from './GenUiSource'
 import { addGenUiIssue, type GenUiIssue } from './issues'
-import { programHash } from './persist'
 
 /** Least time between two messages or links one frame may send, even with the person clicking. */
 const ACTION_INTERVAL_MS = 1000
@@ -41,9 +41,15 @@ export function hasTransientActivation(view: Window): boolean {
   return activation?.isActive === true
 }
 
+/** Hides a pending fence while its message streams; once the message ends it is ordinary code. */
+export function PendingFence({ children }: { children: ReactNode }) {
+  return useGenUiHost().live ? null : <pre>{children}</pre>
+}
+
 /**
  * A ```inline-html block of a message: the model's HTML in an isolated frame (see shared/genui-widget-frame.ts). It
- * renders once the block is complete, so its scripts never run half-written.
+ * renders once the block is complete, so its scripts never run half-written. An empty block is a reference to a
+ * preview that the message does not hold (see expandGenUiPreviews).
  */
 export function HtmlWidgetBlock({ code, complete }: { code: string; complete: boolean }) {
   const { t } = useTranslation('ui')
@@ -54,12 +60,14 @@ export function HtmlWidgetBlock({ code, complete }: { code: string; complete: bo
     <div className="genui-widget my-2 flex min-w-0 flex-col gap-1.5 not-italic">
       {!ready ? (
         <p className="m-0 animate-pulse text-[12px] text-muted-foreground">{t('genUi.building')}</p>
+      ) : !code.trim() ? (
+        <p className="m-0 text-[12px] text-muted-foreground">{t('genUi.missing')}</p>
       ) : tooLong ? (
         <p className="m-0 text-[12px] text-muted-foreground">{t('genUi.tooLong')}</p>
       ) : (
-        <WidgetFrame key={programHash(code)} code={code} send={send} />
+        <WidgetFrame key={genUiWidgetHash(code)} code={code} send={send} />
       )}
-      <GenUiSource code={code} open={ready && tooLong} />
+      {code.trim() && <GenUiSource code={code} open={ready && tooLong} />}
     </div>
   )
 }
@@ -101,7 +109,8 @@ function WidgetFrame({ code, send }: { code: string; send?: (text: string) => vo
         if (deliver && actionAllowed()) deliver(message.text)
       } else if (message.type === 'open') {
         if (actionAllowed()) void window.api.openExternalUrl(message.url)
-      } else setIssues((current) => addGenUiIssue(current, { kind: message.kind, detail: message.detail }))
+      } else if (message.type === 'issue')
+        setIssues((current) => addGenUiIssue(current, { kind: message.kind, detail: message.detail }))
     }
     view.addEventListener('message', onMessage)
     return () => view.removeEventListener('message', onMessage)

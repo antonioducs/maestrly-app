@@ -1756,6 +1756,8 @@ export interface ChatConfig {
   appToolGroups?: AppToolGroupState
 
   imageGenEnabled: boolean
+  /** Generated interfaces: the inline HTML instructions in the prompt and the preview tool. Default on. */
+  generatedInterfacesEnabled: boolean
 
   bashFiltersEnabled: boolean
 

@@ -51,43 +51,47 @@ reopening saved conversations and does not change the stored tool input.
 ## Interactive answers
 
 In chats, project conversations and bot conversations, an agent can answer with
-interfaces mixed into its text, as many as the answer needs:
-
-- **Native interfaces** use a fixed set of components in the app's own style:
-  calculators with sliders, charts, tables of figures, or a choice to send back.
-- **Inline HTML** is a small page the agent writes, shown in an isolated frame:
-  pictures such as product photos, custom layouts, diagrams, animations or small
-  games.
+interfaces mixed into its text, as many as the answer needs: small pages it
+writes in HTML, CSS and JavaScript, shown in an isolated frame. They suit
+pictures such as product photos, visual comparisons, charts, diagrams,
+calculators and simulations, small tools and games.
 
 How they behave:
 
-- Each interface appears as soon as the agent finishes writing it, while the
-  rest of the answer is still arriving.
-- Moving a slider or changing a field recalculates the interface locally; it
-  does not call the model.
-- A button can send a message as you or open a web page in your browser; native
-  interfaces can also change their own fields. A sent message appears in the
-  conversation like one you typed, and waits in the queue while a turn runs.
-  Inline HTML sends or opens nothing unless you just clicked inside it.
-- In native interfaces, what you change is restored when the conversation shows
-  again on the same computer; it is not synchronized to other devices. Inline
-  HTML starts over each time.
-- The agent writes interfaces without seeing them, so the app checks them. An
-  image that does not load is replaced by a placeholder, and a table wider than
-  the answer scrolls sideways. What cannot be fixed is listed under the
-  interface as **problems found**: content wider than the answer, text cut off,
-  a layout that grows with its own frame, script errors, blocked requests, and
-  in native interfaces, parts the agent named but never defined or that the app
-  does not know.
-- An interface that cannot be rendered shows a notice; **Interface source**
-  shows what the agent wrote.
+- Before showing an interface, the agent can preview it: the app renders it
+  offscreen at the width of the chat and returns a screenshot and the problems
+  it found, so the agent can fix what looks wrong. The preview appears in the
+  answer's activity with its screenshot, and the answer then shows the
+  interface without the agent writing it again. Previews need Maestrly tools;
+  without them the agent writes interfaces without seeing them.
+- Each interface appears as soon as its block is complete, while the rest of
+  the answer is still arriving.
+- Changing a field or moving a slider runs inside the interface; it does not
+  call the model.
+- A button can send a message as you or open a web page in your browser. A sent
+  message appears in the conversation like one you typed, and waits in the
+  queue while a turn runs. An interface sends or opens something only right
+  after you interact with the app window, and at most once per second.
+- An interface keeps nothing: it starts over each time the conversation shows.
+- The app checks each interface. An image that does not load is replaced by a
+  placeholder, and a table wider than the answer scrolls sideways. What cannot
+  be fixed is listed under the interface as **problems found**: content wider
+  than the answer, text cut off, a layout that grows with its own frame, script
+  errors and blocked requests.
+- **Interface source** shows what the agent wrote.
 
 Interfaces cannot call tools, read files or fetch data, so they show only what
-the agent put in them. Inline HTML may load images, video and audio from any web
+the agent put in them. They may load images, video and audio from any web
 address, and libraries and fonts from a few public CDNs; those servers see the
-addresses it asks for. The instructions that teach both kinds add about 4,200
-tokens to each conversation's cached system prompt. Delegated subagents do not
-receive them.
+addresses requested, by previews as well.
+
+The instructions that teach interfaces add about 850 tokens to each
+conversation's cached system prompt, and each preview adds its screenshot to
+the context. To save those tokens, turn off **Interactive answers** in
+**Settings → Tools**; for bots, turn it off in the **Preferences** of the
+environment's settings. Turning it off removes the instructions and the preview
+from the next turn; answers that already have interfaces keep showing them.
+Delegated subagents never receive them.
 
 ## PDF attachments
 

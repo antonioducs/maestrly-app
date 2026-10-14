@@ -152,8 +152,9 @@ export function hostCapabilitySection(mode: ChatBehavior): string {
 export const HOST_RENDERING = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
 
 /**
- * Teaches the model the ```openui-lang blocks every chat renders as interactive interfaces. About 3k tokens, kept in
- * the stable prefix so prompt caching absorbs it. Delegated subagents leave it out: their output goes to a model.
+ * Teaches the model the ```inline-html blocks chats render as interfaces. Kept in the stable prefix so prompt caching
+ * absorbs it. It is left out when the person turned generated interfaces off, and for delegated subagents, whose
+ * output goes to a model.
  */
 export function hostGenUiSection(enabled = true): string {
   return enabled ? `\n\n${GENUI_PROMPT}` : ''

@@ -93,6 +93,16 @@ export default {
       description: 'Marks a comment thread on an artifact as resolved, once what it asked for was dealt with.',
       params: { id: 'artifact id', commentId: 'id of the thread to resolve (from artifact_comments)' },
     },
+    // ---------------- INTERFACES ----------------
+    preview_interface: {
+      title: 'Preview interface',
+      description:
+        'Renders an inline-html fragment offscreen exactly as the chat shows it (same width, frame, styles and policy) and returns a screenshot, its height, the problems the frame found, and an id. Show a preview in your answer by naming its id instead of writing the HTML again.',
+      params: {
+        html: 'the fragment, as it would go inside the inline-html block',
+        width: 'width in CSS px, 320 to 1000 (default 700, about the chat column); use 360 to check a narrow layout',
+      },
+    },
     // ---------------- BROWSER ----------------
     browser_navigate: {
       title: 'Navigate',
@@ -546,6 +556,23 @@ export default {
   },
 
   returns: {
+    interfaces: {
+      rendered: 'Preview {{id}}: {{width}} × {{height}} CSS px.',
+      capped:
+        'Its height was capped at {{max}} px: it reached the maximum, or its layout grows with the frame (100vh or height: 100%).',
+      timedOut: 'It had not finished loading after 15 s; the screenshot shows it as it was.',
+      issues: 'Problems the frame found:',
+      noIssues: 'The frame found no problems.',
+      show: 'To show this preview, put an empty block that names it in your answer:\n{{block}}',
+      kinds: {
+        image: 'image did not load (replaced by a placeholder)',
+        overflow: 'content wider than the frame',
+        clipped: 'text cut off by its box',
+        viewport: 'layout sized by the frame height',
+        script: 'script error',
+        blocked: 'blocked by the frame policy',
+      },
+    },
     artifacts: {
       note: 'The user can open it from the chat card or the Artifacts center. To change it, call artifact_update with baseVersion set to this version.',
       opened: 'Opened "{{title}}" (version {{version}}) in the browser drawer.',
@@ -635,6 +662,7 @@ export default {
 
   // Agent-facing errors.
   errors: {
+    interfacePreview: 'The preview could not be rendered ({{reason}}). Show the interface without previewing it.',
     artifacts: {
       inputConflict:
         'Provide the content in exactly one way: files or directory (artifact_update also accepts edits, or files with delete).',

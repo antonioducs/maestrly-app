@@ -6,13 +6,14 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { FileCode, Folder, MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { MermaidBlock } from '@/components/MermaidBlock'
-import { GenUiBlock, PendingFence } from '@/genui/GenUiBlock'
-import { isFenceClosed, isGenUiFence, isPendingFence, isWidgetFence } from '@/genui/fences'
-import { HtmlWidgetBlock } from '@/genui/HtmlWidgetBlock'
+import { useGenUiHost } from '@/genui/context'
+import { isFenceClosed, isPendingFence, isWidgetFence } from '@/genui/fences'
+import { HtmlWidgetBlock, PendingFence } from '@/genui/HtmlWidgetBlock'
 import { i18n } from '@/lib/i18n'
 import { rehypeChatMentions, rehypeMarkdownSearchHighlight } from '@/lib/markdown-search-highlight'
 import { cn } from '@/lib/utils'
 import { parseLocalFileReference } from '../../shared/file-reference'
+import { expandGenUiPreviews } from '../../shared/genui-widget'
 
 export interface CommentCtx {
   comments: Record<number, string>
@@ -52,9 +53,12 @@ export const MarkdownViewer = memo(function MarkdownViewer({
   searchQuery,
   currentSearchMatch,
 }: Props) {
+  // An answer shows an interface it previewed by naming the preview; the message holds its HTML.
+  const { previews } = useGenUiHost()
+  const source = useMemo(() => (previews ? expandGenUiPreviews(markdown, previews) : markdown), [markdown, previews])
   // Fences read the source to tell a closed block from one still streaming; the ref spares rebuilding components.
-  const sourceRef = useRef(markdown)
-  sourceRef.current = markdown
+  const sourceRef = useRef(source)
+  sourceRef.current = source
   const components = useMemo<Components>(
     () => buildComponents(sourceRef, onOpenFile, ctx, onOpenMention),
     [onOpenFile, ctx, onOpenMention]
@@ -75,7 +79,7 @@ export const MarkdownViewer = memo(function MarkdownViewer({
         components={components}
         urlTransform={markdownUrlTransform}
       >
-        {markdown}
+        {source}
       </ReactMarkdown>
     </div>
   )
@@ -188,16 +192,12 @@ function buildComponents(
         : String(codeNode?.properties?.className ?? '')
       if (/\blanguage-mermaid\b/.test(cls)) return <MermaidBlock code={hastText(codeNode)} />
       const code = hastText(codeNode)
-      if (isGenUiFence(cls) || isWidgetFence(cls)) {
+      if (isWidgetFence(cls)) {
         const start = node?.position?.start?.offset
         const end = node?.position?.end?.offset
         const complete =
           typeof start === 'number' && typeof end === 'number' && isFenceClosed(sourceRef.current.slice(start, end))
-        return isGenUiFence(cls) ? (
-          <GenUiBlock code={code} complete={complete} />
-        ) : (
-          <HtmlWidgetBlock code={code} complete={complete} />
-        )
+        return <HtmlWidgetBlock code={code} complete={complete} />
       }
       if (isPendingFence(cls, code)) return <PendingFence>{children}</PendingFence>
       return <pre>{children}</pre>

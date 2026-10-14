@@ -1,14 +1,8 @@
 import type { GenUiWidgetIssueKind } from '../../shared/genui-widget'
 
-/**
- * A problem found in a generated interface, which its author wrote without seeing it. The frame reports what it finds
- * in inline HTML; a native program reports what the parser and the evaluator dropped: invalid calls, names used but
- * never defined, statements defined but never shown, and props whose evaluation failed.
- */
-export type GenUiIssueKind = GenUiWidgetIssueKind | 'invalid' | 'undefined' | 'unused' | 'runtime'
-
+/** A problem the frame found in a generated interface, which its author wrote without seeing it. */
 export interface GenUiIssue {
-  kind: GenUiIssueKind
+  kind: GenUiWidgetIssueKind
   detail: string
 }
 

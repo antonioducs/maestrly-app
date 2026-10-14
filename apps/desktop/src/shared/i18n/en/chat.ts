@@ -1179,6 +1179,9 @@ export default {
     imageGenHeading: 'Image generation',
     imageGenDescription:
       'Lets models create images in the chat. Codex uses its native generator; other models (Claude, Copilot, API providers) get a `generate_image` tool that runs on the ChatGPT subscription you connected — so it requires a connected ChatGPT account and consumes it.',
+    generatedInterfacesHeading: 'Interactive answers',
+    generatedInterfacesDescription:
+      'Lets models answer with small interfaces you can see and use, such as product pictures, charts and calculators, and preview them before showing them. The instructions add about 850 tokens to each conversation, mostly served from cache, and each preview adds a screenshot to the context. Turn it off to save those tokens; answers that already have interfaces keep showing them.',
     bashFiltersHeading: 'Compact command output',
     bashFiltersDescription:
       'Filters verbose output from supported bash commands before sending it to the model, reducing token usage. Permission prompts still show the original command.',

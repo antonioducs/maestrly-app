@@ -291,6 +291,7 @@ import { releaseTurnDelegationRuntimes } from './subagent-resume'
 import { registerPerformanceCache } from '../performance/metrics'
 import { builtinToolNamesForMode } from './tools'
 import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled, imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
+import { GENERATED_INTERFACES_FLAG, generatedInterfacesEnabled } from './generated-interfaces'
 import { supportsChatToolImages } from './tool-capabilities'
 import {
   getAppFlag,
@@ -2143,6 +2144,7 @@ function buildConfig(): ChatConfig {
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),
     imageGenEnabled: getAppFlag(IMAGE_GEN_FLAG, true),
+    generatedInterfacesEnabled: generatedInterfacesEnabled(),
     bashFiltersEnabled: getAppFlag('chat.bashFilters', true),
     openAIHarnessEnabled: getAppFlag('chat.openAIHarness', true),
     astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
@@ -10773,6 +10775,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // toggle. Default ON; conversations with explicit overrides keep their own values.
   deps.mhandle('chat:set-image-gen', (_e, enabled: boolean) => {
     setAppFlag(IMAGE_GEN_FLAG, enabled === true)
+    return { ok: true }
+  })
+  // Generated interfaces (prompt section + preview_interface) — GLOBAL toggle, default ON. Applies from the next turn.
+  deps.mhandle('chat:set-generated-interfaces', (_e, enabled: boolean) => {
+    setAppFlag(GENERATED_INTERFACES_FLAG, enabled === true)
     return { ok: true }
   })
   // Bash output filters (token savings, experimental) — toggle.

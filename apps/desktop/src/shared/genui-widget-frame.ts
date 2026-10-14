@@ -1,4 +1,4 @@
-import { GENUI_WIDGET_THEME_KEYS } from './genui-widget'
+import { GENUI_WIDGET_MAX_HEIGHT, GENUI_WIDGET_THEME_KEYS } from './genui-widget'
 
 // The page of the frame that renders an ```inline-html block. The main process serves it at GENUI_WIDGET_FRAME_URL.
 // It waits for the block from its parent, then writes it as its own document under the policy below: the block keeps
@@ -27,31 +27,9 @@ export const GENUI_WIDGET_CSP = [
   "base-uri 'none'",
 ].join('; ')
 
-/** Classes the frame styles; the prompt teaches them, and a test keeps both lists in step. */
-export const GENUI_WIDGET_CLASSES = [
-  'ui-stack',
-  'ui-row',
-  'ui-grid',
-  'ui-card',
-  'ui-media',
-  'ui-btn',
-  'ui-btn-primary',
-  'ui-badge',
-  'ui-success',
-  'ui-warning',
-  'ui-danger',
-  'ui-stat',
-  'ui-stat-label',
-  'ui-stat-value',
-  'ui-muted',
-  'ui-small',
-  'ui-num',
-  'ui-scroll',
-] as const
-
 /**
- * The stylesheet written before every block. Each rule sits in :where(), with no specificity, so any style of the
- * block wins: elements get the app's type, spacing and controls, and the ui-* classes give ready-made layouts.
+ * The stylesheet written before every block: plain elements get the app's type, spacing, tables and controls. Each
+ * rule sits in :where(), with no specificity, so any style of the block wins.
  */
 export const GENUI_WIDGET_BASE_CSS = [
   // Theme variables; the host sends the app's current values over them.
@@ -61,6 +39,10 @@ export const GENUI_WIDGET_BASE_CSS = [
   '--ui-font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--ui-mono:ui-monospace,SFMono-Regular,Menlo,monospace;',
   '--ui-radius:12px}',
   '*,*::before,*::after{box-sizing:border-box}html,body{margin:0;background:transparent}',
+  // The frame grows with its content, so it never scrolls down (the bridge lets a block past the maximum height
+  // scroll). A classic scrollbar would narrow the page, and content whose height follows its width, such as images
+  // with an aspect ratio, would then keep it for good.
+  ':where(html){overflow-y:hidden}',
   // The padding keeps the borders, shadows and focus rings of the outermost elements inside the frame.
   'body{padding:2px;color:var(--ui-text);font:14px/1.5 var(--ui-font);overflow-wrap:break-word}',
   ':where(h1,h2,h3,h4,h5,h6){margin:0 0 .5em;font-weight:600;line-height:1.25}',
@@ -79,41 +61,18 @@ export const GENUI_WIDGET_BASE_CSS = [
   ':where(th,td){padding:6px 10px;border-bottom:1px solid var(--ui-border);text-align:left;vertical-align:top}',
   ':where(th){color:var(--ui-muted);font-size:12px;font-weight:500}:where(tr:last-child>td){border-bottom:0}',
   ':where(button,input,select,textarea){font:inherit;color:inherit}',
-  ':where(button,.ui-btn){display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;',
+  ':where(button){display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;',
   'padding:0 12px;border:1px solid var(--ui-border);border-radius:8px;background:rgba(255,255,255,.04);',
   'color:var(--ui-text);font-size:13px;font-weight:500;line-height:1.2;text-decoration:none;cursor:pointer}',
-  ':where(:is(button,.ui-btn):hover){background:rgba(255,255,255,.08)}',
-  ':where(:is(button,.ui-btn):disabled){opacity:.5;cursor:default}',
-  ':where(.ui-btn-primary){border-color:transparent;background:var(--ui-accent);color:var(--ui-accent-text)}',
-  ':where(.ui-btn-primary:hover){background:var(--ui-accent);filter:brightness(.9)}',
+  ':where(button:hover){background:rgba(255,255,255,.08)}',
+  ':where(button:disabled){opacity:.5;cursor:default}',
   ':where(input:not([type=checkbox],[type=radio],[type=range],[type=color],[type=file]),select,textarea){',
   'min-height:32px;max-width:100%;padding:6px 10px;border:1px solid var(--ui-border);border-radius:8px;',
   'background:rgba(0,0,0,.2);color:var(--ui-text)}',
   ':where(textarea){resize:vertical}',
   ':where(input[type=checkbox],input[type=radio],input[type=range]){accent-color:var(--ui-accent)}',
-  ':where(:is(button,input,select,textarea,.ui-btn):focus-visible){outline:2px solid var(--ui-accent);outline-offset:1px}',
-  ':where(.ui-stack){display:flex;flex-direction:column;gap:12px}',
-  ':where(.ui-row){display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}',
-  ':where(.ui-grid){display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}',
-  ':where(.ui-card){display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px;',
-  'border:1px solid var(--ui-border);border-radius:var(--ui-radius);background:var(--ui-card)}',
-  // Layouts space their children with gaps; margins would add to them.
-  ':where(.ui-stack,.ui-row,.ui-grid,.ui-card)>*{margin:0}',
-  // A card's closing button sits at its bottom, so the buttons of a row of cards line up.
-  ':where(.ui-card>:is(button,.ui-btn):last-child){margin-top:auto}',
-  ':where(.ui-media){display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px;',
-  'background:rgba(255,255,255,.04)}',
-  ':where(.ui-badge){display:inline-flex;align-items:center;width:fit-content;padding:2px 8px;',
-  'border:1px solid var(--ui-border);border-radius:999px;color:var(--ui-muted);font-size:11px;font-weight:500;',
-  'line-height:1.4;white-space:nowrap}',
-  ':where(.ui-stat){display:flex;flex-direction:column;gap:2px;min-width:0}',
-  ':where(.ui-stat-label){color:var(--ui-muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase}',
-  ':where(.ui-stat-value){font-size:22px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}',
-  ':where(.ui-muted){color:var(--ui-muted)}:where(.ui-small){font-size:12px}',
-  ':where(.ui-success){color:var(--ui-success)}:where(.ui-warning){color:var(--ui-warning)}',
-  ':where(.ui-danger){color:var(--ui-danger)}',
-  ':where(.ui-badge:is(.ui-success,.ui-warning,.ui-danger)){border-color:color-mix(in srgb,currentColor 40%,transparent)}',
-  ':where(.ui-num){text-align:right;font-variant-numeric:tabular-nums}',
+  ':where(:is(button,input,select,textarea):focus-visible){outline:2px solid var(--ui-accent);outline-offset:1px}',
+  // The bridge wraps a table or code block wider than the answer in it.
   ':where(.ui-scroll){max-width:100%;overflow-x:auto}',
   // An image that did not load keeps its box and shows a placeholder (see the bridge).
   'img[data-ui-failed]{object-fit:contain!important;background:rgba(255,255,255,.04)}',
@@ -285,9 +244,15 @@ const BRIDGE = `(function () {
       if (cutsText(element)) issue('clipped', describe(element));
     }
   }
+  // The first check after the page loaded tells the host it is done: a preview waits for it before its screenshot.
+  var loadedPending = false;
   function check() {
     checkWidth();
     checkClipping();
+    if (loadedPending) {
+      loadedPending = false;
+      post({ type: 'loaded' });
+    }
   }
 
   var last = -1;
@@ -308,6 +273,7 @@ const BRIDGE = `(function () {
   function report(fromResize) {
     if (frozen) return;
     var height = measure();
+    root.style.overflowY = height > ${GENUI_WIDGET_MAX_HEIGHT} ? 'auto' : '';
     if (height === last) return;
     // The host only applied the height asked for, and the content followed it: it is sized by the frame's own height
     // (100vh, height: 100%), so each report would grow it again. Keep the last height instead.
@@ -325,6 +291,7 @@ const BRIDGE = `(function () {
   if (typeof ResizeObserver === 'function') new ResizeObserver(function () { report(false); }).observe(root);
   document.addEventListener('DOMContentLoaded', function () { report(false); });
   window.addEventListener('load', function () {
+    loadedPending = true;
     report(false);
     scheduleCheck();
   });

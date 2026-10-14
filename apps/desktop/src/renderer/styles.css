@@ -675,13 +675,12 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 }
 
 /*
- * Generated interfaces style their elements with utilities, which sit in a cascade layer and so lose to the unlayered
- * prose rules above, whatever their specificity: paragraphs got prose margins, tables became blocks, cells got
- * borders. Inside a block those rules step back to the layers. The `:not(#…)` only lifts this rule above every prose
- * selector.
+ * What a generated interface shows around its frame (its problems, its source) is styled with utilities, which sit in
+ * a cascade layer and so lose to the unlayered prose rules above, whatever their specificity. Inside an interface
+ * those rules step back to the layers. The `:not(#…)` only lifts this rule above every prose selector.
  */
 .dark-glass-prose
-  :is(.genui-block, .genui-widget)
+  .genui-widget
   :is(p, h1, h2, h3, h4, ul, ol, li, a, strong, blockquote, hr, code, pre, table, th, td):not(#genui-prose-reset) {
   all: revert-layer;
 }

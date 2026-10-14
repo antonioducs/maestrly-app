@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest'
 import { APP_CONTENT_SECURITY_POLICY, appPolicyHeaders } from '../../src/main/content-security-policy'
 import { PRIVILEGED_SCHEMES } from '../../src/main/privileged-schemes'
 import { GenUiContext, type GenUiHost } from '../../src/renderer/genui/context'
+import { GenUiIssues } from '../../src/renderer/genui/GenUiIssues'
 import { HtmlWidgetBlock, hasTransientActivation } from '../../src/renderer/genui/HtmlWidgetBlock'
+import { addGenUiIssue, MAX_GENUI_ISSUES } from '../../src/renderer/genui/issues'
 import {
   GENUI_WIDGET_FRAME_URL,
   GENUI_WIDGET_MAX_CHARS,
@@ -13,10 +15,8 @@ import {
   GENUI_WIDGET_MAX_SEND_CHARS,
   parseGenUiWidgetMessage,
 } from '../../src/shared/genui-widget'
-import { GENUI_PROMPT } from '../../src/main/chat/harness/genui-prompt'
 import {
   GENUI_WIDGET_BASE_CSS,
-  GENUI_WIDGET_CLASSES,
   GENUI_WIDGET_CSP,
   GENUI_WIDGET_FRAME_HTML,
   genUiWidgetFrameResponse,
@@ -31,6 +31,7 @@ describe('inline HTML frame messages', () => {
     expect(parseGenUiWidgetMessage({ type: 'ready' })).toBeNull()
     expect(parseGenUiWidgetMessage(message({ type: 'render', html: '<b>x</b>' }))).toBeNull()
     expect(parseGenUiWidgetMessage(message({ type: 'ready' }))).toEqual({ type: 'ready' })
+    expect(parseGenUiWidgetMessage(message({ type: 'loaded' }))).toEqual({ type: 'loaded' })
   })
 
   it('bounds heights and the text a frame sends', () => {
@@ -132,13 +133,10 @@ describe('inline HTML frame styles', () => {
     }
   })
 
-  it('styles every class the prompt teaches, and the prompt teaches them all', () => {
-    for (const name of GENUI_WIDGET_CLASSES) {
-      expect(GENUI_WIDGET_BASE_CSS, name).toMatch(new RegExp(`\\.${name}(?![\\w-])`))
-      expect(GENUI_PROMPT, name).toMatch(new RegExp(`\\b${name}(?![\\w-])`))
-    }
-    const styled = new Set(GENUI_WIDGET_BASE_CSS.match(/\.ui-[\w-]+/g)?.map((name) => name.slice(1)))
-    expect([...styled].sort()).toEqual([...GENUI_WIDGET_CLASSES].sort())
+  it('styles plain elements, and no class but the scroll box the bridge wraps wide tables in', () => {
+    expect(GENUI_WIDGET_BASE_CSS).toContain(':where(button){')
+    expect(GENUI_WIDGET_BASE_CSS).toContain(':where(table){')
+    expect(new Set(GENUI_WIDGET_BASE_CSS.match(/\.[a-z][\w-]*/g))).toEqual(new Set(['.ui-scroll']))
   })
 
   it('cannot end the style element it is written into', () => {
@@ -297,6 +295,7 @@ function runBridge(page: { contentHeight?: (viewportHeight: number) => number; s
       },
       scrollWidth: 700,
       clientWidth: 700,
+      style: { overflowY: '' },
     },
     body: { scrollHeight: 100, getElementsByTagName: () => [] },
     addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(`document:${type}`, listener),
@@ -324,7 +323,7 @@ function runBridge(page: { contentHeight?: (viewportHeight: number) => number; s
     for (const callback of pending) callback()
   }
   const issues = () => posted.filter((item) => item.type === 'issue')
-  return { window: window as any, posted, listeners, applyHeight, runTimers, issues }
+  return { window: window as any, document, posted, listeners, applyHeight, runTimers, issues }
 }
 
 describe('inline HTML frame bridge', () => {
@@ -367,6 +366,26 @@ describe('inline HTML frame bridge', () => {
     expect(posted.filter((item) => item.type === 'size')).toEqual([
       { source: 'maestrly-widget', type: 'size', height: 241 },
     ])
+  })
+
+  it('says it loaded after checking the loaded page, so a preview waits for its problems', () => {
+    const { posted, listeners, runTimers } = runBridge()
+    listeners.get('error')!({ message: 'Uncaught TypeError: x is undefined' })
+    listeners.get('load')!({})
+    expect(posted.some((item) => item.type === 'loaded')).toBe(false)
+    runTimers()
+    expect(posted.map((item) => item.type)).toEqual(['issue', 'size', 'loaded'])
+  })
+
+  it('never scrolls down, unless the block is taller than the frame can grow', () => {
+    let height = 300
+    const { document, listeners } = runBridge({ contentHeight: () => height })
+    listeners.get('load')!({})
+    expect(document.documentElement.style.overflowY).toBe('')
+    height = GENUI_WIDGET_MAX_HEIGHT + 500
+    listeners.get('load')!({})
+    expect(document.documentElement.style.overflowY).toBe('auto')
+    expect(GENUI_WIDGET_BASE_CSS).toContain(':where(html){overflow-y:hidden}')
   })
 
   it('asks for the height of a horizontal scrollbar too, so no vertical one appears', () => {
@@ -461,6 +480,13 @@ describe('inline HTML block', () => {
     }
   })
 
+  it('says so when an answer names a preview its message does not hold', () => {
+    const html = block({ live: false }, '', true)
+    expect(html).toContain('genUi.missing')
+    expect(html).not.toContain('<iframe')
+    expect(html).not.toContain('genUi.source')
+  })
+
   it('shows the source of a block too large to frame', () => {
     const html = block({ live: false }, 'x'.repeat(GENUI_WIDGET_MAX_CHARS + 1), true)
     expect(html).not.toContain('<iframe')
@@ -490,5 +516,22 @@ describe('app windows and the frame', () => {
   it('declares every privileged scheme in one list', () => {
     expect(PRIVILEGED_SCHEMES.map((entry) => entry.scheme)).toEqual(['maestrly-media', 'maestrly-widget'])
     expect(PRIVILEGED_SCHEMES[1].privileges).toEqual({ standard: true, secure: true })
+  })
+})
+
+describe('inline HTML block problems', () => {
+  it('keeps each problem once and at most a fixed number', () => {
+    let issues = addGenUiIssue([], { kind: 'image', detail: 'a.jpg' })
+    expect(addGenUiIssue(issues, { kind: 'image', detail: 'a.jpg' })).toBe(issues)
+    for (let i = 0; i < 40; i++) issues = addGenUiIssue(issues, { kind: 'image', detail: `${i}.jpg` })
+    expect(issues).toHaveLength(MAX_GENUI_ISSUES)
+  })
+
+  it('folds the list under one line, and shows nothing without problems', () => {
+    expect(renderToString(createElement(GenUiIssues, { issues: [] }))).toBe('')
+    const html = renderToString(createElement(GenUiIssues, { issues: [{ kind: 'clipped', detail: 'div.card' }] }))
+    expect(html).toContain('<details class="genui-issues')
+    expect(html).toContain('genUi.issues.summary')
+    expect(html).toContain('genUi.issues.clipped')
   })
 })
