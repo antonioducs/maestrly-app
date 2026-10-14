@@ -33,6 +33,8 @@ describe('workspaces environments', () => {
     expect(FLEET_WORKSPACES_HOST_FEATURE).toBe('workspaces-host')
     expect(FLEET_BOT_ENV.serverMode).toBe('MAESTRLY_SERVER_MODE')
     expect(FLEET_BOT_ENV.workspacesRoot).toBe('MAESTRLY_WORKSPACES_ROOT')
+    // Not the bot gateway token, which images from before environments read as their one bot's.
+    expect(FLEET_BOT_ENV.hostGatewayToken).toBe('MAESTRLY_HOST_GATEWAY_TOKEN')
     expect(FLEET_GATEWAY_ENV.workspacesRoot).toBe('MAESTRLY_GATEWAY_WORKSPACES_ROOT')
     expect(FLEET_INSTANCE_BRIDGE_PATH).toBe('/v1/bridge')
     expect(FLEET_BRIDGE_LIMITS).toEqual({ ticketTtlMs: 30_000, perDevice: 8 })

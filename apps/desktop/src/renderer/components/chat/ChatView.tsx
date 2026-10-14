@@ -19,7 +19,8 @@ import { X, Pencil, ArrowDown } from 'lucide-react'
 import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPrefill } from '@/lib/composer-prefill'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { isRemoteHostId } from '../../../shared/host-key'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
@@ -185,6 +186,16 @@ export function ChatView({
     const frame = requestAnimationFrame(() => composerRef.current?.focus())
     return () => cancelAnimationFrame(frame)
   }, [conversationId, visible, workspaceId])
+  const hostId = useHostId()
+  // An agent on a workspaces host cannot show an artifact in its browser: this computer, which shows the conversation,
+  // opens it through its own connection to the server.
+  useEffect(() => {
+    if (!visible || !isRemoteHostId(hostId)) return
+    return api.onChatArtifactOpen((request) => {
+      if (request.conversationId !== conversationId) return
+      void window.api.artifacts.openExternal(request.artifactId, request.version).catch(() => undefined)
+    })
+  }, [api, conversationId, hostId, visible])
   const maestroPanelHostId = `chat-maestro-panel-${conversationId}`
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [subagentSessions, setSubagentSessions] = useState<SubagentSessionSummary[]>([])

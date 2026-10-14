@@ -59,6 +59,11 @@ feature: use **Update bots** first.
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
+- **Artifacts.** Agents in chats on the server publish [artifacts](artifacts.md) on the server itself, with nothing to
+  set up: the gateway gives the workspaces environment a token of its own for them. Artifact hosting must be on in
+  **Settings → Artifacts**. The server's browser cannot reach the artifact viewer, so **Open** on an artifact's card
+  and the agent's `artifact_open` open the page in this computer's default browser, through its connection to the
+  server. The Artifacts center lists them with the server's other artifacts, as **Other computer**.
 - **Memory of the host.** Chats on the server remember with the server's personal memory, and its workspaces keep their
   own project memory there; nothing is shared with this computer's memory. The personal memory panel has a
   **Memories of** selector to show the server's or this computer's: open it with **Manage personal memory** in the
@@ -219,6 +224,9 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 - **The Code tab says VS Code could not start on the server.** The environment must reach `code.visualstudio.com` and
   Microsoft's download servers to fetch the editor the first time. Open the tab again once it can; **Restart VS Code**
   tries again too.
+- **The agent says the server is too old to host artifacts.** The workspaces environment was created by a gateway from
+  before its artifact token. Use **Update bots**; an environment already on the current version gets its token the
+  next time it starts or restarts.
 - **A cloned repository asks for credentials.** Configure Git credentials in the environment, for example from a
   terminal of a chat on the server. They are kept in the environment's home volume.
 
@@ -234,7 +242,9 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   host, a Plan file opening it, and a selection reaching the composer). For the editor the host uses a stand-in for
   serve-web that the test runs: `MAESTRLY_E2E_VSCODE_SERVER=<port>:<token>`, honored only in E2E mode.
   `remote-hosts-server.spec.ts` does the same through a gateway, from the **Server** page to a stopped and started
-  environment.
+  environment. `remote-host-artifacts.spec.ts` has an agent on the host publish and open an artifact through a
+  stand-in for the gateway's internal API, and checks that the client opens it and that the host's environment no
+  longer holds the token.
 - `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, the
   mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
   streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the

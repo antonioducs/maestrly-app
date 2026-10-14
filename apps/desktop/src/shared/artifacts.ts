@@ -168,6 +168,29 @@ export function parseArtifactToolResult(text: string): ArtifactToolResult | null
   return { id: artifact.id, title: artifact.title.slice(0, MAX_CARD_TITLE_CHARS), version: artifact.version }
 }
 
+/**
+ * Sent by a workspaces host to the computers showing one of its conversations when an agent opens an artifact there:
+ * the host's browser cannot reach the viewer, so the computer opens it with its own connection to the server.
+ */
+export const ARTIFACT_OPEN_REQUEST_CHANNEL = 'chat:artifact-open'
+
+export interface ArtifactOpenRequest {
+  /** The conversation's id on the host. */
+  conversationId: string
+  artifactId: string
+  version: number
+}
+
+export function parseArtifactOpenRequest(value: unknown): ArtifactOpenRequest | null {
+  const request = value as Partial<Record<keyof ArtifactOpenRequest, unknown>> | null
+  if (!request || typeof request !== 'object') return null
+  const { conversationId, artifactId, version } = request
+  if (typeof conversationId !== 'string' || !conversationId) return null
+  if (typeof artifactId !== 'string' || !ARTIFACT_ID.test(artifactId)) return null
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) return null
+  return { conversationId, artifactId, version }
+}
+
 /** The paired bot server's artifact host, where every artifact lives. */
 export type ArtifactServerStatus =
   | { state: 'absent' }

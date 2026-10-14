@@ -116,6 +116,11 @@ export const FLEET_BOT_ENV = {
   serverMode: 'MAESTRLY_SERVER_MODE',
   /** The mounted host directory of a workspaces environment, when the gateway has one. */
   workspacesRoot: 'MAESTRLY_WORKSPACES_ROOT',
+  /**
+   * The token a workspaces environment publishes its chats' artifacts with on the gateway's internal API. It is not
+   * `gatewayToken`, which images from before environments read as the token of their one bot.
+   */
+  hostGatewayToken: 'MAESTRLY_HOST_GATEWAY_TOKEN',
   runtimeUpdates: 'MAESTRLY_BOT_RUNTIME_UPDATES',
 } as const
 

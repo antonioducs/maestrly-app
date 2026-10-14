@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { toWire } from '@maestrly/artifact-host'
 import { describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
 import { GatewayError } from '../src/errors.js'
@@ -55,11 +56,37 @@ describe('workspaces environments', () => {
     expect(spec.labels['org.maestrly.fleet.workspaces-root']).toBe('')
     expect(h.lifecycle.environment(id)).toMatchObject({ kind: 'workspaces', botIds: [], lifecycle: 'running' })
     expect(h.instance.installs).toHaveLength(installsBefore)
+    // Its chats publish artifacts with a token of its own.
+    const hostToken = h.store.hostGatewaySecrets(id)!.gatewayToken
+    expect(spec.env).toContain('MAESTRLY_HOST_GATEWAY_TOKEN=' + hostToken)
+    expect(spec.labels['org.maestrly.fleet.host-token']).toBe('1')
     // A bots environment keeps bot mode and carries no workspaces label.
     const bots = containerOf(h, h.bot.environmentId!)!.spec
     expect(bots.env).toContain('MAESTRLY_BOT_MODE=1')
     expect(bots.env.some((entry) => entry.startsWith('MAESTRLY_SERVER_MODE='))).toBe(false)
+    expect(bots.env.some((entry) => entry.startsWith('MAESTRLY_HOST_GATEWAY_TOKEN='))).toBe(false)
     expect('org.maestrly.fleet.workspaces-root' in bots.labels).toBe(false)
+    expect('org.maestrly.fleet.host-token' in bots.labels).toBe(false)
+    expect(h.store.hostGatewaySecrets(h.bot.environmentId!)).toBeNull()
+  })
+
+  it('gives a container from before host tokens its token when it restarts, and keeps it afterwards', async () => {
+    const h = await setup()
+    const id = await workspaces(h)
+    // As the gateway that created it left it: no token issued, no label.
+    h.store.db.exec('DELETE FROM host_secrets')
+    const before = containerOf(h, id)!
+    delete before.labels['org.maestrly.fleet.host-token']
+    await h.lifecycle.restartEnvironment(id)
+    const after = containerOf(h, id)!
+    expect(after).not.toBe(before)
+    const hostToken = h.store.hostGatewaySecrets(id)!.gatewayToken
+    expect(after.spec.env).toContain('MAESTRLY_HOST_GATEWAY_TOKEN=' + hostToken)
+    expect(h.lifecycle.environment(id)?.lifecycle).toBe('running')
+    // Restarting a container that has its token keeps both.
+    await h.lifecycle.restartEnvironment(id)
+    expect(containerOf(h, id)).toBe(after)
+    expect(h.store.hostGatewaySecrets(id)!.gatewayToken).toBe(hostToken)
   })
 
   it('mounts the configured host directory at the same path, and nothing else', async () => {
@@ -286,5 +313,83 @@ describe('workspaces environment routes', () => {
     const path = await ticket()
     await h.request('DELETE', '/v1/devices/self')
     expect(await upgrade(path)).toBe(403)
+  })
+})
+
+describe('workspaces environment artifacts', () => {
+  const call = (method: string, args: unknown[]) => ({ method, args: toWire(args) })
+  const bundle = (workspaceId: string | null) => ({
+    title: 'Synthetic page',
+    owner: { kind: 'local', id: 'spoof' },
+    origin: { workspaceId, conversationId: 'conversation', conversationTitle: 'Chat' },
+    files: [{ path: 'index.html', bytes: new TextEncoder().encode('<h1>Synthetic</h1>') }],
+  })
+  const hostHeaders = (h: Harness, id: string) => ({
+    'X-Maestrly-Fleet-Protocol': '1',
+    Authorization: 'Bearer ' + h.store.hostGatewaySecrets(id)!.gatewayToken,
+    'Content-Type': 'application/json',
+  })
+
+  it('publishes as the device its environment is, with only the agent methods on its own artifacts', async () => {
+    const h = await setup()
+    const id = await workspaces(h)
+    await h.artifacts.update({ enabled: true })
+    await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
+    const host = (route: 'admin' | 'upload', method: string, args: unknown[]) =>
+      h.request('POST', '/internal/v1/artifacts/' + route, call(method, args), true, hostHeaders(h, id)).then(json)
+
+    const own = await host('upload', 'create', [bundle('ws-1')])
+    expect(own).toMatchObject({ ok: true, value: { ownerKind: 'device', ownerId: id, workspaceId: 'ws-1' } })
+    const device = await json(await h.request('POST', '/v1/artifacts/upload', call('create', [bundle(null)])))
+    const bot = await json(
+      await h.request('POST', '/internal/v1/artifacts/upload', call('create', [bundle(null)]), true)
+    )
+    expect([device.ok, bot.ok]).toEqual([true, true])
+
+    const ids = (result: Record<string, any>) => result.value.map((item: { id: string }) => item.id)
+    expect(ids(await host('admin', 'list', [{ ownerKind: 'bot', ownerId: h.bot.id }]))).toEqual([own.value.id])
+    expect(ids(await host('admin', 'list', [{ workspaceId: 'ws-1' }]))).toEqual([own.value.id])
+    expect(ids(await host('admin', 'list', [{ workspaceId: 'ws-2' }]))).toEqual([])
+    expect(await host('admin', 'get', [own.value.id])).toMatchObject({ ok: true, value: { id: own.value.id } })
+    for (const other of [device.value.id, bot.value.id])
+      expect(await host('admin', 'get', [other])).toMatchObject({ ok: false, error: { code: 'not_found' } })
+    const update = await host('upload', 'update', [
+      { id: device.value.id, baseVersion: 1, change: { kind: 'replace', files: bundle(null).files } },
+    ])
+    expect(update).toMatchObject({ ok: false, error: { code: 'not_found' } })
+    // The owner's controls stay with the owner's computers.
+    for (const method of ['delete', 'mintOwnerTicket', 'setSharing', 'listEvents', 'exportArtifact'])
+      expect(await host('admin', method, [own.value.id]), method).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_input' },
+      })
+    // The owner's computers see it with the rest.
+    const listed = await json(await h.request('POST', '/v1/artifacts/admin', call('list', [])))
+    expect(ids(listed)).toContain(own.value.id)
+  })
+
+  it('reaches nothing else, follows the server setting and stops working once its environment is archived', async () => {
+    const h = await setup()
+    const id = await workspaces(h)
+    const headers = hostHeaders(h, id)
+    const list = () => h.request('POST', '/internal/v1/artifacts/admin', call('list', []), true, headers)
+    expect(await json(await list())).toMatchObject({ ok: false, error: { details: { reason: 'server_off' } } })
+    await h.artifacts.update({ enabled: true })
+    expect(await json(await list())).toMatchObject({ ok: true, value: [] })
+
+    for (const route of ['/internal/v1/peers', '/internal/v1/owner-memory'])
+      expect((await h.request('GET', route, undefined, true, headers)).status, route).toBe(403)
+    expect((await h.request('POST', '/v1/artifacts/admin', call('list', []), false, headers)).status).toBe(401)
+    expect(
+      (
+        await h.request('POST', '/internal/v1/artifacts/admin', call('list', []), true, {
+          ...headers,
+          Authorization: 'Bearer forged',
+        })
+      ).status
+    ).toBe(401)
+
+    await h.lifecycle.archiveEnvironment(id)
+    expect((await list()).status).toBe(401)
   })
 })
