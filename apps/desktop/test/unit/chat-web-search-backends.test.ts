@@ -111,6 +111,22 @@ describe('DuckDuckGo backend', () => {
     expect(parseDuckDuckGoHtml(DDG_FIXTURE)).toEqual(DDG_HITS)
   })
 
+  it('treats only DuckDuckGo hosts as DuckDuckGo', () => {
+    const result = (href: string) => `<div class="result"><a class="result__a" href="${href}">Title</a></div>`
+    const urls = (html: string) => parseDuckDuckGoHtml(html).map((hit) => hit.url)
+    // A look-alike domain is an ordinary site: kept as a result, and its /l/ path is not a redirect.
+    expect(urls(result('https://evilduckduckgo.com/page'))).toEqual(['https://evilduckduckgo.com/page'])
+    expect(urls(result('https://evilduckduckgo.com/l/?uddg=https%3A%2F%2Fother.example.test%2F'))).toEqual([
+      'https://evilduckduckgo.com/l/?uddg=https%3A%2F%2Fother.example.test%2F',
+    ])
+    // DuckDuckGo's own hosts, subdomains included, are redirects or internal links, never results.
+    expect(urls(result('https://duckduckgo.com/y.js?ad=1'))).toEqual([])
+    expect(urls(result('https://links.duckduckgo.com/d.js?q=x'))).toEqual([])
+    expect(urls(result('https://duckduckgo.com/l/?uddg=https%3A%2F%2Fdocs.example.test%2F'))).toEqual([
+      'https://docs.example.test/',
+    ])
+  })
+
   it('posts the query as a browser and limits results', async () => {
     const fetch = mockFetch(() => new Response(DDG_FIXTURE, { headers: { 'content-type': 'text/html' } }))
     const backend = createDuckDuckGoBackend()

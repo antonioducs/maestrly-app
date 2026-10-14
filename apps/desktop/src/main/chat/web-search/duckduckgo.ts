@@ -38,6 +38,11 @@ function textOf(root: Node): string {
   return chunks.join('')
 }
 
+/** DuckDuckGo's own hosts only: a suffix match would also accept look-alikes such as `evilduckduckgo.com`. */
+function isDuckDuckGoHost(hostname: string): boolean {
+  return hostname === 'duckduckgo.com' || hostname.endsWith('.duckduckgo.com')
+}
+
 /** Result links go through `//duckduckgo.com/l/?uddg=<target>`; return the target. */
 function resultUrl(href: string): string | null {
   let url: URL
@@ -46,9 +51,9 @@ function resultUrl(href: string): string | null {
   } catch {
     return null
   }
-  const target = url.hostname.endsWith('duckduckgo.com') && url.pathname === '/l/' ? url.searchParams.get('uddg') : href
+  const target = isDuckDuckGoHost(url.hostname) && url.pathname === '/l/' ? url.searchParams.get('uddg') : href
   if (!isHttpUrl(target)) return null
-  if (new URL(target).hostname.endsWith('duckduckgo.com')) return null
+  if (isDuckDuckGoHost(new URL(target).hostname)) return null
   return target
 }
 
