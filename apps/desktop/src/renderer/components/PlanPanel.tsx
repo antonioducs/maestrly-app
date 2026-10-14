@@ -63,7 +63,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const [draftReady, setDraftReady] = useState(false)
 
   const { t: tChat } = useTranslation('chat')
-  const review = useConversationReview(api, plan.agentId)
+  const { review, start: startReviewOf } = useConversationReview(api, plan.agentId)
   const planReview = review?.target === 'plan' ? review : null
   const reviewing = isReviewRunning(planReview)
   const [reviewNotice, setReviewNotice] = useState<string | null>(null)
@@ -134,12 +134,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const startReview = async () => {
     setReviewNotice(null)
     setReviewOutcome(null)
-    try {
-      const result = await api.chatReviewStart(plan.agentId, { target: 'plan' })
-      if (!result.ok && result.error !== 'review-active') setReviewNotice(result.error)
-    } catch (error) {
-      setReviewNotice(error instanceof Error ? error.message : String(error))
-    }
+    setReviewNotice(await startReviewOf('plan'))
   }
   const failedReview =
     planReview?.status === 'failed' &&

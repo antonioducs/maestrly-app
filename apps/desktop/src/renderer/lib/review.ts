@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import type { HostApi } from '../../preload'
-import type { ReviewFinding, ReviewJobInfo } from '../../shared/review'
+import type { ReviewFinding, ReviewJobInfo, ReviewTarget } from '../../shared/review'
 
 /** Window event the app header uses to start a code review in the conversation that owns it. */
 export const REVIEW_CODE_EVENT = 'maestrly:review-code'
@@ -45,14 +45,40 @@ export function reviewProgressText(t: TFunction, review: ReviewJobInfo): string 
   return t('review.progressReviewers', { ns: 'chat', done, total: review.lenses.length })
 }
 
-/** The conversation's running review, or its last finished one, kept current from main. */
-export function useConversationReview(api: HostApi, conversationId: string): ReviewJobInfo | null {
+const STAGE: Record<ReviewJobInfo['status'], number> = {
+  running: 0,
+  verifying: 1,
+  completed: 2,
+  failed: 2,
+  cancelled: 2,
+}
+
+/**
+ * A snapshot read on demand (a start result or a status query) can arrive after events of the same review that are
+ * further along; it then keeps the newer one. Events arrive in order and always replace.
+ */
+export function mergeReviewInfo(current: ReviewJobInfo | null, incoming: ReviewJobInfo | null): ReviewJobInfo | null {
+  if (!incoming) return current
+  if (current?.reviewId === incoming.reviewId && STAGE[current.status] >= STAGE[incoming.status]) return current
+  return incoming
+}
+
+/**
+ * The conversation's running review, or its last finished one, kept current from main; `start` starts one and shows
+ * it at once. It resolves to why the review could not start, or null.
+ */
+export function useConversationReview(
+  api: HostApi,
+  conversationId: string
+): { review: ReviewJobInfo | null; start: (target: ReviewTarget) => Promise<string | null> } {
   const [review, setReview] = useState<ReviewJobInfo | null>(null)
+  const currentConversation = useRef(conversationId)
   useEffect(() => {
     let alive = true
+    currentConversation.current = conversationId
     setReview(null)
     void api.chatReviewStatus(conversationId).then((info) => {
-      if (alive) setReview((current) => current ?? info)
+      if (alive) setReview((current) => mergeReviewInfo(current, info))
     })
     const off = api.onChatReviewChanged((info) => {
       if (info.conversationId === conversationId) setReview(info)
@@ -62,7 +88,30 @@ export function useConversationReview(api: HostApi, conversationId: string): Rev
       off()
     }
   }, [api, conversationId])
-  return review
+
+  const start = useCallback(
+    async (target: ReviewTarget): Promise<string | null> => {
+      const show = (info: ReviewJobInfo | null) => {
+        if (currentConversation.current === conversationId) setReview((current) => mergeReviewInfo(current, info))
+      }
+      try {
+        const result = await api.chatReviewStart(conversationId, { target })
+        if (result.ok) {
+          show(result.review)
+          return null
+        }
+        if (result.error !== 'review-active') return result.error
+        // Already running: show it, unless it reviews something else, which this surface does not display.
+        const running = await api.chatReviewStatus(conversationId)
+        show(running)
+        return running?.target === target ? null : result.error
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error)
+      }
+    },
+    [api, conversationId]
+  )
+  return { review, start }
 }
 
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s/

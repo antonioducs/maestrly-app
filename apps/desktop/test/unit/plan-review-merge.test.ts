@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { commentablePlanLines, mergePlanReviewFindings, snapToCommentableLine } from '../../src/renderer/lib/review'
+import {
+  commentablePlanLines,
+  mergePlanReviewFindings,
+  mergeReviewInfo,
+  snapToCommentableLine,
+} from '../../src/renderer/lib/review'
 import { tFor } from '../../src/shared/i18n'
-import type { ReviewFinding } from '../../src/shared/review'
+import type { ReviewFinding, ReviewJobInfo } from '../../src/shared/review'
 
 const plan = [
   '# Plan', // 1
@@ -63,5 +68,27 @@ describe('plan review findings', () => {
     )
     expect(merged.lineComments[7]).toBe('Mine.\n\n[blocking] Wrong API (src/api.ts:9)\nStored rows keep the old shape.')
     expect(merged.feedback).toBe('Overall fine.\n\n[minor] No tests planned\nStored rows keep the old shape.')
+  })
+})
+
+describe('review state from a start result', () => {
+  const info = (reviewId: string, status: ReviewJobInfo['status']): ReviewJobInfo => ({
+    reviewId,
+    conversationId: 'conv',
+    target: 'plan',
+    status,
+    startedAt: 0,
+    lenses: [],
+    verification: 'pending',
+  })
+
+  it('shows a review it just started, but never moves the same review backwards', () => {
+    expect(mergeReviewInfo(null, info('r1', 'running'))).toEqual(info('r1', 'running'))
+    expect(mergeReviewInfo(info('r1', 'verifying'), info('r1', 'running'))?.status).toBe('verifying')
+    expect(mergeReviewInfo(info('r1', 'completed'), info('r1', 'running'))?.status).toBe('completed')
+    expect(mergeReviewInfo(info('r1', 'running'), info('r1', 'verifying'))?.status).toBe('verifying')
+    // A new review replaces the last finished one.
+    expect(mergeReviewInfo(info('r1', 'completed'), info('r2', 'running'))?.reviewId).toBe('r2')
+    expect(mergeReviewInfo(info('r1', 'failed'), null)?.reviewId).toBe('r1')
   })
 })

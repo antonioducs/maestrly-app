@@ -8915,9 +8915,9 @@ function reviews(): ReviewService {
     },
     persistReport: ({ conversationId, report, usage, runtimeEstimatedCostUsd }) =>
       persistReviewReport(conversationId, report, usage, runtimeEstimatedCostUsd),
-    onChange: (info: ReviewJobInfo) => {
-      if (hasMainRenderer()) sendToMainRenderers('chat:review:changed', info)
-    },
+    // The chat view lives in the main renderer; the Plan tab is a separate one (a drawer panel or floating window).
+    onChange: (info: ReviewJobInfo) =>
+      sendToConversation(info.conversationId, 'chat:review:changed', info, { panel: 'plan' }),
   })
   return reviewService
 }

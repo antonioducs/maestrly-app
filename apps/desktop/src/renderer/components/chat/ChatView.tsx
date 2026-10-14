@@ -262,7 +262,7 @@ export function ChatView({
   const [companionStarting, setCompanionStarting] = useState(false)
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
-  const review = useConversationReview(api, conversationId)
+  const { review, start: startReviewOf } = useConversationReview(api, conversationId)
   const [reviewNotice, setReviewNotice] = useState<string | null>(null)
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
   const [chatProviders, setChatProviders] = useState<ChatConfig['providers']>([])
@@ -901,13 +901,8 @@ export function ChatView({
   // Code review: one read-only pass by independent reviewers; the report lands in this conversation.
   const startCodeReview = useCallback(async () => {
     setReviewNotice(null)
-    try {
-      const result = await api.chatReviewStart(conversationId, { target: 'code' })
-      if (!result.ok && result.error !== 'review-active') setReviewNotice(result.error)
-    } catch (error) {
-      setReviewNotice(error instanceof Error ? error.message : String(error))
-    }
-  }, [api, conversationId])
+    setReviewNotice(await startReviewOf('code'))
+  }, [startReviewOf])
   useEffect(() => {
     const onReview = (event: Event) => {
       const detail = (event as CustomEvent<ReviewCodeEventDetail>).detail

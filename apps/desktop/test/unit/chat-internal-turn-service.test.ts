@@ -196,6 +196,7 @@ vi.mock('../../src/main/chat/credentials', () => ({
 vi.mock('../../src/main/chat/chat-store', () => ({
   getChatMessage: vi.fn(() => null),
   listReviewReportsSinceLastUserMessage: h.listReviewReports,
+  listCompanionConversationMessages: vi.fn(() => []),
   chatHistoryStats: h.chatHistoryStats,
   listChatMessages: h.listChatMessages,
 
@@ -215,6 +216,28 @@ vi.mock('../../src/main/chat/chat-store', () => ({
 
 vi.mock('../../src/main/usage/usage-service', () => ({
   invalidateUnifiedUsageCache: h.invalidateUnifiedUsageCache,
+}))
+
+// Reviews run read-only subagents; here they finish without submitting anything.
+const reviewH = vi.hoisted(() => ({
+  executeSubagent: vi.fn(async () => ({ text: 'Nothing to report.' })),
+}))
+vi.mock('../../src/main/chat/subagent-executor', () => ({ executeSubagent: reviewH.executeSubagent }))
+vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/subagent-execution-profile')>()),
+  resolveParentSubagentExecutionProfile: vi.fn(async () => ({
+    version: 1,
+    agentName: 'reviewer',
+    effective: {
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      configuredEffort: 'off',
+      sentEffort: null,
+      source: 'parent',
+      candidateIndex: 0,
+    },
+    attempts: [],
+  })),
 }))
 
 vi.mock('../../src/main/chat/runner', () => ({
@@ -654,6 +677,32 @@ describe('isolated internal turn service API', () => {
     expect(internal).toMatchObject({ ok: true })
     expect(userParts().parts.some((part) => part.type === 'file' && part.name === 'code-review.md')).toBe(false)
     h.listReviewReports.mockReturnValue([])
+  })
+
+  it('delivers review progress to the main window and to the Plan tab, a renderer of its own', async () => {
+    h.getConversation.mockReturnValue({ id: 'conv-chat', cwd, workspaceId: 'workspace-1', archived: 0 })
+    h.getPendingPlan.mockReturnValue({ agentId: 'conv-chat', cwd, plan: '# Plan\n- Step', version: 1 } as never)
+    const handlers = register()
+    const started = (await handlers.get('chat:review:start')?.({ sender: wc }, 'conv-chat', { target: 'plan' })) as {
+      ok: boolean
+      review?: { reviewId: string }
+    }
+    expect(started).toMatchObject({ ok: true, review: { target: 'plan', status: 'running' } })
+    const reviewEvents = () =>
+      h.sendToConversation.mock.calls.filter(([, channel]) => channel === 'chat:review:changed') as unknown as Array<
+        [string, string, { reviewId: string; status: string }, { panel?: string }]
+      >
+    await vi.waitFor(() => expect(reviewEvents().at(-1)?.[2].status).toBe('failed'))
+    for (const [conversationId, , info, options] of reviewEvents()) {
+      expect(conversationId).toBe('conv-chat')
+      expect(info.reviewId).toBe(started.review?.reviewId)
+      expect(options).toEqual({ panel: 'plan' })
+    }
+    expect(reviewEvents()[0][2].status).toBe('running')
+    expect(reviewH.executeSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-chat', readOnly: true, agentName: 'reviewer' })
+    )
+    h.getPendingPlan.mockReturnValue(null)
   })
 
   it('blocks manual turns while admitting job owners', async () => {
