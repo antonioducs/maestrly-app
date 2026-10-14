@@ -14,7 +14,7 @@ import { execFileSync, spawn } from 'node:child_process'
 const ENCODER = '/usr/local/bin/maestrly-screen-encoder'
 const REGION = { x: 1280, y: 0, width: 1280, height: 800 }
 const TYPES = { ready: 0x01, frame: 0x02, cursor: 0x03, pointer: 0x04, clipboard: 0x05, log: 0x06 }
-const COMMANDS = { pointer: 0x84, clipboard: 0x87, watch: 0x88 }
+const COMMANDS = { tune: 0x83, pointer: 0x84, clipboard: 0x87, watch: 0x88 }
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
 const child = spawn(ENCODER, ['--display', ':0', '--region', `${REGION.x},${REGION.y},${REGION.width},${REGION.height}`], {
@@ -147,6 +147,23 @@ await sleep(1000)
 const primary = messages.slice(mark).find((message) => message.type === TYPES.clipboard)
 if (primary) fail(`primary: reported ${JSON.stringify(clipboardText(primary))}`)
 ok('PRIMARY selections are not reported')
+
+// Paint-over stays off until the session turns it on; then a still screen gets a key frame of the whole region.
+const isFrame = (message) => message.type === TYPES.frame
+const isKey = (message) => isFrame(message) && (message.payload[8] & 1) === 1
+const flash = () => shell("xterm -geometry 20x4+1600+400 -bg '#2266cc' -e sleep 1 >/dev/null 2>&1 &")
+mark = messages.length
+flash()
+await sleep(2500)
+if (!messages.slice(mark).some(isFrame)) fail('paint-over: a window that came and went sent no frame')
+if (messages.slice(mark).some(isKey)) fail('paint-over: a key frame came while it was off')
+const tuning = { crf: 25, fps: 30, paintoverCrf: 18, paintoverBurst: 3, paintover: true, paintoverAfterFrames: 10 }
+command(COMMANDS.tune, Buffer.from(JSON.stringify(tuning)))
+await sleep(200)
+mark = messages.length
+flash()
+const paintover = await waitFor('paint-over key frame', mark, isKey, 4000)
+ok(`paint-over off by default, then a key frame of ${paintover.payload.length - 9} bytes once tuned on`)
 
 child.stdin.end()
 const result = await Promise.race([exited, sleep(3000).then(() => null)])

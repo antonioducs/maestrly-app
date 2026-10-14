@@ -25,6 +25,8 @@ export interface EncoderProcess {
 
 /** The live tunables of a capture: its quality, frame rate and the quality of the paint-over of a still screen. */
 export type ScreenLevel = { crf: number; fps: number; paintoverCrf: number; paintoverBurst: number }
+/** A level, whether the encoder paints a still screen over, and after how many still frames. */
+export type ScreenTuning = ScreenLevel & { paintover: boolean; paintoverAfterFrames: number }
 
 export type EncoderEvent =
   | { type: 'ready'; width: number; height: number; capture: string | null; encoder: string | null }
@@ -154,9 +156,10 @@ export class ScreenEncoder {
     fields(payload).setUint32(0, frameId >>> 0)
     this.write(TO.invalidate, payload)
   }
-  tune(level: ScreenLevel): void {
-    const { crf, fps, paintoverCrf, paintoverBurst } = level
-    this.write(TO.tune, encoder.encode(JSON.stringify({ crf, fps, paintoverCrf, paintoverBurst })))
+  tune(tuning: ScreenTuning): void {
+    const { crf, fps, paintoverCrf, paintoverBurst, paintover, paintoverAfterFrames } = tuning
+    const json = JSON.stringify({ crf, fps, paintoverCrf, paintoverBurst, paintover, paintoverAfterFrames })
+    this.write(TO.tune, encoder.encode(json))
   }
   pointer(x: number, y: number, buttons: number): void {
     const payload = new Uint8Array(5)

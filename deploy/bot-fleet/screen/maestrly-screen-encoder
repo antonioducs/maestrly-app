@@ -245,9 +245,11 @@ def main():
     settings = pixelflux.CaptureSettings()
     for name, value in dict(capture_x=region[0], capture_y=region[1], capture_width=region[2],
                             capture_height=region[3], codec='h264', video_fullframe=True, omit_stripe_headers=True,
-                            video_streaming_mode=False, capture_cursor=False, use_paint_over_quality=True,
-                            target_fps=30.0, video_crf=25, video_paintover_crf=18,
-                            video_paintover_burst_frames=3).items():
+                            video_streaming_mode=False, capture_cursor=False, target_fps=30.0, video_crf=25,
+                            video_paintover_crf=18, video_paintover_burst_frames=3,
+                            # The session turns paint-over on once it has measured that the links carry its key
+                            # frame quickly: on a full frame it is a key frame of the whole region.
+                            use_paint_over_quality=False, paint_over_trigger_frames=10).items():
         setattr(settings, name, value)
     capture = pixelflux.ScreenCapture()
     last_cursor = [None]
@@ -299,9 +301,13 @@ def main():
                     settings.video_crf = int(min(max(tune['crf'], 0), 51))
                     settings.video_paintover_crf = int(min(max(tune['paintoverCrf'], 0), 51))
                     settings.video_paintover_burst_frames = int(min(max(tune['paintoverBurst'], 0), 10))
+                    settings.use_paint_over_quality = tune['paintover'] is True
+                    settings.paint_over_trigger_frames = int(min(max(tune['paintoverAfterFrames'], 1), 600))
+                    changed = fps != settings.target_fps
                     settings.target_fps = fps
                     capture.update_tunables(settings)
-                    capture.update_framerate(fps)
+                    if changed:
+                        capture.update_framerate(fps)
                 elif kind == POINTER_IN:
                     keys.pointer(*struct.unpack('>HHB', payload))
                 elif kind == WHEEL:

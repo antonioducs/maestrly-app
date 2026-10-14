@@ -56,6 +56,12 @@ A second probe, on the same day, drove pixelflux 2.1.0 directly on the bot image
   of the stream decoded without an error and ended identical to the full stream. No frame after a dropped one
   referenced it.
 - **Frames report their reference** (`reference_frame_id`), and a key frame reports -1.
+- **A paint-over is a key frame of the whole region** on a full frame: 110–165 KB at 1280×800, ten captured frames
+  after any change, even a 140-byte one. `use_paint_over_quality` and `paint_over_trigger_frames` change live through
+  `update_tunables`; a burst of 0 does not turn it off.
+- **Invalidating a key frame makes the encoder code another key frame** at once. Invalidating a delta frame on a still
+  screen makes it code nothing: only a later change or a key frame brings a client back.
+- **Frame ids count captured frames**, so ids skip while the screen is still.
 - **A 1280×800 region at (1280, 0) of a 3840×2400 display** captures at 49.5 dB, so a bot's browser tile works.
 - **The cursor callback** delivers `('png', bytes, hot_x, hot_y)` and fires again when the shape changes.
 - **python-xlib 0.33** offers XTEST input and XFixes selection notifications.
@@ -136,7 +142,7 @@ framing as the wire protocol and these internal types:
 | `0x06` log | encoder → instance | UTF-8 diagnostic line |
 | `0x81` key frame | instance → encoder | empty: `request_idr_frame()` |
 | `0x82` invalidate | instance → encoder | u32 frame id: `invalidate_reference(id)` |
-| `0x83` tune | instance → encoder | JSON `{ "crf", "fps", "paintoverCrf", "paintoverBurst" }`: `update_tunables` and `update_framerate` |
+| `0x83` tune | instance → encoder | JSON `{ "crf", "fps", "paintoverCrf", "paintoverBurst", "paintover", "paintoverAfterFrames" }`: `update_tunables`, and `update_framerate` when the rate changes |
 | `0x84` pointer | instance → encoder | u16 x, u16 y, u8 buttons |
 | `0x85` wheel | instance → encoder | i16 dx, i16 dy |
 | `0x86` key | instance → encoder | u32 keysym, u8 down |
@@ -150,8 +156,8 @@ Capture settings:
   unit.
 - `video_streaming_mode = False`: changes only.
 - `capture_cursor = False`, because the cursor goes out of band.
-- `use_paint_over_quality = True`.
-- CRF and frame rate come from the session's level.
+- `use_paint_over_quality = False` and `paint_over_trigger_frames = 10` until the session's first `tune`.
+- CRF, frame rate and paint-over come from the session.
 
 Input goes through XTEST on a connection of its own:
 
@@ -179,21 +185,34 @@ display `:0` stay in the control server.
 
 - **Joining.** A client gets `hello`, then the current cursor, and is marked as needing a key frame; the session asks
   the encoder for one. The client receives no frame until a key frame.
-- **Deliverable frames.** A frame goes to a client when it is a key frame, or when the client holds the frame it
-  references (for `-2`, the previous frame). A frame that a client cannot decode is skipped for that client and
-  invalidated, so the encoder stops predicting from it.
-- **Flow control.** Each client has a window of bytes in flight: sent and not yet acknowledged.
+- **Deliverable frames.** A key frame always goes to every client: a client that missed one could decode nothing until
+  the next, and invalidating one makes the encoder code another at once. A delta frame goes to a client that holds the
+  frame it references (for `-2`, the previous frame). A delta frame that a client cannot decode is skipped for that
+  client and invalidated, so the encoder stops predicting from it.
+- **Flow control.** Each client has a window of delta-frame bytes in flight: sent and not yet acknowledged.
   - It starts at 256 KiB and stays between 64 KiB and 4 MiB.
-  - A frame that would overflow the window is dropped for that client and invalidated. A client with nothing in flight
-    always gets the next deliverable frame, even one larger than its window.
-  - Every ack gives a round-trip sample. The session keeps the minimum of the last 10 s. When the delay over that
-    minimum exceeds 100 ms, the window shrinks to 70% (at most once per minimum round trip). Below 30 ms it grows by a
-    quarter of the acknowledged bytes.
+  - A delta frame that would overflow the window is dropped for that client and invalidated. A client with nothing in
+    flight always gets the next deliverable frame, even one larger than its window.
+  - Key frames in flight do not count against the window. Their transfer is a one-off, not a queue that delta frames
+    build.
+  - Every other ack gives a round-trip sample. The session keeps the minimum of the last 10 s. When the delay over
+    that minimum exceeds 100 ms, the window shrinks to 70% (at most once per minimum round trip). Below 30 ms it grows
+    by a quarter of the acknowledged bytes. A key frame's ack, and the acks of frames sent while a key frame was in
+    flight, leave the window alone: their delay is the key frame's transfer.
   - So the queue stands at no more than about 100 ms over the link's base latency, instead of the seconds an
     unacknowledged stream builds behind the gateway's and Funnel's buffers.
+- **Paint-over.** It makes a still screen sharp, but each one is a key frame of the whole region that input waits
+  behind.
+  - The session estimates how long a key frame holds each client's link. It uses the latest frame of 16 KiB or more
+    sent with nothing in flight: its round trip over the client's minimum, scaled to the size of the encoder's latest
+    key frame.
+  - Paint-over turns on while that time is at most 150 ms for every client, and off above 200 ms, or while a client
+    has not measured its link. The session checks every 500 ms and tells the encoder through `tune`.
+  - It starts off.
 - **Catching up.** A client is stale when the newest frame was dropped or skipped for it. Once the screen has been
   still for 250 ms and a stale client has nothing in flight, the session asks for a key frame (at most one a second),
-  so the client converges on the still screen.
+  so the client converges on the still screen. While paint-over is on, the session first waits for the paint-over's
+  key frame: ten frames at the level's frame rate.
 - **Quality ladder.** One level for the whole session, set through `tune`:
 
   | Level | CRF | fps | Paint-over CRF | Paint-over burst |
@@ -315,9 +334,10 @@ leave with it.
 - **Instance unit tests, with a fake encoder and fake sockets and clock:**
   - join and key frame;
   - reference skipping and invalidation;
-  - window drops;
-  - window growth and shrink from round-trip samples;
-  - catch-up key frames;
+  - window drops, and key frames sent outside the window and never invalidated;
+  - window growth and shrink from round-trip samples, except those a key frame delays;
+  - the paint-over choice from each client's link;
+  - catch-up key frames, after the paint-over when it is on;
   - ladder moves;
   - input gating for viewers;
   - clipboard and pointer routing;
@@ -349,8 +369,11 @@ leave with it.
 
 - **Encoder efficiency.** An invalidation may make the encoder code a larger frame. The probe checked correctness,
   not size. The ladder and the window bound the cost.
-- **Paint-over bursts** are large (about 320 KB over five frames at CRF 18). On a narrow link the window drops most of
-  them, and the catch-up key frame converges the still screen at the session's CRF.
+- **Paint-over key frames** are large (110–165 KB at 1280×800). The first measurement of this design, on a 300 ms,
+  1.5 Mbit/s link, showed the window dropping them along with the delta frames behind them. Each drop invalidated
+  a key frame or left a still screen stale, which cost another key frame, so clicks took 1.5–2 s. Key frames now
+  bypass the window, and paint-over is on only where its key frame crosses the link in 150 ms. On narrow links a
+  still screen stays at the level's CRF.
 - **WebCodecs H.264 must work in Electron on all three CI platforms.** The E2E decode assertion proves it, or fails the
   plan early.
 - **Upstream.** pixelflux is young and moves fast: pin it, and re-run the probe before raising the pin. The capped CRF

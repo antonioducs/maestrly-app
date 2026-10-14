@@ -9,13 +9,13 @@ import {
   encodePointer,
   type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
-import type { EncoderEvent, ScreenLevel } from './screen-encoder'
+import type { EncoderEvent, ScreenLevel, ScreenTuning } from './screen-encoder'
 
 /** The encoder commands a session uses; `ScreenEncoder` implements them. */
 export interface ScreenEncoderPort {
   keyframe(): void
   invalidate(frameId: number): void
-  tune(level: ScreenLevel): void
+  tune(tuning: ScreenTuning): void
   pointer(x: number, y: number, buttons: number): void
   wheel(dx: number, dy: number): void
   key(keysym: number, down: boolean): void
@@ -69,9 +69,28 @@ export const SCREEN_SESSION_LIMITS = {
   stillMs: 250,
   keyframeEveryMs: 1_000,
   stuckMs: 10_000,
+  /** Still frames after which the encoder paints the screen over, with a key frame of better quality. */
+  paintoverAfterFrames: 10,
+  /**
+   * Paint-over turns on while a key frame holds every client's link for at most `paintoverOnMs`, and off above
+   * `paintoverOffMs`: input that comes during that transfer waits behind it.
+   */
+  paintoverOnMs: 150,
+  paintoverOffMs: 200,
+  /** A frame at least this large, sent with nothing in flight, measures how long the link takes to carry one. */
+  sampleMinBytes: 16 * 1024,
 } as const
 const L = SCREEN_SESSION_LIMITS
 
+type Flight = {
+  bytes: number
+  sentAt: number
+  key: boolean
+  /** A key frame, or a frame sent behind one: its round trip includes the key frame's transfer. */
+  keyDelayed: boolean
+  /** Sent with nothing else in flight. */
+  alone: boolean
+}
 type Client = {
   peer: ScreenPeer
   mode: ScreenMode
@@ -81,8 +100,11 @@ type Client = {
   stale: boolean
   held: Set<number>
   heldOrder: number[]
-  inFlight: Map<number, { bytes: number; sentAt: number }>
+  inFlight: Map<number, Flight>
   inFlightBytes: number
+  inFlightKeyBytes: number
+  /** The latest frame of `sampleMinBytes` or more sent alone, and its round trip. */
+  sample: { bytes: number; rtt: number } | null
   window: number
   lastShrinkAt: number
   rtts: { at: number; rtt: number }[]
@@ -90,9 +112,11 @@ type Client = {
 }
 
 /**
- * One screen's stream to its clients. Every client acknowledges the frames it draws; a frame that would queue more than
- * the client's window, or that it cannot decode, is dropped for it and invalidated, so the encoder predicts past it and
- * latency never builds up behind the gateway's buffers. Quality and frame rate follow the worst client's drops.
+ * One screen's stream to its clients. Every client acknowledges the frames it draws; a delta frame that would queue more
+ * than the client's window, or that it cannot decode, is dropped for it and invalidated, so the encoder predicts past it
+ * and latency never builds up behind the gateway's buffers. Key frames always go out: invalidating one makes the encoder
+ * start over with another. Quality and frame rate follow the worst client's drops, and the encoder paints a still
+ * screen over only while every client's link carries a key frame quickly.
  */
 export class ScreenSession {
   private readonly clients = new Set<Client>()
@@ -103,6 +127,9 @@ export class ScreenSession {
   private lastFrameAt: number
   private previousFrame: number | null = null
   private keyframeAt = Number.NEGATIVE_INFINITY
+  /** The size of the encoder's latest key frame, which a paint-over repeats. */
+  private keyBytes = 0
+  private paintover = false
   private ladderAt: number
   private cursor: Uint8Array | null = null
   private watching = { pointer: false, clipboard: false }
@@ -118,17 +145,22 @@ export class ScreenSession {
     this.levelChangedAt = now
     this.ladderAt = now
     this.lastFrameAt = now
-    encoder.tune(SCREEN_LEVELS[this.level])
+    encoder.tune(this.tuning())
   }
 
   get clientCount(): number {
     return this.clients.size
   }
 
-  /** The quality level and each client's window and bytes in flight, for diagnostics and tests. */
-  stats(): { level: number; clients: { mode: ScreenMode; window: number; inFlight: number }[] } {
+  /** The quality level, whether the encoder paints over, and each client's window and bytes in flight. */
+  stats(): {
+    level: number
+    paintover: boolean
+    clients: { mode: ScreenMode; window: number; inFlight: number }[]
+  } {
     return {
       level: this.level,
+      paintover: this.paintover,
       clients: [...this.clients].map((client) => ({
         mode: client.mode,
         window: client.window,
@@ -153,6 +185,8 @@ export class ScreenSession {
       heldOrder: [],
       inFlight: new Map(),
       inFlightBytes: 0,
+      inFlightKeyBytes: 0,
+      sample: null,
       window: L.windowStart,
       lastShrinkAt: Number.NEGATIVE_INFINITY,
       rtts: [],
@@ -199,6 +233,8 @@ export class ScreenSession {
   private frame(frame: Extract<EncoderEvent, { type: 'frame' }>): void {
     const now = this.deps.now()
     this.lastFrameAt = now
+    const bytes = frame.data.byteLength
+    if (frame.key) this.keyBytes = bytes
     // -1 decodes on its own; -2 means the encoder does not track references, so it predicts from the previous frame.
     const reference = frame.key || frame.ref === -1 ? null : frame.ref >= 0 ? frame.ref : this.previousFrame
     let invalidated = false
@@ -213,22 +249,34 @@ export class ScreenSession {
     }
     let message: Uint8Array | null = null
     for (const client of this.clients) {
-      if (client.needsKey && !frame.key) {
-        client.stale = true
-        continue
-      }
-      if (reference !== null && !client.held.has(reference)) {
-        drop(client)
-        continue
-      }
-      if (client.inFlight.size > 0 && client.inFlightBytes + frame.data.byteLength > client.window) {
-        drop(client)
-        continue
+      // A key frame always goes out: a client that missed one could decode nothing until the next.
+      if (!frame.key) {
+        if (client.needsKey) {
+          client.stale = true
+          continue
+        }
+        if (reference !== null && !client.held.has(reference)) {
+          drop(client)
+          continue
+        }
+        // Key frames in flight do not count: their transfer is a one-off, not a queue the delta frames build.
+        const queued = client.inFlightBytes - client.inFlightKeyBytes
+        if (client.inFlight.size > 0 && queued + bytes > client.window) {
+          drop(client)
+          continue
+        }
       }
       message ??= encodeFrame(frame.id, frame.key, frame.data)
       client.peer.send(message)
-      client.inFlight.set(frame.id, { bytes: frame.data.byteLength, sentAt: now })
-      client.inFlightBytes += frame.data.byteLength
+      client.inFlight.set(frame.id, {
+        bytes,
+        sentAt: now,
+        key: frame.key,
+        keyDelayed: frame.key || client.inFlightKeyBytes > 0,
+        alone: client.inFlight.size === 0,
+      })
+      client.inFlightBytes += bytes
+      if (frame.key) client.inFlightKeyBytes += bytes
       client.held.add(frame.id)
       client.heldOrder.push(frame.id)
       if (client.heldOrder.length > L.heldFrames) client.held.delete(client.heldOrder.shift()!)
@@ -268,9 +316,13 @@ export class ScreenSession {
     for (const [frameId, flight] of client.inFlight) {
       client.inFlight.delete(frameId)
       client.inFlightBytes -= flight.bytes
+      if (flight.key) client.inFlightKeyBytes -= flight.bytes
       if (frameId === id) break
     }
     const rtt = now - entry.sentAt
+    if (entry.alone && entry.bytes >= L.sampleMinBytes) client.sample = { bytes: entry.bytes, rtt }
+    // A key frame's transfer delays it and the frames behind it; that delay is not the queue the window bounds.
+    if (entry.keyDelayed) return
     client.rtts.push({ at: now, rtt })
     while (client.rtts[0].at < now - L.rttWindowMs) client.rtts.shift()
     const base = Math.min(...client.rtts.map((sample) => sample.rtt))
@@ -338,14 +390,48 @@ export class ScreenSession {
         this.end(client)
       }
     }
-    const still = now - this.lastFrameAt >= L.stillMs
+    // While the encoder paints over, its key frame refreshes every client once the screen holds still.
+    const catchUpMs = L.stillMs + (this.paintover ? (L.paintoverAfterFrames * 1000) / SCREEN_LEVELS[this.level].fps : 0)
+    const still = now - this.lastFrameAt >= catchUpMs
     if ([...this.clients].some((c) => c.needsKey || (c.stale && still && c.inFlight.size === 0)))
       this.requestKeyframe(false)
     if (now - this.ladderAt >= L.ladderEveryMs) {
       this.ladderAt = now
       this.ladder(now)
+      this.choosePaintover()
     }
     this.schedule()
+  }
+
+  /** How long a key frame holds the slowest client's link, or `null` while a client has not measured its link. */
+  private keyDelay(): number | null {
+    let worst = 0
+    for (const client of this.clients) {
+      if (!client.sample || client.rtts.length === 0 || this.keyBytes === 0) return null
+      const base = Math.min(...client.rtts.map((sample) => sample.rtt))
+      const delay = (Math.max(0, client.sample.rtt - base) * this.keyBytes) / client.sample.bytes
+      worst = Math.max(worst, delay)
+    }
+    return worst
+  }
+
+  /** Paint-over makes a still screen sharp with one more key frame: affordable on a fast link, a stall on a narrow one. */
+  private choosePaintover(): void {
+    if (this.clients.size === 0) return
+    const delay = this.keyDelay()
+    const next = delay !== null && delay <= (this.paintover ? L.paintoverOffMs : L.paintoverOnMs)
+    if (next === this.paintover) return
+    this.paintover = next
+    this.deps.log(
+      delay === null
+        ? 'Screen paint-over off until every client has measured its link.'
+        : `Screen paint-over ${next ? 'on' : 'off'}: a key frame holds the slowest link for about ${Math.round(delay)} ms.`
+    )
+    this.encoder.tune(this.tuning())
+  }
+
+  private tuning(): ScreenTuning {
+    return { ...SCREEN_LEVELS[this.level], paintover: this.paintover, paintoverAfterFrames: L.paintoverAfterFrames }
   }
 
   private ladder(now: number): void {
@@ -374,6 +460,6 @@ export class ScreenSession {
     this.dropsSinceLevel = 0
     const { crf, fps } = SCREEN_LEVELS[level]
     this.deps.log(`Screen quality level ${level}: CRF ${crf} at ${fps} fps.`)
-    this.encoder.tune(SCREEN_LEVELS[level])
+    this.encoder.tune(this.tuning())
   }
 }

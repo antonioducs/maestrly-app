@@ -4,7 +4,7 @@ import {
   type EncoderEvent,
   type EncoderProcess,
   ScreenEncoder,
-  type ScreenLevel,
+  type ScreenTuning,
 } from '../../src/main/fleet/instance/screen-encoder'
 
 function message(type: number, payload: Uint8Array | number[] = []): Buffer {
@@ -116,11 +116,18 @@ describe('ScreenEncoder', () => {
     expect(hex()).toBe('880000000102')
     encoder.release()
     expect(hex()).toBe('8900000000')
-    const level: ScreenLevel = { crf: 30, fps: 30, paintoverCrf: 18, paintoverBurst: 3 }
-    encoder.tune(level)
+    const tuning: ScreenTuning = {
+      crf: 30,
+      fps: 30,
+      paintoverCrf: 18,
+      paintoverBurst: 3,
+      paintover: true,
+      paintoverAfterFrames: 10,
+    }
+    encoder.tune(tuning)
     const tune = written()
     expect(tune[0]).toBe(0x83)
-    expect(JSON.parse(tune.subarray(5).toString('utf8'))).toEqual(level)
+    expect(JSON.parse(tune.subarray(5).toString('utf8'))).toEqual(tuning)
     expect(tune.readUInt32BE(1)).toBe(tune.length - 5)
   })
 

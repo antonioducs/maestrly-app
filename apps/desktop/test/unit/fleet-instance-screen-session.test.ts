@@ -90,6 +90,7 @@ const frame = (id: number, ref: number, key = false, size = 10): EncoderEvent =>
   key,
   data: new Uint8Array(size),
 })
+const tuned = (level: number, paintover = false) => ({ ...SCREEN_LEVELS[level], paintover, paintoverAfterFrames: 10 })
 
 function setup() {
   const clock = new Clock()
@@ -106,7 +107,7 @@ function setup() {
 describe('ScreenSession', () => {
   it('greets a client and withholds delta frames until a key frame', () => {
     const { encoder, session, join } = setup()
-    expect(encoder.named('tune')).toEqual([[SCREEN_LEVELS[1]]])
+    expect(encoder.named('tune')).toEqual([[tuned(1)]])
     const { peer } = join('control')
     expect(peer.events[0]).toEqual({ type: 'hello', hello: { version: 1, width: 1280, height: 800, mode: 'control' } })
     expect(encoder.named('keyframe')).toHaveLength(1)
@@ -132,36 +133,138 @@ describe('ScreenSession', () => {
     const { encoder, session, join } = setup()
     const a = join('view')
     const b = join('view')
-    session.handle(frame(4, -1, true, 300 * KiB))
-    // 4 is still in flight for both, and 5 would overflow their windows.
-    session.handle(frame(5, 4, false, 10 * KiB))
-    session.handle(frame(6, 5))
-    expect(a.peer.frames()).toEqual([4])
-    expect(b.peer.frames()).toEqual([4])
-    expect(encoder.named('invalidate')).toEqual([[5], [6]])
+    session.handle(frame(1, -1, true))
+    a.ack(1)
+    b.ack(1)
+    session.handle(frame(2, 1, false, 300 * KiB))
+    // 2 is still in flight for both, and 3 would overflow their windows.
+    session.handle(frame(3, 2, false, 10 * KiB))
+    session.handle(frame(4, 3))
+    expect(a.peer.frames()).toEqual([1, 2])
+    expect(b.peer.frames()).toEqual([1, 2])
+    expect(encoder.named('invalidate')).toEqual([[3], [4]])
   })
 
-  it("drops frames that overflow a client's window, and always sends to an idle client", () => {
+  it("drops delta frames that overflow a client's window, and always sends to an idle client", () => {
     const { encoder, session, join } = setup()
     const busy = join('view')
-    session.handle(frame(1, -1, true, 200 * KiB))
-    session.handle(frame(2, 1, false, 100 * KiB))
-    expect(busy.peer.frames()).toEqual([1])
-    expect(encoder.named('invalidate')).toEqual([[2]])
+    session.handle(frame(1, -1, true))
     busy.ack(1)
-    session.handle(frame(3, 1, false, 300 * KiB))
-    expect(busy.peer.frames()).toEqual([1, 3])
+    session.handle(frame(2, 1, false, 200 * KiB))
+    session.handle(frame(3, 2, false, 100 * KiB))
+    expect(busy.peer.frames()).toEqual([1, 2])
+    expect(encoder.named('invalidate')).toEqual([[3]])
+    busy.ack(2)
+    session.handle(frame(4, 2, false, 300 * KiB))
+    expect(busy.peer.frames()).toEqual([1, 2, 4])
   })
 
   it('predicts past a dropped frame', () => {
     const { session, join } = setup()
     const client = join('view')
-    session.handle(frame(10, -1, true, 250 * KiB))
-    session.handle(frame(11, 10, false, 10 * KiB))
+    session.handle(frame(10, -1, true))
     client.ack(10)
-    session.handle(frame(12, 11))
-    session.handle(frame(13, 10))
-    expect(client.peer.frames()).toEqual([10, 13])
+    session.handle(frame(11, 10, false, 250 * KiB))
+    session.handle(frame(12, 11, false, 10 * KiB))
+    client.ack(11)
+    session.handle(frame(13, 12))
+    session.handle(frame(14, 11))
+    expect(client.peer.frames()).toEqual([10, 11, 14])
+  })
+
+  it('always sends key frames, outside the window, and never invalidates them', () => {
+    const { encoder, session, join } = setup()
+    const client = join('view')
+    session.handle(frame(1, -1, true, 300 * KiB))
+    // Behind key frames, delta frames still get the whole window.
+    session.handle(frame(2, 1, false, 200 * KiB))
+    session.handle(frame(3, -1, true, 300 * KiB))
+    session.handle(frame(4, 3, false, 50 * KiB))
+    session.handle(frame(5, 4, false, 10 * KiB))
+    expect(client.peer.frames()).toEqual([1, 2, 3, 4])
+    expect(encoder.named('invalidate')).toEqual([[5]])
+    expect(session.stats().clients[0].inFlight).toBe(850 * KiB)
+  })
+
+  it('leaves the window alone for round trips that a key frame delays', () => {
+    const { clock, session, join } = setup()
+    const client = join('view')
+    const window = () => session.stats().clients[0].window
+    // A narrow link: the key frame takes a second to cross, and the delta frame behind it waits as long.
+    session.handle(frame(1, -1, true, 150 * KiB))
+    session.handle(frame(2, 1, false, KiB))
+    clock.advance(1_100)
+    client.ack(1)
+    client.ack(2)
+    expect(window()).toBe(256 * KiB)
+    // Delta frames on their own measure the link: 300 ms, then 500 ms behind a queue, which shrinks the window.
+    session.handle(frame(3, 2, false, KiB))
+    clock.advance(300)
+    client.ack(3)
+    expect(window()).toBe(256 * KiB + 256)
+    session.handle(frame(4, 3, false, KiB))
+    clock.advance(500)
+    client.ack(4)
+    expect(window()).toBe(Math.floor((256 * KiB + 256) * 0.7))
+  })
+
+  it('paints over only while a key frame crosses every link quickly', () => {
+    const { clock, encoder, session, join } = setup()
+    const tunes = () => encoder.named('tune').map(([tuning]) => tuning)
+    const client = join('control')
+    let id = 0
+    // A key frame acknowledged after `rtt`, then a small delta frame after the link's base round trip.
+    const measure = (rtt: number, base: number) => {
+      session.handle(frame(++id, -1, true, 150 * KiB))
+      clock.advance(rtt)
+      client.ack(id)
+      session.handle(frame(++id, id - 1))
+      clock.advance(base)
+      client.ack(id)
+      clock.advance(500)
+    }
+    // 1.5 Mbit/s: the key frame holds the link for 800 ms.
+    measure(1_100, 300)
+    expect(session.stats().paintover).toBe(false)
+    expect(tunes()).toEqual([tuned(1)])
+    // 10 Mbit/s: 130 ms.
+    measure(430, 300)
+    expect(session.stats().paintover).toBe(true)
+    expect(tunes()).toEqual([tuned(1), tuned(1, true)])
+    expect(clock.logs.at(-1)).toMatch(/paint-over on: .* about 130 ms/)
+    // Between the two thresholds it stays on; above them it turns off.
+    measure(480, 300)
+    expect(tunes()).toHaveLength(2)
+    measure(550, 300)
+    expect(tunes()).toEqual([tuned(1), tuned(1, true), tuned(1)])
+    // A client that has not measured its link yet turns it off as well.
+    measure(430, 300)
+    expect(session.stats().paintover).toBe(true)
+    join('view')
+    clock.advance(500)
+    expect(session.stats().paintover).toBe(false)
+    expect(clock.logs.at(-1)).toMatch(/until every client has measured/)
+  })
+
+  it('waits for the paint-over before asking for a catch-up key frame', () => {
+    const { clock, encoder, session, join } = setup()
+    const client = join('view')
+    session.handle(frame(1, -1, true, 150 * KiB))
+    clock.advance(40)
+    client.ack(1)
+    session.handle(frame(2, 1))
+    clock.advance(10)
+    client.ack(2)
+    clock.advance(2_000)
+    expect(session.stats().paintover).toBe(true)
+    const asked = () => encoder.named('keyframe').length
+    const start = asked()
+    session.handle(frame(3, 99))
+    // At 30 fps the paint-over comes 333 ms after the last frame: the session gives it 250 ms more.
+    clock.advance(500)
+    expect(asked()).toBe(start)
+    clock.advance(200)
+    expect(asked()).toBe(start + 1)
   })
 
   it('adapts the window from round trips', () => {
@@ -169,9 +272,11 @@ describe('ScreenSession', () => {
     const client = join('view')
     const window = () => session.stats().clients[0].window
     expect(window()).toBe(256 * KiB)
-    let id = 0
+    session.handle(frame(1, -1, true))
+    client.ack(1)
+    let id = 1
     const roundTrip = (size: number, rtt: number) => {
-      session.handle(frame(++id, id === 1 ? -1 : id - 1, id === 1, size))
+      session.handle(frame(++id, id - 1, false, size))
       clock.advance(rtt)
       client.ack(id)
     }
@@ -241,14 +346,14 @@ describe('ScreenSession', () => {
       last = id
     }
     const bad = () => session.handle(frame(++id, 999_999))
-    const tunes = () => encoder.named('tune').map(([level]) => level)
+    const tunes = () => encoder.named('tune').map(([tuning]) => tuning)
     clock.advance(1_600)
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 7; j++) good()
       for (let j = 0; j < 3; j++) bad()
       clock.advance(100)
     }
-    expect(tunes()).toEqual([SCREEN_LEVELS[1], SCREEN_LEVELS[2]])
+    expect(tunes()).toEqual([tuned(1), tuned(2)])
     const changedAt = clock.now
     // Drops keep coming, but a level holds for 2 s.
     while (clock.now < changedAt + 1_900) {
@@ -261,7 +366,7 @@ describe('ScreenSession', () => {
     // Clean frames: once the drops leave the window and 60 frames and 5 s passed without one, it climbs back.
     clock.advance(2_100)
     const quiet = clock.now
-    expect(tunes()).toEqual([SCREEN_LEVELS[1], SCREEN_LEVELS[2], SCREEN_LEVELS[3]])
+    expect(tunes()).toEqual([tuned(1), tuned(2), tuned(3)])
     for (let i = 0; i < 40; i++) {
       good()
       clock.advance(100)
@@ -272,7 +377,7 @@ describe('ScreenSession', () => {
       good()
       clock.advance(100)
     }
-    expect(tunes()).toEqual([SCREEN_LEVELS[1], SCREEN_LEVELS[2], SCREEN_LEVELS[3], SCREEN_LEVELS[2]])
+    expect(tunes()).toEqual([tuned(1), tuned(2), tuned(3), tuned(2)])
     expect(session.stats().level).toBe(2)
 
     // A still screen measures nothing, so it never climbs.
