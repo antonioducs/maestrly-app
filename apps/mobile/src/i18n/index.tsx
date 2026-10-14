@@ -23,10 +23,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<LocalePreference>('system')
   const [ready, setReady] = useState(false)
   useEffect(() => {
-    void prefs.get('prefs.locale').then((saved) => {
-      if (saved === 'en' || saved === 'pt-BR') setPreferenceState(saved)
-      setReady(true)
-    })
+    void prefs
+      .get('prefs.locale')
+      .catch(() => null)
+      .then((saved) => {
+        if (saved === 'en' || saved === 'pt-BR') setPreferenceState(saved)
+        setReady(true)
+      })
   }, [])
   const setPreference = useCallback((value: LocalePreference) => {
     setPreferenceState(value)
