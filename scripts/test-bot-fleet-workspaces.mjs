@@ -653,6 +653,7 @@ async function main() {
     'drawer:browser-cursor',
     'drawer:browser-select',
     'drawer:browser-stream-notice',
+    'drawer:browser-stream-area',
   ])
   const streamed = []
   bridge.onEvent((frame) => {
@@ -847,6 +848,64 @@ async function main() {
       'streaming, takeover, two conversations at once, stop and release'
   )
 
+  // The same browser over video: a window that plays it gets the page's tile as the conversation's browser screen
+  // through the gateway, and the page's place in it; input still goes over the bridge, and frames come back on request.
+  const areasOf = (id) =>
+    streamed.filter((item) => item.channel === 'drawer:browser-stream-area' && item.payload.streamId === id)
+  const video = await bridge.invoke('drawer:browser-stream-start', chat.id, 900, 640, { video: true })
+  assert.equal(video.transport, 'video')
+  const firstArea = await soon('the page area', () => areasOf(video.streamId)[0])
+  assert.deepEqual(firstArea.payload.area, { x: 0, y: 0, width: 900, height: 640 })
+  await sleep(2000)
+  assert.deepEqual(framesOf(video.streamId), [], 'A video stream sent JPEG frames')
+  const tileView = await ScreenStreamClient.webSocket(
+    base.replace('http', 'ws') +
+      (
+        await request(
+          'POST',
+          `/v1/environments/${environmentId}/conversations/${chat.id}/screen-tickets`,
+          { mode: 'view', surface: 'browser' },
+          { status: 201 }
+        )
+      ).path
+  )
+  const tileHello = await tileView.hello()
+  assert.deepEqual([tileHello.width, tileHello.height, tileHello.mode], [1280, 800, 'view'])
+  const tileKey = await tileView.keyFrame(30000)
+  await request(
+    'POST',
+    `/v1/environments/${environmentId}/conversations/${chat.id}/screen-tickets`,
+    { mode: 'control', surface: 'browser' },
+    { status: 400 }
+  )
+  // Input still reaches the page through the bridge.
+  bridge.send('drawer:navigate', chat.id, `http://${fakeName}:8787/e2e/stream?over=video`)
+  await soon('the stream page again', async () => {
+    const state = await bridge.invoke('drawer:browser-state-get', chat.id)
+    const active = state.tabs.find((tab) => tab.id === state.activeId)
+    return active?.url.includes('over=video') && !active.loading && active.title === 'E2E stream'
+  })
+  input(1, video.streamId, { type: 'focus', focused: true })
+  click(1, video.streamId, 100, 20)
+  input(1, video.streamId, { type: 'text', text: 'vídeo' })
+  await soon('the title typed over video', async () => (await activeTitle()) === 'typed:vídeo')
+  bridge.send('drawer:browser-stream-resize', chat.id, video.streamId, 700, 500)
+  const resizedArea = await soon('the resized area', () =>
+    areasOf(video.streamId).find((item) => item.payload.area.width === 700)
+  )
+  assert.deepEqual(resizedArea.payload.area, { x: 0, y: 0, width: 700, height: 500 })
+  // A window that cannot play the tile asks for frames: the same stream sends them.
+  bridge.send('drawer:browser-stream-transport', chat.id, video.streamId, 'jpeg')
+  const fellBack = await soon('JPEG frames after the fallback', () => framesOf(video.streamId)[0])
+  assert.equal(Buffer.from(fellBack.payload.data, 'base64').readUInt16BE(0), 0xffd8)
+  tileView.close()
+  bridge.send('drawer:browser-stream-stop', chat.id, video.streamId)
+  pass(
+    'browser over video',
+    `video transport with the page at 0,0 900x640 of its tile, no JPEG frames, a key frame of ${tileKey.bytes} bytes, ` +
+      'the tile view only, typed text over the bridge, a resized area, and frames once the window asked for them'
+  )
+
   // The conversation's computer: started from its Computer tab, watched and controlled through the gateway's screen
   // stream, driven by the agent's computer tools, and given back once nothing holds it.
   const ownerKey = (id) => 'c' + createHash('sha256').update(id).digest('hex').slice(0, 31)
@@ -1003,6 +1062,11 @@ async function main() {
   assert.equal(busy.ok, false, JSON.stringify(busy))
   assert.equal(busy.reason, 'busy')
   assert.equal(busy.holders.length, 8)
+  // With every tile taken, its Browser tab streams frames, as before video.
+  const ninthStream = await bridge.invoke('drawer:browser-stream-start', ninth.id, 640, 480, { video: true })
+  assert.equal(ninthStream.transport, 'jpeg')
+  await soon('JPEG frames with every tile taken', () => framesOf(ninthStream.streamId)[0], 60000)
+  bridge.send('drawer:browser-stream-stop', ninth.id, ninthStream.streamId)
   // Deleting a conversation gives its computer back at once.
   await bridge.invoke('conversation:delete', holders[0].id)
   const freed = await bridge.invoke('drawer:computer-open', ninth.id)
@@ -1012,7 +1076,8 @@ async function main() {
     'computer per conversation',
     `opened on :10 (key frame ${computerKey.bytes} bytes), controlled with no takeover, one controller, link through ` +
       `its desktop, browser kept above at ${aboveInTile.trim()}, agent screenshot 1280x800, kept by a program window ` +
-      'and given back after it closed, shells back on :0, eight at most, deleting frees one'
+      'and given back after it closed, shells back on :0, eight at most (a ninth Browser tab on frames), deleting frees ' +
+      'one'
   )
 
   // A terminal of the host, in the conversation's folder.

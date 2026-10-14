@@ -189,10 +189,12 @@ and **Reload**.
 - **One device at a time.** When another computer opens the same conversation's browser, it takes over, and this one
   says **This browser is open on another device**, with **Show here** to take it back.
 
-The browser sends a picture of the page only when the page changes, and at most two pictures travel at once: on a slow
-connection it shows fewer pictures per second rather than falling behind. When the connection is very slow, the
-pictures are smaller and more compressed until it improves. The stream stops when you switch tabs or conversations or
-minimize the window; the page stays open on the server.
+The page streams as video, like the bots' screens: on a server's slow link, such as Tailscale Funnel, scrolling stays
+smooth and clicks quick, and the video adapts its quality to the link. When the server's eight tiles are taken (see
+[Computer](#computer)), or it runs an older version, the browser sends still pictures instead, as before: only when
+the page changes, at most two at once, so on a slow connection it shows fewer pictures per second rather than falling
+behind, smaller and more compressed while the connection is very slow. The stream stops when you switch tabs or
+conversations or minimize the window; the page stays open on the server.
 
 ## Computer
 
@@ -383,20 +385,26 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   bridge client of `@maestrly/bot-fleet-protocol`, as a phone does: lists, a new chat, a streamed answer, a resend
   that is not sent twice, and the chat's setup and models.
 - `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, its own
-  mounted folder and network, a second environment out of reach of the first, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
-  streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the
-  agent's screenshot while streaming, a takeover, two conversations streamed at once, the stop and the release of its
-  window), each conversation's computer (opened, watched and controlled through the gateway, a link through its desktop,
-  its browser kept above in its tile, the agent's screenshot, kept by a program window and given back after it closed,
-  eight at most), a host terminal, the host's real editor (downloaded and started on the host, its workbench, a static file and
-  its WebSocket through the gateway), an upload and a compressed range download through the gateway, and that revoking
-  the device cuts its transfers and its editor connection. It needs Docker, both images and Internet access for the
-  editor; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+  mounted folder and network, a second environment out of reach of the first, the bridge through the gateway, a chat
+  turn whose model drives the host's browser, the browser streamed over the bridge (JPEG frames paced by
+  acknowledgements, input, a resize, a list, a refused file chooser, the agent's screenshot while streaming, a takeover,
+  two conversations streamed at once, the stop and the release of its window), the same browser over video (the page's
+  area in its tile, the tile's screen through the gateway, input over the bridge, a resize, and frames on request), each
+  conversation's computer (opened, watched and controlled through the gateway, a link through its desktop, its browser
+  kept above in its tile, the agent's screenshot, kept by a program window and given back after it closed, eight at
+  most, with a ninth Browser tab on still pictures), a host terminal, the host's real editor (downloaded and started on
+  the host, its workbench, a static file and its WebSocket through the gateway), an upload and a compressed range
+  download through the gateway, and that revoking the device cuts its transfers and its editor connection. It needs
+  Docker, both images and Internet access for the editor; `npm run test:e2e:bot-fleet` runs it as one of its steps.
 - The browser stream (`apps/desktop/src/main/drawer/browser-stream.ts`) uses the bridge: the host moves the
   conversation's browser views into a shown, unfocusable window of its display while someone watches (Chromium paints
-  nothing for a hidden window), streams JPEG frames from the page's DevTools session (`Page.startScreencast`), and holds
-  each frame's acknowledgement to Chromium until the window acknowledges it. Input goes back through the same DevTools
-  session; the host's display gets no input.
+  nothing for a hidden window). A window that plays H.264 asks for video: a host with a free tile of its environment
+  display puts that window in the tile, kept above, sends no frames, and reports where the page is in the tile
+  (`drawer:browser-stream-area`); the window watches the tile through the gateway's conversation screen ticket (surface
+  `browser`, view only) and crops it. Otherwise, or after `drawer:browser-stream-transport`, the host streams JPEG
+  frames from the page's DevTools session (`Page.startScreencast`), and holds each frame's acknowledgement to Chromium
+  until the window acknowledges it. Input goes back through the same DevTools session either way; the host's display
+  gets no input from the Browser tab.
 - The editor (`apps/desktop/src/main/drawer/remote-vscode.ts`) is VS Code's serve-web on the host, started on demand
   and reached under `/v1/environments/:eid/editor/` of the gateway, which passes requests and WebSockets to
   `/v1/editor/` of the host's control server (`remote-host/server/host-editor.ts`), which passes them to serve-web on

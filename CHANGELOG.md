@@ -50,6 +50,10 @@ User-visible changes by version. Downloads are on
   and notification choices. Older gateways cannot open it, so back up the
   gateway volume before updating the server. See
   [compatibility](docs/bot-fleet.md#compatibility).
+- The Browser tab of conversations on a server's workspaces environment now
+  streams as video, which keeps scrolling smooth and clicks quick on slow links,
+  such as Tailscale Funnel. It falls back to still pictures on servers without
+  video. See [remote workspaces](docs/remote-workspaces.md#browser).
 
 ## [0.18.0] - 2026-10-14
 
