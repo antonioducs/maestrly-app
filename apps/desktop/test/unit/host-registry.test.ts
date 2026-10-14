@@ -127,6 +127,8 @@ describe('host registry', () => {
         id: 'local',
         remote: false,
         label: '',
+        server: '',
+        tint: null,
         state: 'online',
         epoch: 0,
         os: 'mac',
@@ -147,7 +149,14 @@ describe('host registry', () => {
   it('reaches the workspaces environment of the paired server through a bridge ticket', async () => {
     const h = setup()
     h.fleet.change({ ...paired, environments: [environment()] })
-    expect(h.remote()).toMatchObject({ remote: true, label: 'vps-1', state: 'connecting', epoch: 0, os: 'linux' })
+    expect(h.remote()).toMatchObject({
+      remote: true,
+      label: 'Workspaces',
+      server: 'vps-1',
+      state: 'connecting',
+      epoch: 0,
+      os: 'linux',
+    })
     await vi.waitFor(() => expect(h.sockets).toHaveLength(1))
     expect(h.fleet.tickets).toEqual(['workspaces'])
     expect(h.sockets[0].url).toBe('ws://127.0.0.1:7443/v1/bridge?ticket=abc_DEF-123')
@@ -161,7 +170,9 @@ describe('host registry', () => {
     expect(h.remote()).toEqual({
       id: HOST,
       remote: true,
-      label: 'vps-1',
+      label: 'Workspaces',
+      server: 'vps-1',
+      tint: null,
       state: 'online',
       epoch: 1,
       os: 'linux',
@@ -265,7 +276,32 @@ describe('host registry', () => {
     h.fleet.change({ environments: [environment()] })
     expect(h.changes).toHaveLength(count)
     h.fleet.change({ hostname: 'renamed' })
-    expect(h.changes.at(-1)?.[1].label).toBe('renamed')
+    expect(h.changes.at(-1)?.[1]).toMatchObject({ label: 'Workspaces', server: 'renamed' })
+    h.fleet.change({ environments: [environment({ name: 'Personal', tint: '#4c9a87' })] })
+    expect(h.changes.at(-1)?.[1]).toMatchObject({ label: 'Personal', tint: '#4c9a87' })
+  })
+
+  it('lists one host per workspaces environment, each named and colored after it, and dials each one', async () => {
+    const h = setup()
+    h.fleet.change({
+      ...paired,
+      environments: [
+        environment({ id: 'personal', name: 'Personal', tint: '#4c9a87' }),
+        environment({ id: 'team', kind: 'bots', name: 'Team' }),
+        environment({ id: 'company-a', name: 'Company A' }),
+      ],
+    })
+    expect(h.registry.list().map((host) => [host.id, host.label, host.server, host.tint])).toEqual([
+      ['local', '', '', null],
+      [`${SERVER}/personal`, 'Personal', 'vps-1', '#4c9a87'],
+      [`${SERVER}/company-a`, 'Company A', 'vps-1', null],
+    ])
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    expect(h.fleet.tickets.sort()).toEqual(['company-a', 'personal'])
+    // Archiving one leaves the others connected.
+    h.fleet.change({ environments: [environment({ id: 'personal', name: 'Personal', tint: '#4c9a87' })] })
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local', `${SERVER}/personal`])
+    expect(h.sockets.filter((socket) => socket.closed)).toHaveLength(1)
   })
 
   it('reaches a development host directly, beside the server’s', async () => {

@@ -67,8 +67,11 @@ export function memorySegments(
   const total = host?.memory.totalBytes ?? 0
   if (!total) return []
   const listed = new Set(environments.map((environment) => environment.id))
+  // The color the owner chose for the environment, else its first bot's.
   const tintOf = (environment: FleetEnvironment) =>
-    bots.filter((bot) => bot.environmentId === environment.id).sort(compareByName)[0]?.tint ?? 'var(--primary)'
+    environment.tint ??
+    bots.filter((bot) => bot.environmentId === environment.id).sort(compareByName)[0]?.tint ??
+    'var(--primary)'
   const active = [
     ...environments.map((environment) => ({
       kind: 'environment' as const,

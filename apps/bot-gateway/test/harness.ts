@@ -460,6 +460,8 @@ export async function harness(
     docker = new FakeDockerDriver()
   docker.images.add(cfg.botImage)
   const lifecycle = new Lifecycle(store, docker, cfg, (id) => new InstanceClient(id, 'control', instance.origin), 200)
+  // The fake Docker has no addresses to find the gateway's container by.
+  lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
   const bot = lifecycle.create({
     name: 'Test',
     instructions: '',
@@ -474,7 +476,7 @@ export async function harness(
     one = auth.pair(auth.createPairing().code, 'Mac', 'one'),
     events: import('@maestrly/bot-fleet-protocol').FleetGatewayEvent[] = []
   lifecycle.onEvent = (event) => events.push(event)
-  const network = new FleetNetwork(docker, cfg.network)
+  const network = new FleetNetwork(docker, cfg.network, () => lifecycle.isolatedNetworks())
   const artifacts = new ArtifactHosting({
     store,
     config: { ...cfg, artifactsPort: 0 },

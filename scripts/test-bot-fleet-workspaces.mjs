@@ -41,6 +41,13 @@ const modelKey = 'e2e-model-key'
 const environmentName = 'E2E Workspaces ' + suffix
 const environmentId = 'e2e-workspaces-' + suffix
 const container = 'maestrly-env-' + environmentId
+// Each workspaces environment runs on a Docker network of its own, which only the gateway joins.
+const environmentNetwork = network + '-env-' + environmentId
+// A second scope of work on the same server, apart from the first.
+const otherName = 'E2E Other ' + suffix
+const otherId = 'e2e-other-' + suffix
+const otherContainer = 'maestrly-env-' + otherId
+const otherNetwork = network + '-env-' + otherId
 const started = Date.now()
 let stepStarted = started
 const results = []
@@ -48,6 +55,8 @@ let composeEnv
 let base
 let token
 let workspacesRoot
+/** The environment's own folder under the server's workspaces folder, mounted at the same path. */
+let hostFolder
 let dockerReady = false
 let bridge
 
@@ -280,6 +289,28 @@ function jpegSize(jpeg) {
  * Removes the mounted folder. It holds what the environment wrote there as its own user (uid 1000): where Docker keeps
  * those owners (Linux), this user cannot remove them, and a throwaway root container of the bot image empties it first.
  */
+/** Opens a folder the gateway created for uid 1000 to everyone, so this test can write and read it on any host. */
+async function openFolder(folder) {
+  const image = process.env.MAESTRLY_GATEWAY_BOT_IMAGE || 'maestrly/bot-instance:local'
+  const mount = folder + ':/mnt/folder'
+  await docker([
+    'run',
+    '--rm',
+    '--user',
+    '0',
+    '--network',
+    'none',
+    '--entrypoint',
+    '',
+    '-v',
+    mount,
+    image,
+    'chmod',
+    '0777',
+    '/mnt/folder',
+  ])
+}
+
 async function removeWorkspacesRoot() {
   try {
     rmSync(workspacesRoot, { recursive: true, force: true })
@@ -303,10 +334,11 @@ async function cleanup() {
   }
   // The gateway stops first so that it creates nothing more; every resource of this run carries its suffix.
   if (composeEnv) await compose(['stop'], { allowFailure: true })
-  for (const name of [container, fakeName]) await docker(['rm', '-f', name], { allowFailure: true })
-  await docker(['volume', 'rm', container + '-home'], { allowFailure: true })
+  for (const name of [container, otherContainer, fakeName]) await docker(['rm', '-f', name], { allowFailure: true })
+  for (const name of [container, otherContainer]) await docker(['volume', 'rm', name + '-home'], { allowFailure: true })
   if (composeEnv) await compose(['down', '-v', '--remove-orphans'], { allowFailure: true })
-  await docker(['network', 'rm', network], { allowFailure: true })
+  for (const name of [environmentNetwork, otherNetwork, network])
+    await docker(['network', 'rm', name], { allowFailure: true })
   if (workspacesRoot)
     await removeWorkspacesRoot().catch((error) => {
       console.error('Could not remove ' + workspacesRoot + ': ' + (error?.message ?? error))
@@ -369,7 +401,7 @@ async function main() {
     '/app/fake-model.mjs',
   ])
 
-  // The environment: Maestrly in server mode, no bot, the server's folder mounted at its own path.
+  // The environment: Maestrly in server mode, no bot, a folder of its own under the server's mounted at its own path.
   const created = await request(
     'POST',
     '/v1/environments',
@@ -387,23 +419,67 @@ async function main() {
   // Only the app in server mode reports this: as a bot (had the entrypoint set bot mode) it would not.
   assert.ok(running.capabilities.includes('workspaces-host'), 'capabilities: ' + running.capabilities)
   assert.equal(running.appVersion, appVersion)
+  hostFolder = path.join(workspacesRoot, environmentId)
   const inspected = JSON.parse((await docker(['inspect', container])).stdout)[0]
   assert.ok(inspected.Config.Env.includes('MAESTRLY_SERVER_MODE=1'))
-  assert.ok(inspected.Config.Env.includes('MAESTRLY_WORKSPACES_ROOT=' + workspacesRoot))
+  assert.ok(inspected.Config.Env.includes('MAESTRLY_WORKSPACES_ROOT=' + hostFolder))
   assert.ok(!inspected.Config.Env.some((entry) => entry.startsWith('MAESTRLY_BOT_MODE=')))
   assert.deepEqual(
     inspected.Mounts.filter((mount) => mount.Type === 'bind').map((mount) => [mount.Source, mount.Destination]),
-    [[workspacesRoot, workspacesRoot]]
+    [[hostFolder, hostFolder]]
   )
+  assert.deepEqual(Object.keys(inspected.NetworkSettings.Networks), [environmentNetwork])
+  // The gateway created the folder for the user the environment runs as.
+  assert.equal(statSync(hostFolder).isDirectory(), true)
   // The app itself runs in server mode and not as a bot: the entrypoint left bot mode unset.
-  pass('workspaces environment', `${container} runs ${appVersion} in server mode with ${workspacesRoot} mounted`)
+  pass('workspaces environment', `${container} runs ${appVersion} in server mode with ${hostFolder} mounted`)
 
-  await request(
+  // Its network holds it and the gateway alone. The model stand-in is a service of the server the environment uses,
+  // which it reaches only once that service joins its network.
+  const members = (networkName) =>
+    docker(['network', 'inspect', networkName, '--format', '{{range .Containers}}{{.Name}} {{end}}']).then((result) =>
+      result.stdout.trim().split(/\s+/).filter(Boolean).sort()
+    )
+  const gatewayName = (await compose(['ps', '--format', '{{.Name}}', 'maestrly-bot-gateway'])).stdout.trim()
+  assert.deepEqual(await members(environmentNetwork), [container, gatewayName].sort())
+  await docker(['network', 'connect', environmentNetwork, fakeName])
+  // The environment writes to its folder as its own user (uid 1000), which this test is not: only here is it opened.
+  await openFolder(hostFolder)
+
+  // A second scope: a container, network, folder and home of its own, which the first one does not reach.
+  const scope = await request(
     'POST',
     '/v1/environments',
-    { name: 'E2E Second ' + suffix, kind: 'workspaces', idempotencyKey: randomUUID() },
-    { status: 409 }
+    { name: otherName, kind: 'workspaces', cpuLimit: 1, tint: '#4c9a87', idempotencyKey: randomUUID() },
+    { status: 201 }
   )
+  assert.equal(scope.id, otherId)
+  await poll('second workspaces environment running', async () => {
+    const value = (await request('GET', '/v1/environments')).environments.find((item) => item.id === otherId)
+    if (value?.lifecycle === 'failed') throw new Error('It failed to start: ' + JSON.stringify(value.setup))
+    return value?.lifecycle === 'running' && value
+  })
+  const otherInspected = JSON.parse((await docker(['inspect', otherContainer])).stdout)[0]
+  assert.deepEqual(Object.keys(otherInspected.NetworkSettings.Networks), [otherNetwork])
+  assert.equal(otherInspected.HostConfig.NanoCpus, 1_000_000_000)
+  assert.deepEqual(
+    otherInspected.Mounts.filter((mount) => mount.Type === 'bind').map((mount) => mount.Source),
+    [path.join(workspacesRoot, otherId)]
+  )
+  assert.deepEqual(await members(otherNetwork), [otherContainer, gatewayName].sort())
+  const reach = await docker(['exec', container, 'getent', 'hosts', otherContainer], { allowFailure: true })
+  assert.notEqual(reach.code, 0, 'The first environment resolves the second one: ' + reach.stdout)
+  // Deleting it takes its network away and leaves the first one running.
+  await request('POST', `/v1/environments/${otherId}/archive`)
+  await request('DELETE', `/v1/archived-environments/${otherId}`, undefined, { status: 204 })
+  const gone = await docker(['network', 'inspect', otherNetwork], { allowFailure: true })
+  assert.notEqual(gone.code, 0, 'The network of a deleted environment is left behind')
+  assert.equal((await environment())?.lifecycle, 'running')
+  pass(
+    'several scopes',
+    'a second environment runs on its own network, folder and CPU limit, out of reach of the first'
+  )
+
   const refusedBot = await request(
     'POST',
     '/v1/bots',
@@ -419,7 +495,7 @@ async function main() {
   )
   assert.equal(refusedBot.message, 'Workspaces environments hold no bots.')
   assert.deepEqual((await request('GET', '/v1/bots')).bots, [])
-  pass('one workspaces environment, no bots', 'a second one and a bot in it are both refused with 409')
+  pass('no bots in a workspaces environment', 'a bot in it is refused with 409')
 
   // Accounts reach the host the way they reach a bots environment: through the gateway.
   await request('POST', `/v1/environments/${environmentId}/accounts/api-key`, {
@@ -458,7 +534,7 @@ async function main() {
       os: 'linux',
       hostName: '',
       homeDir: '/home/bot',
-      roots: ['/home/bot', workspacesRoot],
+      roots: ['/home/bot', hostFolder],
       desktopEffects: false,
       editor: true,
       browser: true,
@@ -477,19 +553,19 @@ async function main() {
   const roots = await bridge.invoke('host-fs:roots')
   assert.deepEqual(roots, [
     { path: '/home/bot', label: 'home' },
-    { path: workspacesRoot, label: 'workspaces' },
+    { path: hostFolder, label: 'workspaces' },
   ])
   const setup = await bridge.invoke('project-setup:start', {
     operationId: randomUUID(),
     kind: 'create',
-    parentPath: workspacesRoot,
+    parentPath: hostFolder,
     name: 'e2e-project',
   })
   assert.equal(setup.status, 'success', JSON.stringify(setup))
-  const projectPath = path.join(workspacesRoot, 'e2e-project')
+  const projectPath = path.join(hostFolder, 'e2e-project')
   assert.equal(setup.workspace.path, projectPath)
   assert.ok(existsSync(path.join(projectPath, '.git')), 'The project is not on the Docker host')
-  const listing = await bridge.invoke('host-fs:list', workspacesRoot, {})
+  const listing = await bridge.invoke('host-fs:list', hostFolder, {})
   assert.deepEqual(
     listing.entries.map((entry) => [entry.name, entry.kind]),
     [['e2e-project', 'directory']]
@@ -882,7 +958,7 @@ async function main() {
   const begun = await raw(
     'POST',
     files + '/uploads',
-    json({ directory: workspacesRoot, name: 'e2e-upload.bin', size: upload.length, overwrite: false })
+    json({ directory: hostFolder, name: 'e2e-upload.bin', size: upload.length, overwrite: false })
   )
   const session = await begun.json()
   assert.equal(begun.status, 200, JSON.stringify(session))
@@ -901,12 +977,12 @@ async function main() {
     await raw('POST', files + '/uploads/' + session.uploadId + '/commit', json({ sha256: sha256(upload) }))
   ).json()
   assert.equal(committed.sha256, sha256(upload), JSON.stringify(committed))
-  const uploaded = path.join(workspacesRoot, 'e2e-upload.bin')
+  const uploaded = path.join(hostFolder, 'e2e-upload.bin')
   // The folder is mounted at the same path in the environment: the file is on the Docker host, where its owner is
   // reported as the host maps it (Docker Desktop maps it to the person; the terminal above shows who wrote it).
   assert.equal(sha256(readFileSync(uploaded)), sha256(upload))
 
-  const report = path.join(workspacesRoot, 'e2e-report.csv')
+  const report = path.join(hostFolder, 'e2e-report.csv')
   const csv = Buffer.from('id,name,amount\n1,alpha,10\n'.repeat(Math.ceil((70 * MiB) / 25))).subarray(0, 70 * MiB)
   writeFileSync(report, csv)
   const stat = await (await raw('POST', files + '/stat', json({ path: report }))).json()

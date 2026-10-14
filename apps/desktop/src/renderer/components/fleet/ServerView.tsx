@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { version as desktopVersion } from '../../../../package.json'
 import { useTranslation } from 'react-i18next'
 import {
+  FLEET_ENVIRONMENT_LIMITS,
+  FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
   type FleetBot,
   type FleetEnvironment,
   type FleetPeerMessage,
 } from '@maestrly/bot-fleet-protocol'
+import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -16,7 +19,7 @@ import {
   botsWithDifferentVersion,
   groupBotsByEnvironment,
   isWorkspacesEnvironment,
-  workspacesEnvironment,
+  workspacesEnvironments,
 } from '@/lib/fleet/selectors'
 import { environmentBots, formatNames, hasEnvironments } from '@/lib/fleet/environments'
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
@@ -24,6 +27,7 @@ import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import { ArchivedBots } from './ArchivedBots'
 import { ArchivedEnvironments } from './ArchivedEnvironments'
 import { BotUpdateBanner } from './BotUpdateBanner'
+import { CreateWorkspacesDialog } from './CreateWorkspacesDialog'
 
 function ResourceBar({ label, fraction, value }: { label: string; fraction: number; value: string }) {
   return (
@@ -170,6 +174,70 @@ function EnvironmentRows({
   )
 }
 
+/** A workspaces environment on the Server page: its color and name, its state, and what can be done with it. */
+function WorkspacesRow({
+  environment,
+  onStart,
+  onConfirm,
+  onOpen,
+}: {
+  environment: FleetEnvironment
+  onStart: () => void
+  onConfirm: (action: 'restart' | 'stop') => void
+  onOpen: () => void
+}) {
+  const { t } = useTranslation('fleet')
+  const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
+  const running = environment.lifecycle === 'running'
+  return (
+    <li
+      data-workspaces-environment={environment.id}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border py-3 text-sm first:border-t-0 first:pt-0 last:pb-0"
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span
+          aria-hidden="true"
+          className="size-2.5 shrink-0 rounded-full bg-muted-foreground"
+          style={environment.tint ? { backgroundColor: environment.tint } : undefined}
+        />
+        <button type="button" className="truncate font-medium text-primary hover:underline" onClick={onOpen}>
+          {environment.name}
+        </button>
+      </span>
+      <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+        {t(`environment.lifecycle.${environment.lifecycle}`)}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {t('server.memory')}{' '}
+        {environment.resources.memoryBytes === null ? '—' : `${gb(environment.resources.memoryBytes)} GB`} ·{' '}
+        {t('server.uptime')} <Uptime startedAt={environment.resources.startedAt} />
+      </span>
+      {environment.isolation?.restartRequired && (
+        <span className="text-xs text-amber-300">{t('workspaces.isolation.restartShort')}</span>
+      )}
+      <div className="ml-auto flex flex-wrap gap-2">
+        {stopped ? (
+          <Button size="sm" onClick={onStart}>
+            {t('action.start')}
+          </Button>
+        ) : (
+          <>
+            <Button size="sm" variant="outline" disabled={!running} onClick={() => onConfirm('restart')}>
+              {t('action.restart')}
+            </Button>
+            <Button size="sm" variant="outline" disabled={!running} onClick={() => onConfirm('stop')}>
+              {t('action.stop')}
+            </Button>
+          </>
+        )}
+        <Button size="sm" variant="ghost" onClick={onOpen}>
+          {t('workspaces.manage')}
+        </Button>
+      </div>
+    </li>
+  )
+}
+
 export function ServerView({
   fleet,
   onOpenBot,
@@ -192,27 +260,16 @@ export function ServerView({
   const [version, setVersion] = useState(desktopVersion)
   const [messages, setMessages] = useState<FleetPeerMessage[]>(fleet.state.snapshot.peerMessages)
   const [error, setError] = useState('')
-  // The server's chats and workspaces: one environment of its own kind, shown apart from the ones bots run in.
-  const workspaces = grouped ? workspacesEnvironment(environments) : null
+  // The server's chats and workspaces: environments of their own kind, one per scope of the owner's work, shown apart
+  // from the ones bots run in.
+  const workspaces = grouped ? workspacesEnvironments(environments) : []
   const workspacesSupported = fleet.state.connection.features.includes(FLEET_WORKSPACES_HOST_FEATURE)
+  // A server from before scopes hosts one; a full one hosts no more.
+  const scoped = fleet.state.connection.features.includes(FLEET_WORKSPACES_ENVIRONMENTS_FEATURE)
+  const canAddWorkspaces =
+    workspacesSupported &&
+    (scoped ? workspaces.length < FLEET_ENVIRONMENT_LIMITS.workspacesMax : workspaces.length === 0)
   const [creatingWorkspaces, setCreatingWorkspaces] = useState(false)
-  async function createWorkspaces() {
-    if (creatingWorkspaces) return
-    setCreatingWorkspaces(true)
-    setError('')
-    try {
-      const environment = await window.api.fleetCreateWorkspaces()
-      fleet.dispatch({
-        type: 'event',
-        value: { type: 'environment.updated', at: new Date().toISOString(), environment },
-      })
-      onOpenEnvironment(environment.id)
-    } catch (cause) {
-      setError(fleetErrorMessage(cause))
-    } finally {
-      setCreatingWorkspaces(false)
-    }
-  }
   useEffect(() => {
     void window.api
       .getAppInfo()
@@ -350,55 +407,37 @@ export function ServerView({
             </h2>
             <div className="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
               <p className="text-sm text-muted-foreground">{t('workspaces.description')}</p>
-              {workspaces ? (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-                  <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                    {t(`environment.lifecycle.${workspaces.lifecycle}`)}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {t('server.memory')}{' '}
-                    {workspaces.resources.memoryBytes === null ? '—' : `${gb(workspaces.resources.memoryBytes)} GB`} ·{' '}
-                    {t('server.uptime')} <Uptime startedAt={workspaces.resources.startedAt} />
-                  </span>
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    {workspaces.lifecycle === 'stopped' || workspaces.lifecycle === 'failed' ? (
-                      <Button size="sm" onClick={() => void fleet.environmentAction(workspaces.id, 'start')}>
-                        {t('action.start')}
-                      </Button>
-                    ) : (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={workspaces.lifecycle !== 'running'}
-                          onClick={() => setConfirm({ environment: workspaces, action: 'restart' })}
-                        >
-                          {t('action.restart')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={workspaces.lifecycle !== 'running'}
-                          onClick={() => setConfirm({ environment: workspaces, action: 'stop' })}
-                        >
-                          {t('action.stop')}
-                        </Button>
-                      </>
-                    )}
-                    <Button size="sm" onClick={() => onOpenEnvironment(workspaces.id)}>
-                      {t('workspaces.manage')}
-                    </Button>
-                  </div>
-                </div>
-              ) : workspacesSupported ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button size="sm" disabled={creatingWorkspaces} onClick={() => void createWorkspaces()}>
-                    {t(creatingWorkspaces ? 'workspaces.creating' : 'workspaces.create')}
+              {workspaces.length > 0 && (
+                <ul aria-label={t('workspaces.title')}>
+                  {workspaces.map((environment) => (
+                    <WorkspacesRow
+                      key={environment.id}
+                      environment={environment}
+                      onStart={() => void fleet.environmentAction(environment.id, 'start')}
+                      onConfirm={(action) => setConfirm({ environment, action })}
+                      onOpen={() => onOpenEnvironment(environment.id)}
+                    />
+                  ))}
+                </ul>
+              )}
+              {!workspacesSupported ? (
+                <p className="text-xs text-muted-foreground">{t('workspaces.unsupported')}</p>
+              ) : canAddWorkspaces ? (
+                <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3 first:border-t-0 first:pt-0">
+                  <Button
+                    size="sm"
+                    variant={workspaces.length ? 'outline' : 'default'}
+                    onClick={() => setCreatingWorkspaces(true)}
+                  >
+                    <Plus aria-hidden="true" />
+                    {t(workspaces.length ? 'workspaces.createAnother' : 'workspaces.create')}
                   </Button>
-                  <p className="text-xs text-muted-foreground">{t('workspaces.createNote')}</p>
+                  <p className="text-xs text-muted-foreground">{t('workspaces.scopesNote')}</p>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground">{t('workspaces.unsupported')}</p>
+                <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+                  {t(scoped ? 'workspaces.limitReached' : 'workspaces.scopesUnsupported')}
+                </p>
               )}
             </div>
           </section>
@@ -479,6 +518,16 @@ export function ServerView({
           </p>
         )}
       </div>
+      {creatingWorkspaces && (
+        <CreateWorkspacesDialog
+          fleet={fleet}
+          onClose={() => setCreatingWorkspaces(false)}
+          onCreated={(environment) => {
+            setCreatingWorkspaces(false)
+            onOpenEnvironment(environment.id)
+          }}
+        />
+      )}
       {confirm && (
         <ConfirmDialog
           title={

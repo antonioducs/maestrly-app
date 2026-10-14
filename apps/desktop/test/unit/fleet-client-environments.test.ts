@@ -89,7 +89,7 @@ import {
   botEnvironments,
   groupBotsByEnvironment,
   isWorkspacesEnvironment,
-  workspacesEnvironment,
+  workspacesEnvironments,
 } from '../../src/renderer/lib/fleet/selectors'
 import { memorySegments } from '../../src/renderer/lib/fleet/format'
 import {
@@ -118,6 +118,10 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
     setup: { step: 'ready', error: null, errorMessage: null },
     resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
     memoryLimitBytes: null,
+    cpuLimit: null,
+    idleStopMinutes: null,
+    tint: null,
+    isolation: null,
     compaction: null,
     appVersion: '1.0.0',
     capabilities: ['provisioning', 'environments'],
@@ -882,8 +886,10 @@ describe('workspaces environment', () => {
     const all = [environment('work', 'Work'), host, environment('home', 'Home')]
     expect(isWorkspacesEnvironment(host)).toBe(true)
     expect(botEnvironments(all).map((item) => item.id)).toEqual(['work', 'home'])
-    expect(workspacesEnvironment(all)).toBe(host)
-    expect(workspacesEnvironment([environment('work')])).toBeNull()
+    // Several, one per scope, by name.
+    const company = environment('company', 'Company', { kind: 'workspaces' })
+    expect(workspacesEnvironments([...all, company])).toEqual([company, host])
+    expect(workspacesEnvironments([environment('work')])).toEqual([])
     // Bot lists never offer it: not as a group, and not as a place a bot could be listed under.
     const grouped = groupBotsByEnvironment(all, [bot('coder', { environmentId: 'work' })])
     expect(grouped.groups.map((group) => group.environment.id)).toEqual(['home', 'work'])
@@ -906,10 +912,63 @@ describe('workspaces environment', () => {
     ])
   })
 
+  it('is created with its name, color, limits and idle stop on a server with scopes, and only the name otherwise', async () => {
+    const { mutate } = register()
+    const input = { name: 'Company A', tint: '#4c9a87', memoryLimitBytes: null, cpuLimit: 2, idleStopMinutes: 60 }
+    features.list = ['environments', 'workspaces-host']
+    mocks.call.mockResolvedValue(host)
+    await mutate('fleet:createWorkspaces', input)
+    features.list = ['environments', 'workspaces-host', 'workspaces-environments']
+    await mutate('fleet:createWorkspaces', input)
+    expect(calls()).toEqual([
+      [
+        'environmentsCreate',
+        { body: { name: 'Company A', memoryLimitBytes: null, kind: 'workspaces', idempotencyKey: KEY } },
+      ],
+      [
+        'environmentsCreate',
+        {
+          body: {
+            name: 'Company A',
+            memoryLimitBytes: null,
+            kind: 'workspaces',
+            cpuLimit: 2,
+            idleStopMinutes: 60,
+            tint: '#4c9a87',
+            idempotencyKey: KEY,
+          },
+        },
+      ],
+    ])
+    for (const bad of [
+      { name: '' },
+      { name: 'X', cpuLimit: 0.3 },
+      { name: 'X', idleStopMinutes: 5 },
+      { name: 'X', root: '/' },
+    ])
+      expect(() => mutate('fleet:createWorkspaces', bad), JSON.stringify(bad)).toThrow()
+  })
+
+  it('changes the settings of scopes only on a server that has them', async () => {
+    const { mutate } = register()
+    features.list = ['environments', 'workspaces-host']
+    for (const patch of [{ cpuLimit: 2 }, { idleStopMinutes: 60 }, { tint: '#4c9a87' }, { hostFolder: 'own' }])
+      expect(() => mutate('fleet:patchEnvironment', 'work', patch), JSON.stringify(patch)).toThrow(
+        'FLEET_SCOPES_UNSUPPORTED'
+      )
+    expect(mocks.call).not.toHaveBeenCalled()
+    features.list = ['environments', 'workspaces-host', 'workspaces-environments']
+    mocks.call.mockResolvedValue(host)
+    await mutate('fleet:patchEnvironment', 'work', { hostFolder: 'own' })
+    expect(calls()).toEqual([['environmentPatch', { params: { eid: 'work' }, body: { hostFolder: 'own' } }]])
+  })
+
   it('reaches its IPC channel from the preload', async () => {
     const invoke = vi.spyOn(ipcRenderer, 'invoke').mockResolvedValue(host)
     expect(await fleetApi.fleetCreateWorkspaces()).toBe(host)
     expect(invoke).toHaveBeenCalledWith('fleet:createWorkspaces')
+    expect(await fleetApi.fleetCreateWorkspaces({ name: 'Personal' })).toBe(host)
+    expect(invoke).toHaveBeenLastCalledWith('fleet:createWorkspaces', { name: 'Personal' })
     invoke.mockRestore()
   })
 })
@@ -947,6 +1006,21 @@ describe('environment memory', () => {
         ['system', 'system', '', 0.1875, 'var(--muted-foreground)'],
       ]
     )
+  })
+
+  it("colors an environment with the color chosen for it, before its bots' and for one with none", () => {
+    const segments = memorySegments(
+      host,
+      [bot('writer', { environmentId: 'work', tint: '#00bb00' })],
+      [
+        environment('work', 'Work', { tint: '#4c9a87', resources: resources(1) }),
+        environment('personal', 'Personal', { kind: 'workspaces', tint: '#c29a43', resources: resources(1) }),
+      ]
+    )
+    expect(segments.slice(0, 2).map((segment) => [segment.id, segment.tint])).toEqual([
+      ['work', '#4c9a87'],
+      ['personal', '#c29a43'],
+    ])
   })
 
   it('keeps one segment per bot for gateways without environments', () => {

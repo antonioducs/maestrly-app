@@ -2,6 +2,7 @@ import { FLEET_ENVIRONMENT_LIMITS } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
   FLEET_UPDATES_UNSUPPORTED,
+  FLEET_SCOPES_UNSUPPORTED,
   FLEET_RUNTIME_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
@@ -88,6 +89,13 @@ const marked = (marker: string) => (message: string) => message.includes(marker)
 const KNOWN_REFUSALS: KnownRefusal[] = [
   { matches: marked(FLEET_ENVIRONMENTS_UNSUPPORTED), key: 'provisioning.updateServer' },
   { matches: marked(FLEET_UPDATES_UNSUPPORTED), key: 'updates.unsupported' },
+  { matches: marked(FLEET_SCOPES_UNSUPPORTED), key: 'workspaces.scopesUnsupported' },
+  { matches: exactly('This server already hosts workspaces.'), key: 'workspaces.scopesUnsupported' },
+  {
+    matches: exactly('This server already hosts as many workspaces environments as it can.'),
+    key: 'workspaces.limitReached',
+  },
+  { matches: exactly('Docker could not change the CPU limit'), key: 'environment.cpuLimitRefused' },
   { matches: marked(FLEET_RUNTIME_UPDATES_UNSUPPORTED), key: 'environment.runtimes.unsupported' },
   {
     matches: exactly('Restart this environment to update it before checking its runtimes.'),

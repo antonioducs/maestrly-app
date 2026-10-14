@@ -11,6 +11,8 @@ function localHost(): HostView {
     id: LOCAL_HOST_ID,
     remote: false,
     label: '',
+    server: '',
+    tint: null,
     state: 'online',
     epoch: 0,
     os: hasWindow() ? window.api.platformInfo.os : 'mac',

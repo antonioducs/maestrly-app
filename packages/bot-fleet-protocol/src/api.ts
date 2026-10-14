@@ -41,6 +41,10 @@ import {
   fleetEnvironmentIdSchema,
   fleetEnvironmentKindSchema,
   fleetEnvironmentSchema,
+  fleetCpuLimitSchema,
+  fleetHostFolderModeSchema,
+  fleetIdleStopMinutesSchema,
+  fleetTintSchema,
   fleetRuntimesSchema,
   fleetHostInfoSchema,
   fleetIdSchema,
@@ -223,7 +227,7 @@ const fleetAttachmentsSchema = fleetAttachmentListSchema.default([])
 const hasContent = (value: { text: string; attachments: unknown[] }) =>
   value.text.trim().length > 0 || value.attachments.length > 0
 
-export const fleetFeaturesSchema = z.array(z.string().max(40)).max(20).default([])
+export const fleetFeaturesSchema = z.array(z.string().max(40)).max(40).default([])
 
 export const fleetMetaResponseSchema = z.object({
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
@@ -264,6 +268,11 @@ export const fleetCreateEnvironmentRequestSchema = z.object({
   /** Null uses the gateway's default limit. */
   memoryLimitBytes: fleetMemoryLimitSchema.nullable().default(null),
   kind: fleetEnvironmentKindSchema.default('bots'),
+  /** Gateways with `workspaces-environments` only; older ones drop these. Null: no CPU limit. */
+  cpuLimit: fleetCpuLimitSchema.nullable().default(null),
+  /** Workspaces environments only. Null: it never stops by itself. */
+  idleStopMinutes: fleetIdleStopMinutesSchema.nullable().default(null),
+  tint: fleetTintSchema.nullable().default(null),
   idempotencyKey: fleetIdempotencyKeySchema,
 })
 export type FleetCreateEnvironmentRequest = z.infer<typeof fleetCreateEnvironmentRequestSchema>
@@ -272,6 +281,13 @@ export const fleetPatchEnvironmentRequestSchema = z
     name: fleetNameSchema.optional(),
     /** Null goes back to the gateway's default limit. */
     memoryLimitBytes: fleetMemoryLimitSchema.nullable().optional(),
+    /** Null removes the CPU limit. Gateways with `workspaces-environments` only, as are the fields below. */
+    cpuLimit: fleetCpuLimitSchema.nullable().optional(),
+    /** Workspaces environments only; null: it never stops by itself. */
+    idleStopMinutes: fleetIdleStopMinutesSchema.nullable().optional(),
+    tint: fleetTintSchema.nullable().optional(),
+    /** Workspaces environments only; it applies when the environment next starts or restarts. */
+    hostFolder: fleetHostFolderModeSchema.optional(),
     /** The default compaction model of its bots; null removes it. */
     compaction: fleetCompactionConfigSchema.nullable().optional(),
     /** Optional compare-and-set values for the shared settings editor; legacy callers omit them. */
@@ -284,7 +300,14 @@ export const fleetPatchEnvironmentRequestSchema = z
       .optional(),
   })
   .refine(
-    (value) => value.name !== undefined || value.memoryLimitBytes !== undefined || value.compaction !== undefined,
+    (value) =>
+      value.name !== undefined ||
+      value.memoryLimitBytes !== undefined ||
+      value.cpuLimit !== undefined ||
+      value.idleStopMinutes !== undefined ||
+      value.tint !== undefined ||
+      value.hostFolder !== undefined ||
+      value.compaction !== undefined,
     'nothing to change'
   )
 export type FleetPatchEnvironmentRequest = z.infer<typeof fleetPatchEnvironmentRequestSchema>

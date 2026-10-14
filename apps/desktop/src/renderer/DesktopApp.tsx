@@ -791,6 +791,14 @@ export function DesktopApp() {
     [fleet.environmentAction]
   )
   const openServerPage = useCallback(() => openFleetView({ kind: 'server' }), [openFleetView])
+  // A host's environment page has its lifecycle, settings and isolation; a host reached without a server has none.
+  const manageHost = useCallback(
+    (host: HostView) =>
+      host.environment
+        ? openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
+        : openServerPage(),
+    [openFleetView, openServerPage]
+  )
   const hostSections: SidebarHostSection[] = remoteHosts.map((host) => ({
     host,
     shell: remote[host.id] ?? null,
@@ -799,7 +807,7 @@ export function DesktopApp() {
     onAddWorkspace: () => void requestProjectOn(host.id),
     onRetry: () => retryHost(host.id),
     onStart: () => startHost(host),
-    onManage: openServerPage,
+    onManage: () => manageHost(host),
   }))
   /** Runs an action of the sidebar on the host its conversation or workspace belongs to. */
   const onHost = (key: string, local: () => unknown, act: (actions: RemoteHostShell['actions']) => unknown): void => {
@@ -1192,7 +1200,7 @@ export function DesktopApp() {
                               host={chatHost}
                               onRetry={() => retryHost(chatHost.id)}
                               onStart={() => startHost(chatHost)}
-                              onManage={openServerPage}
+                              onManage={() => manageHost(chatHost)}
                             />
                           </>
                         ) : (

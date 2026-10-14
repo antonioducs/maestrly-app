@@ -968,8 +968,13 @@ describe('environment contracts', () => {
     expect(FLEET_ENVIRONMENTS_FEATURE).toBe('environments')
     expect(FLEET_ENVIRONMENT_LIMITS).toEqual({
       botsMax: 8,
+      workspacesMax: 8,
       memoryLimitMinBytes: 2 * GiB,
       memoryLimitMaxBytes: 64 * GiB,
+      cpuLimitMin: 0.5,
+      cpuLimitMax: 64,
+      idleStopMinutesMin: 15,
+      idleStopMinutesMax: 10080,
     })
     expect(FLEET_ENVIRONMENT_DISPLAY).toEqual({ columns: 3, rows: 3, width: 3840, height: 2400 })
     expect(FLEET_BOT_ENV.environmentId).toBe('MAESTRLY_ENVIRONMENT_ID')
@@ -1106,6 +1111,9 @@ describe('environment contracts', () => {
       ...request,
       memoryLimitBytes: null,
       kind: 'bots',
+      cpuLimit: null,
+      idleStopMinutes: null,
+      tint: null,
     })
     expect(fleetCreateEnvironmentRequestSchema.parse({ ...request, memoryLimitBytes: 4 * GiB }).memoryLimitBytes).toBe(
       4 * GiB

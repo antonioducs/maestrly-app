@@ -14,6 +14,7 @@ import {
   type FleetCompactionConfig,
   type FleetEnvironmentKind,
   type FleetEnvironmentSetup,
+  type FleetHostFolderMode,
   type FleetLifecycle,
   type FleetPeerMessage,
   type FleetRoutine,
@@ -42,6 +43,14 @@ export type StoredEnvironment = {
   volumeName: string
   /** The limit the owner set for the container; null uses the gateway's default. */
   memoryLimitBytes: number | null
+  /** The CPUs its container may use; null: every CPU of the server. */
+  cpuLimit: number | null
+  /** A workspaces environment stops itself after this many idle minutes; null: never. */
+  idleStopMinutes: number | null
+  /** The color the owner chose for it; null: none. */
+  tint: string | null
+  /** Which server folder a workspaces environment mounts; null for bots environments. */
+  hostFolder: FleetHostFolderMode | null
   /** The compaction model of its bots that have none of their own; null when the owner has not chosen one. */
   compaction: FleetCompactionConfig | null
   /** When the owner asked to update it once its bots are idle; null when no update waits. */
@@ -51,7 +60,19 @@ export type StoredEnvironment = {
   archivedAt: string | null
 }
 export type EnvironmentChanges = Partial<
-  Pick<StoredEnvironment, 'name' | 'lifecycle' | 'setup' | 'memoryLimitBytes' | 'compaction' | 'updateRequestedAt'>
+  Pick<
+    StoredEnvironment,
+    | 'name'
+    | 'lifecycle'
+    | 'setup'
+    | 'memoryLimitBytes'
+    | 'cpuLimit'
+    | 'idleStopMinutes'
+    | 'tint'
+    | 'hostFolder'
+    | 'compaction'
+    | 'updateRequestedAt'
+  >
 >
 /** What an environment's container is started with: the token of its control API and the password of its keyring. */
 export type EnvironmentSecrets = { controlToken: string; keyringPassword: string }
@@ -173,7 +194,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 12) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 13) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -246,6 +267,7 @@ export class Store {
     }
     if (version <= 10) this.migrateEnvironmentKinds()
     if (version <= 11) this.migrateHostSecrets()
+    if (version <= 12) this.migrateEnvironmentScopes()
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -354,6 +376,26 @@ export class Store {
       'CREATE TABLE IF NOT EXISTS host_secrets (environment_id TEXT PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE, gateway_token TEXT NOT NULL, gateway_token_sha256 TEXT NOT NULL UNIQUE)'
     )
     this.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 13: environments get a CPU limit, an idle stop and a tint, and workspaces environments a server folder mode.
+   * Workspaces environments so far mount the whole server folder (`shared`), so the paths of their workspaces keep
+   * working; new ones get a folder of their own.
+   */
+  private migrateEnvironmentScopes() {
+    const existing = new Set(
+      (this.db.prepare('PRAGMA table_info(environments)').all() as Row[]).map((column) => String(column.name))
+    )
+    const columns: Array<[string, string]> = [
+      ['cpu_limit', 'REAL CHECK (cpu_limit IS NULL OR cpu_limit > 0)'],
+      ['idle_stop_minutes', 'INTEGER CHECK (idle_stop_minutes IS NULL OR idle_stop_minutes > 0)'],
+      ['tint', 'TEXT'],
+      ['host_folder', "TEXT CHECK (host_folder IS NULL OR host_folder IN ('own','shared'))"],
+    ]
+    for (const [name, definition] of columns)
+      if (!existing.has(name)) this.db.exec(`ALTER TABLE environments ADD COLUMN ${name} ${definition}`)
+    this.db.exec("UPDATE environments SET host_folder='shared' WHERE kind='workspaces' AND host_folder IS NULL")
+    this.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     return {
@@ -645,6 +687,11 @@ export class Store {
       containerName: String(row.container_name),
       volumeName: String(row.volume_name),
       memoryLimitBytes: row.memory_limit_bytes === null ? null : Number(row.memory_limit_bytes),
+      cpuLimit: row.cpu_limit === null || row.cpu_limit === undefined ? null : Number(row.cpu_limit),
+      idleStopMinutes:
+        row.idle_stop_minutes === null || row.idle_stop_minutes === undefined ? null : Number(row.idle_stop_minutes),
+      tint: typeof row.tint === 'string' ? row.tint : null,
+      hostFolder: row.host_folder === 'own' || row.host_folder === 'shared' ? row.host_folder : null,
       compaction: row.compaction_json ? (JSON.parse(String(row.compaction_json)) as FleetCompactionConfig) : null,
       updateRequestedAt: (row.update_requested_at as string | null) ?? null,
       createdAt: String(row.created_at),
@@ -667,7 +714,7 @@ export class Store {
       if (this.getEnvironment(environment.id)) throw new GatewayError('CONFLICT', 'Environment already exists')
       this.db
         .prepare(
-          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,cpu_limit,idle_stop_minutes,tint,host_folder,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
         .run(
           environment.id,
@@ -678,6 +725,10 @@ export class Store {
           environment.containerName,
           environment.volumeName,
           environment.memoryLimitBytes,
+          environment.cpuLimit ?? null,
+          environment.idleStopMinutes ?? null,
+          environment.tint ?? null,
+          environment.hostFolder ?? null,
           environment.compaction ? JSON.stringify(environment.compaction) : null,
           environment.updateRequestedAt,
           environment.createdAt,
@@ -721,6 +772,10 @@ export class Store {
         lifecycle: changes.lifecycle ?? current.lifecycle,
         setup: changes.setup ?? current.setup,
         memoryLimitBytes: changes.memoryLimitBytes === undefined ? current.memoryLimitBytes : changes.memoryLimitBytes,
+        cpuLimit: changes.cpuLimit === undefined ? current.cpuLimit : changes.cpuLimit,
+        idleStopMinutes: changes.idleStopMinutes === undefined ? current.idleStopMinutes : changes.idleStopMinutes,
+        tint: changes.tint === undefined ? current.tint : changes.tint,
+        hostFolder: changes.hostFolder === undefined ? current.hostFolder : changes.hostFolder,
         compaction: changes.compaction === undefined ? current.compaction : changes.compaction,
         updateRequestedAt:
           changes.updateRequestedAt === undefined ? current.updateRequestedAt : changes.updateRequestedAt,
@@ -728,13 +783,17 @@ export class Store {
       }
       this.db
         .prepare(
-          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,compaction_json=?,update_requested_at=?,updated_at=? WHERE id=?'
+          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,cpu_limit=?,idle_stop_minutes=?,tint=?,host_folder=?,compaction_json=?,update_requested_at=?,updated_at=? WHERE id=?'
         )
         .run(
           next.name,
           next.lifecycle,
           JSON.stringify(next.setup),
           next.memoryLimitBytes,
+          next.cpuLimit,
+          next.idleStopMinutes,
+          next.tint,
+          next.hostFolder,
           next.compaction ? JSON.stringify(next.compaction) : null,
           next.updateRequestedAt,
           next.updatedAt,
@@ -956,6 +1015,10 @@ export class Store {
             containerName: legacyContainerName(bot.id),
             volumeName: legacyVolumeName(bot.id),
             memoryLimitBytes: null,
+            cpuLimit: null,
+            idleStopMinutes: null,
+            tint: null,
+            hostFolder: null,
             compaction: null,
             updateRequestedAt: null,
             createdAt: bot.createdAt,

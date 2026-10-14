@@ -33,10 +33,18 @@ const schema = z.object({
   /** Whether bots update Claude Code and Codex on their own. */
   botRuntimeUpdates: z.enum(FLEET_BOT_RUNTIME_UPDATE_MODES),
   botShm: bytes,
-  /** A directory of the Docker host mounted into the workspaces environment at the same path; null mounts none. */
+  /**
+   * A directory of the Docker host whose subfolders are mounted into the workspaces environments, each at the same
+   * path (environments from before folders of their own mount the whole of it); null mounts none.
+   */
   workspacesRoot: z
     .string()
     .regex(/^\/[^\0]*$/, 'Expected an absolute path')
+    .nullable(),
+  /** The gateway's own container, which joins each workspaces environment's network; null: found on the fleet network. */
+  gatewayContainer: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/, 'Expected a container name or id')
     .nullable(),
   timezone: z.string().min(1).refine(isValidTimeZone, 'Invalid time zone'),
   botSecurityOpt: z.array(z.string()),
@@ -74,6 +82,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     botRuntimeUpdates: env[FLEET_GATEWAY_ENV.botRuntimeUpdates] || 'auto',
     botShm: env[FLEET_GATEWAY_ENV.botShm] ?? '1g',
     workspacesRoot: env[FLEET_GATEWAY_ENV.workspacesRoot]?.trim() || null,
+    gatewayContainer: env[FLEET_GATEWAY_ENV.container]?.trim() || null,
     timezone: env[FLEET_GATEWAY_ENV.timezone] ?? 'UTC',
     botSecurityOpt,
   })
