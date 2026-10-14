@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import {
   FLEET_PROTOCOL_HEADER,
+  FLEET_SCREEN_UPGRADE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   fleetInstanceInputSchema,
   fleetInstanceProfileSchema,
   fleetInstanceHoldRequestSchema,
@@ -88,7 +90,14 @@ async function instance() {
       body = JSON.parse(Buffer.concat(chunks).toString())
     }
     try {
-      if (url.pathname === '/v1/health') return send(200, { ok: true, appVersion: '1.0', protocol: 1, ready: true })
+      if (url.pathname === '/v1/health')
+        return send(200, {
+          ok: true,
+          appVersion: '1.0',
+          protocol: 1,
+          ready: true,
+          capabilities: [FLEET_VIDEO_SCREENS_FEATURE],
+        })
       if (url.pathname === '/v1/status') return send(200, state)
       if (url.pathname === '/v1/profile') {
         fleetInstanceProfileSchema.parse(body)
@@ -123,13 +132,13 @@ async function instance() {
     if (
       req.headers.authorization !== 'Bearer ' + tunnelToken ||
       req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1' ||
-      req.headers.upgrade !== 'maestrly-rfb' ||
-      !['/v1/screen/view', '/v1/screen/control'].includes(req.url ?? '')
+      req.headers.upgrade !== FLEET_SCREEN_UPGRADE ||
+      !/^\/v1\/bots\/[^/]+\/screen\/browser\/(?:view|control)$/.test(req.url ?? '')
     ) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n')
       return
     }
-    socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: maestrly-rfb\r\n\r\n')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: ${FLEET_SCREEN_UPGRADE}\r\n\r\n`)
     const echo = (bytes: Buffer) => {
       socket.write(Buffer.from([1, 2, 3]))
       socket.write(bytes)

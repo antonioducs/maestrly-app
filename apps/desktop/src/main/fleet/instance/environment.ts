@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { app } from 'electron'
 import {
   FLEET_ENVIRONMENT_LIMITS,
@@ -32,6 +33,7 @@ import {
   type FleetSkillInstallResponse,
   type FleetSubscriptionKind,
   type FleetUiOpenRequest,
+  type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
 import {
   addProvider,
@@ -66,8 +68,7 @@ import {
   type BotDisplayEnv,
   type DisplayManagerDeps,
   type DisplaySurface,
-  type VncLease,
-  type VncMode,
+  type ScreenLease,
 } from './displays'
 import {
   SUBSCRIPTION_PROVIDER_KIND,
@@ -96,6 +97,7 @@ import {
 import { BotRuntime, loadFleetAccountOptions, visibleFleetModels, type BotRuntimeHost, type BotScreen } from './runtime'
 import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
+import { SCREEN_ENCODER_PROGRAM } from './screen-encoder'
 import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
 
 /** The part of the display manager an environment uses. */
@@ -104,7 +106,7 @@ export interface EnvironmentDisplays {
   stopBot(botId: string): Promise<void>
   /** Paints the bot's wallpaper again after its name or color changed; it never rejects for a failed painting. */
   redecorate(botId: string): Promise<void>
-  acquireVnc(surface: DisplaySurface, mode: VncMode): Promise<VncLease>
+  acquireScreen(surface: DisplaySurface): Promise<ScreenLease>
   dispose(): Promise<void>
 }
 
@@ -391,19 +393,19 @@ export class EnvironmentRuntime {
   }
 
   /**
-   * A VNC server for a screen: the environment screen, or the browser area or apps display of an installed bot.
-   * The caller releases the lease when its connection ends. The environment screen and the bots' browsers share the
-   * environment display and its keyboard focus: until a control of one of them is released, that focus stays on the
-   * controlled screen's windows, so the owner's typing never reaches another screen.
+   * A screen's stream: the environment screen, or the browser area or apps display of an installed bot. The caller
+   * releases the lease when its connection ends. The environment screen and the bots' browsers share the environment
+   * display and its keyboard focus: until a control of one of them is released, that focus stays on the controlled
+   * screen's windows, so the owner's typing never reaches another screen.
    */
-  async acquireScreen(surface: DisplaySurface, mode: VncMode): Promise<VncLease> {
+  async acquireScreen(surface: DisplaySurface, mode: ScreenMode): Promise<ScreenLease> {
     this.assertOpen()
     if (surface.kind !== 'environment') {
       if (!isBotId(surface.botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
       this.bot(surface.botId)
     }
     if (!this.displays) throw new InstanceHttpError(503, 'INSTANCE_UNAVAILABLE', 'Screen unavailable.')
-    const lease = await this.displays.acquireVnc(surface, mode)
+    const lease = await this.displays.acquireScreen(surface)
     if (mode !== 'control' || surface.kind === 'apps') return lease
     let endFocus: () => void
     try {
@@ -414,7 +416,7 @@ export class EnvironmentRuntime {
     }
     let released = false
     return {
-      port: lease.port,
+      session: lease.session,
       release: () => {
         if (released) return
         released = true
@@ -792,6 +794,39 @@ export function productionDisplayDeps(
         child.once('exit', (code) => resolve(code))
       })
       return {
+        exited,
+        kill: (signal = 'SIGTERM') => {
+          if (child.exitCode === null && child.signalCode === null) child.kill(signal)
+        },
+      }
+    },
+    spawnEncoder(args) {
+      let child: ChildProcess
+      try {
+        child = spawn(SCREEN_ENCODER_PROGRAM, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+      } catch (error) {
+        log('error', `Could not start the screen encoder: ${errorMessage(error)}`)
+        const closed = new PassThrough()
+        closed.end()
+        return {
+          stdin: new PassThrough(),
+          stdout: closed,
+          stderr: closed,
+          exited: Promise.resolve(127),
+          kill: () => {},
+        }
+      }
+      const exited = new Promise<number | null>((resolve) => {
+        child.once('error', (error) => {
+          log('error', `Could not run the screen encoder: ${error.message}`)
+          resolve(127)
+        })
+        child.once('exit', (code) => resolve(code))
+      })
+      return {
+        stdin: child.stdin!,
+        stdout: child.stdout!,
+        stderr: child.stderr!,
         exited,
         kill: (signal = 'SIGTERM') => {
           if (child.exitCode === null && child.signalCode === null) child.kill(signal)

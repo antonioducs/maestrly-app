@@ -866,7 +866,6 @@ export default {
     viewHint: 'Só assistindo. Assuma o controle para clicar e digitar.',
     clipboard: {
       readFailed: 'Não foi possível ler a área de transferência. Tente colar novamente.',
-      unsupportedText: 'A tela do bot ainda não permite colar emojis ou caracteres fora do Latin-1. Nada foi colado.',
       tooLarge: 'O texto é grande demais para a área de transferência da tela. Copie um trecho menor (até 1 MB).',
       writeFailed: 'Não foi possível copiar o texto do bot. Tente copiar novamente.',
     },
@@ -883,6 +882,7 @@ export default {
     conflict: 'Outra tela deste ambiente está sendo controlada.',
     retryControl: 'Tentar de novo',
     restartEnvironment: 'Reinicie este ambiente para atualizá-lo antes de abrir esta tela.',
+    updateServer: 'Atualize o servidor de bots para abrir esta tela.',
     appsNeedsRestart: 'Reinicie o ambiente para atualizá-lo antes de abrir a tela de apps.',
     useEnvironmentScreen: 'Usar a tela do ambiente',
     environmentAccountDescription:

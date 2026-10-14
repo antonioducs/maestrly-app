@@ -3,9 +3,10 @@ import { once } from 'node:events'
 import { randomBytes, randomUUID } from 'node:crypto'
 import http from 'node:http'
 import { Readable } from 'node:stream'
-import net, { type AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
 import {
   FLEET_PROTOCOL_HEADER,
+  FLEET_SCREEN_UPGRADE,
   fleetInstanceStatusSchema,
   type FleetAccountImportRequest,
   type FleetAddApiKeyAccountRequest,
@@ -25,6 +26,7 @@ import {
   type FleetSkillInstallRequest,
   type FleetSubscriptionKind,
   type FleetUiOpenRequest,
+  type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
 import {
   createInstanceControlServer,
@@ -34,7 +36,8 @@ import {
   type InstanceBot,
   type InstanceEnvironment,
 } from '../../src/main/fleet/instance/server'
-import type { DisplaySurface, VncMode } from '../../src/main/fleet/instance/displays'
+import type { DisplaySurface } from '../../src/main/fleet/instance/displays'
+import type { ScreenPeer, ScreenSession } from '../../src/main/fleet/instance/screen-session'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 
 const baseStatus: FleetInstanceStatus = fleetInstanceStatusSchema.parse({
@@ -172,8 +175,9 @@ function fakeEnvironment() {
     ['alpha', fakeBot('alpha', 1)],
     ['beta', fakeBot('beta', 2)],
   ])
-  const screen = { port: 0, delayMs: 0, fail: false }
-  const leases: Array<{ surface: DisplaySurface; mode: VncMode; release: ReturnType<typeof vi.fn> }> = []
+  const screen = { delayMs: 0, fail: false }
+  const session = fakeSession()
+  const leases: Array<{ surface: DisplaySurface; mode: ScreenMode; release: ReturnType<typeof vi.fn> }> = []
   const environment = {
     events,
     health: vi.fn(() => ({
@@ -221,12 +225,12 @@ function fakeEnvironment() {
     uninstallBot: vi.fn(async (botId: string, _options: { purge: boolean }) => {
       bots.delete(botId)
     }),
-    acquireScreen: vi.fn(async (surface: DisplaySurface, mode: VncMode) => {
+    acquireScreen: vi.fn(async (surface: DisplaySurface, mode: ScreenMode) => {
       if (screen.delayMs) await new Promise((resolve) => setTimeout(resolve, screen.delayMs))
       if (screen.fail) throw new Error('The apps display of bot alpha is not running.')
       const release = vi.fn()
       leases.push({ surface, mode, release })
-      return { port: screen.port, release }
+      return { session: session as unknown as ScreenSession, release }
     }),
     startLogin: vi.fn(async (_request: FleetLoginStartRequest) => loginAttempt),
     login: vi.fn((_loginId: string) => loginAttempt),
@@ -256,13 +260,12 @@ function fakeEnvironment() {
   const bot: InstanceBot = bots.get('alpha')!
   void typed
   void bot
-  return { environment, bots, screen, leases, events }
+  return { environment, bots, screen, session, leases, events }
 }
 type Fake = ReturnType<typeof fakeEnvironment>
 
 const servers: http.Server[] = []
-const vncServers: net.Server[] = []
-const clients = new Set<net.Socket>()
+const clients = new Set<Socket>()
 afterEach(async () => {
   for (const socket of clients) socket.destroy()
   clients.clear()
@@ -272,7 +275,6 @@ afterEach(async () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     })
   )
-  await Promise.all(vncServers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))))
   vi.restoreAllMocks()
 })
 async function setup(fake: Fake = fakeEnvironment()) {
@@ -293,42 +295,46 @@ function send(base: string, method: string, route: string, body?: unknown, extra
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 }
-/** A VNC server stand-in that echoes what it receives. */
-async function echoVnc() {
-  const connections = new Set<net.Socket>()
-  const stats = { accepted: 0 }
-  const server = net.createServer((socket) => {
-    stats.accepted++
-    connections.add(socket)
-    socket.on('close', () => connections.delete(socket))
-    socket.on('error', () => {})
-    socket.on('data', (data) => socket.write(data))
-  })
-  vncServers.push(server)
-  server.listen(0, '127.0.0.1')
-  await once(server, 'listening')
-  return { port: (server.address() as AddressInfo).port, connections, stats }
+/**
+ * A screen session stand-in: each client it attaches gets [1, 2, 3], then everything it sends echoed back. One that
+ * closes on attach plays a session whose encoder already stopped.
+ */
+function fakeSession() {
+  const attachments: Array<{ peer: ScreenPeer; mode: ScreenMode; detached: boolean }> = []
+  const session = {
+    attachments,
+    closeOnAttach: false,
+    attach(peer: ScreenPeer, mode: ScreenMode) {
+      const attachment = { peer, mode, detached: false }
+      attachments.push(attachment)
+      if (session.closeOnAttach) peer.close()
+      else peer.send(Uint8Array.of(1, 2, 3))
+      return {
+        receive: (chunk: Uint8Array) => peer.send(chunk),
+        detach: () => {
+          attachment.detached = true
+        },
+      }
+    },
+  }
+  return session
 }
-async function unusedPort(): Promise<number> {
-  const server = net.createServer()
-  server.listen(0, '127.0.0.1')
-  await once(server, 'listening')
-  const port = (server.address() as AddressInfo).port
-  await new Promise<void>((resolve) => server.close(() => resolve()))
-  return port
-}
+type Upgraded = { status: number; socket?: Socket; body?: string; bytes: () => Buffer }
 function upgrade(port: number, path: string, extra: Record<string, string> = {}) {
-  return new Promise<{ status: number; socket?: net.Socket; body?: string }>((resolve, reject) => {
+  return new Promise<Upgraded>((resolve, reject) => {
     const request = http.request({
       host: '127.0.0.1',
       port,
       path,
-      headers: { ...headers(), Connection: 'Upgrade', Upgrade: 'maestrly-rfb', ...extra },
+      headers: { ...headers(), Connection: 'Upgrade', Upgrade: FLEET_SCREEN_UPGRADE, ...extra },
     })
-    request.on('upgrade', (response, socket) => {
+    request.on('upgrade', (response, socket, head: Buffer) => {
       clients.add(socket)
       socket.on('error', () => {})
-      resolve({ status: response.statusCode ?? 0, socket })
+      // What the session sent first may arrive with the response itself.
+      const chunks: Buffer[] = head.length ? [head] : []
+      socket.on('data', (chunk: Buffer) => chunks.push(chunk))
+      resolve({ status: response.statusCode ?? 0, socket, bytes: () => Buffer.concat(chunks) })
     })
     request.on('response', (response) => {
       let body = ''
@@ -336,16 +342,22 @@ function upgrade(port: number, path: string, extra: Record<string, string> = {})
       response.on('data', (chunk: string) => {
         body += chunk
       })
-      response.on('end', () => resolve({ status: response.statusCode ?? 0, body }))
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body, bytes: () => Buffer.alloc(0) }))
     })
     request.on('error', reject)
     request.end()
   })
 }
-async function echoes(socket: net.Socket, bytes: number[]): Promise<void> {
-  const received = once(socket, 'data')
-  socket.write(Buffer.from(bytes))
-  expect((await received)[0]).toEqual(Buffer.from(bytes))
+/** The session greeted the client. */
+async function greeted(screen: Upgraded): Promise<void> {
+  await vi.waitFor(() => expect(screen.bytes().subarray(0, 3)).toEqual(Buffer.from([1, 2, 3])))
+}
+/** What the client sends reaches its session, whose answer reaches the client. */
+async function echoes(screen: Upgraded, bytes: number[]): Promise<void> {
+  await greeted(screen)
+  const before = screen.bytes().length
+  screen.socket!.write(Buffer.from(bytes))
+  await vi.waitFor(() => expect(screen.bytes().subarray(before)).toEqual(Buffer.from(bytes)))
 }
 async function readFrames(response: Response, count: number): Promise<FleetInstanceEvent[]> {
   const reader = response.body!.getReader()
@@ -443,6 +455,7 @@ describe('instance control HTTP', () => {
       'runtime-updates',
       'desktop-bridge',
       'message-edit',
+      'video-screens',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
@@ -954,10 +967,8 @@ describe('bot routes', () => {
 })
 
 describe('instance screen tunnels', () => {
-  it('authenticates screens, relays bytes and releases the VNC lease when a client leaves', async () => {
-    const vnc = await echoVnc()
-    const { port, base, bots, screen, leases, environment } = await setup()
-    screen.port = vnc.port
+  it('authenticates screens, attaches them to their session and releases the lease when a client leaves', async () => {
+    const { port, base, bots, session, leases, environment } = await setup()
     expect((await fetch(base + '/v1/bots/alpha/screen/browser/view', { headers: headers() })).status).toBe(400)
     expect((await fetch(base + '/v1/screen/environment/view', { headers: headers() })).status).toBe(400)
     const view = '/v1/screen/environment/view'
@@ -979,7 +990,7 @@ describe('instance screen tunnels', () => {
     // The environment screen shows only Maestrly's settings: its control needs no takeover.
     const settings = await upgrade(port, '/v1/screen/environment/control')
     expect(settings.status).toBe(101)
-    await echoes(settings.socket!, [1, 2, 3])
+    await echoes(settings, [1, 2, 3])
     // A bot's screens need that bot's own takeover.
     bots.get('beta')!.state.hold = takeover()
     const refused = await upgrade(port, '/v1/bots/alpha/screen/apps/control')
@@ -988,19 +999,21 @@ describe('instance screen tunnels', () => {
     bots.get('alpha')!.state.hold = takeover()
     const apps = await upgrade(port, '/v1/bots/alpha/screen/apps/control')
     expect(apps.status).toBe(101)
-    await echoes(apps.socket!, [4, 5, 6])
+    await echoes(apps, [4, 5, 6])
     const browser = await upgrade(port, '/v1/bots/beta/screen/browser/view')
     expect(browser.status).toBe(101)
-    await echoes(browser.socket!, [7])
+    await echoes(browser, [7])
     expect(leases.map(({ surface, mode }) => [surface, mode])).toEqual([
       [{ kind: 'environment' }, 'control'],
       [{ kind: 'apps', botId: 'alpha' }, 'control'],
       [{ kind: 'browser', botId: 'beta' }, 'view'],
     ])
-    expect(vnc.connections.size).toBe(3)
+    // Each connection joins the screen's session in its own mode: the session, not the socket, enforces watching.
+    expect(session.attachments.map((attachment) => attachment.mode)).toEqual(['control', 'control', 'view'])
 
     browser.socket!.destroy()
     await vi.waitFor(() => expect(leases[2].release).toHaveBeenCalledOnce())
+    expect(session.attachments[2].detached).toBe(true)
     expect(leases[0].release).not.toHaveBeenCalled()
     expect(leases[1].release).not.toHaveBeenCalled()
     settings.socket!.destroy()
@@ -1008,15 +1021,31 @@ describe('instance screen tunnels', () => {
     await vi.waitFor(() => {
       expect(leases[0].release).toHaveBeenCalledOnce()
       expect(leases[1].release).toHaveBeenCalledOnce()
-      expect(vnc.connections.size).toBe(0)
+      expect(session.attachments.every((attachment) => attachment.detached)).toBe(true)
     })
     expect(leases[2].release).toHaveBeenCalledOnce()
   })
 
+  it('rejects the old RFB upgrade', async () => {
+    const { port, environment } = await setup()
+    expect((await upgrade(port, '/v1/screen/environment/view', { Upgrade: 'maestrly-rfb' })).status).toBe(400)
+    expect(environment.acquireScreen).not.toHaveBeenCalled()
+  })
+
+  it('detaches the client and gives the lease back when the socket ends its side', async () => {
+    const { port, session, leases } = await setup()
+    const screen = await upgrade(port, '/v1/screen/environment/view')
+    expect(screen.status).toBe(101)
+    await greeted(screen)
+    screen.socket!.end()
+    await vi.waitFor(() => {
+      expect(session.attachments[0].detached).toBe(true)
+      expect(leases[0].release).toHaveBeenCalledOnce()
+    })
+  })
+
   it('allows one control of the environment display at a time, reserved before connecting', async () => {
-    const vnc = await echoVnc()
     const { port, bots, screen, leases } = await setup()
-    screen.port = vnc.port
     screen.delayMs = 50
     for (const bot of bots.values()) bot.state.hold = takeover()
     const zero = await Promise.all([
@@ -1048,13 +1077,11 @@ describe('instance screen tunnels', () => {
     await vi.waitFor(() => expect(lease.release).toHaveBeenCalledOnce())
     const next = await upgrade(port, '/v1/bots/beta/screen/browser/control')
     expect(next.status).toBe(101)
-    await echoes(next.socket!, [9])
+    await echoes(next, [9])
   })
 
   it('limits each surface to four viewers and one controller', async () => {
-    const vnc = await echoVnc()
     const { port, bots, screen } = await setup()
-    screen.port = vnc.port
     const views = await Promise.all(Array.from({ length: 4 }, () => upgrade(port, '/v1/bots/alpha/screen/apps/view')))
     expect(views.map((result) => result.status)).toEqual([101, 101, 101, 101])
     expect((await upgrade(port, '/v1/bots/alpha/screen/apps/view')).status).toBe(409)
@@ -1071,29 +1098,31 @@ describe('instance screen tunnels', () => {
     await vi.waitFor(async () => expect((await upgrade(port, '/v1/bots/alpha/screen/apps/view')).status).toBe(101))
   })
 
-  it('releases the lease and the reservation when a screen cannot connect or its client leaves', async () => {
-    const { port, bots, screen, leases, environment } = await setup()
+  it('releases the lease and the reservation when a screen cannot start, closes, or its client leaves', async () => {
+    const { port, bots, screen, session, leases, environment } = await setup()
     bots.get('alpha')!.state.hold = takeover()
     screen.fail = true
     const unavailable = await upgrade(port, '/v1/bots/alpha/screen/browser/control')
     expect(unavailable.status).toBe(503)
     expect(JSON.parse(unavailable.body!)).toMatchObject({ code: 'INSTANCE_UNAVAILABLE' })
     screen.fail = false
-    screen.port = await unusedPort()
-    const refused = await upgrade(port, '/v1/screen/environment/control')
-    expect(refused.status).toBe(503)
-    expect(leases).toHaveLength(1)
-    expect(leases[0].release).toHaveBeenCalledOnce()
+    expect(leases).toHaveLength(0)
+
+    // A session that ends its clients at once (its encoder stopped) ends the tunnel and gives the lease back.
+    session.closeOnAttach = true
+    const closed = await upgrade(port, '/v1/screen/environment/control')
+    expect(closed.status).toBe(101)
+    if (!closed.socket!.closed) await once(closed.socket!, 'close')
+    await vi.waitFor(() => expect(leases[0].release).toHaveBeenCalledOnce())
+    session.closeOnAttach = false
 
     // A client that leaves while its screen starts gives the lease back as soon as it arrives.
-    const vnc = await echoVnc()
-    screen.port = vnc.port
     screen.delayMs = 200
     const request = http.request({
       host: '127.0.0.1',
       port,
       path: '/v1/screen/environment/control',
-      headers: { ...headers(), Connection: 'Upgrade', Upgrade: 'maestrly-rfb' },
+      headers: { ...headers(), Connection: 'Upgrade', Upgrade: FLEET_SCREEN_UPGRADE },
     })
     request.on('error', () => {})
     request.end()
@@ -1103,21 +1132,18 @@ describe('instance screen tunnels', () => {
       expect(leases).toHaveLength(2)
       expect(leases[1].release).toHaveBeenCalledOnce()
     })
-    // It never reached the VNC server.
-    expect(vnc.stats.accepted).toBe(0)
-    expect(vnc.connections.size).toBe(0)
+    // It never joined the session.
+    expect(session.attachments).toHaveLength(1)
 
     // None of these failures keeps the environment display reserved.
     screen.delayMs = 0
     const control = await upgrade(port, '/v1/bots/alpha/screen/browser/control')
     expect(control.status).toBe(101)
-    await echoes(control.socket!, [1])
+    await echoes(control, [1])
   })
 
   it("ends only the controls of the bot whose takeover ends, never a neighbour's", async () => {
-    const vnc = await echoVnc()
-    const { port, base, bots, screen, events } = await setup()
-    screen.port = vnc.port
+    const { port, base, bots, events } = await setup()
     const alpha = bots.get('alpha')!
     const beta = bots.get('beta')!
     alpha.state.hold = takeover()
@@ -1133,13 +1159,13 @@ describe('instance screen tunnels', () => {
     beta.state.hold = NO_HOLD
     events.publish({ type: 'status', status: await beta.status(), botId: 'beta' })
     await betaClosed
-    await echoes(alphaApps.socket!, [1])
-    await echoes(settings.socket!, [2])
+    await echoes(alphaApps, [1])
+    await echoes(settings, [2])
     // A late status of Alpha from before its takeover does not end the control it has now, nor does an event
     // of the environment.
     events.publish({ type: 'status', status: { ...baseStatus, hold: NO_HOLD }, botId: 'alpha' })
     events.publish({ type: 'reset' })
-    await echoes(alphaApps.socket!, [3])
+    await echoes(alphaApps, [3])
 
     // Releasing Alpha's takeover ends its control at once; its viewers and the environment screen stay.
     const alphaClosed = once(alphaApps.socket!, 'close')
@@ -1150,8 +1176,8 @@ describe('instance screen tunnels', () => {
     })
     expect(released.status).toBe(200)
     await alphaClosed
-    await echoes(alphaView.socket!, [4])
-    await echoes(settings.socket!, [5])
+    await echoes(alphaView, [4])
+    await echoes(settings, [5])
 
     // Pausing a bot under takeover ends its control too.
     settings.socket!.destroy()
@@ -1164,13 +1190,11 @@ describe('instance screen tunnels', () => {
     const browserClosed = once(browser.socket!, 'close')
     expect((await send(base, 'POST', '/v1/bots/alpha/hold', { reason: 'paused' })).status).toBe(200)
     await browserClosed
-    await echoes(alphaView.socket!, [6])
+    await echoes(alphaView, [6])
   })
 
   it('ends the screens of a bot that is uninstalled or moves to another slot', async () => {
-    const vnc = await echoVnc()
-    const { port, base, bots, screen, leases } = await setup()
-    screen.port = vnc.port
+    const { port, base, bots, leases } = await setup()
     bots.get('alpha')!.state.hold = takeover()
     const install = (slot: number) =>
       send(base, 'PUT', '/v1/bots/alpha', {
@@ -1185,13 +1209,13 @@ describe('instance screen tunnels', () => {
 
     // Installing the same slot again keeps the screens open.
     expect((await install(1)).status).toBe(200)
-    await echoes(control.socket!, [1])
-    await echoes(view.socket!, [2])
+    await echoes(control, [1])
+    await echoes(view, [2])
     // Moving to another slot moves both screens: the old tunnels end.
     const closed = [once(control.socket!, 'close'), once(view.socket!, 'close')]
     expect((await install(3)).status).toBe(200)
     await Promise.all(closed)
-    await echoes(neighbour.socket!, [3])
+    await echoes(neighbour, [3])
     await vi.waitFor(() => {
       for (const lease of leases.slice(0, 2)) expect(lease.release).toHaveBeenCalledOnce()
     })
@@ -1201,7 +1225,7 @@ describe('instance screen tunnels', () => {
     const gone = once(again.socket!, 'close')
     expect((await send(base, 'DELETE', '/v1/bots/alpha')).status).toBe(204)
     await gone
-    await echoes(neighbour.socket!, [4])
+    await echoes(neighbour, [4])
     expect((await upgrade(port, '/v1/bots/alpha/screen/apps/view')).status).toBe(404)
     await vi.waitFor(() => expect(leases[3].release).toHaveBeenCalledOnce())
     expect(leases[2].release).not.toHaveBeenCalled()

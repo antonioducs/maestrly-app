@@ -50,7 +50,7 @@ that isolation is required.
 | Main process to AI providers | Prompt, context, tool results, attachments, account state | User-enabled provider, host-owned tools, permission modes, redaction, bounded context |
 | Main process to Local ML | Model/runtime archive and inference payload | Target manifest, critical-file verification, utility process, package checks |
 | Loopback clients to local services | Editor or ChatGPT Web bridge requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
-| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; loopback-only VNC; screen tickets and takeover |
+| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; screens streamed only through the authenticated control server; screen tickets and takeover |
 
 ## Renderer and IPC boundary
 
@@ -420,10 +420,14 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   Docker bridge network. The `public` egress guard does not filter traffic
   between containers: a service a bot starts on a network port can be reached
   from other environments. The gateway's public API refuses fleet-network
-  clients, every control-server request needs the environment's control token, and VNC servers
-  start on demand and listen only on each container's loopback.
+  clients, every control-server request needs the environment's control token, and screens
+  have no port of their own: each streams through the control server from a screen encoder
+  that talks to Maestrly over pipes and starts only while the screen is open.
 - **Screens.** Takeover holds exactly one bot, and control of a bot's browser
-  area or apps screen requires that device's takeover. The environment screen
+  area or apps screen requires that device's takeover. The environment, not
+  the app, drops a watching connection's input, and a controller's pointer is
+  held to its own screen's region of the display. Clipboard text crosses only
+  while a controller is connected, CLIPBOARD only, up to 1 MiB each way. The environment screen
   shows only Maestrly's settings, so a paired device can control it without a
   takeover. The browser areas and the environment screen share one display, and
   the gateway allows one control session on it per environment at a time. While

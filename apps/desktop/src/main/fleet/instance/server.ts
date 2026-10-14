@@ -11,7 +11,6 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
-import { createConnection, type Socket } from 'node:net'
 import { Transform, type Duplex, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import {
@@ -31,6 +30,7 @@ import {
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   fleetAccountSlotIdSchema,
   fleetBotIdSchema,
   fleetFileIdSchema,
@@ -73,11 +73,13 @@ import {
   type FleetSubscriptionKind,
   type FleetTranscriptPage,
   type FleetUiOpenRequest,
+  type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
 import type { HostFiles } from '../../remote-host/server/host-files'
 import type { BotInstanceConfig } from './config'
-import type { DisplaySurface, VncLease, VncMode } from './displays'
+import type { DisplaySurface, ScreenLease } from './displays'
+import type { ScreenClientHandle } from './screen-session'
 
 export class InstanceHttpError extends Error {
   constructor(
@@ -94,8 +96,8 @@ export class InstanceHttpError extends Error {
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
  * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
- * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, and lets the owner edit their
- * last message. Its health and every status advertise them.
+ * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
+ * last message, and streams its screens as video. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -109,6 +111,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_DESKTOP_BRIDGE_FEATURE,
   FLEET_MESSAGE_EDIT_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -165,8 +168,8 @@ export interface InstanceEnvironment {
   bot(botId: string): InstanceBot
   installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus>
   uninstallBot(botId: string, options: { purge: boolean }): Promise<void>
-  /** A VNC server showing a screen surface; the tunnel gives its lease back when it ends or fails. */
-  acquireScreen(surface: DisplaySurface, mode: VncMode): Promise<VncLease>
+  /** The stream of a screen surface; the tunnel gives its lease back when it ends or fails. */
+  acquireScreen(surface: DisplaySurface, mode: ScreenMode): Promise<ScreenLease>
   startLogin(request: FleetLoginStartRequest): Promise<FleetLoginAttempt>
   login(loginId: string): FleetLoginAttempt
   loginCallback(loginId: string, request: FleetLoginCallbackRequest): Promise<FleetLoginCallbackResponse>
@@ -320,7 +323,7 @@ const underTakeover = (bot: InstanceBot): boolean => {
   return hold.state === 'held' && hold.reason === 'takeover'
 }
 /** The surface and mode a screen upgrade asks for, or null for a path that is not a screen. */
-function screenFor(pathname: string): { surface: DisplaySurface; mode: VncMode } | null {
+function screenFor(pathname: string): { surface: DisplaySurface; mode: ScreenMode } | null {
   const match = routeFor('GET', pathname)
   if (!match) return null
   if (match.key === 'environmentScreenView' || match.key === 'environmentScreenControl')
@@ -377,15 +380,16 @@ const CONTROLLERS_MAX = 1
 interface Tunnel {
   /** What it shows: `environment`, or `browser:<botId>` and `apps:<botId>`. */
   readonly surface: string
-  readonly mode: VncMode
+  readonly mode: ScreenMode
   readonly botId: string | null
   /** The bot's slot when it was accepted: a bot that moves to another slot moves its screens. */
   readonly slot: number | null
   /** A control of the environment display :0, which the environment screen and every bot's browser share. */
   readonly zero: boolean
   readonly socket: Duplex
-  lease: VncLease | null
-  vnc: Socket | null
+  lease: ScreenLease | null
+  /** The connection's place in the screen's stream, once upgraded. */
+  client: ScreenClientHandle | null
   ended: boolean
 }
 
@@ -439,8 +443,8 @@ export function createInstanceControlServer(
     if (tunnel.ended) return
     tunnel.ended = true
     tunnels.delete(tunnel)
+    tunnel.client?.detach()
     tunnel.lease?.release()
-    tunnel.vnc?.destroy()
     tunnel.socket.destroy()
   }
   const endWhere = (test: (tunnel: Tunnel) => boolean): void => {
@@ -732,8 +736,8 @@ export function createInstanceControlServer(
         if (tunnel.ended) return
         tunnel.ended = true
         tunnels.delete(tunnel)
+        tunnel.client?.detach()
         tunnel.lease?.release()
-        tunnel.vnc?.destroy()
       }
       reject(status, code, message)
     }
@@ -786,7 +790,7 @@ export function createInstanceControlServer(
         zero,
         socket,
         lease: null,
-        vnc: null,
+        client: null,
         ended: false,
       }
       tunnel = entry
@@ -795,7 +799,7 @@ export function createInstanceControlServer(
       socket.once('end', () => end(entry))
       socket.once('close', () => end(entry))
 
-      let lease: VncLease
+      let lease: ScreenLease
       try {
         lease = await environment.acquireScreen(surface, mode)
       } catch (error) {
@@ -804,16 +808,6 @@ export function createInstanceControlServer(
       }
       if (entry.ended) return lease.release()
       entry.lease = lease
-      const vnc = createConnection({ host: '127.0.0.1', port: lease.port })
-      entry.vnc = vnc
-      await new Promise<void>((resolve, rejectConnection) => {
-        vnc.once('connect', resolve)
-        vnc.once('error', rejectConnection)
-        vnc.once('close', () => rejectConnection(new Error('The VNC connection closed.')))
-      }).catch(() => {
-        throw new InstanceHttpError(503, 'INSTANCE_UNAVAILABLE', 'Screen unavailable.')
-      })
-      if (entry.ended) return
       if (socket.destroyed) return end(entry)
       if (owner) {
         // The bot may have been uninstalled, or its takeover released, while its screen connected.
@@ -829,10 +823,20 @@ export function createInstanceControlServer(
       socket.write(
         `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: ${FLEET_SCREEN_UPGRADE}\r\n\r\n`
       )
-      vnc.on('close', () => end(entry))
-      vnc.on('error', () => end(entry))
-      if (head.length && !vnc.write(head)) socket.pause()
-      socket.pipe(vnc).pipe(socket)
+      // The session paces what it writes by the frames the client acknowledges, so the socket never queues more than
+      // the client's window.
+      const client = lease.session.attach(
+        {
+          send: (bytes) => {
+            if (!socket.destroyed) socket.write(bytes)
+          },
+          close: () => end(entry),
+        },
+        mode
+      )
+      entry.client = client
+      if (head.length) client.receive(head)
+      socket.on('data', (chunk: Buffer) => client.receive(chunk))
     })().catch((error: unknown) => {
       const known =
         error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Screen request failed.')

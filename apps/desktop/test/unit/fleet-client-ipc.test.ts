@@ -5,10 +5,11 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
 } from '../../src/shared/fleet-targets'
 
 const mocks = vi.hoisted(() => ({
-  hasFeature: vi.fn(() => false),
+  hasFeature: vi.fn((_feature: string) => false),
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   downloadFile: vi.fn(async () => {}),
@@ -382,6 +383,8 @@ describe('fleet IPC validation', () => {
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const screenOpen = handlers.get('fleet:screenOpen')
     if (!screenOpen) throw new Error('fleet:screenOpen is not registered')
+    // A gateway that streams screens as video.
+    mocks.hasFeature.mockReturnValue(true)
     const open = (mode: 'view' | 'control') =>
       (screenOpen({ sender: {} }, 'scout', mode) as Promise<unknown>).then(
         () => 'opened',
@@ -405,6 +408,23 @@ describe('fleet IPC validation', () => {
         mocks.screens.openScreen.mockRejectedValueOnce(error)
         await expect(open(mode)).resolves.toBe(expected)
       }
+  })
+  it('refuses screens on gateways without video screens', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const open = (target: unknown) => handlers.get('fleet:screenOpen')!({ sender: {} }, target, 'view')
+    mocks.hasFeature.mockImplementation((feature: string) => feature === 'environments')
+    for (const target of ['scout', { botId: 'scout', surface: 'apps' }, { environmentId: 'work' }])
+      expect(() => open(target)).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    expect(mocks.screens.openScreen).not.toHaveBeenCalled()
+    mocks.hasFeature.mockImplementation((feature: string) => ['environments', 'video-screens'].includes(feature))
+    mocks.screens.openScreen.mockResolvedValueOnce({ channelId: 'c1' })
+    await expect(open('scout')).resolves.toEqual({ channelId: 'c1' })
+    mocks.hasFeature.mockReset()
+    mocks.hasFeature.mockReturnValue(false)
   })
   it('recognizes the screen refusals by the exact messages the gateway sends', () => {
     const gateway = readFileSync(new URL('../../../bot-gateway/src/screen.ts', import.meta.url), 'utf8')

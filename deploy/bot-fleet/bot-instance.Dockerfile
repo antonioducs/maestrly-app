@@ -57,7 +57,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC HOME=/home/bot DISPLAY=:0 XDG_CURRENT_DESKTOP=Openbox
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates chromium curl dbus-x11 fontconfig fonts-dejavu-core fonts-noto-color-emoji \
-    fonts-noto-cjk gnome-keyring libsecret-1-0 locales openbox tint2 x11vnc xvfb x11-utils \
+    fonts-noto-cjk gnome-keyring libsecret-1-0 locales openbox tint2 xclip xvfb x11-utils \
     xdotool xdg-utils xauth tini imagemagick libasound2 libatk-bridge2.0-0 libgtk-3-0 \
     libnss3 libgbm1 libdrm2 libxss1 libxtst6 libxkbcommon0 libatspi2.0-0 \
     && sed -i 's/^# *\(pt_BR.UTF-8 UTF-8\)/\1/' /etc/locale.gen && locale-gen \
@@ -74,6 +74,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     hsetroot librsvg2-bin xterm pcmanfm mousepad gnome-themes-extra libxdamage1 libxfixes3 libxext6 \
     && rm -rf /var/lib/apt/lists/*
+# The screen encoder: pixelflux captures and encodes each screen as H.264 (x264 in software) and python-xlib types the
+# owner's input. The libraries are what pixelflux's wheel loads even without a GPU.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libva2 libva-drm2 libva-x11-2 libgbm1 libpixman-1-0 libxkbcommon0 libegl1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY deploy/bot-fleet/screen/requirements.txt /tmp/screen-requirements.txt
+RUN python3 -m venv /opt/maestrly/screen \
+    && /opt/maestrly/screen/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: \
+       -r /tmp/screen-requirements.txt \
+    && rm /tmp/screen-requirements.txt
+COPY deploy/bot-fleet/screen/maestrly-screen-encoder /usr/local/bin/maestrly-screen-encoder
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /usr/local/include/node /usr/local/include/node
 COPY --from=build /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
@@ -116,7 +127,8 @@ RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoi
     chmod 0755 /usr/local/bin/maestrly-egress-guard && \
     chmod 755 /usr/local/bin/prepare-xvfb-display && \
     chmod 0755 /usr/local/bin/maestrly-bot-browser && \
-    chmod 0755 /usr/local/bin/maestrly-desktop /usr/local/bin/maestrly-pty-attach /usr/local/bin/maestrly-open-url && \
+    chmod 0755 /usr/local/bin/maestrly-desktop /usr/local/bin/maestrly-pty-attach /usr/local/bin/maestrly-open-url \
+      /usr/local/bin/maestrly-screen-encoder && \
     chmod -R a+rX /opt/maestrly/desktop /usr/share/themes/Maestrly && \
     chmod 0644 /usr/share/applications/maestrly-*.desktop && \
     cat /opt/maestrly/desktop/xterm/XTerm >> /etc/X11/app-defaults/XTerm && \
@@ -125,6 +137,6 @@ RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoi
 USER bot
 WORKDIR /opt/maestrly
 VOLUME /home/bot
-EXPOSE 7680 5900 5901
+EXPOSE 7680
 ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/usr/local/bin/bot-entrypoint"]
 HEALTHCHECK --interval=15s --timeout=3s --start-period=90s CMD curl -fsS -H "Authorization: Bearer ${MAESTRLY_BOT_CONTROL_TOKEN}" -H 'X-Maestrly-Fleet-Protocol: 1' http://127.0.0.1:${MAESTRLY_BOT_CONTROL_PORT:-7680}/v1/health >/dev/null || exit 1

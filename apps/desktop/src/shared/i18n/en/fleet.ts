@@ -861,7 +861,6 @@ export default {
     viewHint: 'Just watching. Take control to click and type.',
     clipboard: {
       readFailed: 'Could not read your clipboard. Try pasting again.',
-      unsupportedText: 'This bot’s screen cannot paste emoji or characters outside Latin-1 yet. Nothing was pasted.',
       tooLarge: 'This text is too large for the screen clipboard. Copy a smaller section (up to 1 MB).',
       writeFailed: 'Could not copy the bot’s text to your clipboard. Try copying again.',
     },
@@ -878,6 +877,7 @@ export default {
     conflict: 'Another screen in this environment is being controlled.',
     retryControl: 'Try again',
     restartEnvironment: 'Restart this environment to update it before opening this screen.',
+    updateServer: 'Update the bot server to open this screen.',
     appsNeedsRestart: 'Restart this environment to update it before opening the apps screen.',
     useEnvironmentScreen: 'Use the environment screen',
     environmentAccountDescription:

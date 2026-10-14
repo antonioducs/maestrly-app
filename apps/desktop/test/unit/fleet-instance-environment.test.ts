@@ -40,7 +40,8 @@ import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
 import { gateInstanceAppTool } from '../../src/main/fleet/instance/gate'
 import { createInstanceControlServer, InstanceHttpError } from '../../src/main/fleet/instance/server'
 import * as wallpaperPainter from '../../src/main/fleet/instance/desktop/paint-wallpaper'
-import type { DisplaySurface, VncMode } from '../../src/main/fleet/instance/displays'
+import type { DisplaySurface } from '../../src/main/fleet/instance/displays'
+import type { ScreenSession } from '../../src/main/fleet/instance/screen-session'
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 import { conversationScreen } from '../../src/main/conversation-screen'
 import type { ScreenFocusOwner } from '../../src/main/screen-focus'
@@ -96,7 +97,10 @@ function fakeDisplays(home: string) {
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
     redecorate: vi.fn(async (_botId: string) => {}),
-    acquireVnc: vi.fn(async (_surface: DisplaySurface, _mode: VncMode) => ({ port: 5903, release: vi.fn() })),
+    acquireScreen: vi.fn(async (_surface: DisplaySurface) => ({
+      session: { surface: _surface } as unknown as ScreenSession,
+      release: vi.fn(),
+    })),
     dispose: vi.fn(async () => {}),
   }
 }
@@ -492,6 +496,7 @@ describe('bot environment registry', () => {
       'runtime-updates',
       'desktop-bridge',
       'message-edit',
+      'video-screens',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -508,6 +513,7 @@ describe('bot environment registry', () => {
         'runtime-updates',
         'desktop-bridge',
         'message-edit',
+        'video-screens',
       ],
     })
   })
@@ -1171,21 +1177,19 @@ describe('bot environment registry', () => {
     expect(deps.language?.()).toBe('pt_BR')
   })
 
-  it('lends VNC servers for the screens of installed bots and the environment screen only', async () => {
+  it('lends the screens of installed bots and the environment screen only', async () => {
     const { runtime, displays, deps } = await twoBots()
     const lease = await runtime.acquireScreen({ kind: 'apps', botId: 'beta' }, 'control')
-    expect(lease.port).toBe(5903)
+    expect(lease.session).toBe((await displays.acquireScreen.mock.results[0].value).session)
     await runtime.acquireScreen({ kind: 'environment' }, 'view')
-    expect(displays.acquireVnc.mock.calls).toEqual([
-      [{ kind: 'apps', botId: 'beta' }, 'control'],
-      [{ kind: 'environment' }, 'view'],
-    ])
+    // Viewers and controllers share a surface's session: the mode stays with the connection.
+    expect(displays.acquireScreen.mock.calls).toEqual([[{ kind: 'apps', botId: 'beta' }], [{ kind: 'environment' }]])
     for (const surface of [
       { kind: 'browser', botId: 'gamma' },
       { kind: 'apps', botId: 'Not_A_Bot' },
     ] as const)
       await expect(runtime.acquireScreen(surface, 'view')).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' })
-    expect(displays.acquireVnc).toHaveBeenCalledTimes(2)
+    expect(displays.acquireScreen).toHaveBeenCalledTimes(2)
     const bare = new EnvironmentRuntime({ ...deps, displays: null })
     environments.push(bare)
     await expect(bare.acquireScreen({ kind: 'environment' }, 'view')).rejects.toMatchObject({
@@ -1211,13 +1215,13 @@ describe('bot environment registry', () => {
     await runtime.acquireScreen({ kind: 'apps', botId: 'beta' }, 'control')
     expect(holds).toHaveLength(1)
 
-    // Releasing the control, once or again, ends the hold and gives the VNC server back.
-    const vnc = await displays.acquireVnc.mock.results[0].value
+    // Releasing the control, once or again, ends the hold and gives the screen back.
+    const screen = await displays.acquireScreen.mock.results[0].value
     browser.release()
     browser.release()
     expect(holds[0].end).toHaveBeenCalledOnce()
-    expect(vnc.release).toHaveBeenCalledOnce()
-    expect(browser.port).toBe(vnc.port)
+    expect(screen.release).toHaveBeenCalledOnce()
+    expect(browser.session).toBe(screen.session)
 
     const settings = await runtime.acquireScreen({ kind: 'environment' }, 'control')
     expect(holds[1].owner).toEqual({ kind: 'environment' })
@@ -1225,12 +1229,12 @@ describe('bot environment registry', () => {
     expect(holds[1].end).toHaveBeenCalledOnce()
 
     // A screen that cannot start holds nothing; a bot removed while its screen starts has no windows to type into.
-    displays.acquireVnc.mockRejectedValueOnce(new Error('The VNC server on port 5904 did not start.'))
+    displays.acquireScreen.mockRejectedValueOnce(new Error('The screen encoder of browser:2 did not start.'))
     await expect(runtime.acquireScreen({ kind: 'browser', botId: 'beta' }, 'control')).rejects.toThrow('did not start')
     expect(holds).toHaveLength(2)
-    displays.acquireVnc.mockImplementationOnce(async () => {
+    displays.acquireScreen.mockImplementationOnce(async () => {
       await runtime.uninstallBot('beta', { purge: false })
-      return { port: 5904, release: vi.fn() }
+      return { session: {} as ScreenSession, release: vi.fn() }
     })
     const removed = await runtime.acquireScreen({ kind: 'browser', botId: 'beta' }, 'control')
     expect(holds[2].owner).toBeNull()
@@ -1272,6 +1276,7 @@ describe('bot environment registry', () => {
           'runtime-updates',
           'desktop-bridge',
           'message-edit',
+          'video-screens',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1288,6 +1293,7 @@ describe('bot environment registry', () => {
           'runtime-updates',
           'desktop-bridge',
           'message-edit',
+          'video-screens',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1308,6 +1314,7 @@ describe('bot environment registry', () => {
           'runtime-updates',
           'desktop-bridge',
           'message-edit',
+          'video-screens',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

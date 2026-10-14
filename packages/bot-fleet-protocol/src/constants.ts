@@ -1,6 +1,7 @@
 export const FLEET_PROTOCOL_VERSION = 1 as const
 export const FLEET_PROTOCOL_HEADER = 'X-Maestrly-Fleet-Protocol' as const
-export const FLEET_SCREEN_UPGRADE = 'maestrly-rfb' as const
+/** The upgrade token of a screen connection: the video stream of `screen-stream.ts`. */
+export const FLEET_SCREEN_UPGRADE = 'maestrly-video' as const
 
 export const FLEET_MESSAGE_TEXT_MAX = 16_000
 export const FLEET_INSTRUCTIONS_MAX = 8_000
@@ -73,8 +74,6 @@ export const FLEET_PORTS = {
   public: 7443,
   internal: 7444,
   instanceControl: 7680,
-  vncControl: 5900,
-  vncView: 5901,
 } as const
 
 export const FLEET_SCREEN = { width: 1280, height: 800 } as const
@@ -212,6 +211,12 @@ export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
  * Apps areas.
  */
 export const FLEET_UNIFIED_DESKTOP_FEATURE = 'unified-desktop'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: screens stream as acknowledged H.264 video
+ * (`FLEET_SCREEN_UPGRADE`, see `screen-stream.ts`). Gateways refuse screens of environments without it, which restart
+ * onto a newer image first; apps refuse screens through gateways without it.
+ */
+export const FLEET_VIDEO_SCREENS_FEATURE = 'video-screens'
 export const FLEET_RUNTIME_IDS = ['claude-code', 'codex', 'antigravity-acp'] as const
 /** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
 export const FLEET_RUNTIME_STATES = [

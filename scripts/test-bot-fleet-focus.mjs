@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Browser keyboard focus between the screens of a real environment container. npm run test:e2e:bot-fleet runs it.
 //
-// The owner controls Alpha's browser through the instance's RFB control tunnel, which sends real key and pointer
+// The owner controls Alpha's browser through the instance's screen stream in control, which sends real key and pointer
 // events to the environment display (not CDP input), while the other screens change: settings open from another
 // device, a new bot's browser starts, and Beta's page opens a popup with native dialogs. Alpha keeps the keyboard until
 // its own popup opens, and gets it back when that popup closes. Once the control ends, Beta's popup gets its input
@@ -20,6 +20,8 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+import { FLEET_SCREEN_UPGRADE } from '@maestrly/bot-fleet-protocol'
+import { ScreenStreamClient } from './fleet-screen-client.mjs'
 
 if (process.argv.length > 2) throw new Error('Usage: node scripts/test-bot-fleet-focus.mjs')
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -145,14 +147,14 @@ function check(label, pass, detail) {
   log((pass ? 'PASS ' : 'FAIL ') + label + (detail === undefined ? '' : ' ' + JSON.stringify(detail)))
 }
 
-/** The owner's side: the instance's RFB control tunnel for a screen, as the gateway forwards it. */
+/** The owner's side: the instance's screen stream for a screen, in control, as the gateway forwards it. */
 async function control(route) {
   const { socket, head } = await new Promise((resolve, reject) => {
     const upgrade = http.request({
       host: '127.0.0.1',
       port,
       path: route,
-      headers: { ...headers, Connection: 'Upgrade', Upgrade: 'maestrly-rfb' },
+      headers: { ...headers, Connection: 'Upgrade', Upgrade: FLEET_SCREEN_UPGRADE },
       timeout: 30_000,
     })
     upgrade.on('upgrade', (_response, socket, head) => resolve({ socket, head }))
@@ -165,60 +167,19 @@ async function control(route) {
     upgrade.end()
   })
   sockets.add(socket)
-  let buffer = Buffer.from(head)
-  let failure
-  socket.on('data', (chunk) => {
-    buffer = Buffer.concat([buffer, chunk])
-  })
-  socket.on('error', (error) => {
-    failure = error
-  })
-  socket.on('close', () => {
-    failure ??= new Error('Control of ' + route + ' closed')
-  })
-  const take = async (size) => {
-    const until = Date.now() + 30_000
-    while (buffer.length < size) {
-      if (failure) throw failure
-      if (Date.now() >= until) throw new Error('Timed out waiting for RFB data from ' + route)
-      await sleep(50)
-    }
-    const bytes = buffer.subarray(0, size)
-    buffer = buffer.subarray(size)
-    return bytes
-  }
-  const send = async (bytes, pauseMs) => {
-    if (failure) throw failure
-    socket.write(bytes)
+  // It acknowledges the frames as they come, so the screen keeps the session.
+  const screen = ScreenStreamClient.socket(socket, head)
+  const hello = await screen.hello()
+  if (hello.mode !== 'control') throw new Error('Control of ' + route + ' answered as ' + hello.mode)
+  const send = async (write, pauseMs) => {
+    if (screen.closed !== undefined) throw new Error('Control of ' + route + ' closed')
+    write()
     await sleep(pauseMs)
   }
-  await take(12)
-  socket.write('RFB 003.008\n')
-  const securityTypes = await take((await take(1))[0])
-  if (!securityTypes.includes(1)) throw new Error('Control of ' + route + ' offers no RFB None security')
-  socket.write(Buffer.from([1]))
-  if ((await take(4)).readUInt32BE(0) !== 0) throw new Error('Control of ' + route + ' failed the RFB handshake')
-  // ClientInit, shared; then ServerInit and the desktop name.
-  socket.write(Buffer.from([1]))
-  const serverInit = await take(24)
-  await take(serverInit.readUInt32BE(20))
-  const key = (keysym, down) => {
-    const event = Buffer.alloc(8)
-    event[0] = 4
-    event[1] = down ? 1 : 0
-    event.writeUInt32BE(keysym, 4)
-    return send(event, 25)
-  }
+  const key = (keysym, down) => send(() => screen.key(keysym, down), 25)
   return {
     async click(x, y) {
-      for (const buttons of [0, 1, 0]) {
-        const event = Buffer.alloc(6)
-        event[0] = 5
-        event[1] = buttons
-        event.writeUInt16BE(x, 2)
-        event.writeUInt16BE(y, 4)
-        await send(event, 80)
-      }
+      for (const buttons of [0, 1, 0]) await send(() => screen.pointer(x, y, buttons), 80)
     },
     /** Types ASCII text; each character's keysym is its code point. */
     async text(value) {

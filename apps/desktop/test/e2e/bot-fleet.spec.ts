@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test, _electron as electron, type Locator, type Page } from '@playwright/test'
+import { SCREEN_KEY_COLOR, SCREEN_KEY_FRAME, ScreenClientReader, screenStream, wsBinary } from './helpers/fake-screen'
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_UNIFIED_DESKTOP_FEATURE,
@@ -407,6 +408,8 @@ async function runFleetScenario(workspaceOnly: boolean) {
   }
   const screenSockets = new Set<Duplex>()
   let screenConnections = 0
+  /** Frames the app acknowledged on its screen sockets: it drew them. */
+  const screenAcks: number[] = []
   let rejectRelease = false
   let holdRelease: Promise<void> | undefined
   let finishRelease: (() => void) | undefined
@@ -680,7 +683,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
       case 'meta':
         value = {
           protocol: 1,
-          features: ['provisioning'],
+          features: ['provisioning', 'video-screens'],
           gatewayVersion: '0.9.2',
           botImage: 'test-image',
           botImageVersion: '0.9.2',
@@ -1128,48 +1131,23 @@ async function runFleetScenario(workspaceOnly: boolean) {
       socket.write(
         `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
       )
-      const send = (payload: Buffer) => socket.write(Buffer.concat([Buffer.from([0x82, payload.length]), payload]))
-      send(Buffer.from('RFB 003.008\n'))
-      let buffered = Buffer.alloc(0)
-      let stage = 0
-      // Minimal RFB 3.8 server: negotiate no authentication and a true-color desktop.
+      // A 640×480 screen: hello, the pointer's sprite and one key frame of solid color; the app acknowledges what it
+      // draws.
+      socket.write(
+        wsBinary(
+          screenStream({
+            width: 640,
+            height: 480,
+            mode: 'view',
+            frames: [{ id: 1, key: true, data: SCREEN_KEY_FRAME }],
+          })
+        )
+      )
+      const reader = new ScreenClientReader()
       socket.on('data', (chunk: Buffer) => {
-        buffered = Buffer.concat([buffered, chunk])
-        while (buffered.length >= 2) {
-          const opcode = buffered[0] & 15
-          let length = buffered[1] & 127
-          let offset = 2
-          if (length === 126) {
-            if (buffered.length < 4) return
-            length = buffered.readUInt16BE(2)
-            offset = 4
-          } else if (length === 127) {
-            socket.destroy()
-            return
-          }
-          const masked = Boolean(buffered[1] & 128)
-          const total = offset + (masked ? 4 : 0) + length
-          if (buffered.length < total) return
-          buffered = buffered.subarray(total)
-          if (opcode === 8) {
-            socket.end(Buffer.from([0x88, 0]))
-            return
-          }
-          if (opcode !== 2) continue
-          if (stage++ === 0) send(Buffer.from([1, 1]))
-          else if (stage === 2) send(Buffer.from([0, 0, 0, 0]))
-          else if (stage === 3) {
-            const init = Buffer.alloc(28)
-            init.writeUInt16BE(640, 0)
-            init.writeUInt16BE(480, 2)
-            init.set([32, 24, 0, 1], 4)
-            for (const offset of [8, 10, 12]) init.writeUInt16BE(255, offset)
-            init.set([16, 8, 0], 14)
-            init.writeUInt32BE(4, 20)
-            init.write('Test', 24)
-            send(init)
-          }
-        }
+        const { events, close } = reader.push(chunk)
+        for (const event of events) if (event.type === 'ack') screenAcks.push(event.id)
+        if (close) socket.end(Buffer.from([0x88, 0]))
       })
     })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -1295,7 +1273,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
         await openComputer(page)
         await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
       }
-      await test.step('opening the screen keeps a live conversation beside one VNC session', async () => {
+      await test.step('opening the screen keeps a live conversation beside one screen session', async () => {
         await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
         await draft.fill('Keep this unsent workspace draft')
         await page
@@ -1311,6 +1289,16 @@ async function runFleetScenario(workspaceOnly: boolean) {
           computer.getByRole('region', { name: 'Tela do Scout', exact: true }).locator('canvas')
         ).toBeVisible()
         await expect.poll(() => screenSockets.size).toBe(1)
+        // The app decodes the screen's H.264 with WebCodecs, draws it and acknowledges the frame.
+        await expect.poll(() => screenAcks.includes(1)).toBe(true)
+        const pixel = await computer
+          .getByRole('region', { name: 'Tela do Scout', exact: true })
+          .locator('canvas')
+          .evaluate((canvas: HTMLCanvasElement) =>
+            Array.from(canvas.getContext('2d')!.getImageData(320, 240, 1, 1).data.slice(0, 3))
+          )
+        for (const [channel, value] of pixel.entries())
+          expect(Math.abs(value - SCREEN_KEY_COLOR[channel]), `channel ${channel} of ${pixel}`).toBeLessThanOrEqual(12)
         // The bot's view is a chat header beside a computer header: no tabs, on the agent chat black.
         await expect(page.getByRole('tablist', { name: 'Telas do bot' })).toHaveCount(0)
         await expect(page.locator('[data-bot-view]')).toHaveCSS('background-color', 'rgb(13, 13, 16)')
@@ -2602,7 +2590,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       case 'meta':
         value = {
           protocol: 1,
-          features: ['provisioning', 'environments', 'environment-updates', 'runtime-updates'],
+          features: ['provisioning', 'environments', 'environment-updates', 'runtime-updates', 'video-screens'],
           gatewayVersion: '0.9.3',
           botImage: 'test-image',
           botImageVersion: '0.9.3',
@@ -3389,7 +3377,7 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     botImageVersion: '0.9.3',
     dockerVersion: '28',
   })
-  const capable = ['provisioning', 'environments']
+  const capable = ['provisioning', 'environments', 'video-screens']
   // What an environment migrated from a bot advertises once the gateway is updated, until it restarts on the new image.
   const oldImage = ['provisioning']
   const noResources = { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null }
@@ -3467,8 +3455,9 @@ test('fleet UI keeps older environment images, stopped environments and refused 
   // The gateway's own refusals of a screen ticket (apps/bot-gateway/src/screen.ts), word for word.
   const restartToOpen = 'Restart this environment to update it before opening this screen.'
   let issued = 0
-  const ticket = (kind: 'hold' | 'invalid' | 'limit') => {
-    const value = `${kind}-${++issued}`
+  // A ticket names what the fake screen does with it, and its mode.
+  const ticket = (kind: 'hold' | 'invalid' | 'limit', mode: string) => {
+    const value = `${kind}-${mode === 'control' ? 'control' : 'view'}-${++issued}`
     return { ticket: value, path: `/v1/screen?ticket=${value}`, expiresAt: now() }
   }
   const conversationResult = (op: string): unknown => {
@@ -3608,7 +3597,7 @@ test('fleet UI keeps older environment images, stopped environments and refused 
         if (bot.id === 'ghost' || bot.lifecycle !== 'running') return refuse('BOT_NOT_RUNNING', 'Bot not running')
         if ((body as { surface: string }).surface !== 'browser' && !home?.capabilities.includes('environments'))
           return refuse('CONFLICT', restartToOpen)
-        value = ticket(bot.id === 'scout' ? 'invalid' : 'hold')
+        value = ticket(bot.id === 'scout' ? 'invalid' : 'hold', (body as { mode: string }).mode)
         break
       }
       case 'environmentScreenTicket':
@@ -3616,7 +3605,10 @@ test('fleet UI keeps older environment images, stopped environments and refused 
         if (environment.lifecycle !== 'running') return refuse('BOT_NOT_RUNNING', 'Environment not running')
         if (!environment.capabilities.includes('environments')) return refuse('CONFLICT', restartToOpen)
         // The display is free when a control ticket is issued, and taken by another Mac before it is used.
-        value = ticket((body as { mode: string }).mode === 'control' ? 'limit' : 'hold')
+        value = ticket(
+          (body as { mode: string }).mode === 'control' ? 'limit' : 'hold',
+          (body as { mode: string }).mode
+        )
         break
       default:
         return refuse('NOT_FOUND', 'Not found')
@@ -3645,8 +3637,13 @@ test('fleet UI keeps older environment images, stopped environments and refused 
       `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
     )
     const reason = value.startsWith('limit') ? 'limit' : value.startsWith('invalid') ? 'ticket_invalid' : null
-    // A held screen stays open without frames.
-    if (!reason) return
+    // A held screen greets the app with its size and pointer sprite, then stays open without frames.
+    if (!reason) {
+      socket.write(
+        wsBinary(screenStream({ width: 640, height: 480, mode: value.startsWith('hold-control') ? 'control' : 'view' }))
+      )
+      return
+    }
     const payload = Buffer.concat([Buffer.from([0x0f, 0xa3]), Buffer.from(reason)])
     socket.write(Buffer.concat([Buffer.from([0x88, payload.length]), payload]))
     setTimeout(() => socket.end(), 50)
@@ -3708,8 +3705,8 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await expect(surfaces.getByRole('radio', { name: 'Apps' })).toBeDisabled()
     await expect(page.getByText('Reinicie o ambiente para atualizá-lo antes de abrir a tela de apps.')).toBeVisible()
     await expect.poll(() => botTickets('veteran')).toContainEqual({ mode: 'view', surface: 'browser' })
-    // noVNC hides the local pointer on its canvas, since the screen server draws the bot's own pointer into the
-    // frames. A watched screen keeps the local pointer, so hovering it never loses the mouse.
+    // A watched screen keeps the local pointer, so hovering it never loses the mouse; the bot's pointer shows where the
+    // screen reports it.
     const veteranCanvas = page.getByRole('region', { name: 'Tela do Veterano' }).locator('canvas')
     await expect(veteranCanvas).toHaveCSS('cursor', 'not-allowed')
     await expect(page.getByRole('button', { name: 'Usar a tela do ambiente' })).toHaveCount(0)
@@ -3721,8 +3718,8 @@ test('fleet UI keeps older environment images, stopped environments and refused 
       '/v1/bots/veteran/takeover',
     ])
     await expect.poll(() => botTickets('veteran').at(-1)).toEqual({ mode: 'control', surface: 'browser' })
-    // Under control only the bot's pointer shows, drawn in the frames; a local one would be a second pointer.
-    await expect(veteranCanvas).toHaveCSS('cursor', 'none')
+    // Under control the bot's pointer sprite is the local cursor, so it moves without waiting for the screen.
+    await expect(veteranCanvas).toHaveCSS('cursor', /url\(/)
     expect(botTickets('veteran').filter((item) => item.surface !== 'browser')).toEqual([])
     expect(requests.filter((item) => item.key === 'environmentUiOpen')).toHaveLength(0)
 

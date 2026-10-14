@@ -243,6 +243,32 @@ describe('fleet screen bridge', () => {
     expect(sockets[3].close.mock.calls.length).toBeGreaterThan(0)
   })
 
+  it('splits sends into WebSocket messages of at most 64 KiB', async () => {
+    const socket = new FakeSocket()
+    const api = {
+      origin: 'https://fleet.example',
+      call: async () => ({ path: '/v1/screen?ticket=test' }),
+    } as unknown as FleetApiClient
+    const bridge = new FleetScreenBridge(
+      () => api,
+      () => socket as unknown as WebSocket
+    )
+    const owner = new Owner()
+    const { channelId } = await bridge.openScreen(owner as unknown as WebContents, 'bot', 'control')
+    socket.open()
+    const payload = new Uint8Array(150 * 1024).map((_, index) => index % 251)
+    bridge.send(owner as unknown as WebContents, channelId, payload.buffer)
+    expect(socket.sent.map((part) => part.byteLength)).toEqual([65536, 65536, 22528])
+    // The pieces carry the payload in order.
+    const joined = new Uint8Array(payload.byteLength)
+    let offset = 0
+    for (const part of socket.sent) {
+      joined.set(new Uint8Array(part), offset)
+      offset += part.byteLength
+    }
+    expect(joined).toEqual(payload)
+  })
+
   it('reserves pending slots and discards a ticket after disconnect', async () => {
     const resolveTickets: Array<(ticket: { ticket: string; path: string; expiresAt: string }) => void> = []
     const api = {

@@ -81,6 +81,7 @@ import {
   FLEET_RUNTIME_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
   fleetTargetKey,
 } from '../../src/shared/fleet-targets'
 import { fleetReducer, initialFleetState, type FleetState } from '../../src/renderer/lib/fleet/state'
@@ -558,17 +559,19 @@ describe('environment IPC', () => {
     expect(mocks.call).not.toHaveBeenCalled()
   })
 
-  it('opens bot areas and the environment screen, keeping older gateways and views on the browser area', async () => {
+  it('opens bot areas and the environment screen, and needs a gateway that streams them as video', async () => {
     const ipc = register()
+    // A gateway from before video screens opens none, not even a bot's browser area.
+    for (const features_ of [[], ['environments']]) {
+      features.list = features_
+      for (const target of ['scout', { botId: 'scout', surface: 'apps' }, { environmentId: 'work' }])
+        expect(() => ipc.mutate('fleet:screenOpen', target, 'view')).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    }
+    expect(mocks.openScreen).not.toHaveBeenCalled()
+    features.list = ['environments', 'video-screens']
+    // A bare bot id is that bot's browser area, as the views from before environments open it.
     await ipc.mutate('fleet:screenOpen', 'scout', 'view')
     await ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'browser' }, 'control')
-    expect(() => ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).toThrow(
-      FLEET_ENVIRONMENTS_UNSUPPORTED
-    )
-    expect(() => ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'view')).toThrow(
-      FLEET_ENVIRONMENTS_UNSUPPORTED
-    )
-    features.list = ['environments']
     await ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'control')
     await ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')
     for (const [target, mode] of [
@@ -588,7 +591,7 @@ describe('environment IPC', () => {
   })
 
   it('marks a screen conflict so the view can tell that the environment display is in use', async () => {
-    features.list = ['environments']
+    features.list = ['environments', 'video-screens']
     const ipc = register()
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_SCREEN_CONTROLLED))
     await expect(ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')).rejects.toThrow(

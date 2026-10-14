@@ -51,7 +51,7 @@
     "smoke:packaged-cursor-sdk": "node scripts/smoke-packaged-cursor-sdk.mjs",
     "smoke:cursor-sdk-authenticated": "node scripts/smoke-cursor-sdk-authenticated.mjs",
     "verify:packaged-cursor-sdk": "node scripts/verify-packaged-cursor-sdk.mjs",
-    "test:e2e:bot-fleet": "node scripts/test-bot-fleet-e2e.mjs",
+    "test:e2e:bot-fleet": "npm run build --workspace @maestrly/bot-fleet-protocol && node scripts/test-bot-fleet-e2e.mjs",
     "test:e2e:bot-fleet:workspaces": "node scripts/test-bot-fleet-workspaces.mjs",
     "bot-fleet:dev": "node scripts/bot-fleet-dev.mjs"
   },
