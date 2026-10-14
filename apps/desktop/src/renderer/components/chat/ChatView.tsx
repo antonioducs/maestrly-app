@@ -1432,6 +1432,22 @@ export function ChatView({
     return result
   }, [api, conversationId, onExperienceChange])
 
+  // A generated interface sends as the user without touching the draft; a busy chat queues it like the composer.
+  const sendUiMessage = useCallback(
+    (text: string) => {
+      const enqueue = () =>
+        setQueueState((q) => [...q, { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] }])
+      if (streamingRef.current || compactingRef.current) {
+        enqueue()
+        return
+      }
+      void doSend(text, []).then((result) => {
+        if (result?.error === 'busy') enqueue()
+      })
+    },
+    [doSend, setQueueState]
+  )
+
   const submitDraft = useCallback(
     ({ text: rawText, agentMentions }: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => {
       const text = rawText
@@ -2053,6 +2069,7 @@ export function ChatView({
                     ])
                   }
                   onOpenMention={openMention}
+                  onUiSend={sendUiMessage}
                   scrollContainerRef={scrollRef}
                   onLoadOlder={loadOlder}
                   hasMore={hasMore}

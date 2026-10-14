@@ -495,6 +495,11 @@ export default {
     reset: 'Reset zoom',
     close: 'Close (Esc)',
   },
+  genUi: {
+    loading: 'Loading interface…',
+    source: 'Interface source',
+    invalid: 'This interface could not be rendered. Its source is shown instead.',
+  },
   localData: {
     exportIncomplete: 'The export is incomplete. Save the omitted content separately before resetting local data.',
     repositoryFiles:

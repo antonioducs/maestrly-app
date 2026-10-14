@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { FileCode, Folder, MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { MermaidBlock } from '@/components/MermaidBlock'
+import { GenUiBlock, isGenUiFence, isPendingFence, PendingFence } from '@/genui/GenUiBlock'
 import { i18n } from '@/lib/i18n'
 import { rehypeChatMentions, rehypeMarkdownSearchHighlight } from '@/lib/markdown-search-highlight'
 import { cn } from '@/lib/utils'
@@ -180,6 +181,9 @@ function buildComponents(
         ? codeNode.properties.className.join(' ')
         : String(codeNode?.properties?.className ?? '')
       if (/\blanguage-mermaid\b/.test(cls)) return <MermaidBlock code={hastText(codeNode)} />
+      const code = hastText(codeNode)
+      if (isGenUiFence(cls)) return <GenUiBlock code={code} />
+      if (isPendingFence(cls, code)) return <PendingFence>{children}</PendingFence>
       return <pre>{children}</pre>
     },
     code: ({ className, children }: any) => (

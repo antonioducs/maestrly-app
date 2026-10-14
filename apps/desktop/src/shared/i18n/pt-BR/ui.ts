@@ -501,6 +501,11 @@ export default {
     reset: 'Redefinir zoom',
     close: 'Fechar (Esc)',
   },
+  genUi: {
+    loading: 'Carregando interface…',
+    source: 'Código da interface',
+    invalid: 'Não foi possível montar esta interface. O código dela aparece no lugar.',
+  },
   localData: {
     exportIncomplete:
       'A exportação está incompleta. Salve o conteúdo omitido separadamente antes de redefinir os dados locais.',

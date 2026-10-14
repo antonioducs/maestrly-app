@@ -19,6 +19,7 @@ export const REQUIRED_LEGAL_RESOURCES = [
   'licenses/openai-codex-apache-2.0.txt',
   'licenses/openai-codex-runtime-NOTICE.txt',
   'licenses/openai-codex-runtime-apache-2.0.txt',
+  'licenses/openui-MIT.txt',
 ]
 
 const PLATFORM_PACKAGES = [

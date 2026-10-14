@@ -1,6 +1,6 @@
 import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { isBotMode } from '../../fleet/instance/config'
-import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE } from '../harness/host-contracts'
+import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE, hostGenUiSection } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, AUTONOMOUS_INSTRUCTIONS, withAutonomousPolicy } from '../autonomous'
 import { remoteChatPolicy, withRemoteChatPolicy } from '../remote-policy'
@@ -732,6 +732,7 @@ export function maestrlyDeveloperInstructions(
     'instructions and tool discipline. Maestrly renders GitHub-flavored Markdown and fenced `mermaid` diagrams. ' +
     'Dynamic tools supplied by the host are real Maestrly app/MCP tools; use them when relevant. Use the native ' +
     'request_user_input interaction when a decision from the user is genuinely required.' +
+    hostGenUiSection() +
     maestrlySkillCatalog(skills) +
     (mode === 'maestro' && options.maestro
       ? `\n\n${renderMaestroAgentCatalog(options.maestro)}`

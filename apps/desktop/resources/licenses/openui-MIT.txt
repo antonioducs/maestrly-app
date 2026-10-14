@@ -1,0 +1,62 @@
+OPENUI - THIRD-PARTY ATTRIBUTION AND LICENSE
+
+Upstream work: OpenUI (OpenUI Lang)
+Repository: https://github.com/thesysdev/openui
+Pinned release: @openuidev/lang-core 1.0.0 and @openuidev/react-lang 1.0.0
+Pinned commit: f7109dd01b7bdfb14c8c9006eaca5a8b3cfc3a20
+Copyright (c) 2011-2024 Thesys Inc.
+
+Derived material included in Maestrly:
+
+1. The openui-lang language core in src/renderer/genui/lang/, adapted from
+   packages/lang-core/src at the pinned commit: tokens, lexer, expression
+   parser, statement splitter, AST, materialization and schema validation,
+   built-in functions and action steps, evaluator, library definition, Zod
+   signature introspection, and the system prompt sections.
+2. The element error boundary in src/renderer/genui/runtime.tsx, adapted from
+   packages/react-lang/src/Renderer.tsx at the pinned commit.
+3. Unit tests in test/unit/genui-lang-*.test.ts, adapted from the lang-core
+   tests at the pinned commit.
+
+Maestrly modifications:
+
+- Removed Query and Mutation statements, the @Run step, tool providers and MCP
+  data fetching, custom library actions, library extension, OpenUI Cloud
+  configuration, edit and inline prompt modes, the incremental streaming
+  parser, and all install and runtime telemetry.
+- Hardened evaluation for model-written programs: fields are read only as own
+  data properties (never __proto__, constructor or prototype), objects are
+  built without prototype assignment, concatenation and equality never convert
+  objects, action plans and bindings are trusted only when the evaluator made
+  them, a prop that fails evaluates to null, and parsing and rendering stop at
+  a step budget.
+- Each component must own its props schema; sharing one is an error instead
+  of silently renaming it.
+- Replaced the React runtime (react-lang) with Maestrly's own: program state
+  is the declared defaults plus the person's changes, available on the first
+  render, and actions are limited to sending a message, opening an http(s)
+  URL, and setting or resetting state.
+
+The complete MIT License from the pinned OpenUI source follows.
+
+The MIT License (MIT)
+
+Copyright (c) 2011-2024 Thesys Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
