@@ -1155,15 +1155,8 @@ app.whenReady().then(async () => {
       await startServerHostMode(mainWindow, {
         hub,
         busy: () => activeChatRunCount() > 0,
-        // A conversation's computer goes before its browser views and terminals do.
-        closeConversation: async (id) => {
-          await serverComputers()?.close(id)
-          await stopConversationLive(id)
-        },
-        purgeConversation: async (id) => {
-          await serverComputers()?.close(id)
-          await deleteConversation(id)
-        },
+        closeConversation: (id) => stopConversationLive(id),
+        purgeConversation: (id) => deleteConversation(id),
         watchStatuses: (listener) => {
           const onStatus = ({ agentId, status }: { agentId: string; status: string }) => listener(agentId, status)
           registry.on('status', onStatus)
