@@ -1,7 +1,7 @@
 import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { Redirect } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { KeyboardAvoidingView, Platform, type TextInput, View } from 'react-native'
+import { KeyboardAvoidingView, type TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats } from '../chats/react'
 import { waitingChats } from '../chats/selectors'
@@ -176,7 +176,8 @@ function HomeScreen() {
   return (
     <Drawer open={open} onOpenChange={setOpen} panel={<DrawerPanel open={open} current={current} onOpen={go} />}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // Android draws the app edge to edge, so its window no longer shrinks for the keyboard either.
+        behavior="padding"
         style={{ flex: 1, paddingTop: insets.top }}
       >
         <ConversationHeader

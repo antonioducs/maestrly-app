@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native'
+import { KeyboardAvoidingView, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '../theme/ThemeProvider'
 import type { IconName } from './icons'
@@ -28,7 +28,8 @@ export function OnboardingScreen({
   const background = dark ? 'transparent' : palette.canvas
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // Android draws the app edge to edge, so its window no longer shrinks for the keyboard either.
+      behavior="padding"
       style={{ flex: 1, backgroundColor: background }}
     >
       <View style={{ flex: 1, paddingTop: insets.top + 14, paddingBottom: insets.bottom + 14, paddingHorizontal: 24 }}>
