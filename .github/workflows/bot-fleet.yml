@@ -14,6 +14,7 @@ on:
       - .nvmrc
       - scripts/bot-fleet-images.mjs
       - scripts/test-bot-fleet-e2e.mjs
+      - scripts/test-bot-fleet-workspaces.mjs
       - scripts/test-bot-fleet-focus.mjs
       - scripts/fleet-screen-client.mjs
       - .github/workflows/bot-fleet.yml
@@ -30,6 +31,7 @@ on:
       - .nvmrc
       - scripts/bot-fleet-images.mjs
       - scripts/test-bot-fleet-e2e.mjs
+      - scripts/test-bot-fleet-workspaces.mjs
       - scripts/test-bot-fleet-focus.mjs
       - scripts/fleet-screen-client.mjs
       - .github/workflows/bot-fleet.yml

@@ -33,6 +33,13 @@ User-visible changes by version. Downloads are on
   [Notifications](docs/mobile.md#notifications).
 - Any paired device can create pairing codes for other devices, at most five
   unused at once.
+- Give each conversation on a server's workspaces environment its own Linux
+  computer. Open the **Computer** tab to watch it or take control while the
+  agent keeps working; its `computer_*` tools use the same computer. A computer
+  is given back a minute after nobody uses it and its programs are closed; a
+  server runs up to eight at a time. Update the desktop app and the bot server,
+  and restart the workspaces environments onto the new image. See
+  [remote workspaces](docs/remote-workspaces.md#computer).
 
 ### Changed
 

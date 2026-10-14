@@ -60,10 +60,11 @@ the server hosts one environment and predates several: **Update bots** too.
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
 - **Work in a conversation.** The chat view is the same as for a conversation of this computer. The drawer offers
-  **Browser**, **Code**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the
-  server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
-  [Browser](#browser). **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this
-  computer and the server: see [Files](#files).
+  **Browser**, **Computer**, **Code**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a
+  shell on the server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
+  [Browser](#browser). **Computer** is the conversation's own Linux desktop on the server: see [Computer](#computer).
+  **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this computer and the
+  server: see [Files](#files).
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
@@ -193,6 +194,32 @@ connection it shows fewer pictures per second rather than falling behind. When t
 pictures are smaller and more compressed until it improves. The stream stops when you switch tabs or conversations or
 minimize the window; the page stays open on the server.
 
+## Computer
+
+Each conversation on the server can have a computer of its own: a 1280×800 Linux desktop, like a bot's, where you run
+and test what the conversation produced (a dev server in its browser, a desktop app, a terminal). Open the
+**Computer** tab of the drawer to start it and watch it.
+
+- **Watch or take control.** The tab opens watching. **Take control** lets you use its mouse, keyboard and clipboard,
+  as on a bot's screen; **Release** goes back to watching. The agent keeps working while you control it, so its input
+  and yours can interleave; the tab says so.
+- **What it has.** A dock with **Browser**, **Terminal**, and **Files**. **Browser** is the conversation's own browser,
+  the one of the **Browser** tab and of the agent's `browser_*` tools. **Terminal** opens a window on the
+  conversation's terminals, and **Files** opens its folder. Links opened by programs on the computer open in that
+  browser. Graphical programs started from the conversation's shells show on the computer while it runs.
+- **The agent's computer tools.** The agent's `computer_*` tools act on the same computer, and start it when it is not
+  running; their result says when they started it.
+- **Given back when idle.** A computer is given back once, for a minute, no device showed it, the agent did not use it,
+  and no window of a program was open on it: a desktop app the agent or you started keeps it until it closes. Opening
+  the tab again starts it again; what ran on it is gone. Archiving or deleting the conversation gives it back at once.
+- **Eight at most.** A server runs up to eight computers at a time. When all are in use, the tab names the
+  conversations that hold them, with **Try again**.
+- **Update first.** A bot server from before computers asks to be updated; a workspaces environment on an older image
+  has no **Computer** tab until it restarts onto the current one.
+
+Computers keep conversations apart for clarity, not for security: every conversation on the server runs as the same
+user, as their files and shells already do.
+
 ## Code
 
 The **Code** tab of the drawer, in a conversation on the server, opens VS Code on the server, in the conversation's
@@ -278,6 +305,8 @@ kept by the server: opening the conversation on one computer clears it on the ot
   open on the server's own desktop, which nobody sees.
 - **Alert sounds** do not play for conversations on a server.
 - **Drawer tools stay docked** for those conversations: no floating windows and no pop-up shortcuts.
+- **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
+  survive a restart of the server's Maestrly.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between
   folders, and workspace groups are for conversations of this computer.
 - **Moving plain chats and multi-repository conversations** between this computer and the server: only conversations
@@ -357,7 +386,9 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   mounted folder and network, a second environment out of reach of the first, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
   streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the
   agent's screenshot while streaming, a takeover, two conversations streamed at once, the stop and the release of its
-  window), a host terminal, the host's real editor (downloaded and started on the host, its workbench, a static file and
+  window), each conversation's computer (opened, watched and controlled through the gateway, a link through its desktop,
+  its browser kept above in its tile, the agent's screenshot, kept by a program window and given back after it closed,
+  eight at most), a host terminal, the host's real editor (downloaded and started on the host, its workbench, a static file and
   its WebSocket through the gateway), an upload and a compressed range download through the gateway, and that revoking
   the device cuts its transfers and its editor connection. It needs Docker, both images and Internet access for the
   editor; `npm run test:e2e:bot-fleet` runs it as one of its steps.
@@ -371,6 +402,13 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
   `/v1/editor/` of the host's control server (`remote-host/server/host-editor.ts`), which passes them to serve-web on
   its loopback with the editor's token. On the computer, `remote-host/client/editor-proxy.ts` gives the editor a
   loopback origin; the bridge only opens, follows, and restarts it (`editor:*` channels).
+- A conversation's computer (`apps/desktop/src/main/remote-host/server/computers.ts`) is a bot's apps desktop on a
+  display number of its own, from 10, with the conversation's browser in one of the eight tiles of the environment
+  display. The Computer tab opens it over the bridge (`drawer:computer-open`) and watches it through the gateway's
+  screen tickets for conversations (`/v1/environments/:eid/conversations/:cid/screen-tickets`), which the gateway
+  relays to `/v1/conversations/:id/screen/:surface/view|control` of the host's control server as `maestrly-video`.
+  The design is in
+  [`docs/superpowers/specs/2026-10-14-workspace-computers-design.md`](superpowers/specs/2026-10-14-workspace-computers-design.md).
 - File transfers use the `host-files` routes of the gateway (`/v1/environments/:eid/host-files/…`), passed through to
   the host's control server, never the bridge. A gateway or host without the `host-files` feature makes the **Files**
   tab ask for an update.

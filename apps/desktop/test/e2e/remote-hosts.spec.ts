@@ -389,7 +389,11 @@ test('remote host browser: streamed live, typed into and copied from', async () 
     // The Browser tab streams the host's page into a canvas of this window.
     await page.getByTitle(/^Toggle drawer/).click()
     await page.getByTitle('Open a tool').click()
-    await page.getByRole('dialog', { name: 'Open a tool' }).getByText('Browser', { exact: true }).click()
+    const tools = page.getByRole('dialog', { name: 'Open a tool' })
+    // A host without the bot image's display programs gives its conversations no computers: no Computer tab.
+    await expect(tools.getByText('Browser', { exact: true })).toBeVisible()
+    await expect(tools.getByText('Computer', { exact: true })).toHaveCount(0)
+    await tools.getByText('Browser', { exact: true }).click()
     const canvas = page.getByTestId('remote-browser-canvas')
     await expect(canvas).toHaveAttribute('data-live', 'true', { timeout: 60_000 })
     await expect(page.getByRole('button', { name: /developer tools/i })).toHaveCount(0)

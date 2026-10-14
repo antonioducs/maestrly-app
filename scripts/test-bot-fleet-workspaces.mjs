@@ -24,6 +24,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inflateSync, zstdDecompressSync } from 'node:zlib'
+import { ScreenStreamClient } from './fleet-screen-client.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const composeFile = path.join(root, 'deploy/bot-fleet/compose.yml')
@@ -538,6 +539,7 @@ async function main() {
       desktopEffects: false,
       editor: true,
       browser: true,
+      computer: true,
     }
   )
   bridge.open(1, { role: 'main' })
@@ -843,6 +845,174 @@ async function main() {
     `${framesOf(streamId).length + framesOf(second.streamId).length + framesOf(restarted.streamId).length} JPEG frames ` +
       'paced by acknowledgements; typed text, resize, list choice, file chooser refused, agent screenshot while ' +
       'streaming, takeover, two conversations at once, stop and release'
+  )
+
+  // The conversation's computer: started from its Computer tab, watched and controlled through the gateway's screen
+  // stream, driven by the agent's computer tools, and given back once nothing holds it.
+  const ownerKey = (id) => 'c' + createHash('sha256').update(id).digest('hex').slice(0, 31)
+  const wsBase = base.replace('http', 'ws')
+  const conversationTicket = (id, mode, surface, options = { status: 201 }) =>
+    request('POST', `/v1/environments/${environmentId}/conversations/${id}/screen-tickets`, { mode, surface }, options)
+  const openConversationScreen = async (ticket, mode) => {
+    const screen = await ScreenStreamClient.webSocket(wsBase + ticket.path)
+    const hello = await screen.hello()
+    assert.deepEqual([hello.width, hello.height, hello.mode], [1280, 800, mode])
+    return screen
+  }
+  const onDisplay = (display, args) =>
+    docker(['exec', '-u', '1000', '-e', 'DISPLAY=' + display, container, ...args], { allowFailure: true })
+  const displayAnswers = async (display) => (await onDisplay(display, ['xdpyinfo'])).code === 0
+
+  assert.deepEqual(await bridge.invoke('drawer:computer-open', chat.id), { ok: true, display: ':10', started: true })
+  assert.deepEqual(await bridge.invoke('drawer:computer-open', chat.id), {
+    ok: true,
+    display: ':10',
+    started: false,
+  })
+  const computerView = await openConversationScreen(await conversationTicket(chat.id, 'view', 'apps'), 'view')
+  const computerKey = await computerView.keyFrame(30000)
+  const computerControl = await openConversationScreen(await conversationTicket(chat.id, 'control', 'apps'), 'control')
+  await computerControl.keyFrame(30000)
+  computerControl.pointer(100, 120, 0)
+  await poll(
+    'the pointer on the computer',
+    async () => {
+      const { stdout } = await onDisplay(':10', ['xdotool', 'getmouselocation', '--shell'])
+      return /^X=100$/m.test(stdout) && /^Y=120$/m.test(stdout)
+    },
+    20000
+  )
+  const secondControl = await ScreenStreamClient.webSocket(
+    wsBase + (await conversationTicket(chat.id, 'control', 'apps')).path
+  )
+  assert.equal(await secondControl.closeCode(), 4003)
+  // The browser tile is only watched: the Browser tab sends its input over the bridge.
+  await conversationTicket(chat.id, 'control', 'browser', { status: 400 })
+
+  // Links opened by the computer's programs open in the conversation's browser, whose window stays above in its tile.
+  const desktopSocket = `/home/bot/.cache/maestrly-desktops/${ownerKey(chat.id)}/desktop.sock`
+  await docker([
+    'exec',
+    '-u',
+    '1000',
+    '-e',
+    'DISPLAY=:10',
+    '-e',
+    'MAESTRLY_DESKTOP_SOCKET=' + desktopSocket,
+    container,
+    'maestrly-open-url',
+    `http://${fakeName}:8787/e2e/stream?from=computer`,
+  ])
+  await soon('the link in the conversation browser', async () =>
+    (await bridge.invoke('drawer:browser-state-get', chat.id)).tabs.some((tab) => tab.url.includes('from=computer'))
+  )
+  const aboveInTile = await poll(
+    'the browser window kept above in its tile',
+    async () => {
+      const { stdout } = await onDisplay(':0', [
+        'sh',
+        '-c',
+        'for id in $(xprop -root _NET_CLIENT_LIST | sed "s/.*# //; s/,/ /g"); do ' +
+          'if xprop -id "$id" _NET_WM_STATE | grep -q _NET_WM_STATE_ABOVE; then ' +
+          'xdotool getwindowgeometry --shell "$id" | tr "\\n" " "; echo; fi; done',
+      ])
+      return stdout.split('\n').find((line) => {
+        const x = Number(/X=(-?\d+)/.exec(line)?.[1])
+        const y = Number(/Y=(-?\d+)/.exec(line)?.[1])
+        return x >= 1280 && x < 2560 && y >= 0 && y < 800
+      })
+    },
+    20000
+  )
+
+  // The agent takes a picture of the same computer.
+  const turnDone = (id) =>
+    new Promise((resolve) => {
+      const off = bridge.onEvent((frame) => {
+        if (frame.channel !== 'chat:delta:' + id) return
+        const kind = frame.args[0]?.kind
+        if (kind !== 'done' && kind !== 'finish' && kind !== 'error') return
+        off()
+        resolve(kind)
+      })
+    })
+  const computerTurn = turnDone(chat.id)
+  const computerSent = await bridge.invoke('chat:send', { conversationId: chat.id, text: 'E2E-HOST-COMPUTER' })
+  assert.equal(computerSent.ok, true, JSON.stringify(computerSent))
+  await within(computerTurn, 180000, 'The computer turn did not finish')
+  const computerAnswer = (await bridge.invoke('chat:history:page', chat.id)).messages.at(-1)
+  assert.ok(
+    JSON.stringify(computerAnswer).includes('E2E-HOST-COMPUTER-OK started=no'),
+    'The computer turn failed: ' + JSON.stringify(computerAnswer).slice(-600)
+  )
+  const computerShot = computerAnswer.parts.find(
+    (part) => part.type === 'tool' && part.toolName === 'computer_screenshot'
+  )
+  const computerPicture = await bridge.invoke('chat:tool-image', {
+    conversationId: chat.id,
+    messageId: computerAnswer.id,
+    toolPartId: computerShot.id,
+    imageId: computerShot.state.output.images[0].id,
+  })
+  assert.equal(computerPicture.ok, true, JSON.stringify(computerPicture).slice(0, 200))
+  const computerSeen = pngColors(Buffer.from(computerPicture.bytes.b64, 'base64'))
+  assert.deepEqual([computerSeen.width, computerSeen.height], [1280, 800])
+
+  // Given back a minute after nothing holds it: a program window holds it until it closes.
+  for (const screen of [computerView, computerControl]) screen.close()
+  await docker(['exec', '-d', '-u', '1000', '-e', 'DISPLAY=:10', container, 'xterm', '-title', 'e2e-holder'])
+  await poll(
+    'the program window',
+    // Its shell retitles the window: its class tells it from the desktop's own terminal windows (Maestrly-Terminal).
+    async () => (await onDisplay(':10', ['xdotool', 'search', '--classname', '^xterm$'])).code === 0,
+    20000
+  )
+  await sleep(65000)
+  assert.ok(await displayAnswers(':10'), 'A computer with a program window open was given back')
+  await docker(['exec', '-u', '1000', container, 'pkill', '-f', 'xterm -title e2e-holder'], { allowFailure: true })
+  await poll('the computer given back', async () => !(await displayAnswers(':10')), 100000)
+  // Its shells no longer see its display.
+  bridge.send('drawer:create-terminal', chat.id)
+  const afterTerminal = await poll(
+    'a terminal after the computer',
+    async () => (await bridge.invoke('drawer:terminal-state-get', chat.id)).terminals.at(-1),
+    30000
+  )
+  await poll(
+    'that terminal ready',
+    async () => (await bridge.invoke('drawer:read-terminal', afterTerminal.id)).data.length > 0,
+    30000
+  )
+  const displayFile = path.join(projectPath, 'display-after-computer.txt')
+  bridge.send('pty:write', { id: afterTerminal.id, data: `echo "display=$DISPLAY" > ${displayFile}\n` })
+  await poll('the terminal display', async () => existsSync(displayFile), 30000)
+  assert.equal(readFileSync(displayFile, 'utf8').trim(), 'display=:0')
+  rmSync(displayFile)
+  bridge.send('drawer:close-terminal', chat.id, afterTerminal.id)
+
+  // Eight computers at most: a ninth conversation is told who holds them, until one is given back.
+  const holders = []
+  for (let index = 0; index < 8; index++) {
+    const other = await bridge.invoke('conversation:create-standalone', {})
+    holders.push(other)
+    const started = await bridge.invoke('drawer:computer-open', other.id)
+    assert.equal(started.ok, true, JSON.stringify(started))
+  }
+  const ninth = await bridge.invoke('conversation:create-standalone', {})
+  const busy = await bridge.invoke('drawer:computer-open', ninth.id)
+  assert.equal(busy.ok, false, JSON.stringify(busy))
+  assert.equal(busy.reason, 'busy')
+  assert.equal(busy.holders.length, 8)
+  // Deleting a conversation gives its computer back at once.
+  await bridge.invoke('conversation:delete', holders[0].id)
+  const freed = await bridge.invoke('drawer:computer-open', ninth.id)
+  assert.equal(freed.ok, true, JSON.stringify(freed))
+  for (const other of [...holders.slice(1), ninth]) await bridge.invoke('conversation:delete', other.id)
+  pass(
+    'computer per conversation',
+    `opened on :10 (key frame ${computerKey.bytes} bytes), controlled with no takeover, one controller, link through ` +
+      `its desktop, browser kept above at ${aboveInTile.trim()}, agent screenshot 1280x800, kept by a program window ` +
+      'and given back after it closed, shells back on :0, eight at most, deleting frees one'
   )
 
   // A terminal of the host, in the conversation's folder.
