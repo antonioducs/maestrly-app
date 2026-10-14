@@ -1,7 +1,9 @@
-export type ScreenClipboardError = 'unsupportedText' | 'tooLarge' | 'writeFailed' | 'readFailed'
-const MAX_TEXT_LENGTH = 1024 * 1024
+export type ScreenClipboardError = 'tooLarge' | 'writeFailed' | 'readFailed'
+/** The screen stream carries clipboard text of up to 1 MiB of UTF-8, either way. */
+const MAX_TEXT_BYTES = 1024 * 1024
+const utf8 = new TextEncoder()
 
-/** Text clipboard bridge for a controlled noVNC canvas. No local clipboard polling. */
+/** Text clipboard bridge for a controlled screen. No local clipboard polling. */
 export function attachScreenClipboard(
   container: HTMLElement,
   remote: EventTarget & {
@@ -37,12 +39,12 @@ export function attachScreenClipboard(
     })
   }
   const shortcut = (key: 'c' | 'x' | 'v', withShift = shift) => {
-    // x11vnc may defer its first CLIPBOARD notification. Keep an explicit copy alive
-    // while the user switches apps, but never carry it across a disconnected session.
+    // The screen reports CLIPBOARD once the copying program owns it, which may take a moment. Keep an explicit
+    // copy alive while the user switches apps, but never carry it across a disconnected session.
     copyDeadline = key === 'v' ? 0 : Date.now() + 20_000
-    // The fleet server uses -noprimary, so this cache holds CLIPBOARD, never a selection.
-    // x11vnc suppresses unchanged notifications. Re-copying the same text must still
-    // replace a local clipboard changed since the previous remote copy.
+    // The screen reports CLIPBOARD only, so this cache never holds a selection. A program that copies the same text
+    // again may raise no notification: re-copying must still replace a local clipboard changed since the previous
+    // remote copy.
     if (key !== 'v' && remoteText !== null) write(remoteText)
     for (const [code, sym] of held) remote.sendKey(sym, code, false)
     remote.sendKey(0xffe3, 'ControlLeft', true)
@@ -104,15 +106,14 @@ export function attachScreenClipboard(
     shift = false
   }
   const pasteText = (text: string, withShift: boolean) => {
-    // The fleet's x11vnc uses legacy Latin-1 cut text. noVNC silently replaces other
-    // characters with '?'; refuse those pastes instead of changing commands or content.
-    if (text.length > MAX_TEXT_LENGTH || /[^\u0000-\u00ff]/u.test(text)) {
-      onError(text.length > MAX_TEXT_LENGTH ? 'tooLarge' : 'unsupportedText')
+    // Refuse what the stream cannot carry whole instead of pasting part of it.
+    if (text.length > MAX_TEXT_BYTES || utf8.encode(text).byteLength > MAX_TEXT_BYTES) {
+      onError('tooLarge')
       return
     }
     onError(null)
     remote.clipboardPasteFrom(text)
-    // x11vnc adopts pasted text as CLIPBOARD and suppresses unchanged notifications.
+    // The screen adopts pasted text as its CLIPBOARD.
     remoteText = text
     shortcut('v', withShift)
   }
@@ -130,11 +131,16 @@ export function attachScreenClipboard(
   const clipboard = (event: Event) => {
     if (!connected) return
     const requested = Date.now() < copyDeadline
-    const text: unknown = (event as CustomEvent<{ text: unknown }>).detail?.text
+    const detail = (event as CustomEvent<{ text: unknown; tooLarge?: unknown }>).detail
+    const text: unknown = detail?.text
     if (typeof text !== 'string') return
-    if (text.length > MAX_TEXT_LENGTH) {
+    // The screen's clipboard holds more than the stream carries: what was cached is stale, and a copy fails visibly.
+    if (detail.tooLarge === true || text.length > MAX_TEXT_BYTES) {
       remoteText = null
-      if (requested) onError('tooLarge')
+      if (requested) {
+        copyDeadline = 0
+        onError('tooLarge')
+      }
       return
     }
     remoteText = text

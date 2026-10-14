@@ -3,6 +3,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { harnessValidationPlugin } from './build/harness-validation-plugin'
+import { NOVNC_KEYBOARD, novncKeyboardPath } from './build/novnc-keyboard'
 
 export default defineConfig({
   main: {
@@ -33,6 +34,7 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src/renderer'),
+        [NOVNC_KEYBOARD]: novncKeyboardPath(resolve(__dirname, 'package.json')),
       },
     },
     build: {
