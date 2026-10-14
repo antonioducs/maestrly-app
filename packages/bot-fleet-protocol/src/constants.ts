@@ -74,8 +74,6 @@ export const FLEET_PORTS = {
   public: 7443,
   internal: 7444,
   instanceControl: 7680,
-  vncControl: 5900,
-  vncView: 5901,
 } as const
 
 export const FLEET_SCREEN = { width: 1280, height: 800 } as const

@@ -1,19 +1,21 @@
 import {
   FLEET_ENVIRONMENT_LIMITS,
-  FLEET_PORTS,
   FLEET_SCREEN,
   fleetBotIdSchema,
   fleetEnvironmentTile,
 } from '@maestrly/bot-fleet-protocol'
 import type { ScreenArea } from '../../conversation-screen'
+import { ScreenEncoder, type EncoderProcess } from './screen-encoder'
+import { ScreenSession } from './screen-session'
 
 /**
  * The screens of the bots in one environment.
  *
  * Each bot has an apps display `:<slot>` of its own (Xvfb, openbox, tint2 and its own D-Bus session bus, so programs
  * that keep a single instance open on the right screen) and a browser area: tile `<slot>` of the environment display
- * `:0`, where the environment's Electron process draws that bot's browser. VNC servers start when a view or control
- * client needs one and stop a minute after the last client leaves.
+ * `:0`, where the environment's Electron process draws that bot's browser. Each screen streams through a screen
+ * encoder that starts when a viewer or controller needs it and stops a minute after the last one leaves; its viewers
+ * and its controller share it.
  */
 
 export type BotDisplayEnv = {
@@ -47,11 +49,10 @@ export type DisplaySurface =
   | { kind: 'environment' }
   | { kind: 'browser'; botId: string }
   | { kind: 'apps'; botId: string }
-export type VncMode = 'view' | 'control'
-export interface VncLease {
-  /** Local port of the VNC server. */
-  port: number
-  /** Gives the server back; it stops a minute after its last lease is released. Calling it again does nothing. */
+export interface ScreenLease {
+  /** The screen's stream, which connections attach to as viewers or as its controller. */
+  session: ScreenSession
+  /** Gives the screen back; its encoder stops a minute after its last lease is released. Calling it again does nothing. */
   release(): void
 }
 
@@ -78,6 +79,10 @@ export interface DisplayManagerDeps {
   decorate?(display: BotDisplay): Promise<void>
   /** The language of the app, such as `pt_BR`, for the taskbar's launcher names. Empty or `null` keeps the container's. */
   language?(): string | null
+  /** Runs the screen encoder (`SCREEN_ENCODER_PROGRAM`) with these arguments and pipes for its stdin, stdout and stderr. */
+  spawnEncoder(args: string[]): EncoderProcess
+  /** The clock of the screens' pacing; `Date.now` unless a test sets one. */
+  now?(): number
   setTimeout: typeof setTimeout
   clearTimeout: typeof clearTimeout
   log(message: string): void
@@ -100,30 +105,12 @@ const ENVIRONMENT_DISPLAY = ':0'
 /** Opens links in the bot's Maestrly browser, which shares the environment's site logins, through its desktop socket. */
 export const BOT_URL_OPENER = '/usr/local/bin/maestrly-open-url'
 const OPENBOX_CONFIG = '/opt/maestrly/openbox-rc.xml'
-const BROWSER_VNC_BASE = 5900
-const APPS_VNC_BASE = 5950
-const VNC_OPTIONS = [
-  '-localhost',
-  '-forever',
-  '-shared',
-  '-nopw',
-  // Only forward CLIPBOARD: PRIMARY selections must not satisfy a pending copy or pollute its cache.
-  '-noprimary',
-  // Create the X11 selection window immediately so pastes work as soon as the viewer connects.
-  '-env',
-  'X11VNC_AVOID_WINDOWS=never',
-  // Viewers send letters already in the case their Caps Lock gives. Forwarding the lock would turn it on here too,
-  // and the Shift x11vnc adds for a capital would then type it lowercase. The display's lock stays off.
-  '-skip_lockkeys',
-]
-// -nocursorshape draws the X cursor into framebuffer updates for passive viewers.
-const VNC_CURSOR = ['-cursor', 'arrow', '-nocursorshape', '-nocursorpos', '-noxfixes', '-quiet']
-// Connects to the port and exits 0 once something listens there.
-const VNC_PROBE = ['-c', 'exec 3<>"/dev/tcp/127.0.0.1/$1"', 'maestrly-vnc-probe']
 const RESTART_DELAY_MS = 1_000
 const RESTART_BUDGET = 5
 const RESTART_WINDOW_MS = 60_000
-const VNC_IDLE_MS = 60_000
+const SCREEN_IDLE_MS = 60_000
+/** How long a screen encoder may take to say it captures. */
+const ENCODER_READY_MS = 5_000
 const READY_POLL_MS = 100
 const READY_ATTEMPTS = 50
 const DECORATE_LIMIT_MS = 15_000
@@ -157,20 +144,24 @@ interface BotStack {
   serverStarting: boolean
 }
 
-interface VncTarget {
-  port: number
+interface ScreenTarget {
+  /** `environment`, or `browser:<slot>` and `apps:<slot>`: one encoder per key. */
+  key: string
   kind: SurfaceKind
   /** The bot's slot, or 0 for the environment screen. */
   slot: number
   display: string
-  clip: ScreenArea | null
+  region: ScreenArea
 }
 
-interface VncServer {
-  readonly port: number
+interface ScreenServer {
+  readonly key: string
   readonly kind: SurfaceKind
   readonly slot: number
   readonly child: Child
+  readonly encoder: ScreenEncoder
+  /** Created once the encoder says it captures. */
+  session: ScreenSession | null
   running: boolean
   refs: number
   ready: Promise<void>
@@ -187,28 +178,12 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/**
- * The local VNC port of a surface: the environment screen uses 5900 (control) and 5901 (view), the browser area of
- * slot k 5900 + 2k and the next port, and the apps display of slot k 5950 + 2k and the next port.
- */
-export function vncPort(
-  surface: { kind: 'environment' } | { kind: 'browser' | 'apps'; slot: number },
-  mode: VncMode
-): number {
-  const offset = mode === 'view' ? 1 : 0
-  if (surface.kind === 'environment') return FLEET_PORTS.vncControl + offset
-  assertSlot(surface.slot)
-  return (surface.kind === 'browser' ? BROWSER_VNC_BASE : APPS_VNC_BASE) + 2 * surface.slot + offset
-}
-
-/** Starts, supervises and stops the apps displays of an environment's bots, and its VNC servers. */
+/** Starts, supervises and stops the apps displays of an environment's bots, and its screen encoders. */
 export class DisplayManager {
   private readonly deps: DisplayManagerDeps
   private readonly home: string
   private readonly bots = new Map<string, BotStack>()
-  private readonly servers = new Map<number, VncServer>()
-  private readonly probes = new Set<DisplayProcess>()
-  private readonly sleepers = new Set<() => void>()
+  private readonly servers = new Map<string, ScreenServer>()
   private disposing: Promise<void> | null = null
 
   constructor(deps: DisplayManagerDeps) {
@@ -286,7 +261,7 @@ export class DisplayManager {
     await this.decorating(stack)
   }
 
-  /** Stops the bot's programs and VNC servers for good; they are not restarted. */
+  /** Stops the bot's programs and screen encoders for good; they are not restarted. */
   async stopBot(botId: string): Promise<void> {
     const stack = this.bots.get(botId)
     if (!stack) return
@@ -306,10 +281,10 @@ export class DisplayManager {
   }
 
   /**
-   * A VNC server for the surface, started on demand. Clients of the same surface and mode share one server; it stops
-   * a minute after the last lease is released.
+   * The surface's screen, whose encoder starts on demand. The viewers and the controller of a surface share it; its
+   * encoder stops a minute after the last lease is released.
    */
-  async acquireVnc(surface: DisplaySurface, mode: VncMode): Promise<VncLease> {
+  async acquireScreen(surface: DisplaySurface): Promise<ScreenLease> {
     for (;;) {
       this.assertOpen()
       if (surface.kind === 'apps') {
@@ -331,32 +306,30 @@ export class DisplayManager {
         this.assertOpen()
       }
       // From here to the spawn nothing awaits, so a bot cannot stop in between.
-      const target = this.vncTarget(surface, mode)
-      const current = this.servers.get(target.port)
+      const target = this.screenTarget(surface)
+      const current = this.servers.get(target.key)
       if (current?.closing) {
         await current.closing
         continue
       }
-      const server = current ?? this.startVnc(target, mode)
+      const server = current ?? this.startScreen(target)
       server.refs++
       if (server.idle) {
         this.deps.clearTimeout(server.idle)
         server.idle = null
       }
       await server.ready
-      if (this.servers.get(server.port) !== server || server.closing)
-        throw new Error(`The VNC server on port ${server.port} stopped while it was starting.`)
-      return this.lease(server)
+      if (this.servers.get(server.key) !== server || server.closing || !server.session)
+        throw new Error(`The screen encoder of ${server.key} stopped while it was starting.`)
+      return this.lease(server, server.session)
     }
   }
 
-  /** Stops every display and VNC server; the manager accepts nothing afterwards. */
+  /** Stops every display and screen encoder; the manager accepts nothing afterwards. */
   dispose(): Promise<void> {
     this.disposing ??= (async () => {
-      for (const wake of [...this.sleepers]) wake()
-      for (const probe of this.probes) this.kill(probe, 'a VNC probe')
       await Promise.all([...this.bots.keys()].map((botId) => this.stopBot(botId)))
-      await Promise.all([...this.servers.values()].map((server) => this.closeVnc(server)))
+      await Promise.all([...this.servers.values()].map((server) => this.closeScreen(server)))
     })()
     return this.disposing
   }
@@ -636,7 +609,7 @@ export class DisplayManager {
     }
   }
 
-  /** Stops the bot's programs, timers and apps VNC servers (and its browser VNC servers unless it failed). */
+  /** Stops the bot's programs, timers and apps screen (and its browser screen unless it failed). */
   private async teardown(stack: BotStack): Promise<void> {
     const kinds: SurfaceKind[] = stack.state === 'failed' ? ['apps'] : ['apps', 'browser']
     stack.serverReady = false
@@ -664,113 +637,141 @@ export class DisplayManager {
     await this.terminate(child, `${program} of bot ${stack.display.botId}`)
   }
 
-  private vncTarget(surface: DisplaySurface, mode: VncMode): VncTarget {
+  private screenTarget(surface: DisplaySurface): ScreenTarget {
     if (surface.kind === 'environment')
       return {
-        port: vncPort(surface, mode),
+        key: 'environment',
         kind: 'environment',
         slot: 0,
         display: ENVIRONMENT_DISPLAY,
-        clip: this.environmentArea(),
+        region: this.environmentArea(),
       }
     const stack = this.bots.get(surface.botId)
     if (!stack || stack.state === 'stopping') throw new Error(`Bot ${surface.botId} has no display.`)
     const { slot, display, browserArea } = stack.display
     if (surface.kind === 'browser')
-      return {
-        port: vncPort({ kind: 'browser', slot }, mode),
-        kind: 'browser',
-        slot,
-        display: ENVIRONMENT_DISPLAY,
-        clip: browserArea,
-      }
+      return { key: `browser:${slot}`, kind: 'browser', slot, display: ENVIRONMENT_DISPLAY, region: browserArea }
     if (stack.state !== 'running') throw new Error(`The apps display of bot ${surface.botId} is not running.`)
-    return { port: vncPort({ kind: 'apps', slot }, mode), kind: 'apps', slot, display, clip: null }
+    return {
+      key: `apps:${slot}`,
+      kind: 'apps',
+      slot,
+      display,
+      region: { x: 0, y: 0, width: FLEET_SCREEN.width, height: FLEET_SCREEN.height },
+    }
   }
 
-  private startVnc(target: VncTarget, mode: VncMode): VncServer {
-    const { clip, port } = target
-    const args = [
-      '-display',
+  /** Starts the surface's encoder; its session exists once the encoder says it captures. */
+  private startScreen(target: ScreenTarget): ScreenServer {
+    const { key, region } = target
+    const handle = this.deps.spawnEncoder([
+      '--display',
       target.display,
-      ...(clip ? ['-clip', `${clip.width}x${clip.height}+${clip.x}+${clip.y}`] : []),
-      '-rfbport',
-      String(port),
-      // LibVNCServer listens on IPv6 loopback too, on 5900 unless told otherwise: the first server of the environment
-      // would take the environment screen's port there.
-      '-rfbportv6',
-      String(port),
-      ...VNC_OPTIONS,
-      ...(mode === 'view' ? ['-viewonly'] : []),
-      ...VNC_CURSOR,
-    ]
-    const server: VncServer = {
-      port,
+      '--region',
+      `${region.x},${region.y},${region.width},${region.height}`,
+    ])
+    const child: Child = {
+      handle,
+      exited: handle.exited.then(
+        (code) => code,
+        () => null
+      ),
+    }
+    let started: () => void = () => undefined
+    let failed: (error: Error) => void = () => undefined
+    const ready = new Promise<void>((resolve, reject) => {
+      started = resolve
+      failed = reject
+    })
+    ready.catch(() => undefined)
+    let readyTimer: Timer | null = null
+    const server: ScreenServer = {
+      key,
       kind: target.kind,
       slot: target.slot,
-      child: this.spawnChild('x11vnc', args, {}),
+      child,
+      encoder: new ScreenEncoder(
+        handle,
+        (event) => {
+          if (event.type !== 'ready') {
+            server.session?.handle(event)
+            return
+          }
+          if (server.session || server.closing || !server.running) return
+          if (readyTimer) this.deps.clearTimeout(readyTimer)
+          readyTimer = null
+          server.session = new ScreenSession(
+            server.encoder,
+            { width: event.width, height: event.height },
+            {
+              now: this.deps.now ?? Date.now,
+              setTimeout: (callback, ms) => this.deps.setTimeout(callback, ms),
+              clearTimeout: (timer) => this.deps.clearTimeout(timer),
+              log: (message) => this.deps.log(message),
+            }
+          )
+          this.deps.log(
+            `The screen encoder of ${key} captures through ${event.capture || 'an unknown path'} and encodes with ${event.encoder || 'its default encoder'}.`
+          )
+          started()
+        },
+        (message) => this.deps.log(message)
+      ),
+      session: null,
       running: true,
       refs: 0,
-      ready: Promise.resolve(),
+      ready,
       idle: null,
       closing: null,
     }
-    this.servers.set(port, server)
-    void server.child.exited.then((code) => {
+    readyTimer = this.timer(ENCODER_READY_MS, () => {
+      readyTimer = null
+      failed(new Error(`The screen encoder of ${key} did not start.`))
+      void this.closeScreen(server)
+    })
+    this.servers.set(key, server)
+    void child.exited.then((code) => {
       server.running = false
-      if (this.servers.get(port) !== server || server.closing) return
-      this.servers.delete(port)
+      if (readyTimer) this.deps.clearTimeout(readyTimer)
+      readyTimer = null
+      server.session?.close()
+      failed(new Error(`The screen encoder of ${key} exited before it started.`))
+      if (this.servers.get(key) !== server || server.closing) return
+      this.servers.delete(key)
       if (server.idle) this.deps.clearTimeout(server.idle)
       server.idle = null
-      this.deps.log(`The VNC server on port ${port} exited with code ${code}.`)
+      this.deps.log(`The screen encoder of ${key} exited with code ${code}.`)
     })
-    server.ready = this.waitForVnc(server)
-    server.ready.catch(() => undefined)
     return server
   }
 
-  /** Resolves once the server accepts connections, so a client connecting right after does not get refused. */
-  private async waitForVnc(server: VncServer): Promise<void> {
-    try {
-      for (let attempt = 1; ; attempt++) {
-        const listening = (await this.probe(this.probes, 'bash', [...VNC_PROBE, String(server.port)])) === 0
-        if (!server.running || server.closing)
-          throw new Error(`The VNC server on port ${server.port} exited before it accepted connections.`)
-        if (listening) return
-        if (attempt >= READY_ATTEMPTS) throw new Error(`The VNC server on port ${server.port} did not start.`)
-        await this.sleep(READY_POLL_MS, this.sleepers)
-        this.assertOpen()
-      }
-    } catch (error) {
-      void this.closeVnc(server)
-      throw error
-    }
-  }
-
-  private lease(server: VncServer): VncLease {
+  private lease(server: ScreenServer, session: ScreenSession): ScreenLease {
     let released = false
     return {
-      port: server.port,
+      session,
       release: () => {
         if (released) return
         released = true
-        if (this.servers.get(server.port) !== server || server.closing) return
+        if (this.servers.get(server.key) !== server || server.closing) return
         server.refs = Math.max(0, server.refs - 1)
         if (server.refs > 0 || server.idle) return
-        server.idle = this.timer(VNC_IDLE_MS, () => {
+        server.idle = this.timer(SCREEN_IDLE_MS, () => {
           server.idle = null
-          void this.closeVnc(server)
+          void this.closeScreen(server)
         })
       },
     }
   }
 
-  private closeVnc(server: VncServer): Promise<void> {
+  /** Ends the screen's clients and stops its encoder: closing stdin, then the usual signals. */
+  private closeScreen(server: ScreenServer): Promise<void> {
     if (!server.closing) {
       if (server.idle) this.deps.clearTimeout(server.idle)
       server.idle = null
-      server.closing = this.terminate(server.child, `The VNC server on port ${server.port}`).then(() => {
-        if (this.servers.get(server.port) === server) this.servers.delete(server.port)
+      server.session?.close()
+      server.encoder.stop()
+      server.closing = this.terminate(server.child, `The screen encoder of ${server.key}`).then(() => {
+        if (this.servers.get(server.key) === server) this.servers.delete(server.key)
       })
       void server.closing.catch((error: unknown) => this.deps.log(describeError(error)))
     }
@@ -779,7 +780,7 @@ export class DisplayManager {
 
   private async closeServers(slot: number, kinds: readonly SurfaceKind[]): Promise<void> {
     const servers = [...this.servers.values()].filter((server) => server.slot === slot && kinds.includes(server.kind))
-    await Promise.all(servers.map((server) => this.closeVnc(server)))
+    await Promise.all(servers.map((server) => this.closeScreen(server)))
   }
 
   private spawnChild(command: string, args: string[], env: Record<string, string>): Child {
@@ -839,7 +840,7 @@ export class DisplayManager {
     return timer
   }
 
-  /** A slot or VNC port cannot be reused while its previous process still owns it. */
+  /** A slot or screen cannot be reused while its previous process still owns it. */
   private async terminate(child: Child, label: string): Promise<void> {
     this.kill(child.handle, label)
     if (await this.waitForExit(child)) return

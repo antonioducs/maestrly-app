@@ -147,7 +147,7 @@ function fakeDisplays() {
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
     redecorate: vi.fn(async (_botId: string) => {}),
-    acquireVnc: vi.fn(async () => ({ port: 5903, release: vi.fn() })),
+    acquireScreen: vi.fn(async () => ({ session: {} as never, release: vi.fn() })),
     dispose: vi.fn(async () => {}),
   }
 }

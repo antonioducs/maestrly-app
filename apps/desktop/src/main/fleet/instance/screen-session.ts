@@ -119,7 +119,6 @@ export class ScreenSession {
     this.ladderAt = now
     this.lastFrameAt = now
     encoder.tune(SCREEN_LEVELS[this.level])
-    this.schedule()
   }
 
   get clientCount(): number {
@@ -164,6 +163,7 @@ export class ScreenSession {
     if (this.cursor) peer.send(this.cursor)
     this.requestKeyframe(true)
     this.updateWatch()
+    this.schedule()
     return { receive: (chunk) => this.receive(client, chunk), detach: () => this.detach(client) }
   }
 
@@ -187,7 +187,7 @@ export class ScreenSession {
   close(): void {
     if (this.closed) return
     this.closed = true
-    if (this.timer) this.deps.clearTimeout(this.timer)
+    this.unschedule()
     const clients = [...this.clients]
     this.clients.clear()
     for (const client of clients) {
@@ -294,6 +294,7 @@ export class ScreenSession {
     client.closed = true
     if (client.mode === 'control') this.encoder.release()
     this.updateWatch()
+    if (this.clients.size === 0) this.unschedule()
   }
 
   private updateWatch(): void {
@@ -314,12 +315,20 @@ export class ScreenSession {
     this.encoder.keyframe()
   }
 
+  /** The session ticks only while it has clients: an encoder nobody watches has nothing to pace. */
   private schedule(): void {
+    if (this.timer || this.closed || this.clients.size === 0) return
     this.timer = this.deps.setTimeout(() => this.tick(), L.tickMs)
     this.timer.unref?.()
   }
 
+  private unschedule(): void {
+    if (this.timer) this.deps.clearTimeout(this.timer)
+    this.timer = null
+  }
+
   private tick(): void {
+    this.timer = null
     if (this.closed) return
     const now = this.deps.now()
     for (const client of [...this.clients]) {

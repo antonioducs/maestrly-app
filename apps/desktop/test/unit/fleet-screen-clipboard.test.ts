@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DisplayManager } from '../../src/main/fleet/instance/displays'
 import { attachScreenClipboard } from '../../src/renderer/lib/fleet/screen-clipboard'
 
 function setup(isMac = true) {
@@ -46,44 +45,20 @@ describe('controlled screen text clipboard', () => {
     'keeps the copied text after %s with no notification and a new PRIMARY selection',
     async (action) => {
       const s = setup()
-      let serverArgs: string[] = []
-      const manager = new DisplayManager({
-        home: '/srv/maestrly-clipboard-test',
-        mkdir: async () => {},
-        setTimeout,
-        clearTimeout,
-        log: () => {},
-        spawn: (command, args) => {
-          if (command !== 'x11vnc') return { exited: Promise.resolve(0), kill: () => {} }
-          serverArgs = [...args]
-          let exit!: (code: number) => void
-          const exited = new Promise<number>((resolve) => {
-            exit = resolve
-          })
-          return { exited, kill: () => exit(0) }
-        },
-      })
       const now = vi.spyOn(Date, 'now').mockReturnValue(100)
       try {
-        await manager.acquireVnc({ kind: 'environment' }, 'control')
-        // Model x11vnc's selection filtering using the actual server startup arguments.
-        // RFB cut text has no selection type, so PRIMARY must be filtered before receive().
-        const select = (text: string) => {
-          if (!serverArgs.includes('-noprimary')) s.receive(text)
-        }
+        // The screen encoder reports CLIPBOARD only, never PRIMARY (its smoke test and the container E2E check it), so
+        // a selection in another program raises no clipboard event here.
         s.receive('X')
-        select('selection from another app')
         s.emit(action)
         // An unchanged CLIPBOARD produces no notification; the copy remains pending.
         now.mockReturnValue(1_100)
-        select('selection')
         expect(s.write.mock.calls).toEqual([['X']])
         s.emit('paste', { clipboardData: { types: ['text/plain'], getData: () => s.write.mock.calls.at(-1)![0] } })
         expect(s.remote.clipboardPasteFrom).toHaveBeenCalledWith('X')
       } finally {
         now.mockRestore()
         s.detach()
-        await manager.dispose()
       }
     }
   )

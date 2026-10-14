@@ -275,6 +275,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'runtime-updates',
     'desktop-bridge',
     'message-edit',
+    'video-screens',
   ])
 })
 
