@@ -33,6 +33,7 @@ and sanitize diagnostics before posting them.
 | Model metadata | `models.dev` may receive metadata requests for model limits and pricing. |
 | Git and GitHub | Remote operations contact the selected Git host or GitHub. |
 | Browser and web tools | Navigation and fetches contact their selected destinations. |
+| Web search | Search queries go to the provider selected in Settings → Tools → Web search: Tavily (`api.tavily.com`), Brave Search (`api.search.brave.com`), OpenAI through your ChatGPT subscription, or DuckDuckGo (`html.duckduckgo.com`). Automatic mode can try them in that order. Tavily and Brave keys are stored in the operating-system keyring. |
 | Browser address bar | Text typed in the drawer browser's address bar goes to Google's suggestion service (`suggestqueries.google.com`) without cookies, except URLs with a scheme, local hosts, and IP addresses. Favicons of visited pages are fetched with the browser's session. Browsing history stays in the local profile. |
 | MCP | HTTP servers receive requests at their configured URLs; stdio servers run locally but can make their own network requests. |
 | Skills and runtimes | Searches and installs can contact skills.sh, GitHub, npm, OpenAI asset hosts, and configured upstream sources. |

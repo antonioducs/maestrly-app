@@ -12,8 +12,9 @@ New standalone chats start in Standard with Ask mode and Ask permissions. Saved
 use their usual generic capabilities under the selected permission policy.
 Maestro, Git review, branch operations and project-memory tools require a project.
 Browser, MCPs and other optional tools retain their existing enablement settings.
-Online research requires an available search tool; `webfetch` reads a supplied
-URL and does not provide a general search engine.
+Models search the web with `web_search` when web search is enabled in
+**Settings → Tools → Web search**, and read a specific URL with `webfetch`. Both
+ask for permission under the Ask policy.
 
 Each chat stores working files in `<userData>/standalone-chats/<conversationId>`.
 This managed directory is an execution location, not an operating-system sandbox.

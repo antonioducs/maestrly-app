@@ -77,7 +77,7 @@ export function assertAutonomousPermission(
     if (!policy.allowPush && input.resources.some((r) => /\bgit\s+(?:-[^\s]+\s+)*push\b/.test(r))) deny('git push')
     return
   }
-  if (input.action === 'webfetch') {
+  if (input.action === 'webfetch' || input.action === 'web_search') {
     if (!policy.allowWeb) deny('web access')
     return
   }

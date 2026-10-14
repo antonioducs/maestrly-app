@@ -62,7 +62,7 @@ export function assertRemoteChatPermission(
     if (!policy.allowPush && input.resources.some((r) => /\bgit\s+(?:-[^\s]+\s+)*push\b/.test(r))) deny('git push')
     return policy.permMode === 'full' ? 'read' : 'ask'
   }
-  if (input.action === 'webfetch') {
+  if (input.action === 'webfetch' || input.action === 'web_search') {
     if (!policy.allowWeb) deny('web access')
     return protectedEffect()
   }

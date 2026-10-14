@@ -28,7 +28,16 @@ export interface Rule {
 }
 export type Ruleset = Rule[]
 
-export type PermissionAction = 'bash' | 'edit' | 'read' | 'grep' | 'glob' | 'webfetch' | 'external_directory' | 'mcp'
+export type PermissionAction =
+  | 'bash'
+  | 'edit'
+  | 'read'
+  | 'grep'
+  | 'glob'
+  | 'webfetch'
+  | 'web_search'
+  | 'external_directory'
+  | 'mcp'
 export type Reply = 'once' | 'always' | 'reject'
 
 export interface AssertInput {
@@ -161,6 +170,7 @@ export const BYOK_DEFAULT_RULESET: Ruleset = [
   { action: 'bash', resource: '*', effect: 'ask' },
   { action: 'edit', resource: '*', effect: 'ask' }, // Covers write/edit.
   { action: 'webfetch', resource: '*', effect: 'ask' },
+  { action: 'web_search', resource: '*', effect: 'ask' },
   { action: 'external_directory', resource: '*', effect: 'ask' },
   { action: 'mcp', resource: '*', effect: 'ask' }, // External MCP server tools → request approval.
   { action: 'read', resource: '*.env', effect: 'ask' },
@@ -206,6 +216,8 @@ function titleFor(action: string, resources: string[]): string {
       return `Write file: ${first}`
     case 'webfetch':
       return `Fetch URL: ${first}`
+    case 'web_search':
+      return `Search the web: ${first}`
     case 'external_directory':
       return `Access directory outside the project: ${first}`
     case 'mcp':

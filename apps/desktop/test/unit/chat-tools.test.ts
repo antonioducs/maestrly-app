@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+const h = vi.hoisted(() => ({ webSearchEnabled: true }))
+vi.mock('../../src/main/chat/web-search/settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/web-search/settings')>()),
+  webSearchToolEnabled: () => h.webSearchEnabled,
+}))
+
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -7,7 +14,7 @@ import { editTool, findReplacementMatches, type ReplacementMatch } from '../../s
 import { bashPermissionSavePattern, commandSegments } from '../../src/main/chat/tools/bash'
 import { shouldSkipSearchDir } from '../../src/main/chat/tools/grep'
 import { webfetchPermissionSavePattern } from '../../src/main/chat/tools/webfetch'
-import { buildTools, builtinToolNamesForMode } from '../../src/main/chat/tools'
+import { READ_ONLY_TOOL_NAMES, buildTools, builtinToolNamesForMode } from '../../src/main/chat/tools'
 import { reviewPlanTool } from '../../src/main/chat/tools/review-plan'
 import { boundText, withFileLock, type ToolContext } from '../../src/main/chat/tools/util'
 
@@ -33,6 +40,7 @@ describe('chat tools', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    h.webSearchEnabled = true
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -201,6 +209,19 @@ describe('chat tools', () => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '0')
     expect(builtinToolNamesForMode('agent').has('review_plan')).toBe(true)
     expect(buildTools({ makeCtx }).review_plan).toBeDefined()
+  })
+
+  it('offers web_search as a read-only tool in every mode', () => {
+    expect(READ_ONLY_TOOL_NAMES).toContain('web_search')
+    for (const mode of ['ask', 'plan', 'agent'] as const) expect(builtinToolNamesForMode(mode).has('web_search')).toBe(true)
+    expect(buildTools({ enabled: new Set(['web_search']), makeCtx: () => ctx(dir) }).web_search).toBeDefined()
+  })
+
+  it('removes web_search everywhere when web search is turned off', () => {
+    h.webSearchEnabled = false
+    for (const mode of ['ask', 'plan', 'agent'] as const) expect(builtinToolNamesForMode(mode).has('web_search')).toBe(false)
+    expect(buildTools({ enabled: new Set(['web_search']), makeCtx: () => ctx(dir) }).web_search).toBeUndefined()
+    expect(buildTools({ makeCtx: () => ctx(dir) }).web_search).toBeUndefined()
   })
 
   it('submits and releases plans through context', async () => {
