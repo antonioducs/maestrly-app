@@ -114,6 +114,54 @@ describe('review service', () => {
     expect(changes.at(-1)?.status).toBe('completed')
   })
 
+  it("runs on the conversation's model unless the person chose another reviewer", async () => {
+    const { deps: d } = deps()
+    const service = createReviewService(d)
+    await service.start('conv', { target: 'code' })
+    await settle(service)
+    expect(d.resolveProfile).toHaveBeenLastCalledWith(
+      { providerId: 'provider-1', modelId: 'model-1', reasoning: 'high', fastMode: false },
+      { chosen: false }
+    )
+
+    const chosen = { providerId: 'provider-2', modelId: 'reviewer-model', reasoning: 'medium', fastMode: true }
+    ;(d.resolveProfile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...PROFILE,
+      effective: {
+        ...PROFILE.effective!,
+        providerId: 'provider-2',
+        modelId: 'reviewer-model',
+        configuredEffort: 'medium',
+        fastMode: true,
+      },
+    })
+    const started = await service.start('conv', { target: 'code', reviewer: chosen })
+    expect(started).toMatchObject({
+      ok: true,
+      review: { model: { providerId: 'provider-2', modelId: 'reviewer-model', reasoning: 'medium', fastMode: true } },
+    })
+    expect(d.resolveProfile).toHaveBeenLastCalledWith(chosen, { chosen: true })
+    expect((await settle(service)).status).toBe('completed')
+  })
+
+  it('refuses a malformed reviewer and providers that cannot run reviewers', async () => {
+    const { deps: d } = deps({ reviewerProviderSupported: (providerId) => providerId !== 'builtin_chatgpt_web' })
+    const service = createReviewService(d)
+    const reviewer = { providerId: 'provider-2', modelId: 'm', reasoning: 'off', fastMode: false }
+    expect(await service.start('conv', { target: 'code', reviewer: { ...reviewer, fastMode: 'yes' } })).toEqual({
+      ok: false,
+      error: 'invalid-reviewer',
+    })
+    expect(await service.start('conv', { target: 'code', reviewer: { ...reviewer, modelId: '' } })).toEqual({
+      ok: false,
+      error: 'invalid-reviewer',
+    })
+    expect(
+      await service.start('conv', { target: 'plan', reviewer: { ...reviewer, providerId: 'builtin_chatgpt_web' } })
+    ).toEqual({ ok: false, error: 'reviewer-unsupported' })
+    expect(d.resolveProfile).not.toHaveBeenCalled()
+  })
+
   it('reviews the pending plan and hands its findings back instead of storing a message', async () => {
     const { deps: d } = deps()
     const service = createReviewService(d)

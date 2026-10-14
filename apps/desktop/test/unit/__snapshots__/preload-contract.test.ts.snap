@@ -103,6 +103,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "chatRetryBackgroundCompaction",
   "chatReviewCancel",
   "chatReviewDismiss",
+  "chatReviewReviewerOptions",
   "chatReviewStart",
   "chatReviewStatus",
   "chatRuntime",

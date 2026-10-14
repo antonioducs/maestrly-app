@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import type { HostApi } from '../../preload'
-import type { ReviewFinding, ReviewJobInfo, ReviewTarget } from '../../shared/review'
+import type {
+  ReviewFinding,
+  ReviewJobInfo,
+  ReviewModelChoice,
+  ReviewReviewerOptions,
+  ReviewTarget,
+} from '../../shared/review'
 
 /** Window event the app header uses to start a code review in the conversation that owns it. */
 export const REVIEW_CODE_EVENT = 'maestrly:review-code'
@@ -24,6 +30,8 @@ const KNOWN_ERRORS = new Set([
   'no-pending-plan',
   'no-model',
   'invalid-conversation',
+  'invalid-reviewer',
+  'reviewer-unsupported',
 ])
 
 /** Localized reason a review could not start or failed; unknown errors are shown as reported. */
@@ -70,7 +78,10 @@ export function mergeReviewInfo(current: ReviewJobInfo | null, incoming: ReviewJ
 export function useConversationReview(
   api: HostApi,
   conversationId: string
-): { review: ReviewJobInfo | null; start: (target: ReviewTarget) => Promise<string | null> } {
+): {
+  review: ReviewJobInfo | null
+  start: (target: ReviewTarget, reviewer?: ReviewModelChoice) => Promise<string | null>
+} {
   const [review, setReview] = useState<ReviewJobInfo | null>(null)
   const currentConversation = useRef(conversationId)
   useEffect(() => {
@@ -90,12 +101,12 @@ export function useConversationReview(
   }, [api, conversationId])
 
   const start = useCallback(
-    async (target: ReviewTarget): Promise<string | null> => {
+    async (target: ReviewTarget, reviewer?: ReviewModelChoice): Promise<string | null> => {
       const show = (info: ReviewJobInfo | null) => {
         if (currentConversation.current === conversationId) setReview((current) => mergeReviewInfo(current, info))
       }
       try {
-        const result = await api.chatReviewStart(conversationId, { target })
+        const result = await api.chatReviewStart(conversationId, { target, ...(reviewer ? { reviewer } : {}) })
         if (result.ok) {
           show(result.review)
           return null
@@ -112,6 +123,39 @@ export function useConversationReview(
     [api, conversationId]
   )
   return { review, start }
+}
+
+/** Which reviewer the dialog offers first: the one used last time, else the conversation's model. */
+export function initialReviewerChoice(options: ReviewReviewerOptions): {
+  useConversation: boolean
+  choice: ReviewModelChoice | null
+} {
+  const last = options.last
+  if (last?.kind === 'model') {
+    const { kind: _kind, ...choice } = last
+    return { useConversation: false, choice }
+  }
+  const conversation = options.conversation
+    ? {
+        providerId: options.conversation.providerId,
+        modelId: options.conversation.modelId,
+        reasoning: options.conversation.reasoning,
+        fastMode: options.conversation.fastMode,
+      }
+    : null
+  // Without a model of its own, the conversation cannot review; a model has to be chosen.
+  return { useConversation: !!conversation, choice: conversation }
+}
+
+/** "Provider · model · high · Fast": how the dialog names the conversation's model. */
+export function reviewModelLabel(choice: ReviewModelChoice & { providerName?: string }): string {
+  return [
+    `${choice.providerName ?? choice.providerId} · ${choice.modelId}`,
+    choice.reasoning && choice.reasoning !== 'off' ? choice.reasoning : '',
+    choice.fastMode ? 'Fast' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s/

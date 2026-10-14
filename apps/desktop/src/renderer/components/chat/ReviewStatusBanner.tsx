@@ -4,25 +4,22 @@ import type { ReviewJobInfo } from '../../../shared/review'
 import { isReviewRunning, reviewErrorText, reviewProgressText } from '../../lib/review'
 
 /**
- * Above the composer: a code review in progress (with Cancel), a review that failed, or why one could not start.
- * A finished review shows up in the conversation as a report card instead.
+ * Above the composer: a code review in progress, with the model reviewing and Cancel, or a review that failed. A
+ * finished review shows up in the conversation as a report card instead.
  */
 export function ReviewStatusBanner({
   review,
-  notice,
   onCancel,
   onDismiss,
 }: {
   review: ReviewJobInfo | null
-  /** Why the last start request was refused. */
-  notice: string | null
   onCancel: () => void
   onDismiss: () => void
 }) {
   const { t } = useTranslation('chat')
   const running = review?.target === 'code' && isReviewRunning(review)
   const failed = review?.target === 'code' && review.status === 'failed'
-  if (!running && !failed && !notice) return null
+  if (!running && !failed) return null
 
   if (running && review) {
     return (
@@ -34,7 +31,9 @@ export function ReviewStatusBanner({
         >
           <Loader2 className="size-3.5 shrink-0 animate-spin" />
           <span className="shrink-0 font-medium">{t('review.running')}</span>
-          <span className="min-w-0 flex-1 truncate text-sky-100/75">{reviewProgressText(t, review)}</span>
+          <span className="min-w-0 flex-1 truncate text-sky-100/75">
+            {[reviewProgressText(t, review), review.model?.modelId].filter(Boolean).join(' · ')}
+          </span>
           <button
             type="button"
             onClick={onCancel}
@@ -47,9 +46,7 @@ export function ReviewStatusBanner({
     )
   }
 
-  const message = failed
-    ? t('review.failed', { reason: reviewErrorText(t, review?.error) })
-    : t('review.startFailed', { reason: reviewErrorText(t, notice ?? undefined) })
+  const message = t('review.failed', { reason: reviewErrorText(t, review?.error) })
   return (
     <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
       <div

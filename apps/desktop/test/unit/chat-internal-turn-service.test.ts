@@ -147,7 +147,7 @@ vi.mock('../../src/main/store', () => ({
   updateConversationStatus: h.updateConversationStatus,
   patchConvUiPrefs: vi.fn(),
   setAppFlag: vi.fn(),
-  setAppSetting: vi.fn(),
+  setAppSetting: reviewH.setAppSetting,
 }))
 
 vi.mock('../../src/main/chat/catalog', () => ({
@@ -170,7 +170,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isGrokSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn((providerId: string) => providerId.startsWith('builtin_codex_subscription')),
   isManagedProvider: vi.fn((providerId: string) => providerId.startsWith('builtin_codex_subscription')),
-  isChatGptWebProvider: vi.fn(() => false),
+  isChatGptWebProvider: vi.fn((providerId?: string | null) => providerId === 'builtin_chatgpt_web'),
   isChatGptWebEnabled: vi.fn(() => true),
   subscriptionAccountId: vi.fn((providerId: string) =>
     providerId.startsWith('builtin_codex_subscription@') ? providerId.split('@')[1] : null
@@ -221,11 +221,8 @@ vi.mock('../../src/main/usage/usage-service', () => ({
 // Reviews run read-only subagents; here they finish without submitting anything.
 const reviewH = vi.hoisted(() => ({
   executeSubagent: vi.fn(async () => ({ text: 'Nothing to report.' })),
-}))
-vi.mock('../../src/main/chat/subagent-executor', () => ({ executeSubagent: reviewH.executeSubagent }))
-vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/main/chat/subagent-execution-profile')>()),
-  resolveParentSubagentExecutionProfile: vi.fn(async () => ({
+  setAppSetting: vi.fn(),
+  resolveProfile: vi.fn(async (_input: unknown) => ({
     version: 1,
     agentName: 'reviewer',
     effective: {
@@ -238,6 +235,11 @@ vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal)
     },
     attempts: [],
   })),
+}))
+vi.mock('../../src/main/chat/subagent-executor', () => ({ executeSubagent: reviewH.executeSubagent }))
+vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/subagent-execution-profile')>()),
+  resolveParentSubagentExecutionProfile: reviewH.resolveProfile,
 }))
 
 vi.mock('../../src/main/chat/runner', () => ({
@@ -635,17 +637,17 @@ describe('isolated internal turn service API', () => {
       candidates: 1,
       startedAt: 1,
       finishedAt: 2,
-      findings: [{ id: 'F1', severity: 'blocking', title: 'Lost update', details: 'Writers race.', lens: 'integration' }],
+      findings: [
+        { id: 'F1', severity: 'blocking', title: 'Lost update', details: 'Writers race.', lens: 'integration' },
+      ],
     },
     createdAt: 1,
   }
   const userParts = () =>
-    (
-      h.upsertChatMessage.mock.calls.find(([message]) => (message as { role: string }).role === 'user')?.[0] as {
-        internal?: boolean
-        parts: MessagePart[]
-      }
-    )
+    h.upsertChatMessage.mock.calls.find(([message]) => (message as { role: string }).role === 'user')?.[0] as {
+      internal?: boolean
+      parts: MessagePart[]
+    }
 
   it("attaches pending code review reports to the person's next message", async () => {
     h.projectEnvironmentLockFor.mockReturnValue(null)
@@ -702,6 +704,73 @@ describe('isolated internal turn service API', () => {
     expect(reviewH.executeSubagent).toHaveBeenCalledWith(
       expect.objectContaining({ conversationId: 'conv-chat', readOnly: true, agentName: 'reviewer' })
     )
+    h.getPendingPlan.mockReturnValue(null)
+  })
+
+  it('offers the conversation model and the last reviewer, and remembers the reviewer a review started with', async () => {
+    h.getConversation.mockReturnValue({ id: 'conv-chat', cwd, workspaceId: 'workspace-1', archived: 0 })
+    h.getConvUiPrefs.mockReturnValue({
+      chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent', reasoning: 'high', fastMode: true },
+    })
+    h.getPendingPlan.mockReturnValue({ agentId: 'conv-chat', cwd, plan: '# Plan\n- Step', version: 1 } as never)
+    const last = { kind: 'model', providerId: 'provider-1', modelId: 'model-2', reasoning: 'low', fastMode: false }
+    h.getAppSetting.mockImplementation((key: string) => (key === 'chat.review.reviewer' ? JSON.stringify(last) : null))
+    const handlers = register()
+    expect(await handlers.get('chat:review:reviewer-options')?.({ sender: wc }, 'conv-chat')).toEqual({
+      conversation: {
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        reasoning: 'high',
+        fastMode: true,
+        providerName: 'Provider',
+      },
+      last,
+    })
+
+    const finished = async () =>
+      vi.waitFor(async () => {
+        const status = (await handlers.get('chat:review:status')?.({ sender: wc }, 'conv-chat')) as { status: string }
+        expect(['completed', 'failed', 'cancelled']).toContain(status.status)
+      })
+    // A chosen reviewer's Fast is validated against its model, not inherited from the conversation.
+    const reviewer = { providerId: 'provider-1', modelId: 'model-2', reasoning: 'low', fastMode: true }
+    expect(
+      await handlers.get('chat:review:start')?.({ sender: wc }, 'conv-chat', { target: 'plan', reviewer })
+    ).toMatchObject({ ok: true })
+    expect(reviewH.resolveProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        parent: { providerId: 'provider-1', modelId: 'model-2', effort: 'low', fastMode: true },
+        parentFastMode: true,
+      })
+    )
+    expect(reviewH.setAppSetting).toHaveBeenLastCalledWith(
+      'chat.review.reviewer',
+      JSON.stringify({ kind: 'model', ...reviewer })
+    )
+    await finished()
+
+    // Without a reviewer, the conversation's model runs and becomes the remembered choice.
+    expect(await handlers.get('chat:review:start')?.({ sender: wc }, 'conv-chat', { target: 'plan' })).toMatchObject({
+      ok: true,
+    })
+    expect(reviewH.resolveProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        parent: { providerId: 'provider-1', modelId: 'model-1', effort: 'high' },
+        parentFastMode: true,
+      })
+    )
+    expect(reviewH.setAppSetting).toHaveBeenLastCalledWith('chat.review.reviewer', '{"kind":"conversation"}')
+    await finished()
+
+    // A refused start remembers nothing.
+    reviewH.setAppSetting.mockClear()
+    expect(
+      await handlers.get('chat:review:start')?.({ sender: wc }, 'conv-chat', {
+        target: 'plan',
+        reviewer: { ...reviewer, providerId: 'builtin_chatgpt_web' },
+      })
+    ).toEqual({ ok: false, error: 'reviewer-unsupported' })
+    expect(reviewH.setAppSetting).not.toHaveBeenCalled()
     h.getPendingPlan.mockReturnValue(null)
   })
 

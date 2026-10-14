@@ -74,11 +74,19 @@ describe('review components', () => {
     expect(renderToStaticMarkup(createElement(ReviewReportCard, { report }))).not.toContain('type="checkbox"')
   })
 
-  it('shows progress, failures and refused starts above the composer', () => {
-    const props = { notice: null, onCancel: () => undefined, onDismiss: () => undefined }
+  it('shows progress with the reviewing model, and failures, above the composer', () => {
+    const props = { onCancel: () => undefined, onDismiss: () => undefined }
     expect(renderToStaticMarkup(createElement(ReviewStatusBanner, { ...props, review: running }))).toContain(
       '2 of 3 reviewers done'
     )
+    expect(
+      renderToStaticMarkup(
+        createElement(ReviewStatusBanner, {
+          ...props,
+          review: { ...running, model: { providerId: 'p', modelId: 'reviewer-model' } },
+        })
+      )
+    ).toContain('2 of 3 reviewers done · reviewer-model')
     expect(
       renderToStaticMarkup(
         createElement(ReviewStatusBanner, {
@@ -95,9 +103,7 @@ describe('review components', () => {
         })
       )
     ).toContain('The review failed: stream closed')
-    expect(
-      renderToStaticMarkup(createElement(ReviewStatusBanner, { ...props, review: null, notice: 'nothing-to-review' }))
-    ).toContain('Couldn&#x27;t start the review: there are no changes to review.')
+    expect(renderToStaticMarkup(createElement(ReviewStatusBanner, { ...props, review: null }))).toBe('')
     expect(
       renderToStaticMarkup(createElement(ReviewStatusBanner, { ...props, review: { ...running, target: 'plan' } }))
     ).toBe('')

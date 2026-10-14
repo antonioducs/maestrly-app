@@ -55,7 +55,7 @@ import type {
   SubagentSessionSummary,
   SubagentTranscriptPage,
 } from '../shared/chat'
-import type { ReviewJobInfo, ReviewStartInput, ReviewStartResult } from '../shared/review'
+import type { ReviewJobInfo, ReviewReviewerOptions, ReviewStartInput, ReviewStartResult } from '../shared/review'
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
 import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
@@ -801,6 +801,9 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:review:status', conversationId),
     chatReviewDismiss: (conversationId: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:review:dismiss', conversationId),
+    /** The conversation's own model and the reviewer used last time, for the review dialog. */
+    chatReviewReviewerOptions: (conversationId: string): Promise<ReviewReviewerOptions> =>
+      ipcRenderer.invoke('chat:review:reviewer-options', conversationId),
     onChatReviewChanged: (cb: (review: ReviewJobInfo) => void): (() => void) => {
       const listener = (_event: unknown, review: ReviewJobInfo) => cb(review)
       ipcRenderer.on('chat:review:changed', listener)

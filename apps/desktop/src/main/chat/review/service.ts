@@ -3,6 +3,7 @@ import type { ToolSet } from 'ai'
 import {
   CODE_REVIEW_LENSES,
   PLAN_REVIEW_LENSES,
+  parseReviewModelChoice,
   type ChatReviewReport,
   type ReviewFinding,
   type ReviewJobInfo,
@@ -46,8 +47,15 @@ export interface ReviewServiceDeps {
   /** A turn or operation is running in the conversation. */
   isBusy(conversationId: string): boolean
   pendingPlan(conversationId: string): { plan: string; version: number } | null
+  /** The conversation's own model, effort and Fast setting, used when no reviewer model is chosen. */
   selection(conversationId: string): ReviewSelection | null
-  resolveProfile(selection: ReviewSelection): Promise<SubagentExecutionSnapshotV1>
+  /**
+   * `chosen` marks a model the person picked for the review: its Fast setting is validated against the model like
+   * any explicit subagent profile, instead of being inherited from the conversation.
+   */
+  resolveProfile(selection: ReviewSelection, options: { chosen: boolean }): Promise<SubagentExecutionSnapshotV1>
+  /** Whether a provider can run reviewers at all; ChatGPT Web, for one, cannot. */
+  reviewerProviderSupported?(providerId: string): boolean
   /** User-visible conversation excerpt used to understand intent. */
   conversationContext(conversationId: string): string
   locale(): string
@@ -208,6 +216,12 @@ export function createReviewService(deps: ReviewServiceDeps) {
         ? (input as { target: ReviewTarget }).target
         : null
     if (!target) return { ok: false, error: 'invalid-input' }
+    const rawReviewer = (input as { reviewer?: unknown }).reviewer
+    const reviewer = rawReviewer === undefined ? null : parseReviewModelChoice(rawReviewer)
+    if (rawReviewer !== undefined && !reviewer) return { ok: false, error: 'invalid-reviewer' }
+    if (reviewer && deps.reviewerProviderSupported?.(reviewer.providerId) === false) {
+      return { ok: false, error: 'reviewer-unsupported' }
+    }
     if (starting.has(conversationId) || isActive(jobs.get(conversationId)?.info)) {
       return { ok: false, error: 'review-active' }
     }
@@ -228,9 +242,9 @@ export function createReviewService(deps: ReviewServiceDeps) {
         plan = deps.pendingPlan(conversationId)
         if (!plan?.plan.trim()) return { ok: false, error: 'no-pending-plan' }
       }
-      const selection = deps.selection(conversationId)
+      const selection = reviewer ?? deps.selection(conversationId)
       if (!selection) return { ok: false, error: 'no-model' }
-      const profile = await deps.resolveProfile(selection)
+      const profile = await deps.resolveProfile(selection, { chosen: !!reviewer })
       if (!profile.effective) {
         const diagnostic = profile.attempts
           .flatMap((attempt) => attempt.diagnostics)

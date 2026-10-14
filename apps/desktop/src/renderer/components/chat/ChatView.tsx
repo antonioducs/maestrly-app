@@ -21,7 +21,7 @@ import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { isRemoteHostId } from '../../../shared/host-key'
-import { REVIEW_CODE_EVENT, useConversationReview, type ReviewCodeEventDetail } from '@/lib/review'
+import { isReviewRunning, REVIEW_CODE_EVENT, useConversationReview, type ReviewCodeEventDetail } from '@/lib/review'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
@@ -107,6 +107,7 @@ import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
+import { ReviewStartDialog } from './ReviewStartDialog'
 import { ReviewStatusBanner } from './ReviewStatusBanner'
 import { MaestroControl } from './MaestroControl'
 import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
@@ -263,7 +264,7 @@ export function ChatView({
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
   const { review, start: startReviewOf } = useConversationReview(api, conversationId)
-  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
   const [chatProviders, setChatProviders] = useState<ChatConfig['providers']>([])
   // A conversation opened for a purpose (such as a suggested request) starts with that text in the composer.
@@ -899,14 +900,15 @@ export function ChatView({
   )
 
   // Code review: one read-only pass by independent reviewers; the report lands in this conversation.
-  const startCodeReview = useCallback(async () => {
-    setReviewNotice(null)
-    setReviewNotice(await startReviewOf('code'))
-  }, [startReviewOf])
+  // The dialog chooses who reviews; a code review already running shows in the banner instead.
+  const runningCodeReview = review?.target === 'code' && isReviewRunning(review)
+  const startCodeReview = useCallback(() => {
+    if (!runningCodeReview) setReviewDialogOpen(true)
+  }, [runningCodeReview])
   useEffect(() => {
     const onReview = (event: Event) => {
       const detail = (event as CustomEvent<ReviewCodeEventDetail>).detail
-      if (detail?.conversationId === conversationId && detail.hostId === hostId) void startCodeReview()
+      if (detail?.conversationId === conversationId && detail.hostId === hostId) startCodeReview()
     }
     window.addEventListener(REVIEW_CODE_EVENT, onReview)
     return () => window.removeEventListener(REVIEW_CODE_EVENT, onReview)
@@ -1735,7 +1737,7 @@ export function ChatView({
         } else if (cmd.action === 'code-review') {
           setDraft('')
           setDraftMentions([])
-          void startCodeReview()
+          startCodeReview()
         }
         return
       }
@@ -2228,15 +2230,20 @@ export function ChatView({
             <ConversationDispatchBanner conversationId={conversationId} />
             <ReviewStatusBanner
               review={review && review.reviewId !== dismissedReviewId ? review : null}
-              notice={reviewNotice}
               onCancel={() => void api.chatReviewCancel(conversationId)}
               onDismiss={() => {
-                setReviewNotice(null)
                 if (review?.status === 'failed') {
                   setDismissedReviewId(review.reviewId)
                   void api.chatReviewDismiss(conversationId)
                 }
               }}
+            />
+            <ReviewStartDialog
+              open={reviewDialogOpen}
+              conversationId={conversationId}
+              target="code"
+              onOpenChange={setReviewDialogOpen}
+              onStart={(reviewer) => startReviewOf('code', reviewer)}
             />
 
             {failoverNotice && (

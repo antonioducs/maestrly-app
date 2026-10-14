@@ -57,19 +57,26 @@ changes: the committed difference from the default branch, staged and unstaged
 changes, and new files. Three reviewers examine the changes in parallel — logic,
 integration (callers, contracts, stored data, state and cancellation), and
 security and tests — and a verifier keeps only the findings it can confirm in the
-code. Reviewers use the conversation's model, reasoning effort and Fast setting,
-and run read-only: they read and search the checkout but cannot change files.
+code. Reviewers run read-only: they read and search the checkout but cannot
+change files.
+
+Before a review starts, a dialog asks who reviews: the conversation's own model,
+reasoning effort and Fast setting, or another model with its own effort and Fast
+setting. A different model tends to catch mistakes the conversation's model
+misses. ChatGPT Web cannot run reviewers. The choice is remembered for the next
+review and stored in the local database; the model that reviewed is shown while
+the review runs and on its report.
 
 The report appears in the conversation as a card listing each finding's
 severity, location, evidence and suggestion. It changes nothing by itself:
 select findings and choose **Discuss with the model** or **Fix selected**, or
 write your own message. The model receives the report with your next message,
-whichever provider runs that turn. A code review uses four model runs, or three
-when no reviewer finds anything, and its usage counts toward the conversation.
+whichever provider runs that turn. A code review uses up to four runs of the
+reviewing model, and its usage counts toward the conversation.
 
 In the Plan tab, **Review plan** checks a plan that is waiting for your decision
 against the repository with two reviewers (feasibility and completeness) and the
-verifier. Findings are added to your line comments and general feedback, where
+verifier, chosen in the same dialog. Findings are added to your line comments and general feedback, where
 you can edit or remove them before choosing **Request revision**. Findings about
 a plan that was approved, discarded or replaced while it was being reviewed are
 dropped.

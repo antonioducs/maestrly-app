@@ -92,7 +92,26 @@ export interface ChatReviewReport {
   scope?: { branch?: string; head?: string }
 }
 
-export type ReviewStartInput = { target: ReviewTarget }
+/** A model chosen to run a review instead of the conversation's own. */
+export interface ReviewModelChoice {
+  providerId: string
+  modelId: string
+  /** `off` uses the provider's default effort. */
+  reasoning: string
+  fastMode: boolean
+}
+
+/** The reviewer last used, offered first the next time: the conversation's model or a chosen one. */
+export type ReviewerPreference = { kind: 'conversation' } | ({ kind: 'model' } & ReviewModelChoice)
+
+/** What the review dialog offers: the model the conversation would use, and the reviewer used last time. */
+export interface ReviewReviewerOptions {
+  conversation: (ReviewModelChoice & { providerName?: string }) | null
+  last: ReviewerPreference | null
+}
+
+/** Without `reviewer`, the review runs on the conversation's model, effort and Fast setting. */
+export type ReviewStartInput = { target: ReviewTarget; reviewer?: ReviewModelChoice }
 
 export type ReviewStartResult = { ok: true; review: ReviewJobInfo } | { ok: false; error: string }
 
@@ -111,6 +130,26 @@ function boundedString(value: unknown, max: number): string | undefined {
 
 function positiveLine(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+/** A reviewer model from the renderer or from storage; null when anything is missing or malformed. */
+export function parseReviewModelChoice(raw: unknown): ReviewModelChoice | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const value = raw as Record<string, unknown>
+  const providerId = typeof value.providerId === 'string' ? value.providerId.trim() : ''
+  const modelId = typeof value.modelId === 'string' ? value.modelId.trim() : ''
+  const reasoning = typeof value.reasoning === 'string' ? value.reasoning.trim() : ''
+  if (!providerId || providerId.length > 300 || !modelId || modelId.length > 300) return null
+  if (!reasoning || reasoning.length > 40 || typeof value.fastMode !== 'boolean') return null
+  return { providerId, modelId, reasoning, fastMode: value.fastMode }
+}
+
+export function parseReviewerPreference(raw: unknown): ReviewerPreference | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const kind = (raw as { kind?: unknown }).kind
+  if (kind === 'conversation') return { kind: 'conversation' }
+  const choice = kind === 'model' ? parseReviewModelChoice(raw) : null
+  return choice ? { kind: 'model', ...choice } : null
 }
 
 /** Defensive parse of a stored finding; anything malformed is dropped rather than rendered. */

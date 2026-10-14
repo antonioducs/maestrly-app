@@ -237,7 +237,15 @@ import {
   searchCompanionConversation,
 } from './chatgpt-web/conversation-context'
 import { buildAgentMentionParts, type StructuredAgentMentionDraft } from '../../shared/chat-agent-mentions'
-import type { ChatReviewReport, ReviewJobInfo } from '../../shared/review'
+import {
+  parseReviewerPreference,
+  parseReviewModelChoice,
+  type ChatReviewReport,
+  type ReviewerPreference,
+  type ReviewJobInfo,
+  type ReviewModelChoice,
+  type ReviewReviewerOptions,
+} from '../../shared/review'
 import { executeSubagent } from './subagent-executor'
 import { resolveParentSubagentExecutionProfile } from './subagent-execution-profile'
 import { createReviewService, REVIEWER_AGENT, type ReviewService } from './review/service'
@@ -8850,6 +8858,52 @@ const REVIEWER_RULESET: Ruleset = [
 let reviewService: ReviewService | null = null
 let reviewerBroker: PermissionBroker | null = null
 
+/** The conversation's own model, effort and Fast setting; ChatGPT Web cannot run reviewers, so it uses the default. */
+function conversationReviewSelection(conversationId: string): ReviewModelChoice | null {
+  const prefs = getConvUiPrefs(conversationId).chat
+  const chosen =
+    prefs?.providerId && getProvider(prefs.providerId) && !isChatGptWebProvider(prefs.providerId)
+      ? { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
+      : defaultSelection()
+  if (!chosen?.providerId || !chosen.modelId) return null
+  return { ...chosen, reasoning: prefs?.reasoning || 'off', fastMode: prefs?.fastMode === true }
+}
+
+const REVIEWER_PREFERENCE_KEY = 'chat.review.reviewer'
+
+function readReviewerPreference(): ReviewerPreference | null {
+  try {
+    return parseReviewerPreference(JSON.parse(getAppSetting(REVIEWER_PREFERENCE_KEY) ?? 'null'))
+  } catch {
+    return null
+  }
+}
+
+function reviewerOptions(conversationId: unknown): ReviewReviewerOptions {
+  const conversation = typeof conversationId === 'string' ? conversationReviewSelection(conversationId) : null
+  const providerName = conversation ? getProvider(conversation.providerId)?.name : undefined
+  return {
+    conversation: conversation ? { ...conversation, ...(providerName ? { providerName } : {}) } : null,
+    last: readReviewerPreference(),
+  }
+}
+
+/** A started review remembers its reviewer, so the dialog offers the same one next time. */
+async function startReview(conversationId: unknown, input: unknown) {
+  const result = await reviews().start(conversationId, input)
+  if (result.ok) {
+    // start() only succeeds with a valid reviewer, or without one.
+    const reviewer = parseReviewModelChoice((input as { reviewer?: unknown }).reviewer)
+    const preference: ReviewerPreference = reviewer ? { kind: 'model', ...reviewer } : { kind: 'conversation' }
+    try {
+      setAppSetting(REVIEWER_PREFERENCE_KEY, JSON.stringify(preference))
+    } catch {
+      // The review already runs; failing to remember the choice only affects the next dialog.
+    }
+  }
+  return result
+}
+
 function reviews(): ReviewService {
   if (reviewService) return reviewService
   reviewService = createReviewService({
@@ -8869,21 +8923,19 @@ function reviews(): ReviewService {
       const pending = getPendingPlan(conversationId)
       return pending ? { plan: pending.plan, version: pending.version } : null
     },
-    selection: (conversationId) => {
-      const prefs = getConvUiPrefs(conversationId).chat
-      const chosen =
-        prefs?.providerId && getProvider(prefs.providerId) && !isChatGptWebProvider(prefs.providerId)
-          ? { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
-          : defaultSelection()
-      if (!chosen?.providerId || !chosen.modelId) return null
-      return { ...chosen, ...(prefs?.reasoning ? { reasoning: prefs.reasoning } : {}), fastMode: prefs?.fastMode === true }
-    },
-    resolveProfile: (selection) =>
+    selection: conversationReviewSelection,
+    resolveProfile: (selection, { chosen }) =>
       resolveParentSubagentExecutionProfile({
         agent: REVIEWER_AGENT,
-        parent: { providerId: selection.providerId, modelId: selection.modelId, effort: selection.reasoning ?? 'off' },
+        parent: {
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+          effort: selection.reasoning ?? 'off',
+          ...(chosen ? { fastMode: selection.fastMode } : {}),
+        },
         parentFastMode: selection.fastMode,
       }),
+    reviewerProviderSupported: (providerId) => !isChatGptWebProvider(providerId),
     conversationContext: (conversationId) => JSON.stringify(getCompanionConversationContext(conversationId).messages),
     locale: () => getLocale(),
     runReviewer: async ({ conversation, profile, task, tools, signal }) => {
@@ -10173,7 +10225,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     stop(conversationId)
   })
   // Code and plan reviews: start, cancel, read and dismiss the conversation's review (renderer and remote hosts).
-  deps.mhandle('chat:review:start', (_e, conversationId: unknown, input: unknown) => reviews().start(conversationId, input))
+  deps.mhandle('chat:review:start', (_e, conversationId: unknown, input: unknown) => startReview(conversationId, input))
+  deps.mhandle('chat:review:reviewer-options', (_e, conversationId: unknown) => reviewerOptions(conversationId))
   deps.mhandle('chat:review:cancel', (_e, conversationId: unknown) => reviews().cancel(conversationId))
   deps.mhandle('chat:review:status', (_e, conversationId: unknown) => reviews().status(conversationId))
   deps.mhandle('chat:review:dismiss', (_e, conversationId: unknown) => {

@@ -23,6 +23,7 @@ import { MarkdownViewer, type CommentCtx } from '@/components/MarkdownViewer'
 import { planDecisionError } from '@/lib/plan-decision'
 import { MaestroPlanProfileDialog } from '@/components/MaestroPlanProfileDialog'
 import { StandardPlanHandoffDialog } from '@/components/StandardPlanHandoffDialog'
+import { ReviewStartDialog } from '@/components/chat/ReviewStartDialog'
 import {
   isReviewRunning,
   mergePlanReviewFindings,
@@ -66,7 +67,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const { review, start: startReviewOf } = useConversationReview(api, plan.agentId)
   const planReview = review?.target === 'plan' ? review : null
   const reviewing = isReviewRunning(planReview)
-  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
   const [reviewOutcome, setReviewOutcome] = useState<{ reviewId: string; count: number } | null>(null)
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
 
@@ -131,10 +132,10 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
     void api.chatReviewDismiss(plan.agentId)
   }, [api, draftReady, feedback, lineComments, plan.agentId, plan.plan, plan.version, planReview, reviewOutcome, tChat])
 
-  const startReview = async () => {
-    setReviewNotice(null)
+  // The dialog chooses who reviews and reports why a review could not start.
+  const startReview = (reviewer?: Parameters<typeof startReviewOf>[1]) => {
     setReviewOutcome(null)
-    setReviewNotice(await startReviewOf('plan'))
+    return startReviewOf('plan', reviewer)
   }
   const failedReview =
     planReview?.status === 'failed' &&
@@ -240,7 +241,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
             disabled={busy || reviewing}
             title={t('plan.reviewPlanHint')}
-            onClick={() => void startReview()}
+            onClick={() => setReviewDialogOpen(true)}
           >
             {reviewing ? <Loader2 className="size-3.5 animate-spin" /> : <ScanSearch className="size-3.5" />}
             {t('plan.reviewPlan')}
@@ -270,13 +271,13 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
         </div>
       </div>
 
-      {(reviewing || failedReview || reviewNotice || reviewOutcome) && (
+      {(reviewing || failedReview || reviewOutcome) && (
         <div
-          role={failedReview || reviewNotice ? 'alert' : 'status'}
+          role={failedReview ? 'alert' : 'status'}
           data-testid="plan-review-status"
           className={cn(
             'flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-[11px]',
-            failedReview || reviewNotice
+            failedReview
               ? 'border-amber-500/20 bg-amber-500/[0.06] text-amber-100'
               : 'border-sky-500/15 bg-sky-500/[0.05] text-sky-100'
           )}
@@ -285,7 +286,9 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             <>
               <Loader2 className="size-3.5 shrink-0 animate-spin" />
               <span className="min-w-0 flex-1 truncate">
-                {t('plan.reviewRunning')} · {reviewProgressText(tChat, planReview)}
+                {[t('plan.reviewRunning'), reviewProgressText(tChat, planReview), planReview.model?.modelId]
+                  .filter(Boolean)
+                  .join(' · ')}
               </span>
               <button
                 type="button"
@@ -301,16 +304,13 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
               <span className="min-w-0 flex-1">
                 {failedReview
                   ? tChat('review.failed', { reason: reviewErrorText(tChat, failedReview.error) })
-                  : reviewNotice
-                    ? tChat('review.startFailed', { reason: reviewErrorText(tChat, reviewNotice) })
-                    : reviewOutcome && reviewOutcome.count > 0
-                      ? t('plan.reviewApplied', { count: reviewOutcome.count })
-                      : t('plan.reviewClean')}
+                  : reviewOutcome && reviewOutcome.count > 0
+                    ? t('plan.reviewApplied', { count: reviewOutcome.count })
+                    : t('plan.reviewClean')}
               </span>
               <button
                 type="button"
                 onClick={() => {
-                  setReviewNotice(null)
                   setReviewOutcome(null)
                   if (failedReview) {
                     setDismissedReviewId(failedReview.reviewId)
@@ -431,6 +431,13 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             editedPlan: edited ? text : undefined,
           })
         }
+      />
+      <ReviewStartDialog
+        open={reviewDialogOpen}
+        conversationId={plan.agentId}
+        target="plan"
+        onOpenChange={setReviewDialogOpen}
+        onStart={startReview}
       />
       <StandardPlanHandoffDialog
         open={standardHandoffOpen}
