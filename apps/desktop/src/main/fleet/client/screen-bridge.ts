@@ -28,7 +28,10 @@ export class FleetScreenBridge {
     private readonly makeSocket: (url: string) => Socket = (url) => new WebSocket(url)
   ) {}
 
-  /** Opens a bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
+  /**
+   * Opens a bot's browser or apps area, an environment's screen, or a workspaces conversation's computer or browser
+   * tile; a bare bot id is its browser area.
+   */
   async openScreen(
     owner: WebContents,
     target: FleetScreenTargetInput,
@@ -43,9 +46,17 @@ export class FleetScreenBridge {
     try {
       api = this.getApi()
       ticket =
-        'environmentId' in screen
-          ? await api.call('environmentScreenTicket', { params: { eid: screen.environmentId }, body: { mode } })
-          : await api.call('botScreenTicket', { params: { id: screen.botId }, body: { mode, surface: screen.surface } })
+        'conversationId' in screen
+          ? await api.call('conversationScreenTicket', {
+              params: { eid: screen.environmentId, cid: screen.conversationId },
+              body: { mode, surface: screen.surface },
+            })
+          : 'environmentId' in screen
+            ? await api.call('environmentScreenTicket', { params: { eid: screen.environmentId }, body: { mode } })
+            : await api.call('botScreenTicket', {
+                params: { id: screen.botId },
+                body: { mode, surface: screen.surface },
+              })
     } finally {
       this.pending--
     }

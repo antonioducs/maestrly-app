@@ -13,8 +13,14 @@ export type FleetProvisioningTarget = { environmentId: string } | { botId: strin
 /** A bare string is a bot id, as the views from before environments pass it. */
 export type FleetProvisioningTargetInput = FleetProvisioningTarget | string
 
-/** A screen: a bot's browser or apps area, or an environment's own screen (its Maestrly settings window). */
-export type FleetScreenTarget = { botId: string; surface: FleetScreenSurface } | { environmentId: string }
+/**
+ * A screen: a bot's browser or apps area, an environment's own screen (its Maestrly settings window), or a workspaces
+ * conversation's computer (`apps`) or browser tile (`browser`), by its id on the host.
+ */
+export type FleetScreenTarget =
+  | { botId: string; surface: FleetScreenSurface }
+  | { environmentId: string }
+  | { environmentId: string; conversationId: string; surface: FleetScreenSurface }
 /** A bare string is a bot's browser area, as the views from before environments open it. */
 export type FleetScreenTargetInput = FleetScreenTarget | string
 

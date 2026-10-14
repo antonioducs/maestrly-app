@@ -7,6 +7,7 @@ import {
   type FLEET_GATEWAY_ROUTES,
   fleetBotIdSchema,
   fleetEnvironmentIdSchema,
+  fleetHostConversationIdSchema,
   fleetScreenSurfaceSchema,
 } from '@maestrly/bot-fleet-protocol'
 import {
@@ -102,6 +103,13 @@ export function provisioningRoute<Op extends FleetProvisioningOp>(
 const screenTargetSchema = z.union([
   fleetBotIdSchema.transform((botId): FleetScreenTarget => ({ botId, surface: 'browser' })),
   z.object({ botId: fleetBotIdSchema, surface: fleetScreenSurfaceSchema }).strict(),
+  z
+    .object({
+      environmentId: fleetEnvironmentIdSchema,
+      conversationId: fleetHostConversationIdSchema,
+      surface: fleetScreenSurfaceSchema,
+    })
+    .strict(),
   z.object({ environmentId: fleetEnvironmentIdSchema }).strict(),
 ])
 
@@ -124,12 +132,18 @@ export function resolveScreenTarget(fleet: FleetFeatures, raw: unknown): FleetSc
 export const GATEWAY_SCREEN_CONTROLLED = 'Another screen in this environment is being controlled.'
 export const GATEWAY_RESTART_TO_OPEN_SCREEN = 'Restart this environment to update it before opening this screen.'
 
+/** How a gateway from before a route answers it. */
+const GATEWAY_ROUTE_NOT_FOUND = 'Route not found'
+
 /**
  * The error a refused screen ticket crosses IPC as, which keeps only its message: a stable marker for the refusals
- * the screen handles itself, the gateway's own error otherwise.
+ * the screen handles itself, the gateway's own error otherwise. A gateway from before conversation screens does not
+ * know their ticket route: it needs an update.
  */
-export function screenTicketError(error: unknown): unknown {
+export function screenTicketError(error: unknown, target?: FleetScreenTarget): unknown {
   if (!(error instanceof FleetClientError)) return error
+  if (target && 'conversationId' in target && error.code === 'NOT_FOUND' && error.message === GATEWAY_ROUTE_NOT_FOUND)
+    return new Error(FLEET_SCREEN_UPDATE_REQUIRED)
   if (error.code === 'BOT_NOT_RUNNING') return new Error(FLEET_SCREEN_OFFLINE)
   if (error.code !== 'CONFLICT') return error
   if (error.message === GATEWAY_SCREEN_CONTROLLED) return new Error(FLEET_SCREEN_CONFLICT)

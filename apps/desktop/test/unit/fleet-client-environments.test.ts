@@ -594,6 +594,46 @@ describe('environment IPC', () => {
     ])
   })
 
+  it("opens a workspaces conversation's computer and browser tile, and refuses malformed targets", async () => {
+    const ipc = register()
+    const conversationId = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
+    features.list = ['environments']
+    expect(() =>
+      ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'view')
+    ).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    features.list = ['environments', 'video-screens']
+    await ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'control')
+    await ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'browser' }, 'view')
+    for (const target of [
+      { environmentId: 'workspaces', conversationId: 'ação', surface: 'apps' },
+      { environmentId: 'workspaces', conversationId, surface: 'desktop' },
+      { environmentId: 'workspaces', conversationId, surface: 'apps', extra: 1 },
+      { environmentId: 'Work Space', conversationId, surface: 'apps' },
+    ])
+      expect(() => ipc.mutate('fleet:screenOpen', target, 'view')).toThrow()
+    expect(mocks.openScreen.mock.calls.map(([, target, mode]) => [target, mode])).toEqual([
+      [{ environmentId: 'workspaces', conversationId, surface: 'apps' }, 'control'],
+      [{ environmentId: 'workspaces', conversationId, surface: 'browser' }, 'view'],
+    ])
+  })
+
+  it('asks for an update of a gateway that does not know conversation screens', async () => {
+    features.list = ['environments', 'video-screens']
+    const ipc = register()
+    const target = { environmentId: 'workspaces', conversationId: 'c-1', surface: 'apps' }
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Route not found'))
+    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_RESTART_TO_OPEN_SCREEN))
+    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow(FLEET_SCREEN_RESTART_REQUIRED)
+    // A missing environment is not an old gateway, nor is a bot's missing route.
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Environment not found'))
+    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow('Environment not found')
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Route not found'))
+    await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
+      'Route not found'
+    )
+  })
+
   it('marks a screen conflict so the view can tell that the environment display is in use', async () => {
     features.list = ['environments', 'video-screens']
     const ipc = register()
@@ -750,10 +790,15 @@ describe('environment screens', () => {
     await bridge.openScreen(owner, 'scout', 'view')
     await bridge.openScreen(owner, { botId: 'scout', surface: 'apps' }, 'control')
     await bridge.openScreen(owner, { environmentId: 'work' }, 'control')
+    await bridge.openScreen(owner, { environmentId: 'workspaces', conversationId: 'c-1', surface: 'browser' }, 'view')
     expect(call.mock.calls).toEqual([
       ['botScreenTicket', { params: { id: 'scout' }, body: { mode: 'view', surface: 'browser' } }],
       ['botScreenTicket', { params: { id: 'scout' }, body: { mode: 'control', surface: 'apps' } }],
       ['environmentScreenTicket', { params: { eid: 'work' }, body: { mode: 'control' } }],
+      [
+        'conversationScreenTicket',
+        { params: { eid: 'workspaces', cid: 'c-1' }, body: { mode: 'view', surface: 'browser' } },
+      ],
     ])
     bridge.closeAll()
   })

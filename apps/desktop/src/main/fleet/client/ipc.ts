@@ -448,7 +448,7 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const target = resolveScreenTarget(fleet, rawTarget)
     return fleet.screens.openScreen(event.sender, target, mode).catch((error: unknown) => {
       // Only a control session on the shared display is a conflict; the other 409s need a start or a restart.
-      throw screenTicketError(error)
+      throw screenTicketError(error, target)
     })
   })
   reg.mhandle('fleet:screenSend', (event, channelId: unknown, data: unknown) => {
