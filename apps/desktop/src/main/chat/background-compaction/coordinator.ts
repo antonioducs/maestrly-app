@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { estimateTextTokens } from '../portable-context'
+import { estimateTextTokens, PORTABLE_SUMMARY_MAX_RETRIES, PORTABLE_SUMMARY_STEP_TIMEOUT_MS } from '../portable-context'
 import {
   backgroundCompactionConfigIdentity,
   effectiveBackgroundCompactionInterval,
@@ -25,7 +25,6 @@ import {
 } from './types'
 
 const MAX_SUMMARY_TOKENS = 8_000
-const STAGE_TIMEOUT_MS = 3 * 60_000
 const RETRY_DELAY_MS = 30_000
 
 class BackgroundCompactionInvariantError extends Error {
@@ -746,9 +745,9 @@ export class ChatBackgroundCompactionCoordinator {
         selection: work.selection,
         contextWindow: work.contextWindow,
         maxSummaryTokens: work.maxSummaryTokens,
-        stepTimeoutMs: STAGE_TIMEOUT_MS,
+        stepTimeoutMs: PORTABLE_SUMMARY_STEP_TIMEOUT_MS,
         retryDelayMs: RETRY_DELAY_MS,
-        maxRetries: 1,
+        maxRetries: PORTABLE_SUMMARY_MAX_RETRIES,
         signal: controller.signal,
         onAttempt: (phase) => {
           controller.signal.throwIfAborted()
