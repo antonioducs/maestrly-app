@@ -78,7 +78,11 @@ type Entry = {
   starting: Promise<ComputerOpenResult> | null
   /** The display number of the computer it runs or starts. */
   number: number | null
+  /** The teardown of its last computer: the next one starts once it is over, on the same key and number. */
+  stopping: Promise<void> | null
   closed: boolean
+  /** Its close: the entry keeps its slot until its computer stopped. */
+  closing: Promise<void> | null
 }
 
 const NOT_HELD: FleetInstanceHold = { state: 'none', reason: null, since: null, interruptedTurn: false }
@@ -114,6 +118,13 @@ export class ConversationComputers {
   async open(conversationId: string, by: 'owner' | 'agent'): Promise<ComputerOpenResult> {
     if (this.disposing) return { ok: false, reason: 'unavailable' }
     let entry = this.entries.get(conversationId)
+    // Opened again while it closes: a new computer, once the old one stopped.
+    if (entry?.closing) {
+      await entry.closing
+      // A deleted conversation gets no new computer.
+      if (!this.deps.conversation(conversationId)) return { ok: false, reason: 'unavailable' }
+      return this.open(conversationId, by)
+    }
     if (entry?.computer) {
       entry.computer.idleSince = null
       return { ok: true, display: entry.computer.display.display, started: false }
@@ -149,6 +160,7 @@ export class ConversationComputers {
    */
   async acquireScreen(conversationId: string, surface: 'apps' | 'browser', mode: ScreenMode): Promise<ScreenLease> {
     const entry = this.entries.get(conversationId)
+    if (entry?.closed) throw new ComputerUnavailableError('This conversation is being closed.')
     if (surface === 'browser') {
       if (!entry) throw new ComputerUnavailableError("This conversation's browser is not on a tile.")
       return this.deps.displays.acquireScreen({ kind: 'tile', slot: entry.slot })
@@ -187,6 +199,7 @@ export class ConversationComputers {
   leaseTile(conversationId: string): TileLease | null {
     if (this.disposing) return null
     let entry = this.entries.get(conversationId)
+    if (entry?.closed) return null
     if (!entry) {
       const slot = this.freeSlot()
       if (slot === null) return null
@@ -216,15 +229,19 @@ export class ConversationComputers {
   }
 
   /** Gives the conversation's computer and its tile back at once: it is being closed or deleted. */
-  async close(conversationId: string): Promise<void> {
+  close(conversationId: string): Promise<void> {
     const entry = this.entries.get(conversationId)
-    if (!entry) return
-    this.entries.delete(conversationId)
+    if (!entry) return Promise.resolve()
+    if (entry.closing) return entry.closing
     entry.closed = true
     entry.tileLeases = 0
-    if (entry.starting) await entry.starting.catch(() => undefined)
-    await this.stopComputer(conversationId, entry)
-    this.deps.placeBrowser(conversationId, { kind: 'none' })
+    entry.closing = (async () => {
+      if (entry.starting) await entry.starting.catch(() => undefined)
+      await this.stopComputer(conversationId, entry)
+      if (this.entries.get(conversationId) === entry) this.entries.delete(conversationId)
+      this.deps.placeBrowser(conversationId, { kind: 'none' })
+    })()
+    return entry.closing
   }
 
   dispose(): Promise<void> {
@@ -244,6 +261,8 @@ export class ConversationComputers {
     let display: BotDisplay | null = null
     let handle: BotDesktopHandle | null = null
     try {
+      if (entry.stopping) await entry.stopping
+      if (entry.closed || this.disposing) throw new Error('The conversation was closed while its computer started.')
       display = await this.deps.displays.startDesktop({
         key,
         slot: entry.slot,
@@ -286,7 +305,16 @@ export class ConversationComputers {
   }
 
   private newEntry(conversationId: string, slot: number): Entry {
-    const entry: Entry = { slot, tileLeases: 0, computer: null, starting: null, number: null, closed: false }
+    const entry: Entry = {
+      slot,
+      tileLeases: 0,
+      computer: null,
+      starting: null,
+      number: null,
+      stopping: null,
+      closed: false,
+      closing: null,
+    }
     this.entries.set(conversationId, entry)
     return entry
   }
@@ -371,18 +399,27 @@ export class ConversationComputers {
     }
   }
 
-  /** Stops the entry's computer and clears what the conversation's shells and tools knew of it. */
-  private async stopComputer(conversationId: string, entry: Entry): Promise<void> {
+  /**
+   * Stops the entry's computer and clears what the conversation's shells and tools knew of it at once; the promise
+   * settles once its desktop stopped, or the one already stopping did.
+   */
+  private stopComputer(conversationId: string, entry: Entry): Promise<void> {
     const computer = entry.computer
-    if (!computer) return
+    if (!computer) return entry.stopping ?? Promise.resolve()
     entry.computer = null
     entry.number = null
     setConversationScreen(conversationId, null)
     setConversationShellEnv(conversationId, null)
     // The size its desktop presented the browser at: a stream window of the browser takes the viewer's size again.
     setPresentedBrowserSize(conversationId, null)
-    await computer.handle.dispose().catch((error: unknown) => this.deps.log(describeError(error)))
-    await this.deps.displays.stopBot(computer.key).catch((error: unknown) => this.deps.log(describeError(error)))
-    this.deps.log(`The computer of conversation ${conversationId} on ${computer.display.display} was given back.`)
+    const stopping = (async () => {
+      await computer.handle.dispose().catch((error: unknown) => this.deps.log(describeError(error)))
+      await this.deps.displays.stopBot(computer.key).catch((error: unknown) => this.deps.log(describeError(error)))
+      this.deps.log(`The computer of conversation ${conversationId} on ${computer.display.display} was given back.`)
+    })()
+    entry.stopping = stopping
+    return stopping.finally(() => {
+      if (entry.stopping === stopping) entry.stopping = null
+    })
   }
 }

@@ -52,6 +52,7 @@ function setup(titles: Record<string, string | null> = {}) {
   const windows = new Map<string, { pid: number | null }[]>()
   const ownPids = new Map<string, number[]>()
   const releases: DisplayScreen[] = []
+  const deleted = new Set<string>()
   const displays = {
     startDesktop: vi.fn(async (owner: DesktopOwner): Promise<BotDisplay> => {
       started.push(owner)
@@ -96,7 +97,8 @@ function setup(titles: Record<string, string | null> = {}) {
       }
     },
     listWindows: async (display) => windows.get(display) ?? [],
-    conversation: (id) => (id in titles ? { title: titles[id], cwd: '/srv/work' } : { title: id, cwd: null }),
+    conversation: (id) =>
+      deleted.has(id) ? null : id in titles ? { title: titles[id], cwd: '/srv/work' } : { title: id, cwd: null },
     placeBrowser: (id, placement) => void placements.push([id, placement]),
     untitled: 'Untitled conversation',
     now: () => now,
@@ -122,6 +124,7 @@ function setup(titles: Record<string, string | null> = {}) {
   return {
     computers,
     displays,
+    deleted,
     started,
     stopped,
     acquired,
@@ -270,6 +273,77 @@ describe('ConversationComputers', () => {
     expect(t.placementsOf(a).at(-1)).toEqual({ kind: 'none' })
     lease?.release()
     expect(t.computers.leaseTile(conversation())?.tile).toEqual(fleetEnvironmentTile(1))
+  })
+
+  /** Holds the next stop of a desktop until `finish` runs. */
+  function holdNextStop(t: ReturnType<typeof setup>) {
+    let finish: () => void = () => undefined
+    t.displays.stopBot.mockImplementationOnce(async (key: string) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      t.stopped.push(key)
+    })
+    return () => finish()
+  }
+
+  it('starts a computer opened while its last one is given back once that one stopped', async () => {
+    const t = setup()
+    const a = conversation()
+    await t.computers.open(a, 'owner')
+    const finish = holdNextStop(t)
+    await t.advance(65_000)
+    expect(t.displays.stopBot).toHaveBeenCalledTimes(1)
+    // The agent uses the computer as it is being given back: the new one waits for the old one to stop.
+    const reopened = t.computers.open(a, 'agent')
+    await settle()
+    expect(t.started).toHaveLength(1)
+    finish()
+    expect(await reopened).toEqual({ ok: true, display: ':10', started: true })
+    expect(t.started).toHaveLength(2)
+    expect(t.stopped).toEqual([computerOwnerKey(a)])
+    expect(t.computers.computer(a)?.display).toBe(':10')
+    expect(conversationScreen(a)?.display).toBe(':10')
+  })
+
+  it("keeps a closing conversation's slot until its computer stopped", async () => {
+    const t = setup()
+    const a = conversation()
+    const b = conversation()
+    await t.computers.open(a, 'owner')
+    const finish = holdNextStop(t)
+    const closing = t.computers.close(a)
+    await settle()
+    // Another conversation does not get the tile whose desktop is still stopping.
+    await t.computers.open(b, 'owner')
+    expect(t.started.at(-1)?.slot).toBe(2)
+    expect(t.computers.leaseTile(a)).toBeNull()
+    await expect(t.computers.acquireScreen(a, 'browser', 'view')).rejects.toBeInstanceOf(ComputerUnavailableError)
+    // Opened again meanwhile, it starts afresh once the old one stopped.
+    const reopened = t.computers.open(a, 'owner')
+    await settle()
+    expect(t.started).toHaveLength(2)
+    finish()
+    await closing
+    expect(await reopened).toMatchObject({ ok: true, started: true })
+    expect(t.started).toHaveLength(3)
+    expect(t.started.at(-1)?.slot).toBe(1)
+  })
+
+  it('starts no computer for a conversation deleted while it was closing', async () => {
+    const a = conversation()
+    const t = setup()
+    await t.computers.open(a, 'owner')
+    const finish = holdNextStop(t)
+    const closing = t.computers.close(a)
+    const reopened = t.computers.open(a, 'owner')
+    await settle()
+    // Deleted: the store no longer knows it.
+    t.deleted.add(a)
+    finish()
+    await closing
+    expect(await reopened).toEqual({ ok: false, reason: 'unavailable' })
+    expect(t.started).toHaveLength(1)
   })
 
   it('holds its desktop back from bringing windows forward while a device controls it', async () => {
