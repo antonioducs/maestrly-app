@@ -16,7 +16,10 @@ vi.mock('../../src/main/drawer/panels', () => ({
   ensurePanelView: vi.fn(),
   scheduleColdPanelEviction: vi.fn(),
 }))
-vi.mock('../../src/main/conversation-screen', () => ({ presentedBrowserSize: vi.fn(() => null) }))
+vi.mock('../../src/main/conversation-screen', () => ({
+  presentedBrowserSize: vi.fn(() => null),
+  presentsBrowserInArea: vi.fn(() => false),
+}))
 vi.mock('../../src/main/fleet/instance/config', () => ({ isBotMode: vi.fn(() => false) }))
 vi.mock('../../src/main/fleet/instance/window-bounds', () => ({
   floatingStripHeight: vi.fn((_presented: boolean, height: number) => height),

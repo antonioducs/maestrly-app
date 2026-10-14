@@ -13,9 +13,9 @@ describe('standalone renderer scope', () => {
       'notes',
       'chatgpt',
     ])
-    // The Files tab is for conversations of a remote host only.
+    // The Files and Computer tabs are for conversations of a remote host only.
     expect(mainTabsForContext(DEFAULT_MAIN_ORDER, { scope: 'project' })).toEqual(
-      DEFAULT_MAIN_ORDER.filter((tab) => tab !== 'files')
+      DEFAULT_MAIN_ORDER.filter((tab) => tab !== 'files' && tab !== 'computer')
     )
   })
   it('restores on-demand tabs without reopening project-only tools', () => {
