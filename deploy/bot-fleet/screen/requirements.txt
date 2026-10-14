@@ -1,0 +1,7 @@
+pixelflux==2.1.0 \
+    --hash=sha256:c2e69ac66e599eb340e827c4d1e730638cc4165e67954e386cc53632c2507d38 \
+    --hash=sha256:36a594b25005405eae09fdbfaf66d3c83caae9bc42a834624dfc64fa4e8434d4
+python-xlib==0.33 \
+    --hash=sha256:c3534038d42e0df2f1392a1b30a15a4ff5fdc2b86cfa94f072bf11b10a164398
+six==1.17.0 \
+    --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
