@@ -8,8 +8,11 @@ import { Group } from '../primitives/Group'
 import { Sheet } from '../primitives/Sheet'
 
 const fromImage = (asset: ImagePicker.ImagePickerAsset): OutboxAttachment => {
-  const name = asset.fileName ?? asset.uri.split('/').pop() ?? 'photo.jpg'
-  const mediaType = asset.mimeType ?? (/\.png$/i.test(name) ? 'image/png' : 'image/jpeg')
+  const file = asset.uri.split('/').pop() ?? 'photo.jpg'
+  const mediaType = asset.mimeType ?? (/\.png$/i.test(file) ? 'image/png' : 'image/jpeg')
+  // A photo taken as HEIC keeps its original name after it was re-encoded; name it for what it now is.
+  const original = asset.fileName ?? file
+  const name = mediaType === 'image/jpeg' ? original.replace(/\.(heic|heif)$/i, '.jpg') : original
   return { name, kind: 'image', mediaType, uri: asset.uri, byteSize: asset.fileSize ?? 0 }
 }
 
@@ -33,6 +36,8 @@ export function AttachSheet({
     mediaTypes: ['images'],
     quality: 0.8,
     allowsMultipleSelection: true,
+    // iOS hands over a JPEG copy of HEIC photos, which every model reads.
+    preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
   }
 
   async function camera() {
