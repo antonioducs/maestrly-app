@@ -171,7 +171,8 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       upsert(botId, { ...item })
       await sleep(45)
     }
-    upsert(botId, { ...item, text, streaming: false })
+    // A cancelled turn keeps only what it had said.
+    upsert(botId, { ...item, text: alive() ? text : item.text, streaming: false })
   }
 
   function ask(botId: string, spec: AskSpec) {

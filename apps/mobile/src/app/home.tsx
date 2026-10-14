@@ -160,7 +160,7 @@ function HomeScreen() {
   let body = <EmptyState chats={hosted} />
   if (current?.kind === 'bot' && bot) {
     title = <BotTitle bot={bot} />
-    body = <BotConversation bot={bot} />
+    body = <BotConversation key={bot.id} bot={bot} />
   } else if (current?.kind === 'chat') {
     title = chat ? <ChatTitle chat={chat} runtime={runtime} serverName={active?.name ?? ''} /> : null
     body = <ChatConversation key={current.id} conversationId={current.id} />
