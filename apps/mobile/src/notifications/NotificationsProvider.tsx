@@ -43,8 +43,9 @@ const NotificationsContext = createContext<NotificationsValue | null>(null)
 const OFFERED_KEY = 'prefs.notificationsOffered'
 const native = Platform.OS === 'ios' || Platform.OS === 'android'
 
-const toPermission = (status: Notifications.PermissionStatus | string): PushPermission =>
-  status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined'
+/** Android 13 and later report `denied` before the app ever asked; that is not the person turning them off. */
+const toPermission = ({ status, canAskAgain }: { status: string; canAskAgain: boolean }): PushPermission =>
+  status === 'granted' ? 'granted' : status === 'denied' && !canAskAgain ? 'denied' : 'undetermined'
 
 /**
  * Notifications from every paired server: the permission, this phone's push token and what it wants to hear about,
@@ -92,7 +93,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         importance: Notifications.AndroidImportance.HIGH,
       }).catch(() => {})
     void Notifications.getPermissionsAsync().then(
-      (value) => setPermission(toPermission(value.status)),
+      (value) => setPermission(toPermission(value)),
       () => setPermission('unavailable')
     )
     void loadPushPreferences(kv).then(setPreferences)
@@ -184,7 +185,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       return 'denied'
     }
     const asked = await Notifications.requestPermissionsAsync()
-    const next = toPermission(asked.status)
+    const next = toPermission(asked)
     setPermission(next)
     return next
   }, [])
