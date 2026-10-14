@@ -405,7 +405,7 @@ async function fake(environments: boolean, compaction = false, runtimes = false)
  */
 export async function harness(
   now: () => number = Date.now,
-  options: { environments?: boolean; compaction?: boolean; runtimes?: boolean } = {}
+  options: { environments?: boolean; compaction?: boolean; runtimes?: boolean; pushOff?: boolean } = {}
 ) {
   const instance = await fake(options.environments === true, options.compaction === true, options.runtimes === true),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
@@ -414,6 +414,7 @@ export async function harness(
     MAESTRLY_GATEWAY_DATA_DIR: dir,
     MAESTRLY_GATEWAY_PUBLIC_PORT: '1',
     MAESTRLY_GATEWAY_INTERNAL_PORT: '2',
+    ...(options.pushOff ? { MAESTRLY_GATEWAY_PUSH: 'off' } : {}),
   })
   const store = new Store(dir),
     docker = new FakeDockerDriver()

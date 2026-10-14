@@ -49,4 +49,14 @@ describe('push registration routes', () => {
     const anonymous = await fetch(h.origin + '/v1/devices/self/push', { headers: { 'X-Maestrly-Fleet-Protocol': '1' } })
     expect(anonymous.status).toBe(401)
   })
+
+  it('tells a phone that a server with push off sends no notifications', async () => {
+    const h = await harness(Date.now, { pushOff: true })
+    expect((await json(await fetch(h.origin + '/v1/meta'))).features).toContain('push-notifications')
+    const refused = await h.request('PUT', '/v1/devices/self/push', registration)
+    expect(refused.status).toBe(409)
+    expect(await json(refused)).toMatchObject({ code: 'CONFLICT' })
+    expect(h.store.activePushRegistrations()).toEqual([])
+    expect((await h.request('POST', '/v1/devices/self/push/test', {})).status).toBe(409)
+  })
 })

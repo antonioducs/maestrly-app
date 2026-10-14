@@ -307,7 +307,8 @@ export async function publicRoute(
             FLEET_HOST_EDITOR_FEATURE,
             FLEET_DEVICE_PAIRING_FEATURE,
             FLEET_MOBILE_BRIDGE_FEATURE,
-            ...(ctx.config.push === 'off' ? [] : [FLEET_PUSH_FEATURE]),
+            // Also when push is off: a phone then hears from the push routes that this server sends none.
+            FLEET_PUSH_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
