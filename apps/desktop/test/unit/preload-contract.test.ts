@@ -32,6 +32,7 @@ import { hostsApi } from '../../src/preload/api-hosts'
 import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 import { transfersApi } from '../../src/preload/api-transfers'
+import { conversationMoveApi } from '../../src/preload/api-conversation-move'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -78,6 +79,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['hostFsApi', hostFsApi],
   ['artifactsApi', artifactsApi],
   ['transfersApi', transfersApi],
+  ['conversationMoveApi', conversationMoveApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -333,7 +335,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(571)
+    expect(keys).toHaveLength(577)
     expect(keys.sort()).toMatchSnapshot()
   })
 

@@ -15,6 +15,7 @@ import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
 import { performanceApi } from '../../src/preload/api-performance'
 import { transfersApi } from '../../src/preload/api-transfers'
+import { conversationMoveApi } from '../../src/preload/api-conversation-move'
 import { popupApi } from '../../src/preload/api-popup'
 import { settingsApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
@@ -95,6 +96,7 @@ describe('host channel policy', () => {
       ...hostsApi,
       ...artifactsApi,
       ...transfersApi,
+      ...conversationMoveApi,
     }
     const byMember = channelsOf(local, seen)
     expect(new Set([...byMember.values()].flat()).size).toBeGreaterThan(100)
