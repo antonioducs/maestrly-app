@@ -224,6 +224,13 @@ export class HostEditorProxy {
     for (const entry of [...this.requests]) if (entry.environmentId === environmentId) this.cut(entry)
     for (const [socket, entry] of [...this.sockets]) if (entry.environmentId === environmentId) socket.destroy()
   }
+  /** The editor requests and connections open to an environment. */
+  count(environmentId: string): number {
+    return (
+      [...this.requests].filter((entry) => entry.environmentId === environmentId).length +
+      [...this.sockets.values()].filter((entry) => entry.environmentId === environmentId).length
+    )
+  }
   close(): void {
     for (const entry of [...this.requests]) this.cut(entry)
     for (const socket of [...this.sockets.keys()]) socket.destroy()

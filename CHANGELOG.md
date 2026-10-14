@@ -5,6 +5,21 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Run several workspaces environments on one server, one per scope of your work
+  (for example personal and each company), so their accounts, keys, site
+  sign-ins, Git and cloud credentials never mix. Each has its own Docker network,
+  its own folder on the server, a name and a color in the sidebar's machine
+  switcher, and optional CPU limit and stop when idle. Update the bot server to
+  use it. See [several scopes on one server](docs/remote-workspaces.md#several-scopes-on-one-server).
+
+### Changed
+
+- A workspaces environment created before moves to a network of its own the
+  next time it restarts, and keeps the server's whole workspaces folder until
+  you give it a folder of its own on its page.
+
 ## [0.18.0] - 2026-10-14
 
 ### Added

@@ -86,6 +86,7 @@ describe('environment routes', () => {
       'runtime-updates',
       'desktop-bridge',
       'workspaces-host',
+      'workspaces-environments',
       'host-files',
       'host-editor',
       'message-edit',

@@ -9,6 +9,7 @@ import {
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
+  FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_HOST_FILES_FEATURE,
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -337,6 +338,8 @@ export async function publicRoute(
             FLEET_RUNTIME_UPDATES_FEATURE,
             FLEET_DESKTOP_BRIDGE_FEATURE,
             FLEET_WORKSPACES_HOST_FEATURE,
+            // The 20th feature: desktops from before it accept no more than 20.
+            FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
             FLEET_HOST_FILES_FEATURE,
             FLEET_HOST_EDITOR_FEATURE,
             FLEET_MESSAGE_EDIT_FEATURE,
@@ -374,6 +377,9 @@ export async function publicRoute(
           name: input.name,
           memoryLimitBytes: input.memoryLimitBytes,
           kind: input.kind,
+          cpuLimit: input.cpuLimit,
+          idleStopMinutes: input.idleStopMinutes,
+          tint: input.tint,
         }),
         status: 201,
       }))

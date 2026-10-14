@@ -13,11 +13,27 @@ export type ContainerSpec = {
   /** Directories of the Docker host mounted into the container, besides its home volume. */
   binds?: Array<{ source: string; target: string }>
   memory: number
+  /** CPUs the container may use, in billionths of a CPU (Docker's `NanoCpus`); absent: every CPU. */
+  nanoCpus?: number
   shmSize: number
   securityOpt: string[]
   user: string
   capAdd: string[]
 }
+/** A short-lived container that runs one command and is removed: no network, no home volume, no restart. */
+export type OneShotSpec = {
+  image: string
+  /** The program and its arguments, in place of the image's entrypoint. */
+  command: string[]
+  user: string
+  binds: Array<{ source: string; target: string }>
+  securityOpt: string[]
+  /** The container keeps only these capabilities. */
+  capAdd: string[]
+  labels: Record<string, string>
+}
+/** A container attached to a network, with its addresses there (without prefix lengths). */
+export type NetworkMember = { id: string; name: string; addresses: string[] }
 export type ContainerInfo = {
   id: string
   imageId: string
@@ -32,8 +48,19 @@ export type ImageInfo = { id: string; version?: string | null }
 export type FleetNetworkSubnet = { subnet: string; gateway: string | null }
 export interface DockerDriver {
   version(): Promise<string>
-  ensureNetwork(name: string): Promise<void>
+  /** Creates a bridge network unless one of that name exists; labels apply only to a network it creates. */
+  ensureNetwork(name: string, labels?: Record<string, string>): Promise<void>
   networkInspect(name: string): Promise<FleetNetworkSubnet[]>
+  /** The containers attached to a network; empty when there is no such network. */
+  networkMembers(name: string): Promise<NetworkMember[]>
+  /** Attaches a container to a network under these extra names; one already attached is left as it is. */
+  networkConnect(name: string, container: string, aliases: string[]): Promise<void>
+  /** Detaches a container from a network; one not attached, or a network that is gone, is not an error. */
+  networkDisconnect(name: string, container: string): Promise<void>
+  /** Removes a network; one already gone is not an error. */
+  networkRemove(name: string): Promise<void>
+  /** Runs a one-shot container to its end and removes it; returns its exit code. */
+  runOnce(spec: OneShotSpec): Promise<number>
   imageInspect(ref: string): Promise<ImageInfo | null>
   volumeCreate(name: string, labels: Record<string, string>): Promise<void>
   volumeExists(name: string): Promise<boolean>
@@ -46,6 +73,8 @@ export interface DockerDriver {
   remove(id: string, force?: boolean): Promise<void>
   /** Changes a container's memory limit (and its swap, twice the limit as Docker sets by default) in place. */
   updateMemory(id: string, bytes: number): Promise<void>
+  /** Changes a container's CPU limit in place, in billionths of a CPU; 0 lifts it. */
+  updateCpus(id: string, nanoCpus: number): Promise<void>
   inspect(id: string): Promise<ContainerInfo>
   list(label?: string): Promise<ContainerInfo[]>
   statsOnce(id: string): Promise<ContainerStats>
@@ -75,7 +104,7 @@ export class DockerEngineDriver implements DockerDriver {
     readonly socketPath: string,
     readonly timeoutMs = 10000
   ) {}
-  private request(method: string, route: string, body?: unknown): Promise<any> {
+  private request(method: string, route: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<any> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body)
       const req = http.request(
@@ -83,7 +112,7 @@ export class DockerEngineDriver implements DockerDriver {
           socketPath: this.socketPath,
           method,
           path: route,
-          timeout: this.timeoutMs,
+          timeout: timeoutMs,
           headers: payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {},
         },
         (res) => {
@@ -123,13 +152,17 @@ export class DockerEngineDriver implements DockerDriver {
     if (!this.api) await this.version()
     return this.api + path
   }
-  async ensureNetwork(name: string): Promise<void> {
+  async ensureNetwork(name: string, labels: Record<string, string> = {}): Promise<void> {
     const networks = await this.request(
       'GET',
       await this.route('/networks?filters=' + encodeURIComponent(JSON.stringify({ name: [name] })))
     )
     if (!networks.some((network: any) => network.Name === name))
-      await this.request('POST', await this.route('/networks/create'), { Name: name, Driver: 'bridge' })
+      await this.request('POST', await this.route('/networks/create'), {
+        Name: name,
+        Driver: 'bridge',
+        ...(Object.keys(labels).length ? { Labels: labels } : {}),
+      })
   }
   async networkInspect(name: string): Promise<FleetNetworkSubnet[]> {
     const result = await this.request('GET', await this.route('/networks/' + encodeURIComponent(name)))
@@ -137,6 +170,89 @@ export class DockerEngineDriver implements DockerDriver {
     return entries.flatMap((entry) =>
       entry.Subnet ? [{ subnet: entry.Subnet, gateway: entry.Gateway ? entry.Gateway : null }] : []
     )
+  }
+  async networkMembers(name: string): Promise<NetworkMember[]> {
+    let result: any
+    try {
+      result = await this.request('GET', await this.route('/networks/' + encodeURIComponent(name)))
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404) return []
+      throw error
+    }
+    const containers: Record<string, { Name?: string; IPv4Address?: string; IPv6Address?: string }> =
+      result.Containers ?? {}
+    return Object.entries(containers).map(([id, entry]) => ({
+      id,
+      name: String(entry.Name ?? ''),
+      addresses: [entry.IPv4Address, entry.IPv6Address].flatMap((value) =>
+        value ? [String(value).split('/')[0]] : []
+      ),
+    }))
+  }
+  async networkConnect(name: string, container: string, aliases: string[]): Promise<void> {
+    const members = await this.networkMembers(name)
+    if (
+      members.some((member) => member.id === container || member.id.startsWith(container) || member.name === container)
+    )
+      return
+    await this.request('POST', await this.route('/networks/' + encodeURIComponent(name) + '/connect'), {
+      Container: container,
+      EndpointConfig: aliases.length ? { Aliases: aliases } : {},
+    })
+  }
+  async networkDisconnect(name: string, container: string): Promise<void> {
+    try {
+      await this.request('POST', await this.route('/networks/' + encodeURIComponent(name) + '/disconnect'), {
+        Container: container,
+        Force: true,
+      })
+    } catch (error) {
+      // 404: no such network or container; 403 and 409 (by version): not attached to it.
+      if (error instanceof DockerError && [403, 404, 409].includes(error.status)) return
+      throw error
+    }
+  }
+  async networkRemove(name: string): Promise<void> {
+    try {
+      await this.request('DELETE', await this.route('/networks/' + encodeURIComponent(name)))
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404) return
+      throw error
+    }
+  }
+  async runOnce(spec: OneShotSpec): Promise<number> {
+    const created = await this.request('POST', await this.route('/containers/create'), {
+      Image: spec.image,
+      User: spec.user,
+      Entrypoint: spec.command.slice(0, 1),
+      Cmd: spec.command.slice(1),
+      Labels: spec.labels,
+      NetworkDisabled: true,
+      HostConfig: {
+        NetworkMode: 'none',
+        Init: false,
+        AutoRemove: false,
+        Mounts: spec.binds.map((bind) => ({ Type: 'bind', Source: bind.source, Target: bind.target })),
+        SecurityOpt: spec.securityOpt,
+        CapDrop: ['ALL'],
+        ...(spec.capAdd.length ? { CapAdd: spec.capAdd } : {}),
+      },
+    })
+    const id = String(created.Id)
+    try {
+      await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/start'))
+      const result = await this.request(
+        'POST',
+        await this.route('/containers/' + encodeURIComponent(id) + '/wait?condition=not-running'),
+        undefined,
+        60000
+      )
+      return Number(result?.StatusCode ?? 1)
+    } finally {
+      await this.request('DELETE', await this.route('/containers/' + encodeURIComponent(id) + '?force=true')).catch(
+        () => undefined
+      )
+    }
   }
   async imageInspect(ref: string): Promise<ImageInfo | null> {
     try {
@@ -180,6 +296,7 @@ export class DockerEngineDriver implements DockerDriver {
         Env: spec.env,
         HostConfig: {
           Memory: spec.memory,
+          ...(spec.nanoCpus ? { NanoCpus: spec.nanoCpus } : {}),
           ShmSize: spec.shmSize,
           Init: true,
           RestartPolicy: { Name: 'unless-stopped' },
@@ -216,6 +333,11 @@ export class DockerEngineDriver implements DockerDriver {
     await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/update'), {
       Memory: bytes,
       MemorySwap: bytes * 2,
+    })
+  }
+  async updateCpus(id: string, nanoCpus: number) {
+    await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/update'), {
+      NanoCpus: nanoCpus,
     })
   }
   async inspect(id: string): Promise<ContainerInfo> {
@@ -256,18 +378,64 @@ export class FakeDockerDriver implements DockerDriver {
   readonly containers = new Map<string, ContainerInfo & { spec: ContainerSpec }>()
   readonly volumes = new Set<string>()
   readonly networks = new Set<string>()
+  /** Labels each network was created with, and the containers (names or ids, as attached) on each one. */
+  readonly networkLabels = new Map<string, Record<string, string>>()
+  readonly networkAttachments = new Map<string, Set<string>>()
+  /** The subnet each network reports; the fleet network gets the default. */
+  readonly subnets = new Map<string, FleetNetworkSubnet[]>()
   readonly memoryUpdates: Array<{ id: string; memory: number }> = []
+  readonly cpuUpdates: Array<{ id: string; nanoCpus: number }> = []
+  readonly oneShots: OneShotSpec[] = []
+  /** The exit code of the next one-shot containers; 0 by default. */
+  oneShotExitCode = 0
   memoryUpdateFailure: DockerError | null = null
+  cpuUpdateFailure: DockerError | null = null
+  /** Refuses to create networks, as a server with no address pool left does. */
+  networkCreateFailure: DockerError | null = null
   startLatencyMs = 0
   stats: ContainerStats = { memoryBytes: 0, memoryLimitBytes: 0, cpuPercent: 0 }
   async version() {
     return '28.0.0'
   }
-  async networkInspect(_name: string): Promise<FleetNetworkSubnet[]> {
-    return [{ subnet: '172.30.0.0/16', gateway: '172.30.0.1' }]
+  async networkInspect(name: string): Promise<FleetNetworkSubnet[]> {
+    return this.subnets.get(name) ?? [{ subnet: '172.30.0.0/16', gateway: '172.30.0.1' }]
   }
-  async ensureNetwork(name: string) {
+  async ensureNetwork(name: string, labels: Record<string, string> = {}) {
+    if (this.networks.has(name)) return
+    if (this.networkCreateFailure) throw this.networkCreateFailure
     this.networks.add(name)
+    this.networkLabels.set(name, labels)
+  }
+  async networkMembers(name: string): Promise<NetworkMember[]> {
+    if (!this.networks.has(name)) return []
+    const attached = [...(this.networkAttachments.get(name) ?? [])].map((id) => ({ id, name: id, addresses: [] }))
+    const containers = [...this.containers.values()]
+      .filter((item) => item.spec.network === name)
+      .map((item) => ({ id: item.id, name: item.name, addresses: [] }))
+    return [...containers, ...attached]
+  }
+  async networkConnect(name: string, container: string) {
+    if (!this.networks.has(name)) throw new DockerError(404, 'Network not found')
+    const attached = this.networkAttachments.get(name) ?? new Set<string>()
+    attached.add(container)
+    this.networkAttachments.set(name, attached)
+  }
+  async networkDisconnect(name: string, container: string) {
+    this.networkAttachments.get(name)?.delete(container)
+  }
+  async networkRemove(name: string) {
+    if ([...this.containers.values()].some((item) => item.spec.network === name))
+      throw new DockerError(409, 'Network has active endpoints')
+    if (this.networkAttachments.get(name)?.size) throw new DockerError(409, 'Network has active endpoints')
+    this.networks.delete(name)
+    this.networkLabels.delete(name)
+    this.networkAttachments.delete(name)
+  }
+  async runOnce(spec: OneShotSpec): Promise<number> {
+    const image = await this.imageInspect(spec.image)
+    if (!image) throw new DockerError(404, 'Image not found')
+    this.oneShots.push(spec)
+    return this.oneShotExitCode
   }
   setImage(ref: string, id: string) {
     this.images.add(ref)
@@ -332,6 +500,12 @@ export class FakeDockerDriver implements DockerDriver {
     if (this.memoryUpdateFailure) throw this.memoryUpdateFailure
     item.spec = { ...item.spec, memory: bytes }
     this.memoryUpdates.push({ id: item.id, memory: bytes })
+  }
+  async updateCpus(id: string, nanoCpus: number) {
+    const item = await this.lookup(id)
+    if (this.cpuUpdateFailure) throw this.cpuUpdateFailure
+    item.spec = { ...item.spec, nanoCpus: nanoCpus || undefined }
+    this.cpuUpdates.push({ id: item.id, nanoCpus })
   }
   async inspect(id: string) {
     const { spec, ...item } = await this.lookup(id)

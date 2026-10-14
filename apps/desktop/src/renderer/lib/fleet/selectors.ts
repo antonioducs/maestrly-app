@@ -25,9 +25,9 @@ export const isWorkspacesEnvironment = (environment: Pick<FleetEnvironment, 'kin
 export const botEnvironments = (environments: FleetEnvironment[]): FleetEnvironment[] =>
   environments.filter((environment) => !isWorkspacesEnvironment(environment))
 
-/** The server's workspaces environment, if it has one; a server hosts workspaces in at most one. */
-export const workspacesEnvironment = (environments: FleetEnvironment[]): FleetEnvironment | null =>
-  environments.find(isWorkspacesEnvironment) ?? null
+/** The server's workspaces environments, one per scope of the owner's work, by name. */
+export const workspacesEnvironments = (environments: FleetEnvironment[]): FleetEnvironment[] =>
+  environments.filter(isWorkspacesEnvironment).sort(compareByName)
 
 export type FleetEnvironmentGroup = { environment: FleetEnvironment; bots: FleetBot[] }
 /**

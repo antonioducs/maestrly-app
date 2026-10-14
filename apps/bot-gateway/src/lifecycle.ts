@@ -3,6 +3,7 @@ import {
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
@@ -15,8 +16,10 @@ import {
   type FleetCompactionConfig,
   type FleetCreateBotRequest,
   type FleetEnvironment,
+  type FleetEnvironmentIsolation,
   type FleetEnvironmentKind,
   type FleetEnvironmentSetup,
+  type FleetHostFolderMode,
   type FleetRuntimeInfo,
   type FleetErrorCode,
   type FleetGatewayEvent,
@@ -33,6 +36,7 @@ import { token, sha256 } from './auth.js'
 import type { GatewayConfig } from './config.js'
 import { type ContainerInfo, DockerError, type DockerDriver, type ContainerStats } from './docker.js'
 import { GatewayError } from './errors.js'
+import { findGatewayContainer, gatewayAlias } from './gateway-container.js'
 import { InstanceClient, InstanceUnreachableError } from './instance.js'
 import { Logger } from './logger.js'
 import type { EnvironmentChanges, Store, StoredEnvironment } from './store.js'
@@ -41,12 +45,23 @@ const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
 const environmentLabel = 'org.maestrly.fleet.environment-id'
 const egressLabel = 'org.maestrly.fleet.egress'
-/** The host directory a workspaces environment's container was created with; empty when none. */
+/** The server folder a workspaces environment's container was created with; empty when none. */
 const workspacesRootLabel = 'org.maestrly.fleet.workspaces-root'
+/** The network a workspaces environment's container was created on; absent on those from before networks of their own. */
+const networkLabel = 'org.maestrly.fleet.network'
+/** Marks the short-lived containers the gateway runs for a task of its own: never an environment's. */
+const helperLabel = 'org.maestrly.fleet.helper'
 /** Set on a workspaces environment's container created with the token it publishes artifacts with. */
 const hostTokenLabel = 'org.maestrly.fleet.host-token'
 /** Shown on a workspaces environment whose container runs an image from before workspaces hosts. */
 const WORKSPACES_UNSUPPORTED = 'This bot image cannot host workspaces. Update the server.'
+const HOST_FOLDER_FAILED = 'The folder of this environment could not be created on the server.'
+const NETWORK_FAILED = 'Docker could not create the network of this environment.'
+const GATEWAY_NOT_ATTACHED = 'The gateway could not join the network of this environment.'
+/** Failures shown to the owner as they are: fixed texts that say what to look at. */
+const SHOWN_FAILURES = new Set([WORKSPACES_UNSUPPORTED, HOST_FOLDER_FAILED, NETWORK_FAILED, GATEWAY_NOT_ATTACHED])
+export const WORKSPACES_LIMIT = 'This server already hosts as many workspaces environments as it can.'
+export const WORKSPACES_ONLY = 'Only a workspaces environment has this setting.'
 const runtimeUpdatesLabel = 'org.maestrly.fleet.runtime-updates'
 /** The label of containers created before environments: their bot's id, which their environment took over. */
 const legacyBotLabel = 'org.maestrly.fleet.bot-id'
@@ -128,7 +143,22 @@ export class Lifecycle {
   private readonly draining = new Map<string, Promise<void>>()
   /** Checks waiting updates while any exists: a bot may go idle without a status event reaching the gateway. */
   private updateTimer: NodeJS.Timeout | null = null
+  /** Checks idle workspaces environments while any has an idle stop. */
+  private idleTimer: NodeJS.Timeout | null = null
+  /** When each running environment with an idle stop was last seen in use, by environment. */
+  private readonly lastUsed = new Map<string, number>()
+  /** The network and server folder each environment's container was created with, from its labels. */
+  private readonly applied = new Map<string, { network: string; folder: string }>()
+  /** The gateway's own container, once found. */
+  private gatewayContainerId: string | null = null
   private readonly logger = new Logger()
+  /** Finds the gateway's own container, which joins each workspaces environment's network. */
+  locateGateway: () => Promise<string | null> = () =>
+    findGatewayContainer(this.docker, this.config.network, this.config.gatewayContainer)
+  /** A workspaces environment's network was created or removed: the gateway's network boundary reads them again. */
+  onNetworksChanged: () => void = () => {}
+  /** How many bridges, editor connections and file transfers devices hold open to an environment now. */
+  hostConnections: (environmentId: string) => number = () => 0
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   onCloseEnvironmentScreens: (environmentId: string, code: number) => void = () => {}
   /** Closes the bridges computers hold to a workspaces environment: its container stops or goes away. */
@@ -151,7 +181,8 @@ export class Lifecycle {
       new InstanceClient(id, secret, 'http://' + host + ':' + FLEET_PORTS.instanceControl),
     readonly healthTimeoutMs = 240000,
     readonly controllerLostMs = 300000,
-    readonly updateCheckMs = 30000
+    readonly updateCheckMs = 30000,
+    readonly idleCheckMs = 60000
   ) {}
   /**
    * Runs an environment's container, membership and installation changes one at a time, so that a bot joining while
@@ -503,6 +534,10 @@ export class Lifecycle {
         startedAt: resources?.startedAt ?? null,
       },
       memoryLimitBytes: environment.memoryLimitBytes,
+      cpuLimit: environment.cpuLimit,
+      idleStopMinutes: environment.idleStopMinutes,
+      tint: environment.tint,
+      isolation: environment.kind === 'workspaces' ? this.isolation(environment) : null,
       compaction: environment.compaction,
       appVersion: instance?.appVersion ?? null,
       capabilities: this.environmentCapabilities(environment.id),
@@ -587,7 +622,8 @@ export class Lifecycle {
     name: string,
     memoryLimitBytes: number | null,
     at: string,
-    kind: FleetEnvironmentKind = 'bots'
+    kind: FleetEnvironmentKind = 'bots',
+    extra: { cpuLimit?: number | null; idleStopMinutes?: number | null; tint?: string | null } = {}
   ): string {
     const taken = [...this.store.listEnvironments(), ...this.store.archivedEnvironments()].map((item) => item.id)
     const id = deriveBotId(name, taken)
@@ -601,6 +637,11 @@ export class Lifecycle {
         containerName: environmentContainerName(id),
         volumeName: environmentVolumeName(id),
         memoryLimitBytes,
+        cpuLimit: extra.cpuLimit ?? null,
+        idleStopMinutes: kind === 'workspaces' ? (extra.idleStopMinutes ?? null) : null,
+        tint: extra.tint ?? null,
+        // A new workspaces environment gets a server folder of its own.
+        hostFolder: kind === 'workspaces' ? 'own' : null,
         compaction: null,
         updateRequestedAt: null,
         createdAt: at,
@@ -611,29 +652,155 @@ export class Lifecycle {
     )
     return id
   }
-  /** A server hosts workspaces in one environment: its owner separates work by using separate servers. */
-  private requireNoWorkspacesEnvironment() {
-    if (this.store.listEnvironments().some((environment) => environment.kind === 'workspaces'))
-      throw new GatewayError('CONFLICT', 'This server already hosts workspaces.')
+  /**
+   * A server hosts a bounded number of workspaces environments, one per scope of the owner's work: each is a whole
+   * Maestrly with a network of its own.
+   */
+  private requireWorkspacesRoom() {
+    const active = this.store.listEnvironments().filter((environment) => environment.kind === 'workspaces')
+    if (active.length >= FLEET_ENVIRONMENT_LIMITS.workspacesMax) throw new GatewayError('CONFLICT', WORKSPACES_LIMIT)
   }
   /**
    * Creates an environment with no bot yet: its container, then its desktop. A `workspaces` environment never gets
-   * bots: it runs Maestrly in server mode for the owner's chats and workspaces.
+   * bots: it runs Maestrly in server mode for the owner's chats and workspaces, on a network and a server folder of its
+   * own.
    */
   createEnvironment(input: {
     name: string
     memoryLimitBytes: number | null
     kind?: FleetEnvironmentKind
+    cpuLimit?: number | null
+    idleStopMinutes?: number | null
+    tint?: string | null
   }): FleetEnvironment {
     const kind = input.kind ?? 'bots'
+    // Bots run routines on their own: their environment never stops for being idle.
+    if (kind !== 'workspaces' && input.idleStopMinutes != null)
+      throw new GatewayError('INVALID_REQUEST', WORKSPACES_ONLY)
     const id = this.store.transaction(() => {
-      if (kind === 'workspaces') this.requireNoWorkspacesEnvironment()
-      return this.insertEnvironment(input.name, input.memoryLimitBytes, now(), kind)
+      if (kind === 'workspaces') this.requireWorkspacesRoom()
+      return this.insertEnvironment(input.name, input.memoryLimitBytes, now(), kind, input)
     })
     this.recordEnvironmentActivity(id, 'environment_created')
     this.emitEnvironment(id, false)
     this.queueProvision(id, false)
+    this.armIdleChecks()
     return this.environment(id)!
+  }
+  /** The Docker network an environment's container runs on: one of its own for workspaces, the fleet's for bots. */
+  environmentNetwork(environment: Pick<StoredEnvironment, 'id' | 'kind'>): string {
+    return environment.kind === 'workspaces' ? this.config.network + '-env-' + environment.id : this.config.network
+  }
+  /** The networks of the active workspaces environments: the gateway's network boundary includes them. */
+  isolatedNetworks(): string[] {
+    return this.store
+      .listEnvironments()
+      .filter((environment) => environment.kind === 'workspaces')
+      .map((environment) => this.environmentNetwork(environment))
+  }
+  /** The server folder a workspaces environment mounts at the same path; null when it mounts none. */
+  private hostFolderPath(environment: StoredEnvironment): string | null {
+    const root = this.config.workspacesRoot
+    if (environment.kind !== 'workspaces' || !root) return null
+    return environment.hostFolder === 'own' ? root.replace(/\/+$/, '') + '/' + environment.id : root
+  }
+  /** What a workspaces environment's container should be created with. */
+  private desiredPlacement(environment: StoredEnvironment): { network: string; folder: string } {
+    return { network: this.environmentNetwork(environment), folder: this.hostFolderPath(environment) ?? '' }
+  }
+  /** What a workspaces environment's container was created with, as its labels say. */
+  private placementOf(container: ContainerInfo): { network: string; folder: string } {
+    return {
+      network: container.labels[networkLabel] ?? this.config.network,
+      folder: container.labels[workspacesRootLabel] ?? '',
+    }
+  }
+  private isolation(environment: StoredEnvironment): FleetEnvironmentIsolation {
+    const desired = this.desiredPlacement(environment)
+    const applied = this.applied.get(environment.id)
+    const path = desired.folder || null
+    return {
+      network: desired.network === this.config.network ? 'shared' : 'own',
+      folder: { mode: !path ? 'none' : environment.hostFolder === 'own' ? 'own' : 'shared', path },
+      restartRequired: !!applied && (applied.network !== desired.network || applied.folder !== desired.folder),
+    }
+  }
+  /** The gateway's own container, found once; null while it cannot be found. */
+  private async gatewayContainer(): Promise<string | null> {
+    if (this.gatewayContainerId) return this.gatewayContainerId
+    try {
+      this.gatewayContainerId = await this.locateGateway()
+    } catch {
+      return null
+    }
+    return this.gatewayContainerId
+  }
+  /**
+   * Gets a workspaces environment ready for its container: its network exists with the gateway on it (under the name
+   * its internal URL gives, so the environment reaches the gateway at the usual address), and its server folder exists,
+   * owned by the user the environment runs as. A gateway container recreated since starts on the fleet network only,
+   * so this runs before every start, not only when the container is created.
+   */
+  private async prepareWorkspaces(environment: StoredEnvironment) {
+    if (environment.kind !== 'workspaces') return
+    const network = this.environmentNetwork(environment)
+    try {
+      await this.docker.ensureNetwork(network, { [managed]: 'true', [environmentLabel]: environment.id })
+    } catch (error) {
+      if (error instanceof GatewayError) throw error
+      throw new GatewayError('DOCKER_UNAVAILABLE', NETWORK_FAILED)
+    }
+    this.onNetworksChanged()
+    const gateway = await this.gatewayContainer()
+    if (!gateway) throw new GatewayError('INSTANCE_UNAVAILABLE', GATEWAY_NOT_ATTACHED)
+    const alias = gatewayAlias(this.config.internalUrl)
+    try {
+      await this.docker.networkConnect(network, gateway, alias ? [alias] : [])
+    } catch {
+      throw new GatewayError('INSTANCE_UNAVAILABLE', GATEWAY_NOT_ATTACHED)
+    }
+    await this.ensureHostFolder(environment)
+  }
+  /**
+   * Creates a workspaces environment's own server folder, owned by uid 1000, through a short-lived container: the
+   * gateway itself does not mount the server's workspaces folder. It never touches the shared folder.
+   */
+  private async ensureHostFolder(environment: StoredEnvironment) {
+    const root = this.config.workspacesRoot
+    if (!root || environment.hostFolder !== 'own') return
+    let code: number
+    try {
+      code = await this.docker.runOnce({
+        image: this.config.botImage,
+        command: ['install', '-d', '-o', '1000', '-g', '1000', '-m', '0750', '--', '/mnt/root/' + environment.id],
+        user: '0',
+        binds: [{ source: root, target: '/mnt/root' }],
+        securityOpt: this.config.botSecurityOpt,
+        capAdd: ['CHOWN', 'DAC_OVERRIDE', 'FOWNER'],
+        labels: { [helperLabel]: 'host-folder' },
+      })
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404)
+        throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
+      code = -1
+    }
+    if (code !== 0) {
+      this.logger.warn('Environment folder not created', { environmentId: environment.id, exitCode: code })
+      throw new GatewayError('DOCKER_UNAVAILABLE', HOST_FOLDER_FAILED)
+    }
+  }
+  /** Takes a workspaces environment's network away once its container is gone; failures only leave it unused. */
+  private async removeNetwork(environment: StoredEnvironment) {
+    if (environment.kind !== 'workspaces') return
+    const network = this.environmentNetwork(environment)
+    try {
+      const gateway = await this.gatewayContainer()
+      if (gateway) await this.docker.networkDisconnect(network, gateway)
+      await this.docker.networkRemove(network)
+    } catch {
+      this.logger.warn('Environment network not removed', { environmentId: environment.id })
+    }
+    this.onNetworksChanged()
   }
   /**
    * Creates a bot in an existing environment (`environmentId`) or in a new one (`environment`, or else one named after
@@ -816,6 +983,7 @@ export class Lifecycle {
     if (!(await this.docker.imageInspect(this.config.botImage)))
       throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
     await this.docker.ensureNetwork(this.config.network)
+    await this.prepareWorkspaces(environment)
     // Docker returns the existing volume of a restored environment, keeping its files.
     await this.docker.volumeCreate(environment.volumeName, { [managed]: 'true', [environmentLabel]: environmentId })
     const container = await this.createContainer(environmentId)
@@ -848,7 +1016,8 @@ export class Lifecycle {
     const sole = active.length === 1 && single?.id === active[0].id ? single : null
     const soleToken = sole ? this.store.botGatewaySecrets(sole.id)?.gatewayToken : undefined
     const workspaces = environment.kind === 'workspaces'
-    const root = workspaces ? this.config.workspacesRoot : null
+    const root = this.hostFolderPath(environment)
+    const network = this.environmentNetwork(environment)
     // The owner's chats there publish artifacts on this server with it; it is kept, so a new container reuses it.
     const hostToken = workspaces ? this.hostGatewayToken(environmentId) : null
     const env = {
@@ -869,7 +1038,7 @@ export class Lifecycle {
       MAESTRLY_BOT_KEYRING_PASSWORD: secrets.keyringPassword,
       TZ: this.config.timezone,
     }
-    return this.docker.containerCreate({
+    const id = await this.docker.containerCreate({
       name: environment.containerName,
       image: this.config.botImage,
       hostname: environmentId,
@@ -878,19 +1047,22 @@ export class Lifecycle {
         [environmentLabel]: environmentId,
         [egressLabel]: this.config.botEgress,
         [runtimeUpdatesLabel]: this.config.botRuntimeUpdates,
-        ...(workspaces ? { [workspacesRootLabel]: root ?? '', [hostTokenLabel]: '1' } : {}),
+        ...(workspaces ? { [workspacesRootLabel]: root ?? '', [hostTokenLabel]: '1', [networkLabel]: network } : {}),
       },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
-      network: this.config.network,
+      network,
       volume: environment.volumeName,
       // The same path inside as on the host, so paths in logs, in the host's shell and in Maestrly agree.
       ...(root ? { binds: [{ source: root, target: root }] } : {}),
       memory: environment.memoryLimitBytes ?? this.config.botMemory,
+      ...(environment.cpuLimit ? { nanoCpus: Math.round(environment.cpuLimit * 1e9) } : {}),
       shmSize: this.config.botShm,
       securityOpt: this.config.botSecurityOpt,
       user: guarded ? '0' : '1000',
       capAdd: guarded ? ['NET_ADMIN'] : [],
     })
+    if (workspaces) this.applied.set(environmentId, { network, folder: root ?? '' })
+    return id
   }
   private async updateImageState(environmentId: string, container: ContainerInfo): Promise<string | null> {
     const image = await this.docker.imageInspect(this.config.botImage)
@@ -916,13 +1088,23 @@ export class Lifecycle {
     const egressChanged = (container.labels[egressLabel] ?? 'open') !== this.config.botEgress
     // Containers from before this setting update on their own, as `auto` does.
     const runtimeUpdatesChanged = (container.labels[runtimeUpdatesLabel] ?? 'auto') !== this.config.botRuntimeUpdates
-    // A workspaces environment is created with its host directory: a server that gained or moved one replaces it.
-    const workspaces = this.store.getEnvironment(environmentId)?.kind === 'workspaces'
-    const rootChanged =
-      workspaces && (container.labels[workspacesRootLabel] ?? '') !== (this.config.workspacesRoot ?? '')
+    // A workspaces environment is created with its server folder and network: a server that gained or moved its
+    // workspaces folder, an environment that moved to a folder of its own, or a container from before networks of
+    // their own replaces it.
+    const environment = this.store.getEnvironment(environmentId)!
+    const workspaces = environment.kind === 'workspaces'
+    const desired = workspaces ? this.desiredPlacement(environment) : null
+    const placed = workspaces ? this.placementOf(container) : null
+    if (workspaces) this.applied.set(environmentId, placed!)
+    const rootChanged = !!desired && placed!.folder !== desired.folder
+    const networkChanged = !!desired && placed!.network !== desired.network
     // A container created before host tokens cannot publish artifacts: it is created again with its token.
     const hostTokenMissing = workspaces && container.labels[hostTokenLabel] !== '1'
-    if (imageId && (imageChanged || egressChanged || runtimeUpdatesChanged || rootChanged || hostTokenMissing)) {
+    await this.prepareWorkspaces(environment)
+    if (
+      imageId &&
+      (imageChanged || egressChanged || runtimeUpdatesChanged || rootChanged || networkChanged || hostTokenMissing)
+    ) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
       this.instances.delete(environmentId)
@@ -1205,8 +1387,8 @@ export class Lifecycle {
         errorMessage:
           code === 'IMAGE_MISSING'
             ? 'Bot image missing'
-            : error instanceof GatewayError && error.message === WORKSPACES_UNSUPPORTED
-              ? WORKSPACES_UNSUPPORTED
+            : error instanceof GatewayError && SHOWN_FAILURES.has(error.message)
+              ? error.message
               : 'Bot startup failed',
       },
     })
@@ -1241,7 +1423,7 @@ export class Lifecycle {
     })
   }
   /** Stops an environment's container and every bot in it; the environment must be exclusive. */
-  private async halt(id: string, via: Via) {
+  private async halt(id: string, via: Via, data: FleetActivityEntry['data'] = {}) {
     const environment = this.store.getEnvironment(id)!
     // Its next start moves it to the configured image anyway.
     this.updateEnvironment(id, { lifecycle: 'stopping', updateRequestedAt: null })
@@ -1253,8 +1435,9 @@ export class Lifecycle {
     const container = await this.container(environment)
     if (container) await this.docker.stop(container.id)
     this.resources.delete(id)
+    this.lastUsed.delete(id)
     this.updateEnvironment(id, { lifecycle: 'stopped' })
-    this.lifecycleActivity(id, via, 'stopped')
+    this.lifecycleActivity(id, via, 'stopped', data)
   }
   /** Restarts every bot of an environment, recreating its container on the configured image when it is older. */
   async restartEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
@@ -1396,25 +1579,57 @@ export class Lifecycle {
     this.updateTimer = null
   }
   /**
-   * Changes an environment's name, memory limit or default compaction model. A new limit reaches its container live
-   * first: when Docker refuses it, the container and the record both keep the previous one. A new default then reaches
-   * the bots that inherit it.
+   * Changes an environment's name, tint, memory or CPU limit, idle stop, server folder or default compaction model. A
+   * new limit reaches its container live first: when Docker refuses it, the container and the record both keep the
+   * previous one. A new default then reaches the bots that inherit it. A new server folder applies when the container is
+   * next created: the environment reports that a restart is required meanwhile.
    */
   async patchEnvironment(
     id: string,
     input: {
       name?: string
       memoryLimitBytes?: number | null
+      cpuLimit?: number | null
+      idleStopMinutes?: number | null
+      tint?: string | null
+      hostFolder?: FleetHostFolderMode
       compaction?: FleetCompactionConfig | null
       expected?: { name?: string; compaction?: FleetCompactionConfig | null }
     }
   ): Promise<FleetEnvironment> {
     const environment = this.requireEnvironment(id)
+    if (
+      environment.kind !== 'workspaces' &&
+      ((input.idleStopMinutes !== undefined && input.idleStopMinutes !== null) || input.hostFolder !== undefined)
+    )
+      throw new GatewayError('INVALID_REQUEST', WORKSPACES_ONLY)
     const limit = input.memoryLimitBytes
     const changesLimit = limit !== undefined && limit !== environment.memoryLimitBytes
+    const cpus = input.cpuLimit
+    const changesCpus = cpus !== undefined && cpus !== environment.cpuLimit
+    /** What changes in the record alone, compared with the environment as it is when the change applies. */
+    const plain = (current: StoredEnvironment): EnvironmentChanges => {
+      const changes: EnvironmentChanges = {}
+      if (input.name !== undefined && input.name !== current.name) changes.name = input.name
+      if (input.tint !== undefined && input.tint !== current.tint) changes.tint = input.tint
+      if (input.idleStopMinutes !== undefined && input.idleStopMinutes !== current.idleStopMinutes)
+        changes.idleStopMinutes = input.idleStopMinutes
+      if (input.hostFolder !== undefined && input.hostFolder !== current.hostFolder)
+        changes.hostFolder = input.hostFolder
+      return changes
+    }
+    const applyPlain = (changes: EnvironmentChanges) => {
+      if (!Object.keys(changes).length) return
+      this.updateEnvironment(id, changes)
+      if (changes.idleStopMinutes !== undefined) {
+        // A new idle stop counts from now, not from when the environment was last used.
+        this.lastUsed.delete(id)
+        this.armIdleChecks()
+      }
+    }
     // A default is compared in the environment's turn: an earlier change may still be waiting for it.
-    if (!changesLimit && input.compaction === undefined && !input.expected) {
-      if (input.name !== undefined && input.name !== environment.name) this.updateEnvironment(id, { name: input.name })
+    if (!changesLimit && !changesCpus && input.compaction === undefined && !input.expected) {
+      applyPlain(plain(environment))
       return this.environment(id)!
     }
     return this.exclusive(id, async () => {
@@ -1425,12 +1640,12 @@ export class Lifecycle {
       )
         throw new GatewayError('CONFLICT', 'Environment settings changed. Reload before saving.')
       const changesCompaction = input.compaction !== undefined && !sameCompaction(input.compaction, current.compaction)
-      if (!changesLimit && !changesCompaction) {
-        if (input.name !== undefined && input.name !== current.name) this.updateEnvironment(id, { name: input.name })
+      if (!changesLimit && !changesCpus && !changesCompaction) {
+        applyPlain(plain(current))
         return this.environment(id)!
       }
-      const container = changesLimit ? await this.container(current) : null
-      if (limit !== undefined && container) {
+      const container = changesLimit || changesCpus ? await this.container(current) : null
+      if (changesLimit && limit !== undefined && container) {
         const bytes = limit ?? this.config.botMemory
         try {
           await this.docker.updateMemory(container.id, bytes)
@@ -1445,11 +1660,30 @@ export class Lifecycle {
         const measured = this.resources.get(id)
         if (measured) this.resources.set(id, { ...measured, memoryLimitBytes: bytes })
       }
+      if (changesCpus && cpus !== undefined && container) {
+        try {
+          // 0 lifts Docker's limit.
+          await this.docker.updateCpus(container.id, cpus === null ? 0 : Math.round(cpus * 1e9))
+        } catch (error) {
+          if (error instanceof DockerError)
+            throw new GatewayError(
+              error.status >= 400 && error.status < 500 ? 'CONFLICT' : 'DOCKER_UNAVAILABLE',
+              'Docker could not change the CPU limit'
+            )
+          throw error
+        }
+      }
+      const changes = plain(current)
       this.store.updateEnvironment(id, {
-        name: input.name,
+        ...changes,
         ...(changesLimit ? { memoryLimitBytes: limit } : {}),
+        ...(changesCpus ? { cpuLimit: cpus } : {}),
         ...(changesCompaction ? { compaction: input.compaction } : {}),
       })
+      if (changes.idleStopMinutes !== undefined) {
+        this.lastUsed.delete(id)
+        this.armIdleChecks()
+      }
       // A new limit shows in the resources of a bot alone in its environment; a new default only in the bots that
       // inherit it, which it reaches next.
       this.emitEnvironment(id, changesLimit)
@@ -1482,9 +1716,13 @@ export class Lifecycle {
         await this.docker.stop(container.id)
         await this.docker.remove(container.id, true)
       }
+      // Restoring it creates its network again.
+      await this.removeNetwork(environment)
       this.resources.delete(id)
       this.imageOutdated.delete(id)
       this.instances.delete(id)
+      this.applied.delete(id)
+      this.lastUsed.delete(id)
       const members = this.store.botsOfEnvironment(id)
       const botIds = this.store.transaction(() => {
         // Restoring it creates its container on the configured image anyway.
@@ -1528,7 +1766,7 @@ export class Lifecycle {
       throw new GatewayError('NOT_FOUND', 'Archived environment not found')
     const peers = new Set<string>()
     const botIds = this.store.transaction(() => {
-      if (environment.kind === 'workspaces') this.requireNoWorkspacesEnvironment()
+      if (environment.kind === 'workspaces') this.requireWorkspacesRoom()
       const restored = this.store.restoreEnvironment(id)
       for (const botId of restored) {
         const talksTo = this.activePeers(this.store.getBot(botId)!)
@@ -1573,6 +1811,8 @@ export class Lifecycle {
   private async removeFiles(environment: StoredEnvironment, subject: 'bot' | 'environment') {
     const leftover = await this.container(environment)
     if (leftover) await this.docker.remove(leftover.id, true)
+    // Its server folder stays: it holds the owner's files, not the environment's.
+    await this.removeNetwork(environment)
     try {
       await this.docker.volumeRemove(environment.volumeName)
     } catch (error) {
@@ -1592,6 +1832,8 @@ export class Lifecycle {
     this.resources.delete(id)
     this.imageOutdated.delete(id)
     this.instances.delete(id)
+    this.applied.delete(id)
+    this.lastUsed.delete(id)
   }
   private activeEnvironment(id: string): string {
     const bot = this.store.getBot(id)
@@ -2039,6 +2281,7 @@ export class Lifecycle {
       this.imageOutdated.set(id, Boolean(currentImage && container.imageId !== currentImage.id))
       if (this.imageOutdated.get(id))
         this.logger.info('Environment container uses an older image; restart to update', { environmentId: id })
+      if (environment.kind === 'workspaces') this.applied.set(id, this.placementOf(container))
       // A waiting update survives a gateway restart, including the one updating the server, while there is still
       // something to update in a running container.
       if (environment.updateRequestedAt && (!this.imageOutdated.get(id) || container.state !== 'running'))
@@ -2046,16 +2289,25 @@ export class Lifecycle {
       if (container.state === 'running') {
         try {
           if (await this.exclusive(id, () => this.reconcileEnvironment(id))) this.scheduleReconcile(id, 1000)
-        } catch {
+        } catch (error) {
+          if (error instanceof GatewayError && error.message === GATEWAY_NOT_ATTACHED)
+            this.logger.warn('Gateway not on the network of a running environment', { environmentId: id })
           this.updateEnvironment(id, { lifecycle: 'starting' })
           this.scheduleReconcile(id, 1000)
         }
       } else this.updateEnvironment(id, { lifecycle: 'stopped' })
     }
     if (this.store.listEnvironments().some((environment) => environment.updateRequestedAt)) this.armUpdateChecks()
+    this.armIdleChecks()
   }
-  /** Installs a running environment's bots again; true when a bot that had to leave its slot could not. */
+  /**
+   * Installs a running environment's bots again; true when a bot that had to leave its slot could not. A workspaces
+   * environment on a network of its own is reached only once the gateway (perhaps a container recreated since) is on it.
+   */
   private async reconcileEnvironment(id: string): Promise<boolean> {
+    const environment = this.store.getEnvironment(id)
+    if (environment?.kind === 'workspaces' && this.applied.get(id)?.network === this.environmentNetwork(environment))
+      await this.prepareWorkspaces(environment)
     const client = this.client(id)
     const health = await client.health()
     if (!health.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
@@ -2104,6 +2356,55 @@ export class Lifecycle {
     for (const timer of this.controllerTimers.values()) clearTimeout(timer)
     this.controllerTimers.clear()
     this.disarmUpdateChecks()
+    this.disarmIdleChecks()
+  }
+  private armIdleChecks() {
+    if (this.idleTimer || !this.store.listEnvironments().some((environment) => environment.idleStopMinutes)) return
+    this.idleTimer = setInterval(() => void this.checkIdle(), this.idleCheckMs)
+    this.idleTimer.unref?.()
+  }
+  private disarmIdleChecks() {
+    if (this.idleTimer) clearInterval(this.idleTimer)
+    this.idleTimer = null
+  }
+  /**
+   * Stops the running workspaces environments idle for longer than their idle stop: no device holds a bridge, an editor
+   * connection or a file transfer to them, and no chat turn runs there (one that does not answer counts as busy). The
+   * timer calls it, and so can tests.
+   */
+  async checkIdle(at = Date.now()): Promise<void> {
+    const environments = this.store.listEnvironments()
+    if (!environments.some((environment) => environment.idleStopMinutes)) this.disarmIdleChecks()
+    for (const environment of environments) {
+      const id = environment.id
+      if (environment.kind !== 'workspaces' || !environment.idleStopMinutes || environment.lifecycle !== 'running') {
+        this.lastUsed.delete(id)
+        continue
+      }
+      let used = this.hostConnections(id) > 0
+      if (!used) {
+        await this.refreshHostBusy(id)
+        used = this.hostBusy.get(id) !== false
+      }
+      const last = this.lastUsed.get(id)
+      if (used || last === undefined) {
+        this.lastUsed.set(id, at)
+        continue
+      }
+      if (at - last < environment.idleStopMinutes * 60000) continue
+      this.lastUsed.delete(id)
+      try {
+        await this.exclusive(id, async () => {
+          // Checked again in the environment's turn: someone may have connected or started it meanwhile.
+          const current = this.store.getEnvironment(id)
+          if (current?.lifecycle !== 'running' || current.archivedAt || this.hostConnections(id) > 0) return
+          this.logger.info('Environment idle; stopping', { environmentId: id })
+          await this.halt(id, null, { idle: true })
+        })
+      } catch {
+        this.logger.warn('Idle environment not stopped', { environmentId: id })
+      }
+    }
   }
   /** Measures each running environment's container; a bot alone in its environment reports the figures too. */
   async refreshStats() {

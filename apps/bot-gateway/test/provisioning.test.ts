@@ -57,6 +57,7 @@ it('discovers provisioning on the gateway and the live bot', async () => {
     'runtime-updates',
     'desktop-bridge',
     'workspaces-host',
+    'workspaces-environments',
     'host-files',
     'host-editor',
     'message-edit',

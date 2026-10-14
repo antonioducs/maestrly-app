@@ -4,7 +4,7 @@ import { Check, ChevronsUpDown, Monitor, Server } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { HostView } from '../../../shared/hosts'
 import type { HostId } from '../../../shared/host-key'
-import { instanceColor } from '../../../shared/instance-color'
+import { hostTint } from '@/lib/hosts/host-tint'
 import { cn } from '@/lib/utils'
 import { hostSectionStatus, type HostSectionStatus } from '@/lib/hosts/host-status'
 import { Button } from '@/components/ui/button'
@@ -41,9 +41,6 @@ const STATUS_DOT: Record<HostSectionStatus, string> = {
   failed: 'bg-destructive',
 }
 
-/** This computer keeps the app's warm neutral; each server gets a tint of its own, stable across windows. */
-const LOCAL_TINT: [number, number, number] = [230, 223, 208]
-
 const TILE_SIZE = {
   lg: { box: 'size-[26px] rounded-lg', icon: 14, dot: 'size-2' },
   md: { box: 'size-[22px] rounded-[7px]', icon: 12, dot: 'size-2' },
@@ -57,7 +54,7 @@ export function hostName(host: HostView, t: TFunction<'ui'>): string {
 /** One look for a machine wherever the sidebar shows it: its kind, its tint, and a dot for how it is reached. */
 export function HostTile({ host, size = 'lg' }: { host: HostView; size?: keyof typeof TILE_SIZE }) {
   const status = hostSectionStatus(host)
-  const [r, g, b] = host.remote ? instanceColor(host.id).rgb : LOCAL_TINT
+  const [r, g, b] = hostTint(host)
   const Icon = host.remote ? Server : Monitor
   const dims = TILE_SIZE[size]
   const style: CSSProperties = {
@@ -183,6 +180,8 @@ export function HostSwitcher({
               key={host.id}
               data-host-option={host.id}
               onSelect={() => onSelect(host.id)}
+              // Environments of one server are told apart by name; the server they run on is a hover away.
+              title={host.server ? `${hostName(host, t)} · ${host.server}` : undefined}
               className="gap-2.5 py-1.5"
             >
               <HostTile host={host} />
