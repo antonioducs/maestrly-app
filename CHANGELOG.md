@@ -22,6 +22,13 @@ User-visible changes by version. Downloads are on
 - Any paired device can create pairing codes for other devices, at most five
   unused at once.
 
+### Changed
+
+- The bot gateway database moves to schema 13 to keep each phone's push token
+  and notification choices. Older gateways cannot open it, so back up the
+  gateway volume before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
+
 ## [0.18.0] - 2026-10-14
 
 ### Added
