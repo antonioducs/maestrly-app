@@ -195,7 +195,7 @@ export function BotPeerPicker({
         <div
           ref={panel}
           style={style}
-          className="z-[60] flex flex-col rounded-xl border border-border-strong bg-popover p-1.5 backdrop-blur-2xl backdrop-saturate-150 text-popover-foreground shadow-[0_18px_50px_rgba(0,0,0,0.55)] animate-in fade-in-0 zoom-in-[0.985] duration-150 motion-reduce:animate-none"
+          className="z-[60] flex flex-col rounded-xl border border-border-strong bg-popover p-1.5 text-popover-foreground shadow-[0_18px_50px_rgba(0,0,0,0.55)] animate-in fade-in-0 zoom-in-[0.985] duration-150 motion-reduce:animate-none"
         >
           <div className="flex shrink-0 items-center gap-2 border-b border-border px-2 pb-2 pt-1 text-muted-foreground">
             <Search className="size-3.5 shrink-0" aria-hidden="true" />

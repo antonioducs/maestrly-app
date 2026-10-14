@@ -80,7 +80,7 @@ export function MaestroActivityPill({
   return (
     <div ref={rootRef} className="absolute bottom-3 right-3 z-10">
       {open && (
-        <div className="absolute bottom-full right-0 mb-2 flex max-h-[60vh] w-[min(30rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-xl border border-white/[0.1] bg-[#15151a]/95 shadow-xl backdrop-blur">
+        <div className="absolute bottom-full right-0 mb-2 flex max-h-[60vh] w-[min(30rem,calc(100vw-3rem))] flex-col overflow-hidden rounded-xl border border-white/[0.1] bg-[#15151a] shadow-xl">
           <div className="flex items-center gap-2 border-b border-white/[0.07] px-3 py-2">
             <Route className="size-4 text-amber-300" />
             <span className="text-xs font-medium text-foreground">{t('maestro.run.activity.title')}</span>
@@ -187,10 +187,10 @@ export function MaestroActivityPill({
         title={t('maestro.run.activity.open')}
         aria-expanded={open}
         className={cn(
-          'flex max-w-[min(22rem,calc(100vw-3rem))] items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] shadow-lg backdrop-blur transition',
+          'flex max-w-[min(22rem,calc(100vw-3rem))] items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] shadow-lg transition',
           active
-            ? 'border-amber-400/35 bg-amber-400/[0.12] text-amber-100 hover:bg-amber-400/[0.18]'
-            : 'border-white/[0.1] bg-[#1a1a1f]/95 text-muted-foreground hover:bg-[#26262d] hover:text-foreground'
+            ? 'border-amber-400/35 bg-[color-mix(in_oklab,var(--color-amber-400)_12%,#1a1a1f)] text-amber-100 hover:bg-[color-mix(in_oklab,var(--color-amber-400)_18%,#1a1a1f)]'
+            : 'border-white/[0.1] bg-[#1a1a1f] text-muted-foreground hover:bg-[#26262d] hover:text-foreground'
         )}
       >
         <Route className={cn('size-3.5 shrink-0', active ? 'text-amber-300' : 'text-muted-foreground')} />

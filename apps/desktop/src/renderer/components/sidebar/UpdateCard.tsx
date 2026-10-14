@@ -82,7 +82,7 @@ export function UpdateCard() {
           onClick={() => void skip()}
           aria-label={t('update.card.skip')}
           title={t('update.card.skip')}
-          className="no-drag absolute -right-1.5 -top-1.5 rounded-full border border-border bg-background p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+          className="no-drag absolute -right-1.5 -top-1.5 rounded-full border border-border bg-popover p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
         >
           <X className="size-3" />
         </button>

@@ -27,7 +27,7 @@ export function ChatSearchBar({ query, onQueryChange, total, index, loading, onP
 
   return (
     <div className="pointer-events-none absolute left-0 right-0 top-2 z-20 flex justify-center px-4">
-      <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#1a1a1f]/95 px-2 py-1.5 shadow-xl backdrop-blur">
+      <div className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#1a1a1f] px-2 py-1.5 shadow-xl">
         <input
           ref={inputRef}
           value={query}

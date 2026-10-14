@@ -91,7 +91,7 @@ export function ToolPalette({ open, items, openTabs, onPick, onClose, ignoreRef 
       ref={rootRef}
       role="dialog"
       aria-label={t('drawer.addTab')}
-      className="glass-strong absolute left-2 top-11 z-30 flex w-[min(300px,calc(100%-16px))] flex-col overflow-hidden rounded-xl border border-border-strong bg-popover shadow-2xl shadow-black/50 animate-in fade-in-0 zoom-in-95 duration-150"
+      className="absolute left-2 top-11 z-30 flex w-[min(300px,calc(100%-16px))] flex-col overflow-hidden rounded-xl border border-border-strong bg-popover shadow-2xl shadow-black/50 animate-in fade-in-0 zoom-in-95 duration-150"
       style={{ transformOrigin: 'top left' }}
     >
       <label className="flex items-center gap-2 border-b border-border px-3 py-2.5 text-muted-foreground">

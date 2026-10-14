@@ -69,6 +69,7 @@ const NATIVE_ALIAS_CANDIDATES: Record<string, string> = {
   Glob: 'glob',
   Grep: 'grep',
   WebFetch: 'webfetch',
+  WebSearch: 'web_search',
 }
 
 export interface ClaudeToolBridge {

@@ -203,7 +203,7 @@ export function ArtifactGridCard({
                 <MoreHorizontal className="size-4" aria-hidden="true" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[13rem] backdrop-blur-xl">
+            <DropdownMenuContent align="end" className="min-w-[13rem]">
               <DropdownMenuItem onSelect={onOpen}>
                 <ArrowUpRight /> {t('artifacts.menu.open')}
               </DropdownMenuItem>

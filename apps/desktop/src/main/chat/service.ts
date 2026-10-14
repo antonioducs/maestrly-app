@@ -292,6 +292,14 @@ import { registerPerformanceCache } from '../performance/metrics'
 import { builtinToolNamesForMode } from './tools'
 import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled, imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
 import { GENERATED_INTERFACES_FLAG, generatedInterfacesEnabled } from './generated-interfaces'
+import {
+  clearWebSearchKey,
+  getWebSearchProvider,
+  setWebSearchKey,
+  setWebSearchProvider,
+  webSearchKeysPresent,
+} from './web-search/settings'
+import { isWebSearchKeyProvider, isWebSearchProvider } from '../../shared/web-search'
 import { supportsChatToolImages } from './tool-capabilities'
 import {
   getAppFlag,
@@ -2145,6 +2153,7 @@ function buildConfig(): ChatConfig {
     appToolGroups: globalAppToolGroups(),
     imageGenEnabled: getAppFlag(IMAGE_GEN_FLAG, true),
     generatedInterfacesEnabled: generatedInterfacesEnabled(),
+    webSearch: { provider: getWebSearchProvider(), keys: webSearchKeysPresent() },
     bashFiltersEnabled: getAppFlag('chat.bashFilters', true),
     openAIHarnessEnabled: getAppFlag('chat.openAIHarness', true),
     astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
@@ -10780,6 +10789,22 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // Generated interfaces (prompt section + preview_interface) — GLOBAL toggle, default ON. Applies from the next turn.
   deps.mhandle('chat:set-generated-interfaces', (_e, enabled: boolean) => {
     setAppFlag(GENERATED_INTERFACES_FLAG, enabled === true)
+    return { ok: true }
+  })
+  // Web search provider and keys. The renderer only learns whether each key is set.
+  deps.mhandle('chat:set-web-search-provider', (_e, provider: unknown) => {
+    if (!isWebSearchProvider(provider)) return { ok: false }
+    setWebSearchProvider(provider)
+    notifyChatRunnerCapabilityChanges(false)
+    return { ok: true }
+  })
+  deps.mhandle('chat:set-web-search-key', (_e, provider: unknown, key: unknown) => {
+    if (!isWebSearchKeyProvider(provider) || typeof key !== 'string' || !key.trim()) return { ok: false }
+    return { ok: true, mode: setWebSearchKey(provider, key) }
+  })
+  deps.mhandle('chat:clear-web-search-key', (_e, provider: unknown) => {
+    if (!isWebSearchKeyProvider(provider)) return { ok: false }
+    clearWebSearchKey(provider)
     return { ok: true }
   })
   // Bash output filters (token savings, experimental) — toggle.

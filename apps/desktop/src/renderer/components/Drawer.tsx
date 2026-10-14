@@ -623,7 +623,7 @@ export function Drawer({
         )}
 
         {tab === 'chatgpt' && chatGptSessionActive && chatGptAccessOpen && !isFloating('chatgpt') && (
-          <div className="absolute inset-x-0 bottom-0 top-11 overflow-y-auto bg-surface p-4 sm:p-6">
+          <div className="absolute inset-x-0 bottom-0 top-11 overflow-y-auto bg-[#111113] p-4 sm:p-6">
             <div className="mx-auto w-full max-w-3xl">
               <div className="mb-4 flex items-start gap-3 rounded-xl border border-violet-400/20 bg-violet-500/[0.07] p-3 text-[11px] text-violet-100">
                 <Shield className="mt-0.5 size-4 shrink-0 text-violet-300" />
@@ -804,7 +804,7 @@ export function Drawer({
           )}
 
         {tab && isFloating(tab) && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface p-6 text-center">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#111113] p-6 text-center">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-white/[0.04] ring-1 ring-white/[0.06]">
               <PictureInPicture2 className="size-6 text-muted-foreground" />
             </div>

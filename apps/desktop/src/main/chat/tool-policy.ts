@@ -187,6 +187,7 @@ export const PARALLEL_SAFE_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
   'grep',
   'read',
   'use_skill',
+  'web_search',
   'webfetch',
 ])
 

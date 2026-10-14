@@ -18,7 +18,7 @@ function ScreenOverlay({ role, children }: { role?: 'status'; children: ReactNod
   return (
     <div
       role={role}
-      className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/75 p-6 text-center text-sm text-white backdrop-blur-md"
+      className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black p-6 text-center text-sm text-white"
     >
       {children}
     </div>

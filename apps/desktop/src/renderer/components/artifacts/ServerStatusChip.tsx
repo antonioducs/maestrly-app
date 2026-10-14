@@ -84,7 +84,7 @@ export function ServerStatusChip({
           role="dialog"
           tabIndex={-1}
           aria-label={t('artifacts.server.title')}
-          className="absolute right-0 top-[calc(100%+8px)] z-30 w-[300px] rounded-[10px] border border-border-strong bg-popover p-3.5 shadow-2xl outline-none backdrop-blur-xl animate-in fade-in-0"
+          className="absolute right-0 top-[calc(100%+8px)] z-30 w-[300px] rounded-[10px] border border-border-strong bg-popover p-3.5 shadow-2xl outline-none animate-in fade-in-0"
         >
           <h3 className="mb-1 flex items-center gap-2 text-[13px] font-semibold text-foreground">
             {dot}

@@ -46,14 +46,15 @@
 
   --background: rgba(0, 0, 0, 0);
   --surface: rgba(20, 20, 22, 0.62);
-  --surface-elevated: rgba(30, 30, 33, 0.82); /* cards, inputs, popovers, menus */
+  --surface-elevated: rgba(30, 30, 33, 0.82); /* cards and inputs; anything floating uses --popover */
   --terminal-bg: rgba(10, 10, 11, 0.82);
   --chat-canvas: #0d0d10; /* the agent chat's black, which a bot's view shares */
 
   --foreground: rgba(237, 234, 227, 0.96);
   --card: var(--surface-elevated);
   --card-foreground: var(--foreground);
-  --popover: rgba(26, 26, 29, 0.86);
+  /* Opaque: menus, popovers, tooltips and dialogs open over content that would otherwise show through. */
+  --popover: #1e1e21;
   --popover-foreground: var(--foreground);
 
   --primary: #EDEAE3;
@@ -166,10 +167,6 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 .glass {
   backdrop-filter: blur(30px) saturate(180%);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
-}
-.glass-strong {
-  backdrop-filter: blur(40px) saturate(200%);
-  -webkit-backdrop-filter: blur(40px) saturate(200%);
 }
 
 .hairline-r {

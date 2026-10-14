@@ -443,7 +443,7 @@ export function EnvironmentSettingsSheet({
             <div className="sticky bottom-0 px-[18px] pb-4">
               <section
                 aria-label={t('botSettings.saveBar.region')}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-border-strong bg-popover py-2.5 pl-4 pr-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.5)] backdrop-blur-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-border-strong bg-popover py-2.5 pl-4 pr-2.5 shadow-[0_14px_44px_rgba(0,0,0,0.5)] animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"
               >
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1.5">
                   <strong className="text-[13px] font-semibold">

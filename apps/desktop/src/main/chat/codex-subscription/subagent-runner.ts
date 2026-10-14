@@ -1,5 +1,7 @@
 import { autonomousPolicy } from '../autonomous'
 import { remoteChatPolicy } from '../remote-policy'
+import { getWebSearchProvider } from '../web-search/settings'
+import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 import { randomUUID } from 'node:crypto'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
@@ -483,6 +485,10 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
               }
             : {}),
           ...(args.readOnly ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
+          // Turned off by the user, or the gated host web_search is inherited: it shares the native tool's name.
+          ...(getWebSearchProvider() === 'off' || providedDynamicToolNames.has(WEB_SEARCH_TOOL_NAME)
+            ? { web_search: 'disabled' }
+            : {}),
         },
         developerInstructions: [
           args.definition.prompt,

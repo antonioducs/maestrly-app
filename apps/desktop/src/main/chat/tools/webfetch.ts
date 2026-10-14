@@ -10,7 +10,7 @@ import { defineTool, type ToolContext } from './util'
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 const DEFAULT_TIMEOUT_SECONDS = 30
 const MAX_TIMEOUT_SECONDS = 120
-const BROWSER_UA =
+export const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
 const params = z.object({
@@ -47,7 +47,7 @@ const OMITTED_HTML_ELEMENTS = new Set(['script', 'style', 'noscript', 'template'
 const LINE_BREAK_ELEMENTS = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'br'])
 
 /** Extract text, not sanitized HTML. The parser decodes entities exactly once and never executes scripts. */
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
   const chunks: string[] = []
   // Iterative traversal also handles deeply nested untrusted documents without recursive stack growth.
   const pending: Array<DefaultTreeAdapterMap['node'] | '\n'> = [parseFragment(html)]

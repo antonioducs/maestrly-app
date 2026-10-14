@@ -256,6 +256,32 @@ describe('OpenAI harness kill switch', () => {
     expect(await enabled()).toBe(false)
   })
 
+  it('reports and persists the web search provider and key presence without exposing keys', async () => {
+    const handlers = register()
+    const webSearch = async () =>
+      ((await handlers.get('chat:config')!(undefined as never)) as { webSearch: unknown }).webSearch
+
+    expect(await webSearch()).toEqual({ provider: 'auto', keys: { tavily: false, brave: false } })
+
+    expect(handlers.get('chat:set-web-search-provider')?.(undefined as never, 'nope')).toEqual({ ok: false })
+    expect(handlers.get('chat:set-web-search-provider')?.(undefined as never, 'brave')).toEqual({ ok: true })
+    expect(await webSearch()).toMatchObject({ provider: 'brave' })
+
+    expect(handlers.get('chat:set-web-search-key')?.(undefined as never, 'tavily', '  ')).toEqual({ ok: false })
+    expect(handlers.get('chat:set-web-search-key')?.(undefined as never, 'bing', 'test-key')).toEqual({ ok: false })
+    expect(handlers.get('chat:set-web-search-key')?.(undefined as never, 'tavily', 'test-key')).toEqual({
+      ok: true,
+      mode: 'secure',
+    })
+    const config = await webSearch()
+    expect(config).toEqual({ provider: 'brave', keys: { tavily: true, brave: false } })
+    expect(JSON.stringify(config)).not.toContain('test-key')
+    expect([...h.settings.values()].join('\n')).not.toContain('test-key')
+
+    expect(handlers.get('chat:clear-web-search-key')?.(undefined as never, 'tavily')).toEqual({ ok: true })
+    expect(await webSearch()).toEqual({ provider: 'brave', keys: { tavily: false, brave: false } })
+  })
+
   it('defaults Maestrly tools and every group on, and persists group switches', async () => {
     const handlers = register()
     const config = async () =>

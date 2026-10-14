@@ -33,6 +33,7 @@ it('retains model behavior and reasoning guidance without a project-oriented ide
   expect(result.instructions).not.toContain('Use Memory Center')
   expect(result.instructions).not.toContain('real project context')
   expect(result.instructions).toContain('webfetch')
+  expect(result.instructions).toContain('web_search')
 })
 describe('standalone general harness', () => {
   it('has general identity without project memory and retains Ask restrictions', () => {

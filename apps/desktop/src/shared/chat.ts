@@ -7,6 +7,7 @@ import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 import type { AppToolGroupState } from './app-tool-groups'
+import type { WebSearchConfig } from './web-search'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -1758,6 +1759,12 @@ export interface ChatConfig {
   imageGenEnabled: boolean
   /** Generated interfaces: the inline HTML instructions in the prompt and the preview tool. Default on. */
   generatedInterfacesEnabled: boolean
+
+  /**
+   * Selected provider and whether each key is stored; never the keys themselves. Absent on hosts that predate web
+   * search, whose settings then omit the section.
+   */
+  webSearch?: WebSearchConfig
 
   bashFiltersEnabled: boolean
 

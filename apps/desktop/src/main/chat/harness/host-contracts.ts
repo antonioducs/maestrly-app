@@ -252,7 +252,7 @@ export function buildMaestrlyBasePrompt(input: MaestrlyBasePromptInput): string 
       `You are a general assistant inside the Maestrly app. Reply in the user's language, in Markdown.
 ${scopeLine}
 This directory is an execution location, not an operating-system sandbox. Answer ordinary conversation without requiring file inspection, tests or commits. Profile guidance about code applies only when the user requests work on files or code.
-${discovery} Online research requires an actually available tool; webfetch reads URLs and is not a general search engine. Never claim to have searched without using an available search tool.`,
+${discovery} Online research requires an actually available tool: use web_search to search when it is in your tool catalog and webfetch to read a specific URL. Never claim to have searched without calling a search tool.`,
       chatStyle,
       harnessBehaviorHeader(input.harness),
       botIdentityPrompt(input.cwd),

@@ -1197,6 +1197,21 @@ export default {
     generatedInterfacesHeading: 'Respostas interativas',
     generatedInterfacesDescription:
       'Permite que os modelos respondam com pequenas interfaces que você vê e usa, como fotos de produtos, gráficos e calculadoras, e que vejam uma prévia antes de mostrá-las. As instruções somam cerca de 850 tokens a cada conversa, quase sempre servidos do cache, e cada prévia acrescenta um print ao contexto. Desligue para economizar esses tokens; respostas que já têm interfaces continuam mostrando elas.',
+    webSearchHeading: 'Busca na web',
+    webSearchDescription:
+      'Permite que os modelos pesquisem na web. As consultas são enviadas ao provedor escolhido. O modo Automático usa primeiro uma chave de API configurada, depois sua assinatura do ChatGPT e, por fim, o DuckDuckGo.',
+    webSearchProvider: {
+      auto: 'Automático',
+      tavily: 'Tavily (chave de API)',
+      brave: 'Brave Search (chave de API)',
+      chatgpt: 'Assinatura do ChatGPT',
+      duckduckgo: 'DuckDuckGo (sem chave, pode ser bloqueado)',
+      off: 'Desativada',
+    },
+    webSearchKeyLabel: { tavily: 'Chave de API do Tavily', brave: 'Chave de API do Brave Search' },
+    webSearchKeyPlaceholder: 'Cole a chave de API',
+    webSearchKeySave: 'Salvar',
+    webSearchKeyRemove: 'Remover',
     bashFiltersHeading: 'Saída compacta de comandos',
     bashFiltersDescription:
       'Filtra a saída verbosa de comandos bash suportados antes de enviá-la ao modelo, reduzindo o uso de tokens. Os pedidos de permissão continuam mostrando o comando original.',
