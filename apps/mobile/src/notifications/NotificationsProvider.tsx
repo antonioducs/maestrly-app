@@ -198,7 +198,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         // The demo server lives on the phone: its test is a local notification.
         await Notifications.scheduleNotificationAsync({
           content: { title: 'Maestrly', body: t('notifications.testBody', { server: server.name }) },
-          trigger: null,
+          // Android shows it on the app's own channel, as it does the server's, rather than Expo's fallback one.
+          trigger: Platform.OS === 'android' ? { channelId: 'default' } : null,
         })
         return
       }
