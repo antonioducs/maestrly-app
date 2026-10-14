@@ -1,6 +1,7 @@
 import {
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
+  fleetMetaFeatures,
   type FleetBot,
   type FleetGatewayEvent,
   type FleetInteractionResolution,
@@ -121,9 +122,10 @@ export function createFleetController(
         has(FLEET_ENVIRONMENTS_FEATURE) ? source.call('environmentsList') : Promise.resolve({ environments: [] }),
         source.call('inbox'),
       ])
-      if (meta && meta.features.join() !== state.features.join()) {
-        dispatch({ type: 'features', features: meta.features })
-        options.onFeatures?.(meta.features)
+      const features = meta ? fleetMetaFeatures(meta) : null
+      if (features && features.join() !== state.features.join()) {
+        dispatch({ type: 'features', features })
+        options.onFeatures?.(features)
       }
       dispatch({
         type: 'snapshot',

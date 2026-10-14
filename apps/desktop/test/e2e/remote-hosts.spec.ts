@@ -178,7 +178,7 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     await page.getByRole('tab', { name: 'Workspaces' }).click()
     await expect(switcher).toHaveAttribute('data-host-switcher', HOST_ID)
     const workspacesSection = page.locator(`#sidebar-panel-workspaces [data-host-section="${HOST_ID}"]`)
-    await expect(workspacesSection).toContainText('No workspaces on this server.')
+    await expect(workspacesSection).toContainText('No workspaces in this environment.')
     await page.getByRole('button', { name: `Add workspace on 127.0.0.1:${controlPort}`, exact: true }).click()
     await page.getByRole('button', { name: 'Create new', exact: true }).click()
     await page.getByRole('button', { name: 'Choose…', exact: true }).click()

@@ -46,6 +46,7 @@ import {
   fleetUiOpenRequestSchema,
 } from '../src/index.js'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   FLEET_ERROR_STATUS,
   FLEET_GATEWAY_ROUTES,
@@ -883,6 +884,19 @@ describe('bot provisioning contracts', () => {
     expect(fleetInstanceStatusSchema.parse(status).capabilities).toEqual([])
     expect(fleetActivityKindSchema.options).toContain('bot_configured')
   })
+  it('announces features past those installed desktops read in a list they drop', () => {
+    const features = Array.from({ length: provisioning.FLEET_META_FEATURES_LEGACY_MAX }, (_, index) => `f${index}`)
+    const meta = { protocol: 1, gatewayVersion: '1', botImage: 'i', botImageVersion: null, features }
+    const answer = { ...meta, moreFeatures: ['phones', 'f0'] }
+    // What a desktop up to 0.18 parses: at most 20 features, and no field it does not know.
+    const legacy = provisioning.fleetMetaResponseSchema.omit({ moreFeatures: true }).extend({
+      features: z.array(z.string()).max(provisioning.FLEET_META_FEATURES_LEGACY_MAX),
+    })
+    expect(legacy.parse(answer)).toEqual(meta)
+    const parsed = provisioning.fleetMetaResponseSchema.parse(answer)
+    expect(provisioning.fleetMetaFeatures(parsed)).toEqual([...features, 'phones'])
+    expect(provisioning.fleetMetaResponseSchema.parse(meta).moreFeatures).toEqual([])
+  })
   it('allows only provider sign-in URLs and extracts loopback redirects', () => {
     for (const [kind, url] of [
       ['codex', 'https://auth.openai.com/oauth/authorize?x=1'],
@@ -968,8 +982,13 @@ describe('environment contracts', () => {
     expect(FLEET_ENVIRONMENTS_FEATURE).toBe('environments')
     expect(FLEET_ENVIRONMENT_LIMITS).toEqual({
       botsMax: 8,
+      workspacesMax: 8,
       memoryLimitMinBytes: 2 * GiB,
       memoryLimitMaxBytes: 64 * GiB,
+      cpuLimitMin: 0.5,
+      cpuLimitMax: 64,
+      idleStopMinutesMin: 15,
+      idleStopMinutesMax: 10080,
     })
     expect(FLEET_ENVIRONMENT_DISPLAY).toEqual({ columns: 3, rows: 3, width: 3840, height: 2400 })
     expect(FLEET_BOT_ENV.environmentId).toBe('MAESTRLY_ENVIRONMENT_ID')
@@ -1106,6 +1125,9 @@ describe('environment contracts', () => {
       ...request,
       memoryLimitBytes: null,
       kind: 'bots',
+      cpuLimit: null,
+      idleStopMinutes: null,
+      tint: null,
     })
     expect(fleetCreateEnvironmentRequestSchema.parse({ ...request, memoryLimitBytes: 4 * GiB }).memoryLimitBytes).toBe(
       4 * GiB

@@ -24,6 +24,7 @@ import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { EnvironmentCompaction } from './EnvironmentCompaction'
 import { EnvironmentConfirm, type EnvironmentConfirmKind } from './EnvironmentConfirm'
+import { EnvironmentIsolation } from './EnvironmentIsolation'
 import { EnvironmentRack } from './EnvironmentRack'
 import { EnvironmentResources } from './EnvironmentResources'
 import { EnvironmentRuntimes } from './EnvironmentRuntimes'
@@ -234,6 +235,8 @@ function EnvironmentHeader({
       <span
         aria-hidden="true"
         className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] border border-border-strong bg-white/[0.04] text-foreground/75"
+        // An environment with a color shows it here, as the sidebar does.
+        style={environment.tint ? { color: environment.tint, borderColor: environment.tint + '55' } : undefined}
       >
         <Boxes className="size-4" />
       </span>
@@ -367,7 +370,7 @@ function EnvironmentOverview({
           onOpenInbox={onOpenInbox}
         />
         {workspaces ? (
-          <p className="text-sm text-muted-foreground">{t('workspaces.description')}</p>
+          <p className="text-sm text-muted-foreground">{t('workspaces.environmentDescription')}</p>
         ) : (
           <EnvironmentRack
             bots={bots}
@@ -388,6 +391,7 @@ function EnvironmentOverview({
         ) : (
           <LegacySharedSetup environment={environment} fleet={fleet} bots={bots} onOpenScreen={onOpenScreen} />
         )}
+        {workspaces && <EnvironmentIsolation environment={environment} fleet={fleet} onConfirm={onConfirm} />}
         <EnvironmentResources environment={environment} fleet={fleet} />
       </div>
     </div>

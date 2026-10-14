@@ -182,6 +182,8 @@ const host = (patch: Partial<HostView>): HostView => ({
   id: 'server-1/workspaces',
   remote: true,
   label: 'Server',
+  server: 'vps',
+  tint: null,
   state: 'online',
   epoch: 1,
   os: 'linux',

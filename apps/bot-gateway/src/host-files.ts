@@ -150,6 +150,10 @@ export class HostFilesProxy {
   closeEnvironment(environmentId: string): void {
     for (const transfer of [...this.active]) if (transfer.environmentId === environmentId) this.cut(transfer)
   }
+  /** The transfers in progress to or from an environment. */
+  count(environmentId: string): number {
+    return [...this.active].filter((transfer) => transfer.environmentId === environmentId).length
+  }
   close(): void {
     for (const transfer of [...this.active]) this.cut(transfer)
   }

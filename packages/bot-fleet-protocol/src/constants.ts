@@ -93,8 +93,16 @@ export const FLEET_GATEWAY_ENV = {
   botMemory: 'MAESTRLY_GATEWAY_BOT_MEMORY',
   botEgress: 'MAESTRLY_GATEWAY_BOT_EGRESS',
   botShm: 'MAESTRLY_GATEWAY_BOT_SHM',
-  /** A directory of the Docker host that the gateway mounts into its workspaces environment at the same path. */
+  /**
+   * A directory of the Docker host whose subfolders the gateway mounts into its workspaces environments, each at the
+   * same path.
+   */
   workspacesRoot: 'MAESTRLY_GATEWAY_WORKSPACES_ROOT',
+  /**
+   * The gateway's own container (name or id), which joins the network of each workspaces environment. Unset: the
+   * gateway finds it on the fleet network by its own address.
+   */
+  container: 'MAESTRLY_GATEWAY_CONTAINER',
   /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
   botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
   /** `off` sends no push notifications to phones; `expo` (the default) sends them through Expo's push service. */
@@ -117,7 +125,7 @@ export const FLEET_BOT_ENV = {
   egress: 'MAESTRLY_BOT_EGRESS',
   /** Set instead of `mode` in a workspaces environment: the full Maestrly, driven from the owner's computers. */
   serverMode: 'MAESTRLY_SERVER_MODE',
-  /** The mounted host directory of a workspaces environment, when the gateway has one. */
+  /** The server folder mounted into a workspaces environment (its own, or the shared root), when the gateway has one. */
   workspacesRoot: 'MAESTRLY_WORKSPACES_ROOT',
   /**
    * The token a workspaces environment publishes its chats' artifacts with on the gateway's internal API. It is not
@@ -252,15 +260,32 @@ export const FLEET_WORKSPACES_HOST_FEATURE = 'workspaces-host'
  * As an instance capability: the environment's Maestrly serves those files.
  */
 export const FLEET_HOST_FILES_FEATURE = 'host-files'
+/**
+ * Gateway feature (`/v1/meta`): a server hosts several workspaces environments, one per scope of the owner's work, each
+ * with a Docker network and a server folder of its own, and every environment may have a CPU limit, a tint and (for
+ * workspaces) an idle stop.
+ */
+export const FLEET_WORKSPACES_ENVIRONMENTS_FEATURE = 'workspaces-environments'
 /** Where a workspaces environment's control server accepts the bridge, as a WebSocket upgrade. */
 export const FLEET_INSTANCE_BRIDGE_PATH = '/v1/bridge'
-/** A bridge ticket is one-use and short-lived; each paired computer holds a bounded number of bridges. */
-export const FLEET_BRIDGE_LIMITS = { ticketTtlMs: 30_000, perDevice: 8 } as const
-/** Bots per environment, and the range of the container memory limit the owner may set. */
+/**
+ * A bridge ticket is one-use and short-lived; each paired computer holds a bounded number of bridges: one per
+ * workspaces environment, with room for those still closing while their replacements open.
+ */
+export const FLEET_BRIDGE_LIMITS = { ticketTtlMs: 30_000, perDevice: 16 } as const
+/**
+ * Bots per environment; workspaces environments per server; and the ranges of the container memory limit, the CPU
+ * limit (in CPUs) and the idle stop (in minutes) the owner may set.
+ */
 export const FLEET_ENVIRONMENT_LIMITS = {
   botsMax: 8,
+  workspacesMax: 8,
   memoryLimitMinBytes: 2 * 1024 ** 3,
   memoryLimitMaxBytes: 64 * 1024 ** 3,
+  cpuLimitMin: 0.5,
+  cpuLimitMax: 64,
+  idleStopMinutesMin: 15,
+  idleStopMinutesMax: 7 * 24 * 60,
 } as const
 /**
  * The environment display: a grid of `FLEET_SCREEN`-sized tiles. Tile 0 holds the environment screen (Maestrly's
@@ -301,8 +326,8 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
 /**
  * Gateway feature: what phones need of the gateway. A paired device may create one-use pairing codes for another
  * device, which the desktop shows as a QR code; a bridge ticket may name the Origin its WebSocket will send, which
- * phones always send; and phones register for push notifications (`/v1/devices/self/push`). It is one feature because
- * `/v1/meta` lists at most 20 (`fleetFeaturesSchema`), and these ship together.
+ * phones always send; and phones register for push notifications (`/v1/devices/self/push`). These ship together, so
+ * they are one feature, announced in `moreFeatures` of `/v1/meta`.
  */
 export const FLEET_PHONES_FEATURE = 'phones'
 /** Unused, unexpired codes paired devices may have at once. The CLI is not limited. */

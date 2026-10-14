@@ -1,4 +1,4 @@
-import { isAllowedPhoneServerUrl, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
+import { fleetMetaFeatures, isAllowedPhoneServerUrl, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
 import { createGatewayClient, GatewayError, type FetchLike } from '../gateway/client'
 import type { PairedServer } from './registry'
 
@@ -58,7 +58,7 @@ export async function pairWithServer(
         origin: address.origin,
         name: serverName(address.origin),
         deviceName: input.deviceName,
-        features: meta.features,
+        features: fleetMetaFeatures(meta),
         pairedAt: new Date().toISOString(),
       },
     }

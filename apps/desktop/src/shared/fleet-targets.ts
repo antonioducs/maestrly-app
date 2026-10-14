@@ -1,4 +1,9 @@
-import type { FleetScreenSurface } from '@maestrly/bot-fleet-protocol'
+import type { FleetCreateEnvironmentRequest, FleetScreenSurface } from '@maestrly/bot-fleet-protocol'
+
+/** What the owner chooses for a new workspaces environment; anything omitted takes the server's default. */
+export type FleetCreateWorkspacesInput = Partial<
+  Pick<FleetCreateEnvironmentRequest, 'name' | 'memoryLimitBytes' | 'cpuLimit' | 'idleStopMinutes' | 'tint'>
+>
 
 /**
  * Where the Mac sends accounts, skills, MCP servers and sign-ins: an environment, shared by its bots, or a bot. On
@@ -23,6 +28,11 @@ export function fleetTargetKey(target: FleetProvisioningTargetInput): string {
 export const FLEET_ENVIRONMENTS_UNSUPPORTED = 'FLEET_ENVIRONMENTS_UNSUPPORTED'
 /** Raised by the main process when the gateway cannot schedule environment updates yet. */
 export const FLEET_UPDATES_UNSUPPORTED = 'FLEET_UPDATES_UNSUPPORTED'
+/**
+ * Raised by the main process when the gateway cannot set the CPU limit, idle stop, tint or folder of an environment
+ * yet (`workspaces-environments`).
+ */
+export const FLEET_SCOPES_UNSUPPORTED = 'FLEET_SCOPES_UNSUPPORTED'
 /** Raised by the main process when the gateway cannot report or check the environments' runtimes yet. */
 export const FLEET_RUNTIME_UPDATES_UNSUPPORTED = 'FLEET_RUNTIME_UPDATES_UNSUPPORTED'
 /** Raised when another control session holds the environment display that browser areas and its screen share. */

@@ -103,6 +103,10 @@ function environmentRecord(id: string, overrides: Partial<StoredEnvironment> = {
     containerName: 'maestrly-env-' + id,
     volumeName: 'maestrly-env-' + id + '-home',
     memoryLimitBytes: null,
+    cpuLimit: null,
+    idleStopMinutes: null,
+    tint: null,
+    hostFolder: null,
     compaction: null,
     updateRequestedAt: null,
     createdAt: at(20),
@@ -227,7 +231,7 @@ function seedSchema5(db: DatabaseSync) {
 describe('schema 6 migration', () => {
   it('creates the current schema with environments, their kinds and desktop links in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -247,6 +251,10 @@ describe('schema 6 migration', () => {
       ['compaction_json', 0],
       ['update_requested_at', 0],
       ['kind', 1],
+      ['cpu_limit', 0],
+      ['idle_stop_minutes', 0],
+      ['tint', 0],
+      ['host_folder', 0],
     ])
     expect(columns('environment_secrets')).toEqual([
       ['environment_id', 0],
@@ -331,7 +339,7 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     expect(snapshot(store.db)).toEqual(before)
     expect(meta(store.db)).toEqual(metaBefore)
 
@@ -345,6 +353,10 @@ describe('schema 6 migration', () => {
         containerName: 'maestrly-bot-alpha',
         volumeName: 'maestrly-bot-alpha-home',
         memoryLimitBytes: null,
+        cpuLimit: null,
+        idleStopMinutes: null,
+        tint: null,
+        hostFolder: null,
         compaction,
         updateRequestedAt: null,
         createdAt: at(20),
@@ -362,6 +374,10 @@ describe('schema 6 migration', () => {
         containerName: 'maestrly-bot-beta',
         volumeName: 'maestrly-bot-beta-home',
         memoryLimitBytes: null,
+        cpuLimit: null,
+        idleStopMinutes: null,
+        tint: null,
+        hostFolder: null,
         compaction: null,
         updateRequestedAt: null,
         createdAt: at(18),
@@ -439,7 +455,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('13')
+    expect(version(reopened.db)).toBe('14')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -515,7 +531,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -523,14 +539,14 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='14' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='15' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('14')
+    expect(version(after)).toBe('15')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
@@ -649,7 +665,7 @@ describe('schema 7 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     checked(store.db)
     expect(untouched(store.db)).toEqual(before)
     expect(
@@ -683,7 +699,7 @@ describe('schema 7 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('13')
+    expect(version(reopened.db)).toBe('14')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -710,7 +726,7 @@ describe('schema 7 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
   })
 
@@ -776,11 +792,19 @@ describe('schema 8 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     checked(store.db)
     expect(store.db.prepare('SELECT * FROM environments ORDER BY id').all()).toEqual(
       // The later schema 11 step adds the kind; every environment from before it runs bots.
-      before.map((row) => ({ ...row, update_requested_at: null, kind: 'bots' }))
+      before.map((row) => ({
+        ...row,
+        update_requested_at: null,
+        kind: 'bots',
+        cpu_limit: null,
+        idle_stop_minutes: null,
+        tint: null,
+        host_folder: null,
+      }))
     )
     expect(store.getEnvironment('alpha')).toEqual(
       environmentRecord('alpha', {
@@ -798,7 +822,7 @@ describe('schema 8 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('13')
+    expect(version(reopened.db)).toBe('14')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -808,7 +832,7 @@ describe('schema 8 migration', () => {
     const dir = temp()
     createSchema6Database(dir).close()
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     checked(store.db)
     store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
@@ -840,7 +864,7 @@ describe('schema 11 migration', () => {
     old.db.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
   })
 
@@ -858,7 +882,7 @@ describe('schema 11 migration', () => {
     stores.splice(stores.indexOf(store), 1)
 
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('13')
+    expect(version(reopened.db)).toBe('14')
     expect(reopened.getEnvironment('host')?.kind).toBe('workspaces')
     expect(reopened.listEnvironments().map((environment) => [environment.id, environment.kind])).toEqual([
       ['work', 'bots'],
@@ -896,8 +920,11 @@ describe('schema 12 migration', () => {
     old.db.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
-    expect(store.getEnvironment('host')).toEqual(environmentRecord('host', { kind: 'workspaces' }))
+    expect(version(store.db)).toBe('14')
+    // Schema 13 then keeps it on the whole server folder, as it was created.
+    expect(store.getEnvironment('host')).toEqual(
+      environmentRecord('host', { kind: 'workspaces', hostFolder: 'shared' })
+    )
     expect(store.hostGatewaySecrets('host')).toBeNull()
     checked(store.db)
   })
@@ -932,8 +959,8 @@ describe('schema 12 migration', () => {
   })
 })
 
-describe('schema 13 migration', () => {
-  it('adds push registrations to a schema 12 database, keeping its devices and host tokens', () => {
+describe('schema 14 migration', () => {
+  it('adds push registrations to a schema 13 database, keeping its devices and host tokens', () => {
     const dir = temp()
     const old = new Store(dir)
     old.insertEnvironment(environmentRecord('host', { kind: 'workspaces' }), environmentSecrets('host'))
@@ -941,10 +968,10 @@ describe('schema 13 migration', () => {
       .prepare('INSERT INTO devices(id,name,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,NULL,NULL)')
       .run('phone', 'Phone', hash('phone-token'), at(1))
     old.db.exec('DROP TABLE push_registrations')
-    old.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
+    old.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     expect(store.getEnvironment('host')).toEqual(environmentRecord('host', { kind: 'workspaces' }))
     const saved = store.savePushRegistration('phone', {
       provider: 'expo',
@@ -1290,6 +1317,10 @@ describe('environments and their bots', () => {
       containerName: 'maestrly-bot-legacy',
       volumeName: 'maestrly-bot-legacy-home',
       memoryLimitBytes: null,
+      cpuLimit: null,
+      idleStopMinutes: null,
+      tint: null,
+      hostFolder: null,
       compaction: null,
       updateRequestedAt: null,
       createdAt: at(20),
@@ -1368,7 +1399,7 @@ describe('schema 10 migration', () => {
     old.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('13')
+    expect(version(store.db)).toBe('14')
     expect(store.getBot('legacy')?.name).toBe('Bot legacy')
     expect(store.desktopLinks('legacy')).toEqual([])
   })
@@ -1408,5 +1439,52 @@ describe('schema 10 migration', () => {
     store.purgeBot('one')
     expect(store.desktopLinkById('dsk_aaaaaaaaaaaaaaaaaaaa')).toBeNull()
     expect(store.device('mac-a')?.name).toBe('Mac mac-a')
+  })
+})
+
+describe('schema 13 migration', () => {
+  const checked = (db: DatabaseSync) => {
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+  }
+
+  it('keeps the workspaces environments of a schema 12 database on the shared folder, with no limit, stop or tint', () => {
+    const dir = temp()
+    const old = new Store(dir)
+    old.insertEnvironment(environmentRecord('host', { kind: 'workspaces' }), environmentSecrets('host'))
+    old.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
+    for (const column of ['cpu_limit', 'idle_stop_minutes', 'tint', 'host_folder'])
+      old.db.exec(`ALTER TABLE environments DROP COLUMN ${column}`)
+    old.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
+    old.close()
+    const store = open(dir)
+    expect(version(store.db)).toBe('14')
+    expect(store.getEnvironment('host')).toEqual(
+      environmentRecord('host', { kind: 'workspaces', hostFolder: 'shared' })
+    )
+    expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
+    checked(store.db)
+    const schema = schemaOf(store.db)
+    const data = dumpTables(store.db)
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    const reopened = open(dir)
+    expect(schemaOf(reopened.db)).toEqual(schema)
+    expect(dumpTables(reopened.db)).toEqual(data)
+  })
+
+  it('stores and changes the CPU limit, idle stop, tint and folder of an environment', () => {
+    const store = open()
+    store.insertEnvironment(
+      environmentRecord('host', { kind: 'workspaces', hostFolder: 'own', cpuLimit: 2.5, idleStopMinutes: 60 }),
+      environmentSecrets('host')
+    )
+    expect(store.getEnvironment('host')).toMatchObject({ cpuLimit: 2.5, idleStopMinutes: 60, hostFolder: 'own' })
+    const next = store.updateEnvironment('host', { tint: '#4978c6', hostFolder: 'shared', idleStopMinutes: null })
+    expect(next).toMatchObject({ cpuLimit: 2.5, idleStopMinutes: null, tint: '#4978c6', hostFolder: 'shared' })
+    expect(store.getEnvironment('host')).toEqual(next)
+    expect(store.updateEnvironment('host', { cpuLimit: null }).cpuLimit).toBeNull()
+    expect(() => store.db.prepare("UPDATE environments SET host_folder='other' WHERE id='host'").run()).toThrow(/CHECK/)
+    expect(() => store.db.prepare("UPDATE environments SET cpu_limit=0 WHERE id='host'").run()).toThrow(/CHECK/)
   })
 })

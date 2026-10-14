@@ -4,7 +4,11 @@ import type {
   FleetPairingCodeResponse,
 } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
-import type { FleetProvisioningTargetInput, FleetScreenTargetInput } from '../shared/fleet-targets'
+import type {
+  FleetCreateWorkspacesInput,
+  FleetProvisioningTargetInput,
+  FleetScreenTargetInput,
+} from '../shared/fleet-targets'
 import type {
   FleetBotAccounts,
   FleetBotSkills,
@@ -245,8 +249,14 @@ export const fleetApi = {
     environmentId: string,
     action: 'start' | 'stop' | 'restart' | 'archive'
   ): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:environmentAction', environmentId, action),
-  /** Creates the server's workspaces environment: Maestrly running there for the owner's chats and workspaces. */
-  fleetCreateWorkspaces: (): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:createWorkspaces'),
+  /**
+   * Creates a workspaces environment: Maestrly running on the server for the owner's chats and workspaces of one scope.
+   * Without input, as older views ask, it is named Workspaces and takes the server's defaults.
+   */
+  fleetCreateWorkspaces: (input?: FleetCreateWorkspacesInput): Promise<FleetEnvironment> =>
+    input === undefined
+      ? ipcRenderer.invoke('fleet:createWorkspaces')
+      : ipcRenderer.invoke('fleet:createWorkspaces', input),
   /**
    * Moves the environment to the server's bot image: `idle` schedules it for when none of its bots is busy and answers
    * at once; `now` restarts it at once, interrupting its bots. Gateways with `environment-updates` only.

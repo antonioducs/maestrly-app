@@ -3,6 +3,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { WebSocket, WebSocketServer } from 'ws'
+import { FLEET_BRIDGE_LIMITS } from '@maestrly/bot-fleet-protocol'
 import { BridgeProxy, type BridgeProxyDeps } from '../src/bridge.js'
 
 const servers: http.Server[] = []
@@ -163,7 +164,7 @@ describe('bridge proxy', () => {
   it('limits the bridges one device holds', async () => {
     const h = await setup()
     const held: WebSocket[] = []
-    for (let index = 0; index < 8; index++) {
+    for (let index = 0; index < FLEET_BRIDGE_LIMITS.perDevice; index++) {
       const socket = h.connect(h.proxy.ticket('workspaces', 'device-1').path)
       expect(await h.outcome(socket)).toBe('open')
       held.push(socket)
@@ -171,6 +172,9 @@ describe('bridge proxy', () => {
     expect(await h.outcome(h.connect(h.proxy.ticket('workspaces', 'device-1').path))).toBe(429)
     // Another device is not affected, and a closed bridge frees its place.
     expect(await h.outcome(h.connect(h.proxy.ticket('workspaces', 'device-2').path))).toBe('open')
+    // What the idle stop of the environment counts.
+    expect(h.proxy.count('workspaces')).toBe(FLEET_BRIDGE_LIMITS.perDevice + 1)
+    expect(h.proxy.count('elsewhere')).toBe(0)
     const closed = once(held[0], 'close')
     held[0].close()
     await closed

@@ -8,6 +8,7 @@ import {
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_FILES_FEATURE,
   FLEET_PROTOCOL_VERSION,
+  fleetMetaFeatures,
   isAllowedFleetUrl,
   normalizePairingCode,
   type FleetBot,
@@ -270,7 +271,7 @@ export class FleetClientService {
         if (generation !== this.generation) return
         const meta = await this.requireApi().call('meta')
         if (generation !== this.generation) return
-        this.setConnection({ features: meta.features ?? [] })
+        this.setConnection({ features: fleetMetaFeatures(meta) })
         await this.refresh()
         // Links may have changed while this computer was away; checking them needs the stream open, not this answer.
         if (generation === this.generation) void this.desktopBridge?.connected().catch(() => undefined)
@@ -297,7 +298,7 @@ export class FleetClientService {
     })
     const persistence = saveFleetCredentials(allowed.origin, paired.deviceId, deviceName, paired.token)
     this.useCredentials(allowed.origin, paired.token, persistence)
-    this.setConnection({ features: meta.features ?? [] })
+    this.setConnection({ features: fleetMetaFeatures(meta) })
     return this.connection
   }
 

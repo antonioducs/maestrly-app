@@ -1,12 +1,15 @@
 import { expect, it } from 'vitest'
-import { FLEET_PHONES_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { FLEET_PHONES_FEATURE, fleetMetaFeatures } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { harness } from './harness.js'
 
 it('lets a paired device create a one-use code that pairs another device', async () => {
   const h = await harness()
   const meta = await (await h.request('GET', '/v1/meta')).json()
-  expect(meta.features).toContain(FLEET_PHONES_FEATURE)
+  // Past the 20 features installed desktops read, in the list they drop.
+  expect(meta.features).not.toContain(FLEET_PHONES_FEATURE)
+  expect(meta.moreFeatures).toContain(FLEET_PHONES_FEATURE)
+  expect(fleetMetaFeatures(meta)).toContain(FLEET_PHONES_FEATURE)
 
   const created = await h.request('POST', '/v1/pairings', {})
   expect(created.status).toBe(201)

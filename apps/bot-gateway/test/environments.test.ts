@@ -1757,6 +1757,8 @@ describe('pauses during an installation', () => {
 describe('chats of a workspaces host', () => {
   it('hands on what a chat needs from the host, asking the host for it, and only from a workspaces host', async () => {
     const f = fixture()
+    // The fake Docker has no addresses to find the gateway's container by.
+    f.lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
     const heard: Array<[string, string, string]> = []
     f.lifecycle.onChatAttention = (conversationId, name, kind) => heard.push([conversationId, name, kind])
     const host = await f.instance('workspaces')

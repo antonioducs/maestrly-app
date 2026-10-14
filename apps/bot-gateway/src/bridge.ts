@@ -158,6 +158,11 @@ export class BridgeProxy {
     for (const [socket, entry] of this.open) if (entry.deviceId === deviceId) socket.destroy()
   }
 
+  /** The bridges open to an environment. */
+  count(environmentId: string): number {
+    return [...this.open.values()].filter((entry) => entry.environmentId === environmentId).length
+  }
+
   /** The environment's container stops or goes away. */
   closeEnvironment(environmentId: string): void {
     for (const [value, ticket] of this.tickets) if (ticket.environmentId === environmentId) this.tickets.delete(value)

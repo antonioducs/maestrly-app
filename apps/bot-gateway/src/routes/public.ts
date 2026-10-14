@@ -10,6 +10,7 @@ import {
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
+  FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_HOST_FILES_FEATURE,
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -338,13 +339,16 @@ export async function publicRoute(
             FLEET_RUNTIME_UPDATES_FEATURE,
             FLEET_DESKTOP_BRIDGE_FEATURE,
             FLEET_WORKSPACES_HOST_FEATURE,
+            // The 20th feature: desktops from before it accept no more than 20.
+            FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
             FLEET_HOST_FILES_FEATURE,
             FLEET_HOST_EDITOR_FEATURE,
             FLEET_MESSAGE_EDIT_FEATURE,
             FLEET_VIDEO_SCREENS_FEATURE,
-            // Also when push is off: a phone then hears from the push routes that this server sends none.
-            FLEET_PHONES_FEATURE,
           ],
+          // Past the 20 features installed desktops read (`FLEET_META_FEATURES_LEGACY_MAX`). `phones` is announced
+          // also when push is off: a phone then hears from the push routes that this server sends none.
+          moreFeatures: [FLEET_PHONES_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },
@@ -400,6 +404,9 @@ export async function publicRoute(
           name: input.name,
           memoryLimitBytes: input.memoryLimitBytes,
           kind: input.kind,
+          cpuLimit: input.cpuLimit,
+          idleStopMinutes: input.idleStopMinutes,
+          tint: input.tint,
         }),
         status: 201,
       }))

@@ -20,8 +20,11 @@ services:
       MAESTRLY_GATEWAY_BOT_MEMORY: ${MAESTRLY_GATEWAY_BOT_MEMORY:-4g}
       MAESTRLY_GATEWAY_BOT_SHM: ${MAESTRLY_GATEWAY_BOT_SHM:-1g}
       MAESTRLY_GATEWAY_NETWORK: ${MAESTRLY_GATEWAY_NETWORK:-maestrly-bots}
-      # A directory of this Docker host that the workspaces environment mounts at the same path; empty mounts none.
+      # A directory of this Docker host under which each workspaces environment gets a folder of its own, mounted at
+      # the same path; empty mounts none.
       MAESTRLY_GATEWAY_WORKSPACES_ROOT: ${MAESTRLY_GATEWAY_WORKSPACES_ROOT:-}
+      # This container's name, which joins each workspaces environment's network; empty: found by its own address.
+      MAESTRLY_GATEWAY_CONTAINER: ${MAESTRLY_GATEWAY_CONTAINER:-}
       # Notifications to paired phones through Expo's push service (`expo`), or none (`off`). The token is needed only
       # when the app's Expo project requires access tokens for push.
       MAESTRLY_GATEWAY_PUSH: ${MAESTRLY_GATEWAY_PUSH:-expo}

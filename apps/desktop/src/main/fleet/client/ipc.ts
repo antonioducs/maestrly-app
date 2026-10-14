@@ -6,7 +6,13 @@ import { z } from 'zod'
 import {
   FLEET_PHONES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
+  fleetCpuLimitSchema,
+  fleetIdleStopMinutesSchema,
+  fleetMemoryLimitSchema,
+  fleetNameSchema,
+  fleetTintSchema,
   fleetBotIdSchema,
   fleetFileIdSchema,
   fleetEnvironmentIdSchema,
@@ -38,7 +44,7 @@ import { FLEET_ATTENDED_FILES_MAX } from '../../../shared/fleet-downloads'
 import { FleetClientError } from './api'
 import { setAttendedFleetFiles } from './download-notices'
 import { fleetClientService as fleet } from './service'
-import { FLEET_EDIT_CONFLICT, FLEET_EDIT_UNSUPPORTED } from '../../../shared/fleet-targets'
+import { FLEET_EDIT_CONFLICT, FLEET_EDIT_UNSUPPORTED, FLEET_SCOPES_UNSUPPORTED } from '../../../shared/fleet-targets'
 import {
   provisioningRoute,
   requireEnvironmentUpdates,
@@ -51,6 +57,16 @@ import {
 
 const id = fleetBotIdSchema
 const environmentId = fleetEnvironmentIdSchema
+/** A new workspaces environment, as the renderer asks for it; omitted settings take the server's defaults. */
+const createWorkspacesInput = z
+  .object({
+    name: fleetNameSchema.optional(),
+    memoryLimitBytes: fleetMemoryLimitSchema.nullable().optional(),
+    cpuLimit: fleetCpuLimitSchema.nullable().optional(),
+    idleStopMinutes: fleetIdleStopMinutesSchema.nullable().optional(),
+    tint: fleetTintSchema.nullable().optional(),
+  })
+  .strict()
 const opaqueId = z.string().min(1).max(256)
 const optionalLimit = z.number().int().min(1).max(500).optional()
 const outgoingAttachments = z
@@ -152,12 +168,28 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     requireEnvironments(fleet)
     return fleet.call(route, { params })
   })
-  // A server hosts the owner's chats and workspaces in one environment of its own kind, with no bots.
-  reg.mhandle('fleet:createWorkspaces', () => {
+  // A server hosts the owner's chats and workspaces in environments of their own kind, with no bots: one per scope of
+  // the owner's work on servers with `workspaces-environments`, one in all on older ones.
+  reg.mhandle('fleet:createWorkspaces', (_event, raw: unknown) => {
     if (!fleet.hasFeature(FLEET_WORKSPACES_HOST_FEATURE))
       throw new FleetClientError('INVALID_REQUEST', 400, 'Update the server to run workspaces on it.')
+    const input = createWorkspacesInput.parse(raw ?? {})
+    // An older server drops the settings it does not know; they are not sent, so none is silently lost.
+    const scoped = fleet.hasFeature(FLEET_WORKSPACES_ENVIRONMENTS_FEATURE)
     return fleet.call('environmentsCreate', {
-      body: { name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces', idempotencyKey: fleet.idempotencyKey() },
+      body: {
+        name: input.name ?? 'Workspaces',
+        memoryLimitBytes: input.memoryLimitBytes ?? null,
+        kind: 'workspaces',
+        ...(scoped
+          ? {
+              cpuLimit: input.cpuLimit ?? null,
+              idleStopMinutes: input.idleStopMinutes ?? null,
+              tint: input.tint ?? null,
+            }
+          : {}),
+        idempotencyKey: fleet.idempotencyKey(),
+      },
     })
   })
   reg.mhandle('fleet:environmentUpdate', (_event, rawId: unknown, rawWhen: unknown) => {
@@ -181,6 +213,10 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const params = { eid: environmentId.parse(rawId) }
     const body = fleetPatchEnvironmentRequestSchema.parse(patch)
     requireEnvironments(fleet)
+    // An older server drops these fields, and then refuses or ignores the change.
+    const scoped = ['cpuLimit', 'idleStopMinutes', 'tint', 'hostFolder'] as const
+    if (scoped.some((key) => body[key] !== undefined) && !fleet.hasFeature(FLEET_WORKSPACES_ENVIRONMENTS_FEATURE))
+      throw new FleetClientError('INVALID_REQUEST', 400, FLEET_SCOPES_UNSUPPORTED)
     return fleet.call('environmentPatch', { params, body })
   })
   // Listed on demand, like archived bots; a gateway without environments has none.

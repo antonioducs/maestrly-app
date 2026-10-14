@@ -13,7 +13,7 @@ const json = (response: Response) => response.json() as Promise<Record<string, a
 describe('push registration routes', () => {
   it('lets a phone register, read, change and remove its push token', async () => {
     const h = await harness()
-    expect((await json(await fetch(h.origin + '/v1/meta'))).features).toContain('phones')
+    expect((await json(await fetch(h.origin + '/v1/meta'))).moreFeatures).toContain('phones')
     expect(await json(await h.request('GET', '/v1/devices/self/push'))).toEqual({ registration: null })
 
     const saved = await h.request('PUT', '/v1/devices/self/push', registration)
@@ -52,7 +52,7 @@ describe('push registration routes', () => {
 
   it('tells a phone that a server with push off sends no notifications', async () => {
     const h = await harness(Date.now, { pushOff: true })
-    expect((await json(await fetch(h.origin + '/v1/meta'))).features).toContain('phones')
+    expect((await json(await fetch(h.origin + '/v1/meta'))).moreFeatures).toContain('phones')
     const refused = await h.request('PUT', '/v1/devices/self/push', registration)
     expect(refused.status).toBe(409)
     expect(await json(refused)).toMatchObject({ code: 'CONFLICT' })

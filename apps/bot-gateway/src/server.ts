@@ -93,7 +93,9 @@ export function createGatewayServers(ctx: GatewayContext) {
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
-  const network = ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network)
+  const network =
+    ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network, () => ctx.lifecycle.isolatedNetworks())
+  ctx.lifecycle.onNetworksChanged = () => void network.refresh().catch(() => {})
   const desktops = ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events)
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
   ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
@@ -105,6 +107,8 @@ export function createGatewayServers(ctx: GatewayContext) {
     hostFiles.closeEnvironment(id)
     hostEditor.closeEnvironment(id)
   }
+  // A workspaces environment that a device uses through any of these is not idle.
+  ctx.lifecycle.hostConnections = (id) => bridge.count(id) + hostFiles.count(id) + hostEditor.count(id)
   // Phones hear of what waits on the owner even while no app streams events.
   const push =
     ctx.push ??

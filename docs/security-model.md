@@ -515,10 +515,10 @@ See [environments](bot-fleet.md#environments) for what its bots share.
 
 ## Remote workspaces
 
-A bot server can run one **workspaces environment**: a container with a full
-Maestrly, in server mode, that hosts the owner's chats and workspaces instead of
-bots. A paired computer drives it through a **bridge**: see
-[remote workspaces](remote-workspaces.md).
+A bot server can run several **workspaces environments**, one per scope of the
+owner's work: each a container with a full Maestrly, in server mode, that hosts
+the owner's chats and workspaces instead of bots. A paired computer drives each
+one through a **bridge**: see [remote workspaces](remote-workspaces.md).
 
 - **A paired computer controls the host as a window controls its own
   computer.** Over the bridge, the computer's renderers call the host's IPC
@@ -534,7 +534,7 @@ bots. A paired computer drives it through a **bridge**: see
   its first use. The gateway then forwards the WebSocket handshake to the
   environment's control server with the environment's control token, which
   never leaves the gateway and the container, and passes bytes both ways
-  without reading them. A device holds at most eight bridges. Revoking a
+  without reading them. A device holds at most sixteen bridges. Revoking a
   device discards its tickets and closes its bridges; stopping or archiving
   the environment closes every bridge to it.
 - **A phone reaches only the mobile API.** A phone says it is one in its first
@@ -559,9 +559,15 @@ bots. A paired computer drives it through a **bridge**: see
   list is `apps/desktop/src/shared/host-channels.ts`, and a test checks every
   channel of the preload against it.
 - **The host sees only its own folders.** Workspaces are added from the
-  environment's home folder and, when the server names one, from a single
-  server directory mounted at the same path (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`;
-  `/srv/maestrly` on a VPS that Maestrly set up). The folder browser resolves
+  environment's home folder and, when the server names a workspaces directory
+  (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`; `/srv/maestrly` on a VPS that Maestrly
+  set up), from that environment's own subfolder of it, mounted at the same
+  path. An environment created before subfolders keeps the whole directory,
+  with the subfolders of the others, until the owner moves it to its own; its
+  page warns about it. The gateway creates each subfolder through a
+  short-lived container with no network, root in it, and only the `CHOWN`,
+  `DAC_OVERRIDE`, and `FOWNER` capabilities, running one fixed command on a
+  path built from the environment id. The folder browser resolves
   symbolic links before checking a path against those folders. No request can
   mount another directory of the server: mounts are fixed when the container
   is created. The container has no Docker socket and no `sudo`, and runs as
@@ -636,10 +642,16 @@ bots. A paired computer drives it through a **bridge**: see
 - **Several computers share one host.** Every paired computer sees the same
   conversations, receives the same streams, and can answer the same permission
   requests, questions, and plans. There is no per-computer or per-workspace
-  isolation inside a host: use separate servers for work that must stay apart.
-- **Workspaces and bots do not share a container**, and the gateway refuses to
-  place a bot in a workspaces environment. They do share the Docker host and
-  the fleet network, like any two environments.
+  isolation inside a host: use separate environments for work that must stay
+  apart.
+- **Workspaces environments are kept apart from each other and from bots.**
+  Each has its own container, home volume, keyring, browser profile, accounts,
+  and server subfolder, and a Docker network of its own that only the gateway
+  joins, so one environment cannot reach another's control server, editor, or
+  ports. The gateway refuses to place a bot in a workspaces environment. They
+  still share the Docker host, its kernel, and the owner's pairing: root on
+  the server, or a paired device, reaches all of them. Work that must not
+  share a machine at all needs a server of its own.
 
 A development or test build, never a packaged one, also accepts
 `MAESTRLY_DEV_DIRECT_HOST`, which connects it straight to a host's control

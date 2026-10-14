@@ -302,7 +302,7 @@ export const fleetBotSchema = z.object({
     display: z.string(),
   }),
   appVersion: z.string().nullable(),
-  capabilities: z.array(z.string().max(40)).max(20).default([]),
+  capabilities: z.array(z.string().max(40)).max(40).default([]),
   usage: fleetUsageSchema.nullable().default(null),
   /**
    * The model the bot compacts with: its own, or else its environment's default. Stored by the gateway, like
@@ -384,6 +384,40 @@ export const fleetRuntimeInfoSchema = z.object({
 export type FleetRuntimeInfo = z.infer<typeof fleetRuntimeInfoSchema>
 export const fleetRuntimesSchema = z.array(fleetRuntimeInfoSchema).max(4)
 
+export const fleetTintSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+/** The CPU limit the owner may set for an environment's container, in CPUs (Docker's `--cpus`). */
+export const fleetCpuLimitSchema = z
+  .number()
+  .finite()
+  .min(FLEET_ENVIRONMENT_LIMITS.cpuLimitMin)
+  .max(FLEET_ENVIRONMENT_LIMITS.cpuLimitMax)
+  .refine((value) => Number.isInteger(value * 4), 'CPU limits go by quarters of a CPU')
+/** How long a workspaces environment stays idle before it stops itself, in minutes. */
+export const fleetIdleStopMinutesSchema = z
+  .number()
+  .int()
+  .min(FLEET_ENVIRONMENT_LIMITS.idleStopMinutesMin)
+  .max(FLEET_ENVIRONMENT_LIMITS.idleStopMinutesMax)
+/**
+ * Which server folder a workspaces environment mounts: one of its own under the server's workspaces folder, or that whole
+ * folder, shared with whatever else is in it (environments from before folders of their own).
+ */
+export const fleetHostFolderModeSchema = z.enum(['own', 'shared'])
+export type FleetHostFolderMode = z.infer<typeof fleetHostFolderModeSchema>
+/** What a workspaces environment shares with the rest of its server. */
+export const fleetEnvironmentIsolationSchema = z.object({
+  /** `own`: a Docker network shared only with the gateway; `shared`: the network of the server's bots. */
+  network: z.enum(['own', 'shared']),
+  /** The server folder it mounts; `none` (path null) when the server has no workspaces folder. */
+  folder: z.object({
+    mode: z.enum(['own', 'shared', 'none']),
+    path: z.string().max(4096).nullable(),
+  }),
+  /** Its container was created with another network or folder than these: restarting it applies them. */
+  restartRequired: z.boolean(),
+})
+export type FleetEnvironmentIsolation = z.infer<typeof fleetEnvironmentIsolationSchema>
+
 /**
  * An environment: one container with one Maestrly, one home folder and one set of accounts, skills, MCP servers and
  * site logins, shared by its bots. Its lifecycle (start, stop, restart, update) acts on all of them.
@@ -398,10 +432,18 @@ export const fleetEnvironmentSchema = z.object({
   resources: fleetResourcesSchema,
   /** The limit the owner set for the container; null when it uses the gateway's default. */
   memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
+  /** The CPU limit the owner set, in CPUs; null when the container may use every CPU of the server. */
+  cpuLimit: fleetCpuLimitSchema.nullable().default(null),
+  /** A workspaces environment stops itself after this many idle minutes; null when it never does. */
+  idleStopMinutes: fleetIdleStopMinutesSchema.nullable().default(null),
+  /** The color the owner chose for it; null when it has none, or the gateway predates colors. */
+  tint: fleetTintSchema.nullable().default(null),
+  /** A workspaces environment's network and folder; null for bots, or from gateways that predate them. */
+  isolation: fleetEnvironmentIsolationSchema.nullable().default(null),
   /** The compaction model of its bots that have none of their own; null when none is set or the gateway predates it. */
   compaction: fleetCompactionConfigSchema.nullable().default(null),
   appVersion: z.string().nullable(),
-  capabilities: z.array(z.string().max(40)).max(20).default([]),
+  capabilities: z.array(z.string().max(40)).max(40).default([]),
   /** Null when the gateway predates environment updates. */
   update: fleetEnvironmentUpdateSchema.nullable().default(null),
   /** Null when the gateway or the environment's image predates runtime reports. */
