@@ -198,7 +198,10 @@ export const fleetSettingsRuntimeSchema = z
   })
   .strict()
 export const fleetSettingsRuntimesSchema = z.object({ runtimes: z.array(fleetSettingsRuntimeSchema).max(3) }).strict()
-export const fleetSettingsPreferencesSchema = z.object({ revision, imageGenEnabled: z.boolean() }).strict()
+/** `generatedInterfacesEnabled` is absent from environments that predate it; send it only to one that reported it. */
+export const fleetSettingsPreferencesSchema = z
+  .object({ revision, imageGenEnabled: z.boolean(), generatedInterfacesEnabled: z.boolean().optional() })
+  .strict()
 /** Subscription kinds whose accounts can take over from one another when one reaches its usage limit. */
 export const FLEET_FAILOVER_KINDS = ['claude', 'codex'] as const
 const failoverKind = z.enum(FLEET_FAILOVER_KINDS)
@@ -354,7 +357,7 @@ export const FLEET_SETTINGS_OPERATIONS = {
   setPreferences: operation(
     'PUT',
     '/preferences',
-    z.object({ ...expected, imageGenEnabled: z.boolean() }).strict(),
+    z.object({ ...expected, imageGenEnabled: z.boolean(), generatedInterfacesEnabled: z.boolean().optional() }).strict(),
     fleetSettingsPreferencesSchema
   ),
   /** Needs `FLEET_ACCOUNT_FAILOVER_FEATURE` from both the gateway and the environment. */

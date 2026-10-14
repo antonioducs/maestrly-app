@@ -517,6 +517,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:set-app-tool-group', group, enabled),
 
     chatSetImageGen: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-image-gen', enabled),
+    chatSetGeneratedInterfaces: (enabled: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-generated-interfaces', enabled),
 
     chatSetWebSearchProvider: (provider: WebSearchProvider): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:set-web-search-provider', provider),

@@ -9,6 +9,7 @@ import type {
   WindowOpenHandlerResponse,
 } from 'electron'
 import { chatWindowKey, type ChatWindowRequest, type ChatWindowTarget } from '../shared/chat-window'
+import { GENUI_WIDGET_FRAME_URL } from '../shared/genui-widget'
 
 const TOKEN_TTL = 15_000
 const MAX_PENDING = 64
@@ -203,7 +204,10 @@ export class ChatWindowManager {
       if (!window.isDestroyed()) window.destroy()
     })
     window.webContents.on('will-navigate', (event) => event.preventDefault())
-    window.webContents.on('will-frame-navigate', (event) => event.preventDefault())
+    // Inline HTML answers load their isolated frame; it may not navigate anywhere else.
+    window.webContents.on('will-frame-navigate', (event) => {
+      if (event.isMainFrame || event.url !== GENUI_WIDGET_FRAME_URL) event.preventDefault()
+    })
     window.webContents.on('will-redirect', (event) => event.preventDefault())
     window.webContents.on('will-attach-webview', (event) => event.preventDefault())
     window.on('close', (event) => {

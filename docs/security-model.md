@@ -69,6 +69,39 @@ sessions with stricter origin and permission controls.
 New renderer APIs should expose one domain operation, not a generic IPC sender,
 SQL executor, filesystem primitive, process launcher, or credential accessor.
 
+Interactive answers (`inline-html` blocks) never run in an app page. Each one
+is framed from the `maestrly-widget://frame/` scheme with
+`sandbox="allow-scripts"` and no `allow-same-origin`: the frame has an opaque
+origin and no access to the app, its storage, cookies, IPC or preload. Its page
+receives the block through `postMessage` and writes it under its own policy
+(`sandbox allow-scripts; default-src 'none'`): scripts may be inline or come
+from the artifact CDN allowlist, `connect-src`, `frame-src`, `form-action` and
+`object-src` are `'none'`, and images and media load from any `https` URL. That
+last point is a deliberate trade-off for showing pictures from the web: a block
+can reveal what it writes in those URLs to their hosts. The app's own policy
+allows framing only its own pages and that scheme, detached chat windows allow
+frame navigation only to that URL, and the permission handler grants the frame
+nothing. The host accepts a fixed set of validated messages from the frame
+(ready, loaded, size, issue, send, open); an issue is one of a fixed list of
+kinds with a short text, shown as plain text under the block. Sending a message
+as the person and opening an `http(s)` URL require transient user activation in
+the app window, at most once per second. Activation comes from any recent
+interaction with that window, not only from a click inside the frame.
+
+The `preview_interface` app tool renders a block for the model before it shows
+it. The block runs in the same frame page and policy, framed by a host page in
+an offscreen window of the in-memory `genui-previews` session. That window is
+sandboxed with context isolation and no Node integration; its session denies
+every permission and download, serves only the host and frame pages, and is
+cleared after each preview. The window opens no other window and navigates
+nowhere else. Previews run one at a time, for at most 15 seconds each, on the
+machine that runs the agent (for bots, their environment), which loads the
+images and CDN files the block asks for. The model receives the screenshot and
+the validated messages of the frame, never data from the app. An answer shows a
+preview by naming it (`inline-html preview=<id>`, where the id is a hash of the
+HTML); the renderer, or a bot environment building its transcript, replaces the
+name with the HTML of a completed preview of the same message.
+
 ## Local data and migrations
 
 The main process owns SQLite and applies the application identity before opening

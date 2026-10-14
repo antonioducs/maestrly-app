@@ -244,6 +244,20 @@ describe('environment preferences', () => {
     expect(await preferences({})).toEqual(changed)
   })
 
+  it('turns generated interfaces off, and leaves them alone for a desktop app that does not send them', async () => {
+    const initial = await preferences({})
+    expect(initial.generatedInterfacesEnabled).toBe(true)
+    const off = await setPreferences({
+      expectedRevision: initial.revision,
+      imageGenEnabled: true,
+      generatedInterfacesEnabled: false,
+    })
+    expect(off.generatedInterfacesEnabled).toBe(false)
+    expect(getAppFlag('chat.generatedInterfaces', true)).toBe(false)
+    const older = await setPreferences({ expectedRevision: off.revision, imageGenEnabled: false })
+    expect(older).toMatchObject({ imageGenEnabled: false, generatedInterfacesEnabled: false })
+  })
+
   it('rejects concurrent stale writes and observes local preference changes', async () => {
     const initial = await preferences({})
     const results = await Promise.allSettled([

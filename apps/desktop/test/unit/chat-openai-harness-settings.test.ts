@@ -243,6 +243,19 @@ describe('OpenAI harness kill switch', () => {
     ).toBe(false)
   })
 
+  it('defaults generated interfaces on and persists their switch', async () => {
+    const handlers = register()
+    const enabled = async () =>
+      ((await handlers.get('chat:config')!(undefined as never)) as { generatedInterfacesEnabled: boolean })
+        .generatedInterfacesEnabled
+
+    expect(await enabled()).toBe(true)
+    expect(h.getAppFlag).toHaveBeenCalledWith('chat.generatedInterfaces', true)
+    expect(handlers.get('chat:set-generated-interfaces')?.(undefined as never, false)).toEqual({ ok: true })
+    expect(h.setAppFlag).toHaveBeenCalledWith('chat.generatedInterfaces', false)
+    expect(await enabled()).toBe(false)
+  })
+
   it('reports and persists the web search provider and key presence without exposing keys', async () => {
     const handlers = register()
     const webSearch = async () =>

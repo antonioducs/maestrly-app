@@ -15,6 +15,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, ChevronRight } from 'lucide-react'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
+import { GenUiContext, type GenUiHost } from '@/genui/context'
+import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -636,6 +638,7 @@ const Bubble = memo(function Bubble({
   onRetrySteering,
   onOpenMention,
   onOpenImage,
+  onUiSend,
   searchQuery,
   currentSearchMatch,
 }: {
@@ -656,11 +659,15 @@ const Bubble = memo(function Bubble({
   onRetrySteering?: (text: string) => void
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
   onOpenImage?: (src: string, name: string) => void
+  /** Sends what a generated interface of this message asks to send as the user. */
+  onUiSend?: (text: string) => void
   searchQuery?: string
   currentSearchMatch?: boolean
 }) {
   const { t } = useTranslation('chat')
   const { openSettings } = useSettings()
+  const previews = useMemo(() => genUiPreviewsOf(message.parts), [message.parts])
+  const genUiHost = useMemo<GenUiHost>(() => ({ live, send: onUiSend, previews }), [live, onUiSend, previews])
   const isUser = message.role === 'user'
   const text = plainText(message)
   const bodyText = textOnly(message)
@@ -930,7 +937,7 @@ const Bubble = memo(function Bubble({
           onToggle={isReviewLoopRound ? () => setRoundCollapsed((v) => !v) : undefined}
         />
       )}
-      {showRoundBody && body}
+      {showRoundBody && <GenUiContext.Provider value={genUiHost}>{body}</GenUiContext.Provider>}
     </div>
   )
 })
@@ -961,6 +968,8 @@ interface Props extends EditCtx {
 
   currentSearchHitId?: string | null
   onRetrySteering?: (text: string) => void
+  /** Sends what a generated interface asks to send as the user; absent where the person cannot write. */
+  onUiSend?: (text: string) => void
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
@@ -983,6 +992,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   currentSearchHitId,
   readOnly = false,
   onRetrySteering,
+  onUiSend,
 }: Props) {
   const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
@@ -1196,6 +1206,7 @@ export const ChatMessageList = memo(function ChatMessageList({
             onRetrySteering={onRetrySteering}
             onOpenMention={onOpenMention}
             onOpenImage={openImage}
+            onUiSend={readOnly ? undefined : onUiSend}
             searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
             currentSearchMatch={currentSearchHitId === m.id}
           />

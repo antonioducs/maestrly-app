@@ -501,6 +501,23 @@ export default {
     reset: 'Redefinir zoom',
     close: 'Fechar (Esc)',
   },
+  genUi: {
+    source: 'Código da interface',
+    building: 'Montando interface…',
+    missing: 'Esta interface está faltando: a resposta cita uma prévia que não gerou.',
+    tooLong: 'Esta interface é grande demais para exibir. O código dela está abaixo.',
+    frameTitle: 'Resposta interativa',
+    issues: {
+      summary_one: '{{count}} problema encontrado nesta interface',
+      summary_other: '{{count}} problemas encontrados nesta interface',
+      image: 'Uma imagem não carregou e foi substituída: {{detail}}',
+      overflow: 'O conteúdo é mais largo que a resposta: {{detail}}',
+      clipped: 'O texto fica cortado pela caixa: {{detail}}',
+      viewport: 'O layout cresce com a altura do quadro (100vh ou height: 100%), por isso a altura foi limitada.',
+      script: 'Erro de script: {{detail}}',
+      blocked: 'Bloqueado pela política da interface: {{detail}}',
+    },
+  },
   localData: {
     exportIncomplete:
       'A exportação está incompleta. Salve o conteúdo omitido separadamente antes de redefinir os dados locais.',

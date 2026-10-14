@@ -139,6 +139,11 @@ export const session = {
   fromPartition: (_partition: string): typeof fakeSession => fakeSession,
 }
 export const utilityProcess = { fork: (): unknown => ({ on: () => {}, postMessage: () => {} }) }
+// `protocol` lets the custom scheme modules load; tests check what they register, not Electron's handling.
+export const protocol = {
+  registerSchemesAsPrivileged: (_schemes: unknown): void => {},
+  handle: (_scheme: string, _handler: unknown): void => {},
+}
 // `net.fetch` allows HTTP client modules to load in plain Node under Vitest.
 // Reject by default to prevent network calls; tests must mock requests explicitly.
 export const net = {

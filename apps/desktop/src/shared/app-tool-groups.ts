@@ -1,7 +1,7 @@
 /**
  * User-facing groups of Maestrly app tools. A group is derived from the stable tool-name prefix, so new tools
  * join their group without extra wiring. Bot-only tools (computer, peers, routines, owner help) belong to no
- * group: bots always run with them.
+ * group: bots always run with them. Neither does preview_interface, which the Interactive answers setting governs.
  */
 export const APP_TOOL_GROUPS = [
   'terminal',

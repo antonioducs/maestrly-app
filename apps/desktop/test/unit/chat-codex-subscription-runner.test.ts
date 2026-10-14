@@ -987,7 +987,7 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          'a3eaf66873efb1399337099b79a5b6837520c2682371b36d79f1357bdc1acf51'
+          '37115024b896e45e4ffc158baf48f27b774c29386bc62bafb24a5de7a9156e98'
         )
         expect(request.baseInstructions).toBeUndefined()
         expect(request.personality).toBe('friendly')

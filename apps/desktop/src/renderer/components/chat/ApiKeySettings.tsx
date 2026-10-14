@@ -1553,6 +1553,13 @@ export function ApiKeySettings({
           />
           {config.webSearch && <WebSearchSettings webSearch={config.webSearch} onChanged={refresh} />}
           <FlagToggle
+            headingKey="settings.generatedInterfacesHeading"
+            descriptionKey="settings.generatedInterfacesDescription"
+            enabled={config.generatedInterfacesEnabled}
+            setEnabled={api.chatSetGeneratedInterfaces}
+            onChanged={refresh}
+          />
+          <FlagToggle
             headingKey="settings.bashFiltersHeading"
             descriptionKey="settings.bashFiltersDescription"
             enabled={config.bashFiltersEnabled}

@@ -545,7 +545,10 @@ tab remains available for application interaction and browser sign-ins.
   cancel an operation.
 - **Preferences:** rename the environment, choose its default compaction
   settings, and set image generation's default availability. Per-conversation
-  overrides still apply. Maestrly tools stay enabled for bots.
+  overrides still apply. Turn **Interactive answers** off to stop the
+  environment's bots from answering with interfaces and previewing them, which
+  saves their tokens; an environment on an image from before this setting does
+  not show it. Maestrly tools stay enabled for bots.
 
 Draft forms offer **Save changes** and **Discard**. Leaving with unsaved edits
 asks first; `Cmd/Ctrl+S` saves the current draft. Edits that conflict with another

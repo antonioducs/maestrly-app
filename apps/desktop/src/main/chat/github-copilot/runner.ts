@@ -86,6 +86,7 @@ import { harnessFor } from '../harness/execution'
 import { captureHarnessFlags } from '../harness/flags'
 import { buildMaestrlyBasePrompt, harnessUltraGuidance } from '../harness/host-contracts'
 import { buildHarnessPrompt } from '../harness/prompt-builder'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import type { ResolvedHarness } from '../harness/types'
 import { resolveSubagentExecutionProfile } from '../subagent-execution-profile'
 import { namespaceSubagentToolSet, type NormalizedAiUsage } from '../subagent-runner'
@@ -761,6 +762,7 @@ async function prepareRuntime(
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: notes,
+        generatedInterfaces: generatedInterfacesEnabled(),
       }) +
       runtimeOverlay +
       projectContext +
@@ -787,6 +789,7 @@ async function prepareRuntime(
         envContext: env,
         ultraContext: ultra,
         nativeTools: { localShell: false, applyPatch: false },
+        generatedInterfaces: generatedInterfacesEnabled(),
       }).instructions
     }
 

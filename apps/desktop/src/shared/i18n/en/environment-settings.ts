@@ -77,6 +77,9 @@ export default {
   skillReadOnly: 'This skill is managed or read-only and cannot be edited here.',
   imageGen: 'Image generation',
   imageGenNote: 'Default availability of image generation for bots in this environment.',
+  generatedInterfaces: 'Interactive answers',
+  generatedInterfacesNote:
+    'Lets bots in this environment answer with interfaces such as pictures, charts and calculators, previewing them first. Off saves about 850 tokens per conversation, plus the screenshots of previews.',
   appTools: 'App tools',
   appToolsLocked: 'App tools stay enabled for remote environments.',
   failover: {

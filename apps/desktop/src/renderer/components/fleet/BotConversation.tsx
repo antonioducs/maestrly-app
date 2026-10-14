@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowDown, Loader2, Pencil, Wrench, X } from 'lucide-react'
 import { FLEET_MESSAGE_EDIT_FEATURE, type FleetBot, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
+import { GenUiContext, type GenUiHost } from '@/genui/context'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
@@ -27,6 +28,28 @@ import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { searchTranscriptSegments, transcriptSegmentKey } from '@/lib/fleet/transcript-search'
 import { cn } from '@/lib/utils'
+
+/** A bot's answer: each generated interface renders once its block is complete, and sends through the bot. */
+function BotAnswer({
+  text,
+  streaming,
+  onInterfaceSend,
+  searchQuery,
+  currentSearchMatch,
+}: {
+  text: string
+  streaming: boolean
+  onInterfaceSend?: (text: string) => void
+  searchQuery?: string
+  currentSearchMatch?: boolean
+}) {
+  const host = useMemo<GenUiHost>(() => ({ live: streaming, send: onInterfaceSend }), [onInterfaceSend, streaming])
+  return (
+    <GenUiContext.Provider value={host}>
+      <MarkdownViewer markdown={text} searchQuery={searchQuery} currentSearchMatch={currentSearchMatch} />
+    </GenUiContext.Provider>
+  )
+}
 
 /** Plain transcript text with the search matches marked like a chat message's Markdown. */
 function SearchText({ text, query, current }: { text: string; query?: string; current?: boolean }) {
@@ -148,6 +171,7 @@ function TranscriptRow({
   searchQuery,
   currentSearchMatch,
   edit,
+  onInterfaceSend,
 }: {
   bot: FleetBot
   imageCache: FleetImageCache
@@ -159,6 +183,8 @@ function TranscriptRow({
   searchQuery?: string
   currentSearchMatch?: boolean
   edit?: RowEdit
+  /** Sends what a generated interface asks to send as the owner; absent while the bot cannot take messages. */
+  onInterfaceSend?: (text: string) => void
 }) {
   const { t, i18n } = useTranslation('fleet')
   const at = new Date(item.at).toLocaleTimeString(i18n.language, {
@@ -282,7 +308,13 @@ function TranscriptRow({
   if (item.kind === 'assistant')
     return (
       <div className="max-w-[90%] text-sm">
-        <MarkdownViewer markdown={item.text} searchQuery={searchQuery} currentSearchMatch={currentSearchMatch} />
+        <BotAnswer
+          text={item.text}
+          streaming={!!item.streaming}
+          onInterfaceSend={onInterfaceSend}
+          searchQuery={searchQuery}
+          currentSearchMatch={currentSearchMatch}
+        />
         {item.streaming && <span className="text-xs text-muted-foreground">{t('transcript.streaming')}</span>}
         <span className="mt-1 block text-xs text-muted-foreground">{at}</span>
       </div>
@@ -585,6 +617,21 @@ export function BotConversation({
 
   const latestTodoId = latestTodoItemId(shownItems)
   const working = bot.status === 'working' || bot.status === 'waiting'
+
+  // A generated interface sends as the owner, like the composer; the instance queues it while the bot works.
+  const sendFromInterface = useCallback(
+    (text: string) => {
+      setError(null)
+      void window.api
+        .fleetSendMessage(bot.id, text)
+        .then(() => fleet.loadTranscript(bot.id))
+        .catch((cause) => setError(fleetErrorMessage(cause)))
+    },
+    [bot.id, fleet.loadTranscript]
+  )
+  const interfaceSend = locked ? undefined : sendFromInterface
+  // Interfaces inside the activity (reasoning, interim text) wait for the turn; each answer follows its own stream.
+  const transcriptHost = useMemo<GenUiHost>(() => ({ live: working, send: interfaceSend }), [interfaceSend, working])
   const segments = useMemo<FleetActivitySegment[]>(
     () =>
       compact ? fleetActivitySegments(shownItems, { working }) : shownItems.map((item) => ({ kind: 'item', item })),
@@ -742,42 +789,50 @@ export function BotConversation({
                 {t('transcript.loadOlder')}
               </button>
             )}
-            {segments.map((segment) => {
-              const key = transcriptSegmentKey(segment)
-              const query = searchHighlight && searchHitKeys.has(key) ? searchHighlight : undefined
-              const current = key === currentHitKey
-              return (
-                // `contents` keeps the transcript's layout: a row that renders nothing adds no gap.
-                <div key={key} data-search-key={key} className="contents">
-                  {segment.kind === 'activity' ? (
-                    <BotAgentActivity
-                      bot={bot}
-                      segment={segment}
-                      imageCache={imageCache}
-                      onShowOnComputer={onOpenScreen}
-                      searchQuery={query}
-                      currentSearchMatch={current}
-                    />
-                  ) : segment.kind === 'images' ? (
-                    // The images the bot shared: the tool stays in the activity, with its images in its details.
-                    <BotTranscriptImages botId={bot.id} images={segment.item.images} cache={imageCache} size="large" />
-                  ) : (
-                    <TranscriptRow
-                      bot={bot}
-                      item={segment.item}
-                      fleet={fleet}
-                      onOpenBot={onOpenBot}
-                      onOpenScreen={onOpenScreen}
-                      imageCache={imageCache}
-                      latestTodoId={latestTodoId}
-                      searchQuery={query}
-                      currentSearchMatch={current}
-                      edit={rowEdit(segment.item)}
-                    />
-                  )}
-                </div>
-              )
-            })}
+            <GenUiContext.Provider value={transcriptHost}>
+              {segments.map((segment) => {
+                const key = transcriptSegmentKey(segment)
+                const query = searchHighlight && searchHitKeys.has(key) ? searchHighlight : undefined
+                const current = key === currentHitKey
+                return (
+                  // `contents` keeps the transcript's layout: a row that renders nothing adds no gap.
+                  <div key={key} data-search-key={key} className="contents">
+                    {segment.kind === 'activity' ? (
+                      <BotAgentActivity
+                        bot={bot}
+                        segment={segment}
+                        imageCache={imageCache}
+                        onShowOnComputer={onOpenScreen}
+                        searchQuery={query}
+                        currentSearchMatch={current}
+                      />
+                    ) : segment.kind === 'images' ? (
+                      // The images the bot shared: the tool stays in the activity, with its images in its details.
+                      <BotTranscriptImages
+                        botId={bot.id}
+                        images={segment.item.images}
+                        cache={imageCache}
+                        size="large"
+                      />
+                    ) : (
+                      <TranscriptRow
+                        bot={bot}
+                        item={segment.item}
+                        fleet={fleet}
+                        onOpenBot={onOpenBot}
+                        onOpenScreen={onOpenScreen}
+                        imageCache={imageCache}
+                        latestTodoId={latestTodoId}
+                        searchQuery={query}
+                        currentSearchMatch={current}
+                        edit={rowEdit(segment.item)}
+                        onInterfaceSend={interfaceSend}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </GenUiContext.Provider>
             {bot.status === 'working' && !runningToolLast && !liveLine && (
               <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />

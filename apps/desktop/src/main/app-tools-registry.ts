@@ -13,6 +13,8 @@ import { registerArtifactTools } from './mcp/tools/artifacts'
 import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
 import { botRuntimeForConversation } from './fleet/instance'
 import { isBotMode } from './fleet/instance/config'
+import { registerInterfaceTools } from './mcp/tools/interfaces'
+import { generatedInterfacesEnabled } from './chat/generated-interfaces'
 
 /**
  * In-process native Chat tool registry. Client and server connect exclusively through
@@ -51,5 +53,7 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
     registerArtifactCommentTools(ctx)
   }
   registerBotModeTools(ctx)
+  // Only where the prompt teaches interfaces: never for delegated workers, and not when the person turned them off.
+  if (!workerScope && generatedInterfacesEnabled()) registerInterfaceTools(ctx)
   return server
 }

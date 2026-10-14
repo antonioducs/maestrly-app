@@ -495,6 +495,23 @@ export default {
     reset: 'Reset zoom',
     close: 'Close (Esc)',
   },
+  genUi: {
+    source: 'Interface source',
+    building: 'Building interface…',
+    missing: 'This interface is missing: the answer names a preview it did not render.',
+    tooLong: 'This interface is too large to show. Its source is below.',
+    frameTitle: 'Interactive answer',
+    issues: {
+      summary_one: '{{count}} problem found in this interface',
+      summary_other: '{{count}} problems found in this interface',
+      image: 'An image did not load and was replaced: {{detail}}',
+      overflow: 'Content is wider than the answer: {{detail}}',
+      clipped: 'Text is cut off by its box: {{detail}}',
+      viewport: 'The layout grows with the height of its frame (100vh or height: 100%), so its height was capped.',
+      script: 'Script error: {{detail}}',
+      blocked: 'Blocked by the interface policy: {{detail}}',
+    },
+  },
   localData: {
     exportIncomplete: 'The export is incomplete. Save the omitted content separately before resetting local data.',
     repositoryFiles:

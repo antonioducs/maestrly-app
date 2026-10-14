@@ -8,6 +8,7 @@ import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-t
 import type { ResolvedHarness } from './types'
 import type { AppToolGroup } from '../../../shared/app-tool-groups'
 import { appToolPromptGroups, listJoin } from './app-tool-prompt'
+import { GENUI_PROMPT } from './genui-prompt'
 
 /**
  * Host contracts are composed outside the replaceable profile text. Mode limits, the actually
@@ -150,6 +151,15 @@ export function hostCapabilitySection(mode: ChatBehavior): string {
 
 export const HOST_RENDERING = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
 
+/**
+ * Teaches the model the ```inline-html blocks chats render as interfaces. Kept in the stable prefix so prompt caching
+ * absorbs it. It is left out when the person turned generated interfaces off, and for delegated subagents, whose
+ * output goes to a model.
+ */
+export function hostGenUiSection(enabled = true): string {
+  return enabled ? `\n\n${GENUI_PROMPT}` : ''
+}
+
 export function hostAppToolsSection(
   appToolsEnabled: boolean,
   hasNotesTab: boolean,
@@ -189,6 +199,8 @@ export interface MaestrlyBasePromptInput {
   disabledAppToolGroups?: readonly AppToolGroup[]
   mode: ChatBehavior
   hasNotesTab: boolean
+  /** Teach the generated-interface language; on unless the output never reaches a person. */
+  generatedInterfaces?: boolean
 }
 
 /**
@@ -247,7 +259,7 @@ ${discovery} Online research requires an actually available tool: use web_search
       standaloneProfileText(input.harness.prompts.styleAndWork, { chatStyle: Boolean(chatStyle) }),
       HOST_USING_TOOLS,
       standaloneCapabilities(input.mode),
-      HOST_RENDERING,
+      HOST_RENDERING + hostGenUiSection(input.generatedInterfaces),
       isBot ? '' : PERSONAL_MEMORY_TOOL_GUIDANCE,
       input.appToolsEnabled
         ? 'Maestrly tools are available only as exposed in your tool catalog. Respect their permissions.'
@@ -266,6 +278,7 @@ ${discovery} Online research requires an actually available tool: use web_search
     base +
     hostCapabilitySection(input.mode) +
     HOST_RENDERING +
+    hostGenUiSection(input.generatedInterfaces) +
     hostAppToolsSection(input.appToolsEnabled, input.hasNotesTab, input.mode, input.disabledAppToolGroups) +
     `\n\n${MEMORY_TOOL_GUIDANCE}` +
     (designPrompt ? `\n\n${designPrompt}` : '')

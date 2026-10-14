@@ -4,7 +4,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { APP_TOOL_POLICY, appToolAllowed, appToolMetadata } from '../../src/main/chat/tool-policy'
 import { buildAppTools } from '../../src/main/chat/mcp'
 import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
-import { insertConversation } from '../../src/main/store'
+import { GENERATED_INTERFACES_FLAG } from '../../src/main/chat/generated-interfaces'
+import { insertConversation, setAppFlag } from '../../src/main/store'
 import { freshDb, closeDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
 
@@ -147,6 +148,7 @@ const EXPECTED_TOOL_NAMES = [
   'artifact_comments',
   'artifact_comment_reply',
   'artifact_comment_resolve',
+  'preview_interface',
 ] as const
 
 // Board tools register only for linked board or project-chat conversations.
@@ -247,6 +249,7 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('artifact_comments', ['cursor', 'id', 'status', 'version'], ['id']),
   shape('artifact_comment_reply', ['body', 'commentId', 'id'], ['body', 'commentId', 'id']),
   shape('artifact_comment_resolve', ['commentId', 'id'], ['commentId', 'id']),
+  shape('preview_interface', ['html', 'width'], ['html']),
 ]
 
 async function listToolInventory(convId: string, includeDescriptions = false): Promise<ToolShape[]> {
@@ -440,7 +443,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(85)
+    expect(registered).toHaveLength(86)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
@@ -490,6 +493,15 @@ describe('MCP app tools inventory', () => {
     } finally {
       await memory.close()
     }
+  })
+
+  it('offers the interface preview only while generated interfaces are on', async () => {
+    setAppFlag(GENERATED_INTERFACES_FLAG, false)
+    expect((await listToolInventory(convId)).map((tool) => tool.name)).not.toContain('preview_interface')
+    setAppFlag(GENERATED_INTERFACES_FLAG, true)
+    expect((await listToolInventory(convId)).map((tool) => tool.name)).toContain('preview_interface')
+    expect(appToolAllowed('ask', 'preview_interface')).toBe(true)
+    expect(appToolAllowed('plan', 'preview_interface')).toBe(true)
   })
 
   it('keeps critical Plan/Ask policy sentinels explicit', () => {
