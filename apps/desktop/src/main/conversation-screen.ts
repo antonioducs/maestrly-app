@@ -1,7 +1,11 @@
+import { isBotMode } from './fleet/instance/config'
+import { isServerMode } from './remote-host/server/config'
+
 /**
  * Screens that belong to single conversations. In a bot environment each bot conversation has its own X display for
  * desktop apps (`computer_*` tools) and an area of the shared Electron display that holds its browser and other
- * windows. Conversations without a registration keep using the primary display, as before.
+ * windows. A workspaces host registers one while a conversation's computer runs. Conversations without a registration
+ * keep using the primary display, as before.
  */
 
 export interface ScreenArea {
@@ -78,6 +82,45 @@ export function setConversationScreen(conversationId: string, screen: Conversati
 /** The registered screen of a conversation, or `null` when it uses the primary display. */
 export function conversationScreen(conversationId: string | undefined): ConversationScreen | null {
   return conversationId ? (screens.get(conversationId) ?? null) : null
+}
+
+/**
+ * The tile of the environment display that holds a workspaces conversation's browser while its Browser tab streams it
+ * as video, with no computer running. Changing it notifies the screen listeners.
+ */
+const tiles = new Map<string, ScreenArea>()
+
+export function setConversationTile(conversationId: string, area: ScreenArea | null): void {
+  if (!conversationId) throw new TypeError('A conversation tile needs a conversation id.')
+  if (area === null) {
+    if (!tiles.delete(conversationId)) return
+  } else {
+    const valid =
+      Number.isSafeInteger(area.x) &&
+      Number.isSafeInteger(area.y) &&
+      isPositiveInteger(area.width) &&
+      isPositiveInteger(area.height)
+    if (!valid) throw new TypeError(`Invalid tile for conversation ${conversationId}.`)
+    const current = tiles.get(conversationId)
+    if (current?.x === area.x && current.y === area.y && current.width === area.width && current.height === area.height)
+      return
+    tiles.set(conversationId, Object.freeze({ x: area.x, y: area.y, width: area.width, height: area.height }))
+  }
+  notify(conversationId, screens.get(conversationId) ?? null)
+}
+
+/** Where the conversation's browser windows belong on the environment display: its screen's area, or its tile. */
+export function conversationBrowserArea(conversationId: string | undefined): ScreenArea | null {
+  if (!conversationId) return null
+  return screens.get(conversationId)?.windowArea ?? tiles.get(conversationId) ?? null
+}
+
+/**
+ * Whether a desktop presents the conversation's browser in its area, frameless and filling it: every bot's, and a
+ * workspaces conversation's while its computer runs.
+ */
+export function presentsBrowserInArea(conversationId: string): boolean {
+  return isBotMode() || (isServerMode() && conversationScreen(conversationId) !== null)
 }
 
 /** Observe registrations and removals; returns the function that stops observing. */

@@ -957,7 +957,7 @@ describe('bot environment registry', () => {
       const dispose = vi.fn(async () => {
         order.push('desktop ' + target.botId)
       })
-      const handle = { present: vi.fn(), dispose }
+      const handle = { present: vi.fn(), ownProcessIds: () => [], dispose }
       handles.push({ botId: target.botId, display: target.display.display, ...handle })
       return handle
     })
@@ -1040,7 +1040,7 @@ describe('bot environment registry', () => {
     })
     const desktop = vi.fn(async (target: BotDesktopTarget) => {
       if (target.botId === 'alpha') throw new Error('socket busy')
-      return { present: vi.fn(), dispose: vi.fn(async () => {}) }
+      return { present: vi.fn(), ownProcessIds: () => [], dispose: vi.fn(async () => {}) }
     })
     const runtime = new EnvironmentRuntime({ ...environment(displays).deps, desktop })
     environments.push(runtime)

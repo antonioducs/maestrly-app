@@ -124,6 +124,8 @@ export interface BotDesktopHandle {
    * the bot over, and not again within moments for the same app.
    */
   present(request: PresentationRequest): void
+  /** The ids of the programs its services started (terminal windows, the file manager): their windows are its own. */
+  ownProcessIds(): number[]
   dispose(): Promise<void>
 }
 

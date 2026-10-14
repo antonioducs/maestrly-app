@@ -148,6 +148,11 @@ export class TerminalViewers {
     this.stop(viewer)
   }
 
+  /** The process ids of the open terminal windows. */
+  processIds(): number[] {
+    return [...this.viewers.values()].map((viewer) => viewer.pid)
+  }
+
   dispose(): void {
     this.disposed = true
     const viewers = [...this.viewers.values()]
