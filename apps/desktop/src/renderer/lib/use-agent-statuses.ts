@@ -47,6 +47,29 @@ export function clearChatGptAttention(state: AgentAttentionState, conversationId
   return { normalAttention: state.normalAttention, companionAttention }
 }
 
+/** The host cleared the mark, seen from some computer; a companion completion stays this window's own. */
+export function clearNormalAttention(state: AgentAttentionState, conversationId: string): AgentAttentionState {
+  if (!state.normalAttention.has(conversationId)) return state
+  const normalAttention = new Set(state.normalAttention)
+  normalAttention.delete(conversationId)
+  return { normalAttention, companionAttention: state.companionAttention }
+}
+
+/** The host's marks, as listed, replace this window's; the conversation in front of the person is never marked. */
+export function replaceNormalAttention(
+  state: AgentAttentionState,
+  hostIds: readonly string[],
+  focusedId: string | null
+): AgentAttentionState {
+  const normalAttention = new Set(hostIds.filter((id) => id !== focusedId))
+  if (
+    normalAttention.size === state.normalAttention.size &&
+    [...normalAttention].every((id) => state.normalAttention.has(id))
+  )
+    return state
+  return { normalAttention, companionAttention: state.companionAttention }
+}
+
 export function clearConversationAttention(state: AgentAttentionState, conversationId: string): AgentAttentionState {
   if (!state.normalAttention.has(conversationId) && !state.companionAttention.has(conversationId)) return state
   const normalAttention = new Set(state.normalAttention)
@@ -97,20 +120,61 @@ export function useAgentStatuses({
   chatGptVisibleRef.current = chatGptVisibleConversationId
 
   const acknowledgementRevisionRef = useRef(new Map<string, number>())
-  const acknowledgeConversation = useCallback((conversationId: string) => {
-    const revisions = acknowledgementRevisionRef.current
-    revisions.set(conversationId, (revisions.get(conversationId) ?? 0) + 1)
-    setAttentionState((state) => clearConversationAttention(state, conversationId))
-  }, [])
+  // The host keeps the mark: clearing it there clears it in the windows of every connected computer.
+  const clearOnHost = useCallback(
+    (conversationId: string) => void api.clearConversationAttention(conversationId).catch(() => undefined),
+    [api]
+  )
+  const acknowledgeConversation = useCallback(
+    (conversationId: string) => {
+      const revisions = acknowledgementRevisionRef.current
+      revisions.set(conversationId, (revisions.get(conversationId) ?? 0) + 1)
+      setAttentionState((state) => clearConversationAttention(state, conversationId))
+      clearOnHost(conversationId)
+    },
+    [clearOnHost]
+  )
   useEffect(() => {
     refreshWorkspaces()
+    // Marks that changed while a listing was on its way are newer than the listing.
+    let attentionRevision = 0
+    let alive = true
+    const syncAttention = (): void => {
+      const revision = attentionRevision
+      void api.listConversationAttention().then(
+        (ids) => {
+          if (!alive || revision !== attentionRevision) return
+          const focusedId = focusedRef.current
+          setAttentionState((state) => replaceNormalAttention(state, ids, focusedId))
+          // Only a window the person is looking at counts as having seen it.
+          if (focusedId && ids.includes(focusedId) && document.hasFocus()) clearOnHost(focusedId)
+        },
+        () => undefined
+      )
+    }
     const offStatus = api.onStatus(({ agentId, status }) => {
       const endedTurn = statusesRef.current[agentId] === 'working' && (status === 'ready' || status === 'error')
-      if ((endedTurn || status === 'asking') && agentId !== focusedRef.current) {
-        setAttentionState((state) => applyNormalAttention(state, agentId))
+      if (endedTurn || status === 'asking') {
+        attentionRevision++
+        if (agentId !== focusedRef.current) setAttentionState((state) => applyNormalAttention(state, agentId))
+        else if (document.hasFocus()) clearOnHost(agentId)
       }
       setStatuses((prev) => ({ ...prev, [agentId]: status as AgentStatus }))
     })
+    const offAttention = api.onConversationAttention(({ conversationId, attention }) => {
+      attentionRevision++
+      if (!attention) {
+        setAttentionState((state) => clearNormalAttention(state, conversationId))
+        return
+      }
+      if (conversationId !== focusedRef.current) {
+        setAttentionState((state) => applyNormalAttention(state, conversationId))
+      } else if (document.hasFocus()) clearOnHost(conversationId)
+    })
+    // Coming back to the window catches up with what other computers saw meanwhile, and the open conversation is seen.
+    const onWindowFocus = (): void => syncAttention()
+    window.addEventListener('focus', onWindowFocus)
+    syncAttention()
     const offChatGptCompletion = api.onChatGptWebTurnCompleted(({ conversationId }) => {
       if (!conversationId) return
       const acknowledgementRevision = acknowledgementRevisionRef.current.get(conversationId) ?? 0
@@ -124,10 +188,13 @@ export function useAgentStatuses({
       void window.api.isChatGptVisible(conversationId).then(applyVisibility, () => applyVisibility(undefined))
     })
     return () => {
+      alive = false
+      window.removeEventListener('focus', onWindowFocus)
       offStatus()
+      offAttention()
       offChatGptCompletion()
     }
-  }, [refreshWorkspaces, api])
+  }, [refreshWorkspaces, api, clearOnHost])
 
   useEffect(() => {
     const id = chatGptVisibleConversationId
