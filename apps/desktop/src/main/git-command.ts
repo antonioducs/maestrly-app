@@ -25,6 +25,8 @@ export interface GitCommandOptions {
   timeoutMs?: number
   signal?: AbortSignal
   maxBuffer?: number
+  /** Added to the inherited environment, for example a temporary GIT_INDEX_FILE. */
+  env?: Record<string, string>
 }
 
 export async function runGitRaw(
@@ -37,7 +39,7 @@ export async function runGitRaw(
     const { stdout } = await execFileAsync('git', args, {
       cwd,
       encoding: 'utf8',
-      env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C', ...options.env },
       maxBuffer: options.maxBuffer ?? 10 * 1024 * 1024,
       ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
       ...(options.signal ? { signal: options.signal } : {}),

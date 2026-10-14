@@ -70,6 +70,9 @@ function conversationDir(conversationId: string): string {
   return path.join(root(), conversationId)
 }
 
+/** A conversation's generated-image folder, for moving it to another host. */
+export const generatedImageConversationDir = conversationDir
+
 /**
  * Resolves the requested destination WITHOUT disk access. Deliberately stricter than
  * `write`: generated assets may only be materialized INSIDE this conversation's worktree/cwd.

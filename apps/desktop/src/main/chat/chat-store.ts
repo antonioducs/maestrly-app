@@ -8,6 +8,7 @@ import { normalizeForSearch } from '../memory/relevance'
  * goes in `meta_json`. Idempotent upserts persist the assistant under construction at every checkpoint.
  */
 
+import type { SQLInputValue } from 'node:sqlite'
 import { getDb, inTransaction } from '../store'
 import type {
   ChatContextSnapshot,
@@ -2008,6 +2009,44 @@ export function findGeneratedImagePart(
     if (part.type === 'generated-image' && part.id === partId) return part
   }
   return null
+}
+
+/**
+ * Writes the messages of a conversation that moved here from another host, as they were there. Usage stays billed to
+ * the machine that spent it: the ledger rows the insert trigger copies are dropped again, while rows this machine
+ * already had for those messages (a conversation coming back) are kept.
+ */
+export function insertMovedChatMessages(conversationId: string, rows: Array<Record<string, SQLInputValue>>): void {
+  const db = getDb()
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(chat_messages)').all() as Array<{ name: string }>).map((column) => column.name)
+  )
+  const ids = rows.map((row) => String(row.id))
+  const kept = new Set<string>()
+  for (let index = 0; index < ids.length; index += 500) {
+    const chunk = ids.slice(index, index + 500)
+    const existing = db
+      .prepare(`SELECT message_id FROM chat_usage_ledger WHERE message_id IN (${chunk.map(() => '?').join(',')})`)
+      .all(...chunk) as Array<{ message_id: string }>
+    for (const row of existing) kept.add(row.message_id)
+  }
+  for (const row of rows) {
+    if (row.conversation_id !== conversationId) throw new Error('A moved message belongs to another conversation.')
+    const names = Object.keys(row)
+    if (names.some((name) => !columns.has(name))) throw new Error('A moved message has columns this schema lacks.')
+    db.prepare(`INSERT INTO chat_messages (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`).run(
+      ...names.map((name) => row[name])
+    )
+  }
+  const copied = ids.filter((id) => !kept.has(id))
+  for (let index = 0; index < copied.length; index += 500) {
+    const chunk = copied.slice(index, index + 500)
+    db.prepare(`DELETE FROM chat_usage_ledger WHERE message_id IN (${chunk.map(() => '?').join(',')})`).run(...chunk)
+  }
+  contextStarts.delete(conversationId)
+  newestMarkers.delete(conversationId)
+  noteHistoryStatsWrite(conversationId, null)
+  noteHistoryStatsLedger(conversationId)
 }
 
 /**

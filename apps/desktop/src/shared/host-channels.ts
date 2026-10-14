@@ -4,7 +4,9 @@
  * on the host's own desktop, which nobody sees on a server.
  */
 // `artifacts:` is this computer's artifacts center, which reaches the paired server's artifacts itself; `chat-window:`
-// opens a conversation of this computer in a window of its own; `transfers:` drives this computer's own transfer queue.
+// opens a conversation of this computer in a window of its own; `transfers:` drives this computer's own transfer queue;
+// `conversation-move:` is the move coordinator, which runs on this computer only (hosts serve
+// `conversation-move-endpoint:` to it instead).
 const LOCAL_ONLY_PREFIXES = [
   'fleet:',
   'update:',
@@ -17,6 +19,7 @@ const LOCAL_ONLY_PREFIXES = [
   'artifacts:',
   'chat-window:',
   'transfers:',
+  'conversation-move:',
 ]
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:info',

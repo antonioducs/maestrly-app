@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Info, Loader2, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, Loader2, ShieldAlert } from 'lucide-react'
+import { IgnoredEntriesChecklist } from './IgnoredEntriesChecklist'
 import type { ConversationMigrationDialogState } from './flow'
 import { canExecuteConversationMigration, missingSensitiveConfirmations } from './flow'
 import {
@@ -150,75 +151,14 @@ export function ConversationMigrationDialog({
                 </h3>
                 <p className="text-xs text-muted-foreground">{t('conversationMigration.ignoredDescription')}</p>
               </div>
-              {preview.ignored.length === 0 ? (
-                <p className="rounded-md border border-border p-3 text-xs text-muted-foreground">
-                  {t('conversationMigration.noIgnored')}
-                </p>
-              ) : (
-                <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                  {preview.ignored.map((entry) => {
-                    const selected = state.selectedIgnoredPaths.includes(entry.path)
-                    const confirmed = state.confirmedSensitivePaths.includes(entry.path)
-                    const details = (
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="break-all font-mono">{entry.path}</span>
-                          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                            {formatBytes(entry.size)}
-                          </span>
-                          {entry.sensitive && (
-                            <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] text-amber-200">
-                              {t('conversationMigration.sensitive')}
-                            </span>
-                          )}
-                        </span>
-                        {!entry.selectable && (
-                          <span className="mt-1 block text-muted-foreground">
-                            {t(`conversationMigration.ignoredReason.${entry.reasonCode ?? 'unsafe'}`)}
-                          </span>
-                        )}
-                      </span>
-                    )
-
-                    if (!entry.selectable) {
-                      return (
-                        <div key={entry.path} className="rounded-md border border-border p-3 opacity-80">
-                          <div className="flex items-start gap-2 text-xs">
-                            <Info className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                            {details}
-                          </div>
-                        </div>
-                      )
-                    }
-                    return (
-                      <div key={entry.path} className="rounded-md border border-border p-3">
-                        <label className="flex items-start gap-2 text-xs">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5"
-                            checked={selected}
-                            disabled={state.busy !== null}
-                            onChange={(event) => onIgnoredChange(entry.path, event.target.checked, entry.sensitive)}
-                          />
-                          {details}
-                        </label>
-                        {entry.sensitive && selected && (
-                          <label className="mt-2 flex items-start gap-2 rounded border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-100">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5"
-                              checked={confirmed}
-                              disabled={state.busy !== null}
-                              onChange={(event) => onSensitiveConfirmationChange(entry.path, event.target.checked)}
-                            />
-                            <span>{t('conversationMigration.confirmSensitive', { path: entry.path })}</span>
-                          </label>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+              <IgnoredEntriesChecklist
+                entries={preview.ignored}
+                selected={state.selectedIgnoredPaths}
+                confirmed={state.confirmedSensitivePaths}
+                disabled={state.busy !== null}
+                onToggle={onIgnoredChange}
+                onConfirm={onSensitiveConfirmationChange}
+              />
             </section>
 
             {expired && (
@@ -306,10 +246,4 @@ function ChangeList({ title, files }: { title: string; files: string[] }) {
 
 function shortOid(oid: string): string {
   return oid.slice(0, 10)
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }

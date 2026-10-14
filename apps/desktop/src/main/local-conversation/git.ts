@@ -425,6 +425,22 @@ async function operationBlockers(cwd: string, status: StatusSnapshot): Promise<L
   return blockers
 }
 
+/** Read-only summary of a checkout's changes and the Git states that make moving it unsafe. */
+export async function inspectWorkingTree(cwd: string): Promise<{
+  changes: LocalChangeSummary
+  statusRaw: string
+  stagedIndex: string
+  blockers: LocalConversationBlocker[]
+}> {
+  const status = await readStatus(cwd)
+  return {
+    changes: status.changes,
+    statusRaw: status.raw,
+    stagedIndex: status.stagedIndex,
+    blockers: await operationBlockers(cwd, status),
+  }
+}
+
 function pathAncestors(relative: string): string[] {
   const out: string[] = []
   let index = relative.indexOf('/')

@@ -16,6 +16,7 @@ import { hostsApi } from './api-hosts'
 import { localHostApi } from './host-api'
 import { artifactsApi } from './api-artifacts'
 import { transfersApi } from './api-transfers'
+import { conversationMoveApi } from './api-conversation-move'
 
 export type * from '../shared/chat-window'
 
@@ -98,6 +99,7 @@ export type { UnifiedUsageStats, UsageModelRow, UsageSource } from '../shared/us
 export type * from '../shared/local-conversation'
 export type * from '../shared/performance'
 export type * from '../shared/conversation-migration'
+export type * from '../shared/conversation-move'
 export type * from '../shared/subagent-profile-effort'
 export type * from '../shared/subagent-profiles'
 export type * from '../shared/runtime-assets'
@@ -106,6 +108,7 @@ export type * from './api-local-data'
 export type * from './api-app'
 export type * from './api-chat'
 export type * from './api-conversation-migration'
+export type * from './api-conversation-move'
 export type * from './api-drawer'
 export type * from './api-memory'
 export type * from './api-notes'
@@ -144,6 +147,7 @@ const localApi = {
   ...hostsApi,
   ...artifactsApi,
   ...transfersApi,
+  ...conversationMoveApi,
 }
 const api = { ...localHostApi, ...localApi }
 
