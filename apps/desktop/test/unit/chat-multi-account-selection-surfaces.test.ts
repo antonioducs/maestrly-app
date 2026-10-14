@@ -7,14 +7,11 @@ describe('multi-account selection surfaces', () => {
   it('keeps the exact provider slot in every chat model picker', () => {
     const chip = source('src/renderer/components/chat/ChatModelChip.tsx')
     const settings = source('src/renderer/components/chat/ApiKeySettings.tsx')
-    const review = source('src/renderer/components/chat/ReviewLoopPickerDialog.tsx')
     const candidate = source('src/renderer/components/chat/subagent-profiles/CandidateFields.tsx')
 
     expect(chip).toContain('providerId: p.id, providerName: p.name')
     expect(chip).toMatch(/key=\{`\$\{r\.providerId\}::\$\{r\.modelId\}`\}/)
     expect(settings.match(/<SelectOption key=\{p\.id\} value=\{p\.id\}>/g)).toHaveLength(2)
-    expect(review).toContain('<SelectItem key={provider.id} value={provider.id}>')
-    expect(review).toContain('{provider.name}')
     expect(candidate).toContain('id: provider.id')
     expect(candidate).toContain('.chatSubagentProfilesModelCatalog(candidate.providerId)')
   })

@@ -68,48 +68,24 @@ export default {
       'Could not start this conversation ({{reason}}). Its task was kept — use “Retry start” above the composer to try again.',
   },
 
-  // ---- review-loop.ts (internal turn + auditable summary of the automatic review loop) ----
-  reviewLoop: {
-    pairedReviewerRound:
-      'Review the current code checkout afresh. Use git_diff, at least one grep or glob, and read before ' +
-      'calling submit_review exactly once. Stay read-only and do not infer the decision from prose.',
-    pairedImplementFindings:
-      'Implement the structured review findings for correction {{iteration}} of {{max}}. Do not create a plan; ' +
-      'apply the findings directly, run relevant checks, and verify the changes before finishing.',
-    implementFindings:
-      'Implement now the findings of round {{iteration}}/{{max}} of the automatic review, attached as ' +
-      'review-loop-findings.md. Treat them as the specification of this round: implement the actionable ' +
-      'findings directly; DO NOT produce a plan or call review_plan; inspect the implementation and related ' +
-      'contracts before changing anything; make minimal and complete changes; run the relevant checks ' +
-      'available to you (tests/lint/typecheck); if a finding is invalid, do not force a change — explain ' +
-      'with evidence in the final summary; do not commit, push or change anything outside the scope of the ' +
-      'findings; finish with a summary of the changes and validations.',
-    findingsHeading: 'Review loop — round {{iteration}}/{{max}}',
-    findingsSection: 'Findings ({{count}})',
-    reviewerNotes: 'Reviewer notes',
-    summaryHeading: 'Automatic review finished',
-    summaryResult: 'Result',
-    summaryRounds: 'Rounds executed',
-    summaryDuration: 'Duration',
-    summaryBaseline: 'Initial fingerprint (workspace)',
-    summaryFinal: 'Final fingerprint (workspace)',
-    summaryStopReason: 'Stop reason',
-    summaryReviewer: 'Reviewer summary',
-    summaryRemaining: 'Remaining findings',
-    summaryRemainingCount:
-      '{{total}} in total ({{blocking}} blocking, {{important}} important, {{optional}} optional):',
-    summaryRemainingNone: 'None reported.',
-    summaryChecks: 'Checks executed through the bridge',
-    summaryChecksNone: 'None.',
-    resultClean: 'clean',
-    resultMaxIterations: 'iteration limit reached',
-    resultNoProgress: 'no progress',
-    resultFailed: 'failed',
-    resultCancelled: 'cancelled',
-    reasonExecutorUnavailable: 'executor unavailable',
-    reasonWorkspaceChanged: 'workspace changed externally',
-    reasonSessionEnded: 'session ended',
-    reasonInterrupted: 'interrupted',
+  // ---- review/report.ts (code review report stored in the conversation) ----
+  review: {
+    reportHeading_one: 'Code review: {{count}} finding',
+    reportHeading_other: 'Code review: {{count}} findings',
+    reportClean: 'Code review: no problems found.',
+    planReportHeading_one: 'Plan review: {{count}} finding',
+    planReportHeading_other: 'Plan review: {{count}} findings',
+    planReportClean: 'Plan review: no problems found.',
+    decisionFix: 'fix',
+    decisionDiscuss: 'discuss',
+    decisionComment: 'comment',
+    decisionDismiss: 'dismissed',
+    reportUnverified: 'The verifier did not rule on every finding; the unconfirmed ones are marked.',
+    severityBlocking: 'blocking',
+    severityImportant: 'important',
+    severityMinor: 'minor',
+    evidence: 'Evidence',
+    suggestion: 'Suggestion',
   },
 
   // ---- memory-service.ts (legacy wrapper/header retained for compatibility) ----

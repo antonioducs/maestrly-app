@@ -52,7 +52,7 @@ describe('Fable Agent SDK hooks', () => {
 
   it('ignores mutating and terminal tools', async () => {
     const hook = createFablePostToolUseHook().hooks[0]!
-    for (const tool of ['edit', 'bash', 'review_plan', 'submit_review']) {
+    for (const tool of ['edit', 'bash', 'review_plan']) {
       expect(
         await hook(postTool(`mcp__maestrly__${tool}`, `${tool}-1`), `${tool}-1`, {
           signal: new AbortController().signal,

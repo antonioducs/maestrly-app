@@ -67,6 +67,12 @@ const h = vi.hoisted(() => {
   }
 })
 
+const environmentLocks = vi.hoisted(() => new Map<string, string>())
+vi.mock('../../src/main/chat/chatgpt-web/manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/chatgpt-web/manager')>()),
+  // An isolated internal turn is admitted only for the project-environment job that owns the conversation.
+  projectEnvironmentLockFor: (conversationId: string) => environmentLocks.get(conversationId) ?? null,
+}))
 vi.mock('../../src/main/chat/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/chat/runner')>()
   return { ...actual, runChat: (args: unknown) => h.runChat(args) }
@@ -117,10 +123,9 @@ import type { ChatIpcDeps } from '../../src/main/chat/service'
 import {
   disposeChat,
   registerChatIpc,
-  resolveReviewLoopSelection,
+  resolveFrozenChatSelection,
   startInternalChatTurn,
 } from '../../src/main/chat/service'
-import { reserveReviewLoop, releaseReviewLoop } from '../../src/main/chat/review-loop/registry'
 import {
   addSubscriptionAccount,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
@@ -256,7 +261,7 @@ describe('Codex logical vs physical provider identity', () => {
     })
     const route = { primaryProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID, fallbackProviderIds: [slotProviderId] }
     setFailoverRoute({ ...route, enabled: routeAtFreeze })
-    const frozen = await resolveReviewLoopSelection(conversation.id)
+    const frozen = await resolveFrozenChatSelection(conversation.id)
     if (!frozen.ok) throw new Error(frozen.error)
     expect(frozen.selection.failoverRoute?.map((account) => account.providerId)).toEqual(
       routeAtFreeze ? [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId] : undefined
@@ -264,15 +269,12 @@ describe('Codex logical vs physical provider identity', () => {
     setFailoverRoute({ ...route, enabled: true })
     h.resolveCodexRuntimeTarget.mockResolvedValue(defaultTarget({ providerId: slotProviderId, accountId: slot.id }))
     const loopId = `codex-route-loop-${conversation.id}`
-    expect(
-      reserveReviewLoop({ loopId, driver: 'chatgpt-web', cwd: '/repo', participants: { executor: conversation.id } }).ok
-    ).toBe(true)
+    environmentLocks.set(conversation.id, loopId)
     try {
       const result = await startInternalChatTurn({
         conversationId: conversation.id,
         prompt: 'Apply review findings.',
         selection: frozen.selection,
-        source: 'chatgpt-web-review-loop',
         loopId,
         iteration: 1,
         maxIterations: 3,
@@ -300,7 +302,7 @@ describe('Codex logical vs physical provider identity', () => {
       }
       await result.handle.done
     } finally {
-      releaseReviewLoop(loopId)
+      environmentLocks.clear()
     }
   })
 

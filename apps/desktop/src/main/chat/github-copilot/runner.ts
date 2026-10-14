@@ -65,16 +65,10 @@ import {
   recordSubagentDispatch,
 } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
-import {
-  builtinToolNamesForMode,
-  buildTools,
-  isSubagentReadOnly,
-  REVIEWER_READONLY_TOOL_NAMES,
-  selectSubagentToolNames,
-} from '../tools'
+import { builtinToolNamesForMode, buildTools, isSubagentReadOnly, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools } from '../tools/conversation-link'
-import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
+import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -225,7 +219,7 @@ export interface RunGitHubCopilotChatArgs {
     prepared?: PreparedBackgroundCompaction
   } | null>
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
-  /** Isolated review loop: do not resume the conversation binding; transcript = execution. */
+  /** Isolated internal turn: do not resume the conversation binding; transcript = execution. */
   ephemeralSession?: boolean
   messageMeta?: {
     source?: import('../../../shared/chat').ChatMessageSource
@@ -234,8 +228,6 @@ export interface RunGitHubCopilotChatArgs {
     reviewLoop?: import('../../../shared/chat').ChatReviewLoopMeta
   }
   executionScope?: import('../../../shared/chat').ChatExecutionScope
-  /** Isolated review turns receive only the fixed host-owned read-only surface. */
-  reviewerRuntime?: ReviewerToolRuntime
 }
 
 export interface RunGitHubCopilotChatResult {
@@ -488,13 +480,8 @@ async function prepareRuntime(
     toolCallId,
     cwd: args.cwd,
     signal: toolSignal,
-    ask: (action, resources, save) => {
-      if (args.reviewerRuntime) {
-        return action === 'read' || action === 'grep' || action === 'glob'
-          ? Promise.resolve()
-          : Promise.reject(new Error(`Reviewer read-only boundary denied ${action}`))
-      }
-      return args.broker.assert({
+    ask: (action, resources, save) =>
+      args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
         permissionScope: args.permissionScope,
@@ -504,8 +491,7 @@ async function prepareRuntime(
         toolName: action,
         toolCallId,
         signal: toolSignal,
-      })
-    },
+      }),
     askQuestion: (questions) =>
       args.questionBroker.ask({
         conversationId: args.conversationId,
@@ -520,20 +506,6 @@ async function prepareRuntime(
       activateTerminalStep()
       return true
     },
-    ...(args.reviewerRuntime
-      ? {
-          reviewer: {
-            recordEvidence: (kind) => args.reviewerRuntime!.recordEvidence(kind),
-            searchExecutionContext: (input) => args.reviewerRuntime!.searchExecutionContext(input),
-            readExecutionContext: (input) => args.reviewerRuntime!.readExecutionContext(input),
-            submitReview: (decision) => {
-              const result = args.reviewerRuntime!.submitReview(decision)
-              if (result.ok) activateTerminalStep()
-              return result
-            },
-          } satisfies ReviewerToolRuntime,
-        }
-      : {}),
     ...(state.emitGeneratedImage
       ? { emitGeneratedImage: (image: GeneratedImageEmission) => state.emitGeneratedImage?.(toolCallId, image) }
       : {}),
@@ -542,24 +514,14 @@ async function prepareRuntime(
     ...(conversationLink ? { conversationLink } : {}),
   })
 
-  const enabledBuiltins = args.reviewerRuntime
-    ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-    : builtinToolNamesForMode(args.mode)
-  // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
-  const conversationDispatch = args.reviewerRuntime
-    ? undefined
-    : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+  const enabledBuiltins = builtinToolNamesForMode(args.mode)
+  // Starting other conversations: only in a main turn admitted from text the person typed.
+  const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
   // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
-  const conversationLink = args.reviewerRuntime
-    ? undefined
-    : enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
+  const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even when the conversation runs on Copilot).
-  if (
-    !args.reviewerRuntime &&
-    state.emitGeneratedImage &&
-    (await generateImageToolEnabled(args.conversationId, args.mode))
-  ) {
+  if (state.emitGeneratedImage && (await generateImageToolEnabled(args.conversationId, args.mode))) {
     enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
   }
   const core = buildTools({ executorReport: true, enabled: enabledBuiltins, makeCtx: makeContext })
@@ -576,29 +538,27 @@ async function prepareRuntime(
       signal,
     })
   }
-  const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
+  const prefs = getConvUiPrefs(args.conversationId).chat?.tools
   const appAccess = resolveAppToolAccess(args.conversationId)
-  const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
+  const appToolsEnabled = appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
-  const mcp = args.reviewerRuntime
-    ? { tools: {}, close: async () => {} }
-    : await buildMcpTools({
-        mode: args.mode,
+  const mcp = await buildMcpTools({
+    mode: args.mode,
+    signal: args.signal,
+    gate,
+    disabledIds,
+    codexSafeNames: true,
+    supportsImages: true,
+    describeImage: (image) =>
+      describeEphemeralToolImage({
+        image,
+        conversationId: args.conversationId,
+        cwd: args.cwd,
         signal: args.signal,
-        gate,
-        disabledIds,
-        codexSafeNames: true,
-        supportsImages: true,
-        describeImage: (image) =>
-          describeEphemeralToolImage({
-            image,
-            conversationId: args.conversationId,
-            cwd: args.cwd,
-            signal: args.signal,
-          }),
-      })
+      }),
+  })
   const app =
-    !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+    appToolsEnabled || hasPersonalMemoryTools(args.conversationId)
       ? await buildAppTools({
           only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
           disabledGroups: appAccess.disabledGroups,
@@ -619,7 +579,7 @@ async function prepareRuntime(
 
   try {
     const skills =
-      args.reviewerRuntime || args.mode === 'ask'
+      args.mode === 'ask'
         ? []
         : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
     const skillTools: ToolSet = skills.length
@@ -643,13 +603,11 @@ async function prepareRuntime(
         }
       : {}
 
-    const allAgents = args.reviewerRuntime
-      ? []
-      : await listEffectiveAgents({
-          cwd: args.cwd,
-          conversationId: args.conversationId,
-          mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
-        })
+    const allAgents = await listEffectiveAgents({
+      cwd: args.cwd,
+      conversationId: args.conversationId,
+      mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+    })
     const agents =
       args.mode === 'maestro' && args.maestro
         ? maestroAgentsFromTurn(args.maestro, allAgents)
@@ -898,7 +856,7 @@ function addPortableCompactionUsage(usage: UsageAccumulator, compacted: Normaliz
 
 /**
  * Efforts the official Copilot runner CAN serialize (SDK whitelist): all other values are OMITTED from the session
- * (silent degradation). Single source of truth: review-loop freezing uses the SAME list so it never freezes an
+ * (silent degradation). Single source of truth: isolated-turn freezing uses the SAME list so it never freezes an
  * effort the transport cannot deliver.
  */
 export const GITHUB_COPILOT_SERIALIZABLE_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
@@ -1750,7 +1708,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       args.signal.addEventListener('abort', onAbort, { once: true })
       try {
         await state.session.sendAndWait(
-          { ...input, agentMode: args.reviewerRuntime || args.mode === 'plan' ? 'plan' : 'interactive' },
+          { ...input, agentMode: args.mode === 'plan' ? 'plan' : 'interactive' },
           SESSION_WAIT_TIMEOUT_MS
         )
       } catch (error) {

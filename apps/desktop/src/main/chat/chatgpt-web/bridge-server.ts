@@ -3,11 +3,9 @@
  *
  * The user chats directly in ChatGPT and calls these tools to inspect the local repository. To bring
  * an artifact back, they call `send_to_maestrly`. Read tools remain read-only; the bridge ceases to be
- * strictly read-only when explicitly granted a write capability (MCP, browser or review loop). For review loops (`start_review_loop`):
- * `submit_review_fix` then starts ONE local Maestrly agent execution at a time, tracked through
- * `wait_review_fix` (server-side long-poll) and concluded through `finish_review_loop`.
- * Loop reasoning (review, convergence decisions) belongs to ChatGPT; this module validates, enforces
- * limits, counts per-iteration investigation checkpoints, and audits only sanitized metadata.
+ * strictly read-only when explicitly granted a write capability (MCP, browser interaction or a
+ * project-environment bootstrap). This module validates arguments, enforces limits, and audits only
+ * sanitized metadata.
  */
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -15,7 +13,6 @@ import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { z } from 'zod'
 import type { ChatGptWebBrowserCapability } from '../../../shared/chat'
 import type { BrowserSurface } from '../browser-surface'
 import { globToRegExp, shouldSkipSearchDir } from '../tools/grep'
@@ -31,24 +28,6 @@ import {
   createMcpDiscoverResult,
   isStatelessMcpRequest,
 } from './bridge-protocol'
-import {
-  DEFAULT_MAX_ITERATIONS,
-  HARD_MAX_ITERATIONS,
-  MAX_FINDINGS,
-  MAX_FINDING_DETAILS_CHARS,
-  MAX_FINDING_ID_CHARS,
-  MAX_FINDING_PATH_CHARS,
-  MAX_FINDING_PATHS,
-  MAX_FINDING_TITLE_CHARS,
-  MAX_FINISH_SUMMARY_CHARS,
-  MAX_REMAINING_FINDINGS,
-  MAX_REVIEWER_NOTES_CHARS,
-  MAX_WAIT_SECONDS,
-  validateFindingsShape,
-  validateRemainingFindingsShape,
-  type BridgeReviewEvidence,
-  type ReviewLoopController,
-} from './review-loop'
 import { CHATGPT_WEB_MCP_QUERY_MAX_CHARS, CHATGPT_WEB_MCP_SEARCH_MAX_RESULTS } from './mcp-gateway'
 import type { DrawerBrowserSession, CompanionBrowserTab } from './drawer-browser-session'
 import type { ProjectEnvironmentJobController } from './project-environment'
@@ -112,16 +91,6 @@ export type BridgeEvent =
       deduplicated: boolean
     }
   | { kind: 'turn-completed'; idempotencyKey: string; deduplicated: boolean }
-  | { kind: 'review-loop-started'; loopId: string; maxIterations: number }
-  | { kind: 'review-fix-started'; jobId: string; iteration: number; findings: number }
-  | {
-      kind: 'review-fix-finished'
-      jobId: string
-      iteration: number
-      status: string
-      madeProgress: boolean
-    }
-  | { kind: 'review-loop-finished'; loopId: string; result: string; iterations: number; finishReason?: string }
   | { kind: 'session-ended' }
 
 /** Allowed check (allowlist): the model selects the NAME, never the command line. */
@@ -160,7 +129,6 @@ export interface BridgeExternalCapabilities {
 /** Read-only adapter already bound by the manager to this session's Maestrly conversation. */
 export interface BridgeConversationCapabilities {
   getContext(signal?: AbortSignal): Promise<unknown> | unknown
-  getRevision(signal?: AbortSignal): Promise<string | null> | string | null
   search(args: { query: string; limit?: number }, signal?: AbortSignal): Promise<unknown> | unknown
   read(args: { around_seq: number; limit?: number }, signal?: AbortSignal): Promise<unknown> | unknown
 }
@@ -173,13 +141,6 @@ export interface BridgeMemoryCapabilities {
     args: { kind: 'local' | 'shared'; id: string; repo?: string; path?: string },
     signal?: AbortSignal
   ): Promise<unknown> | unknown
-}
-
-function conversationRevisionFromBrief(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const revision = (value as { revision?: unknown }).revision
-  if (typeof revision === 'string' && revision.length > 0) return revision
-  return undefined
 }
 
 type InvestigationConfidence = 'low' | 'medium' | 'high'
@@ -212,13 +173,8 @@ export interface BridgeOptions {
   runCheck?: (name: string, signal?: AbortSignal) => Promise<BridgeCheckResult>
   /** Publish an artifact to the originating conversation or Plan tab. Other writes require their own capabilities. */
   deliver?: (delivery: BridgeDelivery) => Promise<void> | void
-  /** Human Plan-tab channel, separate from the automatic code/frontend review loop. */
+  /** Human Plan-tab review channel for plans delivered with `send_to_maestrly`. */
   planReview?: Pick<PlanReviewController, 'create' | 'isDelivered' | 'markDelivered' | 'wait'>
-  /**
-   * Review-loop controller for this conversation. If absent, reject review tools in `tools/call` with
-   * `review-loop-unavailable` (the stable, complete `tools/list` catalog ALWAYS advertises them).
-   */
-  reviewLoop?: ReviewLoopController
   /** Embedded browser tabs owned by this conversation; all public IDs are session-scoped and opaque. */
   browserSession?: Pick<DrawerBrowserSession, 'list' | 'attach' | 'detach' | 'active' | 'attachedId' | 'dispose'>
   /** Local executor bootstrap. The bridge resolves enabled skills before crossing this boundary. */
@@ -242,10 +198,6 @@ export interface BridgeStats {
   deliveries: number
   /** Explicit completion signals accepted by the companion (not deliveries). */
   completedTurns: number
-  /** Accepted fix jobs (no findings/prompts, only sanitized counters). */
-  reviewJobs: number
-  /** Highest iteration submitted to the executor. */
-  reviewIterations: number
   ended: boolean
 }
 
@@ -552,20 +504,15 @@ export const CHATGPT_WEB_SERVER_INSTRUCTIONS = [
   'Only when explicitly asked to send results back, call send_to_maestrly with destination="chat" or destination="plan".',
   'The bridge requires basic investigation and attaches observed coverage. Reuse idempotency_key on retries;',
   'never invent another session_key. For plans, capture plan_review_id and call wait_plan_review until a terminal',
-  'outcome. On waiting, wait again; on revise, revise and resend with a new key. Do not use the automatic review',
-  'loop for plans in the Plan tab or complete the turn between plan versions.',
+  'outcome. On waiting, wait again; on revise, revise and resend with a new key. Do not complete the turn',
+  'between plan versions.',
   'For GitHub or external systems, use list_external_capabilities. Discover unfamiliar MCP tools with',
   'search_mcp_tools; never invent server/tool names. MCP write requires a user-requested mutation and write scope.',
   'There is no remote shell: git_read and gh_read are read-only. In gh_read, search-* and api-get are global',
   'and may query any resource visible to the local gh login.',
   'After pairing, end each normal message with exactly one notify_turn_complete after all other tools; it delivers no content.',
-  'For requested automatic fixes, follow start_review_loop → submit_review_fix → wait_review_fix → finish_review_loop',
-  'as described in the pairing prompt. Each round starts a local execution and requires fresh diff, search and read',
-  'evidence before the next submission. Do not finish an active loop merely because the current response is ending;',
-  'cancelled requires actual user cancellation. For frontend review, prefer an existing loopback tab through',
-  'browser_list_tabs/browser_attach; fall back to a managed preview. Only bootstrap through a skill after an',
-  'explicit request; never scan ports. Capture a fresh snapshot and screenshot each iteration after rereading',
-  'the code. Screenshots do not replace implementation investigation.',
+  'Browser tools act only on a loopback tab of the built-in browser: use browser_list_tabs and browser_attach first.',
+  'Only bootstrap a local environment through an enabled skill after an explicit request; never scan ports.',
 ].join(' ')
 
 export function createChatGptWebBridge(options: BridgeOptions) {
@@ -587,81 +534,18 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   let toolCalls = 0
   let deliveries = 0
   let completedTurns = 0
-  let reviewJobs = 0
-  let reviewIterations = 0
   const deliveredKeys = new Map<string, string>()
   const deliveryPromises = new Map<string, { fingerprint: string; promise: Promise<void> }>()
   /** Per-session completion-signal deduplication; bounded to prevent indefinite growth. */
   const completedKeys = new Set<string>()
   let canonicalCwdPromise: Promise<string> | null = null
   let contextLoaded = false
-  let conversationContextLoaded = false
-  let conversationContextRevision: string | undefined
-  /** Idempotent retries of a successful start go through the controller, which validates the key/fingerprint. */
-  const startedReviewKeys = new Set<string>()
   const readFiles = new Set<string>()
   const externalEvidence = new Set<string>()
   const searches: string[] = []
   const inspectedDiffs = new Set<string>()
   const executedChecks = new Set<string>()
   const readSkills = new Set<string>()
-  /**
-   * Investigation checkpoints SCOPED by loop_id + iteration. Sequential loops restart at iteration=1
-   * without reusing evidence from the previous loop.
-   *
-   * Capture each tool owner AT ADMISSION (before the first await); ownership remains immutable until
-   * completion, even if the active pointer advances, cancels, or switches loops while the tool runs.
-   */
-  interface ReviewEvidenceOwner {
-    loopId: string
-    iteration: number
-  }
-  let activeReviewCheckpoint: ReviewEvidenceOwner | null = null
-  type ReviewEvidenceKind =
-    | 'diff'
-    | 'search'
-    | 'read'
-    | 'browserSnapshot'
-    | 'browserScreenshot'
-    | 'browserNavigation'
-    | 'browserInteraction'
-  const emptyReviewEvidence = () => ({
-    diff: 0,
-    search: 0,
-    read: 0,
-  })
-  type ReviewEvidenceEntry = ReturnType<typeof emptyReviewEvidence> &
-    Partial<Record<Exclude<ReviewEvidenceKind, 'diff' | 'search' | 'read'>, number>>
-  const reviewCheckpoints = new Map<string, Map<number, ReviewEvidenceEntry>>()
-  /** Checks run DURING a loop (final-summary audit); the global send_to_maestrly report stays in executedChecks. */
-  const checksByLoop = new Map<string, Set<string>>()
-
-  /** Immutable copy of the current pointer; NEVER pass the mutable activeReviewCheckpoint reference. */
-  const captureReviewEvidenceOwner = (): ReviewEvidenceOwner | null =>
-    activeReviewCheckpoint
-      ? { loopId: activeReviewCheckpoint.loopId, iteration: activeReviewCheckpoint.iteration }
-      : null
-
-  /**
-   * Record evidence under the owner captured at admission. Read/update-only: do NOT create a bucket
-   * (only setReviewIteration does that) or consult the global pointer; forgetReviewLoop is final.
-   */
-  const checkpointFor = (owner: ReviewEvidenceOwner | null, kind: ReviewEvidenceKind): void => {
-    if (!owner) return
-    const byIteration = reviewCheckpoints.get(owner.loopId)
-    if (!byIteration) return // loop forgotten or never activated: no-op, never resurrect it
-    const entry: ReviewEvidenceEntry = byIteration.get(owner.iteration) ?? emptyReviewEvidence()
-    entry[kind] = (entry[kind] ?? 0) + 1
-    byIteration.set(owner.iteration, entry)
-  }
-
-  /** Same rules as checkpointFor: record only if the loop bucket still exists. */
-  const rememberCheckFor = (owner: ReviewEvidenceOwner | null, name: string): void => {
-    if (!owner) return
-    const bucket = checksByLoop.get(owner.loopId)
-    if (!bucket) return
-    bucket.add(name)
-  }
 
   const remember = (target: string[], value: string) => {
     if (target.includes(value)) return
@@ -820,47 +704,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       toolCalls,
       deliveries,
       completedTurns,
-      reviewJobs,
-      reviewIterations,
       ended,
-    }
-  }
-
-  /**
-   * Activate the current loop investigation checkpoint. `setReviewIteration(null, null)` clears the
-   * pointer without deleting buckets. Compare-and-clear by loopId only clears a pointer still owned
-   * by that loop; a late finish/cancel from loop A never clears loop B's pointer.
-   */
-  function setReviewIteration(loopId: string | null, iteration: number | null): void {
-    if (loopId == null || iteration == null) {
-      activeReviewCheckpoint = null
-      return
-    }
-    activeReviewCheckpoint = { loopId, iteration }
-    // Create an empty bucket if the loop has no evidence yet (start of a sequential loop).
-    if (!reviewCheckpoints.has(loopId)) reviewCheckpoints.set(loopId, new Map())
-    if (!checksByLoop.has(loopId)) checksByLoop.set(loopId, new Set())
-  }
-
-  /** Clear the ACTIVE pointer only if it still belongs to this loopId (guard against late responses). */
-  function clearReviewIteration(loopId: string): void {
-    if (activeReviewCheckpoint?.loopId === loopId) activeReviewCheckpoint = null
-  }
-
-  /** Remove a loop’s evidence/check buckets along with history eviction. */
-  function forgetReviewLoop(loopId: string): void {
-    reviewCheckpoints.delete(loopId)
-    checksByLoop.delete(loopId)
-    if (activeReviewCheckpoint?.loopId === loopId) activeReviewCheckpoint = null
-  }
-
-  /** Sanitized evidence for the specified LOOP, used by the controller for round validation and summaries. */
-  function getReviewEvidence(loopId: string): BridgeReviewEvidence {
-    const byIteration = reviewCheckpoints.get(loopId)
-    return {
-      contextLoaded,
-      byIteration: byIteration ? Object.fromEntries(byIteration) : {},
-      checks: [...(checksByLoop.get(loopId) ?? [])],
     }
   }
 
@@ -1054,107 +898,17 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     }
   }
 
-  // ---------------------------------------------------------------- review loop
-
-  /** Controller errors → readable messages (the tool returns text for the model to act on). */
-  const REVIEW_LOOP_ERRORS: Record<string, string> = {
-    'review-loop-active':
-      'A review loop is already active in this conversation. Finish with finish_review_loop or wait for the user to ' +
-      'stop it (Stop button) before starting another.',
-    'review-loop-inactive': 'The review loop ended before the turn started. Do not start another round.',
-    'review-loop-cancelled': 'The review loop was cancelled.',
-    'review-loop-stopping':
-      'The review loop is shutting down (the agent is still stopping). Wait for the job to finish with ' +
-      'wait_review_fix before starting another loop.',
-    'project-environment-active':
-      'The project environment is still being prepared. Wait with wait_project_environment before starting the review loop.',
-    'summary-persist-failed':
-      'The audit summary could not be saved. Call finish_review_loop again with the same result ' +
-      'to retry; the message will not be duplicated.',
-    'session-not-active': 'The companion session is inactive. Ask the user to start a session in Maestrly.',
-    'invalid-max-iterations': `max_iterations must be an integer between 1 and ${HARD_MAX_ITERATIONS}.`,
-    'invalid-review-scope': 'review_scope must be "code" or "frontend".',
-    'preview-options-require-frontend': 'preview_id/browser_id can only be used with review_scope="frontend".',
-    'frontend-environment-required':
-      'Frontend review requires exactly one browser_id from browser_list_tabs or preview_id from discover_frontend_previews.',
-    'frontend-environment-conflict':
-      'Pass only one frontend source: browser_id for an existing tab OR preview_id for a managed preview.',
-    'target-url-not-allowed':
-      'target_url is not accepted. Use browser_list_tabs/browser_id or discover_frontend_previews/preview_id.',
-    'frontend-preview-unavailable': 'The frontend preview runtime is unavailable in this session.',
-    'frontend-browser-unavailable': 'The built-in browser is unavailable in this session.',
-    'browser-capability-off':
-      "Browser / Visual review is Off. In this conversation's ChatGPT tab in Maestrly, click Access, choose Inspect or Interact, then Restart to apply.",
-    'idempotency-conflict': 'idempotency_key was already used with different content; generate a new key.',
-    'no-turn-or-operation': 'Cannot start the review loop now: a turn or operation is active in this conversation.',
-    'pending-plan':
-      'A pending plan is awaiting a decision in the Plan tab. Resolve it before starting the review loop.',
-    'no-provider': 'No provider/model is available to run the loop.',
-    'no-model': 'The executor model is unavailable; the loop ended (executor_unavailable).',
-    'no-key': 'The executor is not authenticated; the loop ended (executor_unavailable).',
-    'executor-unavailable': 'The executor became unavailable; the loop ended (executor_unavailable).',
-    'review-loop-failed':
-      'The executor agent failed during the round; the review loop ended. Read the job result ' +
-      'and finish with finish_review_loop(result="failed").',
-    'review-loop-unavailable': 'The review loop is unavailable in this session.',
-    'conversation-context-stale':
-      'The main conversation context became stale before review started. ' +
-      'Run get_conversation_context again and try starting the review loop.',
-    'job-active': 'A fix job is already running. Wait with wait_review_fix before submitting another round.',
-    'wrong-iteration': 'The supplied iteration does not match the current loop iteration.',
-    'below-threshold': 'No finding meets the loop severity_threshold; adjust the round or finish.',
-    'no-progress-repeat':
-      'You resubmitted the same findings after a round with no changes; the loop ended due to lack of progress.',
-    'no-progress-limit': 'Two consecutive rounds made no workspace changes; the loop ended due to lack of progress.',
-    'max-iterations-reached': 'The iteration limit was reached; the loop ended.',
-    'workspace-changed-externally': 'The workspace changed outside the loop between rounds; the loop ended.',
-    'insufficient-investigation':
-      'Insufficient investigation for this round: the bridge requires git_diff + grep/glob + read_file of the ' +
-      'relevant implementation AFTER the latest execution.',
-    'insufficient-browser-snapshot':
-      'Insufficient visual evidence for this round: call browser_snapshot again after the latest execution.',
-    'insufficient-browser-screenshot':
-      'Insufficient visual evidence for this round: call browser_screenshot again after the latest execution.',
-    'loop-not-found': 'No review loop found for this loop_id.',
-    'unknown-job': 'Unknown job for this loop_id.',
-    'session-ended': 'The companion session ended; the review loop was cancelled.',
-    'inconsistent-result':
-      'The supplied result is inconsistent with the actual loop state (an idempotent retry returns the original).',
-    'loop-not-terminal':
-      'The review loop is still active. Do not use failed, no_progress or cancelled merely to end this ' +
-      'response: investigate with git_diff + grep/glob + read_file and submit the round. cancelled is only valid ' +
-      'after the user clicks Stop and the bridge confirms cancellation.',
-    'max-not-reached': 'The iteration limit has not been reached; submit more rounds or finish as clean.',
-    'remaining-blocking-findings': 'Cannot finish as "clean" with remaining blocking/important findings.',
-    'invalid-result': 'result must be "clean", "max_iterations", "no_progress", "failed" or "cancelled".',
-    'empty-summary': 'finish_review_loop requires a nonempty summary.',
-  }
-
-  const reviewLoopError = (code: string): string => {
-    const direct = REVIEW_LOOP_ERRORS[code]
-    if (direct) return direct
-    if (code.startsWith('frontend-preview-start-failed:')) {
-      const detail = code.slice('frontend-preview-start-failed:'.length).trim()
-      return `Visual Review could not start.${detail ? `\n\nDiagnostics:\n${detail}` : ''}`
-    }
-    if (code.startsWith('review-loop-')) return 'The review loop has already ended.'
-    return `Review loop error: ${code}`
-  }
-
   const requireIdempotencyKey = (value: unknown): string | null => {
     const key = typeof value === 'string' ? value.trim() : ''
     return IDEMPOTENCY_KEY_REGEX.test(key) ? key : null
   }
 
-  async function toolDiscoverFrontendPreviews() {
-    if (!options.reviewLoop) return ERR(reviewLoopError('review-loop-unavailable'))
-    const previews = await options.reviewLoop.discoverFrontendPreviews()
-    return TEXT(JSON.stringify(previews, null, 2))
-  }
+  const BROWSER_CAPABILITY_OFF_MESSAGE =
+    "Browser access is Off. In this conversation's ChatGPT tab in Maestrly, click Access, choose Inspect or Interact, then Restart to apply."
 
   function requireBrowserCapability(interaction = false): string | null {
     const capability = options.browserCapability ?? 'off'
-    if (capability === 'off') return reviewLoopError('browser-capability-off')
+    if (capability === 'off') return BROWSER_CAPABILITY_OFF_MESSAGE
     if (interaction && capability !== 'interact') {
       return 'Browser Interact is not authorized; this session only permits inspection.'
     }
@@ -1189,15 +943,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     return TEXT(JSON.stringify({ detached: true }))
   }
 
-  const activeVisualBrowser = (interaction = false) => {
+  const activeBrowser = (interaction = false) => {
     const denied = requireBrowserCapability(interaction)
     if (denied) return { error: denied } as const
-    const browser: BrowserSurface | null =
-      options.reviewLoop?.visualBrowser() ?? options.browserSession?.active() ?? null
+    const browser: BrowserSurface | null = options.browserSession?.active() ?? null
     if (!browser) {
-      return {
-        error: 'No browser attached. Use browser_list_tabs + browser_attach, or start a frontend review.',
-      } as const
+      return { error: 'No browser attached. Use browser_list_tabs + browser_attach.' } as const
     }
     return { browser } as const
   }
@@ -1243,20 +994,16 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolBrowserSnapshot() {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
-    const owner = captureReviewEvidenceOwner()
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const result = await active.browser.snapshot()
-    checkpointFor(owner, 'browserSnapshot')
     return TEXT(JSON.stringify(result, null, 2))
   }
 
   async function toolBrowserScreenshot(): Promise<BridgeToolResult> {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
-    const owner = captureReviewEvidenceOwner()
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const result = await active.browser.screenshot()
-    checkpointFor(owner, 'browserScreenshot')
     return {
       content: [
         { type: 'image', data: result.data, mimeType: 'image/png' },
@@ -1266,14 +1013,14 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolBrowserReadText() {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     return TEXT(await active.browser.readText())
   }
 
   async function toolBrowserWait(args: Record<string, unknown>) {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const timeoutMs = args.timeout_ms === undefined ? undefined : Number(args.timeout_ms)
     if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)) {
       return ERR('timeout_ms must be an integer between 1 and 60000.')
@@ -1288,31 +1035,26 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolBrowserNavigate(args: Record<string, unknown>) {
-    const active = activeVisualBrowser(true)
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
+    const active = activeBrowser(true)
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     if (typeof args.url !== 'string' || !args.url.trim()) return ERR('browser_navigate requires url.')
-    const owner = captureReviewEvidenceOwner()
     const result = await active.browser.navigate(args.url.trim())
-    checkpointFor(owner, 'browserNavigation')
     return TEXT(JSON.stringify(result))
   }
 
   async function toolBrowserReload() {
-    const active = activeVisualBrowser(true)
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
-    const owner = captureReviewEvidenceOwner()
+    const active = activeBrowser(true)
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const result = await active.browser.reload()
-    checkpointFor(owner, 'browserNavigation')
     return TEXT(JSON.stringify(result))
   }
 
   async function toolBrowserScroll(args: Record<string, unknown>) {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const number = (key: string): number | undefined =>
       typeof args[key] === 'number' && Number.isFinite(args[key]) ? (args[key] as number) : undefined
     const to = args.to === 'top' || args.to === 'bottom' ? args.to : undefined
-    const owner = captureReviewEvidenceOwner()
     const result = await active.browser.scroll({
       dx: number('dx'),
       dy: number('dy'),
@@ -1322,13 +1064,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       ...(typeof args.selector === 'string' ? { selector: args.selector } : {}),
       ...(typeof args.container === 'string' ? { container: args.container } : {}),
     })
-    checkpointFor(owner, 'browserNavigation')
     return TEXT(JSON.stringify(result))
   }
 
   async function toolBrowserConsoleLogs(args: Record<string, unknown>) {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const logs = await active.browser.consoleLogs(
       typeof args.level === 'string' ? args.level : undefined,
       typeof args.limit === 'number' ? args.limit : undefined
@@ -1337,8 +1078,8 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolBrowserNetworkLogs(args: Record<string, unknown>) {
-    const active = activeVisualBrowser()
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
+    const active = activeBrowser()
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     const logs = await active.browser.networkLogs(
       args.only_errors === true,
       typeof args.limit === 'number' ? args.limit : undefined
@@ -1347,9 +1088,8 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolBrowserInteraction(name: string, args: Record<string, unknown>) {
-    const active = activeVisualBrowser(true)
-    if ('error' in active) return ERR(active.error ?? 'Visual review browser unavailable.')
-    const owner = captureReviewEvidenceOwner()
+    const active = activeBrowser(true)
+    if ('error' in active) return ERR(active.error ?? 'Browser unavailable.')
     if (name === 'browser_click' || name === 'browser_double_click') {
       const ref = Number(args.ref)
       if (!Number.isInteger(ref) || ref < 0) return ERR(`${name} requires an integer ref >= 0.`)
@@ -1375,212 +1115,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       }
       await active.browser.drag(fromRef, toRef)
     }
-    checkpointFor(owner, 'browserInteraction')
     return TEXT(JSON.stringify({ ok: true }))
-  }
-
-  async function toolStartReviewLoop(args: Record<string, unknown>) {
-    if (!options.reviewLoop) return ERR(reviewLoopError('review-loop-unavailable'))
-    const idempotencyKey = requireIdempotencyKey(args.idempotency_key)
-    if (!idempotencyKey) {
-      return ERR('idempotency_key must contain 8 to 128 safe characters and be reused on retries.')
-    }
-    const knownStartRetry = startedReviewKeys.has(idempotencyKey)
-    if (options.conversation && !conversationContextLoaded && !knownStartRetry) {
-      return ERR(
-        'Conversation=Read requires loading the main conversation decisions. ' +
-          'Run get_conversation_context before starting the review.'
-      )
-    }
-    let maxIterations = DEFAULT_MAX_ITERATIONS
-    if (args.max_iterations !== undefined && args.max_iterations !== null) {
-      const raw = Number(args.max_iterations)
-      if (!Number.isInteger(raw) || raw < 1 || raw > HARD_MAX_ITERATIONS) {
-        return ERR(reviewLoopError('invalid-max-iterations'))
-      }
-      maxIterations = raw
-    }
-    let severityThreshold: 'blocking' | 'important' = 'important'
-    if (args.severity_threshold !== undefined && args.severity_threshold !== null) {
-      if (args.severity_threshold !== 'blocking' && args.severity_threshold !== 'important') {
-        return ERR('severity_threshold must be "blocking" or "important".')
-      }
-      severityThreshold = args.severity_threshold
-    }
-    const reviewScope = args.review_scope === undefined ? 'code' : args.review_scope
-    if (reviewScope !== 'code' && reviewScope !== 'frontend') return ERR(reviewLoopError('invalid-review-scope'))
-    if (Object.hasOwn(args, 'target_url')) {
-      return ERR(reviewLoopError('target-url-not-allowed'))
-    }
-    const previewId = typeof args.preview_id === 'string' ? args.preview_id.trim() : ''
-    const browserId = typeof args.browser_id === 'string' ? args.browser_id.trim() : ''
-    if (
-      reviewScope === 'frontend' &&
-      options.browserCapability !== 'inspect' &&
-      options.browserCapability !== 'interact'
-    ) {
-      return ERR(reviewLoopError('browser-capability-off'))
-    }
-    if (ended) return ERR(SESSION_ENDED_MESSAGE)
-    if (options.conversation && !knownStartRetry) {
-      const currentRevision = await options.conversation.getRevision(lifecycleController.signal)
-      if (currentRevision !== conversationContextRevision) {
-        conversationContextLoaded = false
-        conversationContextRevision = undefined
-        return ERR(reviewLoopError('conversation-context-stale'))
-      }
-    }
-    const result = await options.reviewLoop.start({
-      reviewScope,
-      ...(previewId ? { previewId } : {}),
-      ...(browserId ? { browserId } : {}),
-      maxIterations,
-      severityThreshold,
-      idempotencyKey,
-    })
-    if ('error' in result) return ERR(reviewLoopError(result.error))
-    if (options.conversation) {
-      startedReviewKeys.add(idempotencyKey)
-      while (startedReviewKeys.size > MAX_COMPLETION_KEYS) {
-        const oldest = startedReviewKeys.values().next().value
-        if (typeof oldest === 'string') startedReviewKeys.delete(oldest)
-        else break
-      }
-      // A brief authorizes one review start only. Consume it immediately so a cancelled/ended loop
-      // cannot start again with stale context; retries remain allowed by startedReviewKeys above.
-      conversationContextLoaded = false
-      conversationContextRevision = undefined
-    }
-    emit({ kind: 'review-loop-started', loopId: result.loopId, maxIterations: result.maxIterations })
-    return TEXT(JSON.stringify(result, null, 2))
-  }
-
-  async function toolSubmitReviewFix(args: Record<string, unknown>) {
-    if (!options.reviewLoop) return ERR(reviewLoopError('review-loop-unavailable'))
-    const loopId = typeof args.loop_id === 'string' ? args.loop_id.trim() : ''
-    const idempotencyKey = requireIdempotencyKey(args.idempotency_key)
-    if (!loopId) return ERR('submit_review_fix requires loop_id returned by start_review_loop.')
-    if (!idempotencyKey) {
-      return ERR('idempotency_key must contain 8 to 128 safe characters and be reused on retries.')
-    }
-    const iteration = Number(args.iteration)
-    if (!Number.isInteger(iteration) || iteration < 1) {
-      return ERR('submit_review_fix requires iteration (integer >= 1).')
-    }
-    const shaped = validateFindingsShape(args.findings)
-    if (!shaped.ok) return ERR(shaped.error)
-    let reviewerNotes: string | undefined
-    if (args.reviewer_notes !== undefined && args.reviewer_notes !== null) {
-      if (typeof args.reviewer_notes !== 'string' || args.reviewer_notes.length > MAX_REVIEWER_NOTES_CHARS) {
-        return ERR(`reviewer_notes must be text of up to ${MAX_REVIEWER_NOTES_CHARS} characters.`)
-      }
-      reviewerNotes = args.reviewer_notes.trim()
-    }
-    if (ended) return ERR(SESSION_ENDED_MESSAGE)
-    const result = await options.reviewLoop.submit({
-      loopId,
-      iteration,
-      findings: shaped.findings,
-      ...(reviewerNotes ? { reviewerNotes } : {}),
-      idempotencyKey,
-    })
-    if ('error' in result) return ERR(reviewLoopError(result.error))
-    reviewJobs += 1
-    reviewIterations = Math.max(reviewIterations, result.iteration)
-    emit({
-      kind: 'review-fix-started',
-      jobId: result.jobId,
-      iteration: result.iteration,
-      findings: shaped.findings.length,
-    })
-    return TEXT(JSON.stringify(result, null, 2))
-  }
-
-  async function toolWaitReviewFix(args: Record<string, unknown>) {
-    if (!options.reviewLoop) return ERR(reviewLoopError('review-loop-unavailable'))
-    const loopId = typeof args.loop_id === 'string' ? args.loop_id.trim() : ''
-    const jobId = typeof args.job_id === 'string' ? args.job_id.trim() : ''
-    if (!loopId || !jobId) return ERR('wait_review_fix requires loop_id and job_id returned by submit_review_fix.')
-    let waitSeconds = 45
-    if (args.wait_seconds !== undefined && args.wait_seconds !== null) {
-      const raw = Number(args.wait_seconds)
-      if (!Number.isInteger(raw) || raw < 1 || raw > MAX_WAIT_SECONDS) {
-        return ERR(`wait_seconds must be an integer between 1 and ${MAX_WAIT_SECONDS}.`)
-      }
-      waitSeconds = raw
-    }
-    // Server-side long-poll: bridge lifecycle (session end) aborts the wait.
-    const result = await options.reviewLoop.wait({ loopId, jobId, waitSeconds }, lifecycleController.signal)
-    if ('error' in result) {
-      if (ended) return ERR(SESSION_ENDED_MESSAGE)
-      return ERR(reviewLoopError(result.error))
-    }
-    if (result.status !== 'running') {
-      emit({
-        kind: 'review-fix-finished',
-        jobId,
-        iteration: result.iteration,
-        status: result.status,
-        madeProgress: result.madeProgress,
-      })
-    }
-    return TEXT(JSON.stringify(result, null, 2))
-  }
-
-  async function toolFinishReviewLoop(args: Record<string, unknown>) {
-    if (!options.reviewLoop) return ERR(reviewLoopError('review-loop-unavailable'))
-    const loopId = typeof args.loop_id === 'string' ? args.loop_id.trim() : ''
-    const idempotencyKey = requireIdempotencyKey(args.idempotency_key)
-    if (!loopId) return ERR('finish_review_loop requires loop_id.')
-    if (!idempotencyKey) {
-      return ERR('idempotency_key must contain 8 to 128 safe characters and be reused on retries.')
-    }
-    const result =
-      args.result === 'clean' ||
-      args.result === 'max_iterations' ||
-      args.result === 'no_progress' ||
-      args.result === 'failed' ||
-      args.result === 'cancelled'
-        ? args.result
-        : null
-    if (!result) return ERR(reviewLoopError('invalid-result'))
-    if (typeof args.summary !== 'string' || !args.summary.trim() || args.summary.length > MAX_FINISH_SUMMARY_CHARS) {
-      return ERR(reviewLoopError('empty-summary'))
-    }
-    const remaining = validateRemainingFindingsShape(args.remaining_findings)
-    if (!remaining.ok) return ERR(remaining.error)
-    if (ended) return ERR(SESSION_ENDED_MESSAGE)
-    const finished = await options.reviewLoop.finish({
-      loopId,
-      result,
-      summary: args.summary.trim(),
-      ...(remaining.items.length ? { remainingFindings: remaining.items } : {}),
-      idempotencyKey,
-    })
-    if ('error' in finished) {
-      // The controller archives the loop before a summary-persist failure; consume the brief now so a
-      // new loop cannot start with stale context while the same finish is retried idempotently.
-      if (options.conversation && finished.error === 'summary-persist-failed') {
-        conversationContextLoaded = false
-        conversationContextRevision = undefined
-      }
-      return ERR(reviewLoopError(finished.error))
-    }
-    // A successful completion consumes the brief authorization. A later review in this session must
-    // reread the main conversation; retries of this finish remain idempotent because they do not gate
-    // on the authorization and the controller owns the canonical finish result.
-    if (options.conversation) {
-      conversationContextLoaded = false
-      conversationContextRevision = undefined
-    }
-    emit({
-      kind: 'review-loop-finished',
-      loopId: finished.loopId,
-      result: finished.result,
-      iterations: finished.iterations,
-      ...(finished.finishReason ? { finishReason: finished.finishReason } : {}),
-    })
-    return TEXT(JSON.stringify(finished, null, 2))
   }
 
   async function buildContext(signal: AbortSignal, pendingStages: Set<string>): Promise<BridgeToolResult> {
@@ -1769,8 +1304,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolRunCheck(args: Record<string, unknown>) {
-    // Capture the owner BEFORE any await: the check belongs to the loop/iteration at admission.
-    const evidenceOwner = captureReviewEvidenceOwner()
     const name = typeof args.name === 'string' ? args.name.trim() : ''
     const checks = options.listChecks?.() ?? []
     if (!options.runCheck || checks.length === 0) {
@@ -1784,8 +1317,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     const result = await options.runCheck(name, lifecycleController.signal)
     if (ended) return ERR(SESSION_ENDED_MESSAGE)
     rememberSet(executedChecks, name)
-    // Loop auditing uses the captured owner, never the active pointer at completion.
-    rememberCheckFor(evidenceOwner, name)
     const head = result.timedOut
       ? `\`${name}\` exceeded the timeout`
       : result.aborted
@@ -1805,8 +1336,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolReadFile(args: Record<string, unknown>) {
-    // Capture the owner BEFORE the first await: evidence belongs to the loop/iteration at admission.
-    const evidenceOwner = captureReviewEvidenceOwner()
     const rel = typeof args.path === 'string' ? args.path : ''
     if (!rel) return ERR('read_file requires "path" (relative to the repository root).')
     let target: string
@@ -1861,13 +1390,10 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     const more = end < lines.length ? `\n\n… (truncated; continue with offset=${end + 1})` : ''
     if (ended) return ERR(SESSION_ENDED_MESSAGE)
     rememberSet(readFiles, displayPath)
-    checkpointFor(evidenceOwner, 'read')
     return TEXT(`${rel} (lines ${offset}-${end} of ${lines.length})\n${body}${more}`)
   }
 
   async function toolGitDiff(args: Record<string, unknown>) {
-    // Capture the owner BEFORE the first await: evidence belongs to the loop/iteration at admission.
-    const evidenceOwner = captureReviewEvidenceOwner()
     if (options.gitReadEnabled === false) return ERR('git-read-disabled')
     const target = typeof args.path === 'string' && args.path ? args.path : ''
     if (options.repositoryScope?.isMulti) {
@@ -1935,7 +1461,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       }
 
       rememberSet(inspectedDiffs, target || '(all repositories)')
-      checkpointFor(evidenceOwner, 'diff')
       if (!out) return TEXT('(empty diff)')
       return TEXT(clipped ? `${out}\n… [diff truncated]` : out)
     }
@@ -2061,7 +1586,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     }
 
     rememberSet(inspectedDiffs, target || '(entire repository)')
-    checkpointFor(evidenceOwner, 'diff')
     if (!out) return TEXT('(empty diff)')
     return TEXT(clipped ? `${out}\n… [diff truncated]` : out)
   }
@@ -2088,8 +1612,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   }
 
   async function toolGrep(args: Record<string, unknown>) {
-    // Capture the owner BEFORE the first await: evidence belongs to the loop/iteration at admission.
-    const evidenceOwner = captureReviewEvidenceOwner()
     const pattern = typeof args.pattern === 'string' ? args.pattern : ''
     if (!pattern) return ERR('grep requires "pattern" (JavaScript regex).')
     if (pattern.length > MAX_GREP_PATTERN_CHARS) {
@@ -2174,15 +1696,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     }
     if (ended) return ERR(SESSION_ENDED_MESSAGE)
     remember(searches, `grep /${pattern}/ in ${sub}${includePattern ? ` (include ${includePattern})` : ''}`)
-    checkpointFor(evidenceOwner, 'search')
     if (hits.length === 0) return TEXT('(no matches)')
     const more = hits.length >= limit ? `\n… (limit of ${limit} matches reached)` : ''
     return TEXT(`${hits.length} match(es):\n${hits.join('\n')}${more}`)
   }
 
   async function toolGlob(args: Record<string, unknown>) {
-    // Capture the owner BEFORE the first await: evidence belongs to the loop/iteration at admission.
-    const evidenceOwner = captureReviewEvidenceOwner()
     const pattern = typeof args.pattern === 'string' ? args.pattern : ''
     if (!pattern) return ERR('glob requires "pattern" (e.g. "src/**/*.ts").')
     const limit = Math.min(MAX_GLOB_RESULTS, Math.max(1, Number(args.limit) || MAX_GLOB_RESULTS))
@@ -2213,7 +1732,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     }
     if (ended) return ERR(SESSION_ENDED_MESSAGE)
     remember(searches, `glob ${pattern}`)
-    checkpointFor(evidenceOwner, 'search')
     if (found.length === 0) return TEXT('(no files)')
     const more = found.length >= limit ? `\n… (limit of ${limit} files reached)` : ''
     return TEXT(`${found.length} file(s):\n${found.join('\n')}${more}`)
@@ -2306,10 +1824,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     if (!options.conversation) return ERR(CONVERSATION_OFF_MESSAGE)
     const value = await options.conversation.getContext(lifecycleController.signal)
     if (ended) return ERR(SESSION_ENDED_MESSAGE)
-    const revision = conversationRevisionFromBrief(value)
-    if (revision === undefined) return ERR('get_conversation_context returned a brief without a valid revision.')
-    conversationContextRevision = revision
-    conversationContextLoaded = true
     return externalResult(value)
   }
   const toolSearchConversation = (args: Record<string, unknown>) => {
@@ -2370,13 +1884,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       },
     },
     {
-      name: 'discover_frontend_previews',
-      description: 'Discover allowlisted frontend previews in the workspace. Returns opaque IDs, never commands.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      run: toolDiscoverFrontendPreviews,
-    },
-    {
       name: 'browser_list_tabs',
       description: 'List only loopback tabs in the built-in browser for this conversation, with opaque IDs.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -2404,28 +1911,28 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_snapshot',
-      description: 'Semantic snapshot of the active Visual Review page, including interaction refs.',
+      description: 'Semantic snapshot of the attached browser page, including interaction refs.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       run: toolBrowserSnapshot,
     },
     {
       name: 'browser_screenshot',
-      description: 'Bounded real PNG screenshot of the active Visual Review page, with sanitized metadata.',
+      description: 'Bounded real PNG screenshot of the attached browser page, with sanitized metadata.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       run: toolBrowserScreenshot,
     },
     {
       name: 'browser_read_text',
-      description: 'Read visible text from the active Visual Review page.',
+      description: 'Read visible text from the attached browser page.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       run: toolBrowserReadText,
     },
     {
       name: 'browser_wait_for',
-      description: 'Wait for a selector, text or network idle on the visual page.',
+      description: 'Wait for a selector, text or network idle on the attached browser page.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2441,7 +1948,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_console_logs',
-      description: 'Read bounded console logs from the visual page.',
+      description: 'Read bounded console logs from the attached browser page.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2455,7 +1962,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_network_logs',
-      description: 'Read bounded network logs from the visual page.',
+      description: 'Read bounded network logs from the attached browser page.',
       inputSchema: {
         type: 'object',
         properties: { only_errors: { type: 'boolean' }, limit: { type: 'integer', minimum: 1, maximum: 500 } },
@@ -2466,7 +1973,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_navigate',
-      description: 'Navigate only within the frozen Visual Review loopback origin.',
+      description: 'Navigate only within the loopback origin of the attached browser tab.',
       inputSchema: {
         type: 'object',
         properties: { url: { type: 'string', minLength: 1 } },
@@ -2478,14 +1985,14 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_reload',
-      description: 'Reload the current Visual Review page.',
+      description: 'Reload the attached browser page.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       run: toolBrowserReload,
     },
     {
       name: 'browser_scroll',
-      description: 'Scroll the Visual Review page or a container.',
+      description: 'Scroll the attached browser page or a container.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2504,7 +2011,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     ...(['browser_click', 'browser_double_click'] as const).map((name) => ({
       name,
-      description: `${name === 'browser_click' ? 'Click' : 'Double-click'} a visual snapshot ref. Requires Interact.`,
+      description: `${name === 'browser_click' ? 'Click' : 'Double-click'} a snapshot ref of the attached browser page. Requires Interact.`,
       inputSchema: {
         type: 'object',
         properties: { ref: { type: 'integer', minimum: 0 } },
@@ -2516,7 +2023,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     })),
     {
       name: 'browser_type',
-      description: 'Type into a visual snapshot ref. Requires Interact.',
+      description: 'Type into a snapshot ref of the attached browser page. Requires Interact.',
       inputSchema: {
         type: 'object',
         properties: { ref: { type: 'integer', minimum: 0 }, text: { type: 'string' }, clear: { type: 'boolean' } },
@@ -2528,7 +2035,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_press_key',
-      description: 'Press a key on the visual page. Requires Interact.',
+      description: 'Press a key on the attached browser page. Requires Interact.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2543,7 +2050,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     },
     {
       name: 'browser_drag',
-      description: 'Drag between two visual snapshot refs. Requires Interact.',
+      description: 'Drag between two snapshot refs of the attached browser page. Requires Interact.',
       inputSchema: {
         type: 'object',
         properties: { from_ref: { type: 'integer', minimum: 0 }, to_ref: { type: 'integer', minimum: 0 } },
@@ -2642,7 +2149,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     {
       name: 'git_read',
       description:
-        'Run a structured, strictly read-only Git operation in the authorized repository. No arbitrary subcommands or shell. repo is the internal ID from list_external_capabilities, never owner/repo. For a single repository, use repository or omit; for multiple repositories, supply the ID. operation=diff is a generic Git read and does not replace git_diff as required review-loop evidence.',
+        'Run a structured, strictly read-only Git operation in the authorized repository. No arbitrary subcommands or shell. repo is the internal ID from list_external_capabilities, never owner/repo. For a single repository, use repository or omit; for multiple repositories, supply the ID. operation=diff is a generic Git read; git_diff is the dedicated tool for the branch diff against the repository base.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2938,7 +2445,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     {
       name: 'git_diff',
       description:
-        'Unified diff of the current branch against the repository base. Without arguments, returns the full diff; path restricts it to one file. Records the diff checkpoint required by the review loop.',
+        'Unified diff of the current branch against the repository base. Without arguments, returns the full diff; path restricts it to one file.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -3138,206 +2645,8 @@ export function createChatGptWebBridge(options: BridgeOptions) {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       run: toolWaitPlanReview,
     },
-    {
-      name: 'start_review_loop',
-      description:
-        'Start an automatic review loop: the Maestrly agent executes fixes locally, one round at a time. review_scope=frontend accepts a managed preview or attached local tab. The executor provider/model is frozen.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          max_iterations: {
-            type: 'integer',
-            minimum: 1,
-            maximum: HARD_MAX_ITERATIONS,
-            description: `Maximum cycles (default ${DEFAULT_MAX_ITERATIONS}, limit ${HARD_MAX_ITERATIONS})`,
-          },
-          severity_threshold: {
-            type: 'string',
-            enum: ['blocking', 'important'],
-            description: 'Minimum severity that keeps the loop active (default "important")',
-          },
-          review_scope: {
-            type: 'string',
-            enum: ['code', 'frontend'],
-            description: 'Defaults to code; frontend requires exactly one opaque preview_id or browser_id',
-          },
-          preview_id: { type: 'string', minLength: 1, description: 'Opaque ID from discover_frontend_previews' },
-          browser_id: { type: 'string', minLength: 1, description: 'Opaque ID from browser_list_tabs' },
-          idempotency_key: {
-            ...IDEMPOTENCY_KEY_CONSTRAINTS,
-            description: 'Unique start key; reuse the SAME key on every retry',
-          },
-        },
-        required: ['idempotency_key'],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      run: toolStartReviewLoop,
-    },
-    {
-      name: 'submit_review_fix',
-      description:
-        'Submit structured findings and start ONE local Maestrly agent execution. Requires FRESH investigation in this iteration (git_diff + grep/glob + read_file of the changed implementation) after the latest execution. Findings below the threshold do not keep the loop active.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          loop_id: { type: 'string', minLength: 1, description: 'Loop ID returned by start_review_loop' },
-          iteration: { type: 'integer', minimum: 1, description: 'Current loop round' },
-          findings: {
-            type: 'array',
-            minItems: 1,
-            maxItems: MAX_FINDINGS,
-            items: {
-              type: 'object',
-              properties: {
-                id: {
-                  type: 'string',
-                  minLength: 1,
-                  maxLength: MAX_FINDING_ID_CHARS,
-                  pattern: NON_WHITESPACE_PATTERN,
-                  description: 'Stable finding identifier',
-                },
-                severity: { type: 'string', enum: ['blocking', 'important', 'optional'] },
-                title: {
-                  type: 'string',
-                  minLength: 1,
-                  maxLength: MAX_FINDING_TITLE_CHARS,
-                  pattern: NON_WHITESPACE_PATTERN,
-                  description: `Short title (up to ${MAX_FINDING_TITLE_CHARS} characters)`,
-                },
-                details: {
-                  type: 'string',
-                  minLength: 1,
-                  maxLength: MAX_FINDING_DETAILS_CHARS,
-                  pattern: NON_WHITESPACE_PATTERN,
-                  description: `Details and evidence (up to ${MAX_FINDING_DETAILS_CHARS} characters)`,
-                },
-                paths: {
-                  type: 'array',
-                  maxItems: MAX_FINDING_PATHS,
-                  items: { type: 'string', minLength: 1, maxLength: MAX_FINDING_PATH_CHARS },
-                  description: 'RELATIVE paths, for information only (optional)',
-                },
-              },
-              required: ['id', 'severity', 'title', 'details'],
-              additionalProperties: false,
-            },
-          },
-          reviewer_notes: {
-            type: 'string',
-            maxLength: MAX_REVIEWER_NOTES_CHARS,
-            description: `Reviewer notes for the agent (optional, up to ${MAX_REVIEWER_NOTES_CHARS} characters)`,
-          },
-          idempotency_key: {
-            ...IDEMPOTENCY_KEY_CONSTRAINTS,
-            description: 'Unique submission key; reuse the SAME key on retries',
-          },
-        },
-        required: ['loop_id', 'iteration', 'findings', 'idempotency_key'],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-      run: toolSubmitReviewFix,
-    },
-    {
-      name: 'wait_review_fix',
-      description:
-        `Wait for the executor job to finish (long poll up to ${MAX_WAIT_SECONDS}s). If still running, returns ` +
-        'status "running" — call again with the SAME job_id. Read-only.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          loop_id: { type: 'string', minLength: 1, description: 'Loop ID' },
-          job_id: { type: 'string', minLength: 1, description: 'Job ID returned by submit_review_fix' },
-          wait_seconds: {
-            type: 'integer',
-            minimum: 1,
-            maximum: MAX_WAIT_SECONDS,
-            description: `Maximum wait time (default 45, limit ${MAX_WAIT_SECONDS})`,
-          },
-        },
-        required: ['loop_id', 'job_id'],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: true },
-      run: toolWaitReviewFix,
-    },
-    {
-      name: 'finish_review_loop',
-      description:
-        'Formally finish a review loop with result (clean | max_iterations | no_progress | failed | cancelled), summary and remaining_findings. Maestrly persists an audit summary in the conversation. Call only when the loop is terminal or clean after fresh investigation. cancelled requires bridge-confirmed cancellation; never use it merely because the current response is ending.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          loop_id: { type: 'string', minLength: 1, description: 'Loop ID' },
-          result: {
-            type: 'string',
-            enum: ['clean', 'max_iterations', 'no_progress', 'failed', 'cancelled'],
-            description:
-              'clean after investigation with no relevant findings; other values only after the bridge ' +
-              'places the loop in that terminal state. cancelled requires actual user/session cancellation.',
-          },
-          summary: {
-            type: 'string',
-            minLength: 1,
-            maxLength: MAX_FINISH_SUMMARY_CHARS,
-            pattern: NON_WHITESPACE_PATTERN,
-            description: `Completion summary (up to ${MAX_FINISH_SUMMARY_CHARS} characters)`,
-          },
-          remaining_findings: {
-            type: 'array',
-            maxItems: MAX_REMAINING_FINDINGS,
-            items: {
-              type: 'object',
-              properties: {
-                severity: { type: 'string', enum: ['blocking', 'important', 'optional'] },
-                title: {
-                  type: 'string',
-                  minLength: 1,
-                  maxLength: MAX_FINDING_TITLE_CHARS,
-                  pattern: NON_WHITESPACE_PATTERN,
-                },
-                details: {
-                  type: 'string',
-                  minLength: 1,
-                  maxLength: MAX_FINDING_DETAILS_CHARS,
-                  pattern: NON_WHITESPACE_PATTERN,
-                },
-              },
-              required: ['severity', 'title', 'details'],
-              additionalProperties: false,
-            },
-            description: 'Findings that could not be fixed (optional)',
-          },
-          idempotency_key: {
-            ...IDEMPOTENCY_KEY_CONSTRAINTS,
-            description: 'Unique completion key; reuse the SAME key on retries',
-          },
-        },
-        required: ['loop_id', 'result', 'summary', 'idempotency_key'],
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      run: toolFinishReviewLoop,
-    },
   ] as const
 
-  const REVIEW_LOOP_TOOL_NAMES = new Set([
-    'start_review_loop',
-    'submit_review_fix',
-    'wait_review_fix',
-    'finish_review_loop',
-  ])
-  const REVIEW_LOOP_TOOL_ARG_KEYS = [
-    'loop_id',
-    'job_id',
-    'iteration',
-    'max_iterations',
-    'severity_threshold',
-    'wait_seconds',
-    'result',
-    'review_scope',
-  ]
   const BROWSER_TOOL_NAMES = new Set([
     'browser_snapshot',
     'browser_screenshot',
@@ -3355,7 +2664,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     'browser_drag',
   ])
 
-  /** Sanitized events: review tools NEVER expose findings/notes/prompts in tool-call events. */
+  /** Sanitized events: tools with sensitive arguments (memory, MCP, browser, Git/GitHub) expose bounded metadata only. */
   function sanitizedArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {
     if (name === 'personal_memory') return { operation: typeof args.operation === 'string' ? args.operation : 'invalid' }
     if (BROWSER_TOOL_NAMES.has(name)) {
@@ -3425,22 +2734,16 @@ export function createChatGptWebBridge(options: BridgeOptions) {
         ...(typeof args.repo === 'string' ? { repo: args.repo.slice(0, 128) } : {}),
       }
     }
-    if (!REVIEW_LOOP_TOOL_NAMES.has(name)) return args
-    const out: Record<string, unknown> = {}
-    for (const key of REVIEW_LOOP_TOOL_ARG_KEYS) {
-      if (args[key] !== undefined) out[key] = args[key]
-    }
-    return out
+    return args
   }
 
   /**
    * STABLE, complete catalog: ChatGPT caches `tools/list` when creating/updating the app, so schemas
-   * must never vary by session or controller presence. Validate availability/ownership in `tools/call`
-   * (each review tool requires `options.reviewLoop` in the session), NEVER by hiding schemas here.
+   * must never vary by session or adapter presence. Validate availability/ownership in `tools/call`
+   * (each tool requires its session adapter), NEVER by hiding schemas here.
    */
   const requiresProject = (name: string): boolean => [
-    'git_diff', 'git_read', 'gh_read', 'run_check', 'start_review_loop', 'submit_review_fix',
-    'wait_review_fix', 'finish_review_loop', 'discover_frontend_previews', 'start_project_environment',
+    'git_diff', 'git_read', 'gh_read', 'run_check', 'start_project_environment',
     'wait_project_environment', 'cancel_project_environment', 'search_project_memory', 'read_project_memory_source',
   ].includes(name)
 
@@ -3558,10 +2861,6 @@ export function createChatGptWebBridge(options: BridgeOptions) {
     callTool,
     endSession,
     stats,
-    setReviewIteration,
-    clearReviewIteration,
-    forgetReviewLoop,
-    getReviewEvidence,
   }
 }
 

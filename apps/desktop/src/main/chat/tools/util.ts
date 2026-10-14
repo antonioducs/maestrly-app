@@ -6,41 +6,12 @@ import type { PermissionScope } from '../../../shared/conversation-scope'
  */
 
 import path from 'node:path'
-import fs from 'node:fs'
 import { saveToolOutput } from '../tool-output-store'
 import type { z } from 'zod'
 import type { PermissionAction } from '../permission'
 import type { ChatQuestion } from '../../../shared/chat'
 
 export type { PermissionAction }
-
-export type ReviewEvidenceKind = 'diff' | 'search' | 'read' | 'context-search' | 'context-read'
-
-export interface StructuredReviewFinding {
-  id: string
-  severity: 'blocking' | 'important' | 'optional'
-  title: string
-  details: string
-  paths?: string[]
-}
-
-export interface StructuredReviewDecision {
-  result: 'clean' | 'findings'
-  summary: string
-  findings?: StructuredReviewFinding[]
-}
-
-export type SubmitReviewResult = { ok: true; idempotent?: true } | { ok: false; error: string }
-
-/** Host-owned callbacks available only in an isolated reviewer turn. */
-export interface ReviewerToolRuntime {
-  recordEvidence(kind: ReviewEvidenceKind): void
-  submitReview(decision: StructuredReviewDecision): SubmitReviewResult
-  searchExecutionContext(input: { query: string; limit?: number }): unknown | Promise<unknown>
-  readExecutionContext(input: { around_seq: number; limit?: number }): unknown | Promise<unknown>
-  /** Present on the fresh host recorder so the turn outcome can carry the accepted structured decision. */
-  decision?(): StructuredReviewDecision | null
-}
 
 /** Context passed to each tool execute (replaces opencode Location/Permission environments). */
 export interface ToolContext {
@@ -73,16 +44,14 @@ export interface ToolContext {
   ) => Promise<GeneratedImageEmission>
   /** generate_image: accounts for usage as soon as available, even if later materialization fails. */
   onGeneratedImageUsage?: (usage: GeneratedImageUsage) => void
-  /** Reviewer-only host runtime. Normal turns deliberately omit it. */
-  reviewer?: ReviewerToolRuntime
   /**
    * Main-turn-only runtime for start_conversations, bound to the admitted human turn. Absent in child/subagent,
-   * reviewer, restricted-mode and host-generated turns, where the tools refuse to run.
+   * restricted-mode and host-generated turns, where the tools refuse to run.
    */
   conversationDispatch?: import('./conversation-dispatch').ConversationDispatchToolRuntime
   /**
    * Main-turn-only runtime for the tools that read and message other conversations, bound to the admitted turn (one
-   * the person typed, or one started by another conversation). Absent in child/subagent, reviewer and restricted turns.
+   * the person typed, or one started by another conversation). Absent in child/subagent and restricted turns.
    */
   conversationLink?: import('./conversation-link').ConversationLinkToolRuntime
 }
@@ -271,18 +240,6 @@ export function resolveInside(cwd: string, p: string): { abs: string; external: 
   const rel = path.relative(root, abs)
   const external = rel.startsWith('..') || path.isAbsolute(rel)
   return { abs, external }
-}
-
-/** Reviewer-only realpath jail: lexical in-cwd symlinks cannot disclose files outside the checkout. */
-export async function assertReviewerPathInside(
-  ctx: Pick<ToolContext, 'cwd' | 'reviewer'>,
-  abs: string
-): Promise<string> {
-  if (!ctx.reviewer) return abs
-  const [root, target] = await Promise.all([fs.promises.realpath(ctx.cwd), fs.promises.realpath(abs)])
-  const rel = path.relative(root, target)
-  if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('Reviewer path escapes the checkout')
-  return target
 }
 
 // ---- Output bounding (simplified port of tool-output-store.ts). ----

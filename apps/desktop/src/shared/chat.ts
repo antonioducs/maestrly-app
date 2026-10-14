@@ -900,6 +900,12 @@ export interface ChatSkillSearchHit {
   installed: boolean
 }
 
+/**
+ * Where a message belongs. Only `conversation` (or no scope) is part of the model's context.
+ * `review-loop` is an isolated internal execution (ChatGPT Web project-environment jobs); the persisted kind keeps
+ * its historical name. `review-summary` only exists in older conversations. `review-report` holds a code review,
+ * which reaches the model attached to the person's next message instead.
+ */
 export type ChatExecutionScope =
   | { kind: 'conversation' }
   | {
@@ -908,28 +914,17 @@ export type ChatExecutionScope =
       loopId: string
       iteration: number
       maxIterations: number
-      /** Present for the neutral paired driver; absent means the legacy Web executor round. */
-      role?: 'executor' | 'reviewer'
-      executorConversationId?: string
-      reviewerConversationId?: string
     }
   | { kind: 'host'; executionId: string }
-  | {
-      kind: 'review-summary'
-      loopId: string
-      role?: 'executor' | 'reviewer'
-      executorConversationId?: string
-      reviewerConversationId?: string
-    }
+  | { kind: 'review-summary'; loopId: string }
+  | { kind: 'review-report'; reviewId: string }
 
+/** Isolated internal execution round, projected from a `review-loop` execution scope. */
 export interface ChatReviewLoopMeta {
   loopId: string
   executionId: string
   iteration: number
   maxIterations: number
-  role?: 'executor' | 'reviewer'
-  executorConversationId?: string
-  reviewerConversationId?: string
 }
 
 /**
@@ -939,7 +934,7 @@ export interface ChatReviewLoopMeta {
 export type ChatMessageSource =
   | 'chatgpt-web'
   | 'chatgpt-web-review-loop'
-  | 'maestrly-review-loop'
+  | 'maestrly-review'
   | 'conversation-dispatch'
   | 'conversation-message'
 
@@ -1011,6 +1006,9 @@ export interface ChatMessage {
   executionScope?: ChatExecutionScope
 
   reviewLoop?: ChatReviewLoopMeta
+
+  /** Present with source `maestrly-review`. */
+  review?: import('./review').ChatReviewReport
 
   memoryContext?: import('./memory').MemoryContextMeta
 
@@ -1326,7 +1324,6 @@ export interface ChatGptWebSessionInfo {
 
   diagnostic?: ChatGptWebSessionDiagnostic
 
-  reviewLoop?: ChatGptWebReviewLoopInfo
   error?: string
 }
 
@@ -1350,26 +1347,6 @@ export interface ChatGptWebStatus {
 // ----------------------------------------------------------------------------
 
 // ----------------------------------------------------------------------------
-
-export type ChatGptWebReviewLoopStatus =
-  | 'reviewing'
-  | 'executing'
-  | 'finishing'
-  | 'cancelling'
-  | 'finished'
-  | 'cancelled'
-  | 'interrupted'
-
-export function isReviewLoopConversationReserved(status: ChatGptWebReviewLoopStatus | null | undefined): boolean {
-  return (
-    status === 'reviewing' ||
-    status === 'executing' ||
-    status === 'finishing' ||
-    status === 'cancelling' ||
-    status === 'finished' ||
-    status === 'cancelled'
-  )
-}
 
 export interface FrozenChatSelection {
   /** Effective Cursor model and catalog parameters, frozen for isolated execution. */
@@ -1419,17 +1396,6 @@ export type InternalTurnOutcome =
       status: 'success'
       assistantMessageId: string | null
       summaryText?: string
-      reviewDecision?: {
-        result: 'clean' | 'findings'
-        summary: string
-        findings?: Array<{
-          id: string
-          severity: 'blocking' | 'important' | 'optional'
-          title: string
-          details: string
-          paths?: string[]
-        }>
-      }
     }
   | { status: 'error'; error: string; assistantMessageId: string | null }
   | { status: 'cancelled'; assistantMessageId: string | null }
@@ -1441,81 +1407,6 @@ export interface InternalTurnHandle {
   done: Promise<InternalTurnOutcome>
   cancel(): void
 }
-
-export interface ChatGptWebReviewLoopInfo {
-  loopId: string
-  status: ChatGptWebReviewLoopStatus
-  iteration: number
-  maxIterations: number
-  startedAt: number
-  jobStartedAt?: number
-  finishReason?: string
-
-  modelId?: string
-
-  reasoning?: string
-  /** Frozen Fast mode. */
-  fastMode?: boolean
-
-  contextPolicy?: 'isolated'
-
-  roundsCompleted?: number
-  roundsFailed?: number
-  roundsCancelled?: number
-  /** Review protocol axis; absent in older persisted/public payloads means code. */
-  reviewScope?: 'code' | 'frontend'
-  /** Sanitized visual runtime state. Never includes process/session/browser internals. */
-  visual?: {
-    state: 'starting' | 'ready' | 'inspecting' | 'error'
-    url?: string
-    managedPreview: boolean
-  }
-}
-
-export type ReviewLoopDriver = 'chatgpt-web' | 'maestrly-pair'
-export type ReviewLoopRole = 'executor' | 'reviewer'
-export type ReviewLoopTurnPolicy = 'executor-agent' | 'reviewer-readonly'
-export type ReviewLoopSource = 'chatgpt-web-review-loop' | 'maestrly-review-loop'
-export type ReviewLoopSeverityThreshold = 'blocking' | 'important'
-
-export interface ReviewLoopParticipantInfo {
-  conversationId: string
-  name: string
-  modelId: string
-  reasoning?: string
-  fastMode: boolean
-}
-
-/** Sanitized neutral projection. It deliberately excludes prompts, fingerprints, findings and handles. */
-export interface ReviewLoopInfo {
-  loopId: string
-  driver: ReviewLoopDriver
-  status: ChatGptWebReviewLoopStatus
-  iteration: number
-  maxIterations: number
-  activeRole?: ReviewLoopRole
-  participants: {
-    executor: ReviewLoopParticipantInfo
-    reviewer?: ReviewLoopParticipantInfo
-  }
-  startedAt: number
-  jobStartedAt?: number
-  finishReason?: string
-}
-
-export interface ReviewLoopCompatibleCandidate extends ReviewLoopParticipantInfo {
-  compatible: boolean
-  unavailableReason?: string
-}
-
-export interface StartPairedReviewLoopInput {
-  executorConversationId: string
-  reviewerConversationId: string
-  maxIterations?: number
-  severityThreshold?: ReviewLoopSeverityThreshold
-}
-
-export type StartPairedReviewLoopResult = { ok: true; loop: ReviewLoopInfo } | { ok: false; error: string }
 
 // ----------------------------------------------------------------------------
 

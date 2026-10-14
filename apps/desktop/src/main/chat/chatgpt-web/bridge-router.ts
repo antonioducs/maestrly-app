@@ -7,9 +7,8 @@
  *
  * The router answers `initialize`/`tools/list` from a STATIC catalog, created once without a session:
  * ChatGPT caches this list when creating/updating the app, so it includes ALL possible capabilities
- * (including the four review-loop tools) and never varies by conversation or by whether sessions
- * exist. Authorization (session_key, review-loop controller) is validated in `tools/call`;
- * hiding schemas is never an authorization mechanism.
+ * and never varies by conversation or by whether sessions exist. Authorization (session_key, per-session
+ * adapters) is validated in `tools/call`; hiding schemas is never an authorization mechanism.
  */
 import {
   CHATGPT_WEB_SERVER_INSTRUCTIONS,

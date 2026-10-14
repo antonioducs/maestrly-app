@@ -89,10 +89,6 @@ export type {
   ChatGptWebSessionInfo,
   ChatGptWebSessionState,
   ChatGptWebTunnelState,
-  ReviewLoopInfo,
-  ReviewLoopParticipantInfo,
-  StartPairedReviewLoopInput,
-  StartPairedReviewLoopResult,
   McpServerInfo,
   PermissionReply,
 } from '../shared/chat'

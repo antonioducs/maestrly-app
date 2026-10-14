@@ -11,7 +11,7 @@
  * with an organization holding NO API credits: the tunnel incurred no charge.
  */
 import { cancelMemoryExtraction } from '../../memory/extraction/scheduler'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { app, net } from 'electron'
 import { acquireRuntimeAssetLease } from '../../runtime-assets/app-service'
 import {
@@ -38,8 +38,6 @@ import { startBridgeHttp, type BridgeHttpEndpoint } from './bridge-http'
 import { createTunnelRuntime, prepareTunnelClient, tunnelClientBinPath, type TunnelRuntime } from './tunnel-runtime'
 import { listChecks, runCheck } from './checks'
 import { createChatGptWebCompanionWindows, resumableChatGptConversationUrl } from './companion-window'
-import { createReviewLoopController, type ReviewLoopController } from './review-loop'
-import { lookupReviewLoopByConversation, releaseReviewLoop, reserveReviewLoop } from '../review-loop/registry'
 import {
   createPlanReviewController,
   type PlanReviewController,
@@ -47,8 +45,6 @@ import {
   type PlanReviewTerminalOutcome,
 } from './plan-review'
 import { releasePlanRevision } from '../../plan-broker'
-import { discoverPreviewTargets, prepareAndStartPreview, PreviewStartupError } from './preview-runtime'
-import { createVisualBrowser } from './visual-browser'
 import { createDrawerBrowserSession } from './drawer-browser-session'
 import { createProjectEnvironmentJobController, type ProjectEnvironmentJobController } from './project-environment'
 import { createChatGptWebMcpGateway } from './mcp-gateway'
@@ -58,7 +54,6 @@ import { gitRead, type GitReadInput } from '../../git-read'
 import { ghRead, type GhReadInput } from '../../gh-read'
 import * as floatingManager from '../../floating-manager'
 import * as popupManager from '../../popup-manager'
-import { canonicalCwd } from '../../cwd-activity-coordinator'
 import type {
   ChatGptWebCapabilities,
   ChatGptWebCapabilitiesInfo,
@@ -88,8 +83,6 @@ const DEFAULT_APP_NAME = 'Maestrly Bridge'
 const PLATFORM_BASE = 'https://api.openai.com/v1'
 
 const sessions = new Map<string, ChatGptWebSession>()
-/** Per-conversation review-loop controller (created with the session; the loop lives as long as the session). */
-const reviewLoopControllers = new Map<string, ReviewLoopController>()
 /** Per-conversation Plan-tab review channel; survives brief companion-session rearms. */
 const planReviewControllers = new Map<string, PlanReviewController>()
 const projectEnvironmentControllers = new Map<string, ProjectEnvironmentJobController>()
@@ -147,7 +140,6 @@ export interface ChatGptWebHooks {
   listSkills: (cwd: string, conversationId?: string) => Promise<Array<{ name: string; description: string }>>
   readSkill: (cwd: string, name: string, conversationId?: string) => Promise<string | null>
   getConversationContext: (conversationId: string, signal?: AbortSignal) => Promise<unknown> | unknown
-  getConversationRevision: (conversationId: string, signal?: AbortSignal) => Promise<string | null> | string | null
   searchConversation: (
     conversationId: string,
     input: { query: string; limit?: number },
@@ -159,15 +151,14 @@ export interface ChatGptWebHooks {
     signal?: AbortSignal
   ) => Promise<unknown> | unknown
   /**
-   * Automatic review loop (ChatGPT Web reviewer → Maestrly Chat executor). If absent, reject review
-   * tools in tools/call (the tools/list catalog remains stable and complete).
+   * Isolated internal turns for project-environment jobs (ChatGPT Web starts/awaits/cancels them). If
+   * absent, project-environment jobs are rejected in tools/call (the tools/list catalog stays stable).
    */
-  reviewLoop?: {
+  internalTurns?: {
     validateStart: (conversationId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     resolveSelection: (
       conversationId: string
     ) => Promise<{ ok: true; selection: FrozenChatSelection } | { ok: false; error: string }>
-    revalidateSelection?: (selection: FrozenChatSelection) => Promise<{ ok: true } | { ok: false; error: string }>
     startInternalTurn: (input: {
       conversationId: string
       prompt: string
@@ -179,11 +170,6 @@ export interface ChatGptWebHooks {
       signal: AbortSignal
     }) => Promise<{ ok: true; handle: InternalTurnHandle } | { ok: false; error: string }>
     cancelInternalTurn: (executionId: string) => void
-    persistSummary: (input: {
-      conversationId: string
-      loopId: string
-      markdown: string
-    }) => Promise<{ ok: true; messageId: string } | { ok: false; error: string }>
     forceAgentMode: (conversationId: string) => void
   }
 }
@@ -674,8 +660,6 @@ function sessionKeyForConversation(conversationId: string, capabilityFingerprint
 }
 
 function rollbackSession(conversationId: string, created: ChatGptWebSession, sessionRouter: BridgeRouter): void {
-  reviewLoopControllers.get(conversationId)?.dispose()
-  reviewLoopControllers.delete(conversationId)
   projectEnvironmentControllers.get(conversationId)?.stop()
   projectEnvironmentControllers.delete(conversationId)
   sessionRouter.unregister(created.sessionKey)
@@ -759,19 +743,16 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         return !!session && session.getState() !== 'ended'
       },
       validateStart: async () => {
-        if (!hooks?.reviewLoop) return { ok: false, error: 'review-loop-unavailable' }
-        if (reviewLoopControllers.get(input.conversationId)?.busy()) {
-          return { ok: false, error: 'review-loop-active' }
-        }
-        return hooks.reviewLoop.validateStart(input.conversationId)
+        if (!hooks?.internalTurns) return { ok: false, error: 'internal-turns-unavailable' }
+        return hooks.internalTurns.validateStart(input.conversationId)
       },
       resolveSelection: async () => {
-        if (!hooks?.reviewLoop) return { ok: false, error: 'review-loop-unavailable' }
-        return hooks.reviewLoop.resolveSelection(input.conversationId)
+        if (!hooks?.internalTurns) return { ok: false, error: 'internal-turns-unavailable' }
+        return hooks.internalTurns.resolveSelection(input.conversationId)
       },
       startTurn: async ({ prompt, selection, jobId, signal }) => {
-        if (!hooks?.reviewLoop) return { ok: false, error: 'review-loop-unavailable' }
-        return hooks.reviewLoop.startInternalTurn({
+        if (!hooks?.internalTurns) return { ok: false, error: 'internal-turns-unavailable' }
+        return hooks.internalTurns.startInternalTurn({
           conversationId: input.conversationId,
           prompt,
           hiddenParts: [],
@@ -782,119 +763,12 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
           signal,
         })
       },
-      cancelTurn: (executionId) => hooks?.reviewLoop?.cancelInternalTurn(executionId),
-      forceAgentMode: () => hooks?.reviewLoop?.forceAgentMode(input.conversationId),
+      cancelTurn: (executionId) => hooks?.internalTurns?.cancelInternalTurn(executionId),
+      forceAgentMode: () => hooks?.internalTurns?.forceAgentMode(input.conversationId),
       onChange: emitChange,
     })
     provisionalEnvironment = projectEnvironment
     projectEnvironmentControllers.set(input.conversationId, projectEnvironment)
-    // Create the review-loop controller with the session (which supplies bridge and state). The
-    // conversation lock (activeLoopId) begins at start_review_loop; session teardown cancels the loop.
-    const controller = createReviewLoopController({
-      conversationId: input.conversationId,
-      cwd: input.cwd,
-      // The key NEVER enters loop state; only an opaque hash is retained for auditing.
-      sessionKeyHash: createHash('sha256').update(sessionKey).digest('hex'),
-      sessionActive: () => {
-        const session = sessions.get(input.conversationId)
-        return !!session && session.getState() !== 'ended'
-      },
-      validateStart: async () => {
-        if (!hooks?.reviewLoop) return { ok: false, error: 'review-loop-unavailable' }
-        if (projectEnvironment.info()) return { ok: false, error: 'project-environment-active' }
-        return hooks.reviewLoop.validateStart(input.conversationId)
-      },
-      resolveSelection: async () => {
-        if (!hooks?.reviewLoop) return { ok: false, error: 'review-loop-unavailable' }
-        return hooks.reviewLoop.resolveSelection(input.conversationId)
-      },
-      revalidateSelection: async (selection) => {
-        if (!hooks?.reviewLoop?.revalidateSelection) return { ok: true }
-        return hooks.reviewLoop.revalidateSelection(selection)
-      },
-      startTurn: async ({ prompt, hiddenParts, selection, loopId, iteration, maxIterations, signal }) => {
-        if (!hooks?.reviewLoop) return { ok: false, error: 'review-loop-unavailable' }
-        return hooks.reviewLoop.startInternalTurn({
-          conversationId: input.conversationId,
-          prompt,
-          hiddenParts,
-          selection,
-          loopId,
-          iteration,
-          maxIterations,
-          signal,
-        })
-      },
-      cancelTurn: (executionId) => hooks?.reviewLoop?.cancelInternalTurn(executionId),
-      getBridgeEvidence: (loopId) =>
-        sessions.get(input.conversationId)?.bridge.getReviewEvidence(loopId) ?? {
-          contextLoaded: false,
-          byIteration: {},
-          checks: [],
-        },
-      setReviewIteration: (loopId, iteration) =>
-        sessions.get(input.conversationId)?.bridge.setReviewIteration(loopId, iteration),
-      clearReviewIteration: (loopId) => sessions.get(input.conversationId)?.bridge.clearReviewIteration(loopId),
-      forgetReviewLoop: (loopId) => sessions.get(input.conversationId)?.bridge.forgetReviewLoop(loopId),
-      persistSummary: async ({ loopId, markdown }) => {
-        if (!hooks?.reviewLoop) return { ok: false as const, error: 'review-loop-unavailable' }
-        return hooks.reviewLoop.persistSummary({ conversationId: input.conversationId, loopId, markdown })
-      },
-      forceAgentMode: () => hooks?.reviewLoop?.forceAgentMode(input.conversationId),
-      reserveParticipants: (loopId) => {
-        const result = reserveReviewLoop({
-          loopId,
-          driver: 'chatgpt-web',
-          cwd: canonicalCwd(input.cwd),
-          participants: [{ driver: 'chatgpt-web', conversationId: input.conversationId }],
-        })
-        return result.ok ? { ok: true as const } : { ok: false as const, error: 'review-loop-active' }
-      },
-      releaseParticipants: (loopId) => {
-        releaseReviewLoop(loopId)
-      },
-      discoverFrontendPreviews: () => discoverPreviewTargets(input.cwd),
-      prepareFrontendEnvironment: async ({ loopId, previewId, signal, onStateChange }) => {
-        if (capabilityInfo.capabilities.browser === 'off') throw new Error('browser-capability-off')
-        const preview = await prepareAndStartPreview(input.cwd, { targetId: previewId }, { signal })
-        try {
-          const browserStartup = createVisualBrowser({ loopId, url: preview.url, signal, onStateChange })
-          const processExit = preview.waitForExit?.()
-          const outcome = processExit
-            ? await Promise.race([
-                browserStartup.then((browser) => ({ browser })),
-                processExit.then((error) => ({ error })),
-              ])
-            : { browser: await browserStartup }
-          if ('error' in outcome) {
-            // Browser startup has its own bounded deadline. If it completes after the process already
-            // exited, immediately tear down that late surface instead of leaking an orphan window.
-            void browserStartup.then(
-              (lateBrowser) => lateBrowser.dispose(),
-              () => undefined
-            )
-            throw outcome.error
-          }
-          const browser = outcome.browser
-          if (preview.running?.() === false) {
-            await browser.dispose()
-            throw await preview.waitForExit?.()
-          }
-          return { preview, browser }
-        } catch (error) {
-          await preview.dispose()
-          if (error instanceof PreviewStartupError) throw error
-          throw new PreviewStartupError(
-            `Visual review browser failed: ${error instanceof Error ? error.message : String(error)}`,
-            preview.diagnosticOutput?.() ?? ''
-          )
-        }
-      },
-      prepareAttachedFrontendEnvironment: ({ browserId, signal, onStateChange }) =>
-        browserSession.createReviewSurface({ browserId, signal, onStateChange }),
-      onChange: emitChange,
-    })
-    reviewLoopControllers.set(input.conversationId, controller)
     const personalMemory = createPersonalMemoryAdapter({
       conversationId: input.conversationId,
       access: () => {
@@ -969,10 +843,6 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
                 getContext: (signal?: AbortSignal) => {
                   if (!hooks) throw new Error('conversation-context-unavailable')
                   return hooks.getConversationContext(input.conversationId, signal)
-                },
-                getRevision: (signal?: AbortSignal) => {
-                  if (!hooks) throw new Error('conversation-context-unavailable')
-                  return hooks.getConversationRevision(input.conversationId, signal)
                 },
                 search: (args: { query: string; limit?: number }, signal?: AbortSignal) => {
                   if (!hooks) throw new Error('conversation-context-unavailable')
@@ -1085,7 +955,6 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         },
         listChecks: () => listChecks(input.cwd),
         runCheck: (name, signal) => runCheck(input.cwd, name, signal),
-        reviewLoop: controller,
         browserSession,
         projectEnvironment,
         browserCapability: capabilityInfo.capabilities.browser,
@@ -1150,7 +1019,6 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
           dispose: () => mcpGateway.close(),
         },
       },
-      reviewLoopInfo: () => controller.info(),
     })
     sessions.set(input.conversationId, created)
     const sessionRouter = getRouter()
@@ -1174,8 +1042,6 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
     }
     provisionalEnvironment?.stop()
     void provisionalBrowser?.dispose()
-    reviewLoopControllers.get(input.conversationId)?.dispose()
-    reviewLoopControllers.delete(input.conversationId)
     projectEnvironmentControllers.delete(input.conversationId)
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   } finally {
@@ -1188,10 +1054,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
 export async function endSession(conversationId: string): Promise<void> {
   sessionEpochs.set(conversationId, (sessionEpochs.get(conversationId) ?? 0) + 1)
   if (memorySpaceForConversation(conversationId)?.kind === 'personal') void cancelMemoryExtraction(conversationId, 0)
-  // Review loop: cancel the active job BEFORE revoking remote routing (no orphan execution), then
-  // clear all controller state (active + historical); a new session starts from scratch.
-  reviewLoopControllers.get(conversationId)?.dispose()
-  reviewLoopControllers.delete(conversationId)
+  // Project environment: cancel the active job BEFORE revoking remote routing (no orphan execution).
   projectEnvironmentControllers.get(conversationId)?.stop()
   projectEnvironmentControllers.delete(conversationId)
   const session = sessions.get(conversationId)
@@ -1218,32 +1081,9 @@ export async function invalidateMcpConfiguration(): Promise<void> {
   await Promise.all(activeConversationIds.map((conversationId) => endSession(conversationId)))
 }
 
-/** Conversation lock: return the OWNING loopId if a loop is active (the service blocks manual sends/clears). */
-export function reviewLoopLockFor(conversationId: string): string | null {
-  return (
-    lookupReviewLoopByConversation(conversationId)?.loopId ??
-    reviewLoopControllers.get(conversationId)?.activeLoopId() ??
-    null
-  )
-}
-
 /** Lock of the local bootstrap turn; only its controller-owned internal turn may cross startSend. */
 export function projectEnvironmentLockFor(conversationId: string): string | null {
   return projectEnvironmentControllers.get(conversationId)?.info()?.jobId ?? null
-}
-
-/** Renderer action is intentionally limited to showing/focusing the active visual surface. */
-export function showVisualReviewPreview(conversationId: string): { ok: boolean; error?: string } {
-  const controller = reviewLoopControllers.get(conversationId)
-  if (controller?.info()?.visual?.managedPreview === false) floatingManager.detach(conversationId, 'browser')
-  if (!controller?.showVisualPreview()) return { ok: false, error: 'visual-preview-not-active' }
-  return { ok: true }
-}
-
-/** Stop the review loop (banner button): cancel the active job and block new rounds. */
-export function stopReviewLoop(conversationId: string): void {
-  reviewLoopControllers.get(conversationId)?.cancel('cancelled')
-  emitChange()
 }
 
 async function materializeCompanionWindow(conversationId: string): Promise<{ ok: boolean; error?: string }> {
@@ -1388,10 +1228,8 @@ export async function disposeChatGptWeb(): Promise<void> {
   }
   shuttingDown = true
   lifecycleEpoch++
-  // Shutdown: cancel ALL loops (and active jobs) and clear state before revoking sessions;
-  // no orphan execution or resumed history after restart.
-  for (const controller of reviewLoopControllers.values()) controller.dispose()
-  reviewLoopControllers.clear()
+  // Shutdown: cancel active project-environment jobs and clear state before revoking sessions;
+  // no orphan execution after restart.
   for (const controller of planReviewControllers.values()) controller.dispose()
   planReviewControllers.clear()
   for (const controller of projectEnvironmentControllers.values()) controller.stop()

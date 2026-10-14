@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import { getBrowserState } from '../../drawer/browser'
-import type { BrowserSurface, BrowserSurfaceInfo } from '../browser-surface'
+import type { BrowserSurface } from '../browser-surface'
 import { createDrawerBrowserSurface } from './drawer-browser-surface'
-import { normalizeLoopbackPreviewUrl } from './preview-runtime'
+import { normalizeLoopbackPreviewUrl } from './loopback-url'
 
 export interface CompanionBrowserTab {
   id: string
@@ -112,22 +112,6 @@ export function createDrawerBrowserSession(deps: DrawerBrowserSessionDeps) {
     await current?.surface.dispose()
   }
 
-  const createReviewSurface = async (input: {
-    browserId: string
-    signal: AbortSignal
-    onStateChange: (info: BrowserSurfaceInfo) => void
-  }): Promise<{ browser: BrowserSurface; url: string; ownership: 'attached' }> => {
-    const target = resolve(input.browserId)
-    const browser = await createSurface({
-      convId: deps.conversationId,
-      tabId: target.tabId,
-      url: target.url,
-      signal: input.signal,
-      onStateChange: input.onStateChange,
-    })
-    return { browser, url: target.url, ownership: 'attached' }
-  }
-
   const dispose = async (): Promise<void> => {
     if (disposed) return
     disposed = true
@@ -144,8 +128,6 @@ export function createDrawerBrowserSession(deps: DrawerBrowserSessionDeps) {
     detach,
     active: (): BrowserSurface | null => attached?.surface ?? null,
     attachedId: (): string | null => attached?.id ?? null,
-    createReviewSurface,
-    show: (): boolean => attached?.surface.show() ?? false,
     dispose,
   }
 }

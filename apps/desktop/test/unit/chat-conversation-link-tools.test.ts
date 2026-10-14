@@ -291,10 +291,10 @@ describe('conversation link wiring across runtimes', () => {
     'github-copilot/runner.ts',
     'cursor-subscription/runner.ts',
     'antigravity-subscription/runner.ts',
-  ])('%s offers the tools only in its main, non-reviewer context', (file) => {
+  ])('%s offers the tools only in its main context', (file) => {
     const source = read(file)
     expect(source).toContain('enableConversationLinkTools(')
-    expect(source).toMatch(/const conversationLink = args\.reviewerRuntime\s*\?\s*undefined/)
+    expect(source).toMatch(/const conversationLink = enableConversationLinkTools\(/)
     expect(source).toContain('...(conversationLink ? { conversationLink } : {})')
   })
 

@@ -150,6 +150,7 @@ import {
   type FloatTab,
 } from './store'
 import {
+  projectEnvironmentLockFor,
   resolvePlanReview as resolveChatGptWebPlanReview,
   restoreCompanionWindow as restoreChatGptWebCompanionWindow,
   status as getChatGptWebStatus,
@@ -160,7 +161,7 @@ import {
   getGlobalMaestroOrchestratorProfile,
   primeChatTurnSelection,
   registerChatIpc,
-  resolveReviewLoopSelection,
+  resolveFrozenChatSelection,
   resumeBackgroundCompaction,
   stopChat,
 } from './chat/service'
@@ -179,7 +180,6 @@ import { getConversationDispatchService } from './conversation-dispatch-service'
 import { registerDrawerIpc } from './drawer-ipc'
 import { registerConversationIpc } from './conversation-ipc'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
-import { lookupReviewLoopByConversation } from './chat/review-loop/registry'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerConversationMigrationIpc } from './conversation-migration/ipc'
 import { registerMemoryIpc } from './memory-ipc'
@@ -761,7 +761,7 @@ function registerIpc(): void {
     resolveChatGptWebPlanReview,
     createMaestroSibling: (sourceConversationId, options) => createSiblingConversation(sourceConversationId, options),
     deleteConversation,
-    isConversationReserved: (conversationId) => !!lookupReviewLoopByConversation(conversationId),
+    isConversationReserved: (conversationId) => !!projectEnvironmentLockFor(conversationId),
     applyMaestroStrategyProfile: async (conversationId, profileId) => {
       const profile = resolveMaestroStrategyProfile(profileId, getGlobalMaestroOrchestratorProfile())
       if (!profile) return { ok: false, error: 'maestro-strategy-profile-not-found' }
@@ -769,7 +769,7 @@ function registerIpc(): void {
       const applied = setConversationMaestroConfig(conversationId, profile.config)
       if (!applied.ok) return { ok: false, error: 'maestro-strategy-profile-config-invalid' }
       primeChatTurnSelection(conversationId, profile.orchestrator)
-      const available = await resolveReviewLoopSelection(conversationId)
+      const available = await resolveFrozenChatSelection(conversationId)
       return available.ok ? { ok: true } : { ok: false, error: available.error }
     },
     markMaestroStrategyProfileUsed: setLastUsedMaestroStrategyProfile,

@@ -339,7 +339,6 @@ export async function summarizeWithCodexRuntime(args: {
         : {},
     eligibleChatGptSession: true,
     ephemeral: true,
-    reviewer: false,
     requestUserInputAsyncAvailable: args.client.initializeResult?.capabilities?.requestUserInputAsync === true,
   })
   const nominalContext = Math.floor(Number(args.requestedContextWindow))

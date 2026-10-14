@@ -313,7 +313,8 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       transitionPeerMessage(record.messageId, ['queued'], 'delivered')
       return 'delivered'
     }
-    if (result.error === 'busy') return 'busy'
+    // A review holds the target until it is handed off; waitForSlot waits for that too.
+    if (result.error === 'busy' || result.error === 'review-active') return 'busy'
     if (UNAVAILABLE_ERRORS.has(result.error)) return 'unavailable'
     transitionPeerMessage(record.messageId, ['queued'], 'failed', result.error)
     return 'failed'

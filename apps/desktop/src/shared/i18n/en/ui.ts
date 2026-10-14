@@ -1562,7 +1562,6 @@ export default {
       'Prepare the next policy below. Applying it revokes this session and creates a new pairing with the selected scopes.',
     chatgptRestartToApply: 'Restart to apply',
     chatgptRestarting: 'Restarting…',
-    chatgptRestartBlockedByReview: 'Stop the active Review Loop before changing companion access.',
     chatgptRestartError: 'Could not restart the companion: {{error}}',
     chatgptRestartAfterEndError:
       'The previous session was ended, but the new companion could not start: {{error}}. Review the access settings and start it again.',
@@ -1777,6 +1776,20 @@ export default {
     reviseHintEnabled: 'Send feedback for Claude to revise',
     reviseHintDisabled: 'Comment on a section, edit the plan, or write a general comment',
     requestRevision: 'Request revision',
+    reviewPlan: 'Review plan',
+    reviewPlanHint:
+      'Independent read-only review of this plan against the code, in the conversation. You decide each finding, and the ones you keep become comments on the plan.',
+    reviewLockRunning:
+      'Under review in the conversation. Plan decisions open again after you hand off or discard the review.',
+    reviewLockReady:
+      'The review waits for your decisions in the conversation. Plan decisions open again after you hand it off or discard it.',
+    reviewLockCode:
+      'A code review holds this conversation. Plan decisions open again after it is handed off or discarded.',
+    reviewLockCheck: 'The verifier is checking what a review sent. Plan decisions open again in a few seconds.',
+    reviewCheckResolved_one: 'Review: the comment is addressed in this revision.',
+    reviewCheckResolved_other: 'Review: all {{count}} comments are addressed in this revision.',
+    reviewCheckOpen_one: 'Review: {{count}} comment is still open in this revision. See the conversation.',
+    reviewCheckOpen_other: 'Review: {{count}} comments are still open in this revision. See the conversation.',
     discard: 'Discard plan',
   },
 

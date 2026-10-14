@@ -179,6 +179,12 @@ vi.mock('../../src/main/chat/github-copilot', () => ({
     dispose: vi.fn(),
   }),
 }))
+const environmentLocks = vi.hoisted(() => new Map<string, string>())
+vi.mock('../../src/main/chat/chatgpt-web/manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/chatgpt-web/manager')>()),
+  // An isolated internal turn is admitted only for the project-environment job that owns the conversation.
+  projectEnvironmentLockFor: (conversationId: string) => environmentLocks.get(conversationId) ?? null,
+}))
 vi.mock('../../src/main/chat/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/chat/runner')>()
   return { ...actual, runChat: (args: unknown) => h.runGeneric(args) }
@@ -198,8 +204,8 @@ import {
 import {
   compactReserved,
   registerChatIpc,
-  resolveReviewLoopSelection,
-  revalidateReviewLoopSelection,
+  resolveFrozenChatSelection,
+  revalidateFrozenChatSelection,
   startInternalChatTurn,
   stopChat,
   stopChatAndWait,
@@ -208,7 +214,6 @@ import {
 import { chatHistoryStats, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import { setCompactionSummarizer, clearCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
-import { reserveReviewLoop, releaseReviewLoop } from '../../src/main/chat/review-loop/registry'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -355,17 +360,10 @@ describe('Claude physical account service ownership', () => {
     async (ending) => {
       const conv = conversation()
       register()
-      const frozen = await resolveReviewLoopSelection(conv.id)
+      const frozen = await resolveFrozenChatSelection(conv.id)
       if (!frozen.ok) throw new Error(frozen.error)
       const loopId = `claude-loop-${conv.id}`
-      expect(
-        reserveReviewLoop({
-          loopId,
-          driver: 'chatgpt-web',
-          cwd: conv.cwd!,
-          participants: { executor: conv.id },
-        }).ok
-      ).toBe(true)
+      environmentLocks.set(conv.id, loopId)
       const finished = deferred<any>()
       h.runClaude.mockImplementationOnce(() => finished.promise)
       const controller = new AbortController()
@@ -373,7 +371,6 @@ describe('Claude physical account service ownership', () => {
         conversationId: conv.id,
         prompt: 'Apply review findings.',
         selection: frozen.selection,
-        source: 'chatgpt-web-review-loop',
         loopId,
         iteration: 1,
         maxIterations: 3,
@@ -404,7 +401,7 @@ describe('Claude physical account service ownership', () => {
         finished.resolve({ planSubmitted: false, sessionId: 'ephemeral-session' })
         if (result.ok) await result.handle.done
         await closing
-        releaseReviewLoop(loopId)
+        environmentLocks.clear()
       }
     }
   )
@@ -413,7 +410,7 @@ describe('Claude physical account service ownership', () => {
     const fallback = slot()
     const conv = conversation()
     register()
-    const frozen = await resolveReviewLoopSelection(conv.id)
+    const frozen = await resolveFrozenChatSelection(conv.id)
     if (!frozen.ok) throw new Error(frozen.error)
     expect(frozen.selection.failoverRoute).toEqual([
       { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, identityFingerprint: 'sha256:claude-account', identityEpoch: 2 },
@@ -421,7 +418,7 @@ describe('Claude physical account service ownership', () => {
     ])
 
     fallback.status.authenticated = false
-    const withoutSignedOut = await resolveReviewLoopSelection(conv.id)
+    const withoutSignedOut = await resolveFrozenChatSelection(conv.id)
     if (!withoutSignedOut.ok) throw new Error(withoutSignedOut.error)
     expect(withoutSignedOut.selection.failoverRoute).toBeUndefined()
   })
@@ -430,19 +427,19 @@ describe('Claude physical account service ownership', () => {
     const fallback = slot()
     const conv = conversation()
     register()
-    const frozen = await resolveReviewLoopSelection(conv.id)
+    const frozen = await resolveFrozenChatSelection(conv.id)
     if (!frozen.ok) throw new Error(frozen.error)
-    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({ ok: true })
+    await expect(revalidateFrozenChatSelection(frozen.selection)).resolves.toEqual({ ok: true })
 
     h.state.status = { ...h.state.status, authenticated: false, accountFingerprint: null }
-    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({ ok: true })
+    await expect(revalidateFrozenChatSelection(frozen.selection)).resolves.toEqual({ ok: true })
 
     fallback.status.authenticated = false
-    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({ ok: false, error: 'no-key' })
+    await expect(revalidateFrozenChatSelection(frozen.selection)).resolves.toEqual({ ok: false, error: 'no-key' })
 
     fallback.status.authenticated = true
     fallback.status.accountFingerprint = 'account-C'
-    await expect(revalidateReviewLoopSelection(frozen.selection)).resolves.toEqual({
+    await expect(revalidateFrozenChatSelection(frozen.selection)).resolves.toEqual({
       ok: false,
       error: 'executor-unavailable',
     })
@@ -458,7 +455,7 @@ describe('Claude physical account service ownership', () => {
     if (!routeAtFreeze) {
       setFailoverRoute({ primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, enabled: false, fallbackProviderIds: [] })
     }
-    const frozen = await resolveReviewLoopSelection(conv.id)
+    const frozen = await resolveFrozenChatSelection(conv.id)
     if (!frozen.ok) throw new Error(frozen.error)
     setFailoverRoute({
       primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
@@ -467,15 +464,12 @@ describe('Claude physical account service ownership', () => {
     })
     if (routeAtFreeze) exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
     const loopId = `claude-route-loop-${conv.id}`
-    expect(
-      reserveReviewLoop({ loopId, driver: 'chatgpt-web', cwd: conv.cwd!, participants: { executor: conv.id } }).ok
-    ).toBe(true)
+    environmentLocks.set(conv.id, loopId)
     try {
       const result = await startInternalChatTurn({
         conversationId: conv.id,
         prompt: 'Apply review findings.',
         selection: frozen.selection,
-        source: 'chatgpt-web-review-loop',
         loopId,
         iteration: 1,
         maxIterations: 3,
@@ -497,7 +491,7 @@ describe('Claude physical account service ownership', () => {
       }
       await result.handle.done
     } finally {
-      releaseReviewLoop(loopId)
+      environmentLocks.clear()
     }
   })
 
@@ -665,7 +659,7 @@ describe('Claude physical account service ownership', () => {
     const conv = conversation()
     register()
     history(conv.id, 'x'.repeat(30000))
-    const frozen = await resolveReviewLoopSelection(conv.id)
+    const frozen = await resolveFrozenChatSelection(conv.id)
     if (!frozen.ok) throw new Error(frozen.error)
     exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
     await expect(

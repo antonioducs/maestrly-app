@@ -36,6 +36,8 @@ import { GeneratedImageCard } from './GeneratedImageCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
 import { AttachmentImage } from './AttachmentImage'
 import { PdfAttachmentChip } from './PdfAttachmentChip'
+import { ReviewReceiptCard, type ReviewReceiptActions } from './review/ReviewReceiptCard'
+import type { ReviewJobInfo } from '../../../shared/review'
 import { CUT_FINISH_REASONS, estimatedCostOfUsageWithSubagents, toolOutputText } from '../../../shared/chat'
 import { formatResponseDuration, responseDurationMs } from '../../../shared/response-duration'
 import type { ChatMessage, ChatModelMeta, MessagePart } from '../../../shared/chat'
@@ -187,8 +189,7 @@ function ReviewLoopRoundChrome({
   const modelId = message.model?.modelId
   const status = reviewLoopRoundStatus(message)
   const loop = message.reviewLoop
-  const isPaired = message.source === 'maestrly-review-loop'
-  const isSummary = (message.source === 'chatgpt-web-review-loop' || message.source === 'maestrly-review-loop') && !loop
+  const isSummary = message.source === 'chatgpt-web-review-loop' && !loop
 
   const cost =
     message.usage != null
@@ -246,15 +247,7 @@ function ReviewLoopRoundChrome({
         <span className="font-medium text-foreground/90">
           {isSummary
             ? t('chatgptWeb.reviewLoopSummaryBadge')
-            : isPaired && loop?.role
-              ? `${t(`reviewLoop.role${loop.role === 'executor' ? 'Executor' : 'Reviewer'}`)} · ${t(
-                  'reviewLoop.round',
-                  {
-                    iteration: loop.iteration,
-                    max: loop.maxIterations,
-                  }
-                )}`
-              : t('chatgptWeb.reviewLoopRoundHeader', { iteration: loop?.iteration ?? 0 })}
+            : t('chatgptWeb.reviewLoopRoundHeader', { iteration: loop?.iteration ?? 0 })}
         </span>
         {modelId && (
           <span className="max-w-[160px] truncate font-mono text-[10px] text-muted-foreground" title={modelId}>
@@ -636,6 +629,7 @@ const Bubble = memo(function Bubble({
   onCancelEdit,
   onSubmitEdit,
   onRetrySteering,
+  reviewReceipt,
   onOpenMention,
   onOpenImage,
   onUiSend,
@@ -657,6 +651,7 @@ const Bubble = memo(function Bubble({
   onCancelEdit: () => void
   onSubmitEdit: (id: string, payload: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => void
   onRetrySteering?: (text: string) => void
+  reviewReceipt?: ReviewReceiptProps
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
   onOpenImage?: (src: string, name: string) => void
   /** Sends what a generated interface of this message asks to send as the user. */
@@ -682,7 +677,7 @@ const Bubble = memo(function Bubble({
   const catalogLoading = agents === null || agents === undefined
   const editBlockedByCatalog = hasAgentMentions && catalogLoading
 
-  const isReviewLoopSource = message.source === 'chatgpt-web-review-loop' || message.source === 'maestrly-review-loop'
+  const isReviewLoopSource = message.source === 'chatgpt-web-review-loop'
   const isReviewLoopRound = isReviewLoopSource && !!message.reviewLoop
   const roundStatus = isReviewLoopRound ? reviewLoopRoundStatus(message) : null
 
@@ -795,6 +790,19 @@ const Bubble = memo(function Bubble({
           )}
         </div>
       </div>
+    )
+  }
+
+  if (message.review) {
+    return (
+      <ReviewReceiptCard
+        messageId={message.id}
+        report={message.review}
+        check={reviewReceipt?.check}
+        busy={reviewReceipt?.busy}
+        actions={reviewReceipt?.actions}
+        onOpenFile={onOpenMention}
+      />
     )
   }
 
@@ -970,6 +978,15 @@ interface Props extends EditCtx {
   onRetrySteering?: (text: string) => void
   /** Sends what a generated interface asks to send as the user; absent where the person cannot write. */
   onUiSend?: (text: string) => void
+  /** What review receipts need: a check that runs, whether the agent works, and their actions. */
+  reviewReceipt?: ReviewReceiptProps
+}
+
+/** Absent actions leave receipts read-only. */
+export interface ReviewReceiptProps {
+  check: ReviewJobInfo | null
+  busy: boolean
+  actions?: ReviewReceiptActions
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
@@ -993,10 +1010,15 @@ export const ChatMessageList = memo(function ChatMessageList({
   readOnly = false,
   onRetrySteering,
   onUiSend,
+  reviewReceipt,
 }: Props) {
   const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null)
+  const rowReviewReceipt = useMemo(
+    () => (readOnly && reviewReceipt ? { ...reviewReceipt, actions: undefined } : reviewReceipt),
+    [readOnly, reviewReceipt]
+  )
 
   const openImage = useCallback((src: string, name: string) => setLightbox({ src, name }), [])
   const closeImage = useCallback(() => setLightbox(null), [])
@@ -1204,6 +1226,7 @@ export const ChatMessageList = memo(function ChatMessageList({
             onCancelEdit={onCancelEdit}
             onSubmitEdit={onSubmitEdit}
             onRetrySteering={onRetrySteering}
+            reviewReceipt={rowReviewReceipt}
             onOpenMention={onOpenMention}
             onOpenImage={openImage}
             onUiSend={readOnly ? undefined : onUiSend}

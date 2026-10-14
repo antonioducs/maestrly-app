@@ -73,6 +73,7 @@ vi.mock('../../src/main/chat/credentials', () => ({
 
 vi.mock('../../src/main/chat/chat-store', () => ({
   getChatMessage: vi.fn(() => null),
+  listUndeliveredReviewReports: vi.fn(() => []),
   chatHistoryStats: vi.fn(() => ({ lastUsage: null })),
   listChatMessages: h.listChatMessages,
 
@@ -88,7 +89,6 @@ vi.mock('../../src/main/chat/runner', () => ({
 vi.mock('../../src/main/chat/chatgpt-web/manager', () => ({
   onChatGptWebChange: vi.fn(() => vi.fn()),
   setChatGptWebHooks: h.setChatGptWebHooks,
-  reviewLoopLockFor: vi.fn(() => null),
   projectEnvironmentLockFor: vi.fn(() => null),
   transportConfigurationHasActiveResources: vi.fn(() => false),
   withTransportConfigurationMutation: vi.fn((operation: () => Promise<unknown>) => operation()),

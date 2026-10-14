@@ -69,7 +69,6 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { insertConversation, patchConvUiPrefs, setAppSetting, setAppFlag } from '../../src/main/store'
-import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 
 interface HostMcpToolSpec {
@@ -3522,100 +3521,6 @@ describe('Codex subscription runner', () => {
     await expect(running).resolves.toEqual({ planSubmitted: true, threadId: 'thread_1' })
     expect(emitted).toContainEqual(expect.objectContaining({ kind: 'finish', finishReason: 'stop' }))
     expect(emitted).not.toContainEqual(expect.objectContaining({ kind: 'finish', finishReason: 'interrupted' }))
-  })
-
-  it('isolates the reviewer to the exact read-only surface and stops after submit_review is accepted', async () => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd: process.cwd() })
-    persistUser(conversation.id, 'user_reviewer_boundary', 'Review the execution.', 1)
-    const client = new FakeCodexClient()
-    client.queueTurn({ turnId: 'turn_reviewer_boundary', notifications: [] })
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(async () => []),
-      readExecutionContext: vi.fn(async () => []),
-    }
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
-    args.mode = 'agent'
-    args.permMode = 'full'
-    args.reviewerRuntime = reviewerRuntime
-    args.ephemeralSession = true
-
-    const running = runCodexSubscriptionChat(args)
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
-
-    const threadStart = client.startThreadCalls[0] as {
-      config: Record<string, unknown>
-      dynamicTools: Array<{ name: string }>
-      environments?: unknown
-    }
-    expect(threadStart.dynamicTools.map((entry) => entry.name)).toEqual([...REVIEWER_READONLY_TOOL_NAMES].sort())
-    expect(threadStart.environments).toEqual([])
-    expect(threadStart.config).toMatchObject({
-      'features.shell_tool': false,
-      'features.apps': false,
-      'features.plugins': false,
-      web_search: 'disabled',
-    })
-    expect(client.startTurnCalls[0]).toMatchObject({ sandboxPolicy: { type: 'readOnly', networkAccess: false } })
-
-    await expect(
-      client.serverRequest({
-        id: 'reviewer_read',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_reviewer_boundary',
-          itemId: 'reviewer_read',
-          callId: 'reviewer_read',
-          tool: 'read',
-          arguments: { path: 'package.json', limit: 1 },
-        },
-      })
-    ).resolves.toMatchObject({ success: true })
-    expect(args.broker.assert).not.toHaveBeenCalled()
-
-    await expect(
-      client.serverRequest({
-        id: 'reviewer_external_read',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_reviewer_boundary',
-          itemId: 'reviewer_external_read',
-          callId: 'reviewer_external_read',
-          tool: 'read',
-          arguments: { path: path.dirname(process.cwd()), limit: 1 },
-        },
-      })
-    ).resolves.toMatchObject({ success: false })
-    expect(args.broker.assert).not.toHaveBeenCalled()
-
-    await expect(
-      client.serverRequest({
-        id: 'reviewer_submit',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_reviewer_boundary',
-          itemId: 'reviewer_submit',
-          callId: 'reviewer_submit',
-          tool: 'submit_review',
-          arguments: { result: 'clean', summary: 'No findings.' },
-        },
-      })
-    ).resolves.toMatchObject({ success: true })
-    await vi.waitFor(() =>
-      expect(client.interruptTurnCalls).toContainEqual({
-        threadId: 'thread_1',
-        turnId: 'turn_reviewer_boundary',
-      })
-    )
-    client.emit(completedNotification('thread_1', 'turn_reviewer_boundary', 'interrupted'))
-
-    await expect(running).resolves.toEqual({ planSubmitted: true, threadId: 'thread_1' })
-    expect(reviewerRuntime.submitReview).toHaveBeenCalledWith({ result: 'clean', summary: 'No findings.' })
   })
 
   it('exposes .agents, .claude and .codex skills through use_skill governed by effective state', async () => {
