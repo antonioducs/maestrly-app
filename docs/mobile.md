@@ -160,6 +160,13 @@ notifications, install a `preview` build from EAS (see [Release](#release)).
   control without a name for screen readers. It needs Playwright's Chromium
   (`npx playwright install chromium`) and runs in CI with the platform's
   end-to-end tests.
+- **Android build on this computer:** with JDK 17 and the Android SDK
+  (`ANDROID_HOME`), run `npx expo prebuild --platform android` in `apps/mobile`,
+  then `./gradlew assembleRelease` in `apps/mobile/android`, and install the APK
+  on an emulator or phone with `adb install`. The release build runs on Hermes,
+  as the store app does; the web preview runs on the browser's engine and can
+  hide what Hermes lacks, such as `Intl.PluralRules`. Use a checkout whose path
+  has no spaces. `ios/` and `android/` are generated and never committed.
 - **Icons:** `npm run icons --workspace @maestrly/mobile` renders the app icon,
   Android's adaptive and monochrome icons, the splash, the notification icon and
   the favicon from the mark in `src/ui/BrandMark.tsx`. It needs Playwright's
