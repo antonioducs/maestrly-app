@@ -119,6 +119,9 @@ const STRUCTURAL = new Set<ChatStreamEvent['kind']>([
   'steering-accepted',
   'compaction',
   'compaction-finished',
+  // A question asked from inside another tool, such as confirming new conversations, has no part of its own: the
+  // reload merges the runtime's pending questions in as cards.
+  'questions-pending',
 ])
 const STATUSES = new Set<ConversationStatus>(['idle', 'working', 'ready', 'waiting', 'asking', 'error'])
 

@@ -581,6 +581,59 @@ describe('mobile API of a workspaces host', () => {
     h.api.dispose()
   })
 
+  it('shows a question asked from inside another tool as a card, until it is answered', async () => {
+    const h = setup()
+    const starting = {
+      id: 'm3',
+      conversationId: 'c1',
+      role: 'assistant' as const,
+      createdAt: T0 + 20,
+      parts: [
+        {
+          type: 'tool' as const,
+          id: 'd1',
+          toolCallId: 'd1',
+          toolName: 'start_conversations',
+          input: {},
+          state: { status: 'running' as const },
+        },
+      ],
+    }
+    h.state.messages = [...h.state.messages, starting]
+    await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })
+    const confirm = {
+      messageId: 'm3',
+      toolCallId: 'd1',
+      questions: [
+        {
+          header: 'Start',
+          question: 'Start 2 conversations?',
+          options: [{ label: 'Start' }, { label: "Don't start" }],
+        },
+      ],
+    }
+    h.state.runtime = { ...h.state.runtime, pendingQuestions: [confirm] }
+    h.push('chat:delta:c1', { kind: 'questions-pending', questions: [confirm] })
+    await settle()
+    const latest = () => {
+      const last = h.events.filter(([channel]) => channel === 'mobile:v1:items').at(-1)?.[1] as
+        | { items: Array<Record<string, unknown>> }
+        | undefined
+      return last?.items ?? []
+    }
+    expect(latest()).toEqual([
+      expect.objectContaining({ kind: 'question', id: 'm3:0', toolCallId: 'd1', state: 'pending' }),
+    ])
+
+    await h.invoke('mobile:v1:question', { conversationId: 'c1', toolCallId: 'd1', answers: [['Start']] })
+    expect(h.called('chat:question-respond')[0][1]).toEqual(['d1', [['Start']]])
+    h.state.runtime = { ...h.state.runtime, pendingQuestions: [] }
+    h.push('chat:delta:c1', { kind: 'questions-pending', questions: [] })
+    await settle()
+    expect(latest()).toEqual([expect.objectContaining({ kind: 'dispatch', id: 'm3:0', state: 'running' })])
+    h.api.dispose()
+  })
+
   it('keeps a long message, and shows how a failed or stopped turn ended', async () => {
     const h = setup()
     h.state.messages = [
