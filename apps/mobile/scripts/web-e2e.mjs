@@ -191,6 +191,16 @@ try {
     await page.getByText('Maestrly 0.16').waitFor()
   })
 
+  await step('open a conversation from its report', async () => {
+    const chats = page.getByRole('tab', { name: /^Chats/ })
+    if (!(await chats.isVisible())) await openMenu()
+    await chats.click()
+    await button(/^Mobile app MVP scope/).click()
+    await page.getByRole('link', { name: 'Report from Expo push sender interface' }).click()
+    await page.getByText('Expo push sender interface').first().waitFor()
+    await page.getByRole('textbox', { name: /Message|Ask anything/ }).waitFor()
+  })
+
   if (problems.length) throw new Error(`The app reported problems:\n${problems.join('\n')}`)
   console.log('Mobile web flows passed.')
 } catch (error) {

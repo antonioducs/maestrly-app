@@ -4,6 +4,7 @@ import {
   fleetSelectionOptionSchema,
   fleetTimestampSchema,
   fleetTranscriptItemSchema,
+  fleetUserTranscriptItemSchema,
 } from './domain.js'
 
 /**
@@ -87,7 +88,25 @@ export const mobileDispatchItemSchema = z.object({
 })
 export type MobileDispatchItem = z.infer<typeof mobileDispatchItemSchema>
 
-export const mobileChatItemSchema = z.union([fleetTranscriptItemSchema, mobileDispatchItemSchema])
+/**
+ * What the agent of another conversation sent this chat: a message, a report on the work it was given, or the result
+ * of work it was asked for. It shows as a message of the person's, named after the conversation it came from.
+ */
+export const mobilePeerUserItemSchema = fleetUserTranscriptItemSchema.extend({
+  fromConversation: z.object({
+    conversationId: id,
+    name,
+    purpose: z.enum(['message', 'report', 'result']),
+  }),
+})
+export type MobilePeerUserItem = z.infer<typeof mobilePeerUserItemSchema>
+
+// A user item that names another conversation matches the first schema; any other, the transcript's.
+export const mobileChatItemSchema = z.union([
+  mobilePeerUserItemSchema,
+  fleetTranscriptItemSchema,
+  mobileDispatchItemSchema,
+])
 export type MobileChatItem = z.infer<typeof mobileChatItemSchema>
 
 /** Items oldest first; `before` asks for the page before them, null at the start of the conversation. */

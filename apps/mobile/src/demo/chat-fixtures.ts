@@ -205,6 +205,18 @@ export const DEMO_CHATS: DemoChat[] = [
       answer(
         'Started **Expo push sender interface** in `maestrly`. It runs there in Agent mode; this chat stays read-only.'
       ),
+      {
+        kind: 'user',
+        text: 'Done on feat/push-sender: the gateway sends through PushSender, and all 146 gateway tests pass.',
+        source: 'owner',
+        queued: false,
+        memories: [],
+        images: [],
+        fromConversation: { conversationId: 'c-push', name: 'Expo push sender interface', purpose: 'report' },
+      },
+      answer(
+        'The push sender is ready on `feat/push-sender`. Open its conversation from the report to review the diff.'
+      ),
     ],
   },
   {

@@ -1,4 +1,4 @@
-import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import type { MobileChatItem } from '@maestrly/bot-fleet-protocol'
 import { Pressable, View } from 'react-native'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -7,7 +7,7 @@ import { AppText } from '../primitives/Text'
 import { useConversation } from './CueCard'
 import { TranscriptImage } from './TranscriptImage'
 
-type UserItem = Extract<FleetTranscriptItem, { kind: 'user' }>
+type UserItem = Extract<MobileChatItem, { kind: 'user' }>
 
 /** A file sent with a message, as a small chip with its name. */
 export function FileChip({
@@ -53,13 +53,15 @@ export function FileChip({
   )
 }
 
-/** What the owner, a routine or another bot sent. */
+/** What the owner, a routine, another bot or the agent of another conversation sent. */
 export function UserBubble({ item, note }: { item: UserItem; note?: string | null }) {
   const { palette } = useTheme()
   const { t, plural } = useI18n()
-  const { bot } = useConversation()
-  const origin =
-    item.source === 'routine' && item.routine
+  const { bot, openChat } = useConversation()
+  const from = 'fromConversation' in item ? item.fromConversation : null
+  const origin = from
+    ? t(`user.from.${from.purpose}`, { name: from.name })
+    : item.source === 'routine' && item.routine
       ? t('user.routine', { title: item.routine.title })
       : item.source === 'peer' && item.peer
         ? t('user.peer', { name: item.peer.name })
@@ -85,7 +87,20 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
           backgroundColor: palette.surface,
         }}
       >
-        {origin ? (
+        {from && openChat ? (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={origin ?? undefined}
+            accessibilityHint={t('user.fromOpen')}
+            onPress={() => openChat(from.conversationId)}
+            hitSlop={{ top: 12, bottom: 8, left: 8, right: 8 }}
+            style={{ alignSelf: 'flex-start', marginBottom: 2 }}
+          >
+            <AppText variant="small" style={{ fontWeight: '600', color: palette.brass }}>
+              {origin}
+            </AppText>
+          </Pressable>
+        ) : origin ? (
           <AppText variant="small" tone="muted" style={{ fontWeight: '600', marginBottom: 2 }}>
             {origin}
           </AppText>

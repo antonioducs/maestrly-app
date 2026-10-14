@@ -589,6 +589,11 @@ export const en = {
   'schedule.dayShort.5': 'Fri',
   'schedule.dayShort.6': 'Sat',
   'schedule.dayShort.7': 'Sun',
+
+  'user.from.message': 'Message from {name}',
+  'user.from.report': 'Report from {name}',
+  'user.from.result': 'Result from {name}',
+  'user.fromOpen': 'Opens that conversation',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1187,4 +1192,9 @@ export const ptBR: Record<keyof typeof en, string> = {
   'schedule.dayShort.5': 'sex',
   'schedule.dayShort.6': 'sáb',
   'schedule.dayShort.7': 'dom',
+
+  'user.from.message': 'Mensagem de {name}',
+  'user.from.report': 'Relatório de {name}',
+  'user.from.result': 'Resultado de {name}',
+  'user.fromOpen': 'Abre essa conversa',
 }

@@ -711,7 +711,27 @@ export class MobileApi {
           ]
         })
     })
-    const items: MobileChatItem[] = projected.map((item) => this.dispatchItem(item, messages) ?? item)
+    // A message the agent of another conversation sent shows as the person's, named after where it came from.
+    const peers = new Map(
+      messages.flatMap((message) =>
+        message.role === 'user' && message.source === 'conversation-message' && message.peer
+          ? [[message.id, message.peer] as const]
+          : []
+      )
+    )
+    const items: MobileChatItem[] = projected.map((item) => {
+      const peer = item.kind === 'user' ? peers.get(item.id.slice(0, item.id.lastIndexOf(':'))) : undefined
+      if (item.kind === 'user' && peer)
+        return {
+          ...item,
+          fromConversation: {
+            conversationId: peer.fromConversationId,
+            name: peer.fromConversationName.slice(0, 400),
+            purpose: peer.kind,
+          },
+        }
+      return this.dispatchItem(item, messages) ?? item
+    })
     // How a turn ended when it did not end well: the desktop shows it under the answer, and so does the phone.
     for (const message of messages) {
       if (message.role !== 'assistant' || message.internal) continue

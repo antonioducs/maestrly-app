@@ -1,3 +1,4 @@
+import { mobileChatPageSchema } from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestrly-mobile-api-test', getVersion: () => '0.0.0' } }))
@@ -631,6 +632,36 @@ describe('mobile API of a workspaces host', () => {
     h.push('chat:delta:c1', { kind: 'questions-pending', questions: [] })
     await settle()
     expect(latest()).toEqual([expect.objectContaining({ kind: 'dispatch', id: 'm3:0', state: 'running' })])
+    h.api.dispose()
+  })
+
+  it('names the conversation a message came from', async () => {
+    const h = setup()
+    h.state.messages = [
+      {
+        ...user('m1', 'The push sender is merged.', T0),
+        source: 'conversation-message',
+        peer: {
+          messageId: 'j1',
+          fromConversationId: 'c7',
+          fromConversationName: 'Gateway push sender',
+          kind: 'report',
+        },
+      },
+      user('m2', 'Thanks', T0 + 5),
+    ]
+    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as {
+      page: { items: Array<Record<string, unknown>> }
+    }
+    expect(opened.page.items).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        text: 'The push sender is merged.',
+        fromConversation: { conversationId: 'c7', name: 'Gateway push sender', purpose: 'report' },
+      }),
+      expect.not.objectContaining({ fromConversation: expect.anything() }),
+    ])
+    expect(mobileChatPageSchema.parse(opened.page).items[0]).toHaveProperty('fromConversation.purpose', 'report')
     h.api.dispose()
   })
 

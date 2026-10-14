@@ -55,6 +55,23 @@ describe('mobile chat items', () => {
       })
     ).toMatchObject({ kind: 'dispatch' })
   })
+
+  it('keep the conversation a message came from, and no such field on any other message', () => {
+    const message = {
+      kind: 'user',
+      id: 'u',
+      at: '2026-10-13T12:00:00.000Z',
+      text: 'Merged.',
+      source: 'owner',
+      queued: false,
+    }
+    const fromConversation = { conversationId: 'c7', name: 'Push sender', purpose: 'report' }
+    expect(mobileChatItemSchema.parse({ ...message, fromConversation })).toMatchObject({ fromConversation })
+    expect(mobileChatItemSchema.parse(message)).not.toHaveProperty('fromConversation')
+    // A sender this app cannot name leaves an ordinary message.
+    const unknown = { ...message, fromConversation: { ...fromConversation, purpose: 'x' } }
+    expect(mobileChatItemSchema.parse(unknown)).not.toHaveProperty('fromConversation')
+  })
 })
 
 describe('bridge values', () => {
