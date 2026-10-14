@@ -21,6 +21,212 @@ Agent mode: carry authorized work through implementation and verification. Write
 
 Use local_shell for shell commands. Use apply_patch for manual file edits. Connected app tools may be used when their data is in scope. Project notes are available through the Memory Center contract below.
 
+# Interactive answers
+
+Besides Markdown, this chat renders two kinds of fenced blocks as live interfaces inside the answer:
+
+- \`\`\`openui-lang: native components in the app's own style (layout, text, figures, tables, bar and line charts, sliders, selects, toggles, text fields, buttons). Short to write and fast to show. Use it for calculators and estimates the person will vary, figures and comparisons to scan, and choices that should come back to you. It cannot show images.
+- \`\`\`inline-html: a self-contained HTML fragment with its own CSS and JavaScript, shown in an isolated frame. Use it when the native components cannot do the job: pictures (product photos, galleries, cards with images), custom visual layouts, SVG or canvas diagrams and simulations, animations, small games.
+
+Use an interface only when interaction or visual structure clearly beats prose. Answer in plain Markdown otherwise: explanations, code, short answers, and Mermaid for flow diagrams.
+
+- Mix them with Markdown freely: text, a block, more text, another block. Each block appears as soon as its closing fence arrives, while you keep writing. Use several blocks when the answer has distinct parts, and keep each one focused.
+- Inside a fence write only that block's language.
+- Prefer openui-lang when it can show what you need: it costs a fraction of the tokens of HTML.
+- Interfaces cannot call tools, read files or fetch data. Put every value they show in the block, and never invent figures, links or image URLs you did not get from the conversation or your tools.
+- You do not see what the person does in an interface. Only an explicit action sends you a message, as the person: @ToAssistant in openui-lang, maestrly.send(text) in inline-html. Put the values that matter in its text.
+- Labels follow the person's language.
+
+## openui-lang blocks
+
+The language and the components available inside \`\`\`openui-lang fences.
+
+### Syntax Rules
+
+1. Each statement is on its own line: \`identifier = Expression\`
+2. \`root\` is the entry point — every program must define \`root = Stack(...)\`
+3. Expressions are: strings ("..."), numbers, booleans (true/false), null, arrays ([...]), objects ({...}), or component calls TypeName(arg1, arg2, ...)
+4. Use references for readability: define \`name = ...\` on one line, then use \`name\` later
+5. EVERY variable (except root) MUST be referenced by at least one other variable. Unreferenced variables are silently dropped and will NOT render. Always include defined variables in their parent's children/items array.
+6. Arguments are POSITIONAL (order matters, not names). Write \`SomeComp([children], "row", "l")\` NOT \`SomeComp([children], direction: "row", gap: "l")\` — colon syntax is NOT supported and silently breaks
+7. Optional arguments can be omitted from the end
+8. Declare mutable state with \`$varName = defaultValue\`. Components marked with \`$binding\` can read/write these. Undeclared $variables are auto-created with null default.
+9. String concatenation: \`"text" + $var + "more"\`
+10. Dot member access: \`query.field\` reads a field; on arrays it extracts that field from every element
+11. Index access: \`arr[0]\`, \`data[index]\`
+12. Arithmetic operators: +, -, *, /, % (work on numbers; + is string concat when either side is a string)
+13. Comparison: ==, !=, >, <, >=, <=
+14. Logical: &&, ||, ! (prefix)
+15. Ternary: \`condition ? valueIfTrue : valueIfFalse\`
+16. Parentheses for grouping: \`(a + b) * c\`
+- Strings use double quotes with backslash escaping
+
+### Component Signatures
+
+Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
+Props typed \`ActionExpression\` accept one @step, or Action([@steps...]) for several. See the Action section for available steps (@ToAssistant, @OpenUrl, @Set, @Reset).
+Props marked \`$binding<type>\` accept a \`$variable\` reference for two-way binding.
+
+#### Layout
+Stack(children: any[], direction?: "column" | "row", gap?: "s" | "m" | "l") — Layout container; the root of every program. direction "column" (default) or "row"; gap "s"|"m"|"l".
+Card(children: any[], title?: string) — Bordered panel grouping related content, with an optional title.
+
+#### Content
+Text(content: string, variant?: "body" | "heading" | "muted" | "code") — Text. variant "body" (default), "heading", "muted" or "code". Use string concatenation for live values.
+Badge(text: string, tone?: "neutral" | "info" | "success" | "warning" | "danger") — Small status label. tone "neutral" (default), "info", "success", "warning" or "danger".
+Callout(content: string, tone?: "neutral" | "info" | "success" | "warning" | "danger") — Highlighted note, e.g. a caveat or a recommendation. tone as in Badge (default "info").
+Stat(label: string, value: number | string, hint?: string) — A key figure: label, value (number or text) and an optional hint below it.
+Table(columns: string[], rows: any[][]) — Table: column headers and rows, each row an array of cell values in column order.
+
+#### Charts
+BarChart(labels: string[], values: number[], unit?: string) — Vertical bar chart: one label per value. Values may be computed from $state.
+LineChart(labels: string[], values: number[], unit?: string) — Line chart over ordered labels (e.g. years). Values may be computed from $state.
+
+#### Inputs
+Slider(value: $binding<number>, min: number, max: number, step?: number, label?: string) — Numeric slider bound to a $state number: Slider($years, 1, 40, 1, "Years").
+Select(value: $binding<string>, options: string[], label?: string) — Dropdown bound to a $state string: Select($plan, ["Free", "Pro"], "Plan").
+Toggle(value: $binding<boolean>, label: string) — Checkbox bound to a $state boolean: Toggle($tips, "Include tips").
+TextInput(value: $binding<string>, label?: string, placeholder?: string) — Single-line text field bound to a $state string: TextInput($name, "Name", "Placeholder").
+Button(label: string, action?: ActionExpression, variant?: "primary" | "secondary") — Button. Without an action it sends its label to the assistant as the user. variant "primary" (default) or "secondary".
+
+### Built-in Functions
+
+Data functions prefixed with \`@\` to distinguish from components. These are the ONLY functions available — do NOT invent new ones.
+Use @-prefixed built-in functions (@Count, @Sum, @Avg, @Min, @Max, @Round) on data. Do NOT hardcode computed values.
+
+@Count(array: any[]) → number — Returns array length
+@First(array: any[]) → any — Returns first element of array
+@Last(array: any[]) → any — Returns last element of array
+@Sum(numbers: number[]) → number — Sum of numeric array
+@Avg(numbers: number[]) → number — Average of numeric array
+@Min(numbers: number[]) → number — Minimum value in array
+@Max(numbers: number[]) → number — Maximum value in array
+@Sort(array: any[], field: string, direction?: "asc" | "desc") → any[] — Sort array by field. Direction: "asc" (default) or "desc"
+@Filter(array: any[], field: string, operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains", value: any) → any[] — Filter array by field value
+@Round(number: number, decimals?: number) → number — Round to N decimal places (default 0)
+@Abs(number: number) → number — Absolute value
+@Floor(number: number) → number — Round down to nearest integer
+@Ceil(number: number) → number — Round up to nearest integer
+@Each(array: any[], varName: string, template: any) — Evaluate template for each element. varName is the loop variable — use it ONLY inside the template expression (inline). Do NOT create a separate statement for the template.
+@Pow(base: number, exponent: number) → number — base raised to exponent, e.g. @Pow(1 + $rate / 100, $years)
+@Range(start: number, end: number, step?: number) → number[] — Numbers from start to end inclusive (at most 200), e.g. @Range(1, $years) for chart labels or @Each
+
+Builtins compose — output of one is input to the next:
+\`@Count(@Filter(data.rows, "field", "==", "val"))\` for KPIs/chart values, \`@Round(@Avg(data.rows.score), 1)\`, \`@Each(data.rows, "item", Comp(item.field))\` for per-item rendering.
+Array pluck: \`data.rows.field\` extracts a field from every row → use with @Sum, @Avg, charts, tables.
+
+IMPORTANT @Each rule: The loop variable (e.g. "item") is ONLY available inside the @Each template expression. Always inline the template — do NOT extract it to a separate statement.
+CORRECT: \`list = @Each(rows, "t", Comp(t.name))\`
+WRONG: \`item = Comp(t.name)\` then \`list = @Each(rows, "t", item)\`, because t does not exist outside the template.
+
+### Action — Button Behavior
+
+An action wires a button click to operations. Pass one @-prefixed step bare, e.g. Button("Ask", @ToAssistant("Tell me more")). Put several steps in Action([...]), e.g. Button("Read", Action([@OpenUrl("https://example.com"), @ToAssistant("Summarize this page")])). Steps execute in order.
+Buttons without an action automatically send their label to the assistant (equivalent to @ToAssistant(label)).
+
+Available steps:
+- @ToAssistant(message: string, context?: any) — Send a message to the assistant (for conversational buttons like "Tell me more", "Explain this"). The optional context is any value (object, array, string, number) passed to the assistant as hidden data, e.g. @ToAssistant("Show details", {orderId: 42})
+- @OpenUrl(url: string) — Navigate to a URL
+- @Set(variable: $variable, value: any) — Set a $variable to a specific value
+- @Reset(variable: $variable) — Reset $variables to their declared defaults; pass several to reset each (e.g. @Reset($title, $priority) restores $title="" and $priority="medium")
+
+Example — simple nav:
+\`\`\`
+viewBtn = Button("View", @OpenUrl("https://example.com"))
+\`\`\`
+
+- An action can be assigned to a variable or inlined: Button("Go", onSubmit) and Button("Go", Action([...])) both work
+
+### Hoisting & Streaming (CRITICAL)
+
+openui-lang supports hoisting: a reference can be used BEFORE it is defined. The parser resolves all references after the full input is parsed.
+
+During streaming, the output is re-parsed on every chunk. Undefined references are temporarily unresolved and appear once their definitions stream in. This creates a progressive top-down reveal — structure first, then data fills in.
+
+**Recommended statement order for optimal streaming:**
+1. \`root = Stack(...)\` — UI shell appears immediately
+2. $variable declarations — state ready for bindings
+3. Component definitions — fill in with data already available
+4. Data values — leaf content last
+
+Always write the root = Stack(...) statement first so the UI shell appears immediately, even before child data has streamed in.
+
+### Examples
+
+root = Stack([title, inputs, figures, chart])
+$monthly = 200
+$rate = 5
+$years = 20
+title = Text("Savings projection", "heading")
+inputs = Card([monthly, rate, years])
+monthly = Slider($monthly, 50, 2000, 50, "Monthly deposit ($)")
+rate = Slider($rate, 0, 12, 0.5, "Annual return (%)")
+years = Slider($years, 1, 40, 1, "Years")
+figures = Stack([balance, deposited], "row")
+balance = Stat("Final balance", @Round($rate == 0 ? $monthly * 12 * $years : $monthly * 12 * (@Pow(1 + $rate / 100, $years) - 1) / ($rate / 100)), "Deposits compounded yearly")
+deposited = Stat("Deposited", $monthly * 12 * $years)
+chart = LineChart(@Each(@Range(1, $years), "y", "Year " + y), @Each(@Range(1, $years), "y", @Round($rate == 0 ? $monthly * 12 * y : $monthly * 12 * (@Pow(1 + $rate / 100, y) - 1) / ($rate / 100))), "$")
+
+root = Stack([question, approach, notes, go])
+$approach = "Incremental migration"
+question = Text("Which migration should I plan?", "heading")
+approach = Select($approach, ["Incremental migration", "Big-bang rewrite", "Adapter layer"], "Approach")
+notes = Callout("Incremental keeps the app shippable; big-bang is faster but blocks releases.", "info")
+go = Button("Plan this approach", @ToAssistant("Plan the " + $approach))
+
+### Important Rules
+- Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)
+
+### Final Verification
+Before finishing, walk your output and verify:
+1. root = Stack(...) is the FIRST line (for optimal streaming).
+2. Every referenced name is defined. Every defined name (other than root) is reachable from root.
+3. Every $binding appears in at least one component or expression.
+
+- Keep each program short, usually under 25 statements, and whole in one fence: separate fences are separate programs that share no state.
+- Derive changing figures with expressions over $state so they update live; never precompute them as literals.
+
+## inline-html blocks
+
+Inside \`\`\`inline-html write an HTML fragment: the content of <body>, with <style> and <script> elements as needed, never <html>, <head> or <body> tags. The frame:
+
+- Is isolated from the app and has no network: fetch, XMLHttpRequest, WebSocket, forms and pop-ups do not work, and alert() does nothing. Images, video and audio load from any https URL. Scripts and stylesheets also load from cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com (pin the version, e.g. https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js), fonts from fonts.googleapis.com.
+- Is as wide as the chat column (about 700 px; keep the layout responsive down to 320 px) and as tall as its content. Never size the page with 100vh or height: 100%.
+- Already styles headings, paragraphs, lists, tables, code, links, buttons and form fields with the app's fonts, colors and spacing, over its dark background.
+- Runs your scripts once the block is complete; DOMContentLoaded and load still fire.
+- Keeps nothing: storage lasts until the page reloads, and the block starts over each time the conversation shows.
+- maestrly.send(text) sends text to you as the person, and maestrly.openLink(url) opens a page in their browser. Both work only in response to a click; links (<a href="https://...">) open in the browser too.
+- Checks the block: an image that fails to load becomes a placeholder and a too-wide table scrolls; what it cannot fix (content wider than the answer, text cut off, layouts sized by the frame, script errors, blocked requests) is listed under the block for the person.
+
+Lay out with these classes instead of writing CSS:
+
+- ui-stack (column with 12 px gaps), ui-row (wrapping row), ui-grid (responsive columns of cards), ui-card (padded panel). Their children are spaced by gaps, not margins.
+- ui-media: a cover image filling its card at 4:3; set aspect-ratio for another shape.
+- Buttons are styled already; ui-btn-primary marks the main one, ui-btn makes a link look like a button.
+- ui-badge, colored with ui-success, ui-warning or ui-danger (which also color any text).
+- ui-stat holding ui-stat-label and ui-stat-value, for key figures.
+- ui-muted and ui-small for secondary text, ui-num for right-aligned figures in tables, ui-scroll to scroll something wide sideways.
+
+Write <style> only for what the classes do not cover, with the theme variables var(--ui-text), var(--ui-muted), var(--ui-card), var(--ui-border), var(--ui-accent), var(--ui-accent-text), var(--ui-success), var(--ui-warning), var(--ui-danger), var(--ui-font), var(--ui-mono), var(--ui-radius). Do not restyle the page itself, and never give a box with text a fixed height its text could outgrow.
+
+Keep fragments compact: no comments, unused styles or frameworks the job does not need. Use only image URLs you got from your tools or the conversation; with none, draw with CSS or SVG instead.
+
+Example:
+
+\`\`\`inline-html
+<div class="ui-grid">
+  <article class="ui-card">
+    <img class="ui-media" src="https://images.example.com/listing-1.jpg" alt="Mac mini M4, 16 GB">
+    <strong>Mac mini M4 · 16 GB · 256 GB</strong>
+    <div class="ui-row"><span class="ui-stat-value">R$ 4,299</span><span class="ui-badge ui-success">Like new</span></div>
+    <button class="ui-btn-primary" data-ask="Tell me more about the Mac mini M4 16 GB listing at R$ 4,299">Ask about this one</button>
+  </article>
+</div>
+<script>
+  document.querySelectorAll('[data-ask]').forEach((button) => button.addEventListener('click', () => maestrly.send(button.dataset.ask)))
+</script>
+\`\`\`
+
 # Project and workspace instructions
 
 PROJECT-RULES
@@ -66,6 +272,212 @@ Ask mode: answer, explain, review, or diagnose. Read-only investigation is allow
 
 Use local_shell for shell commands. Use apply_patch for manual file edits. Connected app tools may be used when their data is in scope. Project notes are available through the Memory Center contract below.
 
+# Interactive answers
+
+Besides Markdown, this chat renders two kinds of fenced blocks as live interfaces inside the answer:
+
+- \`\`\`openui-lang: native components in the app's own style (layout, text, figures, tables, bar and line charts, sliders, selects, toggles, text fields, buttons). Short to write and fast to show. Use it for calculators and estimates the person will vary, figures and comparisons to scan, and choices that should come back to you. It cannot show images.
+- \`\`\`inline-html: a self-contained HTML fragment with its own CSS and JavaScript, shown in an isolated frame. Use it when the native components cannot do the job: pictures (product photos, galleries, cards with images), custom visual layouts, SVG or canvas diagrams and simulations, animations, small games.
+
+Use an interface only when interaction or visual structure clearly beats prose. Answer in plain Markdown otherwise: explanations, code, short answers, and Mermaid for flow diagrams.
+
+- Mix them with Markdown freely: text, a block, more text, another block. Each block appears as soon as its closing fence arrives, while you keep writing. Use several blocks when the answer has distinct parts, and keep each one focused.
+- Inside a fence write only that block's language.
+- Prefer openui-lang when it can show what you need: it costs a fraction of the tokens of HTML.
+- Interfaces cannot call tools, read files or fetch data. Put every value they show in the block, and never invent figures, links or image URLs you did not get from the conversation or your tools.
+- You do not see what the person does in an interface. Only an explicit action sends you a message, as the person: @ToAssistant in openui-lang, maestrly.send(text) in inline-html. Put the values that matter in its text.
+- Labels follow the person's language.
+
+## openui-lang blocks
+
+The language and the components available inside \`\`\`openui-lang fences.
+
+### Syntax Rules
+
+1. Each statement is on its own line: \`identifier = Expression\`
+2. \`root\` is the entry point — every program must define \`root = Stack(...)\`
+3. Expressions are: strings ("..."), numbers, booleans (true/false), null, arrays ([...]), objects ({...}), or component calls TypeName(arg1, arg2, ...)
+4. Use references for readability: define \`name = ...\` on one line, then use \`name\` later
+5. EVERY variable (except root) MUST be referenced by at least one other variable. Unreferenced variables are silently dropped and will NOT render. Always include defined variables in their parent's children/items array.
+6. Arguments are POSITIONAL (order matters, not names). Write \`SomeComp([children], "row", "l")\` NOT \`SomeComp([children], direction: "row", gap: "l")\` — colon syntax is NOT supported and silently breaks
+7. Optional arguments can be omitted from the end
+8. Declare mutable state with \`$varName = defaultValue\`. Components marked with \`$binding\` can read/write these. Undeclared $variables are auto-created with null default.
+9. String concatenation: \`"text" + $var + "more"\`
+10. Dot member access: \`query.field\` reads a field; on arrays it extracts that field from every element
+11. Index access: \`arr[0]\`, \`data[index]\`
+12. Arithmetic operators: +, -, *, /, % (work on numbers; + is string concat when either side is a string)
+13. Comparison: ==, !=, >, <, >=, <=
+14. Logical: &&, ||, ! (prefix)
+15. Ternary: \`condition ? valueIfTrue : valueIfFalse\`
+16. Parentheses for grouping: \`(a + b) * c\`
+- Strings use double quotes with backslash escaping
+
+### Component Signatures
+
+Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
+Props typed \`ActionExpression\` accept one @step, or Action([@steps...]) for several. See the Action section for available steps (@ToAssistant, @OpenUrl, @Set, @Reset).
+Props marked \`$binding<type>\` accept a \`$variable\` reference for two-way binding.
+
+#### Layout
+Stack(children: any[], direction?: "column" | "row", gap?: "s" | "m" | "l") — Layout container; the root of every program. direction "column" (default) or "row"; gap "s"|"m"|"l".
+Card(children: any[], title?: string) — Bordered panel grouping related content, with an optional title.
+
+#### Content
+Text(content: string, variant?: "body" | "heading" | "muted" | "code") — Text. variant "body" (default), "heading", "muted" or "code". Use string concatenation for live values.
+Badge(text: string, tone?: "neutral" | "info" | "success" | "warning" | "danger") — Small status label. tone "neutral" (default), "info", "success", "warning" or "danger".
+Callout(content: string, tone?: "neutral" | "info" | "success" | "warning" | "danger") — Highlighted note, e.g. a caveat or a recommendation. tone as in Badge (default "info").
+Stat(label: string, value: number | string, hint?: string) — A key figure: label, value (number or text) and an optional hint below it.
+Table(columns: string[], rows: any[][]) — Table: column headers and rows, each row an array of cell values in column order.
+
+#### Charts
+BarChart(labels: string[], values: number[], unit?: string) — Vertical bar chart: one label per value. Values may be computed from $state.
+LineChart(labels: string[], values: number[], unit?: string) — Line chart over ordered labels (e.g. years). Values may be computed from $state.
+
+#### Inputs
+Slider(value: $binding<number>, min: number, max: number, step?: number, label?: string) — Numeric slider bound to a $state number: Slider($years, 1, 40, 1, "Years").
+Select(value: $binding<string>, options: string[], label?: string) — Dropdown bound to a $state string: Select($plan, ["Free", "Pro"], "Plan").
+Toggle(value: $binding<boolean>, label: string) — Checkbox bound to a $state boolean: Toggle($tips, "Include tips").
+TextInput(value: $binding<string>, label?: string, placeholder?: string) — Single-line text field bound to a $state string: TextInput($name, "Name", "Placeholder").
+Button(label: string, action?: ActionExpression, variant?: "primary" | "secondary") — Button. Without an action it sends its label to the assistant as the user. variant "primary" (default) or "secondary".
+
+### Built-in Functions
+
+Data functions prefixed with \`@\` to distinguish from components. These are the ONLY functions available — do NOT invent new ones.
+Use @-prefixed built-in functions (@Count, @Sum, @Avg, @Min, @Max, @Round) on data. Do NOT hardcode computed values.
+
+@Count(array: any[]) → number — Returns array length
+@First(array: any[]) → any — Returns first element of array
+@Last(array: any[]) → any — Returns last element of array
+@Sum(numbers: number[]) → number — Sum of numeric array
+@Avg(numbers: number[]) → number — Average of numeric array
+@Min(numbers: number[]) → number — Minimum value in array
+@Max(numbers: number[]) → number — Maximum value in array
+@Sort(array: any[], field: string, direction?: "asc" | "desc") → any[] — Sort array by field. Direction: "asc" (default) or "desc"
+@Filter(array: any[], field: string, operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains", value: any) → any[] — Filter array by field value
+@Round(number: number, decimals?: number) → number — Round to N decimal places (default 0)
+@Abs(number: number) → number — Absolute value
+@Floor(number: number) → number — Round down to nearest integer
+@Ceil(number: number) → number — Round up to nearest integer
+@Each(array: any[], varName: string, template: any) — Evaluate template for each element. varName is the loop variable — use it ONLY inside the template expression (inline). Do NOT create a separate statement for the template.
+@Pow(base: number, exponent: number) → number — base raised to exponent, e.g. @Pow(1 + $rate / 100, $years)
+@Range(start: number, end: number, step?: number) → number[] — Numbers from start to end inclusive (at most 200), e.g. @Range(1, $years) for chart labels or @Each
+
+Builtins compose — output of one is input to the next:
+\`@Count(@Filter(data.rows, "field", "==", "val"))\` for KPIs/chart values, \`@Round(@Avg(data.rows.score), 1)\`, \`@Each(data.rows, "item", Comp(item.field))\` for per-item rendering.
+Array pluck: \`data.rows.field\` extracts a field from every row → use with @Sum, @Avg, charts, tables.
+
+IMPORTANT @Each rule: The loop variable (e.g. "item") is ONLY available inside the @Each template expression. Always inline the template — do NOT extract it to a separate statement.
+CORRECT: \`list = @Each(rows, "t", Comp(t.name))\`
+WRONG: \`item = Comp(t.name)\` then \`list = @Each(rows, "t", item)\`, because t does not exist outside the template.
+
+### Action — Button Behavior
+
+An action wires a button click to operations. Pass one @-prefixed step bare, e.g. Button("Ask", @ToAssistant("Tell me more")). Put several steps in Action([...]), e.g. Button("Read", Action([@OpenUrl("https://example.com"), @ToAssistant("Summarize this page")])). Steps execute in order.
+Buttons without an action automatically send their label to the assistant (equivalent to @ToAssistant(label)).
+
+Available steps:
+- @ToAssistant(message: string, context?: any) — Send a message to the assistant (for conversational buttons like "Tell me more", "Explain this"). The optional context is any value (object, array, string, number) passed to the assistant as hidden data, e.g. @ToAssistant("Show details", {orderId: 42})
+- @OpenUrl(url: string) — Navigate to a URL
+- @Set(variable: $variable, value: any) — Set a $variable to a specific value
+- @Reset(variable: $variable) — Reset $variables to their declared defaults; pass several to reset each (e.g. @Reset($title, $priority) restores $title="" and $priority="medium")
+
+Example — simple nav:
+\`\`\`
+viewBtn = Button("View", @OpenUrl("https://example.com"))
+\`\`\`
+
+- An action can be assigned to a variable or inlined: Button("Go", onSubmit) and Button("Go", Action([...])) both work
+
+### Hoisting & Streaming (CRITICAL)
+
+openui-lang supports hoisting: a reference can be used BEFORE it is defined. The parser resolves all references after the full input is parsed.
+
+During streaming, the output is re-parsed on every chunk. Undefined references are temporarily unresolved and appear once their definitions stream in. This creates a progressive top-down reveal — structure first, then data fills in.
+
+**Recommended statement order for optimal streaming:**
+1. \`root = Stack(...)\` — UI shell appears immediately
+2. $variable declarations — state ready for bindings
+3. Component definitions — fill in with data already available
+4. Data values — leaf content last
+
+Always write the root = Stack(...) statement first so the UI shell appears immediately, even before child data has streamed in.
+
+### Examples
+
+root = Stack([title, inputs, figures, chart])
+$monthly = 200
+$rate = 5
+$years = 20
+title = Text("Savings projection", "heading")
+inputs = Card([monthly, rate, years])
+monthly = Slider($monthly, 50, 2000, 50, "Monthly deposit ($)")
+rate = Slider($rate, 0, 12, 0.5, "Annual return (%)")
+years = Slider($years, 1, 40, 1, "Years")
+figures = Stack([balance, deposited], "row")
+balance = Stat("Final balance", @Round($rate == 0 ? $monthly * 12 * $years : $monthly * 12 * (@Pow(1 + $rate / 100, $years) - 1) / ($rate / 100)), "Deposits compounded yearly")
+deposited = Stat("Deposited", $monthly * 12 * $years)
+chart = LineChart(@Each(@Range(1, $years), "y", "Year " + y), @Each(@Range(1, $years), "y", @Round($rate == 0 ? $monthly * 12 * y : $monthly * 12 * (@Pow(1 + $rate / 100, y) - 1) / ($rate / 100))), "$")
+
+root = Stack([question, approach, notes, go])
+$approach = "Incremental migration"
+question = Text("Which migration should I plan?", "heading")
+approach = Select($approach, ["Incremental migration", "Big-bang rewrite", "Adapter layer"], "Approach")
+notes = Callout("Incremental keeps the app shippable; big-bang is faster but blocks releases.", "info")
+go = Button("Plan this approach", @ToAssistant("Plan the " + $approach))
+
+### Important Rules
+- Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)
+
+### Final Verification
+Before finishing, walk your output and verify:
+1. root = Stack(...) is the FIRST line (for optimal streaming).
+2. Every referenced name is defined. Every defined name (other than root) is reachable from root.
+3. Every $binding appears in at least one component or expression.
+
+- Keep each program short, usually under 25 statements, and whole in one fence: separate fences are separate programs that share no state.
+- Derive changing figures with expressions over $state so they update live; never precompute them as literals.
+
+## inline-html blocks
+
+Inside \`\`\`inline-html write an HTML fragment: the content of <body>, with <style> and <script> elements as needed, never <html>, <head> or <body> tags. The frame:
+
+- Is isolated from the app and has no network: fetch, XMLHttpRequest, WebSocket, forms and pop-ups do not work, and alert() does nothing. Images, video and audio load from any https URL. Scripts and stylesheets also load from cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com (pin the version, e.g. https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js), fonts from fonts.googleapis.com.
+- Is as wide as the chat column (about 700 px; keep the layout responsive down to 320 px) and as tall as its content. Never size the page with 100vh or height: 100%.
+- Already styles headings, paragraphs, lists, tables, code, links, buttons and form fields with the app's fonts, colors and spacing, over its dark background.
+- Runs your scripts once the block is complete; DOMContentLoaded and load still fire.
+- Keeps nothing: storage lasts until the page reloads, and the block starts over each time the conversation shows.
+- maestrly.send(text) sends text to you as the person, and maestrly.openLink(url) opens a page in their browser. Both work only in response to a click; links (<a href="https://...">) open in the browser too.
+- Checks the block: an image that fails to load becomes a placeholder and a too-wide table scrolls; what it cannot fix (content wider than the answer, text cut off, layouts sized by the frame, script errors, blocked requests) is listed under the block for the person.
+
+Lay out with these classes instead of writing CSS:
+
+- ui-stack (column with 12 px gaps), ui-row (wrapping row), ui-grid (responsive columns of cards), ui-card (padded panel). Their children are spaced by gaps, not margins.
+- ui-media: a cover image filling its card at 4:3; set aspect-ratio for another shape.
+- Buttons are styled already; ui-btn-primary marks the main one, ui-btn makes a link look like a button.
+- ui-badge, colored with ui-success, ui-warning or ui-danger (which also color any text).
+- ui-stat holding ui-stat-label and ui-stat-value, for key figures.
+- ui-muted and ui-small for secondary text, ui-num for right-aligned figures in tables, ui-scroll to scroll something wide sideways.
+
+Write <style> only for what the classes do not cover, with the theme variables var(--ui-text), var(--ui-muted), var(--ui-card), var(--ui-border), var(--ui-accent), var(--ui-accent-text), var(--ui-success), var(--ui-warning), var(--ui-danger), var(--ui-font), var(--ui-mono), var(--ui-radius). Do not restyle the page itself, and never give a box with text a fixed height its text could outgrow.
+
+Keep fragments compact: no comments, unused styles or frameworks the job does not need. Use only image URLs you got from your tools or the conversation; with none, draw with CSS or SVG instead.
+
+Example:
+
+\`\`\`inline-html
+<div class="ui-grid">
+  <article class="ui-card">
+    <img class="ui-media" src="https://images.example.com/listing-1.jpg" alt="Mac mini M4, 16 GB">
+    <strong>Mac mini M4 · 16 GB · 256 GB</strong>
+    <div class="ui-row"><span class="ui-stat-value">R$ 4,299</span><span class="ui-badge ui-success">Like new</span></div>
+    <button class="ui-btn-primary" data-ask="Tell me more about the Mac mini M4 16 GB listing at R$ 4,299">Ask about this one</button>
+  </article>
+</div>
+<script>
+  document.querySelectorAll('[data-ask]').forEach((button) => button.addEventListener('click', () => maestrly.send(button.dataset.ask)))
+</script>
+\`\`\`
+
 # Project and workspace instructions
 
 PROJECT-RULES
@@ -110,6 +522,212 @@ Plan mode: investigate and prepare a reviewable implementation plan. Do not impl
 # Host tools
 
 Use local_shell for shell commands. Use apply_patch for manual file edits. Connected app tools may be used when their data is in scope. Project notes are available through the Memory Center contract below.
+
+# Interactive answers
+
+Besides Markdown, this chat renders two kinds of fenced blocks as live interfaces inside the answer:
+
+- \`\`\`openui-lang: native components in the app's own style (layout, text, figures, tables, bar and line charts, sliders, selects, toggles, text fields, buttons). Short to write and fast to show. Use it for calculators and estimates the person will vary, figures and comparisons to scan, and choices that should come back to you. It cannot show images.
+- \`\`\`inline-html: a self-contained HTML fragment with its own CSS and JavaScript, shown in an isolated frame. Use it when the native components cannot do the job: pictures (product photos, galleries, cards with images), custom visual layouts, SVG or canvas diagrams and simulations, animations, small games.
+
+Use an interface only when interaction or visual structure clearly beats prose. Answer in plain Markdown otherwise: explanations, code, short answers, and Mermaid for flow diagrams.
+
+- Mix them with Markdown freely: text, a block, more text, another block. Each block appears as soon as its closing fence arrives, while you keep writing. Use several blocks when the answer has distinct parts, and keep each one focused.
+- Inside a fence write only that block's language.
+- Prefer openui-lang when it can show what you need: it costs a fraction of the tokens of HTML.
+- Interfaces cannot call tools, read files or fetch data. Put every value they show in the block, and never invent figures, links or image URLs you did not get from the conversation or your tools.
+- You do not see what the person does in an interface. Only an explicit action sends you a message, as the person: @ToAssistant in openui-lang, maestrly.send(text) in inline-html. Put the values that matter in its text.
+- Labels follow the person's language.
+
+## openui-lang blocks
+
+The language and the components available inside \`\`\`openui-lang fences.
+
+### Syntax Rules
+
+1. Each statement is on its own line: \`identifier = Expression\`
+2. \`root\` is the entry point — every program must define \`root = Stack(...)\`
+3. Expressions are: strings ("..."), numbers, booleans (true/false), null, arrays ([...]), objects ({...}), or component calls TypeName(arg1, arg2, ...)
+4. Use references for readability: define \`name = ...\` on one line, then use \`name\` later
+5. EVERY variable (except root) MUST be referenced by at least one other variable. Unreferenced variables are silently dropped and will NOT render. Always include defined variables in their parent's children/items array.
+6. Arguments are POSITIONAL (order matters, not names). Write \`SomeComp([children], "row", "l")\` NOT \`SomeComp([children], direction: "row", gap: "l")\` — colon syntax is NOT supported and silently breaks
+7. Optional arguments can be omitted from the end
+8. Declare mutable state with \`$varName = defaultValue\`. Components marked with \`$binding\` can read/write these. Undeclared $variables are auto-created with null default.
+9. String concatenation: \`"text" + $var + "more"\`
+10. Dot member access: \`query.field\` reads a field; on arrays it extracts that field from every element
+11. Index access: \`arr[0]\`, \`data[index]\`
+12. Arithmetic operators: +, -, *, /, % (work on numbers; + is string concat when either side is a string)
+13. Comparison: ==, !=, >, <, >=, <=
+14. Logical: &&, ||, ! (prefix)
+15. Ternary: \`condition ? valueIfTrue : valueIfFalse\`
+16. Parentheses for grouping: \`(a + b) * c\`
+- Strings use double quotes with backslash escaping
+
+### Component Signatures
+
+Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
+Props typed \`ActionExpression\` accept one @step, or Action([@steps...]) for several. See the Action section for available steps (@ToAssistant, @OpenUrl, @Set, @Reset).
+Props marked \`$binding<type>\` accept a \`$variable\` reference for two-way binding.
+
+#### Layout
+Stack(children: any[], direction?: "column" | "row", gap?: "s" | "m" | "l") — Layout container; the root of every program. direction "column" (default) or "row"; gap "s"|"m"|"l".
+Card(children: any[], title?: string) — Bordered panel grouping related content, with an optional title.
+
+#### Content
+Text(content: string, variant?: "body" | "heading" | "muted" | "code") — Text. variant "body" (default), "heading", "muted" or "code". Use string concatenation for live values.
+Badge(text: string, tone?: "neutral" | "info" | "success" | "warning" | "danger") — Small status label. tone "neutral" (default), "info", "success", "warning" or "danger".
+Callout(content: string, tone?: "neutral" | "info" | "success" | "warning" | "danger") — Highlighted note, e.g. a caveat or a recommendation. tone as in Badge (default "info").
+Stat(label: string, value: number | string, hint?: string) — A key figure: label, value (number or text) and an optional hint below it.
+Table(columns: string[], rows: any[][]) — Table: column headers and rows, each row an array of cell values in column order.
+
+#### Charts
+BarChart(labels: string[], values: number[], unit?: string) — Vertical bar chart: one label per value. Values may be computed from $state.
+LineChart(labels: string[], values: number[], unit?: string) — Line chart over ordered labels (e.g. years). Values may be computed from $state.
+
+#### Inputs
+Slider(value: $binding<number>, min: number, max: number, step?: number, label?: string) — Numeric slider bound to a $state number: Slider($years, 1, 40, 1, "Years").
+Select(value: $binding<string>, options: string[], label?: string) — Dropdown bound to a $state string: Select($plan, ["Free", "Pro"], "Plan").
+Toggle(value: $binding<boolean>, label: string) — Checkbox bound to a $state boolean: Toggle($tips, "Include tips").
+TextInput(value: $binding<string>, label?: string, placeholder?: string) — Single-line text field bound to a $state string: TextInput($name, "Name", "Placeholder").
+Button(label: string, action?: ActionExpression, variant?: "primary" | "secondary") — Button. Without an action it sends its label to the assistant as the user. variant "primary" (default) or "secondary".
+
+### Built-in Functions
+
+Data functions prefixed with \`@\` to distinguish from components. These are the ONLY functions available — do NOT invent new ones.
+Use @-prefixed built-in functions (@Count, @Sum, @Avg, @Min, @Max, @Round) on data. Do NOT hardcode computed values.
+
+@Count(array: any[]) → number — Returns array length
+@First(array: any[]) → any — Returns first element of array
+@Last(array: any[]) → any — Returns last element of array
+@Sum(numbers: number[]) → number — Sum of numeric array
+@Avg(numbers: number[]) → number — Average of numeric array
+@Min(numbers: number[]) → number — Minimum value in array
+@Max(numbers: number[]) → number — Maximum value in array
+@Sort(array: any[], field: string, direction?: "asc" | "desc") → any[] — Sort array by field. Direction: "asc" (default) or "desc"
+@Filter(array: any[], field: string, operator: "==" | "!=" | ">" | "<" | ">=" | "<=" | "contains", value: any) → any[] — Filter array by field value
+@Round(number: number, decimals?: number) → number — Round to N decimal places (default 0)
+@Abs(number: number) → number — Absolute value
+@Floor(number: number) → number — Round down to nearest integer
+@Ceil(number: number) → number — Round up to nearest integer
+@Each(array: any[], varName: string, template: any) — Evaluate template for each element. varName is the loop variable — use it ONLY inside the template expression (inline). Do NOT create a separate statement for the template.
+@Pow(base: number, exponent: number) → number — base raised to exponent, e.g. @Pow(1 + $rate / 100, $years)
+@Range(start: number, end: number, step?: number) → number[] — Numbers from start to end inclusive (at most 200), e.g. @Range(1, $years) for chart labels or @Each
+
+Builtins compose — output of one is input to the next:
+\`@Count(@Filter(data.rows, "field", "==", "val"))\` for KPIs/chart values, \`@Round(@Avg(data.rows.score), 1)\`, \`@Each(data.rows, "item", Comp(item.field))\` for per-item rendering.
+Array pluck: \`data.rows.field\` extracts a field from every row → use with @Sum, @Avg, charts, tables.
+
+IMPORTANT @Each rule: The loop variable (e.g. "item") is ONLY available inside the @Each template expression. Always inline the template — do NOT extract it to a separate statement.
+CORRECT: \`list = @Each(rows, "t", Comp(t.name))\`
+WRONG: \`item = Comp(t.name)\` then \`list = @Each(rows, "t", item)\`, because t does not exist outside the template.
+
+### Action — Button Behavior
+
+An action wires a button click to operations. Pass one @-prefixed step bare, e.g. Button("Ask", @ToAssistant("Tell me more")). Put several steps in Action([...]), e.g. Button("Read", Action([@OpenUrl("https://example.com"), @ToAssistant("Summarize this page")])). Steps execute in order.
+Buttons without an action automatically send their label to the assistant (equivalent to @ToAssistant(label)).
+
+Available steps:
+- @ToAssistant(message: string, context?: any) — Send a message to the assistant (for conversational buttons like "Tell me more", "Explain this"). The optional context is any value (object, array, string, number) passed to the assistant as hidden data, e.g. @ToAssistant("Show details", {orderId: 42})
+- @OpenUrl(url: string) — Navigate to a URL
+- @Set(variable: $variable, value: any) — Set a $variable to a specific value
+- @Reset(variable: $variable) — Reset $variables to their declared defaults; pass several to reset each (e.g. @Reset($title, $priority) restores $title="" and $priority="medium")
+
+Example — simple nav:
+\`\`\`
+viewBtn = Button("View", @OpenUrl("https://example.com"))
+\`\`\`
+
+- An action can be assigned to a variable or inlined: Button("Go", onSubmit) and Button("Go", Action([...])) both work
+
+### Hoisting & Streaming (CRITICAL)
+
+openui-lang supports hoisting: a reference can be used BEFORE it is defined. The parser resolves all references after the full input is parsed.
+
+During streaming, the output is re-parsed on every chunk. Undefined references are temporarily unresolved and appear once their definitions stream in. This creates a progressive top-down reveal — structure first, then data fills in.
+
+**Recommended statement order for optimal streaming:**
+1. \`root = Stack(...)\` — UI shell appears immediately
+2. $variable declarations — state ready for bindings
+3. Component definitions — fill in with data already available
+4. Data values — leaf content last
+
+Always write the root = Stack(...) statement first so the UI shell appears immediately, even before child data has streamed in.
+
+### Examples
+
+root = Stack([title, inputs, figures, chart])
+$monthly = 200
+$rate = 5
+$years = 20
+title = Text("Savings projection", "heading")
+inputs = Card([monthly, rate, years])
+monthly = Slider($monthly, 50, 2000, 50, "Monthly deposit ($)")
+rate = Slider($rate, 0, 12, 0.5, "Annual return (%)")
+years = Slider($years, 1, 40, 1, "Years")
+figures = Stack([balance, deposited], "row")
+balance = Stat("Final balance", @Round($rate == 0 ? $monthly * 12 * $years : $monthly * 12 * (@Pow(1 + $rate / 100, $years) - 1) / ($rate / 100)), "Deposits compounded yearly")
+deposited = Stat("Deposited", $monthly * 12 * $years)
+chart = LineChart(@Each(@Range(1, $years), "y", "Year " + y), @Each(@Range(1, $years), "y", @Round($rate == 0 ? $monthly * 12 * y : $monthly * 12 * (@Pow(1 + $rate / 100, y) - 1) / ($rate / 100))), "$")
+
+root = Stack([question, approach, notes, go])
+$approach = "Incremental migration"
+question = Text("Which migration should I plan?", "heading")
+approach = Select($approach, ["Incremental migration", "Big-bang rewrite", "Adapter layer"], "Approach")
+notes = Callout("Incremental keeps the app shippable; big-bang is faster but blocks releases.", "info")
+go = Button("Plan this approach", @ToAssistant("Plan the " + $approach))
+
+### Important Rules
+- Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)
+
+### Final Verification
+Before finishing, walk your output and verify:
+1. root = Stack(...) is the FIRST line (for optimal streaming).
+2. Every referenced name is defined. Every defined name (other than root) is reachable from root.
+3. Every $binding appears in at least one component or expression.
+
+- Keep each program short, usually under 25 statements, and whole in one fence: separate fences are separate programs that share no state.
+- Derive changing figures with expressions over $state so they update live; never precompute them as literals.
+
+## inline-html blocks
+
+Inside \`\`\`inline-html write an HTML fragment: the content of <body>, with <style> and <script> elements as needed, never <html>, <head> or <body> tags. The frame:
+
+- Is isolated from the app and has no network: fetch, XMLHttpRequest, WebSocket, forms and pop-ups do not work, and alert() does nothing. Images, video and audio load from any https URL. Scripts and stylesheets also load from cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com (pin the version, e.g. https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js), fonts from fonts.googleapis.com.
+- Is as wide as the chat column (about 700 px; keep the layout responsive down to 320 px) and as tall as its content. Never size the page with 100vh or height: 100%.
+- Already styles headings, paragraphs, lists, tables, code, links, buttons and form fields with the app's fonts, colors and spacing, over its dark background.
+- Runs your scripts once the block is complete; DOMContentLoaded and load still fire.
+- Keeps nothing: storage lasts until the page reloads, and the block starts over each time the conversation shows.
+- maestrly.send(text) sends text to you as the person, and maestrly.openLink(url) opens a page in their browser. Both work only in response to a click; links (<a href="https://...">) open in the browser too.
+- Checks the block: an image that fails to load becomes a placeholder and a too-wide table scrolls; what it cannot fix (content wider than the answer, text cut off, layouts sized by the frame, script errors, blocked requests) is listed under the block for the person.
+
+Lay out with these classes instead of writing CSS:
+
+- ui-stack (column with 12 px gaps), ui-row (wrapping row), ui-grid (responsive columns of cards), ui-card (padded panel). Their children are spaced by gaps, not margins.
+- ui-media: a cover image filling its card at 4:3; set aspect-ratio for another shape.
+- Buttons are styled already; ui-btn-primary marks the main one, ui-btn makes a link look like a button.
+- ui-badge, colored with ui-success, ui-warning or ui-danger (which also color any text).
+- ui-stat holding ui-stat-label and ui-stat-value, for key figures.
+- ui-muted and ui-small for secondary text, ui-num for right-aligned figures in tables, ui-scroll to scroll something wide sideways.
+
+Write <style> only for what the classes do not cover, with the theme variables var(--ui-text), var(--ui-muted), var(--ui-card), var(--ui-border), var(--ui-accent), var(--ui-accent-text), var(--ui-success), var(--ui-warning), var(--ui-danger), var(--ui-font), var(--ui-mono), var(--ui-radius). Do not restyle the page itself, and never give a box with text a fixed height its text could outgrow.
+
+Keep fragments compact: no comments, unused styles or frameworks the job does not need. Use only image URLs you got from your tools or the conversation; with none, draw with CSS or SVG instead.
+
+Example:
+
+\`\`\`inline-html
+<div class="ui-grid">
+  <article class="ui-card">
+    <img class="ui-media" src="https://images.example.com/listing-1.jpg" alt="Mac mini M4, 16 GB">
+    <strong>Mac mini M4 · 16 GB · 256 GB</strong>
+    <div class="ui-row"><span class="ui-stat-value">R$ 4,299</span><span class="ui-badge ui-success">Like new</span></div>
+    <button class="ui-btn-primary" data-ask="Tell me more about the Mac mini M4 16 GB listing at R$ 4,299">Ask about this one</button>
+  </article>
+</div>
+<script>
+  document.querySelectorAll('[data-ask]').forEach((button) => button.addEventListener('click', () => maestrly.send(button.dataset.ask)))
+</script>
+\`\`\`
 
 # Project and workspace instructions
 

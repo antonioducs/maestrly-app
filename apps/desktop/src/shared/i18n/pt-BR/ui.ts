@@ -505,6 +505,23 @@ export default {
     loading: 'Carregando interface…',
     source: 'Código da interface',
     invalid: 'Não foi possível montar esta interface. O código dela aparece no lugar.',
+    building: 'Montando interface…',
+    tooLong: 'Esta interface é grande demais para exibir. O código dela está abaixo.',
+    frameTitle: 'Resposta interativa',
+    issues: {
+      summary_one: '{{count}} problema encontrado nesta interface',
+      summary_other: '{{count}} problemas encontrados nesta interface',
+      image: 'Uma imagem não carregou e foi substituída: {{detail}}',
+      overflow: 'O conteúdo é mais largo que a resposta: {{detail}}',
+      clipped: 'O texto fica cortado pela caixa: {{detail}}',
+      viewport: 'O layout cresce com a altura do quadro (100vh ou height: 100%), por isso a altura foi limitada.',
+      script: 'Erro de script: {{detail}}',
+      blocked: 'Bloqueado pela política da interface: {{detail}}',
+      invalid: 'Removido do programa: {{detail}}',
+      undefined: 'Usado, mas nunca definido: {{detail}}',
+      unused: 'Definido, mas nunca exibido: {{detail}}',
+      runtime: 'Não foi possível calcular: {{detail}}',
+    },
   },
   localData: {
     exportIncomplete:

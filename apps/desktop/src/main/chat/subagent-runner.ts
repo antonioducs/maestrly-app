@@ -518,6 +518,7 @@ export async function runSubagent(args: {
           projectContext,
           agentsContext: `${subagentCanMutate ? '' : 'This delegated run is read-only.\n\n'}${def.prompt}`,
           envContext: `Delegated subagent: ${args.agentName}. Project directory: ${args.cwd}.`,
+          generatedInterfaces: false,
           nativeTools: {
             localShell: nativeTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,
             applyPatch: nativeTools[OPENAI_APPLY_PATCH_TOOL_NAME] != null,

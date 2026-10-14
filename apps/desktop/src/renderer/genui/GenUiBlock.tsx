@@ -4,33 +4,21 @@ import { useGenUiHost } from './context'
 
 const OpenUIBlock = lazy(() => import('./OpenUIBlock'))
 
-const FENCE_LANGUAGE = 'openui-lang'
-
-/** The fence of a ```openui-lang block. */
-export const isGenUiFence = (className: string): boolean =>
-  new RegExp(`\\blanguage-${FENCE_LANGUAGE}\\b`).test(className)
-
-/**
- * A fence that may still turn into an interface: its language is being streamed (`ope` of `openui-lang`) or it has
- * no content yet. Showing it as code would flash a code block for a moment.
- */
-export function isPendingFence(className: string, code: string): boolean {
-  const language = /\blanguage-([\w-]+)/.exec(className)?.[1]
-  return code === '' || (!!language && language !== FENCE_LANGUAGE && FENCE_LANGUAGE.startsWith(language))
-}
-
 /** Hides a pending fence while its message streams; once the message ends it is ordinary code. */
 export function PendingFence({ children }: { children: ReactNode }) {
   return useGenUiHost().live ? null : <pre>{children}</pre>
 }
 
-/** A ```openui-lang block of a message: rendered as an interface, or shown as source when it cannot be. */
-export function GenUiBlock({ code }: { code: string }) {
+/**
+ * A ```openui-lang block of a message: rendered as an interface, or shown as source when it cannot be. A block whose
+ * closing fence arrived is complete, so it turns interactive while the rest of the message streams.
+ */
+export function GenUiBlock({ code, complete }: { code: string; complete: boolean }) {
   const { t } = useTranslation('ui')
   return (
     <SourceOnError code={code}>
       <Suspense fallback={<div className="my-2 text-xs text-muted-foreground">{t('genUi.loading')}</div>}>
-        <OpenUIBlock code={code} />
+        <OpenUIBlock code={code} complete={complete} />
       </Suspense>
     </SourceOnError>
   )

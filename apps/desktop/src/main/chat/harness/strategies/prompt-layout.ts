@@ -30,6 +30,8 @@ export interface OpenAIPromptLayoutInput {
   envContext?: string | null
   ultraContext?: string | null
   nativeTools?: { localShell: boolean; applyPatch: boolean }
+  /** Teach the generated-interface language; on unless the output never reaches a person. */
+  generatedInterfaces?: boolean
 }
 
 export interface CompiledPromptLayout {
@@ -166,7 +168,7 @@ export function composeOpenAICodexPortPrompt(input: OpenAIPromptLayoutInput): Co
     appToolsOverlay(input.appToolsEnabled, input.hasNotesTab, input.mode, input.disabledAppToolGroups),
     MEMORY_TOOL_GUIDANCE,
     '# Rendering\n\nThe chat supports GitHub-flavored Markdown, tables, and Mermaid diagrams. Use a Mermaid code block for diagrams instead of ASCII art.',
-    hostGenUiSection(),
+    hostGenUiSection(input.generatedInterfaces),
   ])
 
   const stablePrefix = joinSections([
@@ -218,6 +220,7 @@ export function composeOpenAIConcisePrompt(input: OpenAIPromptLayoutInput): Comp
     `\n\n# Active mode\n\n${ASTRA_MODE_INSTRUCTIONS[input.mode]}`,
     designPrompt ? `\n\n${designPrompt}` : '',
     astraToolPolicy(input),
+    hostGenUiSection(input.generatedInterfaces),
     optionalSection('Project and workspace instructions', input.projectContext),
     optionalSection('Memory Center', MEMORY_TOOL_GUIDANCE),
     optionalSection('Available skills', input.skillsContext),

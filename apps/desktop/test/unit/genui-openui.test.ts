@@ -8,11 +8,14 @@ import { createBudget, evaluateRoot, RENDER_STEPS } from '../../src/renderer/gen
 import { genUiLibrary } from '../../src/renderer/genui/library'
 import { genUiMessage } from '../../src/renderer/genui/message'
 import { loadGenUiState, programHash, saveGenUiState } from '../../src/renderer/genui/persist'
-import { GENUI_PROMPT_OPTIONS } from '../../src/renderer/genui/prompt'
+import { buildGenUiPrompt, GENUI_PROMPT_OPTIONS } from '../../src/renderer/genui/prompt'
+import { GenUiIssues } from '../../src/renderer/genui/GenUiIssues'
+import { addGenUiIssue, MAX_GENUI_ISSUES } from '../../src/renderer/genui/issues'
 import {
   functionsFor,
   type GenUiProgramProps,
   parseGenUi,
+  programIssues,
   runAction,
   useGenUiProgram,
 } from '../../src/renderer/genui/runtime'
@@ -76,7 +79,7 @@ describe('generated interfaces', () => {
   })
 
   it('keeps the system prompt section generated from the catalog', () => {
-    const generated = genUiLibrary.prompt(GENUI_PROMPT_OPTIONS)
+    const generated = buildGenUiPrompt()
     if (process.env.UPDATE_GENUI_PROMPT === '1') {
       writeFileSync(
         PROMPT_FILE,
@@ -91,6 +94,20 @@ describe('generated interfaces', () => {
   it('never teaches the model to call tools from an interface', () => {
     expect(GENUI_PROMPT).not.toMatch(/\b(Query|Mutation)\(/)
     expect(GENUI_PROMPT).not.toContain('@Run')
+    expect(GENUI_PROMPT).toContain('Interfaces cannot call tools, read files or fetch data.')
+  })
+
+  it('teaches both kinds of block and mixing them with text', () => {
+    expect(GENUI_PROMPT).toContain('```openui-lang: native components')
+    expect(GENUI_PROMPT).toContain('```inline-html: a self-contained HTML fragment')
+    expect(GENUI_PROMPT).toContain('text, a block, more text, another block')
+    expect(GENUI_PROMPT).not.toContain('At most one block')
+    expect(GENUI_PROMPT).toContain('maestrly.send(text)')
+    expect(GENUI_PROMPT).toContain('var(--ui-accent)')
+    // The openui-lang reference sits under the section, one level down
+    expect(GENUI_PROMPT).toContain('\n## openui-lang blocks\n')
+    expect(GENUI_PROMPT).toContain('\n### Component Signatures\n')
+    expect(GENUI_PROMPT).not.toMatch(/\n## (Syntax Rules|Component Signatures|Examples)\n/)
   })
 
   it.each(Object.keys(SAMPLES))('parses the %s sample with no errors or dropped statements', (name) => {
@@ -263,5 +280,52 @@ describe('generated interface state', () => {
     expect(loadGenUiState('k', storage)).toBeUndefined()
     storage.setItem('genui.state.v1', '{not json')
     expect(loadGenUiState('k', storage)).toBeUndefined()
+  })
+})
+
+describe('generated interface issues', () => {
+  it('lists what the parser dropped from a complete program, and nothing while it streams', () => {
+    const program = `root = Stack([title, chart, missing])
+title = Text("Sales", "heading")
+chart = PieChart([1, 2])
+stray = Badge("never shown")`
+    expect(programIssues(parse(program), []).map((issue) => [issue.kind, issue.detail.split(' —')[0]])).toEqual([
+      ['invalid', 'Unknown component "PieChart"'],
+      ['undefined', 'missing'],
+      ['unused', 'stray'],
+    ])
+    expect(programIssues(parse(SAMPLES.dashboard), [])).toEqual([])
+    const issuesOf = (live: boolean) => {
+      let seen: readonly unknown[] = []
+      function Probe() {
+        seen = useGenUiProgram({ code: program, library: genUiLibrary, live }).issues
+        return null
+      }
+      renderToString(createElement(Probe))
+      return seen
+    }
+    expect(issuesOf(true)).toEqual([])
+    expect(issuesOf(false)).toHaveLength(3)
+  })
+
+  it('reports props whose evaluation failed', () => {
+    expect(programIssues(null, ['Text.content: @Pow threw: boom'])).toEqual([
+      { kind: 'runtime', detail: 'Text.content: @Pow threw: boom' },
+    ])
+  })
+
+  it('keeps each issue once and at most a fixed number', () => {
+    let issues = addGenUiIssue([], { kind: 'image', detail: 'a.jpg' })
+    expect(addGenUiIssue(issues, { kind: 'image', detail: 'a.jpg' })).toBe(issues)
+    for (let i = 0; i < 40; i++) issues = addGenUiIssue(issues, { kind: 'image', detail: `${i}.jpg` })
+    expect(issues).toHaveLength(MAX_GENUI_ISSUES)
+  })
+
+  it('folds the list under one line, and shows nothing without issues', () => {
+    expect(renderToString(createElement(GenUiIssues, { issues: [] }))).toBe('')
+    const html = renderToString(createElement(GenUiIssues, { issues: [{ kind: 'clipped', detail: 'div.card' }] }))
+    expect(html).toContain('<details class="genui-issues')
+    expect(html).toContain('genUi.issues.summary')
+    expect(html).toContain('genUi.issues.clipped')
   })
 })

@@ -1,6 +1,7 @@
 // Adapted from OpenUI lang-core (packages/lang-core/src/parser/prompt.ts at f7109dd, MIT, Copyright (c) Thesys Inc.).
 // See resources/licenses/openui-MIT.txt. Only the variant this app uses is kept: $state bindings and expressions on,
-// no Query/Mutation, tools, forms, edit or inline mode. The section texts are upstream's for that variant.
+// no Query/Mutation, tools, forms, edit or inline mode. The section texts are upstream's for that variant, one heading
+// level down: they sit under the app's own section about interactive answers.
 
 import { BUILTIN_STEPS, BUILTINS } from './builtins'
 import { schemaSignature } from './signature'
@@ -27,7 +28,7 @@ export interface PromptSpec extends PromptOptions {
 
 function syntaxRules(rootName: string): string {
   return [
-    '## Syntax Rules',
+    '### Syntax Rules',
     '',
     '1. Each statement is on its own line: `identifier = Expression`',
     `2. \`root\` is the entry point — every program must define \`root = ${rootName}(...)\``,
@@ -61,7 +62,7 @@ function builtinFunctionsSection(custom: string[]): string {
     ...custom,
   ].join('\n')
 
-  return `## Built-in Functions
+  return `### Built-in Functions
 
 Data functions prefixed with \`@\` to distinguish from components. These are the ONLY functions available — do NOT invent new ones.
 Use @-prefixed built-in functions (@Count, @Sum, @Avg, @Min, @Max, @Round) on data. Do NOT hardcode computed values.
@@ -74,14 +75,14 @@ Array pluck: \`data.rows.field\` extracts a field from every row → use with @S
 
 IMPORTANT @Each rule: The loop variable (e.g. "item") is ONLY available inside the @Each template expression. Always inline the template — do NOT extract it to a separate statement.
 CORRECT: \`list = @Each(rows, "t", Comp(t.name))\`
-WRONG: \`item = Comp(t.name)\` then \`list = @Each(rows, "t", item)\`, because t is undefined in item.`
+WRONG: \`item = Comp(t.name)\` then \`list = @Each(rows, "t", item)\`, because t does not exist outside the template.`
 }
 
 function actionSection(): string {
   const steps = Object.values(BUILTIN_STEPS).map(
     (s) => `- ${functionLine({ ...s, signature: schemaSignature(s.name, s.params) })}`
   )
-  return `## Action — Button Behavior
+  return `### Action — Button Behavior
 
 An action wires a button click to operations. Pass one @-prefixed step bare, e.g. Button("Ask", @ToAssistant("Tell me more")). Put several steps in Action([...]), e.g. Button("Read", Action([@OpenUrl("https://example.com"), @ToAssistant("Summarize this page")])). Steps execute in order.
 Buttons without an action automatically send their label to the assistant (equivalent to @ToAssistant(label)).
@@ -98,7 +99,7 @@ viewBtn = Button("View", @OpenUrl("https://example.com"))
 }
 
 function streamingRules(rootName: string): string {
-  return `## Hoisting & Streaming (CRITICAL)
+  return `### Hoisting & Streaming (CRITICAL)
 
 openui-lang supports hoisting: a reference can be used BEFORE it is defined. The parser resolves all references after the full input is parsed.
 
@@ -114,10 +115,10 @@ Always write the root = ${rootName}(...) statement first so the UI shell appears
 }
 
 function importantRules(rootName: string): string {
-  return `## Important Rules
+  return `### Important Rules
 - Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)
 
-## Final Verification
+### Final Verification
 Before finishing, walk your output and verify:
 1. root = ${rootName}(...) is the FIRST line (for optimal streaming).
 2. Every referenced name is defined. Every defined name (other than root) is reachable from root.
@@ -128,7 +129,7 @@ const RESTRICTED_SLOT = /[:|] @[A-Z]/
 
 function componentSignatures(spec: PromptSpec): string {
   const lines = [
-    '## Component Signatures',
+    '### Component Signatures',
     '',
     'Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.',
   ]
@@ -147,7 +148,7 @@ function componentSignatures(spec: PromptSpec): string {
     comp.description ? `${comp.signature} — ${comp.description}` : comp.signature
   const grouped = new Set<string>()
   for (const group of spec.componentGroups ?? []) {
-    lines.push('', `### ${group.name}`)
+    lines.push('', `#### ${group.name}`)
     for (const name of group.components) {
       const comp = spec.components[name]
       if (grouped.has(name) || !comp) continue
@@ -158,7 +159,7 @@ function componentSignatures(spec: PromptSpec): string {
   }
   const ungrouped = Object.keys(spec.components).filter((name) => !grouped.has(name))
   if (ungrouped.length) {
-    lines.push('', ...(spec.componentGroups?.length ? ['### Other'] : []))
+    lines.push('', ...(spec.componentGroups?.length ? ['#### Other'] : []))
     for (const name of ungrouped) lines.push(formatSig(spec.components[name]))
   }
   return lines.join('\n')
@@ -180,7 +181,7 @@ export function generatePrompt(spec: PromptSpec): string {
     streamingRules(spec.root),
   ]
   if (spec.examples?.length) {
-    parts.push('', '## Examples', '')
+    parts.push('', '### Examples', '')
     for (const example of spec.examples) parts.push(example, '')
   }
   parts.push(importantRules(spec.root))

@@ -200,7 +200,11 @@ import { createDesktopSources, serverUnavailable } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
-import { handleFleetMediaProtocol, registerFleetMediaScheme } from './fleet/client/media-scheme'
+import { handleFleetMediaProtocol } from './fleet/client/media-scheme'
+import { appPolicyHeaders } from './content-security-policy'
+import { isGenUiWidgetUrl } from '../shared/genui-widget'
+import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
+import { registerPrivilegedSchemes } from './privileged-schemes'
 import { noticeFleetDownload } from './fleet/client/download-notices'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
@@ -223,7 +227,7 @@ const isDev = !!process.env.ELECTRON_RENDERER_URL
 // Isolate the application profile before acquiring locks or opening persistent stores.
 applyChannelIdentity()
 // Privileged schemes can only be declared before the app is ready.
-registerFleetMediaScheme()
+registerPrivilegedSchemes()
 
 // Disable hardware acceleration for the Linux configurations affected by Chromium GPU startup loops.
 const isWaylandSession = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
@@ -515,22 +519,20 @@ function broadcastStatus(payload: { agentId: string; status: string }): void {
 }
 
 function setupSessionPermissions(): void {
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) =>
-    cb(permission === 'media' || permission === 'clipboard-sanitized-write')
+  // Inline HTML answers get no permission at all, whatever their frame asks.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) =>
+    cb(
+      !isGenUiWidgetUrl(details.requestingUrl ?? '') &&
+        (permission === 'media' || permission === 'clipboard-sanitized-write')
+    )
   )
 }
 
 function applyProdCsp(): void {
   if (isDev) return
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
-    cb({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; media-src 'self' maestrly-media:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-        ],
-      },
-    })
+    const responseHeaders = appPolicyHeaders(details.url, details.responseHeaders)
+    cb(responseHeaders ? { responseHeaders } : {})
   })
 }
 
@@ -991,6 +993,7 @@ app.whenReady().then(async () => {
   hardenBrowserSession()
   applyProdCsp()
   handleFleetMediaProtocol(fleetClientService)
+  handleGenUiWidgetProtocol()
   registry.on('status', broadcastStatus)
   registry.setSoundSettings(getSoundSettings())
 

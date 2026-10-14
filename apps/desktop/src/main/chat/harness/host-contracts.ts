@@ -152,11 +152,11 @@ export function hostCapabilitySection(mode: ChatBehavior): string {
 export const HOST_RENDERING = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
 
 /**
- * Generated interfaces (```openui-lang) are an experiment: the catalog prompt costs ~3k tokens per call, so it only
- * reaches the model with MAESTRLY_GENUI=1. Every chat renders the blocks either way.
+ * Teaches the model the ```openui-lang blocks every chat renders as interactive interfaces. About 3k tokens, kept in
+ * the stable prefix so prompt caching absorbs it. Delegated subagents leave it out: their output goes to a model.
  */
-export function hostGenUiSection(env: NodeJS.ProcessEnv = process.env): string {
-  return env.MAESTRLY_GENUI === '1' ? `\n\n${GENUI_PROMPT}` : ''
+export function hostGenUiSection(enabled = true): string {
+  return enabled ? `\n\n${GENUI_PROMPT}` : ''
 }
 
 export function hostAppToolsSection(
@@ -198,6 +198,8 @@ export interface MaestrlyBasePromptInput {
   disabledAppToolGroups?: readonly AppToolGroup[]
   mode: ChatBehavior
   hasNotesTab: boolean
+  /** Teach the generated-interface language; on unless the output never reaches a person. */
+  generatedInterfaces?: boolean
 }
 
 /** Keep applicable profile behavior; project identity and automatic instruction discovery belong to the host. */
@@ -248,7 +250,7 @@ ${discovery} Online research requires an actually available tool; webfetch reads
       standaloneProfileText(input.harness.prompts.styleAndWork),
       HOST_USING_TOOLS,
       standaloneCapabilities(input.mode),
-      HOST_RENDERING + hostGenUiSection(),
+      HOST_RENDERING + hostGenUiSection(input.generatedInterfaces),
       isBot ? '' : PERSONAL_MEMORY_TOOL_GUIDANCE,
       input.appToolsEnabled
         ? 'Maestrly tools are available only as exposed in your tool catalog. Respect their permissions.'
@@ -267,7 +269,7 @@ ${discovery} Online research requires an actually available tool; webfetch reads
     base +
     hostCapabilitySection(input.mode) +
     HOST_RENDERING +
-    hostGenUiSection() +
+    hostGenUiSection(input.generatedInterfaces) +
     hostAppToolsSection(input.appToolsEnabled, input.hasNotesTab, input.mode, input.disabledAppToolGroups) +
     `\n\n${MEMORY_TOOL_GUIDANCE}` +
     (designPrompt ? `\n\n${designPrompt}` : '')

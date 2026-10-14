@@ -69,6 +69,34 @@ sessions with stricter origin and permission controls.
 New renderer APIs should expose one domain operation, not a generic IPC sender,
 SQL executor, filesystem primitive, process launcher, or credential accessor.
 
+Interactive answers (`openui-lang` blocks) are model-written programs that the
+primary renderer interprets, so they are untrusted. The interpreter never uses
+`eval` or `Function`, runs only a fixed component catalog, and gets no tool,
+network, file, or IPC access. Field reads are limited to own data properties,
+objects are built without prototype assignment, `+` and `==` never convert
+objects, action plans and input bindings count only when the interpreter created
+them, and parsing and rendering stop at a step budget. A button can send a
+message as the person, open an `http(s)` URL through the existing external-link
+handler, or change the interface's own state.
+
+Inline HTML answers (`inline-html` blocks) never run in an app page. Each one is
+framed from the `maestrly-widget://frame/` scheme, which only the app's default
+session serves, with `sandbox="allow-scripts"` and no `allow-same-origin`: the
+frame has an opaque origin and no access to the app, its storage, cookies, IPC
+or preload. Its page receives the block through `postMessage` and writes it
+under its own policy (`sandbox allow-scripts; default-src 'none'`): scripts may
+be inline or come from the artifact CDN allowlist, `connect-src`, `frame-src`,
+`form-action` and `object-src` are `'none'`, and images and media load from any
+`https` URL. That last point is a deliberate trade-off for showing pictures from
+the web: a block can reveal what it writes in those URLs to their hosts. The
+app's own policy allows framing only that scheme, detached chat windows allow
+frame navigation only to that URL, and the permission handler grants the frame
+nothing. The host accepts a fixed set of validated messages from the frame
+(size, issue, send, open); an issue is one of a fixed list of kinds with a short
+text, shown as plain text under the block. Sending a message as the person and
+opening an `http(s)` URL require transient user activation, which only a real
+click in the frame gives the app window, at most once per second.
+
 ## Local data and migrations
 
 The main process owns SQLite and applies the application identity before opening

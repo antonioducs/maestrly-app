@@ -22,6 +22,8 @@ export interface BuildHarnessPromptInput {
   agentsContext?: string | null
   envContext?: string | null
   ultraContext?: string | null
+  /** Teach the generated-interface language; on unless the output never reaches a person. */
+  generatedInterfaces?: boolean
 }
 
 export interface CompiledHarnessPrompt {
@@ -86,6 +88,7 @@ export function buildHarnessPrompt(input: BuildHarnessPromptInput): CompiledHarn
     envContext: input.envContext,
     ultraContext: input.ultraContext,
     ...(input.nativeTools ? { nativeTools: input.nativeTools } : {}),
+    ...(input.generatedInterfaces === false ? { generatedInterfaces: false } : {}),
   }
   const compiled =
     harness.prompts.layout === 'openai-astra'

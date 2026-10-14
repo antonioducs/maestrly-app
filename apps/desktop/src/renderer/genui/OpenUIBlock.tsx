@@ -1,35 +1,46 @@
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { safeWebUrl } from '../../shared/genui-widget'
 import { useGenUiHost } from './context'
+import { GenUiIssues } from './GenUiIssues'
+import { GenUiSource } from './GenUiSource'
 import { genUiLibrary } from './library'
 import { loadGenUiState, programHash, saveGenUiState } from './persist'
 import { type GenUiEffect, type GenUiState, useGenUiProgram } from './runtime'
 
 // Loaded on demand with the language runtime: a chat downloads it once a message holds an interface.
-export default function OpenUIBlock({ code }: { code: string }) {
-  const { live, stateKey } = useGenUiHost()
-  // While the message streams the program keeps changing; what the person changes happens after, on the final one
-  const key = !live && stateKey ? `${stateKey}:${programHash(code)}` : null
+export default function OpenUIBlock({ code, complete }: { code: string; complete: boolean }) {
+  const host = useGenUiHost()
+  // Until its closing fence arrives the program keeps changing; what the person changes happens on the final one
+  const live = host.live && !complete
+  const key = !live && host.stateKey ? `${host.stateKey}:${programHash(code)}` : null
   const initialState = useMemo(() => (key ? loadGenUiState(key) : undefined), [key])
   // A restored state belongs to the final program: remount when the stream ends and a saved state applies
-  return <Program key={initialState ? key : 'program'} code={code} stateKey={key} initialState={initialState} />
+  return (
+    <Program key={initialState ? key : 'program'} code={code} live={live} stateKey={key} initialState={initialState} />
+  )
 }
 
 function Program({
   code,
+  live,
   stateKey,
   initialState,
 }: {
   code: string
+  live: boolean
   stateKey: string | null
   initialState?: GenUiState
 }) {
   const { t } = useTranslation('ui')
-  const { live, send } = useGenUiHost()
+  const { send } = useGenUiHost()
   const onEffect = useCallback(
     (effect: GenUiEffect) => {
       if (effect.kind === 'send') send?.(effect.text)
-      else if (/^https?:\/\//i.test(effect.url)) void window.api.openExternalUrl(effect.url)
+      else {
+        const url = safeWebUrl(effect.url)
+        if (url) void window.api.openExternalUrl(url)
+      }
     },
     [send]
   )
@@ -39,7 +50,7 @@ function Program({
     },
     [stateKey]
   )
-  const { content, failure } = useGenUiProgram({
+  const { content, failure, issues } = useGenUiProgram({
     code,
     library: genUiLibrary,
     live,
@@ -57,12 +68,8 @@ function Program({
           {t('genUi.invalid')}
         </p>
       )}
-      <details className="text-[11px] text-muted-foreground" open={failure !== null}>
-        <summary className="cursor-pointer select-none hover:text-foreground">{t('genUi.source')}</summary>
-        <pre className="mt-1.5 max-h-64 overflow-auto">
-          <code>{code}</code>
-        </pre>
-      </details>
+      <GenUiIssues issues={issues} />
+      <GenUiSource code={code} open={failure !== null} />
     </div>
   )
 }

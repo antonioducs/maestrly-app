@@ -48,6 +48,47 @@ or incomplete task data is omitted instead of interrupting the chat interface;
 valid entries appear when the agent supplies them. This also applies when
 reopening saved conversations and does not change the stored tool input.
 
+## Interactive answers
+
+In chats, project conversations and bot conversations, an agent can answer with
+interfaces mixed into its text, as many as the answer needs:
+
+- **Native interfaces** use a fixed set of components in the app's own style:
+  calculators with sliders, charts, tables of figures, or a choice to send back.
+- **Inline HTML** is a small page the agent writes, shown in an isolated frame:
+  pictures such as product photos, custom layouts, diagrams, animations or small
+  games.
+
+How they behave:
+
+- Each interface appears as soon as the agent finishes writing it, while the
+  rest of the answer is still arriving.
+- Moving a slider or changing a field recalculates the interface locally; it
+  does not call the model.
+- A button can send a message as you or open a web page in your browser; native
+  interfaces can also change their own fields. A sent message appears in the
+  conversation like one you typed, and waits in the queue while a turn runs.
+  Inline HTML sends or opens nothing unless you just clicked inside it.
+- In native interfaces, what you change is restored when the conversation shows
+  again on the same computer; it is not synchronized to other devices. Inline
+  HTML starts over each time.
+- The agent writes interfaces without seeing them, so the app checks them. An
+  image that does not load is replaced by a placeholder, and a table wider than
+  the answer scrolls sideways. What cannot be fixed is listed under the
+  interface as **problems found**: content wider than the answer, text cut off,
+  a layout that grows with its own frame, script errors, blocked requests, and
+  in native interfaces, parts the agent named but never defined or that the app
+  does not know.
+- An interface that cannot be rendered shows a notice; **Interface source**
+  shows what the agent wrote.
+
+Interfaces cannot call tools, read files or fetch data, so they show only what
+the agent put in them. Inline HTML may load images, video and audio from any web
+address, and libraries and fonts from a few public CDNs; those servers see the
+addresses it asks for. The instructions that teach both kinds add about 4,200
+tokens to each conversation's cached system prompt. Delegated subagents do not
+receive them.
+
 ## PDF attachments
 
 Attach PDFs with the **+** menu, by pasting them, or by dragging them onto the

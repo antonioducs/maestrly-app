@@ -29,6 +29,7 @@ import {
   RENDER_STEPS,
   type RuntimeFunction,
 } from './lang'
+import { addGenUiIssue, type GenUiIssue } from './issues'
 import { genUiMessage } from './message'
 
 // The React side of generated interfaces: renders a parsed program with the catalog's components and keeps its state.
@@ -219,8 +220,26 @@ export interface GenUiProgramProps {
 }
 
 /**
+ * What the parser and the evaluator dropped from a complete program: invalid calls, names used but never defined,
+ * statements never shown, and props whose evaluation failed. The program renders what is left, so without this list
+ * its author never learns why part of the interface is missing.
+ */
+export function programIssues(result: ParseResult | null, runtimeErrors: readonly string[]): readonly GenUiIssue[] {
+  let issues: readonly GenUiIssue[] = []
+  if (result) {
+    for (const error of result.meta.errors)
+      if (error.severity !== 'warning') issues = addGenUiIssue(issues, { kind: 'invalid', detail: error.message })
+    for (const name of result.meta.unresolved) issues = addGenUiIssue(issues, { kind: 'undefined', detail: name })
+    for (const name of result.meta.orphaned) issues = addGenUiIssue(issues, { kind: 'unused', detail: name })
+  }
+  for (const error of runtimeErrors) issues = addGenUiIssue(issues, { kind: 'runtime', detail: error })
+  return issues
+}
+
+/**
  * One program, rendered: `content` is the interface, or null with why in `failure` (a complete program that renders
- * nothing). While the program streams in, inputs and buttons stay disabled and no failure is reported.
+ * nothing), and `issues` what was dropped from it. While the program streams in, inputs and buttons stay disabled and
+ * neither a failure nor issues are reported.
  */
 export function useGenUiProgram({
   code,
@@ -230,7 +249,7 @@ export function useGenUiProgram({
   onStateChange,
   onEffect,
   canSend = true,
-}: GenUiProgramProps): { content: ReactNode; failure: string | null } {
+}: GenUiProgramProps): { content: ReactNode; failure: string | null; issues: readonly GenUiIssue[] } {
   const parsed = useMemo(() => parseGenUi(code, library), [code, library])
   const defaults = parsed.result?.stateDeclarations ?? {}
   const [state, setState] = useState<GenUiState>(() => initialState ?? {})
@@ -242,17 +261,19 @@ export function useGenUiProgram({
 
   const functions = functionsFor(library)
   const rendered = useMemo(() => {
-    if (!parsed.result) return { root: null, failure: parsed.failure ?? 'The program is empty' }
+    const errors: string[] = []
+    if (!parsed.result) return { root: null, failure: parsed.failure ?? 'The program is empty', errors }
     const defaults = parsed.result.stateDeclarations
     try {
       const root = evaluateRoot(parsed.result, {
         ctx: { getState: (name) => readState(state, defaults, name), resolveRef: () => null, functions },
         library,
+        errors,
       })
       const firstError = parsed.result.meta.errors.find((error) => error.severity !== 'warning')
-      return { root, failure: root ? null : (firstError?.message ?? 'The program has no root component') }
+      return { root, failure: root ? null : (firstError?.message ?? 'The program has no root component'), errors }
     } catch (error) {
-      return { root: null, failure: error instanceof Error ? error.message : String(error) }
+      return { root: null, failure: error instanceof Error ? error.message : String(error), errors }
     }
   }, [parsed, state, library, functions])
 
@@ -281,7 +302,12 @@ export function useGenUiProgram({
     [live, canSend, library, commit, functions]
   )
 
-  if (!rendered.root) return { content: null, failure: live ? null : (rendered.failure ?? '') }
+  const issues = useMemo(
+    () => (live ? [] : programIssues(parsed.result, rendered.errors)),
+    [live, parsed.result, rendered.errors]
+  )
+
+  if (!rendered.root) return { content: null, failure: live ? null : (rendered.failure ?? ''), issues }
   return {
     content: (
       <RuntimeContext.Provider value={runtime}>
@@ -289,6 +315,7 @@ export function useGenUiProgram({
       </RuntimeContext.Provider>
     ),
     failure: null,
+    issues,
   }
 }
 
