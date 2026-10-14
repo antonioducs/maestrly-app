@@ -13,8 +13,10 @@ import { unwatchNotes } from './notes/notes-service'
 import { clearPlan } from './plan-broker'
 import { unwatchConversation } from './selection-bridge'
 import {
+  clearConversationAttention,
   countOtherActiveConversationsInCwd,
   getConversation,
+  listConversationAttention,
   listConversations,
   listStandaloneConversations,
   setStandaloneConversationOrder,
@@ -35,6 +37,8 @@ import {
 export interface ConversationIpcDeps {
   stopChat: (id: string) => void | Promise<void>
   resumeBackgroundCompaction?: (id: string) => void
+  /** Tells every window, on this computer and connected ones, that the conversation's attention mark changed. */
+  emitAttention?: (conversationId: string, attention: boolean) => void
 }
 
 function assertReviewLoopMutationAllowed(conversationId: string): void {
@@ -103,6 +107,12 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   // Pin/unpin returns the canonical timestamp or null so UI can update without refresh. Store requires a
   // regular, unarchived conversation.
   reg.mhandle('conversation:pin', (_e, id: string, pinned: boolean) => setConversationPinned(id, pinned))
+  // Conversations waiting for the person, kept by the host so that seeing one on any computer clears it everywhere.
+  reg.handle('conversation:attention-list', () => listConversationAttention())
+  reg.mhandle('conversation:attention-clear', (_e, id: unknown) => {
+    const conversationId = z.string().min(1).parse(id)
+    if (clearConversationAttention(conversationId)) deps.emitAttention?.(conversationId, false)
+  })
   reg.mhandle('conversation:archive', async (_e, id: string, archived: boolean) => {
     assertReviewLoopMutationAllowed(id)
     assertConversationMigrationMutationAllowed(id, archived ? 'Archive conversation' : 'Unarchive conversation')
@@ -118,6 +128,7 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
       cleanupSharedWatchers(id) // #322: release shared watchers only when no active sibling needs them
     }
     setConversationArchived(id, archived)
+    if (archived && clearConversationAttention(id)) deps.emitAttention?.(id, false)
     if (!archived) deps.resumeBackgroundCompaction?.(id)
   })
   reg.mhandle('conversation:delete', async (_e, id: string) => {

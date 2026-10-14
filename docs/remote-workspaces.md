@@ -187,7 +187,8 @@ sent.
 
 Two computers paired with the same server see the same chats and workspaces. Both receive a turn as it streams, and
 either can answer a permission request, a question, or a plan. A chat or workspace that the other computer created,
-renamed, or removed appears here when this window gets the focus again.
+renamed, or removed appears here when this window gets the focus again. The red dot of a conversation that needs you is
+kept by the server: opening the conversation on one computer clears it on the other.
 
 ## Not available yet
 

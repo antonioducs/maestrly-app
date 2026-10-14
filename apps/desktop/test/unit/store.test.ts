@@ -44,6 +44,9 @@ import {
   getConversation,
   listConversations,
   updateConversationStatus,
+  markConversationAttention,
+  clearConversationAttention,
+  listConversationAttention,
   renameConversation,
   setConversationArchived,
   setConversationPinned,
@@ -710,6 +713,25 @@ describe('conversations — CRUD and helpers', () => {
     const after = getConversation(conv.id)
     expect(after?.status).toBe('working')
     expect(after?.lastActivityAt).toBeGreaterThanOrEqual(before)
+  })
+
+  it('keeps one attention mark per conversation and lists only unarchived ones', () => {
+    const ws = makeWorkspace()
+    const conv = makeConversation(ws.id)
+    const archived = makeConversation(ws.id)
+
+    expect(listConversationAttention()).toEqual([])
+    expect(markConversationAttention(conv.id)).toBe(true)
+    expect(markConversationAttention(conv.id)).toBe(false)
+    expect(markConversationAttention(archived.id)).toBe(true)
+    setConversationArchived(archived.id, true)
+    expect(listConversationAttention()).toEqual([conv.id])
+
+    expect(clearConversationAttention(conv.id)).toBe(true)
+    expect(clearConversationAttention(conv.id)).toBe(false)
+    expect(clearConversationAttention('id-missing')).toBe(false)
+    expect(markConversationAttention('id-missing')).toBe(false)
+    expect(listConversationAttention()).toEqual([])
   })
 
   it('renameConversation updates the name', () => {

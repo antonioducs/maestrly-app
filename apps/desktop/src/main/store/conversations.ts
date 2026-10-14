@@ -197,6 +197,32 @@ export function updateConversationStatus(id: string, status: ConversationStatus)
   getDb().prepare('UPDATE conversations SET status = ?, last_activity_at = ? WHERE id = ?').run(status, Date.now(), id)
 }
 
+/** Marks the conversation as waiting for the person; true when it was not marked yet. */
+export function markConversationAttention(id: string): boolean {
+  return (
+    getDb()
+      .prepare('UPDATE conversations SET attention_at = ? WHERE id = ? AND attention_at IS NULL')
+      .run(Date.now(), id).changes === 1
+  )
+}
+
+/** The person saw the conversation on some computer; true when it was marked. */
+export function clearConversationAttention(id: string): boolean {
+  return (
+    getDb().prepare('UPDATE conversations SET attention_at = NULL WHERE id = ? AND attention_at IS NOT NULL').run(id)
+      .changes === 1
+  )
+}
+
+/** Unarchived conversations waiting for the person. */
+export function listConversationAttention(): string[] {
+  return (
+    getDb().prepare('SELECT id FROM conversations WHERE attention_at IS NOT NULL AND archived = 0').all() as Array<{
+      id: string
+    }>
+  ).map((row) => row.id)
+}
+
 /** Compare-and-set keeps explicit experience transitions from overwriting a concurrent or stale state. */
 export function updateConversationExperience(
   id: string,
