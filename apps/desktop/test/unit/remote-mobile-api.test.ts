@@ -113,6 +113,7 @@ function setup() {
       : { messages: state.messages, hasMore: true, earliestSeq: 7 }
   )
   handle('chat:runtime', () => state.runtime)
+  handle('conversation:attention-clear', () => undefined)
   handle('plan:get', () => null)
   handle('conversation-dispatch:status', () => ({ sourceConversationId: 'c9' }))
   handle('chat:send', () => state.send)
@@ -662,6 +663,22 @@ describe('mobile API of a workspaces host', () => {
       expect.not.objectContaining({ fromConversation: expect.anything() }),
     ])
     expect(mobileChatPageSchema.parse(opened.page).items[0]).toHaveProperty('fromConversation.purpose', 'report')
+    h.api.dispose()
+  })
+
+  it('clears the attention mark of a conversation the phone shows', async () => {
+    const h = setup()
+    await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })
+    expect(h.called('conversation:attention-clear').map(([, args]) => args)).toEqual([['c1']])
+    sendToRemoteMains('conversation:attention', { conversationId: 'c1', attention: true })
+    sendToRemoteMains('conversation:attention', { conversationId: 'c2', attention: true })
+    sendToRemoteMains('conversation:attention', { conversationId: 'c1', attention: false })
+    await settle()
+    expect(h.called('conversation:attention-clear').map(([, args]) => args)).toEqual([['c1'], ['c1']])
+    await h.invoke('mobile:v1:conversation:close', { conversationId: 'c1' })
+    sendToRemoteMains('conversation:attention', { conversationId: 'c1', attention: true })
+    await settle()
+    expect(h.called('conversation:attention-clear')).toHaveLength(2)
     h.api.dispose()
   })
 

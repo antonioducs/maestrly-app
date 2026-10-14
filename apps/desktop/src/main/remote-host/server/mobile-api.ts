@@ -374,6 +374,8 @@ export class MobileApi {
         sourceConversationId?: string | null
       } | null>,
     ])
+    // The phone shows it now: as on a computer, seeing a conversation clears its attention mark everywhere.
+    this.clearAttention(id)
     open.messages = mergePendingChatQuestions(page?.messages ?? [], id, runtime?.pendingQuestions ?? [])
     open.before = page?.hasMore && page.earliestSeq !== null ? `seq-${page.earliestSeq}` : null
     open.streaming = runtime?.streaming === true
@@ -391,6 +393,10 @@ export class MobileApi {
       page: { items, before: open.before },
       runtime: current,
     }
+  }
+
+  private clearAttention(id: string): void {
+    void (this.call('conversation:attention-clear', id) as Promise<unknown>).catch(() => {})
   }
 
   private closeConversation(id: string): void {
@@ -819,6 +825,13 @@ export class MobileApi {
       return this.delta(channel.slice('chat:delta:'.length), payload as ChatStreamEvent)
     if (channel.startsWith('chat:permission:'))
       return this.permission(channel.slice('chat:permission:'.length), payload as ChatPermissionEvent)
+    if (channel === 'conversation:attention') {
+      const value = payload as { conversationId?: unknown; attention?: unknown } | null
+      // A conversation open on the phone is on its screen: what it asks for is already seen.
+      if (value?.attention === true && typeof value.conversationId === 'string' && this.open.has(value.conversationId))
+        this.clearAttention(value.conversationId)
+      return
+    }
     if (channel === 'agent:status') {
       const value = payload as { agentId?: unknown; status?: unknown } | null
       if (typeof value?.agentId === 'string' && STATUSES.has(value.status as ConversationStatus))
