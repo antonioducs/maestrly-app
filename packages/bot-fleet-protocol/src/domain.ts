@@ -264,6 +264,8 @@ export type FleetTakeoverState = z.infer<typeof fleetTakeoverStateSchema>
 /** A bot's screen areas: its browser window (a tile of the environment display) and its own apps display. */
 export const fleetScreenSurfaceSchema = z.enum(['browser', 'apps'])
 export type FleetScreenSurface = z.infer<typeof fleetScreenSurfaceSchema>
+/** A conversation's id on a workspaces host (a UUID today), as it appears in screen routes and tickets. */
+export const fleetHostConversationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/)
 
 /** Container resources, measured per environment. */
 export const fleetResourcesSchema = z.object({
