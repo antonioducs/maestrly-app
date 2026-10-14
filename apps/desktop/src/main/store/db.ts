@@ -1033,6 +1033,8 @@ function initializeSchema(): void {
   // Only the person releases a bot chat for their own messages; a chat that predates the choice keeps none.
   if (!hasCol('bot_manual_chat_enabled'))
     db.exec('ALTER TABLE conversations ADD COLUMN bot_manual_chat_enabled INTEGER NOT NULL DEFAULT 0;')
+  // When the conversation started waiting for the person; kept by the host so every computer shows and clears it.
+  if (!hasCol('attention_at')) db.exec('ALTER TABLE conversations ADD COLUMN attention_at INTEGER;')
   db.exec(`
     CREATE TABLE IF NOT EXISTS bot_conversation_allocations (
       instance_id TEXT NOT NULL, owner_user_id TEXT NOT NULL, desktop_id TEXT NOT NULL,

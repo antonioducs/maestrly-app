@@ -10,7 +10,9 @@ import {
   attentionFor,
   clearChatGptAttention,
   clearConversationAttention,
+  clearNormalAttention,
   reconcileChatGptAttention,
+  replaceNormalAttention,
   type AgentAttentionState,
 } from '../../src/renderer/lib/use-agent-statuses'
 
@@ -182,5 +184,27 @@ describe('companion sidebar attention', () => {
     expect(next.normalAttention).toEqual(new Set())
     expect(next.companionAttention).toEqual(new Set())
     expect(attentionFor(next)).toEqual(new Set())
+  })
+
+  it('takes the host marks as listed, except for the conversation in front of the person', () => {
+    let state = applyChatGptTurnCompleted(empty(), 'conv-c', null)
+    state = applyNormalAttention(state, 'conv-stale')
+
+    const next = replaceNormalAttention(state, ['conv-a', 'conv-b'], 'conv-b')
+
+    expect(next.normalAttention).toEqual(new Set(['conv-a']))
+    expect(next.companionAttention).toEqual(new Set(['conv-c']))
+    expect(replaceNormalAttention(next, ['conv-a'], null)).toBe(next)
+  })
+
+  it('clears a mark another computer saw without touching this window companion completion', () => {
+    let state = applyChatGptTurnCompleted(empty(), 'conv-a', null)
+    state = applyNormalAttention(state, 'conv-a')
+
+    const next = clearNormalAttention(state, 'conv-a')
+
+    expect(next.normalAttention).toEqual(new Set())
+    expect(next.companionAttention).toEqual(new Set(['conv-a']))
+    expect(clearNormalAttention(next, 'conv-a')).toBe(next)
   })
 })

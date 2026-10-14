@@ -137,6 +137,7 @@ import {
   initStore,
   listAllConversations,
   updateConversationStatus,
+  markConversationAttention,
   getConversation,
   getWorkspace,
   getSoundSettings,
@@ -525,7 +526,18 @@ async function applyVSCodeUpdateOnIdle(): Promise<void> {
 }
 
 function broadcastStatus(payload: { agentId: string; status: string }): void {
+  // The registry emits ready/error only when a turn ends, and asking once per question: either needs the person.
+  // The host keeps the mark so that seeing it on one computer clears it on every other.
+  let attention = false
+  if (payload.status === 'ready' || payload.status === 'error' || payload.status === 'asking') {
+    try {
+      attention = markConversationAttention(payload.agentId)
+    } catch {
+      /* The conversation may no longer exist in the store. */
+    }
+  }
   sendToWindow('agent:status', payload)
+  if (attention) sendToWindow('conversation:attention', { conversationId: payload.agentId, attention: true })
 
   onAgentStatus(payload.agentId, payload.status)
 
@@ -791,7 +803,11 @@ function registerIpc(): void {
     stopChat,
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
-  registerConversationIpc(reg, { stopChat, resumeBackgroundCompaction })
+  registerConversationIpc(reg, {
+    stopChat,
+    resumeBackgroundCompaction,
+    emitAttention: (conversationId, attention) => sendToWindow('conversation:attention', { conversationId, attention }),
+  })
   registerLocalConversationIpc(reg)
   disposeConversationMigrationIpc?.()
   disposeConversationMigrationIpc = registerConversationMigrationIpc(reg, {
