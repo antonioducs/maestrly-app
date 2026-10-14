@@ -1759,6 +1759,8 @@ export default {
     takeControl: 'Take control',
     release: 'Release',
     agentKeepsWorking: 'The agent keeps working while you control this computer.',
+    controlledElsewhere:
+      'This computer is being controlled from another device. Take control again once it is released.',
   },
   remoteBrowser: {
     surface: 'Browser on the server',

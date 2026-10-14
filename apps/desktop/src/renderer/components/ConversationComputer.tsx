@@ -43,11 +43,18 @@ export function ConversationComputer({ convId, active }: { convId: string; activ
   const [attempt, setAttempt] = useState(0)
   const [mode, setMode] = useState<'view' | 'control'>('view')
   const target = useRef<HTMLDivElement>(null)
+  // A new open (the tab shown again, a reconnection, Try again) hides the last answer before it commits: that
+  // computer may have been given back since, and its screen must not be asked for.
+  const openRequest = `${convId}|${active}|${online}|${host.epoch}|${attempt}`
+  const [lastRequest, setLastRequest] = useState(openRequest)
+  if (lastRequest !== openRequest) {
+    setLastRequest(openRequest)
+    setOpening(true)
+  }
 
   useEffect(() => {
     if (!active || !online) return
     let cancelled = false
-    setOpening(true)
     api.computerOpen(convId).then(
       (result) => {
         if (cancelled) return
@@ -183,12 +190,22 @@ export function ConversationComputer({ convId, active }: { convId: string; activ
               </Button>
             )}
           </div>
-          <p
-            className="line-clamp-1 w-full text-center text-xs text-muted-foreground"
-            style={{ minHeight: FOOTER_HEIGHT }}
-          >
-            {controlling ? t('remoteComputer.agentKeepsWorking') : ''}
-          </p>
+          {showing && screen.conflict ? (
+            <p
+              role="alert"
+              className="line-clamp-1 w-full text-center text-xs text-destructive"
+              style={{ minHeight: FOOTER_HEIGHT }}
+            >
+              {t('remoteComputer.controlledElsewhere')}
+            </p>
+          ) : (
+            <p
+              className="line-clamp-1 w-full text-center text-xs text-muted-foreground"
+              style={{ minHeight: FOOTER_HEIGHT }}
+            >
+              {controlling ? t('remoteComputer.agentKeepsWorking') : ''}
+            </p>
+          )}
         </div>
       </div>
     </div>

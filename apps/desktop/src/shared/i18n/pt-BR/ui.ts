@@ -1772,6 +1772,8 @@ export default {
     takeControl: 'Assumir o controle',
     release: 'Liberar',
     agentKeepsWorking: 'O agente continua trabalhando enquanto você controla este computador.',
+    controlledElsewhere:
+      'Este computador está sendo controlado em outro dispositivo. Assuma o controle de novo quando ele for liberado.',
   },
   remoteBrowser: {
     surface: 'Navegador no servidor',
