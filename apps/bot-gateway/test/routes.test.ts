@@ -12,6 +12,7 @@ import {
   fleetInstanceHoldRequestSchema,
   fleetInstanceReleaseRequestSchema,
   fleetConversationCallRequestSchema,
+  fleetFeaturesSchema,
 } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
@@ -83,7 +84,8 @@ async function fake() {
       body = JSON.parse(Buffer.concat(chunks).toString())
     }
     try {
-      if (req.url === '/v1/health') return send(200, { ok: true, appVersion: '1.0', protocol: 1, ready: true })
+      if (req.url === '/v1/health')
+        return send(200, { ok: true, appVersion: '1.0', protocol: 1, ready: true, capabilities: ['video-screens'] })
       if (req.url === '/v1/status') return send(200, status)
       if (req.url === '/v1/accounts/api-key' && req.method === 'POST') {
         const input = body as { name: string }
@@ -400,6 +402,15 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     await gateway.close()
     store.close()
   }
+})
+
+it('advertises video screens within the twenty features a Mac reads', async () => {
+  const h = await harness(Date.now, { environments: true })
+  const features = (await (await h.request('GET', '/v1/meta')).json()).features as string[]
+  expect(features).toContain('video-screens')
+  // fleetFeaturesSchema caps the list: a longer one would fail the Mac's strict parse of the whole answer.
+  expect(features.length).toBeLessThanOrEqual(20)
+  expect(fleetFeaturesSchema.safeParse(features).success).toBe(true)
 })
 
 it('refuses to edit a message on a bot that cannot, before reaching it', async () => {

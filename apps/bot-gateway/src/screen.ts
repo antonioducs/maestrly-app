@@ -8,6 +8,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_SCREEN_UPGRADE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   type FleetScreenSurface,
 } from '@maestrly/bot-fleet-protocol'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -55,9 +56,7 @@ export class ScreenProxy {
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
     const environmentId = bot.environmentId!
-    // An instance from before environments has one display, the bot's browser area.
-    if (surface !== 'browser' && this.lifecycle.environmentCapable(environmentId) !== true)
-      throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
+    if (!this.videoCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
     if (mode === 'control' && (bot.takeover.state !== 'human' || bot.takeover.deviceId !== deviceId))
       throw new GatewayError('FORBIDDEN', 'Takeover required for control')
     return this.issue({ environmentId, botId, surface }, deviceId, mode)
@@ -67,9 +66,12 @@ export class ScreenProxy {
     const environment = this.lifecycle.environment(environmentId)
     if (!environment) throw new GatewayError('NOT_FOUND', 'Environment not found')
     if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
-    if (this.lifecycle.environmentCapable(environmentId) !== true)
-      throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
+    if (!this.videoCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
     return this.issue({ environmentId, botId: null, surface: 'environment' }, deviceId, mode)
+  }
+  /** Screens stream as video from images with the encoder; older environments restart onto the new image first. */
+  private videoCapable(environmentId: string): boolean {
+    return this.lifecycle.environmentCapabilities(environmentId).includes(FLEET_VIDEO_SCREENS_FEATURE)
   }
   private issue(target: Target, deviceId: string, mode: Mode) {
     if (mode === 'control' && onSharedDisplay(target.surface) && this.displayControls(target).length)
@@ -107,15 +109,9 @@ export class ScreenProxy {
     if (bot?.lifecycle !== 'running' || bot.environmentId !== ticket.environmentId) return false
     return ticket.mode === 'view' || (bot.takeover.state === 'human' && bot.takeover.deviceId === ticket.deviceId)
   }
-  /** The instance's screen route for a ticket; an instance from before environments has only the bot's browser. */
-  private upstreamPath(ticket: Ticket): string | null {
+  /** The instance's screen route for a ticket. */
+  private upstreamPath(ticket: Ticket): string {
     const view = ticket.mode === 'view'
-    if (this.lifecycle.environmentCapable(ticket.environmentId) !== true)
-      return ticket.surface === 'browser'
-        ? view
-          ? FLEET_INSTANCE_ROUTES.screenView.path
-          : FLEET_INSTANCE_ROUTES.screenControl.path
-        : null
     if (ticket.botId === null)
       return view
         ? FLEET_INSTANCE_ROUTES.environmentScreenView.path
@@ -147,11 +143,12 @@ export class ScreenProxy {
         return
       }
       const secret = this.lifecycle.store.environmentSecrets(ticket.environmentId)?.controlToken
-      const path = this.upstreamPath(ticket)
-      if (!secret || !path) {
+      // An environment that restarted onto an image without video screens since the ticket was issued.
+      if (!secret || !this.videoCapable(ticket.environmentId)) {
         ws.close(4003, 'ticket_invalid')
         return
       }
+      const path = this.upstreamPath(ticket)
       const target: Target = { environmentId: ticket.environmentId, botId: ticket.botId, surface: ticket.surface }
       // Reserved before connecting upstream, so a concurrent use of another ticket sees it.
       const reservation: Reservation = { ...target, deviceId: ticket.deviceId, mode: ticket.mode, ws }

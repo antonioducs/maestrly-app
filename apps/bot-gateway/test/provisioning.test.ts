@@ -60,6 +60,7 @@ it('discovers provisioning on the gateway and the live bot', async () => {
     'host-files',
     'host-editor',
     'message-edit',
+    'video-screens',
   ])
   expect((await (await h.request('GET', '/v1/bots/' + h.bot.id)).json()).capabilities).toEqual(['provisioning'])
 })

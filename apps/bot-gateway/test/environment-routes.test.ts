@@ -89,6 +89,7 @@ describe('environment routes', () => {
       'host-files',
       'host-editor',
       'message-edit',
+      'video-screens',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)
@@ -377,7 +378,7 @@ describe('environment routes', () => {
   })
 
   it('issues screen tickets for bot surfaces and for the environment screen without a takeover', async () => {
-    const h = await harness(Date.now, { environments: true })
+    const h = await harness(Date.now, { environments: true, videoScreens: true })
     for (const body of [{ mode: 'view' }, { mode: 'view', surface: 'browser' }, { mode: 'view', surface: 'apps' }]) {
       const response = await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, body)
       expect(response.status).toBe(201)

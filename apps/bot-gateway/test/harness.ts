@@ -47,8 +47,15 @@ afterEach(async () => {
  * `compaction` it also lists its environment's models, as a Maestrly with environment compaction defaults does. With
  * `runtimes` its statuses report its Claude Code and Codex versions and it accepts runtime checks. With `messageEdit`
  * it edits the owner's last message, recorded in `edits`; it refuses one of input `busy` as a bot that is working.
+ * With `videoScreens` it streams its screens as video, so the gateway issues tickets for them.
  */
-async function fake(environments: boolean, compaction = false, runtimes = false, messageEdit = false) {
+async function fake(
+  environments: boolean,
+  compaction = false,
+  runtimes = false,
+  messageEdit = false,
+  videoScreens = false
+) {
   let account: { id: string; label: string } | null = null
   const installed = new Map<string, { slot: number; gatewayToken: string }>()
   const installs: FleetInstanceBotInstall[] = []
@@ -94,6 +101,7 @@ async function fake(environments: boolean, compaction = false, runtimes = false,
           ]
         : ['provisioning']),
       ...(messageEdit ? ['message-edit'] : []),
+      ...(videoScreens ? ['video-screens'] : []),
     ],
     runtimes: runtimes
       ? ([
@@ -426,13 +434,20 @@ async function fake(environments: boolean, compaction = false, runtimes = false,
  */
 export async function harness(
   now: () => number = Date.now,
-  options: { environments?: boolean; compaction?: boolean; runtimes?: boolean; messageEdit?: boolean } = {}
+  options: {
+    environments?: boolean
+    compaction?: boolean
+    runtimes?: boolean
+    messageEdit?: boolean
+    videoScreens?: boolean
+  } = {}
 ) {
   const instance = await fake(
       options.environments === true,
       options.compaction === true,
       options.runtimes === true,
-      options.messageEdit === true
+      options.messageEdit === true,
+      options.videoScreens === true
     ),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
