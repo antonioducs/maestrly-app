@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Publish artifacts from chats on a server's workspaces environment, with
+  nothing to set up: they go to the server that runs the chat. **Open** on their
+  cards, and the agent's `artifact_open`, open the page in your computer's
+  browser. Update the bot server to use it. See
+  [remote workspaces](docs/remote-workspaces.md#use-it).
+
 ## [0.17.0] - 2026-10-13
 
 ### Added

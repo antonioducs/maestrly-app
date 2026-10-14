@@ -2303,6 +2303,7 @@ export async function runCodexSubscriptionChat(
       eligibleChatGptSession,
       ephemeral: Boolean(args.ephemeralSession),
       reviewer: Boolean(args.reviewerRuntime),
+      standalone: args.projectId === null,
       requestUserInputAsyncAvailable: session?.requestUserInputAsync === true,
       turnSteerAvailable: session?.turnSteer,
       turnSettingsUpdateAvailable: session?.turnSettingsUpdate,

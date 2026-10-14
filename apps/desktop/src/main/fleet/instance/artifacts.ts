@@ -7,7 +7,7 @@ import {
 } from '@maestrly/artifact-host'
 import type { FleetArtifactResult } from '@maestrly/bot-fleet-protocol'
 import type { ArtifactSource, ArtifactSources } from '../../artifacts/sources'
-import { gatewayRequest } from './gateway-client'
+import { type GatewayConfig, gatewayRequest } from './gateway-client'
 import type { BotRuntime } from './runtime'
 
 const botOff = () =>
@@ -18,11 +18,25 @@ const unavailable = () =>
   })
 
 export function botArtifactSource(runtime: BotRuntime): ArtifactSource | null {
-  const ready = () => runtime.artifactsEnabled && !!runtime.gatewayConfig?.token
-  if (!ready()) return null
+  const access = () => (runtime.artifactsEnabled && runtime.gatewayConfig?.token ? runtime.gatewayConfig : null)
+  if (!access()) return null
+  return gatewayArtifactSource({ owner: { kind: 'bot', id: runtime.botId }, access, off: botOff })
+}
+
+/**
+ * Artifacts an agent publishes through the gateway's internal API with its own token: a bot's, or those of the
+ * workspaces host that runs the owner's chats. The gateway keeps each to its own artifacts and to the agent tools.
+ */
+export function gatewayArtifactSource(options: {
+  owner: ArtifactSource['owner']
+  /** The gateway and token to publish with, or null while publishing is not allowed. */
+  access: () => GatewayConfig | null
+  /** Why publishing is not allowed. */
+  off: () => ArtifactHostError
+}): ArtifactSource {
   const config = () => {
-    const value = runtime.gatewayConfig
-    if (!runtime.artifactsEnabled || !value?.token) throw botOff()
+    const value = options.access()
+    if (!value?.token) throw options.off()
     return value
   }
   const admin = createRemoteAdmin(async (method, args) => {
@@ -53,8 +67,8 @@ export function botArtifactSource(runtime: BotRuntime): ArtifactSource | null {
   })
   return {
     key: 'server',
-    owner: { kind: 'bot', id: runtime.botId },
-    ready,
+    owner: options.owner,
+    ready: () => !!options.access()?.token,
     admin: async () => {
       config()
       return admin

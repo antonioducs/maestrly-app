@@ -5,7 +5,9 @@ import { validateStandaloneConversationDirectory } from './standalone-conversati
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
-import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import { isHeadlessInstance, isServerMode, takeHostGatewayAccess } from './remote-host/server/config'
+import { createHostSources } from './remote-host/server/host-artifacts'
+import { ARTIFACT_OPEN_REQUEST_CHANNEL } from '../shared/artifacts'
 import { saveHeadlessDownloads } from './headless-downloads'
 import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
 import { startServerHostMode } from './remote-host/server/start'
@@ -37,7 +39,15 @@ import {
   setTerminalFloatFocuser,
   setTerminalPopupFocuser,
 } from './terminal-manager'
-import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
+import {
+  safeWindowSend,
+  setBroadcastMainWindow,
+  broadcast,
+  guardHandle,
+  guardOn,
+  focusMainWindow,
+  sendToConversation,
+} from './window-ipc'
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
@@ -298,15 +308,19 @@ function initArtifacts(): void {
       onChanged: () => broadcast('artifacts:changed'),
     })
   }
+  // A workspaces host is not paired with the server it runs on: it publishes there with the token the gateway gave it.
+  const hostAccess = takeHostGatewayAccess()
   const sources = isBotMode()
     ? createBotSources((id) => {
         const bot = botRuntimeForConversation(id)
         return bot?.artifactsEnabled ? botArtifactSource(bot) : null
       })
-    : createDesktopSources({
-        server: () => server.source(),
-        unavailable: () => server.unavailable() ?? serverUnavailable(),
-      })
+    : isServerMode()
+      ? createHostSources(hostAccess)
+      : createDesktopSources({
+          server: () => server.source(),
+          unavailable: () => server.unavailable() ?? serverUnavailable(),
+        })
   const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
   if (!isBotMode())
     fleetClientService.onArtifactEvent = (event) => {
@@ -317,7 +331,7 @@ function initArtifacts(): void {
   const service = new ArtifactsService({
     sources,
     emitChanged: () => broadcast('artifacts:changed'),
-    server: isBotMode() ? undefined : server,
+    server: isHeadlessInstance() ? undefined : server,
     legacy: legacyArtifacts ?? undefined,
     botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
     vault,
@@ -331,6 +345,10 @@ function initArtifacts(): void {
       createBrowserTab(convId, url, { activate })
       if (activate) focusBrowserDrawer(convId)
     },
+    // Only the main window of a computer showing the conversation acts on it; panels do not listen.
+    openOnViewer: isServerMode()
+      ? (convId, request) => sendToConversation(convId, ARTIFACT_OPEN_REQUEST_CHANNEL, request)
+      : undefined,
   })
   setArtifactsService(service)
   thumbnails = new ThumbnailQueue({

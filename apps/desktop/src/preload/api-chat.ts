@@ -2,6 +2,7 @@ import type { MemorySettings } from '../shared/memory'
 import type { AppToolGroup } from '../shared/app-tool-groups'
 import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
+import { ARTIFACT_OPEN_REQUEST_CHANNEL, type ArtifactOpenRequest, parseArtifactOpenRequest } from '../shared/artifacts'
 import type { IpcTransport } from './ipc-transport'
 import type {
   ChatConfig,
@@ -360,6 +361,16 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       const listener = (_event: unknown, payload: ChatGptWebTurnCompletedPayload) => cb(payload)
       ipcRenderer.on('chat:chatgpt-web:turn-completed', listener)
       return () => ipcRenderer.removeListener('chat:chatgpt-web:turn-completed', listener)
+    },
+
+    /** A workspaces host asks the computer showing one of its conversations to open an artifact an agent opened. */
+    onChatArtifactOpen: (cb: (request: ArtifactOpenRequest) => void): (() => void) => {
+      const listener = (_event: unknown, payload: unknown) => {
+        const request = parseArtifactOpenRequest(payload)
+        if (request) cb(request)
+      }
+      ipcRenderer.on(ARTIFACT_OPEN_REQUEST_CHANNEL, listener)
+      return () => ipcRenderer.removeListener(ARTIFACT_OPEN_REQUEST_CHANNEL, listener)
     },
 
     chatAddProvider: (input: {

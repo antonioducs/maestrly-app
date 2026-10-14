@@ -61,4 +61,12 @@ export class Auth {
     if (!id) throw new GatewayError('UNAUTHORIZED', 'Invalid bot token')
     return id
   }
+  /** Who calls the internal API: a bot, or the workspaces environment that hosts the owner's chats. */
+  internalCaller(bearer: string | undefined): { botId: string } | { environmentId: string } {
+    if (bearer?.startsWith('Bearer ')) {
+      const environmentId = this.store.hostByGatewayHash(sha256(bearer.slice(7)))
+      if (environmentId) return { environmentId }
+    }
+    return { botId: this.internalBot(bearer) }
+  }
 }
