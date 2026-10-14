@@ -13,6 +13,16 @@ User-visible changes by version. Downloads are on
   browser. Update the bot server to use it. See
   [remote workspaces](docs/remote-workspaces.md#use-it).
 
+### Changed
+
+- Stream the bots' screens as H.264 video instead of VNC. Screens stay
+  responsive on slow or distant links, such as Tailscale Funnel: the bot server
+  sends each viewer only what its link carries and adapts the quality and frame
+  rate to it. Clipboard text crosses as UTF-8, so accents and emoji copy both
+  ways. Update the desktop app and the bot server, and restart each environment
+  onto the new image, to open its screens. See
+  [screens of a bot](docs/bot-fleet.md#screens-of-a-bot).
+
 ## [0.17.0] - 2026-10-13
 
 ### Added

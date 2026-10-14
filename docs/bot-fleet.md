@@ -373,8 +373,9 @@ bot screen does not take focus from the composer.
 Screens stream as H.264 video. The app acknowledges each frame it draws, and the bot server sends a viewer no more than
 its link carries: on a slow or distant link, such as Tailscale Funnel, it drops frames for that viewer rather than
 letting delay build up, lowers the screen's quality and frame rate while frames keep being dropped, and raises them
-again once the link keeps up. A still screen is refined to full quality. Text is sharpest when the screen is shown at
-its own size, or a whole multiple of it, on your display. While you control a screen, your pointer takes the shape of
+again once the link keeps up. On a fast link, a still screen is then refined to full quality; on a slow one it stays at
+the stream's quality, so your clicks never wait behind the refinement. Text is sharpest when the screen is shown at its
+own size, or a whole multiple of it, on your display. While you control a screen, your pointer takes the shape of
 the bot's pointer and moves without waiting for the server; while you watch, the bot's pointer shows where it is.
 
 Under the screen, a bar says who is in control: **name in control** with **Take control** while you watch,
