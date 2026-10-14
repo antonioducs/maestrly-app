@@ -9,6 +9,7 @@ import {
   type MoveFlowState,
   moveTargetConversationKey,
   moveTargetsFor,
+  offersBranchChoice,
 } from '../../src/renderer/lib/conversation-move/flow'
 import type { MoveChangedEvent, MovePreview } from '../../src/shared/conversation-move'
 import type { HostView } from '../../src/shared/hosts'
@@ -195,6 +196,27 @@ describe('conversation move renderer flow', () => {
     expect(canExecuteMove(previewed(), NOW + 120_000)).toBe(false)
     const edited = moveFlowReducer(previewed(), { type: 'edit-branch', value: 'other' })
     expect(canExecuteMove(edited, NOW)).toBe(false)
+  })
+
+  it('keeps a refused branch name in the field so it can be changed', () => {
+    const preparing = moveFlowReducer(initialMoveFlow, {
+      type: 'prepare',
+      sourceHostId: 'local',
+      conversationId: 'c1',
+      targetHostId: REMOTE,
+      conversationName: 'Feature',
+      targetBranch: 'taken',
+    })
+    const refused = preview({
+      operationId: null,
+      target: null,
+      blockers: [{ code: 'target-branch-unavailable', message: 'in use' }],
+    })
+    const state = moveFlowReducer(preparing, { type: 'prepared', preview: refused })
+    expect(state).toMatchObject({ kind: 'preview', branchDraft: 'taken' })
+    expect(offersBranchChoice(refused)).toBe(true)
+    expect(offersBranchChoice(preview({ target: null, blockers: [{ code: 'running', message: 'x' }] }))).toBe(false)
+    expect(canExecuteMove(state, NOW)).toBe(false)
   })
 
   it('builds the focus key of the moved conversation', () => {

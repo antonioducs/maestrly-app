@@ -36,6 +36,8 @@ export type MoveFlowState =
       conversationId: string
       targetHostId: HostId
       conversationName: string
+      /** The branch name the person typed, when they chose one. */
+      targetBranch?: string
     }
   | { kind: 'preview'; preview: MovePreview; selected: string[]; confirmed: string[]; branchDraft: string }
   | { kind: 'executing'; preview: MovePreview; event: MoveChangedEvent | null }
@@ -49,6 +51,7 @@ export type MoveFlowAction =
       conversationId: string
       targetHostId: HostId
       conversationName: string
+      targetBranch?: string
     }
   | { type: 'prepared'; preview: MovePreview }
   | { type: 'toggle-ignored'; path: string }
@@ -78,6 +81,7 @@ export function moveFlowReducer(state: MoveFlowState, action: MoveFlowAction): M
         conversationId: action.conversationId,
         targetHostId: action.targetHostId,
         conversationName: action.conversationName,
+        ...(action.targetBranch ? { targetBranch: action.targetBranch } : {}),
       }
     case 'prepared':
       if (state.kind !== 'preparing') return state
@@ -86,7 +90,8 @@ export function moveFlowReducer(state: MoveFlowState, action: MoveFlowAction): M
         preview: action.preview,
         selected: [],
         confirmed: [],
-        branchDraft: action.preview.target?.branch ?? '',
+        // A refused name stays in the field, to be corrected.
+        branchDraft: action.preview.target?.branch ?? state.targetBranch ?? action.preview.source.branch ?? '',
       }
     case 'toggle-ignored': {
       if (state.kind !== 'preview') return state
@@ -149,6 +154,13 @@ export function canExecuteMove(state: MoveFlowState, now: number): boolean {
     missingMoveConfirmations(preview, state.selected, state.confirmed).length === 0
   )
 }
+
+/** Blockers the person can lift by choosing another branch name. */
+export const BRANCH_BLOCKER_CODES: ReadonlySet<string> = new Set(['target-branch-invalid', 'target-branch-unavailable'])
+
+/** Whether the dialog offers the branch field: a planned move, or one refused for its branch name. */
+export const offersBranchChoice = (preview: MovePreview): boolean =>
+  !!preview.target || preview.blockers.some((blocker) => BRANCH_BLOCKER_CODES.has(blocker.code))
 
 /** The move the dialog drives, whose events and recovery the window leaves to it. */
 export const dialogOperationId = (state: MoveFlowState): string | null => previewOf(state)?.operationId ?? null

@@ -15,7 +15,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { canExecuteMove, missingMoveConfirmations, type MoveFlowState, previewOf } from '@/lib/conversation-move/flow'
+import {
+  canExecuteMove,
+  missingMoveConfirmations,
+  type MoveFlowState,
+  offersBranchChoice,
+  previewOf,
+} from '@/lib/conversation-move/flow'
 
 interface Props {
   state: MoveFlowState
@@ -199,7 +205,8 @@ function PreviewBody({
   const { t } = useTranslation('ui')
   const { target } = preview
   const missing = missingMoveConfirmations(preview, selected, confirmed)
-  const branchEdited = !!target && branchDraft.trim() !== target.branch
+  // A refused name can always be checked again; a planned one once it changed.
+  const branchEdited = target ? branchDraft.trim() !== target.branch : true
   const workspace = target?.workspace
   return (
     <div className="flex flex-col gap-4 text-sm">
@@ -249,7 +256,7 @@ function PreviewBody({
         </div>
       )}
 
-      {target && (
+      {offersBranchChoice(preview) && (
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="conversation-move-branch">{t('conversationMove.branch.label')}</Label>
           <div className="flex gap-2">
@@ -265,7 +272,11 @@ function PreviewBody({
               {t('conversationMove.branch.apply')}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">{t(`conversationMove.branch.action.${target.branchAction}`)}</p>
+          {target && (
+            <p className="text-xs text-muted-foreground">
+              {t(`conversationMove.branch.action.${target.branchAction}`)}
+            </p>
+          )}
           {preview.warnings.includes('branch-renamed') && (
             <p className="text-xs text-amber-200">{t('conversationMove.branch.renamed')}</p>
           )}

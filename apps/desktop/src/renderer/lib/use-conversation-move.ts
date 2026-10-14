@@ -78,7 +78,7 @@ export function useConversationMove({ refreshHost, focusConversationKey }: Param
       input: { sourceHostId: HostId; conversationId: string; targetHostId: HostId; conversationName: string },
       targetBranch?: string
     ) => {
-      dispatch({ type: 'prepare', ...input })
+      dispatch({ type: 'prepare', ...input, ...(targetBranch ? { targetBranch } : {}) })
       try {
         const preview = await api.prepareConversationMove({
           sourceHostId: input.sourceHostId,
