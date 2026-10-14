@@ -26,7 +26,7 @@ export function TerminalSearchBar({ query, index, total, focusSignal, onQueryCha
 
   return (
     <div className="pointer-events-none absolute right-4 top-3 z-20">
-      <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-white/[0.12] bg-[#1a1a1f]/95 px-2 py-1.5 shadow-xl backdrop-blur">
+      <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-white/[0.12] bg-[#1a1a1f] px-2 py-1.5 shadow-xl">
         <input
           ref={inputRef}
           value={query}

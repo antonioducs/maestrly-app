@@ -30,7 +30,7 @@ export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSu
   return (
     <div ref={rootRef} className="absolute bottom-3 right-[max(0.75rem,calc((100%_-_var(--container-3xl))/2))] z-10">
       {open && (
-        <div className="absolute bottom-full right-0 mb-2 w-[min(25rem,calc(100vw-3rem))] overflow-hidden rounded-xl border border-violet-400/20 bg-[#15131d]/95 shadow-xl backdrop-blur">
+        <div className="absolute bottom-full right-0 mb-2 w-[min(25rem,calc(100vw-3rem))] overflow-hidden rounded-xl border border-violet-400/20 bg-[#15131d] shadow-xl">
           <div className="flex items-center gap-2 border-b border-white/[0.07] px-3 py-2">
             <Bot className="size-4 text-violet-300" />
             <span className="text-xs font-medium text-foreground">{t('subagentSession.activity')}</span>
@@ -82,7 +82,7 @@ export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSu
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex max-w-[min(22rem,calc(100vw-3rem))] items-center gap-1.5 rounded-full border border-violet-400/30 bg-violet-400/[0.11] px-2.5 py-1 text-[11px] text-violet-100 shadow-lg backdrop-blur hover:bg-violet-400/[0.17]"
+        className="flex max-w-[min(22rem,calc(100vw-3rem))] items-center gap-1.5 rounded-full border border-violet-400/30 bg-[color-mix(in_oklab,var(--color-violet-400)_11%,#1a1a1f)] px-2.5 py-1 text-[11px] text-violet-100 shadow-lg hover:bg-[color-mix(in_oklab,var(--color-violet-400)_17%,#1a1a1f)]"
       >
         <Bot className="size-3.5" />
         {active.length > 0 && <Loader2 className="size-3 animate-spin" />}

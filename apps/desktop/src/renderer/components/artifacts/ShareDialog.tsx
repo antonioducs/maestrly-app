@@ -230,7 +230,7 @@ export function ShareDialog({
                 >
                   <SelectValue>{t(`artifacts.visibility.${sharing.visibility}`)}</SelectValue>
                 </SelectTrigger>
-                <SelectContent className="backdrop-blur-xl">
+                <SelectContent>
                   {VISIBILITIES.map((visibility) => (
                     <SelectItem
                       key={visibility}
@@ -330,7 +330,7 @@ export function ShareDialog({
                       >
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="backdrop-blur-xl">
+                      <SelectContent>
                         {expiry === 'custom' && sharing.linkExpiresAt !== null && (
                           <SelectItem value={CUSTOM}>
                             {t('artifacts.share.expiryOn', { date: dateFormat.format(sharing.linkExpiresAt) })}

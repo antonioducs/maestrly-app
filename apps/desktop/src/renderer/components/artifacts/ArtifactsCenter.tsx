@@ -415,7 +415,7 @@ export function ArtifactsCenter({
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="backdrop-blur-xl">
+                <SelectContent>
                   {options.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {projectLabel(option)}
@@ -431,7 +431,7 @@ export function ArtifactsCenter({
                   <span className="text-muted-foreground">{t('artifacts.filter.sortPrefix')}</span>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent align="end" className="backdrop-blur-xl">
+                <SelectContent align="end">
                   {ARTIFACT_SORTS.map((value) => (
                     <SelectItem key={value} value={value}>
                       {t(`artifacts.filter.sorts.${value}`)}

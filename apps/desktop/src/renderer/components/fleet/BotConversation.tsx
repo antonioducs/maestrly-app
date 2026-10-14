@@ -792,7 +792,7 @@ export function BotConversation({
             onClick={scrollToBottom}
             title={t('chat:messages.goToBottom')}
             aria-label={t('chat:messages.goToBottom')}
-            className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f]/95 text-foreground shadow-lg backdrop-blur transition hover:bg-[#26262d]"
+            className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f] text-foreground shadow-lg transition hover:bg-[#26262d]"
           >
             <ArrowDown className="h-4 w-4" />
           </button>

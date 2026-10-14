@@ -28,7 +28,7 @@ export function HostUnavailableOverlay({
     <div
       data-host-overlay={status}
       role="status"
-      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 p-6 text-center backdrop-blur-sm"
+      className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-chat-canvas p-6 text-center"
     >
       {waiting ? (
         <LoaderCircle className="size-6 animate-spin text-muted-foreground" />
