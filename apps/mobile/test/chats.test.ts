@@ -392,6 +392,30 @@ describe('bridge socket', () => {
     expect(create).toHaveBeenCalledWith('wss://bots.example.dev/v1/bridge?ticket=t1', 'https://bots.example.dev')
   })
 
+  it('opens the first workspaces environment that runs and speaks to phones, of a server with several', async () => {
+    const tickets: string[] = []
+    const call = vi.fn(async (key: string, options?: { params?: { eid?: string } }) => {
+      if (key !== 'environmentsList') {
+        tickets.push(options?.params?.eid ?? '')
+        return { ticket: 't1', path: '/v1/bridge?ticket=t1', expiresAt: '2026-10-13T12:00:30.000Z' }
+      }
+      return {
+        environments: [
+          workspaces({ id: 'personal', lifecycle: 'stopped' }),
+          workspaces({ id: 'old', capabilities: [] }),
+          workspaces({ id: 'company' }),
+        ],
+      }
+    })
+    await openBridgeSocket(
+      server,
+      { call } as never,
+      () => ['phones'],
+      vi.fn(() => ({}) as never)
+    )
+    expect(tickets).toEqual(['company'])
+  })
+
   it('says when it cannot work now: an old server or host, no running host, or a removed phone', async () => {
     const list = (environments: unknown[]) => ({ call: async () => ({ environments }) }) as never
     const code = (promise: Promise<unknown>) => promise.catch((error: MobileBridgeError) => error.code)

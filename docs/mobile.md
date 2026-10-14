@@ -48,7 +48,10 @@ Serve on the server and Tailscale on the phone: see
 
 Chats and workspaces need the server's workspaces environment to run a version
 of Maestrly that offers the mobile API. The phone does not need the same version
-as the server, only the same mobile API.
+as the server, only the same mobile API. A server with
+[several workspaces environments](remote-workspaces.md#several-scopes-on-one-server)
+shows the phone the chats of one of them: the first that runs and speaks to
+phones.
 
 ## Pair
 

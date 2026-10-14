@@ -43,7 +43,13 @@ export async function openBridgeSocket(
   if (!origin) throw new MobileBridgeError('UNSUPPORTED', 'The server address cannot carry a bridge')
   try {
     const { environments } = await client.call('environmentsList')
-    const host = environments.find((environment) => environment.kind === 'workspaces')
+    const hosts = environments.filter((environment) => environment.kind === 'workspaces')
+    // A server may host one workspaces environment per scope of the owner's work; the phone shows one of them, the
+    // first that runs and speaks to phones.
+    const host =
+      hosts.find((item) => item.lifecycle === 'running' && item.capabilities.includes(FLEET_MOBILE_HOST_FEATURE)) ??
+      hosts.find((item) => item.lifecycle === 'running') ??
+      hosts[0]
     if (host?.lifecycle !== 'running') throw new MobileBridgeError('UNAVAILABLE', 'No running workspaces host')
     if (!host.capabilities.includes(FLEET_MOBILE_HOST_FEATURE))
       throw new MobileBridgeError('UNSUPPORTED', 'The workspaces host predates phones')
