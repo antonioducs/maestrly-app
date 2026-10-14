@@ -883,6 +883,7 @@ export default {
     conflict: 'Outra tela deste ambiente está sendo controlada.',
     retryControl: 'Tentar de novo',
     restartEnvironment: 'Reinicie este ambiente para atualizá-lo antes de abrir esta tela.',
+    updateServer: 'Atualize o servidor de bots para abrir esta tela.',
     appsNeedsRestart: 'Reinicie o ambiente para atualizá-lo antes de abrir a tela de apps.',
     useEnvironmentScreen: 'Usar a tela do ambiente',
     environmentAccountDescription:

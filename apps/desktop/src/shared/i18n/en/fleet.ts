@@ -878,6 +878,7 @@ export default {
     conflict: 'Another screen in this environment is being controlled.',
     retryControl: 'Try again',
     restartEnvironment: 'Restart this environment to update it before opening this screen.',
+    updateServer: 'Update the bot server to open this screen.',
     appsNeedsRestart: 'Restart this environment to update it before opening the apps screen.',
     useEnvironmentScreen: 'Use the environment screen',
     environmentAccountDescription:

@@ -29,6 +29,8 @@ export const FLEET_RUNTIME_UPDATES_UNSUPPORTED = 'FLEET_RUNTIME_UPDATES_UNSUPPOR
 export const FLEET_SCREEN_CONFLICT = 'FLEET_SCREEN_CONFLICT'
 /** Raised when an environment still runs an image from before environments: restarting it updates it. */
 export const FLEET_SCREEN_RESTART_REQUIRED = 'FLEET_SCREEN_RESTART_REQUIRED'
+/** Raised when the gateway predates video screens (`video-screens`): updating the bot server opens them again. */
+export const FLEET_SCREEN_UPDATE_REQUIRED = 'FLEET_SCREEN_UPDATE_REQUIRED'
 /** Raised when the bot or environment of a screen stopped before the gateway could issue its ticket. */
 export const FLEET_SCREEN_OFFLINE = 'FLEET_SCREEN_OFFLINE'
 /** Raised when the gateway or the bot cannot edit messages yet (`message-edit`). */

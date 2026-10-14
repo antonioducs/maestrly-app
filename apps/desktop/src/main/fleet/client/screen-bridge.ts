@@ -16,6 +16,8 @@ type Socket = Pick<WebSocket, 'binaryType' | 'readyState' | 'send' | 'close' | '
 type ScreenChannel = { socket: Socket; owner: WebContents; mode: 'view' | 'control' }
 
 const MAX_CLIPBOARD_TEXT = 1_048_576
+/** The gateway takes WebSocket messages of at most 256 KiB; the screen stream reassembles pieces of any size. */
+const MAX_SOCKET_MESSAGE = 64 * 1024
 
 export class FleetScreenBridge {
   private readonly channels = new Map<string, ScreenChannel>()
@@ -84,7 +86,12 @@ export class FleetScreenBridge {
     const channel = this.channels.get(channelId)
     if (!channel || channel.owner !== owner) throw new Error('Screen channel unavailable')
     if (channel.socket.readyState !== WebSocket.OPEN) throw new Error('Screen channel is not open')
-    channel.socket.send(data)
+    if (data.byteLength <= MAX_SOCKET_MESSAGE) {
+      channel.socket.send(data)
+      return
+    }
+    for (let offset = 0; offset < data.byteLength; offset += MAX_SOCKET_MESSAGE)
+      channel.socket.send(data.slice(offset, Math.min(data.byteLength, offset + MAX_SOCKET_MESSAGE)))
   }
 
   /** Finish an explicit remote copy even if the user has already switched to another local app. */
