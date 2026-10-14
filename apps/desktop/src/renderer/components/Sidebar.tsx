@@ -63,6 +63,7 @@ import { hostActivity, resolveSidebarHost, type HostActivity } from '@/component
 import type { RemoteHostShell } from '@/lib/hosts/remote-host-runtime'
 import { hostSectionStatus } from '@/lib/hosts/host-status'
 import { hostOfKey } from '@/lib/hosts/shell-keys'
+import type { MoveTarget } from '@/lib/conversation-move/flow'
 import type { HostView } from '../../shared/hosts'
 import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -155,6 +156,9 @@ interface Props {
   onDeleteConversation: (conv: Conversation) => void
 
   onMigrateConversation: (conv: Conversation) => void
+  /** The hosts a conversation can move to now. */
+  moveTargetsOf: (conv: Conversation) => MoveTarget[]
+  onMoveConversation: (conv: Conversation, targetHostId: HostId) => void
 
   onReorderWorkspaces: (ids: string[]) => void
 
@@ -235,6 +239,8 @@ export function Sidebar({
   onPinConversation,
   onDeleteConversation,
   onMigrateConversation,
+  moveTargetsOf,
+  onMoveConversation,
   onReorderWorkspaces,
   onReorderConversations,
   groups,
@@ -435,6 +441,8 @@ export function Sidebar({
     onArchiveConversation,
     onDeleteConversation,
     onMigrateConversation,
+    moveTargetsOf,
+    onMoveConversation,
     onArchiveSiblings,
     onDeleteSiblings,
     onNewConversation,

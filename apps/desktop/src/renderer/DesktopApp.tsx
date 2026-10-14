@@ -48,6 +48,11 @@ import { useProjectSetup, type ProjectSetupOptions } from '@/project-setup/use-p
 import { useConversationMigration } from '@/lib/use-conversation-migration'
 import { ConversationMigrationDialog } from '@/components/conversation-migration/ConversationMigrationDialog'
 import { MigrationRecoveryGate } from '@/components/conversation-migration/MigrationRecoveryGate'
+import { useConversationMove } from '@/lib/use-conversation-move'
+import { moveTargetsFor } from '@/lib/conversation-move/flow'
+import { ConversationMoveDialog } from '@/components/conversation-move/ConversationMoveDialog'
+import { ConversationMoveRecoveryGate } from '@/components/conversation-move/ConversationMoveRecoveryGate'
+import { hostName } from '@/components/sidebar/HostSection'
 import { CHAT_VIEW_COLD_TTL_MS, pruneMountedChatViews } from '@/lib/conversation-mount-lru'
 import { useMemoryAutoReclaim } from '@/lib/use-memory-auto-reclaim'
 import { hostApi, HostProvider } from '@/lib/hosts/host-context'
@@ -520,6 +525,30 @@ export function DesktopApp() {
     refreshWorkspaces,
     focusConversation: handleSelect,
   })
+  // A moved conversation is shown once its new host lists it, which a remote host does a render after it answers.
+  const [pendingFocusKey, setPendingFocusKey] = useState<string | null>(null)
+  useEffect(() => {
+    if (!pendingFocusKey) return
+    const moved = everyHostWorkspaces
+      .flatMap((workspace) => workspace.conversations)
+      .find((conversation) => conversation.id === pendingFocusKey)
+    if (!moved) return
+    setPendingFocusKey(null)
+    handleSelect(moved)
+  }, [pendingFocusKey, everyHostWorkspaces, handleSelect])
+  const refreshHost = useCallback(
+    (hostId: HostId): Promise<unknown> =>
+      hostId === LOCAL_HOST_ID ? refreshWorkspaces() : (remoteRef.current[hostId]?.actions.refresh() ?? Promise.resolve()),
+    [refreshWorkspaces]
+  )
+  const move = useConversationMove({ refreshHost, focusConversationKey: setPendingFocusKey })
+  const hostLabel = useCallback(
+    (hostId: HostId): string => {
+      const view = hostViews.get(hostId)
+      return view ? hostName(view, t) : hostId
+    },
+    [hostViews, t]
+  )
   useEffect(() => {
     api.getOpenTargets().then((t) => setOpenTargets({ vscode: t.vscode }))
   }, [api])
@@ -666,7 +695,9 @@ export function DesktopApp() {
     migration.dialog.open ||
     migration.recoveriesChecking ||
     migration.blockingRecoveries.length > 0 ||
-    migration.recoveryError !== null
+    migration.recoveryError !== null ||
+    move.state.kind !== 'idle' ||
+    move.recoveries.length > 0
   useEffect(() => {
     window.api.popupSetSuppressed(overlaysSuspendNativeViews)
   }, [overlaysSuspendNativeViews])
@@ -856,6 +887,8 @@ export function DesktopApp() {
                 )
               }
               onMigrateConversation={migration.openMigration}
+              moveTargetsOf={(conv) => moveTargetsFor(conv.id, hosts)}
+              onMoveConversation={move.open}
               onNewSiblingConversation={handleNewSiblingConversation}
               onArchiveSiblings={(members, archived) =>
                 onHost(
@@ -1198,6 +1231,18 @@ export function DesktopApp() {
               onExecute={() => void migration.execute()}
             />
 
+            <ConversationMoveDialog
+              state={move.state}
+              hostLabel={hostLabel}
+              onClose={move.close}
+              onExecute={move.execute}
+              onBranchChange={move.editBranch}
+              onApplyBranch={move.applyBranch}
+              onToggleIgnored={move.toggleIgnored}
+              onConfirmSensitive={move.confirmSensitive}
+              onResolve={move.resolveInDialog}
+            />
+
             <HostProvider hostId={dialogHostId}>
               {/* The dialog works with its host's own ids; the window's are turned into them and back. */}
               <NewConversationDialog
@@ -1254,6 +1299,15 @@ export function DesktopApp() {
               resolving={migration.resolvingRecovery}
               onResolve={(recovery, action) => void migration.resolveRecovery(recovery, action)}
               onRetry={() => void migration.retryRecoveries()}
+            />
+
+            <ConversationMoveRecoveryGate
+              recoveries={move.recoveries}
+              error={move.recoveryError}
+              resolving={move.resolving}
+              hostLabel={hostLabel}
+              onResolve={move.resolveRecovery}
+              onRetry={move.retryRecoveries}
             />
 
             <PopupOverlay convId={mainOverride ? null : (active?.id ?? null)} />
