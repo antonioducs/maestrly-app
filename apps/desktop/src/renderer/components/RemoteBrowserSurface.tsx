@@ -679,7 +679,7 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
       )}
 
       {overlay && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#0A0A0B]/90 text-sm text-muted-foreground">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#0A0A0B] text-sm text-muted-foreground">
           {'busy' in overlay && overlay.busy && <Loader2 className="size-5 animate-spin" />}
           <p className="max-w-xs text-center" data-testid="remote-browser-status">
             {overlay.text}

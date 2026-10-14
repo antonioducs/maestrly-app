@@ -835,7 +835,7 @@ textarea::placeholder {
   padding: 0 11px;
   border: 0;
   border-radius: 999px;
-  background: rgba(27, 28, 31, 0.92);
+  background: var(--bar);
   color: var(--cream);
   font-size: 12px;
   font-weight: 500;
@@ -900,7 +900,7 @@ textarea::placeholder {
   padding: 0 8px 0 12px;
   border: 0;
   border-radius: 999px;
-  background: rgba(27, 28, 31, 0.9);
+  background: var(--bar);
   color: var(--cream);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
 }

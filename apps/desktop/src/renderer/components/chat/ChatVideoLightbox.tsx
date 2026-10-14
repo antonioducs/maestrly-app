@@ -215,7 +215,7 @@ function SpeedMenu({
           role="menu"
           aria-label={t('videoPlayer.speed')}
           onKeyDown={onMenuKeyDown}
-          className="absolute bottom-full right-0 z-10 mb-2 min-w-[8rem] rounded-md border border-white/10 bg-neutral-900/95 p-1 text-sm text-white shadow-lg"
+          className="absolute bottom-full right-0 z-10 mb-2 min-w-[8rem] rounded-md border border-white/10 bg-neutral-900 p-1 text-sm text-white shadow-lg"
         >
           {[...VIDEO_PLAYBACK_RATES].reverse().map((value) => (
             <button

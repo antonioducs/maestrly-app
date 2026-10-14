@@ -37,7 +37,7 @@ export function AboutModal({ open, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="relative flex w-full max-w-sm flex-col items-center overflow-hidden rounded-xl border border-border-strong bg-surface-elevated px-6 pb-5 pt-9 text-center shadow-2xl ring-1 ring-black/20"
+        className="relative flex w-full max-w-sm flex-col items-center overflow-hidden rounded-xl border border-border-strong bg-popover px-6 pb-5 pt-9 text-center shadow-2xl ring-1 ring-black/20"
         onClick={(e) => e.stopPropagation()}
       >
         <button

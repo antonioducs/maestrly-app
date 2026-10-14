@@ -206,7 +206,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
         onDrop={onFileDrop}
       >
         {dropActive && (
-          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-2xl border border-dashed border-white/30 bg-background/90 text-[13px] text-foreground">
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-2xl border border-dashed border-white/30 bg-popover text-[13px] text-foreground">
             <Paperclip className="h-4 w-4 text-muted-foreground" />
             {t('composer.dropFiles')}
           </div>

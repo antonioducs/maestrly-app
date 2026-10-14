@@ -1442,7 +1442,7 @@ export function ApiKeySettings({
       <div
         role="tablist"
         aria-label={t('settings.tabsLabel')}
-        className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-lg border border-border bg-background/95 p-1 shadow-sm backdrop-blur"
+        className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-lg border border-border bg-popover p-1 shadow-sm"
       >
         {visibleTabs.map((tab, index) => (
           <button

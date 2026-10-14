@@ -467,12 +467,12 @@ export function NotesEditor({ pageId, value, onChange, onFocusChange, imageScope
   return (
     <div className="relative h-full min-h-0" onKeyDownCapture={onKeyDownCapture}>
       {imgError && (
-        <div className="absolute inset-x-2 top-2 z-10 rounded-md border border-status-error/30 bg-status-error/15 px-3 py-1.5 text-xs text-status-error shadow-sm backdrop-blur">
+        <div className="absolute inset-x-2 top-2 z-10 rounded-md border border-status-error/30 bg-[color-mix(in_oklab,var(--status-error)_15%,var(--popover))] px-3 py-1.5 text-xs text-status-error shadow-sm">
           {imgError}
         </div>
       )}
       {copied && (
-        <div className="absolute right-2 top-2 z-10 rounded-md border border-emerald-500/30 bg-emerald-500/15 px-3 py-1.5 text-xs text-emerald-400 shadow-sm backdrop-blur">
+        <div className="absolute right-2 top-2 z-10 rounded-md border border-emerald-500/30 bg-[color-mix(in_oklab,var(--color-emerald-500)_15%,var(--popover))] px-3 py-1.5 text-xs text-emerald-400 shadow-sm">
           {i18n.t('ui:notesEditor.codeCopied')}
         </div>
       )}

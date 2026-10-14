@@ -117,11 +117,11 @@ function PopupFrame({
   const titleH = Math.max(0, chromeTop - browserChromeH)
   return (
     <div
-      className="absolute flex flex-col overflow-hidden rounded-xl bg-surface-elevated shadow-[0_0_0_1px_rgba(237,234,227,0.32),0_24px_64px_-12px_rgba(0,0,0,0.95),0_0_28px_rgba(237,234,227,0.05)]"
+      className="absolute flex flex-col overflow-hidden rounded-xl bg-popover shadow-[0_0_0_1px_rgba(237,234,227,0.32),0_24px_64px_-12px_rgba(0,0,0,0.95),0_0_28px_rgba(237,234,227,0.05)]"
       style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height, zIndex: 10 + depth }}
     >
       <div
-        className="flex shrink-0 items-center gap-2 border-b border-border-strong bg-surface-elevated px-3"
+        className="flex shrink-0 items-center gap-2 border-b border-border-strong bg-popover px-3"
         style={{ height: titleH }}
       >
         <span className="truncate text-xs font-medium text-foreground">{title}</span>

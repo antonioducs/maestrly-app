@@ -23,7 +23,7 @@ function ScreenOverlay({ role, children }: { role?: 'status'; children: ReactNod
   return (
     <div
       role={role}
-      className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/75 p-6 text-center text-sm text-white backdrop-blur-md"
+      className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black p-6 text-center text-sm text-white"
     >
       {children}
     </div>
@@ -291,7 +291,7 @@ export function BotScreen({
             bot.activity?.kind === 'setup' &&
             bot.activity.need === 'account' &&
             !takeoverBlocksResume(takeover) && (
-              <div className="absolute inset-x-4 top-4 z-40 mx-auto max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
+              <div className="absolute inset-x-4 top-4 z-40 mx-auto max-w-md rounded-xl border border-border bg-popover p-5 shadow-xl">
                 <h2 className="font-semibold">{t('screen.connectAccount')}</h2>
                 <p className="mt-2 text-sm text-muted-foreground">
                   {accountsEnvironment
@@ -374,7 +374,7 @@ export function BotScreen({
                   ? t('screen.takeTitle', { name: bot.name })
                   : t('screen.giveTitle', { name: bot.name })
               }
-              className="absolute bottom-[calc(100%+10px)] left-1/2 z-40 w-[340px] max-w-[90vw] -translate-x-1/2 rounded-xl border border-border-strong bg-popover p-3.5 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+              className="absolute bottom-[calc(100%+10px)] left-1/2 z-40 w-[340px] max-w-[90vw] -translate-x-1/2 rounded-xl border border-border-strong bg-popover p-3.5 shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
             >
               <h2 className="text-sm font-semibold">
                 {popover === 'take'
