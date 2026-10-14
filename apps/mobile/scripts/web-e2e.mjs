@@ -201,6 +201,17 @@ try {
     await page.getByRole('textbox', { name: /Message|Ask anything/ }).waitFor()
   })
 
+  await step('see an interactive answer as a card', async () => {
+    await openMenu()
+    await page.getByRole('tab', { name: /^Chats/ }).click()
+    await button(/^Pricing tiers for teams/).click()
+    await page.getByText('Interactive answer').waitFor()
+    if (await page.getByText('<div class="tiers">').count()) throw new Error('The interface showed as source')
+    await button('Show code').click()
+    await page.getByText(/<div class="tiers">/).waitFor()
+    await button('Hide code').click()
+  })
+
   if (problems.length) throw new Error(`The app reported problems:\n${problems.join('\n')}`)
   console.log('Mobile web flows passed.')
 } catch (error) {

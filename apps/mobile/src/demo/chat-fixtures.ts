@@ -256,7 +256,7 @@ export const DEMO_CHATS: DemoChat[] = [
     9 * DAY,
     sonnetAsk,
     'Suggest pricing tiers for a team plan.',
-    '- **Starter:** 3 seats, community support\n- **Team:** 10 seats, shared environments, email support\n- **Business:** unlimited seats, SSO and an uptime commitment'
+    '- **Starter:** 3 seats, community support\n- **Team:** 10 seats, shared environments, email support\n- **Business:** unlimited seats, SSO and an uptime commitment\n\nCompare them side by side:\n\n```inline-html\n<style>.tiers{display:flex;gap:12px}.tier{flex:1;padding:12px;border:1px solid var(--ui-border);border-radius:var(--ui-radius)}</style>\n<div class="tiers"><div class="tier"><b>Starter</b><p>3 seats</p></div><div class="tier"><b>Team</b><p>10 seats</p></div><div class="tier"><b>Business</b><p>Unlimited</p></div></div>\n```'
   ),
   quick(
     'c-docker',

@@ -5,7 +5,9 @@ import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { useReducedMotion } from '../useReducedMotion'
+import { InterfaceCard } from './InterfaceCard'
 import { ReplyRenderer } from './markdown-renderer'
+import { replySegments } from './reply-segments'
 
 function Caret() {
   const { palette } = useTheme()
@@ -29,7 +31,7 @@ function Caret() {
   )
 }
 
-/** A bot's reply, rendered from Markdown with the app's type and colors; a blinking dot while it streams. */
+/** A reply, rendered from Markdown with the app's type and colors, with a card for each interactive interface in it. */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   text,
   streaming,
@@ -37,6 +39,24 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   text: string
   streaming: boolean
 }) {
+  const segments = useMemo(() => replySegments(text), [text])
+  return (
+    <View>
+      {segments.map((segment, index) =>
+        segment.kind === 'interface' ? (
+          // Segments have no identity of their own; their order is stable while a reply streams.
+          <InterfaceCard key={index} html={segment.html} complete={segment.complete} />
+        ) : (
+          <MarkdownBlock key={index} text={segment.text} />
+        )
+      )}
+      {streaming ? <Caret /> : null}
+    </View>
+  )
+})
+
+/** Markdown with the app's type and colors; links open only web pages and email. */
+function MarkdownBlock({ text }: { text: string }) {
   const { palette, scheme } = useTheme()
   const { t } = useI18n()
   const options = useMemo(
@@ -77,7 +97,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         // Markdown blocks have no identity of their own; their order is stable while a reply streams.
         <View key={index}>{element}</View>
       ))}
-      {streaming ? <Caret /> : null}
     </View>
   )
-})
+}

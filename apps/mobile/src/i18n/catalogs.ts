@@ -594,6 +594,12 @@ export const en = {
   'user.from.report': 'Report from {name}',
   'user.from.result': 'Result from {name}',
   'user.fromOpen': 'Opens that conversation',
+
+  'interface.title': 'Interactive answer',
+  'interface.onComputer': 'Open this conversation in Maestrly on your computer to use it.',
+  'interface.writing': 'Writing the interface…',
+  'interface.showCode': 'Show code',
+  'interface.hideCode': 'Hide code',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1197,4 +1203,10 @@ export const ptBR: Record<keyof typeof en, string> = {
   'user.from.report': 'Relatório de {name}',
   'user.from.result': 'Resultado de {name}',
   'user.fromOpen': 'Abre essa conversa',
+
+  'interface.title': 'Resposta interativa',
+  'interface.onComputer': 'Abra esta conversa na Maestrly do computador para usá-la.',
+  'interface.writing': 'Escrevendo a interface…',
+  'interface.showCode': 'Ver código',
+  'interface.hideCode': 'Ocultar código',
 }
