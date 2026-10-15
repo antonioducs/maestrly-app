@@ -5,8 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-15
+
 ### Added
 
+- Review a project conversation's changes, or a plan, once instead of in a loop.
+  **Review** in the conversation header (or `/code-review`) and **Review plan**
+  in the Plan tab open a review room: three read-only reviewers for code, or two
+  for plans, investigate in parallel, a verifier confirms or discards each
+  finding, and you decide on them one at a time before they go to the agent as
+  one message. **Check the fixes** then verifies what was sent. The review holds
+  the conversation until the hand-off, and an open review is lost if the app
+  closes first. See [code and plan reviews](docs/chat-context.md#code-and-plan-reviews).
 - Run several workspaces environments on one server, one per scope of your work
   (for example personal and each company), so their accounts, keys, site
   sign-ins, Git and cloud credentials never mix. Each has its own Docker network,
@@ -40,6 +50,9 @@ User-visible changes by version. Downloads are on
   server runs up to eight at a time. Update the desktop app and the bot server,
   and restart the workspaces environments onto the new image. See
   [remote workspaces](docs/remote-workspaces.md#computer).
+- Show the red dot of a conversation that needs you on every computer paired
+  with the same host, and clear it everywhere once you open the conversation. A
+  reload or a reconnection no longer drops a dot you have not read.
 
 ### Changed
 
@@ -63,6 +76,15 @@ User-visible changes by version. Downloads are on
   for conversations of this computer. The Computer tab stays in the drawer.
 - Keep the browser of a conversation on a server from staying on "Connecting to
   the browser on the server…" when its stream answered faster than its start.
+
+### Removed
+
+- **Breaking:** remove the paired review loop (a reviewer conversation
+  alternating with the executor) and the ChatGPT Web review loop, replaced by
+  the review room. ChatGPT Web loses its `start_review_loop`,
+  `submit_review_fix`, `wait_review_fix`, `finish_review_loop` and
+  `discover_frontend_previews` tools: refresh ChatGPT's tool list to continue.
+  Messages from earlier loops stay readable.
 
 ## [0.18.0] - 2026-10-14
 
