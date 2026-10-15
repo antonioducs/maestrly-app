@@ -1,12 +1,12 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { WebContentsView } from 'electron'
+import { WebContentsView, type WebContents } from 'electron'
 import { panelSearch } from '../drawer-scope'
 import { preparePanelMemoryEviction, registerPanelTarget, sendToPanel, unregisterPanelTarget } from '../window-ipc'
 import { resolvePreload } from '../resolve-preload'
 import { attachHotkeyCapture } from '../hotkeys'
 import { attachTerminalHotkeyCapture } from '../terminal-hotkeys'
-import { attachBrowserHotkeyCapture } from '../browser-hotkeys'
+import { attachBrowserHotkeyCapture, attachMainWindowBrowserHotkeys } from '../browser-hotkeys'
 import {
   activeConvId,
   convHasPopup,
@@ -14,6 +14,7 @@ import {
   getDrawer,
   getPlacement,
   OFFSCREEN,
+  REMOTE_BROWSER_RESOURCE,
   visibleKind,
   win,
   type ConvDrawer,
@@ -224,6 +225,72 @@ export function ensureBrowserChrome(d: ConvDrawer, convId: string): WebContentsV
   attachBrowserHotkeyCapture(v.webContents, () => convId)
   loadPanel(v, 'browser', convId)
   return v
+}
+
+function sendRemoteBrowserActivity(wc: WebContents, convId: string, fullSpeed: boolean): void {
+  if (!wc.isDestroyed()) wc.send('drawer:browser-activity', { convId, fullSpeed })
+}
+
+/**
+ * Idempotently create a remote host's browser as a panel, offscreen in mainWindow, for the popup or floating window
+ * that shows it: its chrome over the page the host streams (panel.html?panel=browser&host=…). The page streams only
+ * while this view is shown, which the governor's full-speed decision tells it; the drawer's own surface yields to it
+ * meanwhile, since a host streams a browser to one viewer at a time.
+ */
+export function ensureRemoteBrowserView(d: ConvDrawer, convId: string): WebContentsView {
+  const existing = d.remoteBrowserView
+  if (existing && !existing.webContents.isDestroyed()) return existing
+  if (existing) closeRemoteBrowserView(convId)
+  const v = new WebContentsView({
+    webPreferences: {
+      preload: resolvePreload(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+  v.setBackgroundColor('#0A0A0B')
+  v.setBounds(OFFSCREEN)
+  win!.contentView.addChildView(v)
+  d.remoteBrowserView = v
+  const wc = v.webContents
+  registerPanelTarget(wc, { convId, panel: 'browser', resourceId: REMOTE_BROWSER_RESOURCE })
+  registerThrottleTarget('panel', convId, REMOTE_BROWSER_RESOURCE, {
+    setBackgroundThrottling: (throttled) => wc.setBackgroundThrottling(throttled),
+    isDestroyed: () => wc.isDestroyed(),
+    once: (event, listener) => wc.once(event, listener),
+    onFullSpeedChange: (fullSpeed) => sendRemoteBrowserActivity(wc, convId, fullSpeed),
+  })
+  // The first decision can come before the page listens; it is sent again once the page loaded.
+  wc.on('did-finish-load', () =>
+    sendRemoteBrowserActivity(wc, convId, resourceNeedsFullSpeed('panel', convId, REMOTE_BROWSER_RESOURCE))
+  )
+  attachHotkeyCapture(wc)
+  // As in the main window's streamed page: main keeps Cmd/Ctrl+T and W from the menu while the page reports the
+  // keyboard in the browser, and the page acts on the host itself.
+  attachMainWindowBrowserHotkeys(wc)
+  loadPanel(v, 'browser', convId)
+  return v
+}
+
+/** Close the remote browser panel of `convId`; the browser is back in the drawer, or the conversation is gone. */
+export function closeRemoteBrowserView(convId: string): void {
+  const d = drawers.get(convId)
+  const v = d?.remoteBrowserView
+  if (!d || !v) return
+  d.remoteBrowserView = null
+  unregisterPanelTarget(v.webContents)
+  unregisterThrottleTarget('panel', convId, REMOTE_BROWSER_RESOURCE)
+  try {
+    win?.contentView.removeChildView(v)
+  } catch {
+    /* the floating window already released it */
+  }
+  try {
+    if (!v.webContents.isDestroyed()) v.webContents.close()
+  } catch {
+    /* already closed */
+  }
 }
 
 /** Ensure a docked React panel view when its tab opens. */

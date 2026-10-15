@@ -18,6 +18,7 @@ export {
   isTabFloating,
   isTabOutOfSlot,
   floatingTabsOf,
+  outOfSlotTabsOf,
   type ViewKind,
   type PanelTab,
   type Bounds,
@@ -27,6 +28,7 @@ export {
 export {
   applyLayout,
   captureSlotView,
+  onPlacementChange,
   setDialogSuppressionOwners,
   setPlacement,
   setViewsSuppressed,

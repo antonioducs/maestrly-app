@@ -64,7 +64,10 @@ the server hosts one environment and predates several: **Update bots** too.
   shell on the server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
   [Browser](#browser). **Computer** is the conversation's own Linux desktop on the server: see [Computer](#computer).
   **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this computer and the
-  server: see [Files](#files).
+  server: see [Files](#files). As for a conversation of this computer, the tool shortcuts open these tools in a pop-up
+  over the chat, or with Shift in a floating window, and the drawer's **Open in a floating window** button detaches
+  them; only **Computer** stays in the drawer. A floating window is named after the conversation and closes when the
+  conversation leaves the server's list.
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
@@ -188,6 +191,9 @@ and **Reload**.
   it is open, under a bar with its address and a **Close** button. It closes by itself when the sign-in finishes.
 - **One device at a time.** When another computer opens the same conversation's browser, it takes over, and this one
   says **This browser is open on another device**, with **Show here** to take it back.
+- **Pop-up and floating window.** The browser's shortcut, or **Open in a floating window**, moves it out of the drawer
+  with its tabs and address bar. It streams there instead of in the drawer, and back in the drawer once you close or
+  reattach it.
 
 The page streams as video, like the bots' screens: on a server's slow link, such as Tailscale Funnel, scrolling stays
 smooth and clicks quick, and the video adapts its quality to the link. When the server's eight tiles are taken (see
@@ -306,7 +312,7 @@ kept by the server: opening the conversation on one computer clears it on the ot
   the server, or use Git. Revealing a file or folder of the server in a file manager is unavailable, because it would
   open on the server's own desktop, which nobody sees.
 - **Alert sounds** do not play for conversations on a server.
-- **Drawer tools stay docked** for those conversations: no floating windows and no pop-up shortcuts.
+- **The Computer tab stays in the drawer:** it opens in no pop-up or floating window, and has no shortcut by default.
 - **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
   survive a restart of the server's Maestrly.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between

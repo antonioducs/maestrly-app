@@ -23,6 +23,8 @@ export interface Bounds {
 }
 
 export const OFFSCREEN: Bounds = { x: -100000, y: 0, width: 1000, height: 800 }
+/** The governor's resource of a remote host's browser panel; distinct from this computer's floating chrome. */
+export const REMOTE_BROWSER_RESOURCE = 'remote-browser'
 // Fixed DIP height for floating browser tabs/URL chrome; reparented page content fills the rest.
 export const BROWSER_CHROME_H = BROWSER_CHROME_HEIGHT
 
@@ -59,6 +61,11 @@ export interface ConvDrawer {
   panelInactiveSince: Map<PanelTab, number>
   /** Browser panel chrome exists only while the browser is floating. */
   browserChromeView: WebContentsView | null
+  /**
+   * A remote host's browser out of the drawer (popup or floating): a panel with its chrome over the page the host
+   * streams. In the slot that browser is DOM of the main window, so this view exists only while it is out of it.
+   */
+  remoteBrowserView: WebContentsView | null
   /**
    * OAuth windows opened by this conversation's embedded browser. ChatGPT Companion owns its popups
    * separately so resetting one session cannot close another tab's login. Close these windows on
@@ -161,6 +168,7 @@ export function getDrawer(convId: string): ConvDrawer {
       panelViews: new Map(),
       panelInactiveSince: new Map(),
       browserChromeView: null,
+      remoteBrowserView: null,
       oauthWindows: new Set(),
     }
     drawers.set(convId, d)
@@ -210,7 +218,8 @@ export function isViewAllowedDuringDialogSuppression(view: WebContentsView | nul
 }
 
 function viewForTab(drawer: ConvDrawer, tab: FloatTab): WebContentsView | null | undefined {
-  if (tab === 'browser') return drawer.browserTabs.find((item) => item.id === drawer.activeBrowserId)?.view
+  if (tab === 'browser')
+    return drawer.remoteBrowserView ?? drawer.browserTabs.find((item) => item.id === drawer.activeBrowserId)?.view
   if (tab === 'vscode') return drawer.vscodeView
   if (tab === 'chatgpt') return drawer.chatgptView
   return drawer.panelViews.get(tab as PanelTab)
@@ -260,6 +269,11 @@ export function isBrowserStreamed(convId: string): boolean {
 /** Whether the tab is outside the drawer slot (floating, popup or stream), so applyLayout leaves it alone. */
 export function isTabOutOfSlot(convId: string, tab: FloatTab): boolean {
   return getPlacement(convId, tab) !== 'slot'
+}
+
+/** Tabs placed outside the drawer slot (floating, popup or stream); the main window is told of each change. */
+export function outOfSlotTabsOf(convId: string): FloatTab[] {
+  return [...(placementByConv.get(convId)?.keys() ?? [])]
 }
 
 /** Floating tabs for the drawer reattach chips; excludes popups. */

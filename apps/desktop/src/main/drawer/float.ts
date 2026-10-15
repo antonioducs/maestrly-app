@@ -18,7 +18,8 @@ import {
 } from './state'
 import { applyLayout, setPlacement } from './layout'
 import { emitBrowserState, ensureBrowser } from './browser'
-import { ensureBrowserChrome, ensurePanelView } from './panels'
+import { ensureBrowserChrome, ensurePanelView, ensureRemoteBrowserView } from './panels'
+import { isRemoteConversation } from '../drawer-scope'
 import { presentedBrowserSize, presentsBrowserInArea } from '../conversation-screen'
 import { floatingStripHeight } from '../fleet/instance/window-bounds'
 
@@ -49,6 +50,7 @@ export function requestVSCodeForDebug(convId: string): void {
 function tabViews(d: ConvDrawer, tab: FloatTab): WebContentsView[] {
   if (tab === 'vscode') return d.vscodeView ? [d.vscodeView] : []
   if (tab === 'chatgpt') return d.chatgptView ? [d.chatgptView] : []
+  if (tab === 'browser' && d.remoteBrowserView) return [d.remoteBrowserView]
   if (tab === 'browser') {
     const pages = d.browserTabs.flatMap((t) => (t.view ? [t.view] : []))
     return d.browserChromeView ? [d.browserChromeView, ...pages] : pages
@@ -65,7 +67,10 @@ function tabViews(d: ConvDrawer, tab: FloatTab): WebContentsView[] {
 export function floatView(convId: string, tab: FloatTab, floatWin: BrowserWindow): boolean {
   if (!win) return false
   const d = getDrawer(convId)
-  if (tab === 'browser') {
+  const remoteBrowser = tab === 'browser' && isRemoteConversation(convId)
+  // A remote host's browser has no page here: it floats as a panel with its own chrome, streaming the host's page.
+  if (remoteBrowser) ensureRemoteBrowserView(d, convId)
+  else if (tab === 'browser') {
     ensureBrowser(convId)
     ensureBrowserChrome(d, convId)
   } else if (tab === 'chatgpt') {
@@ -90,7 +95,7 @@ export function floatView(convId: string, tab: FloatTab, floatWin: BrowserWindow
   // Focus tool content instead of the container strip. Because floatWin is initially hidden,
   // floating-manager must refocus after show so keyboard input and close shortcuts work immediately.
   focusFloatingContent(convId, tab)
-  if (tab === 'browser') emitBrowserState(convId)
+  if (tab === 'browser' && !remoteBrowser) emitBrowserState(convId)
   return true
 }
 
@@ -100,7 +105,7 @@ export function focusFloatingContent(convId: string, tab: FloatTab): void {
   if (!d) return
   const primary =
     tab === 'browser'
-      ? d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view
+      ? (d.remoteBrowserView ?? d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view)
       : tab === 'vscode'
         ? d.vscodeView
         : tab === 'chatgpt'
@@ -113,6 +118,7 @@ export function focusFloatingContent(convId: string, tab: FloatTab): void {
 export function unfloatView(convId: string, tab: FloatTab, floatWin: BrowserWindow): void {
   if (!win) return
   const d = drawers.get(convId)
+  const remoteBrowser = tab === 'browser' && !!d?.remoteBrowserView
   if (d) {
     for (const v of tabViews(d, tab)) {
       try {
@@ -120,6 +126,8 @@ export function unfloatView(convId: string, tab: FloatTab, floatWin: BrowserWind
       } catch {
         /* Already detached from this parent. */
       }
+      // Back in the slot a remote host's browser is the drawer's own surface again; setPlacement closes its panel.
+      if (v === d.remoteBrowserView) continue
       if (tab === 'browser' && v === d.browserChromeView) {
         try {
           v.webContents.close() // chrome exists only while floating
@@ -136,7 +144,7 @@ export function unfloatView(convId: string, tab: FloatTab, floatWin: BrowserWind
   floatWinByKey.delete(fkey(convId, tab))
   setPlacement(convId, tab, 'slot') // return to slot ownership and reapply layout
   applyLayout()
-  if (tab === 'browser') emitBrowserState(convId)
+  if (tab === 'browser' && !remoteBrowser) emitBrowserState(convId)
 }
 
 /** Lay out floating tab views on resize below FLOAT_CHROME_H at unit zoom. */
@@ -148,7 +156,7 @@ export function layoutFloatingTab(convId: string, tab: FloatTab, floatWin: Brows
   // A bot browser its desktop presents shows no identity strip: the desktop window names it.
   const presented = tab === 'browser' && presentsBrowserInArea(convId) && presentedBrowserSize(convId) !== null
   const top = Math.min(floatingStripHeight(presented, FLOAT_CHROME_H), h)
-  if (tab === 'browser') {
+  if (tab === 'browser' && !d.remoteBrowserView) {
     const below = Math.max(0, h - top)
     const chromeH = d.browserChromeView ? Math.min(BROWSER_CHROME_H, below) : 0
     // Address-bar suggestions draw inside the chrome view, so it then covers the page area as well.

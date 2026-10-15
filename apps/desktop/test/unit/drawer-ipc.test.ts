@@ -21,6 +21,8 @@ vi.mock('../../src/main/pty-manager', () => ({
 
 vi.mock('../../src/main/floating-manager', () => ({
   detach: vi.fn(),
+  disposeConversation: vi.fn(),
+  refreshFloatingTitles: vi.fn(),
   reattach: vi.fn(),
   setFloatBounds: vi.fn(),
   setPinned: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('../../src/main/floating-manager', () => ({
 vi.mock('../../src/main/popup-manager', () => ({
   closePopup: vi.fn(),
   closeTopPopup: vi.fn(),
+  disposeConversation: vi.fn(),
   releasePopupForFloating: vi.fn(),
   setSuppressedByDialog: vi.fn(),
   setDialogSuppressionOwners: vi.fn(),
@@ -56,6 +59,7 @@ vi.mock('../../src/main/drawer-manager', () => ({
   isTabVisibleInSlot: vi.fn(() => false),
   applyLayout: vi.fn(),
   navigateBrowser: vi.fn(),
+  outOfSlotTabsOf: vi.fn(() => []),
   queryOmnibox: vi.fn(async () => ({ history: [], tabs: [], searchSuggestions: [] })),
   removeBrowserHistoryEntry: vi.fn(),
   reorderBrowserTab: vi.fn(),
@@ -103,6 +107,7 @@ import * as floatingManager from '../../src/main/floating-manager'
 import * as popupManager from '../../src/main/popup-manager'
 import {
   applyLayout,
+  disposeConversation,
   ensurePanelTab,
   isTabVisibleInSlot,
   navigateBrowser,
@@ -114,7 +119,7 @@ import {
   showVSCodeLoadingAll,
 } from '../../src/main/drawer-manager'
 import { hasBrowserKeyboardFocus } from '../../src/main/browser-hotkeys'
-import { setRemoteEditorHosts } from '../../src/main/drawer-scope'
+import { setRemoteToolHosts } from '../../src/main/drawer-scope'
 import { waitForEditorReady } from '../../src/main/vscode/vscode-server'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
 import {
@@ -182,6 +187,7 @@ describe('registerDrawerIpc', () => {
       'drawer:capture-slot',
       'drawer:chatgpt-visible',
       'drawer:floating-state-get',
+      'drawer:placement-get',
       'drawer:read-terminal',
       'drawer:terminal-state-get',
       'panel:plan-draft-get',
@@ -223,6 +229,7 @@ describe('registerDrawerIpc', () => {
       'drawer:navigate',
       'drawer:reattach',
       'drawer:reload',
+      'drawer:remote-conversations',
       'drawer:set-active-terminal',
       'drawer:set-float-bounds',
       'drawer:suppress-views',
@@ -267,11 +274,11 @@ describe('registerDrawerIpc', () => {
     // A host that does not serve its editor has no Code tab to restart.
     await restart({} as never, 'server-1/workspaces#conv-1')
     expect(restartRemoteVSCode).not.toHaveBeenCalled()
-    setRemoteEditorHosts(() => true)
+    setRemoteToolHosts(() => true)
     try {
       await restart({} as never, 'server-1/workspaces#conv-1')
     } finally {
-      setRemoteEditorHosts(() => false)
+      setRemoteToolHosts(() => false)
     }
     expect(restartRemoteVSCode).toHaveBeenCalledWith('server-1/workspaces#conv-1')
     expect(showVSCodeLoadingAll).not.toHaveBeenCalled()
@@ -322,6 +329,70 @@ describe('registerDrawerIpc', () => {
 
     expect(setDialogSuppressionOwners).toHaveBeenLastCalledWith(new Set())
     expect(popupManager.setDialogSuppressionOwners).toHaveBeenLastCalledWith(new Set())
+  })
+
+  it("detaches and floats the tools of a remote host's conversation, its streamed browser included", () => {
+    const { reg, mons } = createTestRegistrar()
+    const openPopup = vi.fn()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup })
+    vi.mocked(popupManager.releasePopupForFloating).mockReturnValue(true)
+    const remote = 'server-1/workspaces#conv-1'
+    setRemoteToolHosts((_hostId, tool) => tool === 'browser')
+    try {
+      mons.get('drawer:detach')!({} as never, remote, 'terminal')
+      mons.get('drawer:detach')!({} as never, remote, 'browser')
+      mons.get('popup:open')!({} as never, remote, 'files')
+      mons.get('popup:open-floating')!({} as never, remote, 'notes')
+      // Nor its companion, nor an editor its host does not serve.
+      mons.get('drawer:detach')!({} as never, remote, 'chatgpt')
+      mons.get('popup:open')!({} as never, remote, 'vscode')
+    } finally {
+      setRemoteToolHosts(() => false)
+    }
+    expect(vi.mocked(floatingManager.detach).mock.calls).toEqual([
+      [remote, 'terminal'],
+      [remote, 'browser'],
+      [remote, 'notes'],
+    ])
+    expect(openPopup.mock.calls).toEqual([[remote, 'files']])
+  })
+
+  it('closes the floating windows and popups of a dropped conversation before its views', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const remote = 'server-1/workspaces#conv-1'
+
+    mons.get('drawer:dispose-conversation')!({} as never, remote)
+    mons.get('drawer:dispose-conversation')!({} as never, 42)
+
+    expect(floatingManager.disposeConversation).toHaveBeenCalledExactlyOnceWith(remote)
+    expect(popupManager.disposeConversation).toHaveBeenCalledExactlyOnceWith(remote)
+    expect(disposeConversation).toHaveBeenCalledExactlyOnceWith(remote)
+    const order = [floatingManager.disposeConversation, popupManager.disposeConversation, disposeConversation].map(
+      (fn) => vi.mocked(fn).mock.invocationCallOrder[0]
+    )
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it("names the floating windows of remote hosts' conversations again only when their names change", () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const send = mons.get('drawer:remote-conversations')!
+    const a = 'server-1/workspaces#a'
+    const b = 'server-1/workspaces#b'
+
+    send({} as never, [
+      { id: a, name: 'A', projectName: 'P' },
+      { id: b, name: 'B' },
+    ])
+    send({} as never, [
+      { id: a, name: 'A', projectName: 'P' },
+      { id: b, name: 'B' },
+    ])
+    send({} as never, [{ id: a, name: 'A2', projectName: 'P' }])
+
+    expect(vi.mocked(floatingManager.refreshFloatingTitles).mock.calls).toEqual([[new Set([a, b])], [new Set([a, b])]])
+    send({} as never, [])
   })
 
   it('popup:open-floating ignores tools that already left the stack', () => {

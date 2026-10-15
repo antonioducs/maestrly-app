@@ -167,7 +167,10 @@ vi.mock('../../src/main/store', () => ({
   getConvUiPrefs: vi.fn(() => ({})),
   patchConvUiPrefs: vi.fn(),
 }))
-vi.mock('../../src/main/drawer-scope', () => ({ conversationTabAllowed: vi.fn(() => true) }))
+vi.mock('../../src/main/drawer-scope', () => ({
+  conversationTabAllowed: vi.fn(() => true),
+  isRemoteConversation: vi.fn(() => false),
+}))
 vi.mock('../../src/main/drawer-manager', () => ({
   FLOAT_CHROME_H: 32,
   floatView: vi.fn(() => true),

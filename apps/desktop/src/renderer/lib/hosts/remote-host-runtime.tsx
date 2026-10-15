@@ -2,6 +2,7 @@ import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, us
 import type { Conversation, PlanReceived, WorkspaceGroup, WorkspaceWithConversations } from '../../../preload'
 import type { StandaloneConversation } from '../../../shared/conversation'
 import { type HostId, hostKey } from '../../../shared/host-key'
+import type { RemoteConversationLabel } from '../../../shared/hosts'
 import type { Tab as DrawerTab } from '@/components/Drawer'
 import type { AgentStatus } from '@/components/sidebar/StatusIcon'
 import { useAgentStatuses } from '@/lib/use-agent-statuses'
@@ -58,6 +59,18 @@ export interface RemoteHostShell {
   plans: Record<string, PlanReceived>
   pendingPlanIds: Set<string>
   actions: HostShellActions
+}
+
+/** The name, and project, of each conversation the hosts list: what its floating windows are named on this computer. */
+export function remoteConversationLabels(shells: Iterable<RemoteHostShell>): RemoteConversationLabel[] {
+  const labels: RemoteConversationLabel[] = []
+  for (const shell of shells) {
+    for (const chat of shell.standaloneConversations) labels.push({ id: chat.id, name: chat.name })
+    for (const workspace of shell.workspaces)
+      for (const conversation of workspace.conversations)
+        labels.push({ id: conversation.id, name: conversation.name, projectName: workspace.name })
+  }
+  return labels
 }
 
 interface Props {

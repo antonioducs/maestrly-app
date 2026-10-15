@@ -66,7 +66,7 @@ import { createRemoteMoveEndpoint } from './conversation-move/remote-endpoint'
 import { ConversationMoveService } from './conversation-move/service'
 import { moveStagingDirectory, removeMoveStaging, sweepMoveStaging } from './conversation-move/staging'
 import { LOCAL_HOST_ID, type HostId } from '../shared/host-key'
-import { conversationTabAllowed, isRemoteConversation, setRemoteEditorHosts } from './drawer-scope'
+import { conversationTabAllowed, isRemoteConversation, setRemoteToolHosts } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -129,6 +129,8 @@ import {
   ensureViewFor,
   focusBrowserPopup,
   getPlacement,
+  onPlacementChange,
+  outOfSlotTabsOf,
 } from './drawer-manager'
 import { placeConversationBrowser } from './drawer/conversation-tile'
 import { serverComputers } from './remote-host/server/computers-registry'
@@ -405,9 +407,8 @@ function cleanupFailedChatGptShortcutRestore(convId: string): void {
 }
 
 function openPopupGuarded(convId: string, tab: FloatTab): boolean {
-  // The tools of a remote host's conversation stay docked in the drawer; a shortcut never opens a tool the
-  // conversation does not have.
-  if (popupManager.isSuppressed() || isRemoteConversation(convId) || !conversationTabAllowed(convId, tab)) return false
+  // A shortcut never opens a tool the conversation does not have.
+  if (popupManager.isSuppressed() || !conversationTabAllowed(convId, tab)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -434,7 +435,7 @@ function openPopupGuarded(convId: string, tab: FloatTab): boolean {
 }
 
 function openFloatingGuarded(convId: string, tab: FloatTab): boolean {
-  if (popupManager.isSuppressed() || isRemoteConversation(convId) || !conversationTabAllowed(convId, tab)) return false
+  if (popupManager.isSuppressed() || !conversationTabAllowed(convId, tab)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -519,6 +520,8 @@ async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
 }
 
 async function loadVSCodeForConv(convId: string): Promise<void> {
+  // A remote host's conversation is not stored here: its editor opens the folder the host knows.
+  if (isRemoteConversation(convId)) return loadVSCodeFolder(convId, '')
   const conv = getConversation(convId)
   if (conv) await loadVSCodeFolder(convId, conv.cwd)
 }
@@ -669,6 +672,10 @@ async function createWindow(): Promise<void> {
   wc.setVisualZoomLevelLimits(1, 1).catch(() => {})
 
   initDrawer(mainWindow)
+  // The drawer keeps a remote host's streamed browser only while the browser is in its slot.
+  onPlacementChange((convId) =>
+    safeWindowSend(mainWindow, 'drawer:placement', { convId, outOfSlot: outOfSlotTabsOf(convId) })
+  )
   if (isE2E()) {
     const { installE2EAppToolsBridge } = await import('./e2e-app-tools')
     installE2EAppToolsBridge()
@@ -929,12 +936,12 @@ function registerIpc(): void {
     origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
   })
   setRemoteVSCodeHandlers(remoteVSCodeHandlers({ editors: remoteEditors }))
-  // A remote host's conversation shows a Code tab once the host says it serves its editor.
-  setRemoteEditorHosts(
-    (hostId) =>
+  // A remote host's conversation shows a Browser and a Code tab once the host says it serves them.
+  setRemoteToolHosts(
+    (hostId, tool) =>
       hostRegistry()
         ?.list()
-        .some((host) => host.id === hostId && host.editor) ?? false
+        .some((host) => host.id === hostId && (tool === 'browser' ? host.browser : host.editor)) ?? false
   )
   app.once('before-quit', () => remoteEditors?.close())
   registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })

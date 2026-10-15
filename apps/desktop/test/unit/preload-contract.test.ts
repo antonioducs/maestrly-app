@@ -335,7 +335,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(581)
+    expect(keys).toHaveLength(585)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -771,6 +771,36 @@ describe('preload API — main-to-renderer events (ipcRenderer.on)', () => {
     expect(callback).toHaveBeenCalledWith(state)
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('drawer:terminal-activity', listener)
+  })
+
+  it('onBrowserPanelActivity registers its own channel, delivers state, and removes its listener', () => {
+    const callback = vi.fn()
+    const off = api.onBrowserPanelActivity(callback) as () => void
+    expect(onSpy).toHaveBeenCalledWith('drawer:browser-activity', expect.any(Function))
+    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown, payload: unknown) => void
+    listener({}, { convId: 'server-1/workspaces#conv-1', fullSpeed: true })
+    listener({}, { convId: 'conv', fullSpeed: 'yes' })
+    expect(callback).toHaveBeenCalledExactlyOnceWith({ convId: 'server-1/workspaces#conv-1', fullSpeed: true })
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('drawer:browser-activity', listener)
+  })
+
+  it('reads and follows the tabs of a conversation out of the drawer slot', () => {
+    void api.getDrawerPlacement('conv-1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('drawer:placement-get', 'conv-1')
+    const callback = vi.fn()
+    const off = api.onDrawerPlacement(callback) as () => void
+    const listener = onSpy.mock.calls.find(([channel]) => channel === 'drawer:placement')?.[1] as (
+      event: unknown,
+      payload: unknown
+    ) => void
+    listener({}, { convId: 'conv-1', outOfSlot: ['browser'] })
+    expect(callback).toHaveBeenCalledWith({ convId: 'conv-1', outOfSlot: ['browser'] })
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('drawer:placement', listener)
+    const labels = [{ id: 'server-1/workspaces#conv-1', name: 'Fix login', projectName: 'api' }]
+    api.drawerSetRemoteConversations(labels)
+    expect(sendSpy).toHaveBeenLastCalledWith('drawer:remote-conversations', labels)
   })
 
   it('onMemoryAutoReclaimChanged synchronizes state and removes its listener', () => {
