@@ -5,7 +5,7 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
-## [0.19.0] - 2026-10-14
+## [0.19.0] - 2026-10-15
 
 ### Added
 
