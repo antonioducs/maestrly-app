@@ -58,7 +58,7 @@ import { useMemoryAutoReclaim } from '@/lib/use-memory-auto-reclaim'
 import { hostApi, HostProvider } from '@/lib/hosts/host-context'
 import { ReviewHeaderButton } from '@/components/chat/review/ReviewHeaderButton'
 import { useHosts } from '@/lib/hosts/use-hosts'
-import { type RemoteHostShell, RemoteHostRuntime } from '@/lib/hosts/remote-host-runtime'
+import { type RemoteHostShell, RemoteHostRuntime, remoteConversationLabels } from '@/lib/hosts/remote-host-runtime'
 import { hostOfKey, hostTarget, hostWorkspace, isRemoteKey, rawId, shellConversation } from '@/lib/hosts/shell-keys'
 import { HostUnavailableOverlay } from '@/components/HostUnavailableOverlay'
 import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
@@ -183,6 +183,12 @@ export function DesktopApp() {
     remoteLists.current = { sources, conversations }
     return conversations
   }, [remote])
+  // The remote conversations the window listed last, whose windows and views close once they leave the lists.
+  const remoteListedRef = useRef(new Set<string>())
+  // Floating windows of a remote host's conversation are named after it; the lists change only as the hosts list again.
+  useEffect(() => {
+    window.api.drawerSetRemoteConversations(remoteConversationLabels(Object.values(remoteRef.current)))
+  }, [remoteConversations])
   const handleConversationExperienceChange = useCallback(
     (conversationId: string, experience: Conversation['experience']) => {
       setActive((current) =>
@@ -633,6 +639,10 @@ export function DesktopApp() {
     // opened there stays mounted meanwhile.
     if (active && isRemoteKey(active.id)) live.add(active.id)
     setMountedConvs((prev) => (prev.some((c) => !live.has(c.id)) ? prev.filter((c) => live.has(c.id)) : prev))
+    // This computer does not store a remote host's conversations: one that left the window's lists (deleted, archived
+    // or moved there, or its host disconnected) has its popups, floating windows and views closed here.
+    for (const id of remoteListedRef.current) if (!live.has(id)) window.api.drawerDisposeConversation(id)
+    remoteListedRef.current = new Set([...live].filter(isRemoteKey))
     const pruneDead = <T,>(prev: Record<string, T>): Record<string, T> => {
       const dead = Object.keys(prev).filter((id) => !live.has(id))
       if (dead.length === 0) return prev

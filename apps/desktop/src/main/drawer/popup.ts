@@ -1,5 +1,6 @@
 import type { WebContentsView } from 'electron'
 import type { FloatTab } from '../store'
+import { isRemoteConversation } from '../drawer-scope'
 import {
   OFFSCREEN,
   drawers,
@@ -8,24 +9,36 @@ import {
   round,
   win,
   type Bounds,
+  type ConvDrawer,
   type PanelTab,
 } from './state'
 import { ensureBrowser } from './browser'
 import { ensureVSCodeView } from './vscode'
-import { ensurePanelView } from './panels'
+import { ensurePanelView, ensureRemoteBrowserView } from './panels'
 
 // Centered popups reuse the same mainWindow WebContentsView without cross-window reparenting. Set bounds
 // and raise z-order while preserving view state; no remount occurs.
 
+/** The one view of a tab other than this computer's browser, whose pages are views of their own. */
+function singleView(d: ConvDrawer, tab: FloatTab): WebContentsView | null | undefined {
+  if (tab === 'browser') return d.remoteBrowserView
+  if (tab === 'vscode') return d.vscodeView
+  if (tab === 'chatgpt') return d.chatgptView
+  return d.panelViews.get(tab as PanelTab)
+}
+
 /**
  * Ensure tab views exist offscreen in mainWindow; popup-manager positions them afterward. Create an
  * empty VS Code view and let its injected loader start serve-web. Browser popup chrome is DOM, so
- * ensure only pages, not floating browserChromeView.
+ * ensure only pages, not floating browserChromeView. A remote host's browser has no page here: it is
+ * a panel with its own chrome, streaming the host's page.
  */
 export function ensureViewFor(convId: string, tab: FloatTab): boolean {
   const d = getDrawer(convId)
-  if (tab === 'browser') ensureBrowser(convId)
-  else if (tab === 'vscode') ensureVSCodeView(d, convId)
+  if (tab === 'browser') {
+    if (isRemoteConversation(convId)) ensureRemoteBrowserView(d, convId)
+    else ensureBrowser(convId)
+  } else if (tab === 'vscode') ensureVSCodeView(d, convId)
   else if (tab === 'chatgpt') {
     // The companion view is created by the explicit session start. A shortcut/IPC cannot silently
     // create a ChatGPT session or a remote renderer when no session exists.
@@ -48,7 +61,7 @@ export function placeViewInMain(convId: string, tab: FloatTab, viewBounds: Bound
     win!.contentView.removeChildView(v)
     win!.contentView.addChildView(v)
   }
-  if (tab === 'browser') {
+  if (tab === 'browser' && !d.remoteBrowserView) {
     const pageHidden = isBrowserPageHiddenByOmnibox(convId)
     for (const t of d.browserTabs) {
       if (!t.view) continue
@@ -58,7 +71,7 @@ export function placeViewInMain(convId: string, tab: FloatTab, viewBounds: Bound
     }
     return
   }
-  const v = tab === 'vscode' ? d.vscodeView : tab === 'chatgpt' ? d.chatgptView : d.panelViews.get(tab as PanelTab)
+  const v = singleView(d, tab)
   if (!v) return
   v.setBounds(b)
   toTop(v)
@@ -71,12 +84,8 @@ export function placeViewInMain(convId: string, tab: FloatTab, viewBounds: Bound
 export function hideViewOffscreen(convId: string, tab: FloatTab): void {
   const d = drawers.get(convId)
   if (!d) return
-  if (tab === 'browser') {
-    for (const t of d.browserTabs) t.view?.setBounds(OFFSCREEN)
-    return
-  }
-  const v = tab === 'vscode' ? d.vscodeView : tab === 'chatgpt' ? d.chatgptView : d.panelViews.get(tab as PanelTab)
-  v?.setBounds(OFFSCREEN)
+  if (tab === 'browser') for (const t of d.browserTabs) t.view?.setBounds(OFFSCREEN)
+  singleView(d, tab)?.setBounds(OFFSCREEN)
 }
 
 /**
@@ -86,13 +95,13 @@ export function hideViewOffscreen(convId: string, tab: FloatTab): void {
 export function focusViewInMain(convId: string, tab: FloatTab): boolean {
   const d = drawers.get(convId)
   if (!d) return false
-  if (tab === 'browser') {
+  if (tab === 'browser' && !d.remoteBrowserView) {
     const active = d.browserTabs.find((t) => t.id === d.activeBrowserId) ?? d.browserTabs[0]
     if (!active?.view) return false
     active.view.webContents.focus()
     return true
   }
-  const v = tab === 'vscode' ? d.vscodeView : tab === 'chatgpt' ? d.chatgptView : d.panelViews.get(tab as PanelTab)
+  const v = singleView(d, tab)
   if (!v) return false
   v.webContents.focus()
   return true

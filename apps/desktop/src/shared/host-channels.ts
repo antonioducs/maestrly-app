@@ -44,6 +44,8 @@ const LOCAL_ONLY_CHANNELS = new Set([
   'drawer:set-float-bounds',
   'drawer:visible-conversation',
   'drawer:floating-state-get',
+  'drawer:placement-get',
+  'drawer:remote-conversations',
   'drawer:chatgpt-visible',
   'panel:memory-eviction-ready',
   'settings:onboarding-get',

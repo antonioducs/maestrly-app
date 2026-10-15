@@ -30,7 +30,7 @@ import {
   Plus,
   LayoutGrid,
 } from 'lucide-react'
-import type { ChatGptWebSessionInfo, Conversation, PlanReceived } from '../../preload'
+import type { ChatGptWebSessionInfo, Conversation, DrawerPlacement, PlanReceived } from '../../preload'
 import type { ChatGptWebCapabilitiesInfo } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
@@ -82,7 +82,7 @@ export interface TermTab {
   label?: string
 }
 
-const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'chatgpt'])
+const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'files', 'chatgpt'])
 
 const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'files', 'chatgpt'])
 const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal', 'files']) // panel.html hosts the second renderer.
@@ -158,6 +158,10 @@ export function Drawer({
 
   const [floating, setFloating] = useState<Set<Tab>>(new Set())
   const isFloating = (t: Tab): boolean => floating.has(t)
+  // The tabs main placed out of the slot (popup or floating window). Unknown until main answers for this conversation.
+  const [placement, setPlacement] = useState<DrawerPlacement | null>(null)
+  // A host streams a browser to one viewer at a time: out of the slot, the popup or window streams it instead.
+  const remoteBrowserDocked = placement?.convId === convId && !placement.outOfSlot.includes('browser')
   const [chatGptSession, setChatGptSession] = useState<ChatGptWebSessionInfo | null>(null)
   const [chatGptStarting, setChatGptStarting] = useState(false)
   const [chatGptError, setChatGptError] = useState<string | null>(null)
@@ -181,7 +185,7 @@ export function Drawer({
       window.api.drawerReattach(convId, t)
       return
     }
-    if (t === 'browser') api.drawerEnsureBrowser(convId)
+    if (t === 'browser' && hostConvId) api.drawerEnsureBrowser(hostConvId)
     if (t === 'vscode') {
       if (!activeConv) return
       void window.api
@@ -222,6 +226,22 @@ export function Drawer({
       if (s.convId !== convId) return
       setFloating(new Set<Tab>(s.floating))
     })
+  }, [convId])
+
+  useEffect(() => {
+    setPlacement(null)
+    if (!convId) return
+    let alive = true
+    // Main answers and pushes in order: the answer holds every change pushed before it.
+    const apply = (next: DrawerPlacement): void => {
+      if (alive && next.convId === convId) setPlacement(next)
+    }
+    void window.api.getDrawerPlacement(convId).then(apply)
+    const off = window.api.onDrawerPlacement(apply)
+    return () => {
+      alive = false
+      off()
+    }
   }, [convId])
 
   useEffect(() => {
@@ -483,21 +503,17 @@ export function Drawer({
             <RotateCw className={cn('size-4', restarting && 'animate-spin')} />
           </Button>
         )}
-        {/* The tools of a remote host's conversation stay docked here. */}
-        {tab &&
-          DETACHABLE.has(tab) &&
-          !(convId && isRemoteKey(convId)) &&
-          (tab !== 'chatgpt' || chatGptSessionActive) && (
-            <Button
-              variant={isFloating(tab) ? 'secondary' : 'ghost'}
-              size="icon"
-              className="no-drag size-7 shrink-0"
-              onClick={() => toggleDetach(tab)}
-              title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
-            >
-              {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
-            </Button>
-          )}
+        {tab && DETACHABLE.has(tab) && (tab !== 'chatgpt' || chatGptSessionActive) && (
+          <Button
+            variant={isFloating(tab) ? 'secondary' : 'ghost'}
+            size="icon"
+            className="no-drag size-7 shrink-0"
+            onClick={() => toggleDetach(tab)}
+            title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
+          >
+            {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -535,7 +551,7 @@ export function Drawer({
           />
         )}
 
-        {tab === 'browser' && remoteConv && hostConvId && (
+        {tab === 'browser' && remoteConv && hostConvId && remoteBrowserDocked && (
           <RemoteBrowserSurface key={convId} convId={hostConvId} active={visible} onFocusAddress={focusAddress} />
         )}
 

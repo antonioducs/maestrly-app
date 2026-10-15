@@ -55,6 +55,15 @@ User-visible changes by version. Downloads are on
   such as Tailscale Funnel. It falls back to still pictures on servers without
   video. See [remote workspaces](docs/remote-workspaces.md#browser).
 
+### Fixed
+
+- Make the tool shortcuts work in conversations on a server's workspaces
+  environment. Their tools, the streamed browser included, now open in pop-ups
+  and floating windows, from the shortcuts and the drawer's buttons, as they do
+  for conversations of this computer. The Computer tab stays in the drawer.
+- Keep the browser of a conversation on a server from staying on "Connecting to
+  the browser on the server…" when its stream answered faster than its start.
+
 ## [0.18.0] - 2026-10-14
 
 ### Added

@@ -50,6 +50,8 @@ function destroyDrawer(convId: string, d: ConvDrawer): void {
   d.panelInactiveSince.clear()
   closeView(d.browserChromeView)
   d.browserChromeView = null
+  closeView(d.remoteBrowserView)
+  d.remoteBrowserView = null
   // Close conversation-owned OAuth windows during archive/delete/quit so none become orphaned (#560).
   for (const w of d.oauthWindows) {
     try {

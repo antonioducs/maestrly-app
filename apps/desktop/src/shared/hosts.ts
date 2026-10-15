@@ -43,3 +43,12 @@ export interface HostView {
   /** The app version of a host that refused this computer's, when it said so. */
   hostVersion: string | null
 }
+
+/** A conversation of a remote host as the window lists it: what its floating windows on this computer are named. */
+export interface RemoteConversationLabel {
+  /** The window's id of the conversation: its host key. */
+  id: string
+  name: string
+  /** The project the conversation belongs to; none for a chat. */
+  projectName?: string
+}

@@ -26,6 +26,7 @@ import {
   applyLayout,
   captureSlotView,
   navigateBrowser,
+  outOfSlotTabsOf,
   queryOmnibox,
   removeBrowserHistoryEntry,
   reorderBrowserTab,
@@ -45,6 +46,7 @@ import { getMergedSettingsJson, getVSCodeUrl, restartVSCodeServer, waitForEditor
 import { setVisibleConversation } from './selection-bridge'
 import { getConversation, patchConvUiPrefs, type FloatingBounds, type FloatTab } from './store'
 import { receiveMemoryEvictionReady } from './window-ipc'
+import { setRemoteConversationLabels } from './remote-conversation-labels'
 import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
 import { openComputerForViewer } from './remote-host/server/computers-registry'
@@ -216,7 +218,19 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     await waitForEditorReady().catch(() => {}) // wait for the new server to respond; continue on timeout
     reloadAllVSCode(getVSCodeUrl, settingsJson)
   })
-  reg.mon('drawer:dispose-conversation', (_e, convId: string) => disposeConversation(convId))
+  // The window drops a conversation this computer does not store (a remote host's that left its host's list): its
+  // floating windows and popups close before its views, as for one of this computer's.
+  reg.mon('drawer:dispose-conversation', (_e, convId: unknown) => {
+    if (typeof convId !== 'string' || !convId) return
+    floatingManager.disposeConversation(convId)
+    popupManager.disposeConversation(convId)
+    disposeConversation(convId)
+  })
+  // The names of remote hosts' conversations, which name their floating windows here.
+  reg.mon('drawer:remote-conversations', (_e, labels: unknown) => {
+    const changed = setRemoteConversationLabels(labels)
+    if (changed.length > 0) floatingManager.refreshFloatingTitles(new Set(changed))
+  })
 
   // ensure the docked React panel view when opening a panel tab
   reg.mon('drawer:ensure-panel', (_e, convId: string, tab: PanelTab) => {
@@ -225,8 +239,7 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
 
   // --- detach drawer tabs by reparenting their native views ---
   reg.mon('drawer:detach', (_e, convId: string, tab: FloatTab) => {
-    // The tools of a remote host's conversation stay docked in the drawer.
-    if (conversationTabAllowed(convId, tab) && !isRemoteConversation(convId)) floatingManager.detach(convId, tab)
+    if (conversationTabAllowed(convId, tab)) floatingManager.detach(convId, tab)
   })
   reg.mon('drawer:reattach', (_e, convId: string, tab: FloatTab) => floatingManager.reattach(convId, tab))
   reg.mon('drawer:set-float-bounds', (_e, convId: string, tab: FloatTab, bounds: FloatingBounds) =>
@@ -243,6 +256,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     visible: floatingManager.visibleFloatingTabsOf(convId),
   }))
   reg.handle('drawer:chatgpt-visible', (_e, convId: string) => isChatGptVisible(convId))
+  // The tabs a conversation has out of the drawer slot; drawer:placement follows each change.
+  reg.handle('drawer:placement-get', (_e, convId: string) => ({ convId, outOfSlot: outOfSlotTabsOf(convId) }))
   // App reports the visible conversation (null for project notes/settings), controlling floating windows and
   // popups. It also routes VS Code selections to the visible sibling when conversations share a cwd (#322).
   reg.mon('drawer:visible-conversation', (_e, convId: string | null) => {
@@ -256,7 +271,7 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     if (conversationTabAllowed(convId, tab)) deps.openPopup(convId, tab)
   })
   reg.mon('popup:open-floating', (_e, convId: string, tab: FloatTab) => {
-    if (!conversationTabAllowed(convId, tab) || isRemoteConversation(convId)) return
+    if (!conversationTabAllowed(convId, tab)) return
     // Release popup placement and stack state before floating-manager reparents the same view.
     if (popupManager.releasePopupForFloating(convId, tab)) floatingManager.detach(convId, tab)
   })

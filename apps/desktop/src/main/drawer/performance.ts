@@ -11,7 +11,7 @@ import {
   visibleKind,
   type ConvDrawer,
 } from './state'
-import { PANEL_TABS } from './state'
+import { PANEL_TABS, REMOTE_BROWSER_RESOURCE } from './state'
 
 type PlacementReason = 'floating' | 'popup' | 'stream'
 
@@ -35,6 +35,10 @@ function setPlacementReason(
     // The browser chrome is a panel renderer and is present only while the browser is floating.
     if (drawer.browserChromeView) {
       setResourcePlacementActive('panel', convId, 'browser-chrome', reason, active)
+    }
+    // A remote host's browser out of the slot streams its page while this decision keeps it at full speed.
+    if (drawer.remoteBrowserView) {
+      setResourcePlacementActive('panel', convId, REMOTE_BROWSER_RESOURCE, reason, active)
     }
     return
   }
@@ -63,6 +67,7 @@ function setSlotVisible(convId: string, drawer: ConvDrawer, tab: FloatTab, visib
       setResourceVisible('browser', convId, page.id, visible && page.id === drawer.activeBrowserId)
     }
     if (drawer.browserChromeView) setResourceVisible('panel', convId, 'browser-chrome', false)
+    if (drawer.remoteBrowserView) setResourceVisible('panel', convId, REMOTE_BROWSER_RESOURCE, false)
     return
   }
   if (tab === 'chatgpt') {

@@ -7,6 +7,7 @@ import {
   type BrowserSelectRequest,
   type BrowserStreamArea,
   type BrowserStreamCursorName,
+  type BrowserStreamEnded,
   type BrowserStreamFrame,
   type BrowserStreamInput,
   type BrowserStreamSource,
@@ -274,48 +275,83 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
       decoder.busy = false
     }
 
+    const onFrame = (frame: BrowserStreamFrame) => {
+      const ack = () => api.browserStreamAck(convId, frame.streamId, frame.seq)
+      if (frame.streamId !== stream.streamId || frame.source !== stream.source) return ack()
+      // A frame that arrives while another decodes replaces the one waiting, which is dropped.
+      decoder.pending?.ack()
+      decoder.pending = { frame, ack }
+      if (!decoder.busy) void decode()
+    }
+    const onSource = (next: BrowserStreamSource) => {
+      if (next.streamId !== stream.streamId || next.source < stream.source) return
+      if (next.source !== stream.source || next.kind !== stream.kind) {
+        stream.source = next.source
+        stream.kind = next.kind
+        setSelect(null)
+        if (next.kind === 'none') clearFrame()
+      }
+      setSource({ kind: next.kind, popup: next.popup })
+      setPhase('live')
+    }
+    const onEnded = (ended: BrowserStreamEnded) => {
+      if (ended.streamId !== stream.streamId) return
+      stopVideo()
+      stream.streamId = null
+      setSelect(null)
+      setPhase(ended.reason === 'taken-over' ? 'taken-over' : ended.reason === 'unavailable' ? 'error' : 'connecting')
+    }
+    const onSelect = (request: BrowserSelectRequest) => {
+      if (request.streamId !== stream.streamId || request.source !== stream.source) return
+      selectAnswered.current = false
+      setSelect(request)
+    }
+
+    // The host answers the start before it sends the stream's events, but in this window its answer can come after
+    // them: until it has, they wait. Dropped, the stream's first source (or the page's area in the video) would leave
+    // every picture of it unshown.
+    let answered = false
+    const early: Array<() => void> = []
+    const whenAnswered = (deliver: () => void) => {
+      if (answered) deliver()
+      else early.push(deliver)
+    }
+    const answer = (streamId: string | null) => {
+      stream.streamId = streamId
+      answered = true
+      for (const deliver of early.splice(0)) deliver()
+    }
+
     const offs = [
       api.onBrowserStreamFrame((frame) => {
-        if (frame.convId !== convId) return
-        const ack = () => api.browserStreamAck(convId, frame.streamId, frame.seq)
-        if (frame.streamId !== stream.streamId || frame.source !== stream.source) return ack()
-        // A frame that arrives while another decodes replaces the one waiting, which is dropped.
-        decoder.pending?.ack()
-        decoder.pending = { frame, ack }
-        if (!decoder.busy) void decode()
+        if (frame.convId === convId) whenAnswered(() => onFrame(frame))
       }),
       api.onBrowserStreamSource((next) => {
-        if (next.convId !== convId || next.streamId !== stream.streamId || next.source < stream.source) return
-        if (next.source !== stream.source || next.kind !== stream.kind) {
-          stream.source = next.source
-          stream.kind = next.kind
-          setSelect(null)
-          if (next.kind === 'none') clearFrame()
-        }
-        setSource({ kind: next.kind, popup: next.popup })
-        setPhase('live')
+        if (next.convId === convId) whenAnswered(() => onSource(next))
       }),
       api.onBrowserStreamEnded((ended) => {
-        if (ended.convId !== convId || ended.streamId !== stream.streamId) return
-        stopVideo()
-        stream.streamId = null
-        setSelect(null)
-        setPhase(ended.reason === 'taken-over' ? 'taken-over' : ended.reason === 'unavailable' ? 'error' : 'connecting')
+        if (ended.convId === convId) whenAnswered(() => onEnded(ended))
       }),
       api.onBrowserStreamCursor((next) => {
-        if (next.convId === convId && next.streamId === stream.streamId) setCursor(next.cursor)
+        if (next.convId === convId)
+          whenAnswered(() => {
+            if (next.streamId === stream.streamId) setCursor(next.cursor)
+          })
       }),
       api.onBrowserSelect((request) => {
-        if (request.convId !== convId || request.streamId !== stream.streamId || request.source !== stream.source)
-          return
-        selectAnswered.current = false
-        setSelect(request)
+        if (request.convId === convId) whenAnswered(() => onSelect(request))
       }),
       api.onBrowserStreamNotice((next) => {
-        if (next.convId === convId && next.streamId === stream.streamId) setNotice(next.notice)
+        if (next.convId === convId)
+          whenAnswered(() => {
+            if (next.streamId === stream.streamId) setNotice(next.notice)
+          })
       }),
       api.onBrowserStreamArea((next) => {
-        if (next.convId === convId && next.streamId === stream.streamId) area = next.area
+        if (next.convId === convId)
+          whenAnswered(() => {
+            if (next.streamId === stream.streamId) area = next.area
+          })
       }),
     ]
 
@@ -327,14 +363,17 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
           api.browserStreamStop(convId, started.streamId)
           return
         }
-        stream.streamId = started.streamId
+        answer(started.streamId)
         // A host from before video says nothing: frames.
         onVideo({ type: 'started', transport: started.transport === 'video' ? 'video' : 'jpeg' })
         if (transport.transport === 'video') void startVideo()
         if (document.activeElement === inputRef.current) send({ type: 'focus', focused: true })
       },
       () => {
-        if (!disposed) setPhase('error')
+        if (disposed) return
+        // Frames that waited for a stream that never started are acknowledged all the same.
+        answer(null)
+        setPhase('error')
       }
     )
     return () => {

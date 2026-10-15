@@ -149,7 +149,8 @@ function PopupFrame({
         </button>
       </div>
 
-      {tab === 'browser' && (
+      {/* A remote host's browser has no toolbar here: its panel draws one over the page it streams. */}
+      {tab === 'browser' && browserChromeH > 0 && (
         // The address-bar suggestions extend below the toolbar, over the page area, while they are open.
         <div className={cn('shrink-0', !chromeOverlay && 'overflow-hidden')} style={{ height: browserChromeH }}>
           <BrowserChrome convId={convId} host="popup" height={browserChromeH} onOverlayChange={setChromeOverlay} />

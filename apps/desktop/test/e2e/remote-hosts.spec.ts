@@ -448,6 +448,115 @@ test('remote host browser: streamed live, typed into and copied from', async () 
   }
 })
 
+// The tool shortcuts of a host's conversation open its tools as this computer's: in a popup over the chat, or with Shift
+// in a floating window of their own. Its browser goes with them, streamed into a panel there while the drawer yields.
+test('remote host tools: opened by their shortcuts in popups and floating windows, the streamed browser too', async () => {
+  test.setTimeout(240_000)
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
+  await access(path.join(desktop, 'out/main/index.js'))
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-tools-')))
+  let host: ElectronApplication | undefined
+  let client: ElectronApplication | undefined
+  try {
+    const connected = await connect(root)
+    ;({ host, client } = connected)
+    const { page, local, remote, controlPort } = connected
+    await newChatOnHost(page, controlPort)
+    await expect.poll(async () => (await remote('listStandaloneConversations', true)).length).toBe(1)
+    const [chat] = await remote('listStandaloneConversations', true)
+    // The shortcuts act on the conversation the window shows.
+    await expect(page.locator('.chat-input:visible')).toBeVisible()
+    const key = `${HOST_ID}#${chat.id}`
+    // A surface draws the host's page once a frame of its stream arrived.
+    const live = (p: Page) =>
+      expect(p.getByTestId('remote-browser-canvas')).toHaveAttribute('data-live', 'true', { timeout: 60_000 })
+    const tool = process.platform === 'darwin' ? 'Meta+Control' : 'Control+Alt'
+    const popupTabs = async () =>
+      ((await local('getPopupState', key)).stack as Array<{ tab: string }>).map((s) => s.tab)
+    const floatingTabs = async () => (await local('getFloatingState', key)).floating as string[]
+    const windowTitles = () =>
+      client!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((window) => window.getTitle()))
+    const panels = (panel: string) =>
+      client!.windows().filter((window) => window.url().includes(`panel.html?panel=${panel}`))
+    // A key as the main window receives it from the system, where the app's shortcuts are caught before the page.
+    const press = (accelerator: string) =>
+      client!.evaluate(({ BrowserWindow }, accelerator) => {
+        const modifiers = accelerator.split('+')
+        const keyCode = modifiers.pop()!
+        const main = BrowserWindow.getAllWindows().find((window) => window.webContents.getURL().includes('index.html'))
+        for (const type of ['keyDown', 'keyUp'] as const)
+          main!.webContents.sendInputEvent({ type, keyCode, modifiers: modifiers.map((m) => m.toLowerCase()) as never })
+      }, accelerator)
+
+    // The terminal shortcut opens the host's terminal in a popup, and Control+Escape closes it. Main learns which
+    // conversation the window shows just after it is shown; pressing again only raises an open popup.
+    await expect
+      .poll(async () => {
+        await press(`${tool}+J`)
+        return popupTabs()
+      })
+      .toEqual(['terminal'])
+    const terminal = await panelOf(client, 'terminal')
+    expect(new URL(terminal.url()).searchParams.get('host')).toBe(HOST_ID)
+    await press('Control+Escape')
+    await expect.poll(popupTabs).toEqual([])
+
+    // With Shift the tool floats in a window of its own, named after the host's conversation.
+    await press(`${tool}+Shift+N`)
+    await expect.poll(floatingTabs).toEqual(['notes'])
+    await expect.poll(windowTitles).toContain(`${chat.name} — Notes`)
+    await local('drawerReattach', key, 'notes')
+    await expect.poll(floatingTabs).toEqual([])
+
+    // The browser streams into the drawer first.
+    await page.getByTitle(/^Toggle drawer/).click()
+    await page.getByTitle('Open a tool').click()
+    await page.getByRole('dialog', { name: 'Open a tool' }).getByText('Browser', { exact: true }).click()
+    const docked = page.getByTestId('remote-browser-canvas')
+    await live(page)
+
+    // Its shortcut moves it into a popup: a panel with its own toolbar streams it, and the drawer's surface yields.
+    await press(`${tool}+B`)
+    await expect.poll(popupTabs).toEqual(['browser'])
+    expect((await local('getPopupState', key)).stack[0]).toMatchObject({ browserChromeH: 0 })
+    await expect(docked).toHaveCount(0)
+    const inPopup = await panelOf(client, 'browser')
+    expect(new URL(inPopup.url()).searchParams.get('host')).toBe(HOST_ID)
+    await expect(inPopup.getByPlaceholder('Search or type a URL')).toBeVisible()
+    await live(inPopup)
+
+    // From the popup it moves into a floating window, where it keeps streaming.
+    await page.getByRole('button', { name: 'Open in window' }).click()
+    await expect.poll(popupTabs).toEqual([])
+    await expect.poll(floatingTabs).toEqual(['browser'])
+    await expect.poll(windowTitles).toContain(`${chat.name} — Browser`)
+    await expect.poll(() => panels('browser').length).toBe(1)
+    await live(panels('browser')[0])
+    await expect(docked).toHaveCount(0)
+
+    // Back in the drawer it streams there again, and its panel is gone.
+    await page.getByRole('button', { name: 'Reattach to the drawer' }).first().click()
+    await expect.poll(floatingTabs).toEqual([])
+    await live(page)
+    await expect.poll(() => panels('browser').length).toBe(0)
+
+    // A conversation that leaves the host's list takes its windows with it once the window no longer shows it.
+    await press(`${tool}+Shift+P`)
+    await expect.poll(floatingTabs).toEqual(['plan'])
+    await expect.poll(windowTitles).toContain(`${chat.name} — Plan`)
+    await remote('deleteConversation', chat.id)
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await page.locator('[data-host-shortcut="local"]').click()
+    await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
+    await expect.poll(floatingTabs).toEqual([])
+    await expect.poll(async () => (await windowTitles()).filter((title) => title.endsWith('— Plan'))).toEqual([])
+  } finally {
+    await client?.close().catch(() => undefined)
+    await host?.close().catch(() => undefined)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 // The editor of a host's conversation: VS Code's serve-web on the host (here a stand-in the test runs, so no editor is
 // downloaded), opened in a native view of this window's drawer through this computer's proxy and the host's.
 test("remote host editor: opened through both proxies, which keep each side's credentials to themselves", async () => {
