@@ -70,7 +70,13 @@ function run(command, args, options = {}) {
       const stdout = Buffer.concat(out).toString()
       const stderr = Buffer.concat(err).toString()
       if (code === 0 || options.allowFailure) resolve({ code, stdout, stderr })
-      else reject(new Error(command + ' ' + args.join(' ') + ' exited ' + code + ': ' + stderr.slice(-3000)))
+      else {
+        // A test script prints its failure before the logs of its containers, which can push it out of the tail.
+        const failure = /^FAIL .*(?:\n {4}at .*){0,8}/m.exec(stderr)?.[0]
+        const tail = stderr.slice(-3000)
+        const shown = failure && !tail.includes(failure) ? failure + '\n...\n' + tail : tail
+        reject(new Error(command + ' ' + args.join(' ') + ' exited ' + code + ': ' + shown))
+      }
     })
   })
 }

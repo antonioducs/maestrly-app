@@ -1046,7 +1046,9 @@ async function main() {
   bridge.send('pty:write', { id: afterTerminal.id, data: `echo "display=$DISPLAY" > ${displayFile}\n` })
   await poll('the terminal display', async () => existsSync(displayFile), 30000)
   assert.equal(readFileSync(displayFile, 'utf8').trim(), 'display=:0')
-  rmSync(displayFile)
+  // The file belongs to the host's user (uid 1000), which this test is not on Linux: the host's own shell removes it.
+  bridge.send('pty:write', { id: afterTerminal.id, data: `rm -f ${displayFile}\n` })
+  await poll('the terminal display file removed', async () => !existsSync(displayFile), 30000)
   bridge.send('drawer:close-terminal', chat.id, afterTerminal.id)
 
   // Eight computers at most: a ninth conversation is told who holds them, until one is given back.
