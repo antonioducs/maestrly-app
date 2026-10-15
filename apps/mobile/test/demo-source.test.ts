@@ -24,7 +24,8 @@ describe('demo server', () => {
     expect(environments.map((environment) => [environment.name, environment.kind])).toEqual([
       ['studio', 'bots'],
       ['research', 'bots'],
-      ['Workspaces', 'workspaces'],
+      ['Personal', 'workspaces'],
+      ['Company', 'workspaces'],
     ])
     expect(bots.find((bot) => bot.id === 'scout')?.status).toBe('offline')
     expect(bots.find((bot) => bot.id === 'atlas')?.status).toBe('waiting')

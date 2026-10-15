@@ -20,9 +20,21 @@ export interface ChatsConnection {
   close(): void
 }
 
+/** A server without a workspaces environment: it has no chats, and the phone keeps nothing for it. */
+export const noChatsSource = (serverId: string): ChatsSource => ({
+  serverId,
+  environmentId: null,
+  connect() {
+    throw new Error('The server hosts no workspaces environment')
+  },
+  readAttachment: () => Promise.reject(new Error('The server hosts no workspaces environment')),
+})
+
 /** Where chats come from: the server's workspaces host over the bridge, or the in-memory demo server. */
 export interface ChatsSource {
   readonly serverId: string
+  /** The workspaces environment whose chats these are; null for a server that hosts none, which never connects. */
+  readonly environmentId: string | null
   connect(handlers: ChatsHandlers): ChatsConnection
   /** The base64 contents of a file chosen on the phone, read only when its message is sent. */
   readAttachment(uri: string): Promise<string>

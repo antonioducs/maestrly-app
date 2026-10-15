@@ -50,8 +50,10 @@ Chats and workspaces need the server's workspaces environment to run a version
 of Maestrly that offers the mobile API. The phone does not need the same version
 as the server, only the same mobile API. A server with
 [several workspaces environments](remote-workspaces.md#several-scopes-on-one-server)
-shows the phone the chats of one of them: the first that runs and speaks to
-phones.
+shows the phone the chats of one of them at a time. Choose which under the
+server's name in the menu; the phone remembers it, and until you choose it opens
+the first that runs and speaks to phones. Each environment keeps its own
+workspaces, chats and messages waiting to be sent.
 
 ## Pair
 
@@ -85,7 +87,8 @@ Notifications** chooses what you hear about, for every paired server:
 
 **Send a test notification** asks the server for one. A notification for the
 conversation already on screen does not show a banner. Tapping a notification
-opens its bot or chat, on the server that sent it.
+opens its bot or chat, on the server that sent it and, for a chat, on its
+workspaces environment.
 
 The server sends notifications through
 [Expo's push service](https://docs.expo.dev/push-notifications/overview/), which
@@ -232,6 +235,7 @@ For App Review and the stores:
 | **This phone was removed** | The phone was revoked or unpaired elsewhere. Pair it again. |
 | **This server runs a version this app can’t use** | Update the bot server and the app. |
 | **The workspaces host isn’t running** | Start the workspaces environment from Maestrly on your computer. Messages you send wait on the phone. |
+| An environment **is stopped** | Tap **Start** in the menu, or start it from Maestrly on your computer. |
 | **Update the bot server to use chats on this phone** | The server or its workspaces environment predates the mobile API. Update both. |
 | **Update this app to use chats on** a server | The server's workspaces environment uses another version of the mobile API than this app. |
 | A notification setting says the server **sends no notifications** | The server sets `MAESTRLY_GATEWAY_PUSH=off`. |

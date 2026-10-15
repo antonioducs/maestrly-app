@@ -78,6 +78,9 @@ export const DEMO_MODEL_INFO: Record<string, { window: number; ultra: 'native' |
 }
 export const DEMO_DEFAULTS = { providerId: 'claude', modelId: 'claude-opus-5-5', reasoning: 'high', fastMode: false }
 
+/** The demo server hosts two workspaces environments, one per scope of the owner's work, each with its own chats. */
+export const DEMO_ENVIRONMENTS = { personal: 'personal', company: 'company' } as const
+
 export const DEMO_WORKSPACES: DemoWorkspace[] = [
   { id: 'maestrly', name: 'maestrly', defaultBranch: 'main' },
   { id: 'landing', name: 'landing-site', defaultBranch: 'redesign' },
@@ -401,6 +404,31 @@ export const DEMO_CHATS: DemoChat[] = [
     ),
     experience: 'maestro',
   },
+]
+
+export const DEMO_COMPANY_WORKSPACES: DemoWorkspace[] = [
+  { id: 'billing', name: 'billing-api', defaultBranch: 'main' },
+  { id: 'console', name: 'admin-console', defaultBranch: 'main' },
+]
+
+export const DEMO_COMPANY_CHATS: DemoChat[] = [
+  quick(
+    'k-invoices',
+    'Invoice export timeouts',
+    2 * HOUR,
+    codexAgent,
+    'The monthly invoice export times out for our largest customers. Find out why.',
+    'The export loads every line item into memory before writing the CSV. For the largest accounts that is over 2 million rows. Streaming the rows straight to the file keeps memory flat; the change is on `chat/stream-invoices`.',
+    { id: 'billing', branch: 'chat/stream-invoices' }
+  ),
+  quick(
+    'k-roles',
+    'Read-only role for auditors',
+    DAY,
+    sonnetAsk,
+    'What would a read-only role for auditors need in the admin console?',
+    'Auditors need to see accounts, invoices and the audit log, and nothing else. The console checks permissions per page, so the role is one new entry in `roles.ts` plus a test per page.'
+  ),
 ]
 
 /** Standalone chats open with a few things to start with, as the prototype's new chat does. */

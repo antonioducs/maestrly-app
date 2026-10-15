@@ -19,6 +19,7 @@ import { Button } from '../primitives/Button'
 import { AppText } from '../primitives/Text'
 import { BotList } from './BotList'
 import { ChatList } from './ChatList'
+import { EnvironmentSwitcher } from './EnvironmentSwitcher'
 import { ServerRow } from './ServerRow'
 import { TabBar } from './TabBar'
 import { WaitingStrip, type WaitingEntry } from './WaitingStrip'
@@ -303,6 +304,7 @@ export function DrawerPanel({
         </View>
       </View>
       {active ? <ServerRow name={active.name} online={online} onPress={() => router.push('/servers')} /> : null}
+      <EnvironmentSwitcher onChosen={() => choose('chats')} />
       {q ? null : <WaitingStrip items={waiting} />}
       <TabBar
         tabs={tabs.map((id) => ({

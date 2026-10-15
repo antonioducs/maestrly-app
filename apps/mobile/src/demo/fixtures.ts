@@ -98,8 +98,21 @@ export function demoWorld(now: number): DemoWorld {
   const environments = [
     environmentRecord({ id: 'studio', name: 'studio', botIds: ['juno', 'atlas', 'pixel'] }),
     environmentRecord({ id: 'research', name: 'research', botIds: ['ledger', 'scout'] }),
-    // The server's chats and workspaces run here (the demo's are in demo-chats).
-    environmentRecord({ id: 'workspaces', name: 'Workspaces', kind: 'workspaces', capabilities: ['mobile-api'] }),
+    // The server's chats and workspaces run here (the demo's are in demo-chats), one environment per scope of work.
+    environmentRecord({
+      id: 'personal',
+      name: 'Personal',
+      kind: 'workspaces',
+      tint: '#4f7cac',
+      capabilities: ['mobile-api'],
+    }),
+    environmentRecord({
+      id: 'company',
+      name: 'Company',
+      kind: 'workspaces',
+      tint: '#c0663f',
+      capabilities: ['mobile-api'],
+    }),
   ]
   const bots = [
     botRecord({

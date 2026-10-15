@@ -617,6 +617,19 @@ export const en = {
   'botFiles.error.demo':
     "The demo server doesn't host files. With your own server, this opens the file the bot shared.",
   'botFiles.error.unavailable': 'Open this file in Maestrly on your computer.',
+
+  'env.switcher': '{name}, {state}. Choose a workspaces environment',
+  'env.choose': 'Workspaces environment',
+  'env.chooseBody': 'Each environment has its own workspaces and chats.',
+  'env.state.running': 'Running',
+  'env.state.starting': 'Starting',
+  'env.state.stopped': 'Stopped',
+  'chatHost.stopped': '{name} is stopped',
+  'chatHost.starting': '{name} is starting…',
+  'chatHost.stoppedDetail': 'Start it to see its chats. Messages you send wait on this phone.',
+  'chatHost.start': 'Start',
+  'chatHost.startNamed': 'Start {name}',
+  'chatHost.startFailed': "Couldn't start it. Try again.",
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1243,4 +1256,17 @@ export const ptBR: Record<keyof typeof en, string> = {
   'botFiles.error.demo':
     'O servidor de demonstração não guarda arquivos. Com o seu servidor, isto abre o arquivo que o bot compartilhou.',
   'botFiles.error.unavailable': 'Abra este arquivo na Maestrly do computador.',
+
+  'env.switcher': '{name}, {state}. Escolher um ambiente de workspaces',
+  'env.choose': 'Ambiente de workspaces',
+  'env.chooseBody': 'Cada ambiente tem seus próprios workspaces e chats.',
+  'env.state.running': 'Rodando',
+  'env.state.starting': 'Iniciando',
+  'env.state.stopped': 'Parado',
+  'chatHost.stopped': '{name} está parado',
+  'chatHost.starting': '{name} está iniciando…',
+  'chatHost.stoppedDetail': 'Inicie-o para ver os chats. As mensagens que você enviar esperam neste celular.',
+  'chatHost.start': 'Iniciar',
+  'chatHost.startNamed': 'Iniciar {name}',
+  'chatHost.startFailed': 'Não foi possível iniciá-lo. Tente de novo.',
 }

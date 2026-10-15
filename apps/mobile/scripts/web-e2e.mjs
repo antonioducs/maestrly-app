@@ -258,6 +258,20 @@ try {
     await button('Hide code').click()
   })
 
+  await step('switch between workspaces environments', async () => {
+    await openMenu()
+    await button(/^Personal, Running\. Choose a workspaces environment/).click()
+    await page.getByRole('radio', { name: /^Company/ }).click()
+    // Each environment has its own chats.
+    await button(/^Read-only role for auditors/).click()
+    await page.getByText(/Auditors need to see accounts, invoices and the audit log/).waitFor()
+    await openMenu()
+    if (await button(/^Pricing tiers for teams/).count()) throw new Error('Company listed a chat of Personal')
+    await button(/^Company, Running\. Choose a workspaces environment/).click()
+    await page.getByRole('radio', { name: /^Personal/ }).click()
+    await button(/^Pricing tiers for teams/).waitFor()
+  })
+
   if (problems.length) throw new Error(`The app reported problems:\n${problems.join('\n')}`)
   console.log('Mobile web flows passed.')
 } catch (error) {

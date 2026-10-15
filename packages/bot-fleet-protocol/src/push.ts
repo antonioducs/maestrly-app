@@ -40,6 +40,11 @@ export const fleetPushDataSchema = z.object({
   kind: z.enum(['bot', 'chat', 'test']),
   id: z.string().min(1).nullable(),
   category: fleetPushCategorySchema.nullable(),
+  /**
+   * A chat's workspaces environment: a server may host several, each with its own chats. Absent from bots, tests and
+   * gateways that predate it; apps that predate it ignore it.
+   */
+  env: z.string().min(1).max(64).nullable().optional(),
 })
 export type FleetPushData = z.infer<typeof fleetPushDataSchema>
 

@@ -330,9 +330,11 @@ The [mobile app](mobile.md) shows the same chats and workspaces of the server, a
 a smaller, versioned API of the host instead of a computer's full access: it reads and writes chats, answers what
 they ask, and changes their setup, but it never reaches the server's files, terminals, accounts or settings. It does
 not need the same app version as the server, only the same mobile API, so it keeps working while the server updates.
-On a server with several workspaces environments, the phone shows the chats of one of them: the first that runs and
-speaks to phones. To use another scope from the phone, stop the others for now. While the app is open, its
-connection keeps that environment from stopping when idle, as a computer's does.
+On a server with several workspaces environments, the phone shows the chats of one of them at a time, as the
+desktop's machine switcher does: choose it under the server in the app's menu, and the phone remembers the choice.
+Until you choose, it opens the first that runs and speaks to phones. A stopped environment can be started from the
+phone's menu. A notification about a chat opens it on its own environment. While the app is open, its connection
+keeps that environment from stopping when idle, as a computer's does.
 
 ## Security
 

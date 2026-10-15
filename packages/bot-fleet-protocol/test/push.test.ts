@@ -36,6 +36,16 @@ describe('push notifications', () => {
     })
     expect(fleetPushDataSchema.parse({ v: 1, device: 'd1', kind: 'test', id: null, category: null }).kind).toBe('test')
     expect(() => fleetPushDataSchema.parse({ v: 2, device: 'd1', kind: 'bot', id: 'b', category: null })).toThrow()
+    // A chat names its workspaces environment; data from gateways that predate it still parses.
+    expect(
+      fleetPushDataSchema.parse({ v: 1, device: 'd1', kind: 'chat', id: 'c1', category: 'waiting', env: 'zello' }).env
+    ).toBe('zello')
+    expect(
+      fleetPushDataSchema.parse({ v: 1, device: 'd1', kind: 'chat', id: 'c1', category: 'waiting' }).env
+    ).toBeUndefined()
+    expect(() =>
+      fleetPushDataSchema.parse({ v: 1, device: 'd1', kind: 'chat', id: 'c1', category: null, env: '' })
+    ).toThrow()
   })
 
   it('carries a chat that needs the owner on the instance stream, for readers that ask', () => {
