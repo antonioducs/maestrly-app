@@ -560,6 +560,22 @@ export function workspaceReply(
 /** A standalone chat's reply: the suggestions answer in full, a request to send work starts a workspace chat. */
 export function chatReply(text: string, modelLabel: string): ChatStep[] {
   const lower = text.toLowerCase()
+  if (/\bcache\b/.test(lower))
+    return [
+      { think: 500 },
+      {
+        permission: {
+          title: 'Run a command',
+          target: 'rm -rf node_modules/.cache',
+          detail: 'Clears the build cache of this project',
+          allow: [
+            { tool: { name: 'bash', target: 'rm -rf node_modules/.cache', output: '' }, ms: 600 },
+            { say: 'Cleared the build cache. The next build starts from scratch.' },
+          ],
+          deny: [{ say: 'Okay, the cache stays as it is.' }],
+        },
+      },
+    ]
   const workspace = /\b(maestrly|landing-site|docs-site)\b/.exec(lower)?.[1]
   if (workspace && /\bsend\b|\bstart\b/.test(lower)) {
     const push = /push/.test(lower)

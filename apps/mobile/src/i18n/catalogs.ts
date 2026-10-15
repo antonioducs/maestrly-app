@@ -603,6 +603,8 @@ export const en = {
 
   'conv.scrollToEnd': 'Go to the latest message',
   'dictation.needsBuild': 'Dictation needs the Maestrly app. Expo Go has no speech recognition.',
+
+  'perm.allowEverything': 'Allow everything in this chat',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1215,4 +1217,6 @@ export const ptBR: Record<keyof typeof en, string> = {
 
   'conv.scrollToEnd': 'Ir para a última mensagem',
   'dictation.needsBuild': 'O ditado precisa do app Maestrly. O Expo Go não tem reconhecimento de fala.',
+
+  'perm.allowEverything': 'Permitir tudo neste chat',
 }

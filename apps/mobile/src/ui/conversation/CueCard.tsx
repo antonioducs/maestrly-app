@@ -26,6 +26,11 @@ export type ConversationContextValue = {
   imageSource: (imageId: string) => ImageSourceValue | Promise<ImageSourceValue>
   /** Opens another chat of the server, such as one an agent started from here. */
   openChat?: (conversationId: string) => void
+  /**
+   * Gives the chat full access after asking the person, as its setup does; resolves with whether they agreed. Absent
+   * in a bot's conversation, in Maestro chats, and once the chat already has full access.
+   */
+  allowEverything?: () => Promise<boolean>
 }
 export const ConversationContext = createContext<ConversationContextValue | null>(null)
 export function useConversation(): ConversationContextValue {
@@ -104,11 +109,13 @@ export function useResolver(item: FleetTranscriptItem) {
   const interactionId = interactionFor(item)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const run = async (resolution: FleetInteractionResolution, announcement: string) => {
+  /** `before` runs first, such as a confirmation; the request is answered only when it resolves with true. */
+  const run = async (resolution: FleetInteractionResolution, announcement: string, before?: () => Promise<boolean>) => {
     if (!interactionId) return
     setBusy(true)
     setError(null)
     try {
+      if (before && !(await before())) return
       await resolve(interactionId, resolution)
       AccessibilityInfo.announceForAccessibility(announcement)
       focusComposer()

@@ -126,8 +126,16 @@ export function chatSetupSummary(
     : defaultOption
       ? t('chat.setup.defaultModel', { model: defaultOption.modelLabel })
       : t('chat.setup.default')
-  if (setup.reasoning === 'ultra' || setup.reasoning === 'maestrly-ultra') return `${model} · ${t('chat.setup.ultra')}`
-  return setup.reasoning && setup.reasoning !== 'off' ? `${model} · ${effortLabel(setup.reasoning, t)}` : model
+  const effort =
+    setup.reasoning === 'ultra' || setup.reasoning === 'maestrly-ultra'
+      ? t('chat.setup.ultra')
+      : setup.reasoning && setup.reasoning !== 'off'
+        ? effortLabel(setup.reasoning, t)
+        : null
+  // Asking is the default; another permission mode shows, so full access never goes unnoticed. Maestro has none.
+  const permission =
+    setup.experience !== 'maestro' && setup.permMode !== 'ask' ? t(`ceiling.${setup.permMode}.label`) : null
+  return [model, effort, permission].filter(Boolean).join(' · ')
 }
 
 /** The option of a chat's model, in what the host offers. */

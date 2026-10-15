@@ -200,6 +200,17 @@ try {
     await page.getByText('Maestrly 0.16').waitFor()
   })
 
+  await step('allow everything in a chat from its request', async () => {
+    await page.getByRole('button', { name: 'New chat', exact: true }).filter({ visible: true }).first().click()
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Clean the build cache')
+    await button('Send message').click()
+    page.once('dialog', (dialog) => dialog.accept())
+    await button('Allow everything in this chat').click()
+    await page.getByText('Allowed', { exact: true }).waitFor()
+    await page.getByText('Cleared the build cache.', { exact: false }).waitFor()
+    await button(/^Setup: .*Full access/).waitFor()
+  })
+
   await step('change the chat setup', async () => {
     await button(/^Setup:/).click()
     await page.getByText('Chat setup').waitFor()
@@ -216,7 +227,7 @@ try {
 
   await step('show the dark theme', async () => {
     await page.emulateMedia({ colorScheme: 'dark' })
-    await page.getByText('Maestrly 0.16').waitFor()
+    await page.getByText('Cleared the build cache.', { exact: false }).waitFor()
   })
 
   await step('open a conversation from its report', async () => {

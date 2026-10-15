@@ -12,7 +12,7 @@ const SHELL = new Set(['bash', 'shell', 'exec_command'])
 export function PermissionCard({ item }: { item: Extract<FleetTranscriptItem, { kind: 'permission' }> }) {
   const { palette } = useTheme()
   const { t } = useI18n()
-  const { bot, name } = useConversation()
+  const { bot, name, allowEverything } = useConversation()
   const { busy, error, run, disabled } = useResolver(item)
 
   if (item.state !== 'pending')
@@ -67,6 +67,16 @@ export function PermissionCard({ item }: { item: Extract<FleetTranscriptItem, { 
           onPress={() => void run({ kind: 'permission', reply: 'always' }, t('announce.allowed'))}
         />
       </View>
+      {allowEverything ? (
+        <Button
+          label={t('perm.allowEverything')}
+          variant="secondary"
+          icon="shield"
+          disabled={disabled}
+          onPress={() => void run({ kind: 'permission', reply: 'once' }, t('announce.allowed'), allowEverything)}
+          style={{ marginTop: 8 }}
+        />
+      ) : null}
       <Button
         label={t('perm.deny')}
         variant="danger"

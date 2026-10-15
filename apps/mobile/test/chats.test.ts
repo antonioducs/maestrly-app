@@ -161,6 +161,14 @@ describe('chat lists', () => {
     expect(chatSetupSummary({ ...setup, selection: null, reasoning: 'off' }, null, option, text.t)).toBe(
       'Default · Opus 5.5'
     )
+    // A permission mode other than asking shows, so full access is never out of sight; Maestro has none.
+    expect(chatSetupSummary({ ...setup, permMode: 'full' }, option, null, text.t)).toBe('Opus 5.5 · High · Full access')
+    expect(chatSetupSummary({ ...setup, permMode: 'auto', reasoning: 'off' }, option, null, text.t)).toBe(
+      'Opus 5.5 · Approve for me'
+    )
+    expect(chatSetupSummary({ ...setup, permMode: 'full', experience: 'maestro' }, option, null, text.t)).toBe(
+      'Opus 5.5 · High'
+    )
   })
 })
 
