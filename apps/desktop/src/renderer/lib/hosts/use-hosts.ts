@@ -20,6 +20,7 @@ function localHost(): HostView {
     desktopEffects: true,
     editor: true,
     browser: true,
+    computer: false,
     environment: null,
     hostVersion: null,
   }

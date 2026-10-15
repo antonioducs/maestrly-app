@@ -19,8 +19,7 @@ import {
 import { applyLayout, setPlacement } from './layout'
 import { emitBrowserState, ensureBrowser } from './browser'
 import { ensureBrowserChrome, ensurePanelView } from './panels'
-import { presentedBrowserSize } from '../conversation-screen'
-import { isBotMode } from '../fleet/instance/config'
+import { presentedBrowserSize, presentsBrowserInArea } from '../conversation-screen'
 import { floatingStripHeight } from '../fleet/instance/window-bounds'
 
 // Identity/pin strip height in DIPs for every floating window. Container content paints it; reparented
@@ -147,7 +146,7 @@ export function layoutFloatingTab(convId: string, tab: FloatTab, floatWin: Brows
   if (!d) return
   const [w, h] = floatWin.getContentSize()
   // A bot browser its desktop presents shows no identity strip: the desktop window names it.
-  const presented = tab === 'browser' && isBotMode() && presentedBrowserSize(convId) !== null
+  const presented = tab === 'browser' && presentsBrowserInArea(convId) && presentedBrowserSize(convId) !== null
   const top = Math.min(floatingStripHeight(presented, FLOAT_CHROME_H), h)
   if (tab === 'browser') {
     const below = Math.max(0, h - top)

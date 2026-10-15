@@ -107,6 +107,8 @@ export async function captureSlotView(convId: string): Promise<string | null> {
   if (kind === 'browser') view = d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view
   else if (kind === 'vscode') view = d.vscodeView
   else if (kind === 'chatgpt') view = d.chatgptView
+  // The Computer tab of a remote conversation is drawn by the renderer, with no native view.
+  else if (kind === 'computer') return null
   else view = d.panelViews.get(kind)
   if (!view || view.webContents.isDestroyed()) return null
   try {

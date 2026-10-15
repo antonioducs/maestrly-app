@@ -27,6 +27,8 @@ export function panelSearch(tab: string, convId: string): string {
 /** Main-process admission for renderer requests and restored native views. */
 export function conversationTabAllowed(convId: string, tab: FloatTab): boolean {
   if (!isFloatTab(tab)) return false
+  // A remote conversation's computer is drawn by the window from its video stream: it never has a native view.
+  if (tab === 'computer') return false
   // This computer holds no native browser or companion for a conversation that runs on another host; its editor is the
   // host's, shown here when the host serves it (drawer/remote-vscode).
   if (isRemoteConversation(convId))

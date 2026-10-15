@@ -190,6 +190,7 @@ describe('registerDrawerIpc', () => {
       'drawer:browser-copy',
       'drawer:browser-stream-start',
       'drawer:clear-cache',
+      'drawer:computer-open',
       'drawer:load-vscode',
       'drawer:omnibox-overlay',
       'drawer:omnibox-query',
@@ -207,6 +208,7 @@ describe('registerDrawerIpc', () => {
       'drawer:browser-stream-ack',
       'drawer:browser-stream-resize',
       'drawer:browser-stream-stop',
+      'drawer:browser-stream-transport',
       'drawer:close-terminal',
       'drawer:create-terminal',
       'drawer:detach',
@@ -250,7 +252,8 @@ describe('registerDrawerIpc', () => {
     mons.get('drawer:browser-stream-ack')!({ sender } as never, 'conv', 'stream-id', 3)
     mons.get('drawer:browser-input')!({ sender } as never, 'conv', 'stream-id', { type: 'text', text: 'a' })
     await mhandles.get('drawer:browser-copy')!({ sender } as never, 'conv', 'stream-id', true)
-    expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600)
+    // A window that plays video says so in a fifth argument; this one says nothing.
+    expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600, undefined)
     expect(acknowledgeBrowserFrame).toHaveBeenCalledWith(sender, 'conv', 'stream-id', 3)
     expect(inputBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', { type: 'text', text: 'a' })
     expect(copyBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', true)

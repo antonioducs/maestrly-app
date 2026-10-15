@@ -91,13 +91,36 @@ describe("tools of a remote host's conversation", () => {
     expect(tabAvailableInContext('review', { ...remote, scope: 'standalone' })).toBe(false)
   })
 
+  it("offers a conversation's computer only on a host that gives its conversations computers", () => {
+    expect(DEFAULT_MAIN_ORDER[1]).toBe('computer')
+    const computers = (hostId: string, tab: 'browser' | 'vscode' | 'computer') =>
+      hostId === 'server-1/workspaces' && tab !== 'vscode'
+    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true, computers)).toEqual([
+      'browser',
+      'computer',
+      'terminal',
+      'files',
+      'plan',
+      'review',
+      'notes',
+    ])
+    expect(tabAvailableInContext('computer', remote, true, computers)).toBe(true)
+    expect(tabAvailableInContext('computer', { id: 'server-2/workspaces#conv-1' }, true, computers)).toBe(false)
+    expect(tabAvailableInContext('computer', remote)).toBe(false)
+    // This computer is the owner's own: its conversations need no computer tab.
+    expect(tabAvailableInContext('computer', { id: 'conv-1', scope: 'project' }, true, computers)).toBe(false)
+    expect(sanitizeOpenTabs(['computer', 'notes'], remote, true, computers)).toEqual(['computer', 'notes'])
+    expect(sanitizeOpenTabs(['computer', 'notes'], { id: 'conv-1' }, true, computers)).toEqual(['notes'])
+  })
+
   it('drops tabs persisted by the host that this computer cannot show', () => {
     expect(sanitizeOpenTabs(['browser', 'terminal', 'vscode', 'notes'], remote)).toEqual(['terminal', 'notes'])
     expect(sanitizeOpenTabs(['browser', 'terminal'], { id: 'conv-1' })).toEqual(['browser', 'terminal'])
   })
 
   it('offers the browser of a host that streams it, and its editor only when it serves one', () => {
-    const streams = (hostId: string, tab: 'browser' | 'vscode') => hostId === 'server-1/workspaces' && tab === 'browser'
+    const streams = (hostId: string, tab: 'browser' | 'vscode' | 'computer') =>
+      hostId === 'server-1/workspaces' && tab === 'browser'
     expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true, streams)).toEqual([
       'browser',
       'terminal',
@@ -113,7 +136,8 @@ describe("tools of a remote host's conversation", () => {
   })
 
   it('offers the editor of a host that serves it, never the companion', () => {
-    const serves = (hostId: string) => hostId === 'server-1/workspaces'
+    const serves = (hostId: string, tab: 'browser' | 'vscode' | 'computer') =>
+      hostId === 'server-1/workspaces' && tab !== 'computer'
     expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true, serves)).toEqual([
       'browser',
       'vscode',

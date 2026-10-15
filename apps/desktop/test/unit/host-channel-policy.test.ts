@@ -106,7 +106,7 @@ describe('host channel policy', () => {
     expect(allowed).toEqual([])
   })
 
-  it("lets remote origins reach the browser stream and the host's editor", () => {
+  it("lets remote origins reach the browser stream, the host's editor and the conversation's computer", () => {
     const seen: string[] = []
     const byMember = channelsOf(
       makeHostApi({
@@ -118,7 +118,7 @@ describe('host channel policy', () => {
       seen
     )
     const streamChannels = [...byMember]
-      .filter(([member]) => member.startsWith('browserStream'))
+      .filter(([member]) => member.startsWith('browserStream') || member === 'computerOpen')
       .flatMap(([, used]) => used)
     // The editor channels are invoked by this computer's main process over the bridge, not through the preload.
     expect(new Set([...streamChannels, ...Object.values(HOST_EDITOR_CHANNELS)])).toEqual(REMOTE_VIEWER_CHANNELS)

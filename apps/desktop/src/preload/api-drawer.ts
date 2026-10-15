@@ -10,8 +10,11 @@ import type {
   BrowserStreamInput,
   BrowserStreamNotice,
   BrowserStreamSource,
+  BrowserStreamArea,
+  BrowserStreamOptions,
   BrowserStreamStarted,
 } from '../shared/browser-stream'
+import type { ComputerOpenResult } from '../shared/conversation-computer'
 import type { OmniboxQueryResult } from '../shared/browser-omnibox'
 
 /** Main asks the browser chrome hosted at `placement` to focus and select its address bar. */
@@ -227,8 +230,16 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
      * The conversation's browser on a remote host, streamed to this window (see shared/browser-stream). Only a remote
      * host serves these; one window watches a conversation's browser at a time, and the last to start takes it over.
      */
-    browserStreamStart: (convId: string, width: number, height: number): Promise<BrowserStreamStarted> =>
-      ipcRenderer.invoke('drawer:browser-stream-start', convId, width, height),
+    browserStreamStart: (
+      convId: string,
+      width: number,
+      height: number,
+      options?: BrowserStreamOptions
+    ): Promise<BrowserStreamStarted> =>
+      ipcRenderer.invoke('drawer:browser-stream-start', convId, width, height, ...(options ? [options] : [])),
+    /** This window cannot play the tile's video: the host sends frames instead. */
+    browserStreamTransport: (convId: string, streamId: string, transport: 'jpeg') =>
+      ipcRenderer.send('drawer:browser-stream-transport', convId, streamId, transport),
     browserStreamResize: (convId: string, streamId: string, width: number, height: number) =>
       ipcRenderer.send('drawer:browser-stream-resize', convId, streamId, width, height),
     /** Sent once each frame was drawn or dropped: the host sends the next ones only as earlier ones are acknowledged. */
@@ -236,6 +247,8 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       ipcRenderer.send('drawer:browser-stream-ack', convId, streamId, seq),
     browserStreamStop: (convId: string, streamId: string) =>
       ipcRenderer.send('drawer:browser-stream-stop', convId, streamId),
+    /** Starts the conversation's computer on a workspaces host, or keeps it running; only a remote host has one. */
+    computerOpen: (convId: string): Promise<ComputerOpenResult> => ipcRenderer.invoke('drawer:computer-open', convId),
     browserStreamInput: (convId: string, streamId: string, input: BrowserStreamInput) =>
       ipcRenderer.send('drawer:browser-input', convId, streamId, input),
     /** Copies (or cuts) the page's selection; resolves with its text, or null when nothing was copied. */
@@ -277,6 +290,12 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       const listener = (_e: unknown, notice: BrowserStreamNotice) => cb(notice)
       ipcRenderer.on('drawer:browser-stream-notice', listener)
       return () => ipcRenderer.removeListener('drawer:browser-stream-notice', listener)
+    },
+    /** Where the page is in the conversation's tile, for a stream on the video transport. */
+    onBrowserStreamArea: (cb: (area: BrowserStreamArea) => void): (() => void) => {
+      const listener = (_e: unknown, area: BrowserStreamArea) => cb(area)
+      ipcRenderer.on('drawer:browser-stream-area', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-stream-area', listener)
     },
     savePlanDraft: (convId: string, draft: unknown): void => {
       ipcRenderer.send('panel:plan-draft-save', convId, draft)

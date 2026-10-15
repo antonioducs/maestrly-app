@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
   Globe,
+  Monitor,
   Code2,
   SquareTerminal,
   Maximize2,
@@ -39,6 +40,7 @@ import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
+import { ConversationComputer } from '@/components/ConversationComputer'
 import { restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from '@/components/chat/ChatGptWebAccessEditor'
 import { ToolPalette } from '@/components/ToolPalette'
@@ -87,6 +89,7 @@ const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal', 'file
 
 const mainTabDefs = (t: TFunction): Record<Tab, { label: string; icon: React.ReactNode }> => ({
   browser: { label: t('drawer.tabBrowser'), icon: <Globe className="size-4" /> },
+  computer: { label: t('drawer.tabComputer'), icon: <Monitor className="size-4" /> },
   vscode: { label: t('drawer.tabCode'), icon: <Code2 className="size-4" /> },
   terminal: { label: t('drawer.tabTerminal'), icon: <SquareTerminal className="size-4" /> },
   files: { label: t('drawer.tabFiles'), icon: <Files className="size-4" /> },
@@ -534,6 +537,10 @@ export function Drawer({
 
         {tab === 'browser' && remoteConv && hostConvId && (
           <RemoteBrowserSurface key={convId} convId={hostConvId} active={visible} onFocusAddress={focusAddress} />
+        )}
+
+        {tab === 'computer' && remoteConv && hostConvId && (
+          <ConversationComputer key={convId} convId={hostConvId} active={visible} />
         )}
 
         {tab &&

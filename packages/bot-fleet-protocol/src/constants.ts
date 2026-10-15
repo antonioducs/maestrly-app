@@ -266,6 +266,24 @@ export const FLEET_HOST_FILES_FEATURE = 'host-files'
  * workspaces) an idle stop.
  */
 export const FLEET_WORKSPACES_ENVIRONMENTS_FEATURE = 'workspaces-environments'
+/**
+ * Instance capability: a workspaces host gives its conversations computers of their own, and streams a conversation's
+ * browser from its tile of the environment display. Not a gateway feature: a gateway serves conversation screens once
+ * it knows the conversation screen ticket route.
+ */
+export const FLEET_CONVERSATION_COMPUTERS_FEATURE = 'conversation-computers'
+/**
+ * A workspaces host's computers: as many as the environment display has tiles for browsers, given back once idle for
+ * `idleMs` (checked every `checkEveryMs`), on X display numbers from `firstDisplay` to `lastDisplay`, one per
+ * conversation, so they never meet a bot's display numbers (its slot).
+ */
+export const FLEET_CONVERSATION_COMPUTER_LIMITS = {
+  slots: 8,
+  idleMs: 60_000,
+  checkEveryMs: 5_000,
+  firstDisplay: 10,
+  lastDisplay: 4095,
+} as const
 /** Where a workspaces environment's control server accepts the bridge, as a WebSocket upgrade. */
 export const FLEET_INSTANCE_BRIDGE_PATH = '/v1/bridge'
 /**

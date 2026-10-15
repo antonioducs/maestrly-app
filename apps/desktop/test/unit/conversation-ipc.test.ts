@@ -58,6 +58,9 @@ vi.mock('../../src/main/terminal-manager', () => ({
   disposeShellTerminals: vi.fn(),
 }))
 
+const computers = vi.hoisted(() => ({ close: vi.fn(async (_id: string) => undefined) }))
+vi.mock('../../src/main/remote-host/server/computers-registry', () => ({ serverComputers: () => computers }))
+
 vi.mock('../../src/main/workspace-service', () => ({
   createConversation: h.createConversation,
   createSiblingConversation: vi.fn(),
@@ -67,6 +70,7 @@ vi.mock('../../src/main/workspace-service', () => ({
 }))
 
 import { registerConversationIpc } from '../../src/main/conversation-ipc'
+import * as floatingManager from '../../src/main/floating-manager'
 import {
   clearConversationAttention,
   listConversationAttention,
@@ -141,6 +145,18 @@ describe('registerConversationIpc', () => {
         cwd: '/tmp/pwn',
       })
     ).toThrow('Invalid payload')
+  })
+
+  it("gives a workspaces conversation's computer back when it is archived or deleted, before its windows go", async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerConversationIpc(reg, { stopChat: h.stopChat })
+    const order: string[] = []
+    computers.close.mockImplementation(async (id: string) => void order.push('computer ' + id))
+    vi.mocked(floatingManager.disposeConversation).mockImplementation((id: string) => void order.push('windows ' + id))
+    await mhandles.get('conversation:archive')!({} as never, 'c1', true)
+    await mhandles.get('conversation:archive')!({} as never, 'c1', false)
+    await mhandles.get('conversation:delete')!({} as never, 'c2')
+    expect(order).toEqual(['computer c1', 'windows c1', 'computer c2', 'windows c2'])
   })
 
   it('forwards pin state to the store and returns its canonical value', async () => {

@@ -39,7 +39,9 @@ import {
   fleetReaderWantsChatAttention,
   fleetReaderWantsReasoning,
   fleetTranscriptItemReadable,
+  fleetHostConversationIdSchema,
   fleetScreenSurfaceSchema,
+  type FleetScreenSurface,
   fleetSubscriptionKindSchema,
   type FleetAccountImportRequest,
   type FleetAddApiKeyAccountRequest,
@@ -170,7 +172,7 @@ export interface InstanceEnvironment {
   installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus>
   uninstallBot(botId: string, options: { purge: boolean }): Promise<void>
   /** The stream of a screen surface; the tunnel gives its lease back when it ends or fails. */
-  acquireScreen(surface: DisplaySurface, mode: ScreenMode): Promise<ScreenLease>
+  acquireScreen(surface: InstanceScreenSurface, mode: ScreenMode): Promise<ScreenLease>
   startLogin(request: FleetLoginStartRequest): Promise<FleetLoginAttempt>
   login(loginId: string): FleetLoginAttempt
   loginCallback(loginId: string, request: FleetLoginCallbackRequest): Promise<FleetLoginCallbackResponse>
@@ -281,6 +283,8 @@ const SCREEN_ROUTES: ReadonlySet<RouteKey> = new Set<RouteKey>([
   'botScreenControl',
   'environmentScreenView',
   'environmentScreenControl',
+  'conversationScreenView',
+  'conversationScreenControl',
 ])
 /** Bot routes that also serve a bot that is not installed: installing it, and uninstalling it again. */
 const WITHOUT_INSTALLED_BOT: ReadonlySet<RouteKey> = new Set<RouteKey>(['botInstall', 'botUninstall'])
@@ -324,11 +328,20 @@ const underTakeover = (bot: InstanceBot): boolean => {
   return hold.state === 'held' && hold.reason === 'takeover'
 }
 /** The surface and mode a screen upgrade asks for, or null for a path that is not a screen. */
-function screenFor(pathname: string): { surface: DisplaySurface; mode: ScreenMode } | null {
+function screenFor(pathname: string): { surface: InstanceScreenSurface; mode: ScreenMode } | null {
   const match = routeFor('GET', pathname)
   if (!match) return null
   if (match.key === 'environmentScreenView' || match.key === 'environmentScreenControl')
     return { surface: { kind: 'environment' }, mode: match.key === 'environmentScreenView' ? 'view' : 'control' }
+  if (match.key === 'conversationScreenView' || match.key === 'conversationScreenControl') {
+    const surface = fleetScreenSurfaceSchema.safeParse(match.params.surface)
+    const conversationId = fleetHostConversationIdSchema.safeParse(match.params.conversationId)
+    if (!surface.success || !conversationId.success) return null
+    return {
+      surface: { kind: 'conversation', conversationId: conversationId.data, surface: surface.data },
+      mode: match.key === 'conversationScreenView' ? 'view' : 'control',
+    }
+  }
   if (match.key !== 'botScreenView' && match.key !== 'botScreenControl') return null
   const kind = fleetScreenSurfaceSchema.safeParse(match.params.surface)
   if (!kind.success || !isBotId(match.params.botId)) return null
@@ -381,9 +394,17 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
 const VIEWERS_MAX = 4
 const CONTROLLERS_MAX = 1
 
+/**
+ * A screen the control API serves: a bot's or the environment's, or a workspaces conversation's computer (`apps`) or
+ * browser tile (`browser`).
+ */
+export type InstanceScreenSurface =
+  | DisplaySurface
+  | { kind: 'conversation'; conversationId: string; surface: FleetScreenSurface }
+
 /** A screen connection: reserved when it is accepted, open once upgraded, and ended at most once. */
 interface Tunnel {
-  /** What it shows: `environment`, or `browser:<botId>` and `apps:<botId>`. */
+  /** What it shows: `environment`, `browser:<botId>` and `apps:<botId>`, or `conversation:<id>:<surface>`. */
   readonly surface: string
   readonly mode: ScreenMode
   readonly botId: string | null
@@ -773,12 +794,22 @@ export function createInstanceControlServer(
       )
         return fail(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       const { surface, mode } = screen
-      const owner = surface.kind === 'environment' ? null : environment.bot(surface.botId)
+      if (surface.kind === 'conversation' && surface.surface === 'browser' && mode === 'control')
+        return fail(400, 'INVALID_REQUEST', "A conversation's browser is view only.")
+      // A workspaces conversation's screens need no takeover: the agent keeps working while its owner controls them.
+      const owner =
+        surface.kind === 'environment' || surface.kind === 'conversation' ? null : environment.bot(surface.botId)
       if (owner && mode === 'control' && !underTakeover(owner)) return fail(409, 'CONFLICT', 'Takeover hold required.')
 
       // Accepted before anything asynchronous happens, so two requests can never both pass the limits.
-      const key = surface.kind === 'environment' ? 'environment' : `${surface.kind}:${surface.botId}`
-      const zero = mode === 'control' && surface.kind !== 'apps'
+      const key =
+        surface.kind === 'environment'
+          ? 'environment'
+          : surface.kind === 'conversation'
+            ? `conversation:${surface.conversationId}:${surface.surface}`
+            : `${surface.kind}:${surface.botId}`
+      // A conversation's computer has a display of its own, and its browser tile is only watched.
+      const zero = mode === 'control' && surface.kind !== 'apps' && surface.kind !== 'conversation'
       const open = [...tunnels]
       if (
         open.filter((entry) => entry.surface === key && entry.mode === mode).length >=

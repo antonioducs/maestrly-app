@@ -34,6 +34,9 @@ describe('drawer scope', () => {
     // Its browser, editor and companion live on the host: this computer has no native view for them.
     for (const tab of ['browser', 'vscode', 'chatgpt'] as const)
       expect(conversationTabAllowed(REMOTE, tab), tab).toBe(false)
+    // Its computer is drawn by the window from its video: never a native view, here or for this computer's own.
+    expect(conversationTabAllowed(REMOTE, 'computer')).toBe(false)
+    expect(conversationTabAllowed('conv-1', 'computer')).toBe(false)
     expect(getConversation).not.toHaveBeenCalled()
   })
 

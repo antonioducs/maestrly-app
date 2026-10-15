@@ -4,12 +4,17 @@ import {
   FLEET_BOT_ENV,
   FLEET_BRIDGE_LIMITS,
   FLEET_ENVIRONMENT_LIMITS,
+  FLEET_CONVERSATION_COMPUTER_LIMITS,
+  FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_GATEWAY_ENV,
   FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_BRIDGE_PATH,
+  FLEET_INSTANCE_ROUTES,
   FLEET_WORKSPACES_HOST_FEATURE,
   fleetBridgeTicketResponseSchema,
+  fleetConversationScreenTicketRequestSchema,
+  fleetHostConversationIdSchema,
   fleetCreateEnvironmentRequestSchema,
   fleetEnvironmentKindSchema,
   fleetEnvironmentSchema,
@@ -33,6 +38,38 @@ const environment = {
 }
 
 describe('workspaces environments', () => {
+  it('names conversation screens and their limits', () => {
+    expect(FLEET_CONVERSATION_COMPUTERS_FEATURE).toBe('conversation-computers')
+    expect(FLEET_CONVERSATION_COMPUTER_LIMITS).toEqual({
+      slots: 8,
+      idleMs: 60_000,
+      checkEveryMs: 5_000,
+      firstDisplay: 10,
+      lastDisplay: 4095,
+    })
+    expect(FLEET_GATEWAY_ROUTES.conversationScreenTicket).toMatchObject({
+      method: 'POST',
+      path: '/v1/environments/:eid/conversations/:cid/screen-tickets',
+    })
+    expect(FLEET_INSTANCE_ROUTES.conversationScreenView.path).toBe(
+      '/v1/conversations/:conversationId/screen/:surface/view'
+    )
+    expect(FLEET_INSTANCE_ROUTES.conversationScreenControl.path).toBe(
+      '/v1/conversations/:conversationId/screen/:surface/control'
+    )
+  })
+
+  it('validates host conversation ids and conversation screen tickets', () => {
+    expect(fleetHostConversationIdSchema.safeParse(randomUUID()).success).toBe(true)
+    for (const bad of ['', '-a', 'a/b', 'a'.repeat(65), 'ação', 'a b'])
+      expect(fleetHostConversationIdSchema.safeParse(bad).success).toBe(false)
+    const ticket = fleetConversationScreenTicketRequestSchema
+    expect(ticket.safeParse({ mode: 'control', surface: 'apps' }).success).toBe(true)
+    expect(ticket.safeParse({ mode: 'view', surface: 'browser' }).success).toBe(true)
+    expect(ticket.safeParse({ mode: 'control', surface: 'browser' }).success).toBe(false)
+    expect(ticket.safeParse({ mode: 'view', surface: 'apps', extra: 1 }).success).toBe(false)
+  })
+
   it('names the feature, the container variables and the bridge path and limits', () => {
     expect(FLEET_WORKSPACES_HOST_FEATURE).toBe('workspaces-host')
     expect(FLEET_BOT_ENV.serverMode).toBe('MAESTRLY_SERVER_MODE')

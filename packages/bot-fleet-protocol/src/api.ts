@@ -622,6 +622,17 @@ export type FleetScreenTicketRequest = z.infer<typeof fleetScreenTicketRequestSc
 /** The environment screen shows only Maestrly's settings: control needs no takeover. */
 export const fleetEnvironmentScreenTicketRequestSchema = z.object({ mode: z.enum(['view', 'control']) })
 export type FleetEnvironmentScreenTicketRequest = z.infer<typeof fleetEnvironmentScreenTicketRequestSchema>
+/**
+ * A workspaces conversation's screens: its computer (`apps`), or its browser's tile (`browser`), which is only watched:
+ * the Browser tab sends its input over the bridge.
+ */
+export const fleetConversationScreenTicketRequestSchema = z
+  .object({ mode: z.enum(['view', 'control']), surface: fleetScreenSurfaceSchema })
+  .strict()
+  .refine((value) => value.surface !== 'browser' || value.mode === 'view', {
+    message: "A conversation's browser is view only",
+  })
+export type FleetConversationScreenTicketRequest = z.infer<typeof fleetConversationScreenTicketRequestSchema>
 export const fleetScreenTicketResponseSchema = z.object({
   ticket: fleetIdSchema,
   path: z.string().startsWith('/v1/screen?ticket='),
@@ -1365,6 +1376,12 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   /** Irreversible: removes the home volume and every gateway record of the environment and its bots. */
   archivedEnvironmentDelete: { method: 'DELETE', path: '/v1/archived-environments/:eid', body: null, response: null },
+  conversationScreenTicket: {
+    method: 'POST',
+    path: '/v1/environments/:eid/conversations/:cid/screen-tickets',
+    body: fleetConversationScreenTicketRequestSchema,
+    response: fleetScreenTicketResponseSchema,
+  },
   environmentScreenTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/screen-tickets',
@@ -2071,6 +2088,19 @@ export const FLEET_INSTANCE_ROUTES = {
   botScreenControl: { method: 'GET', path: '/v1/bots/:botId/screen/:surface/control', body: null, response: null },
   environmentScreenView: { method: 'GET', path: '/v1/screen/environment/view', body: null, response: null },
   environmentScreenControl: { method: 'GET', path: '/v1/screen/environment/control', body: null, response: null },
+  // A workspaces conversation's computer (`apps`) and its browser's tile (`browser`, view only).
+  conversationScreenView: {
+    method: 'GET',
+    path: '/v1/conversations/:conversationId/screen/:surface/view',
+    body: null,
+    response: null,
+  },
+  conversationScreenControl: {
+    method: 'GET',
+    path: '/v1/conversations/:conversationId/screen/:surface/control',
+    body: null,
+    response: null,
+  },
   // A workspaces host's files: content and chunks carry raw bytes, so their bodies and answers are not JSON.
   hostFileStat: {
     method: 'POST',

@@ -7,6 +7,7 @@ import {
   Globe,
   GripVertical,
   MessageCircle,
+  Monitor,
   PanelRight,
   RotateCw,
   SquareTerminal,
@@ -19,6 +20,7 @@ import type { TFn } from './shared'
 
 const TAB_ICON: Record<DrawerTab, ReactNode> = {
   browser: <Globe className="size-4" />,
+  computer: <Monitor className="size-4" />,
   vscode: <Code2 className="size-4" />,
   terminal: <SquareTerminal className="size-4" />,
   files: <Files className="size-4" />,
@@ -43,6 +45,7 @@ export function TabOrderSection({
 }) {
   const tabLabel: Record<DrawerTab, string> = {
     browser: t('drawer.tabBrowser'),
+    computer: t('drawer.tabComputer'),
     vscode: t('drawer.tabCode'),
     terminal: t('drawer.tabTerminal'),
     files: t('drawer.tabFiles'),

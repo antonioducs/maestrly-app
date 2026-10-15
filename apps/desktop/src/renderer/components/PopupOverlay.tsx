@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils'
 
 const TAB_TITLE_KEY: Record<FloatTab, string> = {
   browser: 'drawer.tabBrowser',
+  computer: 'drawer.tabComputer',
   vscode: 'drawer.tabCode',
   terminal: 'drawer.tabTerminal',
   files: 'drawer.tabFiles',

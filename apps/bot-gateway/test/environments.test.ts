@@ -9,7 +9,9 @@ import { WebSocket } from 'ws'
 import {
   FLEET_PROTOCOL_HEADER,
   FLEET_SCREEN_UPGRADE,
+  FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_VIDEO_SCREENS_FEATURE,
+  FLEET_WORKSPACES_HOST_FEATURE,
   fleetInstanceBotInstallSchema,
   fleetInstanceHoldRequestSchema,
   fleetInstanceProfileSchema,
@@ -20,6 +22,7 @@ import {
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
 import { DockerEngineDriver, DockerError, FakeDockerDriver } from '../src/docker.js'
+import { GatewayError } from '../src/errors.js'
 import { EventHub } from '../src/events.js'
 import { HostMonitor } from '../src/host.js'
 import { InstanceClient } from '../src/instance.js'
@@ -1595,6 +1598,139 @@ describe('environment screens', () => {
     )!.capabilities = ['provisioning', 'environments']
     expect(await rejected(base + ticket.path)).toBe(4003)
     expect(work.upgrades).toEqual([])
+  })
+})
+
+describe('conversation screens', () => {
+  const conversationId = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
+  async function host(screens = [FLEET_VIDEO_SCREENS_FEATURE, FLEET_CONVERSATION_COMPUTERS_FEATURE]) {
+    const f = fixture()
+    // The fake Docker has no addresses to find the gateway's container by.
+    f.lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
+    const capabilities = [FLEET_WORKSPACES_HOST_FEATURE, ...screens]
+    const fake = await f.instance('workspaces', true, capabilities)
+    f.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
+    await until(() => f.lifecycle.environment('workspaces')?.lifecycle === 'running')
+    await until(() => capabilities.every((item) => f.lifecycle.environmentCapabilities('workspaces').includes(item)))
+    fake.setTunnelToken(f.store.environmentSecrets('workspaces')!.controlToken)
+    let time = Date.now()
+    const screen = new ScreenProxy(
+      f.lifecycle,
+      () => '127.0.0.1',
+      fake.port,
+      () => time
+    )
+    const cfg = { ...f.cfg, publicPort: 0, internalPort: 0 }
+    const gateway = createGatewayServers({
+      auth: new Auth(f.store),
+      config: cfg,
+      events: new EventHub(async () => {}),
+      host: new HostMonitor(cfg, f.docker),
+      lifecycle: f.lifecycle,
+      store: f.store,
+      screen,
+    })
+    await gateway.listen()
+    closers.push(() => gateway.close())
+    const base = 'ws://127.0.0.1:' + (gateway.publicServer.address() as net.AddressInfo).port
+    return { f, fake, screen, base, advance: (ms: number) => void (time += ms) }
+  }
+  const connect = (url: string) => {
+    const ws = new WebSocket(url)
+    return new Promise<WebSocket>((resolve, reject) => {
+      ws.once('open', () => resolve(ws))
+      ws.once('error', reject)
+      ws.once('close', (code) => reject(new Error('closed ' + code)))
+    })
+  }
+  const closed = (ws: WebSocket) => new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)))
+  const rejected = (url: string) => closed(new WebSocket(url))
+  const codeOf = (run: () => unknown) => {
+    try {
+      run()
+      return null
+    } catch (error) {
+      return error instanceof GatewayError ? error.code + ': ' + error.message : String(error)
+    }
+  }
+
+  it("relays a conversation's computer and browser tile with no takeover, four viewers and one controller", async () => {
+    const { f, fake, screen, base } = await host()
+    const control = await connect(
+      base + screen.conversationTicket('workspaces', conversationId, 'one', 'control', 'apps').path
+    )
+    const echoed: Buffer[] = []
+    control.on('message', (bytes) => echoed.push(Buffer.from(bytes as Buffer)))
+    control.send(Buffer.from([4, 5, 6]))
+    await until(() => Buffer.concat(echoed).includes(Buffer.from([4, 5, 6])))
+    // A second controller from any device is refused at use.
+    expect(
+      await rejected(base + screen.conversationTicket('workspaces', conversationId, 'two', 'control', 'apps').path)
+    ).toBe(4003)
+    const views = []
+    for (let i = 0; i < 4; i++)
+      views.push(
+        await connect(base + screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps').path)
+      )
+    expect(
+      await rejected(base + screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps').path)
+    ).toBe(4003)
+    // Its computer is not the environment display: the environment screen stays free to control.
+    const settings = await connect(base + screen.environmentTicket('workspaces', 'one', 'control').path)
+    const browser = await connect(
+      base + screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'browser').path
+    )
+    const prefix = '/v1/conversations/' + conversationId + '/screen'
+    // A client's socket opens before the gateway reaches the instance.
+    await until(() => fake.upgrades.length === 7)
+    expect(fake.upgrades).toEqual([
+      prefix + '/apps/control',
+      ...Array.from({ length: 4 }, () => prefix + '/apps/view'),
+      '/v1/screen/environment/control',
+      prefix + '/browser/view',
+    ])
+    expect(codeOf(() => screen.conversationTicket('workspaces', conversationId, 'one', 'control', 'browser'))).toBe(
+      "INVALID_REQUEST: A conversation's browser is view only"
+    )
+    // Stopping the environment closes them all.
+    const closings = [control, ...views, settings, browser].map(closed)
+    await f.lifecycle.stopEnvironment('workspaces')
+    expect(new Set(await Promise.all(closings))).toEqual(new Set([4002]))
+  })
+
+  it('refuses conversation screens of bot environments, stopped environments and images without computers', async () => {
+    const { f, screen } = await host([FLEET_VIDEO_SCREENS_FEATURE])
+    expect(codeOf(() => screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps'))).toBe(
+      'CONFLICT: Restart this environment to update it before opening this screen.'
+    )
+    expect(codeOf(() => screen.conversationTicket('nowhere', conversationId, 'one', 'view', 'apps'))).toBe(
+      'NOT_FOUND: Environment not found'
+    )
+    await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE, FLEET_CONVERSATION_COMPUTERS_FEATURE])
+    await environment(f, 'Work', ['Ads'])
+    expect(codeOf(() => screen.conversationTicket('work', conversationId, 'one', 'view', 'apps'))).toBe(
+      'CONFLICT: This environment does not host workspaces.'
+    )
+    await f.lifecycle.stopEnvironment('workspaces')
+    expect(codeOf(() => screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps'))).toMatch(
+      /^BOT_NOT_RUNNING/
+    )
+  })
+
+  it('refuses a ticket at use once its device is revoked or its image no longer has computers', async () => {
+    const { f, fake, screen, base } = await host()
+    f.store.db
+      .prepare('INSERT INTO devices(id,name,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,NULL,NULL)')
+      .run('gone', 'Gone', 'sha', new Date().toISOString())
+    const revoked = screen.conversationTicket('workspaces', conversationId, 'gone', 'view', 'apps')
+    expect(f.store.revokeDevice('gone')).toBe(true)
+    expect(await rejected(base + revoked.path)).toBe(4003)
+    const older = screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps')
+    ;(f.lifecycle as unknown as { instances: Map<string, { capabilities: string[] }> }).instances.get(
+      'workspaces'
+    )!.capabilities = ['provisioning', 'environments', FLEET_WORKSPACES_HOST_FEATURE, FLEET_VIDEO_SCREENS_FEATURE]
+    expect(await rejected(base + older.path)).toBe(4003)
+    expect(fake.upgrades).toEqual([])
   })
 })
 

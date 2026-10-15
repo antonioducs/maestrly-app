@@ -5,6 +5,7 @@ import { unwatchNotesAtCwd } from '../notes/notes-service'
 import { clearPlan } from '../plan-broker'
 import * as popupManager from '../popup-manager'
 import { killPtyAndWait } from '../pty-manager'
+import { serverComputers } from '../remote-host/server/computers-registry'
 import { unwatchConversation } from '../selection-bridge'
 import { stopChatAndWait } from '../chat/service'
 import { disposeShellTerminalsAndWait } from '../terminal-manager'
@@ -28,6 +29,9 @@ export async function quiesceConversation(conversationId: string, sourceCwd: str
   if (chatStopped) setOwnedCwdActivity(`chat:${conversationId}`, sourceCwd, 'chat', false)
   const admittedActivitiesDrained = await waitForCwdActivityDrain(sourceCwd, ['pty', 'chat', 'terminal'])
 
+  // On a workspaces host, the conversation's computer goes back now: it is leaving, and a program window left open on
+  // it would hold one of the eight computers for good.
+  await serverComputers()?.close(conversationId)
   floatingManager.disposeConversation(conversationId)
   popupManager.disposeConversation(conversationId)
   disposeConversation(conversationId)

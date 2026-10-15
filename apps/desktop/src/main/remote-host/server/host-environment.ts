@@ -6,13 +6,22 @@ import {
   type FleetMcpImportRequest,
   type FleetSkillInstallRequest,
   type FleetSubscriptionKind,
+  FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_HOST_FILES_FEATURE,
   FLEET_MOBILE_HOST_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
+  type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
 import type { EnvironmentRuntime } from '../../fleet/instance/environment'
-import { type InstanceEnvironment, InstanceHttpError } from '../../fleet/instance/server'
+import { type InstanceEnvironment, InstanceHttpError, type InstanceScreenSurface } from '../../fleet/instance/server'
+import { ComputerUnavailableError, type ConversationComputers } from './computers'
+
+/** The computers of the host's conversations, and how to tell a conversation it has from one it does not. */
+export interface HostComputers {
+  computers: Pick<ConversationComputers, 'acquireScreen'>
+  conversationExists(conversationId: string): boolean
+}
 
 const notBots = (): InstanceHttpError =>
   new InstanceHttpError(409, 'CONFLICT', 'This environment hosts workspaces, not bots.')
@@ -20,8 +29,9 @@ const notBots = (): InstanceHttpError =>
 /**
  * What a workspaces host answers on the control API a bot environment serves: it reports itself to the gateway and
  * takes accounts, sign-ins, skills and MCP servers with the code a bot environment runs (an environment runtime with
- * no bots), and it refuses everything about bots and screens. Its environment settings are the profile its chats use.
- * Its chats and workspaces are not here: they are reached over the bridge.
+ * no bots), and it refuses everything about bots. Its only screens are its conversations' computers and browsers, when
+ * it has computers. Its environment settings are the profile its chats use. Its chats and workspaces are not here:
+ * they are reached over the bridge.
  */
 export class HostEnvironment implements InstanceEnvironment {
   readonly events: InstanceEnvironment['events']
@@ -30,7 +40,8 @@ export class HostEnvironment implements InstanceEnvironment {
   constructor(
     private readonly runtime: EnvironmentRuntime,
     /** Whether chat turns are running: a scheduled update of the host waits for them. */
-    private readonly busy: () => boolean
+    private readonly busy: () => boolean,
+    private readonly computers: HostComputers | null = null
   ) {
     this.events = runtime.events
     this.settings = runtime.settings
@@ -38,31 +49,20 @@ export class HostEnvironment implements InstanceEnvironment {
 
   health() {
     const health = this.runtime.health()
-    return {
-      ...health,
-      capabilities: [
-        ...health.capabilities,
-        FLEET_WORKSPACES_HOST_FEATURE,
-        FLEET_HOST_FILES_FEATURE,
-        FLEET_HOST_EDITOR_FEATURE,
-        FLEET_MOBILE_HOST_FEATURE,
-      ],
-      busy: this.busy(),
-    }
+    return { ...health, capabilities: [...health.capabilities, ...this.hostCapabilities()], busy: this.busy() }
   }
   async environmentStatus() {
     const status = await this.runtime.environmentStatus()
-    return {
-      ...status,
-      capabilities: [
-        ...status.capabilities,
-        FLEET_WORKSPACES_HOST_FEATURE,
-        FLEET_HOST_FILES_FEATURE,
-        FLEET_HOST_EDITOR_FEATURE,
-        FLEET_MOBILE_HOST_FEATURE,
-      ],
-      bots: [],
-    }
+    return { ...status, capabilities: [...status.capabilities, ...this.hostCapabilities()], bots: [] }
+  }
+  private hostCapabilities(): string[] {
+    return [
+      FLEET_WORKSPACES_HOST_FEATURE,
+      FLEET_HOST_FILES_FEATURE,
+      FLEET_HOST_EDITOR_FEATURE,
+      FLEET_MOBILE_HOST_FEATURE,
+      ...(this.computers ? [FLEET_CONVERSATION_COMPUTERS_FEATURE] : []),
+    ]
   }
   selections() {
     return this.runtime.selections()
@@ -77,8 +77,17 @@ export class HostEnvironment implements InstanceEnvironment {
   async uninstallBot(): Promise<never> {
     throw notBots()
   }
-  async acquireScreen(): Promise<never> {
-    throw notBots()
+  /** A conversation's computer or browser tile; every other screen belongs to bots. */
+  async acquireScreen(surface: InstanceScreenSurface, mode: ScreenMode) {
+    if (surface.kind !== 'conversation' || !this.computers) throw notBots()
+    if (!this.computers.conversationExists(surface.conversationId))
+      throw new InstanceHttpError(404, 'NOT_FOUND', 'Conversation not found.')
+    try {
+      return await this.computers.computers.acquireScreen(surface.conversationId, surface.surface, mode)
+    } catch (error) {
+      if (error instanceof ComputerUnavailableError) throw new InstanceHttpError(409, 'CONFLICT', error.message)
+      throw error
+    }
   }
   async open(): Promise<never> {
     throw notBots()

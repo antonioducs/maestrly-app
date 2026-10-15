@@ -10,6 +10,7 @@ import {
   screenPoint,
   type ContentBox,
 } from './screen-geometry'
+import { ScreenFrameDecoder } from './screen-frame-decoder'
 import { ScreenStreamCore } from './screen-stream-core'
 
 /** noVNC's keyboard module (`@novnc/novnc/core/input/keyboard.js`), which `loadScreenKeyboard` loads. */
@@ -19,9 +20,6 @@ type ScreenKeyboard = {
   ungrab(): void
 }
 export type ScreenKeyboardConstructor = new (target: Element) => ScreenKeyboard
-
-/** Decoder failures in a row, with no frame drawn in between, after which the screen gives up. */
-const DECODER_FAILURES_MAX = 5
 
 /**
  * Shows a screen's video stream in `target` and sends the owner's input to it. One `<canvas>` of the remote screen's
@@ -41,11 +39,7 @@ export class ScreenVideoClient extends EventTarget {
   private readonly wheelSteps = new WheelSteps()
   private readonly resizeObserver: ResizeObserver | null
   private readonly removeListeners: Array<() => void> = []
-  private decoder: VideoDecoder | null = null
-  private decoderCodec: string | null = null
-  private decoderFailures = 0
-  /** Frames given to the decoder and not drawn yet, oldest first. */
-  private decoding: number[] = []
+  private readonly frames: ScreenFrameDecoder
   private size: { width: number; height: number } = { width: FLEET_SCREEN.width, height: FLEET_SCREEN.height }
   private cursor: { style: string; hotX: number; hotY: number; url: string | null } | null = null
   private remotePointer: { x: number; y: number } | null = null
@@ -86,6 +80,15 @@ export class ScreenVideoClient extends EventTarget {
     })
     this.context = this.canvas.getContext('2d', { alpha: false, desynchronized: true })
     target.append(this.canvas, this.pointerImage)
+    this.frames = new ScreenFrameDecoder({
+      decoded: (id) => this.core.decoded(id),
+      failed: () => this.core.decoderFailed(),
+      fatal: () => this.disconnect(),
+      picture: (picture) => {
+        this.context?.drawImage(picture, 0, 0, this.canvas.width, this.canvas.height)
+        picture.close()
+      },
+    })
 
     this.core = new ScreenStreamCore((bytes) => this.send(bytes), {
       hello: (hello) => this.hello(hello),
@@ -185,7 +188,7 @@ export class ScreenVideoClient extends EventTarget {
     this.grabbed = false
     this.resizeObserver?.disconnect()
     for (const remove of this.removeListeners.splice(0)) remove()
-    this.resetDecoder()
+    this.frames.close()
     this.channel.onmessage = null
     this.channel.onclose = null
     this.canvas.remove()
@@ -214,76 +217,7 @@ export class ScreenVideoClient extends EventTarget {
 
   private decode(frame: { id: number; key: boolean; data: Uint8Array; codec: string }): void {
     if (this.ended) return
-    if (typeof VideoDecoder !== 'function') {
-      this.disconnect()
-      return
-    }
-    if (!this.decoder || this.decoder.state === 'closed' || this.decoderCodec !== frame.codec) {
-      this.resetDecoder()
-      const decoder: VideoDecoder = new VideoDecoder({
-        output: (picture) => this.draw(picture, decoder),
-        error: () => this.decoderFailed(decoder),
-      })
-      this.decoder = decoder
-      this.decoderCodec = frame.codec
-      try {
-        decoder.configure({ codec: frame.codec, optimizeForLatency: true })
-      } catch {
-        this.core.decoded(frame.id)
-        this.decoderFailed(decoder)
-        return
-      }
-    }
-    const decoder = this.decoder
-    this.decoding.push(frame.id)
-    try {
-      decoder.decode(
-        new EncodedVideoChunk({ type: frame.key ? 'key' : 'delta', timestamp: frame.id, data: frame.data })
-      )
-    } catch {
-      this.decoderFailed(decoder)
-    }
-  }
-
-  private draw(picture: VideoFrame, decoder: VideoDecoder): void {
-    const id = picture.timestamp
-    if (decoder !== this.decoder || this.ended) {
-      picture.close()
-      return
-    }
-    this.context?.drawImage(picture, 0, 0, this.canvas.width, this.canvas.height)
-    picture.close()
-    this.decoderFailures = 0
-    this.decoding = this.decoding.filter((pending) => pending > id)
-    // The screen counts what it sent until acknowledged: an acknowledgement covers every frame before it too.
-    this.core.decoded(id)
-  }
-
-  /** A decoder that failed is replaced at the next key frame; the frames it held are acknowledged as lost. */
-  private decoderFailed(decoder: VideoDecoder): void {
-    if (decoder !== this.decoder || this.ended) return
-    const last = this.decoding.at(-1)
-    this.resetDecoder()
-    if (last !== undefined) this.core.decoded(last)
-    if (++this.decoderFailures >= DECODER_FAILURES_MAX) {
-      this.disconnect()
-      return
-    }
-    this.core.decoderFailed()
-  }
-
-  private resetDecoder(): void {
-    const decoder = this.decoder
-    this.decoder = null
-    this.decoderCodec = null
-    this.decoding = []
-    if (decoder && decoder.state !== 'closed') {
-      try {
-        decoder.close()
-      } catch {
-        // Already closed by its own error.
-      }
-    }
+    this.frames.decode(frame)
   }
 
   private setCursor(hotX: number, hotY: number, png: Uint8Array): void {

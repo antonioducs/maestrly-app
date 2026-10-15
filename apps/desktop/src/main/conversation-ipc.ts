@@ -6,6 +6,7 @@ import { isFloatTab } from '../shared/tool-tabs'
 import { getConversationBranchInfo } from './conversation-branch-service'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
 import * as floatingManager from './floating-manager'
+import { serverComputers } from './remote-host/server/computers-registry'
 import * as popupManager from './popup-manager'
 import { disposeConversation } from './drawer-manager'
 import type { IpcRegistrar } from './ipc-registrar'
@@ -113,6 +114,8 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
       clearPlan(id)
       await deps.stopChat(id)
       disposeShellTerminals(id)
+      // On a workspaces host its computer goes back at once, before the windows it presents.
+      await serverComputers()?.close(id)
       floatingManager.disposeConversation(id) // close floating windows before destroying views
       popupManager.disposeConversation(id) // clear popup state before destroying views (#328)
       disposeConversation(id)
@@ -129,6 +132,8 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     clearPlan(id)
     await deps.stopChat(id)
     disposeShellTerminals(id)
+    // On a workspaces host its computer goes back at once, before the windows it presents.
+    await serverComputers()?.close(id)
     floatingManager.disposeConversation(id) // close floating windows before destroying views
     popupManager.disposeConversation(id) // clear popup state before destroying views (#328)
     disposeConversation(id)

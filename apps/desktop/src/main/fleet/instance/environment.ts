@@ -98,7 +98,7 @@ import { BotRuntime, loadFleetAccountOptions, visibleFleetModels, type BotRuntim
 import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
 import { SCREEN_ENCODER_PROGRAM } from './screen-encoder'
-import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
+import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError, type InstanceScreenSurface } from './server'
 
 /** The part of the display manager an environment uses. */
 export interface EnvironmentDisplays {
@@ -124,6 +124,8 @@ export interface BotDesktopHandle {
    * the bot over, and not again within moments for the same app.
    */
   present(request: PresentationRequest): void
+  /** The ids of the programs its services started (terminal windows, the file manager): their windows are its own. */
+  ownProcessIds(): number[]
   dispose(): Promise<void>
 }
 
@@ -398,8 +400,10 @@ export class EnvironmentRuntime {
    * display and its keyboard focus: until a control of one of them is released, that focus stays on the controlled
    * screen's windows, so the owner's typing never reaches another screen.
    */
-  async acquireScreen(surface: DisplaySurface, mode: ScreenMode): Promise<ScreenLease> {
+  async acquireScreen(surface: InstanceScreenSurface, mode: ScreenMode): Promise<ScreenLease> {
     this.assertOpen()
+    if (surface.kind === 'conversation')
+      throw new InstanceHttpError(409, 'CONFLICT', 'This environment runs bots, not workspaces.')
     if (surface.kind !== 'environment') {
       if (!isBotId(surface.botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
       this.bot(surface.botId)
@@ -775,7 +779,9 @@ const taskbarLanguage = (locale: string): string => (locale === 'pt-BR' ? 'pt_BR
 export function productionDisplayDeps(
   home: string,
   look: (botId: string) => BotLook | null = storedBotLook,
-  locale: () => string = getLocale
+  locale: () => string = getLocale,
+  /** Where the displays keep their files: `maestrly-bots`, or `maestrly-desktops` for conversations' computers. */
+  folder: 'maestrly-bots' | 'maestrly-desktops' = 'maestrly-bots'
 ): DisplayManagerDeps {
   return {
     spawn(command, args, options) {
@@ -794,6 +800,7 @@ export function productionDisplayDeps(
         child.once('exit', (code) => resolve(code))
       })
       return {
+        pid: child.pid,
         exited,
         kill: (signal = 'SIGTERM') => {
           if (child.exitCode === null && child.signalCode === null) child.kill(signal)
@@ -841,7 +848,7 @@ export function productionDisplayDeps(
       const botLook = look(display.botId)
       if (!botLook) return
       await paintWallpaper({
-        folder: path.join(home, '.cache', 'maestrly-bots', display.botId),
+        folder: path.join(home, '.cache', folder, display.botId),
         display: display.display,
         ...botLook,
       })

@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FLEET_SCREEN, type FleetScreenSurface } from '@maestrly/bot-fleet-protocol'
-import type { FleetScreenTargetInput } from '../../../preload/api-fleet'
 import { loadScreenKeyboard } from '@/lib/fleet/load-screen-keyboard'
 import { attachScreenClipboard, type ScreenClipboardError } from '@/lib/fleet/screen-clipboard'
 import { FleetScreenChannel, ScreenRetries, screenCloseOutcome } from '@/lib/fleet/screen-channel'
 import { ScreenVideoClient } from '@/lib/fleet/screen-video-client'
 import { fleetErrorMessage, isScreenConflict, isScreenOffline } from '@/lib/fleet/errors'
+import { screenTargetOf } from '@/lib/fleet/screen-target'
 
 export type ScreenPhase = 'connecting' | 'live' | 'offline' | 'error'
 
 /**
- * Streams a screen into `container`: a bot's browser or apps area, or an environment's screen. A null surface is a
- * bot's browser area opened as before environments. Browser areas and the environment screen share one display, so
- * the gateway allows one control session on it per environment: a refused control request watches instead, until
- * the owner retries or asks for another screen. `error` is the failure's raw message, for `fleetErrorText`.
+ * Streams a screen into `container`: a bot's browser or apps area, an environment's screen, or a workspaces
+ * conversation's computer. A null surface is a bot's browser area opened as before environments. Browser areas and the
+ * environment screen share one display, so the gateway allows one control session on it per environment: a refused
+ * control request watches instead, until the owner retries or asks for another screen. `error` is the failure's raw message, for `fleetErrorText`.
  */
 export function useFleetScreen({
   container,
   kind,
   id,
+  conversationId,
   surface,
   mode,
   disabled,
@@ -28,8 +29,10 @@ export function useFleetScreen({
   onControlLost,
 }: {
   container: RefObject<HTMLDivElement | null>
-  kind: 'bot' | 'environment'
+  kind: 'bot' | 'environment' | 'conversation'
   id: string
+  /** For a conversation: its id on the host of environment `id`. */
+  conversationId?: string
   surface: FleetScreenSurface | null
   mode: 'view' | 'control'
   disabled: boolean
@@ -49,7 +52,7 @@ export function useFleetScreen({
   const presentation = useRef({ visible, autoFocus })
   presentation.current = { visible, autoFocus }
   const remoteRef = useRef<ScreenVideoClient | null>(null)
-  const request = `${kind}:${id}:${surface ?? ''}`
+  const request = `${kind}:${id}:${conversationId ?? ''}:${surface ?? ''}`
   const [blocked, setBlocked] = useState<string | null>(null)
   const conflict = mode === 'control' && blocked === request
   const effective = conflict ? 'view' : mode
@@ -72,8 +75,7 @@ export function useFleetScreen({
     setPhase('connecting')
     setError('')
     setClipboardError(null)
-    const target: FleetScreenTargetInput =
-      kind === 'environment' ? { environmentId: id } : surface ? { botId: id, surface } : id
+    const target = screenTargetOf({ kind, id, surface, conversationId })
     const openScreen = async () => {
       // Load the keyboard before opening the channel so a failed load never leaves a channel open.
       const { default: Keyboard } = await loadScreenKeyboard()
@@ -152,7 +154,7 @@ export function useFleetScreen({
       client?.disconnect()
       channel?.close()
     }
-  }, [container, kind, id, surface, request, effective, disabled, attempt])
+  }, [container, kind, id, conversationId, surface, request, effective, disabled, attempt])
   /** Asks for control again once the other session is done. */
   const retryControl = useCallback(() => {
     retries.current.reset()

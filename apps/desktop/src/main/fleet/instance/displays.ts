@@ -1,4 +1,5 @@
 import {
+  FLEET_CONVERSATION_COMPUTER_LIMITS,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_SCREEN,
   fleetBotIdSchema,
@@ -45,10 +46,32 @@ export interface BotDisplay {
   browserArea: ScreenArea
 }
 
+/**
+ * Whose desktop a display is: a bot, or a workspaces conversation's computer (its owner key). Bots use their slot as
+ * their display number and keep their files under `maestrly-bots`; a conversation's computer has a display number of
+ * its own, so a program it left running can never open on another conversation's computer.
+ */
+export type DesktopOwner = {
+  /** A bot id, or a conversation's owner key; matches `fleetBotIdSchema`. */
+  key: string
+  /** 1 to 8: the tile of the environment display that shows its browser. */
+  slot: number
+  /** The X display number; the slot when left out, as for bots. From 10 to 4095 when given. */
+  display?: number
+  /** The folder under `~/.cache` and `~/.config` that holds its bus, desktop socket and browser profile. */
+  folder?: 'maestrly-bots' | 'maestrly-desktops'
+}
+
+/** The screens the control API serves for bots and their environment. */
 export type DisplaySurface =
   | { kind: 'environment' }
   | { kind: 'browser'; botId: string }
   | { kind: 'apps'; botId: string }
+/**
+ * Every screen the manager streams: those surfaces, and a tile of the environment display whether or not an apps
+ * display goes with it (a workspaces conversation's browser).
+ */
+export type DisplayScreen = DisplaySurface | { kind: 'tile'; slot: number }
 export interface ScreenLease {
   /** The screen's stream, which connections attach to as viewers or as its controller. */
   session: ScreenSession
@@ -58,6 +81,8 @@ export interface ScreenLease {
 
 /** A process started through the manager's dependencies. */
 export interface DisplayProcess {
+  /** The process id, when the process started. */
+  pid?: number
   /** Resolves with the exit code, or `null` when a signal ended the process. */
   exited: Promise<number | null>
   /** Asks the process to exit. */
@@ -127,6 +152,15 @@ interface Child {
 
 interface BotStack {
   readonly display: BotDisplay
+  /** The X display number: `display` without its colon. */
+  readonly number: number
+  /** The folder of its bus and desktop socket. */
+  readonly cache: string
+  /**
+   * Whether stopping it also stops the encoder of its tile. A bot's tile is its own; a conversation's tile is also
+   * watched by its Browser tab, which leases it on its own.
+   */
+  readonly ownsTile: boolean
   state: 'starting' | 'running' | 'stopping' | 'failed'
   started: Promise<BotDisplay>
   teardown: Promise<void> | null
@@ -182,7 +216,7 @@ function describeError(error: unknown): string {
 export class DisplayManager {
   private readonly deps: DisplayManagerDeps
   private readonly home: string
-  private readonly bots = new Map<string, BotStack>()
+  private readonly stacks = new Map<string, BotStack>()
   private readonly servers = new Map<string, ScreenServer>()
   private disposing: Promise<void> | null = null
 
@@ -199,29 +233,44 @@ export class DisplayManager {
   }
 
   /** Starts the bot's apps display, or returns the one already running for it. */
-  async startBot(botId: string, slot: number): Promise<BotDisplay> {
+  startBot(botId: string, slot: number): Promise<BotDisplay> {
+    return this.startDesktop({ key: botId, slot })
+  }
+
+  /** Starts the owner's apps display, or returns the one already running for it. */
+  async startDesktop(owner: DesktopOwner): Promise<BotDisplay> {
+    const { key: botId, slot } = owner
     for (;;) {
       this.assertOpen()
-      const display = this.describe(botId, slot)
-      const existing = this.bots.get(botId)
+      const described = this.describe(owner)
+      const { display } = described
+      const existing = this.stacks.get(botId)
       if (existing) {
         if (existing.display.slot !== slot)
           throw new Error(`Bot ${botId} already uses display slot ${existing.display.slot}.`)
+        if (existing.display.display !== display.display)
+          throw new Error(`Bot ${botId} already uses display ${existing.display.display}.`)
         if (existing.state === 'starting' || existing.state === 'running') return existing.started
         // A stack that is stopping, or that gave up after crashing: wait for it to finish, then start again.
         await existing.teardown
         if (existing.state === 'failed') this.forget(existing)
         continue
       }
-      const holder = [...this.bots.values()].find((stack) => stack.display.slot === slot)
+      const holder = [...this.stacks.values()].find(
+        (stack) => stack.display.slot === slot || stack.number === described.number
+      )
       if (holder) {
         if (holder.state !== 'stopping')
-          throw new Error(`Display slot ${slot} is already used by bot ${holder.display.botId}.`)
+          throw new Error(
+            holder.display.slot === slot
+              ? `Display slot ${slot} is already used by bot ${holder.display.botId}.`
+              : `Display ${display.display} is already used by ${holder.display.botId}.`
+          )
         await holder.teardown
         continue
       }
       const stack: BotStack = {
-        display,
+        ...described,
         state: 'starting',
         started: Promise.resolve(display),
         teardown: null,
@@ -236,7 +285,7 @@ export class DisplayManager {
         serverReady: false,
         serverStarting: false,
       }
-      this.bots.set(botId, stack)
+      this.stacks.set(botId, stack)
       stack.started = this.start(stack)
       stack.started.catch(() => undefined)
       return stack.started
@@ -245,7 +294,7 @@ export class DisplayManager {
 
   /** The bot's display while it is started (also after its programs kept crashing), otherwise `null`. */
   bot(botId: string): BotDisplay | null {
-    const stack = this.bots.get(botId)
+    const stack = this.stacks.get(botId)
     return stack && stack.state !== 'stopping' ? stack.display : null
   }
 
@@ -256,14 +305,14 @@ export class DisplayManager {
    */
   async redecorate(botId: string): Promise<void> {
     if (this.disposing) return
-    const stack = this.bots.get(botId)
+    const stack = this.stacks.get(botId)
     if (stack?.state !== 'running' || !stack.serverReady) return
     await this.decorating(stack)
   }
 
   /** Stops the bot's programs and screen encoders for good; they are not restarted. */
   async stopBot(botId: string): Promise<void> {
-    const stack = this.bots.get(botId)
+    const stack = this.stacks.get(botId)
     if (!stack) return
     if (stack.state === 'starting' || stack.state === 'running') {
       stack.state = 'stopping'
@@ -273,7 +322,7 @@ export class DisplayManager {
       stack.state = 'stopping'
       stack.teardown = (async () => {
         await failed
-        await this.closeServers(stack.display.slot, ['browser'])
+        if (stack.ownsTile) await this.closeServers(stack.display.slot, ['browser'])
         this.forget(stack)
       })()
     }
@@ -284,15 +333,15 @@ export class DisplayManager {
    * The surface's screen, whose encoder starts on demand. The viewers and the controller of a surface share it; its
    * encoder stops a minute after the last lease is released.
    */
-  async acquireScreen(surface: DisplaySurface): Promise<ScreenLease> {
+  async acquireScreen(surface: DisplayScreen): Promise<ScreenLease> {
     for (;;) {
       this.assertOpen()
       if (surface.kind === 'apps') {
-        const stack = this.bots.get(surface.botId)
+        const stack = this.stacks.get(surface.botId)
         if (stack?.state === 'failed') {
           await stack.teardown
           this.assertOpen()
-          if (this.bots.get(surface.botId) !== stack || this.bots.get(surface.botId)?.state === 'stopping')
+          if (this.stacks.get(surface.botId) !== stack || this.stacks.get(surface.botId)?.state === 'stopping')
             throw new Error(`The apps display of bot ${surface.botId} was stopped.`)
           if (stack.state === 'failed') {
             stack.state = 'starting'
@@ -325,10 +374,19 @@ export class DisplayManager {
     }
   }
 
+  /** The ids of the owner's display programs that are running: the windows they open are its desktop's own. */
+  ownProcessIds(key: string): number[] {
+    const stack = this.stacks.get(key)
+    if (!stack) return []
+    return [...stack.children.values()].flatMap((child) =>
+      typeof child.handle.pid === 'number' ? [child.handle.pid] : []
+    )
+  }
+
   /** Stops every display and screen encoder; the manager accepts nothing afterwards. */
   dispose(): Promise<void> {
     this.disposing ??= (async () => {
-      await Promise.all([...this.bots.keys()].map((botId) => this.stopBot(botId)))
+      await Promise.all([...this.stacks.keys()].map((botId) => this.stopBot(botId)))
       await Promise.all([...this.servers.values()].map((server) => this.closeScreen(server)))
     })()
     return this.disposing
@@ -343,37 +401,50 @@ export class DisplayManager {
       throw new Error(`The apps display of bot ${stack.display.botId} was stopped.`)
   }
 
-  private describe(botId: string, slot: number): BotDisplay {
+  private describe(owner: DesktopOwner): {
+    display: BotDisplay
+    number: number
+    cache: string
+    ownsTile: boolean
+  } {
+    const { key: botId, slot } = owner
     if (!fleetBotIdSchema.safeParse(botId).success) throw new TypeError(`Invalid bot id ${JSON.stringify(botId)}.`)
     assertSlot(slot)
-    const bus = `${this.home}/.cache/maestrly-bots/${botId}/bus`
+    const number = owner.display ?? slot
+    const { firstDisplay, lastDisplay } = FLEET_CONVERSATION_COMPUTER_LIMITS
+    if (owner.display !== undefined && (!Number.isInteger(number) || number < firstDisplay || number > lastDisplay))
+      throw new RangeError(`Invalid display number ${number}: they go from ${firstDisplay} to ${lastDisplay}.`)
+    const folder = owner.folder ?? 'maestrly-bots'
+    const cache = `${this.home}/.cache/${folder}/${botId}`
+    const bus = `${cache}/bus`
     if (bus.length > SOCKET_PATH_MAX) throw new RangeError(`The bus socket path of bot ${botId} is too long: ${bus}`)
-    const desktop = `${this.home}/.cache/maestrly-bots/${botId}/desktop.sock`
+    const desktop = `${cache}/desktop.sock`
     if (desktop.length > SOCKET_PATH_MAX)
       throw new RangeError(`The desktop socket path of bot ${botId} is too long: ${desktop}`)
     const env: BotDisplayEnv = Object.freeze({
-      DISPLAY: `:${slot}`,
+      DISPLAY: `:${number}`,
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${bus}`,
       BROWSER: BOT_URL_OPENER,
-      MAESTRLY_BOT_BROWSER_PROFILE: `${this.home}/.config/maestrly-bots/${botId}/chromium`,
+      MAESTRLY_BOT_BROWSER_PROFILE: `${this.home}/.config/${folder}/${botId}/chromium`,
       GTK_THEME: BOT_GTK_THEME,
       MAESTRLY_DESKTOP_SOCKET: desktop,
     })
-    return Object.freeze({
+    const display: BotDisplay = Object.freeze({
       botId,
       slot,
-      display: `:${slot}`,
+      display: `:${number}`,
       width: FLEET_SCREEN.width,
       height: FLEET_SCREEN.height,
       env,
       browserArea: Object.freeze(fleetEnvironmentTile(slot)),
     })
+    return { display, number, cache, ownsTile: folder === 'maestrly-bots' }
   }
 
   private async start(stack: BotStack): Promise<BotDisplay> {
     const { botId, display, env } = stack.display
     try {
-      await this.deps.mkdir(`${this.home}/.cache/maestrly-bots/${botId}`)
+      await this.deps.mkdir(stack.cache)
       await this.deps.mkdir(env.MAESTRLY_BOT_BROWSER_PROFILE)
       this.assertActive(stack)
       this.launch(stack, 'dbus-daemon')
@@ -399,14 +470,15 @@ export class DisplayManager {
 
   /** Starts Xvfb and waits until the display answers, so the programs that need it can connect. */
   private async startServer(stack: BotStack): Promise<void> {
-    const { display, slot } = stack.display
+    const { display } = stack.display
+    const { number } = stack
     stack.serverStarting = true
     try {
       // Removes the lock and socket an Xvfb left behind when the container stopped.
       const prepared = await this.probe(stack.probes, 'prepare-xvfb-display', [
         display,
-        `/tmp/.X${slot}-lock`,
-        `/tmp/.X11-unix/X${slot}`,
+        `/tmp/.X${number}-lock`,
+        `/tmp/.X11-unix/X${number}`,
       ])
       this.assertActive(stack)
       if (prepared !== 0) throw new Error(`Display ${display} is already in use.`)
@@ -609,9 +681,12 @@ export class DisplayManager {
     }
   }
 
-  /** Stops the bot's programs, timers and apps screen (and its browser screen unless it failed). */
+  /**
+   * Stops the bot's programs, timers and apps screen, and its browser screen unless it failed or its tile is not its
+   * own.
+   */
   private async teardown(stack: BotStack): Promise<void> {
-    const kinds: SurfaceKind[] = stack.state === 'failed' ? ['apps'] : ['apps', 'browser']
+    const kinds: SurfaceKind[] = stack.state === 'failed' || !stack.ownsTile ? ['apps'] : ['apps', 'browser']
     stack.serverReady = false
     for (const timer of stack.timers) this.deps.clearTimeout(timer)
     stack.timers.clear()
@@ -627,7 +702,7 @@ export class DisplayManager {
   }
 
   private forget(stack: BotStack): void {
-    if (this.bots.get(stack.display.botId) === stack) this.bots.delete(stack.display.botId)
+    if (this.stacks.get(stack.display.botId) === stack) this.stacks.delete(stack.display.botId)
   }
 
   private async stopChild(stack: BotStack, program: Program): Promise<void> {
@@ -637,7 +712,7 @@ export class DisplayManager {
     await this.terminate(child, `${program} of bot ${stack.display.botId}`)
   }
 
-  private screenTarget(surface: DisplaySurface): ScreenTarget {
+  private screenTarget(surface: DisplayScreen): ScreenTarget {
     if (surface.kind === 'environment')
       return {
         key: 'environment',
@@ -646,7 +721,19 @@ export class DisplayManager {
         display: ENVIRONMENT_DISPLAY,
         region: this.environmentArea(),
       }
-    const stack = this.bots.get(surface.botId)
+    if (surface.kind === 'tile') {
+      assertSlot(surface.slot)
+      const { slot } = surface
+      // The same encoder as the browser area of the bot in that slot: one tile, one encoder.
+      return {
+        key: `browser:${slot}`,
+        kind: 'browser',
+        slot,
+        display: ENVIRONMENT_DISPLAY,
+        region: fleetEnvironmentTile(slot),
+      }
+    }
+    const stack = this.stacks.get(surface.botId)
     if (!stack || stack.state === 'stopping') throw new Error(`Bot ${surface.botId} has no display.`)
     const { slot, display, browserArea } = stack.display
     if (surface.kind === 'browser')

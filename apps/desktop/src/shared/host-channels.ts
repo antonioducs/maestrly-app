@@ -79,9 +79,10 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Channels a host serves only to another computer: the conversation's browser, streamed to that computer's window, and
- * its editor, which that computer's main process opens and drives. A window of the host itself shows both natively, so
- * their handlers refuse every local sender.
+ * Channels a host serves only to another computer: the conversation's browser, streamed to that computer's window, its
+ * editor, which that computer's main process opens and drives, and its computer, which that window watches through
+ * the gateway. A window of the host itself shows the first two natively and has no computer, so their handlers refuse
+ * every local sender.
  */
 export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
   'editor:open',
@@ -98,6 +99,8 @@ export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
   'drawer:browser-paste',
   'drawer:browser-select-choose',
   'drawer:browser-popup-close',
+  'drawer:browser-stream-transport',
+  'drawer:computer-open',
 ])
 
 export type RemoteChannelRefusal = 'local-only' | 'desktop-effect'

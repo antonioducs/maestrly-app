@@ -47,6 +47,9 @@ export default {
     exitOk: 'O shell terminou.',
     exitFailed: 'O shell terminou com o código {{code}}. Pressione qualquer tecla para fechar esta janela.',
   },
+  remoteComputer: {
+    untitled: 'Conversa sem título',
+  },
   floating: {
     browser: 'Navegador',
     vscode: 'Código',

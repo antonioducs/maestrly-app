@@ -110,6 +110,8 @@ const hostInfo = z.object({
   desktopEffects: z.boolean(),
   editor: z.boolean(),
   browser: z.boolean(),
+  // Hosts from before computers do not say.
+  computer: z.boolean().default(false),
 })
 const hostFrame = z.union([
   z.object({

@@ -9,6 +9,7 @@ import { registerMemoryTools } from './mcp/tools/memory'
 import { registerDebugTools } from './mcp/tools/debug'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
 import { registerBotModeTools } from './mcp/tools/bot-instance'
+import { registerServerModeTools } from './mcp/tools/server-computer'
 import { registerArtifactTools } from './mcp/tools/artifacts'
 import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
 import { botRuntimeForConversation } from './fleet/instance'
@@ -53,6 +54,7 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
     registerArtifactCommentTools(ctx)
   }
   registerBotModeTools(ctx)
+  registerServerModeTools(ctx)
   // Only where the prompt teaches interfaces: never for delegated workers, and not when the person turned them off.
   if (!workerScope && generatedInterfacesEnabled()) registerInterfaceTools(ctx)
   return server

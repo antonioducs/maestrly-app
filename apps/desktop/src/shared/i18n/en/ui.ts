@@ -1663,6 +1663,7 @@ export default {
   },
   drawer: {
     tabBrowser: 'Browser',
+    tabComputer: 'Computer',
     tabCode: 'Code',
     tabTerminal: 'Terminal',
     tabPlan: 'Plan',
@@ -1748,6 +1749,19 @@ export default {
     removeFromHistory: 'Remove from history',
   },
 
+  remoteComputer: {
+    starting: "Starting this conversation's computer…",
+    busy: 'All {{count}} computers of this server are in use by: {{holders}}. A computer is given back a minute after nobody uses it and its programs are closed.',
+    unavailable: 'This server has no computers for its conversations.',
+    tryAgain: 'Try again',
+    watching: 'Watching',
+    controlling: "You're in control",
+    takeControl: 'Take control',
+    release: 'Release',
+    agentKeepsWorking: 'The agent keeps working while you control this computer.',
+    controlledElsewhere:
+      'This computer is being controlled from another device. Take control again once it is released.',
+  },
   remoteBrowser: {
     surface: 'Browser on the server',
     keyboard: 'Keyboard of the browser on the server',
