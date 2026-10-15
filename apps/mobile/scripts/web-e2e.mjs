@@ -101,6 +101,15 @@ try {
         .map((element) => element.outerHTML.slice(0, 160))
     )
   const button = (name) => page.getByRole('button', { name })
+  /** Waits until the element is inside the window, not just in the page. */
+  const inView = async (locator) => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const box = await locator.boundingBox()
+      if (box && box.y >= 0 && box.y + box.height <= 844) return
+      await page.waitForTimeout(100)
+    }
+    throw new Error('Not scrolled into view')
+  }
   const openMenu = () => button(/^Open menu/).click()
   const step = async (name, run) => {
     process.stdout.write(`- ${name}… `)
@@ -129,6 +138,9 @@ try {
     await field.fill('How did spend look this week?')
     await button('Send message').click()
     await page.getByText('How did spend look this week?').waitFor()
+    // Sending puts the keyboard away.
+    if (await field.evaluate((element) => element === document.activeElement))
+      throw new Error('The message field kept the focus after sending')
     await page.getByText(/Atlas accounts for 64%/).waitFor()
   })
 
@@ -147,6 +159,22 @@ try {
     await button(/^Compact now/).click()
     await page.getByText(/9\.0k of 1\.0M tokens/).waitFor()
     await button('Done').click()
+  })
+
+  await step('go back to the latest message', async () => {
+    const latest = page.getByText('Conversation compacted').last()
+    await inView(latest)
+    const list = page.getByText(/Atlas accounts for 64%/).first()
+    const box = await list.boundingBox()
+    await page.mouse.move(195, box ? Math.max(120, box.y) : 400)
+    for (let turn = 0; turn < 8 && !(await button('Go to the latest message').count()); turn++) {
+      await page.mouse.wheel(0, -1200)
+      await page.waitForTimeout(150)
+    }
+    await button('Go to the latest message').click()
+    await inView(latest)
+    await page.waitForTimeout(300)
+    if (await button('Go to the latest message').count()) throw new Error('The button stayed at the end')
   })
 
   await step('approve a request', async () => {

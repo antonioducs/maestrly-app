@@ -600,6 +600,9 @@ export const en = {
   'interface.writing': 'Writing the interface…',
   'interface.showCode': 'Show code',
   'interface.hideCode': 'Hide code',
+
+  'conv.scrollToEnd': 'Go to the latest message',
+  'dictation.needsBuild': 'Dictation needs the Maestrly app. Expo Go has no speech recognition.',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1209,4 +1212,7 @@ export const ptBR: Record<keyof typeof en, string> = {
   'interface.writing': 'Escrevendo a interface…',
   'interface.showCode': 'Ver código',
   'interface.hideCode': 'Ocultar código',
+
+  'conv.scrollToEnd': 'Ir para a última mensagem',
+  'dictation.needsBuild': 'O ditado precisa do app Maestrly. O Expo Go não tem reconhecimento de fala.',
 }

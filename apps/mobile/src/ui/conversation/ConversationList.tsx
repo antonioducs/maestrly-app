@@ -1,10 +1,12 @@
 import type { MobileChatItem } from '@maestrly/bot-fleet-protocol'
-import { useMemo, type ReactNode } from 'react'
-import { ActivityIndicator, FlatList, View } from 'react-native'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { ActivityIndicator, FlatList, Pressable, View } from 'react-native'
 import { transcriptRows, type TranscriptRow } from '../../fleet/transcript-rows'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
+import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
+import { useReducedMotion } from '../useReducedMotion'
 import { ArtifactCard } from './ArtifactCard'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DispatchCard } from './DispatchCard'
@@ -15,6 +17,7 @@ import { ReasoningBlock } from './ReasoningBlock'
 import { SystemLine } from './SystemLine'
 import { TodoCard } from './TodoCard'
 import { ToolGroup } from './ToolGroup'
+import { shouldOfferScrollToEnd } from './scroll-to-end'
 import { UserBubble } from './UserBubble'
 
 /** A row the conversation adds after its items: a message still on the phone, or a card such as a plan. */
@@ -85,6 +88,10 @@ export function ConversationList({
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
+  const reduced = useReducedMotion()
+  const list = useRef<FlatList<Row>>(null)
+  const viewport = useRef(0)
+  const [away, setAway] = useState(false)
   const data = useMemo<Row[]>(() => {
     const rows: Row[] = transcriptRows(items)
     for (const row of extras) rows.push({ kind: 'extra', row })
@@ -107,30 +114,74 @@ export function ConversationList({
       </View>
     )
   return (
-    <FlatList
-      inverted
-      data={data}
-      keyExtractor={rowKey}
-      renderItem={({ item }) => <RowView row={item} />}
-      ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
-      contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 10 }}
-      keyboardDismissMode="interactive"
-      keyboardShouldPersistTaps="handled"
-      onEndReached={onLoadOlder}
-      onEndReachedThreshold={0.4}
-      ListHeaderComponent={
-        thinking ? (
-          <AppText variant="sub" tone="faint" style={{ fontSize: 15, marginTop: 14 }} accessibilityLiveRegion="polite">
-            {t('status.thinking')}
-          </AppText>
-        ) : null
-      }
-      ListFooterComponent={
-        <View>
-          {loadingOlder ? <ActivityIndicator color={palette.muted} style={{ marginBottom: 14 }} /> : null}
-          {top ? <View style={{ marginBottom: 14 }}>{top}</View> : null}
-        </View>
-      }
-    />
+    <View style={{ flex: 1 }}>
+      <FlatList
+        ref={list}
+        inverted
+        data={data}
+        onLayout={(event) => {
+          viewport.current = event.nativeEvent.layout.height
+        }}
+        onScroll={(event) => {
+          const next = shouldOfferScrollToEnd(event.nativeEvent.contentOffset.y, viewport.current)
+          setAway((current) => (current === next ? current : next))
+        }}
+        scrollEventThrottle={64}
+        keyExtractor={rowKey}
+        renderItem={({ item }) => <RowView row={item} />}
+        ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 10 }}
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+        onEndReached={onLoadOlder}
+        onEndReachedThreshold={0.4}
+        ListHeaderComponent={
+          thinking ? (
+            <AppText
+              variant="sub"
+              tone="faint"
+              style={{ fontSize: 15, marginTop: 14 }}
+              accessibilityLiveRegion="polite"
+            >
+              {t('status.thinking')}
+            </AppText>
+          ) : null
+        }
+        ListFooterComponent={
+          <View>
+            {loadingOlder ? <ActivityIndicator color={palette.muted} style={{ marginBottom: 14 }} /> : null}
+            {top ? <View style={{ marginBottom: 14 }}>{top}</View> : null}
+          </View>
+        }
+      />
+      {away ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('conv.scrollToEnd')}
+          onPress={() => list.current?.scrollToOffset({ offset: 0, animated: !reduced })}
+          style={({ pressed }) => ({
+            position: 'absolute',
+            bottom: 10,
+            alignSelf: 'center',
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderWidth: 1,
+            borderColor: palette.line,
+            backgroundColor: palette.raised,
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 3,
+            transform: [{ scale: pressed ? 0.94 : 1 }],
+          })}
+        >
+          <Icon name="arrow-down" size={20} color={palette.ink} />
+        </Pressable>
+      ) : null}
+    </View>
   )
 }

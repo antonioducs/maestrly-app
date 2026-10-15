@@ -6,7 +6,12 @@ import { useTheme } from '../theme/ThemeProvider'
 import { Icon } from './icons'
 import { AppText } from './primitives/Text'
 
-/** A screen shown as a sheet: a title, a Done button (or Back inside the sheet), and scrolling groups. */
+/**
+ * A screen shown as a sheet: a title, a Done button (or Back inside the sheet), and scrolling groups.
+ *
+ * The scroll view is the screen's only root, with the header as its first, sticky child. iOS form sheets resize a
+ * scroll view that has a sibling and, on the new architecture, then place it at the top, over that sibling.
+ */
 export function SheetScreen({
   title,
   onDone,
@@ -22,8 +27,23 @@ export function SheetScreen({
   const { t } = useI18n()
   const insets = useSafeAreaInsets()
   return (
-    <View style={{ flex: 1, backgroundColor: palette.sheet }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingTop: 14, paddingHorizontal: 6 }}>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: palette.sheet }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+      stickyHeaderIndices={[0]}
+      keyboardShouldPersistTaps="handled"
+    >
+      <View
+        collapsable={false}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          minHeight: 64,
+          paddingTop: 20,
+          paddingHorizontal: 6,
+          backgroundColor: palette.sheet,
+        }}
+      >
         <View style={{ flex: 1, alignItems: 'flex-start' }}>
           {back ? (
             <Pressable
@@ -50,16 +70,12 @@ export function SheetScreen({
           <AppText style={{ color: palette.brass, fontWeight: '600' }}>{t('common.done')}</AppText>
         </Pressable>
       </View>
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 24 }}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={{ paddingHorizontal: 16 }}>
         <AppText variant="title" accessibilityRole="header" style={{ marginHorizontal: 4, marginBottom: 2 }}>
           {title}
         </AppText>
         {children}
-      </ScrollView>
-    </View>
+      </View>
+    </ScrollView>
   )
 }
