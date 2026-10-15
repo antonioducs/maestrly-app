@@ -409,6 +409,15 @@ line is not limited. This adds no authority: every paired device can already
 control the whole gateway, and the new device gets exactly that authority. Each
 code is one-use, expires after ten minutes, and is stored only as a hash.
 
+Any paired device lists the devices paired with the gateway (`GET /v1/devices`:
+name, phone or computer, platform, when it paired and was last active, whether it
+gets notifications) and removes another one (`POST /v1/devices/<id>/revoke`), as the
+gateway's `devices list` and `devices revoke` commands do. This adds no
+authority either: a paired device already controls the whole gateway. A device
+cannot remove itself this way; it unpairs with `DELETE /v1/devices/self`.
+Removing a device revokes its token, deletes its push registration, and closes
+its event streams, bridges and screens.
+
 A phone is a paired device with the same authority. It registers for
 notifications with its own device token (`/v1/devices/self/push`): the gateway
 keeps its Expo push token, language and preferences, deletes them when the

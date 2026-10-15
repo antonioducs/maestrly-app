@@ -5,6 +5,13 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- See the phones and computers paired with your bot server, and remove one you
+  lost, in **Settings → Bot server → Paired devices** on a computer and
+  **Settings → Paired devices** in the mobile app. Update the bot server to use
+  it. See [Mobile app](docs/mobile.md#unpair-and-revoke).
+
 ## [0.19.0] - 2026-10-15
 
 ### Added

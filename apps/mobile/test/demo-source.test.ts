@@ -121,4 +121,19 @@ describe('demo server', () => {
     await expect(source.call('botSkillsList', { params: { id: 'juno' } })).rejects.toBeInstanceOf(GatewayError)
     await expect(source.call('botSkillsList', { params: { id: 'juno' } })).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
+
+  it('lists made-up devices, and removes one that is not this phone', async () => {
+    const source = createDemoSource({ stepMs: 0, autoplay: false })
+    const { devices } = await source.call('devicesList')
+    expect(devices.map((device) => [device.name, device.kind, device.current])).toEqual([
+      ['MacBook Pro', 'computer', false],
+      ['Phone', 'phone', true],
+      ['Pixel 9', 'phone', false],
+    ])
+    await source.call('deviceRevoke', { params: { deviceId: devices[2].id } })
+    expect((await source.call('devicesList')).devices).toHaveLength(2)
+    await expect(source.call('deviceRevoke', { params: { deviceId: devices[1].id } })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+  })
 })

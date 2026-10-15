@@ -242,7 +242,14 @@ export function ServersProvider({ children }: { children: ReactNode }) {
 
   const pair = useCallback(
     async (input: { address: string; code: string }) => {
-      const { server, token } = await pairWithServer({ ...input, deviceName, allowLoopback: __DEV__ }, nativeFetch)
+      const client =
+        Platform.OS === 'ios' || Platform.OS === 'android'
+          ? { kind: 'phone' as const, platform: Platform.OS }
+          : undefined
+      const { server, token } = await pairWithServer(
+        { ...input, deviceName, allowLoopback: __DEV__, client },
+        nativeFetch
+      )
       await registry.add(server, token)
       await reload()
       return server

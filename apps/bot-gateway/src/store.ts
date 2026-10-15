@@ -6,6 +6,7 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   fleetErrorCodeSchema,
   fleetPushRegistrationSchema,
+  type FleetDeviceClient,
   type FleetPushRegistration,
   type FleetPushRegistrationRequest,
   type FleetRoutineRun,
@@ -27,9 +28,25 @@ import { GatewayError } from './errors.js'
 export type StoredRoutineRun = FleetRoutineRun & { inputId: string }
 
 type Row = Record<string, unknown>
+const DEVICE_KINDS = new Set<string>(['computer', 'phone'])
+const DEVICE_PLATFORMS = new Set<string>(['macos', 'windows', 'linux', 'ios', 'android'])
+function deviceRow(row: Row): Device {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    kind: DEVICE_KINDS.has(String(row.kind)) ? (String(row.kind) as Device['kind']) : null,
+    platform: DEVICE_PLATFORMS.has(String(row.platform)) ? (String(row.platform) as Device['platform']) : null,
+    createdAt: String(row.created_at),
+    lastSeenAt: row.last_seen_at as string | null,
+    revokedAt: row.revoked_at as string | null,
+  }
+}
 export type Device = {
   id: string
   name: string
+  /** What the device said it is when it paired; null for devices paired before schema 15. */
+  kind: FleetDeviceClient['kind'] | null
+  platform: FleetDeviceClient['platform'] | null
   createdAt: string
   lastSeenAt: string | null
   revokedAt: string | null
@@ -208,7 +225,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 14) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 15) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -288,6 +305,13 @@ export class Store {
         CREATE TABLE IF NOT EXISTS push_registrations (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, provider TEXT NOT NULL, token TEXT NOT NULL, platform TEXT NOT NULL, locale TEXT NOT NULL, preferences_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       `)
       this.db.prepare("UPDATE meta SET value='14' WHERE key='schema_version'").run()
+    }
+    if (version <= 14) {
+      // Schema 15: whether each device is a phone or a computer, and its platform, as it said when it paired.
+      const columns = (this.db.prepare('PRAGMA table_info(devices)').all() as Row[]).map((column) => column.name)
+      if (columns.length && !columns.includes('kind')) this.db.exec('ALTER TABLE devices ADD COLUMN kind TEXT')
+      if (columns.length && !columns.includes('platform')) this.db.exec('ALTER TABLE devices ADD COLUMN platform TEXT')
+      this.db.prepare("UPDATE meta SET value='15' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -580,9 +604,9 @@ export class Store {
       this.db.prepare('UPDATE pairing_codes SET used_at=? WHERE code_sha256=?').run(new Date().toISOString(), hash)
       this.db
         .prepare(
-          'INSERT INTO devices(id,name,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,NULL,NULL)'
+          'INSERT INTO devices(id,name,kind,platform,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,?,?,NULL,NULL)'
         )
-        .run(device.id, device.name, tokenHash, device.createdAt)
+        .run(device.id, device.name, device.kind, device.platform, tokenHash, device.createdAt)
     })
   }
   recordPairingAttempt(hash: string) {
@@ -598,24 +622,10 @@ export class Store {
     for (const item of this.db.prepare('SELECT * FROM devices WHERE revoked_at IS NULL').all() as Row[]) {
       if (this.digestMatches(hash, item.token_sha256)) row = item
     }
-    return row
-      ? {
-          id: String(row.id),
-          name: String(row.name),
-          createdAt: String(row.created_at),
-          lastSeenAt: row.last_seen_at as string | null,
-          revokedAt: row.revoked_at as string | null,
-        }
-      : null
+    return row ? deviceRow(row) : null
   }
   listDevices(): Device[] {
-    return (this.db.prepare('SELECT * FROM devices ORDER BY created_at DESC').all() as Row[]).map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      createdAt: String(row.created_at),
-      lastSeenAt: row.last_seen_at as string | null,
-      revokedAt: row.revoked_at as string | null,
-    }))
+    return (this.db.prepare('SELECT * FROM devices ORDER BY created_at DESC').all() as Row[]).map(deviceRow)
   }
   deviceRevoked(id: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM devices WHERE id=? AND revoked_at IS NOT NULL').get(id)
@@ -674,15 +684,7 @@ export class Store {
   }
   device(id: string): Device | null {
     const row = this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) as Row | undefined
-    return row
-      ? {
-          id: String(row.id),
-          name: String(row.name),
-          createdAt: String(row.created_at),
-          lastSeenAt: row.last_seen_at as string | null,
-          revokedAt: row.revoked_at as string | null,
-        }
-      : null
+    return row ? deviceRow(row) : null
   }
 
   private desktopLink(row: Row): StoredDesktopLink {

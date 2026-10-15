@@ -10,6 +10,8 @@ export const ICON_PATHS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   'arrow-up': '<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>',
   'arrow-down': '<path d="M12 5v14M5.5 12.5 12 19l6.5-6.5"/>',
+  smartphone: '<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  laptop: '<rect x="4.5" y="5" width="15" height="10" rx="1.5"/><path d="M2.5 19h19"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2.2" fill="currentColor" stroke="none"/>',
   settings:
     '<path d="M4 6.5h9M17 6.5h3M4 12h3M11 12h9M4 17.5h11M19 17.5h1"/><circle cx="15" cy="6.5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17.5" r="2"/>',

@@ -1,3 +1,4 @@
+import { FLEET_DEVICES_FEATURE } from '@maestrly/bot-fleet-protocol'
 import Constants from 'expo-constants'
 import { router } from 'expo-router'
 import { useState } from 'react'
@@ -70,6 +71,9 @@ export default function Settings() {
             chevron
             onPress={() => router.push('/servers')}
           />
+          {active.features.includes(FLEET_DEVICES_FEATURE) ? (
+            <Cell icon="smartphone" label={t('devices.title')} chevron onPress={() => router.push('/devices')} />
+          ) : null}
         </Group>
       ) : null}
       <NotificationSettings />

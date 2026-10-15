@@ -124,8 +124,13 @@ in the app.
 
 In the app, open **Settings** and choose **Unpair from** the server. If the
 server cannot be reached, the app offers to forget it anyway; the server then
-keeps listing the phone until you revoke it with `devices revoke <id>` (see
-[Security and data](bot-fleet.md#security-and-data)). A revoked phone shows
+keeps listing the phone until you remove it from another device or with
+`devices revoke <id>` (see [Security and data](bot-fleet.md#security-and-data)).
+
+**Settings → Paired devices** lists the phones and computers paired with the
+server, with when each paired and was last active, and removes one you no longer
+use or have lost; it can no longer reach the server. On a computer, the same list
+is in **Settings → Bot server**. It needs a bot server that offers it. A revoked phone shows
 **This phone was removed** and offers to pair again. Unpairing or revoking a
 phone also removes its push registration from the server.
 

@@ -389,6 +389,16 @@ describe('fleet client service', () => {
       deviceName: 'Mac',
     })
     expect(service.getConnection().deviceId).toBe('device-1')
+    // The computer says what it is, so the server's list of devices can tell it from a phone.
+    const pairing = vi.mocked(fetch).mock.calls.find(([url]) => new URL(String(url)).pathname === '/v1/pair')
+    expect(JSON.parse(String(pairing?.[1]?.body))).toEqual({
+      code: 'ABCDEFGH',
+      deviceName: 'Mac',
+      client: {
+        kind: 'computer',
+        platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
+      },
+    })
     expect(state.broadcasts.find((event) => event.channel === 'fleet:connection')?.payload).toMatchObject({
       deviceId: 'device-1',
     })

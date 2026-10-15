@@ -47,6 +47,7 @@ function Root() {
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.palette.canvas } }}>
         <Stack.Screen name="settings" options={sheet} />
         <Stack.Screen name="servers" options={sheet} />
+        <Stack.Screen name="devices" options={sheet} />
         <Stack.Screen name="bot-details/[id]" options={sheet} />
         <Stack.Screen name="bot-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
         <Stack.Screen name="new-chat" options={sheet} />

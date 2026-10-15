@@ -57,6 +57,11 @@ export type FleetSnapshot = {
 }
 const emptySnapshot = (): FleetSnapshot => ({ host: null, bots: [], environments: [], inbox: [], peerMessages: [] })
 
+/** The platform this computer pairs as, so the server's list of devices can tell computers apart. */
+function devicePlatform(): 'macos' | 'windows' | 'linux' {
+  return process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
+}
+
 export class FleetClientService {
   private api: FleetApiClient | null = null
   private events: FleetEvents | null = null
@@ -294,7 +299,7 @@ export class FleetClientService {
     if (meta.protocol !== FLEET_PROTOCOL_VERSION)
       throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Incompatible fleet protocol')
     const paired = await unauthenticated.call('pair', {
-      body: { code, deviceName },
+      body: { code, deviceName, client: { kind: 'computer', platform: devicePlatform() } },
     })
     const persistence = saveFleetCredentials(allowed.origin, paired.deviceId, deviceName, paired.token)
     this.useCredentials(allowed.origin, paired.token, persistence)

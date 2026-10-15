@@ -425,6 +425,22 @@ describe('domain contracts', () => {
       }).success
     ).toBe(false)
     expect(fleetPairRequestSchema.parse({ code: '0123ABCD', deviceName: 'MacBook' }).code).toBe('0123ABCD')
+    // A device says what it is when it pairs; devices that predate it say nothing.
+    expect(fleetPairRequestSchema.parse({ code: '0123ABCD', deviceName: 'MacBook' }).client).toBeUndefined()
+    expect(
+      fleetPairRequestSchema.parse({
+        code: '0123ABCD',
+        deviceName: 'Pixel',
+        client: { kind: 'phone', platform: 'android' },
+      }).client
+    ).toEqual({ kind: 'phone', platform: 'android' })
+    expect(
+      fleetPairRequestSchema.safeParse({
+        code: '0123ABCD',
+        deviceName: 'Fridge',
+        client: { kind: 'fridge', platform: 'android' },
+      }).success
+    ).toBe(false)
     expect(
       fleetInternalPeerMessageRequestSchema.parse({ to: 'dev', text: 'x'.repeat(4000), idempotencyKey: key }).to
     ).toBe('dev')

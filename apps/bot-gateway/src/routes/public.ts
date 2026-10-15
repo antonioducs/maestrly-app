@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_PHONES_FEATURE,
+  FLEET_DEVICES_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -349,7 +350,7 @@ export async function publicRoute(
           ],
           // Past the 20 features installed desktops read (`FLEET_META_FEATURES_LEGACY_MAX`). `phones` is announced
           // also when push is off: a phone then hears from the push routes that this server sends none.
-          moreFeatures: [FLEET_PHONES_FEATURE],
+          moreFeatures: [FLEET_PHONES_FEATURE, FLEET_DEVICES_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },
@@ -357,7 +358,9 @@ export async function publicRoute(
     case 'pair': {
       const normalized = normalizePairingCode(body.code)
       if (!normalized) throw new GatewayError('INVALID_REQUEST', 'Invalid pairing code')
-      return { body: ctx.auth.pair(normalized, body.deviceName, res.req?.socket.remoteAddress ?? 'unknown') }
+      return {
+        body: ctx.auth.pair(normalized, body.deviceName, res.req?.socket.remoteAddress ?? 'unknown', body.client),
+      }
     }
     case 'pairingsCreate':
       return { body: ctx.auth.createPairing({ limitActive: true }), status: 201 }
@@ -386,6 +389,34 @@ export async function publicRoute(
       const device = ctx.auth.device(res.req?.headers.authorization)
       ctx.store.revokeDevice(device.id)
       await ctx.revokeDevice?.(device.id)
+      return { status: 204 }
+    }
+    case 'devicesList': {
+      // Any paired device sees the others, as the CLI on the server does: pairing already gives it the whole fleet.
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      const registered = new Set(ctx.store.activePushRegistrations().map((item) => item.deviceId))
+      const devices = ctx.store
+        .listDevices()
+        .filter((item) => !item.revokedAt)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .map((item) => ({
+          id: item.id,
+          name: item.name,
+          kind: item.kind,
+          platform: item.platform,
+          pairedAt: item.createdAt,
+          lastSeenAt: item.lastSeenAt,
+          current: item.id === device.id,
+          notifications: registered.has(item.id),
+        }))
+      return { body: { devices } }
+    }
+    case 'deviceRevoke': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      if (params.deviceId === device.id)
+        throw new GatewayError('INVALID_REQUEST', 'A device removes itself with DELETE /v1/devices/self')
+      if (!ctx.store.revokeDevice(params.deviceId)) throw new GatewayError('NOT_FOUND', 'Device not found')
+      await ctx.revokeDevice?.(params.deviceId)
       return { status: 204 }
     }
     case 'host':

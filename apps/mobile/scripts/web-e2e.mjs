@@ -232,6 +232,21 @@ try {
     await button('Done').click()
   })
 
+  await step('remove a paired device', async () => {
+    if (!(await button('Settings').isVisible())) await openMenu()
+    await button('Settings').click()
+    await button('Paired devices').click()
+    await page.getByText('Phone (this phone)').waitFor()
+    await page.getByText('MacBook Pro').waitFor()
+    if (await button('Remove Phone').count()) throw new Error('This phone offered to remove itself')
+    page.once('dialog', (dialog) => dialog.accept())
+    await button('Remove Pixel 9').click()
+    await page.getByText('Pixel 9').waitFor({ state: 'detached' })
+    await button('Done').click()
+    await page.getByText('Notifications aren’t available here').waitFor()
+    await button('Done').click()
+  })
+
   await step('show the dark theme', async () => {
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.getByText('Cleared the build cache.', { exact: false }).waitFor()

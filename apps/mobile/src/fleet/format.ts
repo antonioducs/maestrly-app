@@ -11,6 +11,16 @@ const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 export const effortLabel = (effort: string, t: Text['t']): string =>
   EFFORTS.has(effort) ? t(`effort.${effort}` as MessageKey) : effort.slice(0, 1).toUpperCase() + effort.slice(1)
 
+/** A moment as a date and time in the app's language, such as when a device was last active. */
+export function formatDateTime(iso: string, locale: string): string {
+  const date = new Date(iso)
+  try {
+    return date.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
+  } catch {
+    return date.toISOString().slice(0, 16).replace('T', ' ')
+  }
+}
+
 /** File sizes in binary units, as the desktop shows them: 512 B, 1.5 KB, 4.0 MB. */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
