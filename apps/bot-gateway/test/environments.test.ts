@@ -1605,6 +1605,8 @@ describe('conversation screens', () => {
   const conversationId = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
   async function host(screens = [FLEET_VIDEO_SCREENS_FEATURE, FLEET_CONVERSATION_COMPUTERS_FEATURE]) {
     const f = fixture()
+    // The fake Docker has no addresses to find the gateway's container by.
+    f.lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
     const capabilities = [FLEET_WORKSPACES_HOST_FEATURE, ...screens]
     const fake = await f.instance('workspaces', true, capabilities)
     f.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
