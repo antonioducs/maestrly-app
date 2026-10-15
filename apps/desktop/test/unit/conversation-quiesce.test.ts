@@ -31,6 +31,8 @@ vi.mock('../../src/main/cwd-activity-coordinator', () => ({
   setOwnedCwdActivity: vi.fn(),
   waitForCwdActivityDrain: vi.fn(),
 }))
+const computers = vi.hoisted(() => ({ current: null as null | { close: ReturnType<typeof vi.fn> } }))
+vi.mock('../../src/main/remote-host/server/computers-registry', () => ({ serverComputers: () => computers.current }))
 
 import { stopChatAndWait } from '../../src/main/chat/service'
 import { disposeConversation as disposeDrawer } from '../../src/main/drawer-manager'
@@ -46,6 +48,7 @@ import { quiesceConversation } from '../../src/main/conversation-migration/quies
 
 beforeEach(() => {
   vi.clearAllMocks()
+  computers.current = null
   vi.mocked(killPtyAndWait).mockResolvedValue(true)
   vi.mocked(disposeShellTerminalsAndWait).mockResolvedValue(true)
   vi.mocked(stopChatAndWait).mockResolvedValue(true)
@@ -68,6 +71,14 @@ describe('conversation migration quiesce', () => {
     expect(disposeDrawer).toHaveBeenCalledWith('conv')
     expect(unwatchNotesAtCwd).toHaveBeenCalledWith('/source')
     expect(unwatchConversation).toHaveBeenCalledWith('conv', '/source')
+  })
+
+  it("gives a workspaces host's computer of the conversation back before its windows go", async () => {
+    const order: string[] = []
+    computers.current = { close: vi.fn(async (id: string) => void order.push('computer ' + id)) }
+    vi.mocked(floatingManager.disposeConversation).mockImplementation((id: string) => void order.push('windows ' + id))
+    await expect(quiesceConversation('conv', '/source')).resolves.toEqual({ ok: true, failed: [] })
+    expect(order).toEqual(['computer conv', 'windows conv'])
   })
 
   it('fails closed when any runtime does not confirm the barrier', async () => {
