@@ -24,7 +24,6 @@ import { HostFiles } from './host-files'
 import { setHostModelOptions } from './mobile-api'
 import { watchChatAttention } from './chat-attention'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
-import { getConversation } from '../../store'
 import { getPending as getPendingPlan } from '../../plan-broker'
 
 /** What server mode needs from the main process. */
