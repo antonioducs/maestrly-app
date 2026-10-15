@@ -11,6 +11,25 @@ User-visible changes by version. Downloads are on
   lost, in **Settings → Bot server → Paired devices** on a computer and
   **Settings → Paired devices** in the mobile app. Update the bot server to use
   it. See [Mobile app](docs/mobile.md#unpair-and-revoke).
+- The mobile app shows the chats of any of the server's workspaces
+  environments: choose one under the server's name in the menu, start a
+  stopped one from there, and a chat notification opens its chat on its own
+  environment. See [Mobile app](docs/mobile.md).
+- Interactive answers run on the phone, in an isolated web view. Sending a
+  message or opening a page from one always asks first. See
+  [interactive answers](docs/chat-context.md#interactive-answers).
+- Files a bot shares show in the mobile app: videos play in the conversation,
+  and any other file downloads and opens the share sheet.
+- **Allow everything in this chat** on a chat's permission request in the
+  mobile app gives the chat full access after the same warning as its setup,
+  and the setup pill shows when a chat has full access or approves for you.
+
+### Fixed
+
+- In the mobile app on iOS, the content of setup sheets no longer slides under
+  their Back and Done buttons, and the chat setup screen opens at its title.
+- The mobile app offers a button back to the latest message once a conversation
+  is scrolled away from it, and sending a message puts the keyboard away.
 
 ## [0.19.0] - 2026-10-15
 
