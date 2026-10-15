@@ -87,7 +87,8 @@ complete license is distributed with the package in `node_modules/uqr/LICENSE`.
 ## Mobile app
 
 The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 57
-(`expo` 57.0.28 and the `expo-*` modules, Expo Router 57.0.26) and
+(`expo` 57.0.28 and the `expo-*` modules, such as `expo-video` 57.0.5 and
+`expo-sharing` 57.0.23, Expo Router 57.0.26) and
 [React Native](https://reactnative.dev) 0.86.3, both under the MIT License. It
 also includes, under the MIT License,
 [react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2

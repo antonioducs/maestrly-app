@@ -193,6 +193,13 @@ try {
     await page.getByRole('alert').filter({ hasText: "The demo server doesn't host pages" }).waitFor()
   })
 
+  await step('play a video a bot shared', async () => {
+    await page.getByText('pricing-walkthrough.mp4').waitFor()
+    await page.getByText('4.0 MB').waitFor()
+    await button('Play pricing-walkthrough.mp4').click()
+    await page.getByRole('alert').filter({ hasText: "The demo server doesn't host files" }).waitFor()
+  })
+
   await step('start a chat', async () => {
     await button('New chat').click()
     await page.getByRole('textbox', { name: 'Ask anything' }).fill('Write the release notes for 0.16')

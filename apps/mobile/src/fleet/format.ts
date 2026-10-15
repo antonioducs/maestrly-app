@@ -11,6 +11,19 @@ const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 export const effortLabel = (effort: string, t: Text['t']): string =>
   EFFORTS.has(effort) ? t(`effort.${effort}` as MessageKey) : effort.slice(0, 1).toUpperCase() + effort.slice(1)
 
+/** File sizes in binary units, as the desktop shows them: 512 B, 1.5 KB, 4.0 MB. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value.toFixed(1)} ${units[unit]}`
+}
+
 export const formatCost = (usd: number): string =>
   usd >= 1 ? `$${usd.toFixed(2)}` : usd >= 0.01 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(4)}`
 

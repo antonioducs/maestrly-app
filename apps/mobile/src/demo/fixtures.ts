@@ -180,6 +180,12 @@ export function demoWorld(now: number): DemoWorld {
   const tool = (id: string, time: string, name: string, target: string | null, output: string | null) =>
     ({ id, at: time, kind: 'tool', name, target, state: 'done', output, images: [] }) satisfies FleetTranscriptItem
 
+  const shared = (id: string, time: string, name: string, mediaType: string, byteSize: number) =>
+    ({
+      ...tool(id, time, 'share_file', name, null),
+      files: [{ id: `${id}-file`, name, mediaType, byteSize }],
+    }) satisfies FleetTranscriptItem
+
   // Ledger's weekly reports go back four months, so its conversation has an older page to scroll to.
   const ledgerHistory: FleetTranscriptItem[] = []
   for (let week = 25; week <= 40; week++) {
@@ -259,6 +265,7 @@ export function demoWorld(now: number): DemoWorld {
           skipped: [],
         })
       ),
+      shared('pixel-2c', at(14), 'pricing-walkthrough.mp4', 'video/mp4', 4 * 1024 * 1024),
       said(
         'pixel-3',
         at(6),
@@ -296,6 +303,7 @@ export function demoWorld(now: number): DemoWorld {
       ...ledgerHistory,
       user('ledger-1', at(32), 'Summarize model spend for the week and flag anything unusual.', weekly),
       tool('ledger-2', at(31), 'read', 'usage/2026-w41.json', null),
+      shared('ledger-2b', at(30, -2_000), 'spend-week-41.csv', 'text/csv', 2_380),
       said(
         'ledger-3',
         at(30),

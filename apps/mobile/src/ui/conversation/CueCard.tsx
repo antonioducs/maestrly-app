@@ -8,6 +8,16 @@ import { Icon, type IconName } from '../icons'
 import { AppText } from '../primitives/Text'
 
 export type ImageSourceValue = { uri: string; headers?: Record<string, string> }
+/** How a conversation reaches the files its bot shared. */
+export type BotFileAccess = {
+  serverId: string
+  botId: string
+  /** The demo server keeps no files. */
+  demo: boolean
+  source(fileId: string): { uri: string; headers: Record<string, string> }
+  /** Resolves while the bot still has the file; rejects with the gateway's NOT_FOUND once it is gone. */
+  check(fileId: string): Promise<unknown>
+}
 
 /**
  * What every row of a conversation needs, with a bot or in a chat: who asks, whether the server is reachable, how to
@@ -31,6 +41,8 @@ export type ConversationContextValue = {
    * in a bot's conversation, in Maestro chats, and once the chat already has full access.
    */
   allowEverything?: () => Promise<boolean>
+  /** The files a bot shared, in a bot's conversation; a chat's are out of the phone's reach. */
+  files?: BotFileAccess
 }
 export const ConversationContext = createContext<ConversationContextValue | null>(null)
 export function useConversation(): ConversationContextValue {

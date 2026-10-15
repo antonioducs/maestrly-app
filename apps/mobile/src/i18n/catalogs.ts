@@ -605,6 +605,18 @@ export const en = {
   'dictation.needsBuild': 'Dictation needs the Maestrly app. Expo Go has no speech recognition.',
 
   'perm.allowEverything': 'Allow everything in this chat',
+
+  'botFiles.play': 'Play',
+  'botFiles.playNamed': 'Play {name}',
+  'botFiles.download': 'Download',
+  'botFiles.downloadNamed': 'Download {name}',
+  'botFiles.downloading': 'Downloading',
+  'botFiles.error.gone': 'This file is no longer on the server.',
+  'botFiles.error.offline': "Couldn't download the file. Try again when you're connected.",
+  'botFiles.error.tooLarge': 'This file is too large to download to the phone.',
+  'botFiles.error.demo':
+    "The demo server doesn't host files. With your own server, this opens the file the bot shared.",
+  'botFiles.error.unavailable': 'Open this file in Maestrly on your computer.',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1219,4 +1231,16 @@ export const ptBR: Record<keyof typeof en, string> = {
   'dictation.needsBuild': 'O ditado precisa do app Maestrly. O Expo Go não tem reconhecimento de fala.',
 
   'perm.allowEverything': 'Permitir tudo neste chat',
+
+  'botFiles.play': 'Assistir',
+  'botFiles.playNamed': 'Assistir {name}',
+  'botFiles.download': 'Baixar',
+  'botFiles.downloadNamed': 'Baixar {name}',
+  'botFiles.downloading': 'Baixando',
+  'botFiles.error.gone': 'Este arquivo não está mais no servidor.',
+  'botFiles.error.offline': 'Não foi possível baixar o arquivo. Tente de novo quando estiver conectado.',
+  'botFiles.error.tooLarge': 'Este arquivo é grande demais para baixar no celular.',
+  'botFiles.error.demo':
+    'O servidor de demonstração não guarda arquivos. Com o seu servidor, isto abre o arquivo que o bot compartilhou.',
+  'botFiles.error.unavailable': 'Abra este arquivo na Maestrly do computador.',
 }

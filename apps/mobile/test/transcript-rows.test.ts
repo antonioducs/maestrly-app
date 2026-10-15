@@ -102,4 +102,18 @@ describe('transcript rows', () => {
       target: 'npm test',
     })
   })
+
+  it('shows the files a tool shared as their own row, apart from the tools around it', () => {
+    const shared = tool('t2', 'share_file', {
+      files: [{ id: 'f1', name: 'walkthrough.mp4', mediaType: 'video/mp4', byteSize: 4_000_000 }],
+    })
+    const rows = transcriptRows([tool('t1', 'bash'), shared, tool('t3', 'read')])
+    expect(rows.map((row) => `${row.kind}:${row.kind === 'item' ? row.item.id : row.id}`)).toEqual([
+      'tools:t1',
+      'files:t2',
+      'tools:t3',
+    ])
+    const files = rows[1]
+    expect(files.kind === 'files' && files.files.map((item) => item.name)).toEqual(['walkthrough.mp4'])
+  })
 })

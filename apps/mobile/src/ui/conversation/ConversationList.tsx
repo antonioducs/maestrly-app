@@ -9,6 +9,7 @@ import { AppText } from '../primitives/Text'
 import { useReducedMotion } from '../useReducedMotion'
 import { ArtifactCard } from './ArtifactCard'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { BotFiles } from './BotFiles'
 import { DispatchCard } from './DispatchCard'
 import { HelpCard } from './HelpCard'
 import { PermissionCard } from './PermissionCard'
@@ -37,6 +38,8 @@ function RowView({ row }: { row: Row }) {
       return <TodoCard todos={row.todos} />
     case 'artifact':
       return <ArtifactCard artifact={row.artifact} />
+    case 'files':
+      return <BotFiles files={row.files} />
     default: {
       const item = row.item
       switch (item.kind) {

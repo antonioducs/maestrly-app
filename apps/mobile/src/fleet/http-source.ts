@@ -33,6 +33,10 @@ export function createHttpSource(server: PairedServer, token: string): FleetSour
       uri: server.origin + buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }),
       headers: client.headers(),
     }),
+    fileSource: (botId, fileId) => ({
+      uri: server.origin + buildPath(FLEET_GATEWAY_ROUTES.botFile.path, { id: botId, fileId }),
+      headers: client.headers(),
+    }),
     readAttachment: (uri) => new File(uri).base64(),
   }
 }
