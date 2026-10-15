@@ -43,6 +43,8 @@ export type ConversationContextValue = {
   allowEverything?: () => Promise<boolean>
   /** The files a bot shared, in a bot's conversation; a chat's are out of the phone's reach. */
   files?: BotFileAccess
+  /** Sends a message as the person, as an interactive answer may ask to; absent where the phone cannot send. */
+  sendMessage?: (text: string) => Promise<void>
 }
 export const ConversationContext = createContext<ConversationContextValue | null>(null)
 export function useConversation(): ConversationContextValue {

@@ -88,6 +88,21 @@ as the person and opening an `http(s)` URL require transient user activation in
 the app window, at most once per second. Activation comes from any recent
 interaction with that window, not only from a click inside the frame.
 
+The mobile app runs a complete block in a `react-native-webview` of its own: a
+separate web process with an opaque `about:blank` origin, incognito, with no
+cache, shared or third-party cookies, file access, link previews or new windows.
+The page carries the same policy in a `<meta>` element, without `sandbox`, which
+only a header can set, so the web view, not the policy, keeps it from the app.
+Every navigation but the initial page load is refused; the origin allowlist
+passes every address to that check, so none is handed to the system to open.
+The block reaches the app only through the web view's message channel, whose
+messages are parsed like the desktop frame's. A phone cannot prove that the
+person tapped the interface, so sending a message always asks first, showing
+it, at most once per second, and opening a page asks first, showing its host;
+the app opens only plain `http(s)` addresses without credentials in the
+system's browser view. The web preview of the app uses a frame with
+`sandbox="allow-scripts"` instead.
+
 The `preview_interface` app tool renders a block for the model before it shows
 it. The block runs in the same frame page and policy, framed by a host page in
 an offscreen window of the in-memory `genui-previews` session. That window is

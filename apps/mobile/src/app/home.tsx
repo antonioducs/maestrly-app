@@ -75,6 +75,9 @@ function BotConversation({ bot }: { bot: FleetBot }) {
         inbox.find((entry) => entry.interaction.itemId === item.id)?.interaction.id ?? null,
       resolve: (interactionId, resolution) => controller.resolve(bot.id, interactionId, resolution),
       imageSource: (imageId) => controller.source.imageSource(bot.id, imageId),
+      sendMessage: async (text: string) => {
+        await controller.send(bot.id, text, [])
+      },
       files: {
         serverId: controller.source.serverId,
         botId: bot.id,

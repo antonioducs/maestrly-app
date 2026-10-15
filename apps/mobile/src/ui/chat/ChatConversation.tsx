@@ -134,6 +134,9 @@ export function ChatConversation({ conversationId }: { conversationId: string })
       resolve,
       imageSource,
       openChat,
+      sendMessage: async (text: string) => {
+        await chats.send(conversationId, text, [])
+      },
       ...(canAllowEverything ? { allowEverything } : {}),
     }),
     [
@@ -146,6 +149,8 @@ export function ChatConversation({ conversationId }: { conversationId: string })
       openChat,
       canAllowEverything,
       allowEverything,
+      chats,
+      conversationId,
     ]
   )
 

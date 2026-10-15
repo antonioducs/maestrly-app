@@ -262,12 +262,24 @@ try {
     await page.getByRole('textbox', { name: /Message|Ask anything/ }).waitFor()
   })
 
-  await step('see an interactive answer as a card', async () => {
+  await step('use an interactive answer', async () => {
     await openMenu()
     await page.getByRole('tab', { name: /^Chats/ }).click()
     await button(/^Pricing tiers for teams/).click()
-    await page.getByText('Interactive answer').waitFor()
+    // The block runs in a sandboxed frame of its own, not as source in the page.
+    const frame = page.frameLocator('iframe[title="Interactive answer"]')
+    await frame.getByText('Starter').waitFor()
     if (await page.getByText('<div class="tiers">').count()) throw new Error('The interface showed as source')
+    // What it asks to send waits for the person to agree.
+    const asked = new Promise((resolve) =>
+      page.once('dialog', (dialog) => {
+        resolve(dialog.message())
+        void dialog.accept()
+      })
+    )
+    await frame.getByRole('button', { name: 'Ask about Team' }).click()
+    if (!String(await asked).includes('Tell me about Team')) throw new Error('The confirmation did not show the message')
+    await page.getByText('Tell me about Team', { exact: true }).waitFor()
     await button('Show code').click()
     await page.getByText(/<div class="tiers">/).waitFor()
     await button('Hide code').click()

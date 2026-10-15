@@ -18,9 +18,13 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   each with a way to open it, and a message, report or result another
   conversation sent names that conversation, which opens from its name.
 - **Interactive answers:** an
-  [interface](chat-context.md#interactive-answers) in a reply shows as a card;
-  the phone never runs it. Use it in Maestrly on your computer, or read its
-  source with **Show code**.
+  [interface](chat-context.md#interactive-answers) in a reply runs in an
+  isolated web view once its block is complete, with no access to the app or
+  the network. When it asks to send a message as you or to open a page, the app
+  asks you first. **Show code** shows its source.
+- **Files and videos from bots:** a file a bot shares shows with its name and
+  size. A video downloads to the phone and plays in the conversation; any other
+  file downloads and opens the system's share sheet.
 - **Requests:** approve or deny a command, answer a question, or mark a request
   for help as resolved; in a chat, also review a plan and confirm the
   conversations an agent wants to start.

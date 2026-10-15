@@ -19,6 +19,7 @@ import {
   GENUI_WIDGET_BASE_CSS,
   GENUI_WIDGET_CSP,
   GENUI_WIDGET_FRAME_HTML,
+  genUiWidgetFrameHeaders,
   genUiWidgetFrameResponse,
 } from '../../src/shared/genui-widget-frame'
 
@@ -109,6 +110,12 @@ describe('inline HTML frame page', () => {
     expect(directives['img-src']).toBe('https: data: blob:')
     expect(directives['script-src']).toContain("'unsafe-inline'")
     expect(directives['script-src']).not.toMatch(/\bhttps:(\s|$)/)
+  })
+
+  // The page is shared with the mobile app's frame through @maestrly/bot-fleet-protocol: moving it must not change it.
+  it('stays byte for byte the page the app has served', () => {
+    expect(GENUI_WIDGET_FRAME_HTML).toMatchSnapshot()
+    expect(genUiWidgetFrameHeaders()).toMatchSnapshot()
   })
 
   it('holds a single script element', () => {

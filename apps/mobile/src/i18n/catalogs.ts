@@ -596,7 +596,6 @@ export const en = {
   'user.fromOpen': 'Opens that conversation',
 
   'interface.title': 'Interactive answer',
-  'interface.onComputer': 'Open this conversation in Maestrly on your computer to use it.',
   'interface.writing': 'Writing the interface…',
   'interface.showCode': 'Show code',
   'interface.hideCode': 'Hide code',
@@ -654,6 +653,21 @@ export const en = {
   'devices.loadFailed': "Couldn't load the devices.",
   'devices.removeFailed': "Couldn't remove the device.",
   'devices.retry': 'Try again',
+
+  'interface.tooLong':
+    'This interface is too long to run on the phone. Open the conversation in Maestrly on your computer.',
+  'interface.sendTitle': 'Send this message?',
+  'interface.send': 'Send',
+  'interface.openTitle': 'Open {host}?',
+  'interface.open': 'Open',
+  'interface.failed': "That didn't work. Try again.",
+  'interface.issues': 'Problems found',
+  'interface.issue.image': "An image didn't load",
+  'interface.issue.overflow': 'Content is wider than the answer',
+  'interface.issue.clipped': 'Text is cut off',
+  'interface.issue.viewport': 'The layout follows the frame’s height',
+  'interface.issue.script': 'A script failed',
+  'interface.issue.blocked': 'Something was blocked',
 } as const
 
 export const ptBR: Record<keyof typeof en, string> = {
@@ -1259,7 +1273,6 @@ export const ptBR: Record<keyof typeof en, string> = {
   'user.fromOpen': 'Abre essa conversa',
 
   'interface.title': 'Resposta interativa',
-  'interface.onComputer': 'Abra esta conversa na Maestrly do computador para usá-la.',
   'interface.writing': 'Escrevendo a interface…',
   'interface.showCode': 'Ver código',
   'interface.hideCode': 'Ocultar código',
@@ -1317,4 +1330,19 @@ export const ptBR: Record<keyof typeof en, string> = {
   'devices.loadFailed': 'Não foi possível carregar os dispositivos.',
   'devices.removeFailed': 'Não foi possível remover o dispositivo.',
   'devices.retry': 'Tentar de novo',
+
+  'interface.tooLong':
+    'Esta interface é longa demais para rodar no celular. Abra a conversa na Maestrly do computador.',
+  'interface.sendTitle': 'Enviar esta mensagem?',
+  'interface.send': 'Enviar',
+  'interface.openTitle': 'Abrir {host}?',
+  'interface.open': 'Abrir',
+  'interface.failed': 'Não deu certo. Tente de novo.',
+  'interface.issues': 'Problemas encontrados',
+  'interface.issue.image': 'Uma imagem não carregou',
+  'interface.issue.overflow': 'O conteúdo é mais largo que a resposta',
+  'interface.issue.clipped': 'Um texto foi cortado',
+  'interface.issue.viewport': 'O layout segue a altura do quadro',
+  'interface.issue.script': 'Um script falhou',
+  'interface.issue.blocked': 'Algo foi bloqueado',
 }

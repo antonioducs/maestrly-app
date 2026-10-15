@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imageLabel, safeLink } from '../src/ui/links'
+import { imageLabel, interfaceLink, safeLink } from '../src/ui/links'
 
 describe('links in replies', () => {
   it('opens only web pages and email', () => {
@@ -25,5 +25,29 @@ describe('links in replies', () => {
     expect(imageLabel('https://cdn.example.dev/a.png', '', 'Title')).toBe('Title')
     expect(imageLabel('https://cdn.example.dev/a.png')).toBe('cdn.example.dev')
     expect(imageLabel('not a url')).toBe('not a url')
+  })
+
+  it('opens from an interactive answer only plain web addresses, naming the host they really reach', () => {
+    expect(interfaceLink('https://example.com/pricing?plan=team#faq')).toEqual({
+      url: 'https://example.com/pricing?plan=team#faq',
+      host: 'example.com',
+    })
+    expect(interfaceLink('http://Docs.Example.com:8080')).toEqual({
+      url: 'http://Docs.Example.com:8080',
+      host: 'docs.example.com:8080',
+    })
+    // React Native's URL reads these hosts differently from a browser, so the phone refuses them outright.
+    for (const url of [
+      'https://evil.example?@good.example/',
+      'https://good.example#@evil.example',
+      'https://user:pass@example.com/',
+      'https://evil.example\\.good.example/',
+      'https://exa mple.com/',
+      'javascript:alert(1)',
+      'maestrly://chat/c1',
+      'tel:+15550100',
+      'https://',
+    ])
+      expect(interfaceLink(url)).toBeNull()
   })
 })
