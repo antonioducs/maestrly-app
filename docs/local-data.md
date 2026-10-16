@@ -162,7 +162,8 @@ plugin's servers, cached tool catalogs, skill settings, stored values and
 installed files.
 
 Plugin hooks keep little state. A conversation's `hookSession` preference
-records where its `SessionStart` hooks last ran. While a turn runs hooks, the
+records where its `SessionStart` hooks last ran on this host; a conversation
+move leaves it behind. While a turn runs hooks, the
 conversation's text is copied to an owner-only file under the system temporary
 folder (`maestrly-hook-transcripts/`) for hooks that read `transcript_path`;
 the file is deleted when the turn ends. Hook messages are never stored.

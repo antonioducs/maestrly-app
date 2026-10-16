@@ -162,19 +162,27 @@ digest the person approved. Tool hooks wrap each runtime's Maestrly `ToolSet`
 Claude, Codex, Cursor, GitHub Copilot and Google AI runtimes and for
 subagents; tool names and inputs are translated to Claude Code's
 (`chat/plugin-hook-tools.ts`). A Codex thread with tool hooks starts without
-environments, shell or web search and receives Maestrly's shell and file
-tools instead, under its own thread key. `startSend` runs `SessionStart` and
+environments, shell or native web search and receives Maestrly's shell, file
+and `web_search` tools instead, under its own thread key. Code and plan
+reviewers run as Ask subagents, so no hook runs for them. `startSend` runs
+`SessionStart` and
 `UserPromptSubmit` before the prompt is stored, as hidden parts of the
 message (outside the cached project context), records the session's
-compaction boundary in the conversation's preferences, and turns a `Stop`
+compaction boundary in the conversation's preferences (`hookSession`, which a
+conversation move leaves behind), and turns a `Stop`
 hook's reason into an internal continuation turn, like the Maestro
 reconciliation guard. The ChatGPT Web bridge takes `toolHooks` around its
 tools; the manager refuses a companion when turn hooks apply. Hook notices are
-a stream event (`hook-notice`) that is never persisted.
+a stream event (`hook-notice`) that is never persisted. The mobile API of a
+host (`remote-host/server/mobile-api.ts`) lists plugin servers by the
+conversation's scope, offers each account of a server with several as an
+entry `<serverId>#<accountId>`, and reports a blocked prompt as
+`blocked-by-hook`.
 
 A bot environment serves the same engine through environment-settings
-operations behind the `environment-plugins-v1` feature (gateway) and capability
-(instance). The protocol lists the plugin operations explicitly
+operations behind the `environment-plugins-v1` feature (gateway, announced in
+`moreFeatures` of `/v1/meta`, past the 20 features older desktops read) and
+capability (instance). The protocol lists the plugin operations explicitly
 (`FLEET_PLUGIN_SETTINGS_OPERATIONS`) with strict schemas; the gateway checks the
 capability and forwards them. `bringPlugin`, `setMcpOAuth` and
 `mcpOAuthDescriptor` carry plugin values, OAuth tokens and the own OAuth client's

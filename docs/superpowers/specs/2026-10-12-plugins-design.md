@@ -542,25 +542,30 @@ model.
   as is.
 - **Agents (Phase 5, delivered as Phase 8)** become subagents named `<plugin>-<agent>` (`plugins/agents-scan.ts`,
   `listPluginAgents`, joined in `listEffectiveAgents` and the Settings catalog). Claude tool names map to Maestrly tools
-  (`Read`→`read`, `LS`→`glob`, `MultiEdit`→`edit`, `mcp__*`→`mcp_search`+`mcp_call`); `WebSearch`, `Task`, `Agent`,
-  `TodoWrite` and `NotebookEdit` are dropped and noted per agent. `model` is ignored, so the agent inherits the parent's
+  (`Read`→`read`, `LS`→`glob`, `MultiEdit`→`edit`, `WebSearch`→`web_search`, `mcp__*`→`mcp_search`+`mcp_call`); `Task`,
+  `Agent`, `TodoWrite` and `NotebookEdit` are dropped and noted per agent. `model` is ignored, so the agent inherits the parent's
   profile. An agent without a description or a body is an invalid entry. A project or home agent with the same name
   wins. Agents count as a portable part, so an agents-only plugin is offered.
 - **Hooks (Phase 9)** are emulated in the main process with Claude Code's contract (`plugins/hooks-scan.ts`,
   `plugins/hook-command.ts`, `chat/plugin-hooks.ts`) for `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
   `PostToolUse`, `PostToolUseFailure` and `Stop` command hooks; other events and types are noted `hook-unsupported`.
-  - Hooks run only in Agent and Design, never in Ask, Plan, Maestro or for a review-loop reviewer.
+  - Hooks run only in Agent and Design, never in Ask, Plan or Maestro. Code and plan reviewers run in Ask.
   - Tool hooks wrap every runtime's Maestrly tools and subagents' tools, with Claude tool names and inputs. Only `deny`
     takes effect from `permissionDecision`; `allow` and `ask` never skip Maestrly's permission.
-  - A Codex conversation with tool hooks runs with `environments: []`, `features.shell_tool=false` and web search off,
-    using Maestrly's `bash`, `read`, `write`, `edit`, `grep` and `glob`.
-  - `startSend` runs `SessionStart` (startup, clear, compact, tracked by the compaction boundary in `hookSession`) and
+  - A Codex conversation with tool hooks runs with `environments: []`, `features.shell_tool=false` and native web search
+    off, using Maestrly's `bash`, `read`, `write`, `edit`, `grep`, `glob` and `web_search` (`WebSearch` to hooks and
+    plugin agents).
+  - `startSend` runs `SessionStart` (startup, resume, clear, compact, tracked by the compaction boundary in
+    `hookSession`, which a conversation move leaves behind) and
     `UserPromptSubmit` before the prompt is stored, as hidden parts; a block returns `blocked-by-hook`. `Stop` can keep
     the agent going with an internal turn, at most 8 times in a row. Steering waits for its own turn when prompt hooks
     exist.
   - The ChatGPT Web companion runs tool hooks around its tools and refuses to start (`companion-hooks-unsupported`)
     when session, prompt or Stop hooks apply.
   - Hook notices are a `hook-notice` stream event, shown above the composer and never stored.
+- **After merging main (2026-10-15):** each workspaces environment of a server is its own plugin host; the phone lists
+  plugin servers by scope and each account as a switch (`<serverId>#<accountId>`), and fails a blocked message with
+  `blocked-by-hook`; `environment-plugins-v1` moved to `moreFeatures` of `/v1/meta`.
 - Adapted components are marked `adapted`.
 - **Catalog value:** before Phase 6, adapting commands alone moved three plugins to Portable (build-macos-apps,
   cloudflare, expo). Under the two-state rule, figma and vercel are offered (their connectors are noted), and zoom

@@ -759,14 +759,19 @@ line, scripts and executables, and every component with its support status.
   list of hooks (event, matcher, command and timeout). Maestrly keeps a digest
   of that list and runs only hooks whose digest matches; an update that changes
   them asks again. Hooks run only in Agent and Design conversations, never in
-  Ask, Plan or Maestro, nor for a review-loop reviewer. Each runs with a time
-  limit (60 seconds by default, at most 10 minutes) and an output limit of
-  1 MiB, and its whole process group is ended on timeout or Stop. A hook can
-  deny a tool call or block a prompt, but its `allow` or `ask` answer never
-  skips Maestrly's permission gate. The transcript a hook can read is an
-  owner-only temporary file deleted when the turn ends. Hook messages are shown
-  above the composer and never stored. With tool hooks, Codex threads get no
-  native shell, patch or web search tools, so every call goes through them.
+  Ask, Plan or Maestro, nor for the reviewers of code and plan reviews, which
+  run in Ask. Each runs with a time limit (60 seconds by default, at most 10
+  minutes) and an output limit of 1 MiB, and its whole process group is ended
+  on timeout or Stop. A hook can deny a tool call or block a prompt, from any
+  sender (the person, a bot, a phone or another conversation's agent), but its
+  `allow` or `ask` answer never skips Maestrly's permission gate. The
+  transcript a hook can read is an owner-only temporary file deleted when the
+  turn ends. Hook messages are shown above the composer and never stored. With
+  tool hooks, Codex threads get no native shell, patch or web search tools, so
+  every call goes through them, the host `web_search` included. Hooks run on
+  the host of the conversation with its shell environment, so on a server they
+  see the conversation's own computer. A moved conversation does not carry
+  where hooks last started its session: the destination's hooks run again.
 - **Never run.** Hooks on events Maestrly does not control, hooks that are not
   commands, monitors, LSP servers, `bin/` executables, MCP bundles,
   OpenAI app connectors and `command` plugin sources never run. Each one is

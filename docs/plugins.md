@@ -15,8 +15,9 @@ Open **Settings → Maestrly Chat → Plugins**. The composer also links to it: 
 **+** menu and of the skills menu. From a conversation on a [remote workspaces host](remote-workspaces.md), the link
 opens that host's plugins.
 
-Plugins belong to a host. Choose the host with the **Settings of** selector: **This computer**, or a server that hosts
-workspaces.
+Plugins belong to a host. Choose the host with the **Settings of** selector: **This computer**, or a workspaces
+environment of a server. A server with [several workspaces environments](remote-workspaces.md#several-scopes-on-one-server)
+lists each one, and each has its own plugins.
 
 ## Sources
 
@@ -100,9 +101,10 @@ A plugin's agents (`agents/*.md` in Claude Code and Codex plugins) become subage
 model can delegate to with `task` or a `#<plugin>-<agent>` mention, like your own agents. The plugin's details list them.
 
 - **Tools.** The tools an agent names map to Maestrly's: `Read`, `Grep`, `Glob`, `LS`, `Bash`, `Edit`, `MultiEdit`,
-  `Write` and `WebFetch` keep their meaning, and any `mcp__…` tool becomes access to the enabled MCP servers through
-  `mcp_search` and `mcp_call`. Tools with no equivalent every model can use, such as `WebSearch`, `Task` or
-  `TodoWrite`, are left out and listed under **Not included**. An agent that names no tools gets the read-only set.
+  `Write`, `WebFetch` and `WebSearch` keep their meaning, and any `mcp__…` tool becomes access to the enabled MCP servers
+  through `mcp_search` and `mcp_call`. `WebSearch` is Maestrly's `web_search`, so the agent searches only while web search
+  is on in Settings. Tools with no equivalent every model can use, such as `Task` or `TodoWrite`, are left out and listed
+  under **Not included**. An agent that names no tools gets the read-only set.
 - **Model.** An agent's `model` is ignored: it runs on the conversation's model, unless a subagent rule in
   **Settings → Maestrly Chat → Subagents** chooses another, so it behaves the same with every provider.
 - **Names.** An agent file of the project (`.claude/agents`, `.agents/agents`) or of your home with the same name wins
@@ -117,12 +119,13 @@ every model.
 - **Approval.** Hooks run only after you approve them, at install or later with the **Hooks** switch under
   **Installed**. An update that changes them asks again.
 - **Where.** Hooks run only in Agent and Design conversations, on the host that runs the conversation, in its folder.
-  They never run in Ask, Plan, or Maestro conversations, or for the reviewer of a review loop.
+  They never run in Ask, Plan, or Maestro conversations, nor for the reviewers of a code or plan review, which run in
+  Ask.
 - **Events.**
 
   | Event | When | What the hook can do |
   | --- | --- | --- |
-  | `SessionStart` | The first turn of a conversation, and the first after clearing or compacting it | Add context for the model |
+  | `SessionStart` | The first turn of a conversation (`startup`); the first turn on a host whose hooks never ran for a conversation with history, such as one moved from another computer or one whose hooks were switched on later (`resume`); and the first after clearing or compacting it (`clear`, `compact`) | Add context for the model |
   | `UserPromptSubmit` | Each message you send, before it is stored | Add context, or block the message |
   | `PreToolUse` | Before each tool call | Block the call, or change its input |
   | `PostToolUse`, `PostToolUseFailure` | After a tool call succeeds or fails | Add text the model reads with the result |
@@ -130,10 +133,11 @@ every model.
 
   Other events, and hooks that are not commands, are listed under **Not included**.
 - **Tools.** Hooks see Maestrly's tools with Claude Code's names and inputs: `bash` is `Bash`, `edit` is `Edit` with
-  `file_path`, and an MCP tool is `mcp__<server>__<tool>`, so matchers such as `Edit|Write` work. A hook can deny a
+  `file_path`, `web_search` is `WebSearch`, and an MCP tool is `mcp__<server>__<tool>`, so matchers such as `Edit|Write`
+  work. A hook can deny a
   call, but its `allow` or `ask` answer never skips Maestrly's own permission.
-- **Every model.** In a conversation with tool hooks, Codex models use Maestrly's shell and file tools instead of their
-  own, so every call goes through the hooks. Subagents' tool calls run them too.
+- **Every model.** In a conversation with tool hooks, Codex models use Maestrly's shell, file, and web search tools
+  instead of their own, so every call goes through the hooks. Subagents' tool calls run them too.
 - **Messages.** A hook's `systemMessage`, failure, or timeout shows above the composer and is not stored in the
   conversation. Context from a hook reaches the model as hidden parts of your message. When a hook blocks a message,
   the message comes back to the composer.
@@ -143,6 +147,9 @@ every model.
   deleted when the turn ends.
 - **While the agent works.** With `UserPromptSubmit` hooks, a message you send during a turn waits for a turn of its
   own instead of steering the current one, so the hooks see it.
+- **Other senders.** Messages from a bot, from the [mobile app](mobile.md), or from the agent of another conversation
+  are prompts too: `UserPromptSubmit` hooks see them and can block them. The phone shows that a plugin hook blocked
+  the message; another conversation's agent is told it could not be delivered, with the hook's reason.
 - **ChatGPT companion.** The ChatGPT Web companion runs tool hooks around its tools. Its turns run in ChatGPT, where
   Maestrly cannot run `SessionStart`, `UserPromptSubmit`, or `Stop` hooks, so it does not start in an Agent
   conversation with a plugin that has them. Switch that plugin's hooks off, or limit where the plugin applies.
@@ -205,9 +212,17 @@ local server. The MCP servers that need them stay off until you provide them; th
 
 ## Remote workspaces
 
-With a server selected in Settings, the plugin center manages the server's plugins. They are downloaded and run on the
-server, and conversations on the server use them. **Selected projects** lists the server's workspaces. Nothing is copied
-between this computer and the server.
+With a workspaces environment selected in Settings, the plugin center manages that environment's plugins. They are
+downloaded and run on the server, in that environment, and its conversations use them. **Selected projects** lists the
+environment's workspaces. Nothing is copied between this computer and the server, or between environments.
+
+When a conversation [moves](remote-workspaces.md#move-a-conversation) to another computer or environment, it uses the
+plugins installed there. What you switched off for it, a plugin's server or an account, stays off where the same plugin
+is installed; the destination's sign-ins are its own. The destination's `SessionStart` hooks run again on the
+conversation's next turn there, as `resume`.
+
+On a phone, a chat's **MCP servers** lists a plugin's servers only where the plugin applies, and each account of a
+server with several signed-in accounts as a switch of its own.
 
 ## Bot environments
 
