@@ -842,8 +842,6 @@ export default {
     gatewayVersion: 'Gateway: {{version}}',
     unknown: 'desconhecida',
     resources: 'Recursos',
-    peerMessages: 'Conversas entre bots',
-    noPeerMessages: 'Nenhuma conversa entre bots ainda.',
     howTitle: 'Como funciona',
     howDescription:
       'Cada bot tem seu próprio desktop Linux e contêiner no servidor. O bot controla seu desktop lá; este computador é só o controle remoto.',

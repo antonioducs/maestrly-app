@@ -627,22 +627,25 @@ export async function evaluate(wc: WebContents, expression: string): Promise<{ t
 }
 
 /**
- * Resolve on the first matching CDP method or timeout. Back/forward can restore from bfcache without
- * loadEventFired, so also accept frameNavigated.
+ * Resolve on the first matching CDP method, timeout, or tab destruction. Back/forward can restore from
+ * bfcache without loadEventFired, so also accept frameNavigated.
  */
 function waitForLoad(wc: WebContents, ms = 15000, methods = ['Page.loadEventFired']): Promise<void> {
   return new Promise<void>((resolve) => {
-    const onMsg = (_e: unknown, method: string): void => {
-      if (methods.includes(method)) {
-        wc.debugger.off('message', onMsg)
-        resolve()
-      }
-    }
-    wc.debugger.on('message', onMsg)
-    setTimeout(() => {
-      wc.debugger.off('message', onMsg)
+    const finish = (): void => {
+      clearTimeout(timer)
+      wc.removeListener('destroyed', finish)
+      // Every native accessor of a destroyed WebContents throws, and this may run from a timer where
+      // nothing would catch it.
+      if (!wc.isDestroyed()) wc.debugger.off('message', onMsg)
       resolve()
-    }, ms)
+    }
+    const onMsg = (_e: unknown, method: string): void => {
+      if (methods.includes(method)) finish()
+    }
+    const timer = setTimeout(finish, ms)
+    wc.debugger.on('message', onMsg)
+    wc.once('destroyed', finish)
   })
 }
 
