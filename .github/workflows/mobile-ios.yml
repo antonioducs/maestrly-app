@@ -1,9 +1,13 @@
 name: Mobile iOS
 
 # Builds the phone app on EAS and uploads it to TestFlight, and pushes the store listing and submits the version to
-# App Review with the newest build of the version in TestFlight. Run it from main after setting the app's version
-# (docs/mobile.md#release). The mobile-ios environment holds the credentials and only deploys main and v* tags.
+# App Review with the newest build of the version in TestFlight (docs/mobile.md#release). A mobile-v<version> tag on
+# main uploads its version; App Review is always a run by hand. The mobile-ios environment holds the credentials and
+# only deploys main and mobile-v* tags.
 on:
+  push:
+    tags:
+      - "mobile-v*"
   workflow_dispatch:
     inputs:
       action:
@@ -36,25 +40,41 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Check the tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/mobile/package.json').version")"
+          if [[ "$GITHUB_REF_NAME" != "mobile-v$version" ]]; then
+            echo "The tag $GITHUB_REF_NAME does not name the app's version: tag mobile-v$version."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "The tagged commit must be on main."
+            exit 1
+          fi
       - name: Install dependencies
         run: npm ci
       - name: Check the app
         run: npm run check:mobile
       # The signing certificate, provisioning profile, push key and App Store Connect key live on EAS.
       - name: Build on EAS and upload to TestFlight
-        if: inputs.action != 'submit'
+        if: github.event_name == 'push' || inputs.action != 'submit'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx --yes eas-cli@25.0.0 build --platform ios --profile production --non-interactive --wait --auto-submit
       - name: Push the store listing
-        if: inputs.action != 'upload'
+        if: github.event_name == 'workflow_dispatch' && inputs.action != 'upload'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -66,7 +86,7 @@ jobs:
           MAESTRLY_APP_REVIEW_PHONE: ${{ secrets.APP_REVIEW_PHONE }}
         run: npx --yes eas-cli@25.0.0 metadata:push --profile production --non-interactive
       - name: Submit to App Review
-        if: inputs.action != 'upload'
+        if: github.event_name == 'workflow_dispatch' && inputs.action != 'upload'
         working-directory: apps/mobile
         env:
           ASC_API_KEY: ${{ secrets.ASC_API_KEY }}

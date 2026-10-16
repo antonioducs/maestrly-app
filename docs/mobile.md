@@ -249,7 +249,7 @@ app is bundled.
    the price and the countries, and answer **App Privacy** (see below). The
    listing itself comes from the repository.
 5. **GitHub:** create a `mobile-ios` environment that deploys only `main` and
-   `v*` tags, with:
+   `mobile-v*` tags, with:
 
    | Name | Kind | Value |
    | --- | --- | --- |
@@ -262,19 +262,36 @@ app is bundled.
 
 ### Release on iOS
 
+The phone app has versions of its own, apart from the desktop app's.
+
 1. Set the new version in `apps/mobile/package.json` and `app.config.ts`; a test
-   keeps them equal. When the screens changed, run
-   `npm run screenshots --workspace @maestrly/mobile`: it renders the 6.9-inch
-   iPhone screenshots from the demo server into `apps/mobile/store/screenshots/`.
-   Merge to `main`.
-2. Run **Mobile iOS** with `upload`
-   (`gh workflow run mobile-ios.yml --ref main -f action=upload`). It runs the
-   app's checks, builds the app on EAS and uploads the build to TestFlight.
+   keeps them equal. Write what's new in it, in English and Portuguese, in
+   `RELEASE_NOTES` of `apps/mobile/store.config.cjs`: the listing refuses to
+   load a version after the first without them, because App Store Connect would
+   otherwise show "Bug fixes and improved stability". When the screens changed,
+   run `npm run screenshots --workspace @maestrly/mobile`: it renders the
+   6.9-inch iPhone screenshots from the demo server into
+   `apps/mobile/store/screenshots/`. Merge to `main`.
+2. Tag the merged commit with `mobile-v` and the version, and push the tag:
+
+   ```sh
+   git fetch origin main
+   git tag mobile-v0.1.1 origin/main
+   git push origin mobile-v0.1.1
+   ```
+
+   **Mobile iOS** checks that the tag names the app's version and is on `main`,
+   runs the app's checks, builds the app on EAS and uploads the build to
+   TestFlight. A tag never submits to App Review. Running **Mobile iOS** by hand
+   with `upload` (`gh workflow run mobile-ios.yml --ref main -f action=upload`)
+   does the same without a tag, for another build of the same version.
 3. Go through the [device checklist](#device-checklist) with the TestFlight build.
-4. Run **Mobile iOS** with `submit`. It pushes the listing in
-   `apps/mobile/store.config.cjs` (texts, keywords, screenshots, categories, age
-   rating and the review notes), waits until App Store Connect has processed
-   the version's newest build, attaches it and submits the version to App Review.
+4. Run **Mobile iOS** by hand with `submit`
+   (`gh workflow run mobile-ios.yml --ref main -f action=submit`). It pushes the
+   listing in `apps/mobile/store.config.cjs` (texts, What's New, keywords,
+   screenshots, categories, age rating and the review notes), waits until App
+   Store Connect has processed the version's newest build, attaches it and
+   submits the version to App Review.
    `upload-and-submit` does both in one run. A language added to the listing
    reaches App Store Connect without its texts the first time; when App Review
    then refuses the version for missing texts, run `submit` again.
