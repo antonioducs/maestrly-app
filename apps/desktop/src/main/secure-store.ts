@@ -1,13 +1,27 @@
 /** Encrypt user-enabled integration credentials with the operating-system keyring; never persist plaintext. */
 import { safeStorage } from 'electron'
 import { getAppSetting, setAppSetting } from './store'
+import { isE2E } from './test-mode'
 
 export type SecureStoreMode = 'secure' | 'unavailable'
 
 const ENC_PREFIX = 'enc:v1:'
 
+let e2ePlainTextKey = false
+
+/**
+ * Playwright starts Electron with `--password-store=basic`, so a Linux test run never reaches a keyring. There, and only
+ * in test mode (whose profile is always an isolated temporary folder), secrets use Electron's in-memory key instead.
+ */
+function allowE2EPlainTextKey(): void {
+  if (e2ePlainTextKey || process.platform !== 'linux' || !isE2E()) return
+  e2ePlainTextKey = true
+  safeStorage.setUsePlainTextEncryption(true)
+}
+
 export function isSecureStorageAvailable(): boolean {
   try {
+    allowE2EPlainTextKey()
     return safeStorage.isEncryptionAvailable()
   } catch {
     return false
