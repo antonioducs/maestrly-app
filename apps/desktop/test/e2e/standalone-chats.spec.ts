@@ -151,8 +151,11 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await expect(page.getByText('Standalone streaming proof:', { exact: false })).toBeVisible()
     expect(held).toBeTruthy()
     await expect(page.locator('button[title="Stop"]:visible')).toBeVisible()
-    // Creating a chat from Settings must close the panel and preserve the first chat's live stream.
+    // Settings take the whole window beside the rail, hiding the list and its New chat button.
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'New chat', exact: true })).toHaveCount(0)
+    // Leaving them through the rail and creating a chat must preserve the first chat's live stream.
+    await page.getByRole('tab', { name: 'Chats', exact: true }).click()
     await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
     await expect.poll(async () => (await list()).length).toBe(2)
     const second = (await list()).find((conv: any) => conv.id !== first.id)

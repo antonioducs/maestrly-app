@@ -524,6 +524,21 @@ export function DesktopApp() {
     setSidebarOpen(!collapsed)
     localStorage.setItem('sidebar.collapsed', collapsed ? '1' : '0')
   }, [])
+  // Settings take the whole window beside the rail; the remembered preference returns when they close.
+  const sidebarPanelOpen = sidebarOpen && !settingsOpen
+  const handleSidebarCollapsedChange = useCallback(
+    (collapsed: boolean) => {
+      if (settingsOpen && !collapsed) {
+        requestMainNavigation(() => {
+          setSettingsOpen(false)
+          setSidebarCollapsed(false)
+        })
+        return
+      }
+      setSidebarCollapsed(collapsed)
+    },
+    [settingsOpen, setSettingsOpen, setSidebarCollapsed]
+  )
 
   const [openTargets, setOpenTargets] = useState<{ vscode: boolean }>({ vscode: false })
   const migration = useConversationMigration({
@@ -776,7 +791,10 @@ export function DesktopApp() {
       <UpdateProvider>
         <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
           <div
-            className={cn('relative flex h-full bg-background text-foreground', !sidebarOpen && 'sidebar-collapsed')}
+            className={cn(
+              'relative flex h-full bg-background text-foreground',
+              !sidebarPanelOpen && 'sidebar-collapsed'
+            )}
           >
             {remoteHosts
               .filter((host) => host.state === 'online')
@@ -936,8 +954,8 @@ export function DesktopApp() {
                   (actions) => actions.toggleWorkspaceCollapsed(id)
                 )
               }
-              collapsed={!sidebarOpen}
-              onCollapsedChange={setSidebarCollapsed}
+              collapsed={!sidebarPanelOpen}
+              onCollapsedChange={handleSidebarCollapsedChange}
               openTargets={openTargets}
               onOpenExternal={(scope, id, target) =>
                 void api.openExternal(scope, id, target).then((r) => {
