@@ -112,8 +112,6 @@ export function PersonalMemorySettingsDialog({
           <MemorySettings
             config={config}
             catalogRevision={catalogRevision}
-            scope="personal"
-            presentation="dialog"
             onChanged={() => {}}
             onDirtyChange={(dirty) => {
               dirtyRef.current = dirty

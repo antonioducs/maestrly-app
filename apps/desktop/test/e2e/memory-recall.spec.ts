@@ -233,9 +233,8 @@ test('recalls relevant memories, opens their source, and honors automatic recall
     const setRecall = async (enabled: boolean) => {
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByRole('tab', { name: 'Models & agents', exact: true }).click()
-      const settings = page.getByRole('region', { name: 'Memory', exact: true })
+      const settings = page.getByRole('region', { name: 'Project memory', exact: true })
       await settings.getByRole('checkbox', { name: 'Recall relevant memories automatically' }).setChecked(enabled)
-      await settings.getByRole('button', { name: 'Save memory settings', exact: true }).click()
       await expect(settings.getByRole('status')).toHaveText('Saved')
       await expect
         .poll(() => page.evaluate(() => window.api.chatConfig()).then((config) => config.memory?.autoRecall))

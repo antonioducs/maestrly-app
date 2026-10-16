@@ -329,10 +329,15 @@ test('detached dialog isolates focus and scroll locking and retains its unsaved 
   const child = await detach(session)
   await child.getByTitle('Add', { exact: true }).click()
   await child.getByRole('menuitem', { name: /Subagent execution profiles/ }).click()
-  const dialog = child.getByRole('dialog')
+  const dialogName = { name: 'Subagent profiles for this conversation', exact: true }
+  const dialog = child.getByRole('dialog', dialogName)
   await expect(dialog).toBeVisible()
   await expect(page.locator('body')).not.toHaveAttribute('data-scroll-locked')
-  await dialog.getByRole('button', { name: 'Add fallback', exact: true }).first().click()
+  // A rule being added stays unsaved while its model picker is open.
+  await dialog.getByRole('button', { name: 'Add a rule for an agent', exact: true }).click()
+  await child.keyboard.type('reviewer')
+  await child.keyboard.press('Enter')
+  await expect(dialog.getByRole('dialog', { name: 'Model 1 for reviewer', exact: true })).toBeVisible()
   await expect(dialog.getByTitle('Remove', { exact: true })).toHaveCount(1)
   await dialog.getByRole('button', { name: 'Close', exact: true }).focus()
   await child.keyboard.press('Tab')
@@ -352,9 +357,12 @@ test('detached dialog isolates focus and scroll locking and retains its unsaved 
   const nativeChild = await app.browserWindow(child)
   await nativeChild.evaluate((window) => window.close())
   await closed
-  const restoredDialog = page.getByRole('dialog')
+  const restoredDialog = page.getByRole('dialog', dialogName)
   await expect(restoredDialog).toBeVisible()
   await expect(restoredDialog.getByTitle('Remove', { exact: true })).toHaveCount(1)
+  // The first Escape closes the picker, which drops the unsaved rule; the second closes the dialog.
+  await page.keyboard.press('Escape')
+  await expect(restoredDialog.getByTitle('Remove', { exact: true })).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(restoredDialog).toHaveCount(0)
   await expect(editor(page)).toHaveText('dialog composer draft')

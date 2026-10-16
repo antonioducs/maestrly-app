@@ -179,13 +179,18 @@ test('configures capabilities, hydrates monotonic status, and keeps send availab
   await page.getByRole('tab', { name: 'Models & agents', exact: true }).click()
   const settings = page.locator('[data-background-compaction-settings]')
   await expect(settings).toBeVisible()
-  await expect(settings.getByRole('spinbutton', { name: 'Preparation interval' })).toHaveValue('100000')
-  const toggle = settings.getByRole('button', { name: 'Use background context preparation' })
-  await expect(toggle).toBeDisabled()
+  await settings.getByRole('button', { name: 'Details: Prepare context', exact: true }).click()
+  await expect(settings.getByRole('radio', { name: '100k tokens', exact: true })).toBeChecked()
+  const toggle = settings.getByRole('switch', { name: 'Use background context preparation' })
+  await expect(toggle).not.toBeChecked()
 
-  await settings.getByRole('button', { name: 'Provider' }).click()
+  // Turning it on without a model opens the model picker; the first complete choice turns it on.
+  await toggle.click()
+  const picker = settings.getByRole('dialog', { name: 'Preparation model', exact: true })
+  await expect(picker).toBeVisible()
+  await picker.getByRole('button', { name: 'Provider' }).click()
   await page.getByRole('option', { name: 'Background provider', exact: true }).click()
-  await expect(settings.getByRole('button', { name: 'Provider' })).toContainText('Background provider')
+  await expect(picker.getByRole('button', { name: 'Provider' })).toContainText('Background provider')
   await expect
     .poll(() =>
       app!.evaluate(
@@ -195,16 +200,14 @@ test('configures capabilities, hydrates monotonic status, and keeps send availab
       )
     )
     .toContain(model.providerId)
-  await settings.getByRole('button', { name: 'Model ID' }).click()
+  await picker.getByRole('button', { name: 'Model ID' }).click()
   await page.getByRole('option', { name: model.modelId, exact: true }).click()
-  await expect(settings.getByRole('button', { name: 'Reasoning level' })).toContainText('Default')
-  const fastMode = settings.getByRole('button', { name: 'Subagent speed' })
-  await expect(fastMode).toContainText('Standard')
-  await fastMode.click()
-  await expect(fastMode).toContainText('Fast')
-  await toggle.click()
-  await settings.getByRole('button', { name: 'Save', exact: true }).click()
-  await expect(settings.getByText('Background preparation saved.', { exact: true })).toBeVisible()
+  await expect(picker.getByRole('radio', { name: 'Default', exact: true })).toBeChecked()
+  const speed = picker.getByRole('radiogroup', { name: 'Speed', exact: true })
+  await expect(speed.getByRole('radio', { name: 'Standard', exact: true })).toBeChecked()
+  await speed.getByRole('radio', { name: 'Fast', exact: true }).click()
+  await expect(speed.getByRole('radio', { name: 'Fast', exact: true })).toBeChecked()
+  await expect(picker.getByRole('status')).toHaveText('Saved')
   await expect
     .poll(() =>
       app!.evaluate(
@@ -216,6 +219,9 @@ test('configures capabilities, hydrates monotonic status, and keeps send availab
       intervalTokens: 100_000,
       selection: { ...model, effort: 'off', fastMode: true },
     })
+  await page.keyboard.press('Escape')
+  await expect(picker).toBeHidden()
+  await expect(toggle).toBeChecked()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
 
   const conversation = await page.evaluate(async (directory) => {

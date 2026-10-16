@@ -1,15 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Plus, Trash2, X } from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import { SearchSelect } from '@/components/ui/search-select'
-import {
-  emptySubagentProfileCandidate,
-  isRealSubagentProfileEffort,
-  subagentProfileProviders,
-} from '@/lib/subagent-profile-editor'
-import { CandidateFields } from './CandidateFields'
+import { ModelPicker } from '../model-settings/ModelPicker'
+import { ProfileSelectionBody } from '../model-settings/SelectionBodies'
+import type { ModelSelection } from '../model-settings/model-selection'
 import { CHAT_SUBSCRIPTION_PROVIDER_KINDS, type ChatConfig } from '../../../../shared/chat'
 import {
   validateSubagentProfileEffort,
@@ -34,8 +31,13 @@ interface Props {
   onClear?: () => Promise<void>
 }
 
-function emptyCandidate(config: ChatConfig): SubagentProfileCandidate {
-  return emptySubagentProfileCandidate(subagentProfileProviders(config.providers)[0]?.id ?? '')
+type Scope = 'default' | 'category' | 'agent'
+
+/** A rule being added, or a fallback being added to a rule, until its picker closes. */
+interface PendingSlot {
+  scope: Scope
+  key: string
+  index: number
 }
 
 function profileCandidates(rules: SubagentProfileRulesV1): SubagentProfileCandidate[] {
@@ -46,175 +48,40 @@ function profileCandidates(rules: SubagentProfileRulesV1): SubagentProfileCandid
   ]
 }
 
-function CandidateList({
-  candidates,
-  config,
-  catalogRevision,
-  onChange,
-}: {
-  candidates: SubagentProfileCandidate[]
-  config: ChatConfig
-  catalogRevision: number
-  onChange: (candidates: SubagentProfileCandidate[]) => void
-}) {
-  const { t } = useTranslation('chat')
-  return (
-    <div className="flex flex-col gap-1.5">
-      {candidates.map((candidate, index) => (
-        <div key={index} className="flex items-center gap-1">
-          <CandidateFields
-            key={`${candidate.providerId}\0${candidate.modelId}`}
-            candidate={candidate}
-            config={config}
-            catalogRevision={catalogRevision}
-            onChange={(next) => onChange(candidates.map((item, itemIndex) => (itemIndex === index ? next : item)))}
-          />
-          <button
-            type="button"
-            title={t('subagentProfiles.moveUp')}
-            disabled={index === 0}
-            onClick={() => {
-              const next = [...candidates]
-              ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
-              onChange(next)
-            }}
-            className="rounded p-1 text-muted-foreground hover:bg-white/5 disabled:opacity-30"
-          >
-            <ArrowUp className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            title={t('subagentProfiles.moveDown')}
-            disabled={index === candidates.length - 1}
-            onClick={() => {
-              const next = [...candidates]
-              ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
-              onChange(next)
-            }}
-            className="rounded p-1 text-muted-foreground hover:bg-white/5 disabled:opacity-30"
-          >
-            <ArrowDown className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            title={t('subagentProfiles.remove')}
-            onClick={() => onChange(candidates.filter((_, itemIndex) => itemIndex !== index))}
-            className="rounded p-1 text-red-300/80 hover:bg-red-500/10"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...candidates, emptyCandidate(config)])}
-        className="inline-flex w-fit items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-white/5"
-      >
-        <Plus className="h-3 w-3" /> {t('subagentProfiles.addFallback')}
-      </button>
-    </div>
-  )
+function chainOf(rules: SubagentProfileRulesV1, scope: Scope, key: string): SubagentProfileCandidate[] {
+  if (scope === 'default') return rules.default ?? []
+  return (scope === 'category' ? rules.byCategory : rules.byAgent)?.[key] ?? []
 }
 
-function RuleMapEditor({
-  title,
-  value,
-  suggestions,
-  config,
-  catalogRevision,
-  agentBadges = false,
-  knownAgents = [],
-  onChange,
-}: {
-  title: string
-  value: Record<string, SubagentProfileCandidate[]>
-  suggestions: string[]
-  config: ChatConfig
-  catalogRevision: number
-
-  agentBadges?: boolean
-  knownAgents?: SubagentAgentDto[]
-  onChange: (value: Record<string, SubagentProfileCandidate[]>) => void
-}) {
-  const { t } = useTranslation('chat')
-  const add = (raw: string) => {
-    const key = normalizeSubagentProfileKey(raw)
-    if (!key || value[key]) return
-    onChange({ ...value, [key]: [emptyCandidate(config)] })
-  }
-  return (
-    <section className="flex flex-col gap-2 rounded-md border border-border/70 p-2.5">
-      <span className="text-[12px] font-medium text-foreground">{title}</span>
-      {Object.entries(value).map(([key, candidates]) => {
-        const knownAgent = knownAgents.find((agent) => normalizeSubagentProfileKey(agent.name) === key)
-        const isRealAgent = knownAgent != null && !knownAgent.virtual
-        return (
-          <div key={key} className="flex flex-col gap-1.5 border-t border-border/60 pt-2 first:border-0 first:pt-0">
-            <div className="flex items-center justify-between">
-              <code className="text-[11px] text-indigo-200">{key}</code>
-              <button
-                type="button"
-                title={t('subagentProfiles.remove')}
-                onClick={() => onChange(Object.fromEntries(Object.entries(value).filter(([item]) => item !== key)))}
-                className="text-red-300/80"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            {agentBadges && (
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={cn(
-                    'rounded px-1 py-px text-[10px] uppercase tracking-wide',
-                    isRealAgent ? 'bg-sky-400/15 text-sky-300' : 'bg-indigo-400/15 text-indigo-300'
-                  )}
-                >
-                  {isRealAgent ? t('subagentProfiles.agentRealBadge') : t('subagentProfiles.agentVirtualBadge')}
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  {isRealAgent ? t('subagentProfiles.realAgentHint') : t('subagentProfiles.virtualAgentHint')}
-                </span>
-              </div>
-            )}
-            <CandidateList
-              candidates={candidates}
-              config={config}
-              catalogRevision={catalogRevision}
-              onChange={(next) =>
-                next.length
-                  ? onChange({ ...value, [key]: next })
-                  : onChange(Object.fromEntries(Object.entries(value).filter(([item]) => item !== key)))
-              }
-            />
-          </div>
-        )
-      })}
-      <div className="flex gap-1.5">
-        <SearchSelect
-          className="min-w-0 flex-1"
-          options={suggestions
-            .filter((item) => !value[normalizeSubagentProfileKey(item)])
-            .map((item) => ({ id: item, label: item }))}
-          placeholder={t('subagentProfiles.manualKey')}
-          ariaLabel={t('subagentProfiles.manualKey')}
-          allowCustom
-          avoidOverflow
-          onChange={(next) => next && add(next)}
-        />
-      </div>
-    </section>
-  )
+/** Rules with one chain replaced; an empty chain removes its rule (the default then follows the conversation). */
+function withChain(
+  rules: SubagentProfileRulesV1,
+  scope: Scope,
+  key: string,
+  chain: SubagentProfileCandidate[]
+): SubagentProfileRulesV1 {
+  if (scope === 'default') return { ...rules, default: chain.length ? chain : undefined }
+  const field = scope === 'category' ? 'byCategory' : 'byAgent'
+  const map = { ...(rules[field] ?? {}) }
+  if (chain.length) map[key] = chain
+  else delete map[key]
+  return { ...rules, [field]: Object.keys(map).length ? map : undefined }
 }
+
+const candidateOf = (selection: ModelSelection): SubagentProfileCandidate => ({
+  providerId: selection.providerId,
+  modelId: selection.modelId,
+  effort: selection.effort ?? '',
+  ...(selection.fastMode ? { fastMode: true } : {}),
+})
 
 export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics = [], onSave, onClear }: Props) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
   const [rules, setRules] = useState<SubagentProfileRulesV1>(value ?? { version: 1 })
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [invalidEffort, setInvalidEffort] = useState(false)
-  const [invalidFastMode, setInvalidFastMode] = useState(false)
-  const [invalidModel, setInvalidModel] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState<PendingSlot | null>(null)
   const [catalogRevision, setCatalogRevision] = useState(0)
   useEffect(() => setRules(value ?? { version: 1 }), [value])
   useEffect(() => {
@@ -223,85 +90,110 @@ export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics
     )
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
   }, [api])
-  useEffect(() => {
-    setInvalidEffort(false)
-    setInvalidFastMode(false)
-    setInvalidModel(false)
-  }, [rules, catalogRevision, config])
-  const invalid = useMemo(() => {
-    return profileCandidates(rules).some(
-      (candidate) =>
-        !candidate.providerId.trim() || !candidate.modelId.trim() || !isRealSubagentProfileEffort(candidate.effort)
+  useEffect(() => setError(null), [rules, catalogRevision, config])
+
+  /** Same checks as the runtime before saving: Fable must be in the account's catalog, effort and Fast supported. */
+  const validate = async (next: SubagentProfileRulesV1): Promise<string | null> => {
+    const fableCandidates = profileCandidates(next).filter((candidate) =>
+      isUnavailableClaudeFable(candidate.providerId, candidate.modelId, [])
     )
-  }, [rules])
-  const save = async () => {
-    setSaving(true)
-    setSaved(false)
+    const catalogRequests = new Map<string, ReturnType<typeof api.chatSubagentProfilesModelCatalog>>()
+    const unavailableModels = await Promise.all(
+      fableCandidates.map(async (candidate) => {
+        let request = catalogRequests.get(candidate.providerId)
+        if (!request) {
+          request = api.chatSubagentProfilesModelCatalog(candidate.providerId)
+          catalogRequests.set(candidate.providerId, request)
+        }
+        try {
+          const catalog = await request
+          return (
+            catalog.status === 'available' &&
+            isUnavailableClaudeFable(candidate.providerId, candidate.modelId, catalog.models)
+          )
+        } catch {
+          return false
+        }
+      })
+    )
+    if (unavailableModels.some(Boolean)) return t('subagentProfiles.modelUnavailable')
+    const validations = await Promise.all(
+      profileCandidates(next).map(async (candidate) => {
+        const metadata = await api.chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId)
+        return {
+          effort: validateSubagentProfileEffort(candidate, metadata).valid,
+          fastMode: validateSubagentProfileFastMode(candidate, metadata).valid,
+        }
+      })
+    )
+    if (validations.some((validation) => !validation.effort)) return t('subagentProfiles.diagnostics.invalid-effort')
+    if (validations.some((validation) => !validation.fastMode))
+      return t('subagentProfiles.diagnostics.fast-mode-unsupported')
+    return null
+  }
+
+  /** Validates and saves at once; the rules shown change only once the save is confirmed. */
+  const persist = async (next: SubagentProfileRulesV1): Promise<string | null> => {
+    setBusy(true)
     try {
-      const fableCandidates = profileCandidates(rules).filter((candidate) =>
-        isUnavailableClaudeFable(candidate.providerId, candidate.modelId, [])
-      )
-      const catalogRequests = new Map<string, ReturnType<typeof api.chatSubagentProfilesModelCatalog>>()
-      const unavailableModels = await Promise.all(
-        fableCandidates.map(async (candidate) => {
-          let request = catalogRequests.get(candidate.providerId)
-          if (!request) {
-            request = api.chatSubagentProfilesModelCatalog(candidate.providerId)
-            catalogRequests.set(candidate.providerId, request)
-          }
-          try {
-            const catalog = await request
-            return (
-              catalog.status === 'available' &&
-              isUnavailableClaudeFable(candidate.providerId, candidate.modelId, catalog.models)
-            )
-          } catch {
-            return false
-          }
-        })
-      )
-      if (unavailableModels.some(Boolean)) {
-        setInvalidModel(true)
-        return
-      }
-      const validations = await Promise.all(
-        profileCandidates(rules).map(async (candidate) => {
-          if (!isRealSubagentProfileEffort(candidate.effort)) return { effort: false, fastMode: true }
-          const metadata = await api.chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId)
-          return {
-            effort: validateSubagentProfileEffort(candidate, metadata).valid,
-            fastMode: validateSubagentProfileFastMode(candidate, metadata).valid,
-          }
-        })
-      )
-      if (validations.some((validation) => !validation.effort)) {
-        setInvalidEffort(true)
-        return
-      }
-      if (validations.some((validation) => !validation.fastMode)) {
-        setInvalidFastMode(true)
-        return
-      }
-      const ok = await onSave(rules)
-      setSaved(ok)
-      if (ok) setTimeout(() => setSaved(false), 1500)
+      const invalid = await validate(next)
+      if (invalid) return invalid
+      if (!(await onSave(next))) return t('modelSettings.saveFailed')
+      setRules(next)
+      return null
     } catch {
-      setSaved(false)
+      return t('modelSettings.saveFailed')
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
   }
+  const act = (next: SubagentProfileRulesV1) => void persist(next).then(setError)
+
   const clear = async () => {
     if (!onClear) return
-    setSaving(true)
+    setBusy(true)
     try {
       await onClear()
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
   }
+
+  const ruleKeys = (scope: 'category' | 'agent') => {
+    const keys = Object.keys((scope === 'category' ? rules.byCategory : rules.byAgent) ?? {})
+    return pending?.scope === scope && !keys.includes(pending.key) ? [...keys, pending.key] : keys
+  }
+  const used = (scope: 'category' | 'agent') => new Set(ruleKeys(scope))
+  const addRule = (scope: 'category' | 'agent', raw: string) => {
+    const key = normalizeSubagentProfileKey(raw)
+    if (!key || used(scope).has(key)) return
+    setPending({ scope, key, index: 0 })
+  }
+
+  const ruleRow = (scope: Scope, key: string) => (
+    <RuleRow
+      key={`${scope}:${key}`}
+      scope={scope}
+      ruleKey={key}
+      chain={chainOf(rules, scope, key)}
+      config={config}
+      catalogRevision={catalogRevision}
+      knownAgents={catalog.agents}
+      pendingIndex={pending?.scope === scope && pending.key === key ? pending.index : null}
+      onAddFallback={(index) => setPending({ scope, key, index })}
+      onPendingClosed={() => setPending(null)}
+      onCommit={(index, selection) => {
+        const chain = [...chainOf(rules, scope, key)]
+        if (selection) chain[index] = candidateOf(selection)
+        else chain.splice(index, 1)
+        return persist(withChain(rules, scope, key, chain))
+      }}
+      onChain={(chain) => act(withChain(rules, scope, key, chain))}
+    />
+  )
+
   return (
-    <fieldset disabled={saving} className="m-0 flex min-w-0 flex-col gap-2.5 border-0 p-0">
+    <div aria-busy={busy} className="@container flex min-w-0 flex-col gap-2.5">
       {diagnostics.map((item, index) => (
         <div
           key={`${item.code}-${index}`}
@@ -311,59 +203,251 @@ export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics
           {t(`subagentProfiles.diagnostics.${item.code}`)}
         </div>
       ))}
-      <section className="flex flex-col gap-2 rounded-md border border-border/70 p-2.5">
-        <span className="text-[12px] font-medium text-foreground">{t('subagentProfiles.default')}</span>
-        <CandidateList
-          candidates={rules.default ?? []}
-          config={config}
-          catalogRevision={catalogRevision}
-          onChange={(next) => setRules({ ...rules, default: next.length ? next : undefined })}
-        />
-      </section>
-      <RuleMapEditor
-        title={t('subagentProfiles.categories')}
-        value={rules.byCategory ?? {}}
-        suggestions={catalog.categories}
-        config={config}
-        catalogRevision={catalogRevision}
-        onChange={(next) => setRules({ ...rules, byCategory: Object.keys(next).length ? next : undefined })}
-      />
-      <RuleMapEditor
-        title={t('subagentProfiles.agents')}
-        value={rules.byAgent ?? {}}
-        suggestions={catalog.agents.map((agent) => agent.name)}
-        config={config}
-        catalogRevision={catalogRevision}
-        agentBadges
-        knownAgents={catalog.agents}
-        onChange={(next) => setRules({ ...rules, byAgent: Object.keys(next).length ? next : undefined })}
-      />
-      {invalid && <p className="text-[11px] text-red-300">{t('subagentProfiles.completeRequired')}</p>}
-      {invalidModel && <p className="text-[11px] text-red-300">{t('subagentProfiles.modelUnavailable')}</p>}
-      {invalidEffort && <p className="text-[11px] text-red-300">{t('subagentProfiles.diagnostics.invalid-effort')}</p>}
-      {invalidFastMode && (
-        <p className="text-[11px] text-red-300">{t('subagentProfiles.diagnostics.fast-mode-unsupported')}</p>
+      <div className="divide-y divide-border rounded-lg border border-border bg-white/[0.02]">
+        {ruleRow('default', '')}
+        {ruleKeys('category').map((key) => ruleRow('category', key))}
+        {ruleKeys('agent').map((key) => ruleRow('agent', key))}
+        <div className="flex flex-wrap gap-2 px-3.5 py-2.5">
+          <SearchSelect
+            className="w-56 max-w-full [&>button]:border-dashed [&>button]:text-muted-foreground"
+            options={catalog.agents
+              .map((agent) => agent.name)
+              .filter((name) => !used('agent').has(normalizeSubagentProfileKey(name)))
+              .map((name) => ({ id: name, label: name }))}
+            placeholder={t('modelSettings.subagents.addAgent')}
+            ariaLabel={t('modelSettings.subagents.addAgent')}
+            allowCustom
+            avoidOverflow
+            onChange={(next) => next && addRule('agent', next)}
+          />
+          <SearchSelect
+            className="w-56 max-w-full [&>button]:border-dashed [&>button]:text-muted-foreground"
+            options={catalog.categories
+              .filter((name) => !used('category').has(normalizeSubagentProfileKey(name)))
+              .map((name) => ({ id: name, label: name }))}
+            placeholder={t('modelSettings.subagents.addCategory')}
+            ariaLabel={t('modelSettings.subagents.addCategory')}
+            allowCustom
+            avoidOverflow
+            onChange={(next) => next && addRule('category', next)}
+          />
+        </div>
+      </div>
+      {error && (
+        <p role="alert" className="text-[11px] text-red-300">
+          {error}
+        </p>
       )}
-      <div className="flex items-center gap-2">
+      {onClear && (
         <button
           type="button"
-          disabled={saving || invalid || invalidModel || invalidEffort || invalidFastMode}
-          onClick={save}
-          className="rounded-md bg-indigo-500 px-2.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+          disabled={busy}
+          onClick={() => void clear()}
+          className="w-fit rounded-md border border-border px-2.5 py-1.5 text-[12px] text-muted-foreground hover:bg-white/5 disabled:opacity-40"
         >
-          {saving ? t('subagentProfiles.saving') : saved ? t('subagentProfiles.saved') : t('subagentProfiles.save')}
+          {t('subagentProfiles.inheritGlobal')}
         </button>
-        {onClear && (
+      )}
+    </div>
+  )
+}
+
+function RuleRow({
+  scope,
+  ruleKey,
+  chain,
+  config,
+  catalogRevision,
+  knownAgents,
+  pendingIndex,
+  onAddFallback,
+  onPendingClosed,
+  onCommit,
+  onChain,
+}: {
+  scope: Scope
+  ruleKey: string
+  chain: SubagentProfileCandidate[]
+  config: ChatConfig
+  catalogRevision: number
+  knownAgents: SubagentAgentDto[]
+  /** Slot whose picker opens by itself: a new rule or a new fallback. */
+  pendingIndex: number | null
+  onAddFallback: (index: number) => void
+  onPendingClosed: () => void
+  onCommit: (index: number, selection: ModelSelection | null) => Promise<string | null>
+  onChain: (chain: SubagentProfileCandidate[]) => void
+}) {
+  const { t } = useTranslation('chat')
+  const knownAgent =
+    scope === 'agent' ? knownAgents.find((agent) => normalizeSubagentProfileKey(agent.name) === ruleKey) : undefined
+  const isRealAgent = knownAgent != null && !knownAgent.virtual
+  const slots = Math.max(chain.length, pendingIndex != null ? pendingIndex + 1 : 0, scope === 'default' ? 1 : 0)
+  const name = scope === 'default' ? t('modelSettings.subagents.allSubagents') : ruleKey
+  const move = (from: number, to: number) => {
+    const next = [...chain]
+    ;[next[from], next[to]] = [next[to], next[from]]
+    onChain(next)
+  }
+
+  return (
+    <div className="grid grid-cols-1 items-start gap-x-3 gap-y-2 px-3.5 py-2.5 @xl:grid-cols-[minmax(0,170px)_minmax(0,1fr)_auto]">
+      <div className="flex min-w-0 flex-col gap-0.5 pt-1">
+        {scope === 'default' ? (
+          <span className="truncate text-[12px] font-medium text-foreground">{name}</span>
+        ) : (
+          <code className="truncate text-[12px] text-indigo-200" title={ruleKey}>
+            {ruleKey}
+          </code>
+        )}
+        <span className="flex flex-wrap items-center gap-1 text-[10.5px] text-muted-foreground">
+          {t(`modelSettings.subagents.kind.${scope}`)}
+          {scope === 'agent' && (
+            <span
+              title={isRealAgent ? t('subagentProfiles.realAgentHint') : t('subagentProfiles.virtualAgentHint')}
+              className={cn(
+                'rounded px-1 py-px text-[9.5px] uppercase tracking-wide',
+                isRealAgent ? 'bg-sky-400/15 text-sky-300' : 'bg-indigo-400/15 text-indigo-300'
+              )}
+            >
+              {isRealAgent ? t('subagentProfiles.agentRealBadge') : t('subagentProfiles.agentVirtualBadge')}
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {Array.from({ length: slots }, (_, index) => {
+          const candidate = chain[index]
+          const value: ModelSelection | null = candidate ?? null
+          const pendingHere = pendingIndex === index
+          return (
+            <Fragment key={index}>
+              {index > 0 && (
+                <ArrowRight
+                  aria-label={t('modelSettings.subagents.fallback')}
+                  className="size-3 shrink-0 text-muted-foreground/70"
+                />
+              )}
+              <ModelPicker
+                value={value}
+                providers={config.providers}
+                label={t('modelSettings.subagents.candidateLabel', { rule: name, position: index + 1 })}
+                placeholder={
+                  scope === 'default' && chain.length === 0
+                    ? t('modelSettings.subagents.inheritConversation')
+                    : t('modelSettings.chooseModel')
+                }
+                className="w-fit max-w-[280px]"
+                {...(pendingHere ? { open: true, onOpenChange: (open: boolean) => !open && onPendingClosed() } : {})}
+              >
+                {(close) => (
+                  <ProfileSelectionBody
+                    value={value}
+                    config={config}
+                    catalogRevision={catalogRevision}
+                    inherit={
+                      scope === 'default' && index === 0 && chain.length <= 1
+                        ? {
+                            label: t('modelSettings.subagents.inheritConversation'),
+                            hint: t('modelSettings.subagents.inheritHint'),
+                          }
+                        : undefined
+                    }
+                    onCommit={(selection) => onCommit(index, selection)}
+                    actions={
+                      candidate && (
+                        <>
+                          {chain.length > 1 && index > 0 && (
+                            <ChainAction
+                              icon={<ArrowLeft />}
+                              label={t('modelSettings.subagents.tryEarlier')}
+                              onClick={() => {
+                                close()
+                                move(index, index - 1)
+                              }}
+                            />
+                          )}
+                          {chain.length > 1 && index < chain.length - 1 && (
+                            <ChainAction
+                              icon={<ArrowRight />}
+                              label={t('modelSettings.subagents.tryLater')}
+                              onClick={() => {
+                                close()
+                                move(index, index + 1)
+                              }}
+                            />
+                          )}
+                          {(chain.length > 1 || scope !== 'default') && (
+                            <ChainAction
+                              icon={<X />}
+                              danger
+                              label={t('modelSettings.subagents.removeCandidate')}
+                              onClick={() => {
+                                close()
+                                onChain(chain.filter((_, item) => item !== index))
+                              }}
+                            />
+                          )}
+                        </>
+                      )
+                    }
+                  />
+                )}
+              </ModelPicker>
+            </Fragment>
+          )
+        })}
+        {chain.length > 0 && pendingIndex == null && (
           <button
             type="button"
-            disabled={saving}
-            onClick={() => void clear()}
-            className="rounded-md border border-border px-2.5 py-1.5 text-[12px] text-muted-foreground hover:bg-white/5 disabled:opacity-40"
+            title={t('modelSettings.subagents.fallbackHint')}
+            onClick={() => onAddFallback(chain.length)}
+            className="inline-flex h-8 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-indigo-400/50 hover:text-foreground"
           >
-            {t('subagentProfiles.inheritGlobal')}
+            <Plus className="size-3" />
+            {t('modelSettings.subagents.fallbackShort')}
           </button>
         )}
       </div>
-    </fieldset>
+      {scope !== 'default' ? (
+        <button
+          type="button"
+          title={t('subagentProfiles.remove')}
+          aria-label={`${t('subagentProfiles.remove')} ${ruleKey}`}
+          onClick={() => (chain.length ? onChain([]) : onPendingClosed())}
+          className="grid size-8 place-items-center justify-self-end rounded-md text-muted-foreground hover:bg-red-500/10 hover:text-red-300"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      ) : (
+        <span />
+      )}
+    </div>
+  )
+}
+
+function ChainAction({
+  icon,
+  label,
+  danger = false,
+  onClick,
+}: {
+  icon: ReactNode
+  label: string
+  danger?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-muted-foreground [&_svg]:size-3',
+        danger ? 'hover:bg-red-500/10 hover:text-red-300' : 'hover:bg-white/[0.05] hover:text-foreground'
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   )
 }
