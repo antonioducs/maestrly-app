@@ -15,6 +15,8 @@ import {
   subagentProfileProviders,
 } from '@/lib/subagent-profile-editor'
 import { subagentEffortLabel } from '@/lib/subagent-profile-display'
+import { PickerField, SegmentedChoice } from '../model-settings/controls'
+import { effortShortLabel } from '../model-settings/model-selection'
 import type { ChatConfig } from '../../../../shared/chat'
 import {
   validateSubagentProfileEffort,
@@ -27,6 +29,7 @@ export function CandidateFields({
   config,
   catalogRevision,
   density = 'compact',
+  layout = 'grid',
   allowOff = false,
   responsive = false,
   readOnly = false,
@@ -36,6 +39,8 @@ export function CandidateFields({
   config: ChatConfig
   catalogRevision: number
   density?: 'compact' | 'comfortable'
+  /** `stacked`: one labelled field per line with efforts as choices, as in the model picker panel. */
+  layout?: 'grid' | 'stacked'
   responsive?: boolean
 
   allowOff?: boolean
@@ -115,75 +120,104 @@ export function CandidateFields({
     modelCatalogStatus === 'available' && isUnavailableClaudeFable(candidate.providerId, candidate.modelId, models)
   const selectClassName = density === 'comfortable' ? '[&>button]:h-9 [&>button]:text-sm' : undefined
   const selectContentClassName = density === 'comfortable' ? '[&_[role=option]]:text-sm [&_input]:text-sm' : undefined
+  const stacked = layout === 'stacked'
+  // Known efforts read better as one row of choices; unknown metadata keeps the free-form select.
+  const segmentedEffort = stacked && modelMeta != null && !allowCustomEffort && effortOptions.length > 0
 
-  return (
-    <div
-      className={cn(
-        'grid min-w-0 flex-1 gap-1.5',
-        responsive
-          ? 'grid-cols-1 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)_minmax(0,1fr)]'
-          : 'grid-cols-[minmax(110px,0.8fr)_minmax(140px,1.4fr)_minmax(150px,1fr)]'
+  const providerField = (
+    <SearchSelect
+      className={selectClassName}
+      contentClassName={selectContentClassName}
+      value={candidate.providerId || undefined}
+      avoidOverflow
+      options={subagentProfileProviders(config.providers).map((provider) => ({
+        id: provider.id,
+        label: `${provider.name}${provider.apiKeyPresent ? '' : ` (${t('subagentProfiles.noKey')})`}`,
+      }))}
+      placeholder={t('subagentProfiles.provider')}
+      ariaLabel={t('subagentProfiles.provider')}
+      disabled={readOnly}
+      onChange={(providerId) => onChange(changeSubagentProfileProvider(candidate, providerId ?? ''))}
+    />
+  )
+  const modelField = (
+    <SearchSelect
+      className={selectClassName}
+      contentClassName={selectContentClassName}
+      value={candidate.modelId || undefined}
+      avoidOverflow
+      options={subagentProfileModelOptions(
+        candidate.providerId,
+        models,
+        t('subagentProfiles.modelUnavailableShort'),
+        modelCatalogStatus === 'available'
       )}
-    >
-      <SearchSelect
-        className={selectClassName}
-        contentClassName={selectContentClassName}
-        value={candidate.providerId || undefined}
-        avoidOverflow
-        options={subagentProfileProviders(config.providers).map((provider) => ({
-          id: provider.id,
-          label: `${provider.name}${provider.apiKeyPresent ? '' : ` (${t('subagentProfiles.noKey')})`}`,
-        }))}
-        placeholder={t('subagentProfiles.provider')}
-        ariaLabel={t('subagentProfiles.provider')}
-        disabled={readOnly}
-        onChange={(providerId) => onChange(changeSubagentProfileProvider(candidate, providerId ?? ''))}
-      />
-      <SearchSelect
-        className={selectClassName}
-        contentClassName={selectContentClassName}
-        value={candidate.modelId || undefined}
-        avoidOverflow
-        options={subagentProfileModelOptions(
-          candidate.providerId,
-          models,
-          t('subagentProfiles.modelUnavailableShort'),
-          modelCatalogStatus === 'available'
-        )}
-        placeholder={t('subagentProfiles.model')}
-        ariaLabel={t('subagentProfiles.model')}
-        allowCustom
-        disabled={readOnly}
-        invalid={unavailableFable}
-        onChange={(modelId) => {
-          const next = modelId ?? ''
-          if (modelCatalogStatus === 'available' && isUnavailableClaudeFable(candidate.providerId, next, models)) {
-            return
-          }
-          onChange(changeSubagentProfileModel(candidate, next))
-        }}
-      />
-      <SearchSelect
-        className={selectClassName}
-        contentClassName={selectContentClassName}
-        value={candidate.effort || undefined}
-        options={effortOptions}
-        placeholder={
-          noConfigurableEffort ? t('subagentProfiles.noConfigurableEffortShort') : t('subagentProfiles.effort')
+      placeholder={t('subagentProfiles.model')}
+      ariaLabel={t('subagentProfiles.model')}
+      allowCustom
+      disabled={readOnly}
+      invalid={unavailableFable}
+      onChange={(modelId) => {
+        const next = modelId ?? ''
+        if (modelCatalogStatus === 'available' && isUnavailableClaudeFable(candidate.providerId, next, models)) {
+          return
         }
-        ariaLabel={t('subagentProfiles.effort')}
-        allowCustom={allowCustomEffort && !allowOff}
-        disabled={!modelMeta || readOnly}
-        invalid={
-          candidate.effort !== 'off' &&
-          (!isRealSubagentProfileEffort(candidate.effort) || noConfigurableEffort || effortValidation?.valid === false)
-        }
-        avoidOverflow
-        panelWidth={280}
-        panelAlign="end"
-        onChange={(effort) => onChange({ ...candidate, effort: effort?.trim().toLowerCase() ?? '' })}
+        onChange(changeSubagentProfileModel(candidate, next))
+      }}
+    />
+  )
+  const effortField = segmentedEffort ? (
+    <SegmentedChoice
+      value={candidate.effort}
+      options={effortOptions.map((option) => ({
+        id: option.id,
+        label: option.id === 'off' ? option.label : effortShortLabel(option.id, t),
+        title: option.label,
+      }))}
+      ariaLabel={t('subagentProfiles.effort')}
+      disabled={readOnly}
+      onChange={(effort) => onChange({ ...candidate, effort })}
+    />
+  ) : (
+    <SearchSelect
+      className={selectClassName}
+      contentClassName={selectContentClassName}
+      value={candidate.effort || undefined}
+      options={effortOptions}
+      placeholder={
+        noConfigurableEffort ? t('subagentProfiles.noConfigurableEffortShort') : t('subagentProfiles.effort')
+      }
+      ariaLabel={t('subagentProfiles.effort')}
+      allowCustom={allowCustomEffort && !allowOff}
+      disabled={!modelMeta || readOnly}
+      invalid={
+        candidate.effort !== 'off' &&
+        (!isRealSubagentProfileEffort(candidate.effort) || noConfigurableEffort || effortValidation?.valid === false)
+      }
+      avoidOverflow
+      panelWidth={280}
+      panelAlign="end"
+      onChange={(effort) => onChange({ ...candidate, effort: effort?.trim().toLowerCase() ?? '' })}
+    />
+  )
+  const fastCapable = modelMeta?.status === 'available' && modelMeta.meta?.fastModeCapability === true
+  const speedField = fastCapable && (
+    <PickerField label={t('modelSettings.speed')}>
+      <SegmentedChoice
+        value={candidate.fastMode === true ? 'fast' : 'standard'}
+        options={[
+          { id: 'standard', label: t('subagentProfiles.standardMode') },
+          { id: 'fast', label: t('fastMode.label'), title: t('subagentProfiles.fastModeTooltip') },
+        ]}
+        ariaLabel={t('modelSettings.speed')}
+        disabled={readOnly}
+        onChange={(speed) => onChange(changeSubagentProfileFastMode(candidate, speed === 'fast'))}
       />
-      {modelMeta?.status === 'available' && modelMeta.meta?.fastModeCapability === true && (
+    </PickerField>
+  )
+  const details = (
+    <>
+      {fastCapable && !stacked && (
         <button
           type="button"
           aria-pressed={candidate.fastMode === true}
@@ -213,6 +247,33 @@ export function CandidateFields({
           {t('subagentProfiles.diagnostics.effort-unverified')}
         </p>
       )}
+    </>
+  )
+
+  if (stacked)
+    return (
+      <div className="flex min-w-0 flex-col gap-3">
+        <PickerField label={t('subagentProfiles.provider')}>{providerField}</PickerField>
+        <PickerField label={t('subagentProfiles.model')}>{modelField}</PickerField>
+        <PickerField label={t('subagentProfiles.effort')}>{effortField}</PickerField>
+        {speedField}
+        {details}
+      </div>
+    )
+
+  return (
+    <div
+      className={cn(
+        'grid min-w-0 flex-1 gap-1.5',
+        responsive
+          ? 'grid-cols-1 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)_minmax(0,1fr)]'
+          : 'grid-cols-[minmax(110px,0.8fr)_minmax(140px,1.4fr)_minmax(150px,1fr)]'
+      )}
+    >
+      {providerField}
+      {modelField}
+      {effortField}
+      {details}
     </div>
   )
 }

@@ -70,14 +70,18 @@ describe('subagent profile conversation UI contract', () => {
     expect(en.subagentProfiles.diagnostics['fast-mode-unverified']).toContain('metadata')
   })
 
-  it('shares candidate fields across profile editors and Maestro pools', () => {
+  it('shares candidate fields across profile editors, background models and Maestro pools', () => {
     const editor = source('src/renderer/components/chat/subagent-profiles/SubagentProfileRulesEditor.tsx')
+    const bodies = source('src/renderer/components/chat/model-settings/SelectionBodies.tsx')
     const maestro = source('src/renderer/components/chat/MaestroControl.tsx')
-    expect(editor).toContain("import { CandidateFields } from './CandidateFields'")
-    expect(editor).toContain('<CandidateFields')
+    expect(editor).toContain("import { ProfileSelectionBody } from '../model-settings/SelectionBodies'")
+    expect(editor).toContain('<ProfileSelectionBody')
+    expect(bodies).toContain("import { CandidateFields } from '../subagent-profiles/CandidateFields'")
+    expect(bodies).toContain('<CandidateFields')
     expect(maestro).toContain('<CandidateFields')
     // Shared extraction must not leave divergent selector copies.
     expect(editor).not.toContain('function CandidateEditor(')
-    expect(editor).not.toContain('<SearchSelect\n        value={candidate.providerId')
+    expect(editor).not.toContain('value={candidate.providerId')
+    expect(bodies).not.toContain('value={candidate.providerId')
   })
 })
