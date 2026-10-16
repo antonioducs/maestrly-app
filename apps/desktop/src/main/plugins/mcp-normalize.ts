@@ -97,10 +97,8 @@ const invalid = (detail: string): never => {
 /** Version of an Agent Plugins schema URI (`…/schemas/<v>/<kind>.schema.json`), or null. */
 export function agentPluginsSchemaVersion(uri: unknown, kind: 'plugin' | 'mcp'): string | null {
   if (typeof uri !== 'string' || !uri.startsWith(AGENT_PLUGINS_SCHEMA_PREFIX)) return null
-  const match = new RegExp(
-    `^${AGENT_PLUGINS_SCHEMA_PREFIX.replace(/[.]/g, '\\.')}([^/]+)/${kind}\\.schema\\.json$`
-  ).exec(uri)
-  return match ? match[1] : null
+  const match = /^([^/]+)\/(plugin|mcp)\.schema\.json$/.exec(uri.slice(AGENT_PLUGINS_SCHEMA_PREFIX.length))
+  return match && match[2] === kind ? match[1] : null
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

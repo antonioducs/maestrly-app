@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeAgentPluginsMcp, normalizeClaudeMcp, normalizeCodexMcp } from '../../src/main/plugins/mcp-normalize'
+import {
+  agentPluginsSchemaVersion,
+  normalizeAgentPluginsMcp,
+  normalizeClaudeMcp,
+  normalizeCodexMcp,
+} from '../../src/main/plugins/mcp-normalize'
 
 const AP_PLUGIN_1_0 = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json'
 const AP_MCP_1_0 = 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json'
@@ -121,6 +126,15 @@ describe('Codex MCP normalization', () => {
 })
 
 describe('Agent Plugins MCP normalization', () => {
+  it('reads the schema version only from an exact Agent Plugins schema URI of the right kind', () => {
+    expect(agentPluginsSchemaVersion(AP_PLUGIN_1_0, 'plugin')).toBe('1.0.0')
+    expect(agentPluginsSchemaVersion(AP_MCP_1_1, 'mcp')).toBe('1.1.0')
+    expect(agentPluginsSchemaVersion(AP_MCP_1_0, 'plugin')).toBeNull()
+    expect(agentPluginsSchemaVersion('https://agent-plugins.org/schemas/1.0.0/x/mcp.schema.json', 'mcp')).toBeNull()
+    expect(agentPluginsSchemaVersion('https://agent-plugins.orgXschemas/1.0.0/mcp.schema.json', 'mcp')).toBeNull()
+    expect(agentPluginsSchemaVersion(42, 'mcp')).toBeNull()
+  })
+
   it('enforces the Agent Plugins closed variants and version match', () => {
     const ok = normalizeAgentPluginsMcp(
       {
