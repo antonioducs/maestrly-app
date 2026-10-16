@@ -17,7 +17,12 @@ npm run dev
 ```
 
 Postinstall prepares Electron and native dependencies. Development uses an isolated
-`maestrly-app-dev-<instance>` profile and detects instance collisions. Close dev
+`maestrly-app-dev-<instance>` profile and detects instance collisions. Without an
+instance name (`npm run dev -- feat-chat`), each run gets a disposable
+`maestrly-app-dev-auto-<hex>` profile, removed when the run ends; profiles of
+earlier unnamed runs are removed at the next start once their launcher and app are
+gone. A profile is kept when it has no lock to prove that, or holds worktrees of a
+repository. Named profiles are never removed automatically. Close dev
 instances before running `npm run clean:dev`, which removes development profiles
 and build caches. See [Local data](local-data.md) before resetting or moving profiles.
 
