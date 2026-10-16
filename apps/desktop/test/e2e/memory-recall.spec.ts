@@ -240,6 +240,8 @@ test('recalls relevant memories, opens their source, and honors automatic recall
       await expect
         .poll(() => page.evaluate(() => window.api.chatConfig()).then((config) => config.memory?.autoRecall))
         .toBe(enabled)
+      // Settings take the whole window beside the rail; its tab leaves them and brings the list back.
+      await page.getByRole('tab', { name: 'Workspaces', exact: true }).click()
       await openConversation()
     }
     await setRecall(false)
