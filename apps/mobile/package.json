@@ -21,7 +21,9 @@
     "build": "node scripts/export.mjs",
     "icons": "node scripts/icons.mjs",
     "test:web": "node scripts/web-e2e.mjs",
-    "check": "npm run typecheck && npm test && npm run build"
+    "screenshots": "node scripts/store-screenshots.mjs",
+    "check": "npm run typecheck && npm test && npm run build",
+    "eas-build-post-install": "cd ../.. && npm run build:fleet-protocol"
   },
   "dependencies": {
     "@expo-google-fonts/bricolage-grotesque": "0.4.1",

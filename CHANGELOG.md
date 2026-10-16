@@ -5,6 +5,19 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- The mobile app's dictation listens in the language chosen in **Settings →
+  Language**; with **System**, it follows the phone. See
+  [Mobile app](docs/mobile.md#what-it-does).
+
+### Fixed
+
+- Dictation on an iPhone whose language and region have no recognizer of their
+  own, such as English with the region set to Brazil, no longer says the phone
+  can't take dictation in its language: it listens in that language's main
+  variant, such as US English.
+
 ## [0.20.0] - 2026-10-16
 
 ### Added

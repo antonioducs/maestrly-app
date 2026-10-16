@@ -1,0 +1,75 @@
+name: Mobile iOS
+
+# Builds the phone app on EAS and uploads it to TestFlight, and pushes the store listing and submits the version to
+# App Review with the newest build of the version in TestFlight. Run it from main after setting the app's version
+# (docs/mobile.md#release). The mobile-ios environment holds the credentials and only deploys main and v* tags.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: upload builds and uploads to TestFlight; submit sends the version to App Review with its newest build
+        type: choice
+        options:
+          - upload
+          - submit
+          - upload-and-submit
+        default: upload
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ios
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: Build and upload iOS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment: mobile-ios
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      MAESTRLY_EAS_PROJECT_ID: ${{ vars.MAESTRLY_EAS_PROJECT_ID }}
+      MAESTRLY_EAS_OWNER: ${{ vars.MAESTRLY_EAS_OWNER }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check the app
+        run: npm run check:mobile
+      # The signing certificate, provisioning profile, push key and App Store Connect key live on EAS.
+      - name: Build on EAS and upload to TestFlight
+        if: inputs.action != 'submit'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx --yes eas-cli@25.0.0 build --platform ios --profile production --non-interactive --wait --auto-submit
+      - name: Push the store listing
+        if: inputs.action != 'upload'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # The App Store Connect key on EAS has no team of its own, and without one the CLI asks for it.
+          EXPO_APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          MAESTRLY_APP_REVIEW_FIRST_NAME: ${{ secrets.APP_REVIEW_FIRST_NAME }}
+          MAESTRLY_APP_REVIEW_LAST_NAME: ${{ secrets.APP_REVIEW_LAST_NAME }}
+          MAESTRLY_APP_REVIEW_EMAIL: ${{ secrets.APP_REVIEW_EMAIL }}
+          MAESTRLY_APP_REVIEW_PHONE: ${{ secrets.APP_REVIEW_PHONE }}
+        run: npx --yes eas-cli@25.0.0 metadata:push --profile production --non-interactive
+      - name: Submit to App Review
+        if: inputs.action != 'upload'
+        working-directory: apps/mobile
+        env:
+          ASC_API_KEY: ${{ secrets.ASC_API_KEY }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER: ${{ secrets.ASC_API_ISSUER }}
+        run: node scripts/submit-for-review.mjs

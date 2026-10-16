@@ -37,8 +37,11 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
 - **Notifications:** hear when a bot or chat needs you, finishes a turn you
   started, finishes a routine, or fails. See [Notifications](#notifications).
 - **Dictation:** the microphone in the message field turns what you say into
-  text with the phone's own speech recognition. See
-  [Data on the phone](#data-on-the-phone).
+  text with the phone's own speech recognition. It listens in the language
+  chosen in **Settings → Language** or, with **System**, in the phone's. When
+  the phone's region has no recognizer for that language, it listens in the
+  language's main one: an iPhone in English set to Brazil dictates in US
+  English. See [Data on the phone](#data-on-the-phone).
 - **Artifacts:** a page an agent publishes shows as a card in the conversation;
   **Open** shows the version it published. See [Artifacts](#artifacts).
 - **Offline:** messages you send without a connection wait on the phone and go
@@ -213,6 +216,12 @@ on Android) and `production` for the stores, with build numbers kept by EAS.
 Run the commands in `apps/mobile`, with the EAS CLI signed in to the Expo account
 that owns the app.
 
+On EAS machines, the repository's `postinstall` skips the desktop setup, and the
+app's `eas-build-post-install` script builds the bot fleet protocol before the
+app is bundled.
+
+### Set up once
+
 1. **Project:** `npx eas-cli init` creates the Expo project. Set its id and
    owner as `MAESTRLY_EAS_PROJECT_ID` and `MAESTRLY_EAS_OWNER`, in your shell and
    as EAS environment variables of the `preview` and `production` environments.
@@ -222,25 +231,72 @@ that owns the app.
    key with `npx eas-cli credentials`, and add its `google-services.json` as an
    EAS file variable named `MAESTRLY_GOOGLE_SERVICES_FILE`. The file is never
    committed.
-3. **iOS:** `npx eas-cli build --profile production --platform ios` signs in to
-   your Apple Developer account and creates the certificates, the provisioning
-   profile and the push key.
-4. **Build and submit:** `npx eas-cli build --profile production --platform all`,
-   then `npx eas-cli submit --profile production` for each platform.
+3. **iOS signing:** in App Store Connect, under **Users and Access →
+   Integrations**, create a team API key with the **Admin** role. Then run
+   `npx eas-cli credentials -p ios` for the `production` profile:
+   - **Build Credentials → All** registers the bundle identifier and creates the
+     distribution certificate and the provisioning profile. With the API key in
+     `EXPO_ASC_API_KEY_PATH`, `EXPO_ASC_KEY_ID`, `EXPO_ASC_ISSUER_ID` and
+     `EXPO_APPLE_TEAM_ID`, the CLI needs no Apple ID. If it cannot turn Push
+     Notifications on for the identifier, turn it on in the developer portal and
+     run it again with `EXPO_NO_CAPABILITY_SYNC=1`.
+   - **Push Notifications** takes an APNs key, created in the developer portal
+     under **Keys** for **Sandbox & Production**.
+   - **App Store Connect** takes the API key, which EAS then uses to upload builds
+     and push the store listing.
+4. **App Store Connect:** create the app with the bundle identifier and put its
+   Apple ID in `ascAppId` of the `production` submit profile in `eas.json`. Set
+   the price and the countries, and answer **App Privacy** (see below). The
+   listing itself comes from the repository.
+5. **GitHub:** create a `mobile-ios` environment that deploys only `main` and
+   `v*` tags, with:
 
-On EAS machines, the repository's `postinstall` skips the desktop setup.
+   | Name | Kind | Value |
+   | --- | --- | --- |
+   | `EXPO_TOKEN` | Secret | An access token of a robot of the Expo account |
+   | `ASC_API_KEY` | Secret | The App Store Connect key's `.p8` file, in base64 |
+   | `ASC_API_KEY_ID`, `ASC_API_ISSUER` | Secrets | The key's id and its issuer id |
+   | `APP_REVIEW_FIRST_NAME`, `APP_REVIEW_LAST_NAME`, `APP_REVIEW_EMAIL`, `APP_REVIEW_PHONE` | Secrets | Who App Review calls with questions |
+   | `MAESTRLY_EAS_PROJECT_ID`, `MAESTRLY_EAS_OWNER` | Variables | As in step 1 |
+   | `APPLE_TEAM_ID` | Variable | The team id under **Membership details** in the developer portal |
+
+### Release on iOS
+
+1. Set the new version in `apps/mobile/package.json` and `app.config.ts`; a test
+   keeps them equal. When the screens changed, run
+   `npm run screenshots --workspace @maestrly/mobile`: it renders the 6.9-inch
+   iPhone screenshots from the demo server into `apps/mobile/store/screenshots/`.
+   Merge to `main`.
+2. Run **Mobile iOS** with `upload`
+   (`gh workflow run mobile-ios.yml --ref main -f action=upload`). It runs the
+   app's checks, builds the app on EAS and uploads the build to TestFlight.
+3. Go through the [device checklist](#device-checklist) with the TestFlight build.
+4. Run **Mobile iOS** with `submit`. It pushes the listing in
+   `apps/mobile/store.config.cjs` (texts, keywords, screenshots, categories, age
+   rating and the review notes), waits until App Store Connect has processed
+   the version's newest build, attaches it and submits the version to App Review.
+   `upload-and-submit` does both in one run. A language added to the listing
+   reaches App Store Connect without its texts the first time; when App Review
+   then refuses the version for missing texts, run `submit` again.
+5. Approval does not publish the version: release it from App Store Connect.
+
+The same steps run from a computer: `npx eas-cli build --platform ios --profile
+production --auto-submit`, `npx eas-cli metadata:push --profile production` with
+the `MAESTRLY_APP_REVIEW_*` variables of the contact, and
+`node scripts/submit-for-review.mjs` with the `ASC_API_*` variables.
 
 For App Review and the stores:
 
-- The app needs no account, but it needs a bot server. Reviewers can use
-  **Explore a demo server** on the first screen; say so in the review notes.
-- The app declares no tracking and no data collected by the developer; its iOS
-  privacy manifest lists the reasons for the system APIs React Native and Expo
-  use. Everything the app sends goes to servers the person runs, and to the
-  phone's push and speech services. Describe those in the privacy answers as
-  your policy requires.
+- The app needs no account, but it needs a bot server. The review notes point
+  reviewers to **Explore a demo server** on the first screen.
+- The app declares no tracking and no data collected by the developer, so
+  **App Privacy** is **Data Not Collected**; its iOS privacy manifest lists the
+  reasons for the system APIs React Native and Expo use. Everything the app
+  sends goes to servers the person runs, and to the phone's push and speech
+  services. App Store Connect offers these answers only on its website.
 - Export compliance: the app uses only the system's encryption
   (`ITSAppUsesNonExemptEncryption` is false).
+- The app is not offered in mainland China, which requires an ICP filing number.
 
 ## Troubleshooting
 
@@ -271,7 +327,8 @@ Before a release, on a real phone with a `preview` build:
    mode from the setup pill.
 5. Lock the phone and have a bot ask for approval: a notification arrives;
    tapping it opens the bot. **Send a test notification** arrives too.
-6. Dictate a message, in English and in Portuguese.
+6. Dictate a message with **Settings → Language** on English, then on
+   Português: each listens in its language.
 7. Ask a chat for an artifact and open it from its card.
 8. Turn on airplane mode and send a message: it shows **Not sent yet**. Turn
    airplane mode off: it sends on its own.

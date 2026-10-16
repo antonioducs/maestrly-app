@@ -2,48 +2,17 @@
 // Drives the app's web build through the demo server in Chromium, as a phone-sized window: the flows a person goes
 // through first, with no server, account or phone. It needs Playwright's Chromium (`npx playwright install chromium`).
 // `--no-export` reuses the last build in `web-dist/`.
-import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, statSync } from 'node:fs'
-import http from 'node:http'
+import { mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { exportWebBuild, serveWebBuild } from './web-build.mjs'
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const dist = path.join(root, 'web-dist')
 const TIMEOUT = 20_000
 
-if (!process.argv.includes('--no-export')) {
-  const result = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['expo', 'export', '--platform', 'web', '--output-dir', 'web-dist', '--clear'],
-    { cwd: root, stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, EXPO_NO_TELEMETRY: '1', CI: '1' } }
-  )
-  if (result.status !== 0) process.exit(result.status ?? 1)
-}
-
-const TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json',
-  '.css': 'text/css',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.svg': 'image/svg+xml',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-}
-/** The build as a single-page app: a known file, else the app's page for every route. */
-const server = http.createServer((req, res) => {
-  const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname)
-  let file = path.join(dist, path.normalize(pathname).replace(/^([/\\])+/, ''))
-  if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) file = path.join(dist, 'index.html')
-  res.writeHead(200, { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' })
-  res.end(readFileSync(file))
-})
-await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-const base = `http://127.0.0.1:${server.address().port}`
+exportWebBuild()
+const server = await serveWebBuild()
+const base = server.base
 
 /** The browser's speech recognition, replaced by one that hears a fixed sentence. */
 function stubSpeech() {
