@@ -76,7 +76,7 @@ let failure = null
 
 try {
   // Release jobs start from a fresh checkout; validation builds live in a different job.
-  const npmArgs = ['run', 'build:runner-core']
+  const npmArgs = ['run', 'build:protocol']
   const npmCli =
     process.env.npm_execpath ??
     (process.platform === 'win32' ? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js') : null)

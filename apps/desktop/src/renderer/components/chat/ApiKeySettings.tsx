@@ -1,4 +1,5 @@
 import { ModelVisibilityCheckbox } from './ModelVisibilityCheckbox'
+import { WebSearchSettings } from './WebSearchSettings'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -1449,7 +1450,7 @@ export function ApiKeySettings({
       <div
         role="tablist"
         aria-label={t('settings.tabsLabel')}
-        className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-lg border border-border bg-background/95 p-1 shadow-sm backdrop-blur"
+        className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-lg border border-border bg-popover p-1 shadow-sm"
       >
         {visibleTabs.map((tab, index) => (
           <button
@@ -1555,6 +1556,14 @@ export function ApiKeySettings({
             descriptionKey="settings.imageGenDescription"
             enabled={config.imageGenEnabled}
             setEnabled={api.chatSetImageGen}
+            onChanged={refresh}
+          />
+          {config.webSearch && <WebSearchSettings webSearch={config.webSearch} onChanged={refresh} />}
+          <FlagToggle
+            headingKey="settings.generatedInterfacesHeading"
+            descriptionKey="settings.generatedInterfacesDescription"
+            enabled={config.generatedInterfacesEnabled}
+            setEnabled={api.chatSetGeneratedInterfaces}
             onChanged={refresh}
           />
           <FlagToggle

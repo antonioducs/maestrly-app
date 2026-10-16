@@ -8,7 +8,6 @@ import {
   ExternalLink,
   FileText,
   LoaderCircle,
-  PanelLeft,
   Pin,
   Plus,
   RefreshCw,
@@ -66,7 +65,6 @@ export interface LocalMemoryPanelProps {
   focusMemoryId?: string
   focusMemoryRequest?: number
   workspaceName: string
-  onShowSidebar?: () => void
   onClose: () => void
 }
 
@@ -97,7 +95,6 @@ export function LocalMemoryPanel({
   workspaceName,
   focusMemoryId,
   focusMemoryRequest = 0,
-  onShowSidebar,
   onClose,
 }: LocalMemoryPanelProps) {
   const { t, i18n } = useTranslation('ui')
@@ -259,23 +256,7 @@ export function LocalMemoryPanel({
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <header
-        className={cn(
-          'drag flex h-11 shrink-0 items-center gap-2 hairline-b pr-3',
-          onShowSidebar ? 'pl-[var(--tt-offset)]' : 'pl-3'
-        )}
-      >
-        {onShowSidebar && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="no-drag size-7"
-            onClick={onShowSidebar}
-            title={t('common.showWorkspaces')}
-          >
-            <PanelLeft className="size-4" />
-          </Button>
-        )}
+      <header className="drag flex h-11 shrink-0 items-center gap-2 hairline-b pl-[var(--view-header-inset)] pr-3">
         <BrainCircuit className="size-4 text-primary" />
         <span className="truncate text-[13px] font-medium">
           {personal ? t('personalMemory.title') : t('projectMemory.centerTitle', { name: workspaceName })}

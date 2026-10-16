@@ -1,12 +1,17 @@
 # Remote workspaces and chats
 
 Maestrly can run your chats and workspaces on a server instead of this computer. They keep working while this computer
-is off, and you use them from the same window: the sidebar lists the chats and workspaces of this computer and of the
-server side by side, grouped by where they run.
+is off, and you use them from the same window: the sidebar lists the chats and workspaces of one machine at a time,
+this computer or the server, and switches between them in one click.
 
 This is experimental and builds on the [bot server](bot-fleet.md): the server runs one more Maestrly, in a container of
 its own, for your chats and workspaces. That container is called a **workspaces environment**, and the Maestrly in it a
 **host**. Bots and workspaces can share a server; they never share a container.
+
+A server can run several workspaces environments, one for each scope of your work: for example **Personal**,
+**Company A**, and **Company B**. Each one is a separate Maestrly with its own accounts, API keys, site sign-ins, Git
+and cloud credentials, skills, MCP servers, memory, conversations, Docker network, and folder on the server, so what
+you sign in to for one company never reaches the others. See [Several scopes on one server](#several-scopes-on-one-server).
 
 ## What runs where
 
@@ -25,60 +30,145 @@ When you come back, the conversation shows what happened meanwhile.
 
 1. Set up a bot server and connect this computer to it: see [Set up the bot server](bot-fleet.md#set-up-the-bot-server).
    A server on a VPS is what keeps working while this computer is off.
-2. Open the **Bots** tab, select the server, and choose **Set up workspaces on this server** under **Workspaces**.
-   The server creates the workspaces environment and starts it. A server hosts workspaces in one environment; use
-   another server to keep work apart.
+2. Open the **Bots** tab, select the server, and choose **Set up workspaces on this server** under **Workspaces**. Give
+   the environment a name and a color (and, if you want, memory and CPU limits and an idle stop), then **Create**. The
+   server creates the workspaces environment and starts it. Use **New workspaces environment** for each other scope of
+   your work.
 3. On the environment's page, add the model accounts the host will use: an API key, a subscription sign-in, or accounts
    brought from this computer, as for a [bot environment](bot-fleet.md#bring-from-your-computer). The host has its own
-   accounts, skills, plugins, and MCP servers; nothing is copied from this computer unless you ask.
+   accounts, skills, plugins, and MCP servers; nothing is copied from this computer, or from another environment,
+   unless you ask.
 
-Once the environment runs, the **Chats** and **Workspaces** tabs show two sections: **This computer** and the server's
-name. With no server that hosts workspaces, the sidebar has no headings and looks as it always did.
+Once an environment runs, the **Chats** and **Workspaces** tabs get a machine switcher above the search. It shows the
+machine whose chats and workspaces are listed, **This computer** or the environment's name in its color, with what is
+going on there: how many conversations need you and how many are running. Beside it, shortcuts to the other machines
+carry a red dot when a conversation there finished and needs you. Click a shortcut, or open the switcher and choose a
+machine; hovering an environment there shows the server it runs on. The choice applies to both tabs and is remembered;
+opening a conversation switches to the machine it runs on. While you filter, a link under the list says how many
+results another machine has. With no server that hosts workspaces, the sidebar has no switcher.
 
 If **Workspaces** says **Update the server to run workspaces on it**, the server runs a version from before this
-feature: use **Update bots** first.
+feature: use **Update bots** first. If it says **Update the server to run more than one workspaces environment on it**,
+the server hosts one environment and predates several: **Update bots** too.
 
 ## Use it
 
-- **New chat on the server.** Use the **+** button on the server's heading in the **Chats** tab. The header's own
-  **New chat** button still creates a chat on this computer.
-- **Add a workspace on the server.** Use the **+** button on the server's heading in the **Workspaces** tab. You open a
+- **New chat on the server.** Switch to the server, then use the **+** button next to **Chats**. With **This
+  computer** chosen, the same button creates a chat on this computer.
+- **Add a workspace on the server.** Switch to the server, then use the **+** button next to **Workspaces**. You open a
   folder that is already on the server, create a project, or clone a Git repository. Folders are chosen in a dialog
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
 - **Work in a conversation.** The chat view is the same as for a conversation of this computer. The drawer offers
-  **Browser**, **Code**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a shell on the
-  server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
-  [Browser](#browser). **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this
-  computer and the server: see [Files](#files).
-- **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**, **Platform**,
+  **Browser**, **Computer**, **Code**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a
+  shell on the server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
+  [Browser](#browser). **Computer** is the conversation's own Linux desktop on the server: see [Computer](#computer).
+  **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this computer and the
+  server: see [Files](#files). As for a conversation of this computer, the tool shortcuts open these tools in a pop-up
+  over the chat, or with Shift in a floating window, and the drawer's **Open in a floating window** button detaches
+  them; only **Computer** stays in the drawer. A floating window is named after the conversation and closes when the
+  conversation leaves the server's list.
+- **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, plugins, and defaults. The other sections are this computer's and have no selector.
+- **Artifacts.** Agents in chats on the server publish [artifacts](artifacts.md) on the server itself, with nothing to
+  set up: the gateway gives the workspaces environment a token of its own for them. Artifact hosting must be on in
+  **Settings → Artifacts**. The server's browser cannot reach the artifact viewer, so **Open** on an artifact's card
+  and the agent's `artifact_open` open the page in this computer's default browser, through its connection to the
+  server. The Artifacts center lists them with the server's other artifacts, as **Other computer**.
 - **Memory of the host.** Chats on the server remember with the server's personal memory, and its workspaces keep their
   own project memory there; nothing is shared with this computer's memory. The personal memory panel has a
   **Memories of** selector to show the server's or this computer's: open it with **Manage personal memory** in the
   host's **Maestrly Chat** settings. **Project memory** in a server workspace's menu shows that workspace's memory.
-- **Start, stop, restart, update, and archive.** These are on the environment's page, reached with **Manage** under
-  **Workspaces** on the server page, or **Open server page** in the menu of the server's heading. Stopping,
-  restarting, or updating at once interrupts the chats that are running on the server. **Update** waits until no chat
-  is running.
+- **Start, stop, restart, update, and archive.** These are on the environment's page, reached with **Manage** next to
+  the environment under **Workspaces** on the server page, or **Open environment page** in the **⋯** menu next to
+  **Chats** or **Workspaces** while the environment is chosen. Stopping, restarting, or updating at once interrupts the
+  chats that are running in that environment; the other environments keep running. **Update** waits until no chat is
+  running.
 
 ### Where files live on the server
 
 | Server | Folders offered when you add a workspace |
 | --- | --- |
-| A VPS set up by Maestrly | **Workspaces**: `/srv/maestrly`, a folder of the server itself, mounted in the environment at the same path. **Home**: the environment's home folder, in its Docker volume. |
+| A VPS set up by Maestrly | **Workspaces**: `/srv/maestrly/<environment>`, a folder of the server itself for that environment alone, mounted at the same path. **Home**: the environment's home folder, in its Docker volume. |
 | Docker on this computer | **Home** only. No folder of this computer is mounted. |
 | A server you manage | **Workspaces** when you set `MAESTRLY_GATEWAY_WORKSPACES_ROOT` in its `.env`; **Home** always. |
+
+`<environment>` is the environment's id, made from its name when it was created: `/srv/maestrly/company-a` for
+**Company A**. The gateway creates that folder, owned by user id 1000, before the environment starts.
 
 Prefer the **Workspaces** folder for projects: its files are ordinary files of the server, so you can reach them over
 SSH, back them up, and keep them when the environment is archived or deleted. The environment's home volume holds the
 host's profile: conversations, accounts, settings, worktrees, and the files of plain chats.
 
-A server you manage mounts the folder named by `MAESTRLY_GATEWAY_WORKSPACES_ROOT`, an absolute path owned by user id
-1000, the user the environment runs as. The environment is created with that mount: after you set or change the
-variable, restart the gateway and then restart the workspaces environment. A VPS that Maestrly set up before this
+A server you manage mounts subfolders of the folder named by `MAESTRLY_GATEWAY_WORKSPACES_ROOT`, an absolute path owned
+by user id 1000, the user the environments run as. An environment is created with its mount: after you set or change
+the variable, restart the gateway and then restart each workspaces environment. A VPS that Maestrly set up before this
 feature gets `/srv/maestrly` the next time you use **Update bots**.
+
+## Several scopes on one server
+
+Each workspaces environment is a scope of your work. What one environment signs in to or keeps stays in it:
+
+| Kept apart per environment | How |
+| --- | --- |
+| Model accounts, API keys, subscription sign-ins, skills, MCP servers | Its own Maestrly profile, provisioned on its page |
+| Git, GitHub CLI, SSH keys, cloud CLIs, package registries | Its own home volume: sign in from a terminal of a chat there |
+| The agent's browser, with its cookies and site logins | Its own browser profile |
+| Conversations, workspaces, memory, notes, and artifacts | Its own profile and, for projects, its own folder on the server |
+| Network | A Docker network of its own, shared only with the bot server's gateway: an environment cannot reach another's container |
+
+On an environment's page, **Isolation** shows its network and its folder on the server, and **Resources** its memory
+and CPU limits and its idle stop:
+
+- **CPU limit** caps how much of the server the environment may use, so a busy build in one scope does not slow the
+  others. It applies at once.
+- **Stop when idle** stops the environment once no computer has been connected to it and no chat has run there for the
+  time you choose (30 minutes to a day). Its terminals and background processes stop too. Start it again from the
+  sidebar or its page. It is off by default.
+- **Color** (under the environment's **Settings → Preferences**) is the color of its icon in the machine switcher.
+
+An environment created before scopes keeps the server's whole folder (`/srv/maestrly`), so the paths of its workspaces
+keep working, and **Isolation** warns that it can read and change the folders of the other environments. **Use a
+folder of its own** moves it to `/srv/maestrly/<environment>` once it restarts; move its projects into that folder (over
+SSH, for example) and add them again. The same environment moves to a network of its own the next time it restarts or
+updates; until then, **Isolation** asks for a restart.
+
+Separate environments keep credentials from mixing by mistake. They still share the server, its kernel, and your
+pairing: anyone with root on the server, or with a paired computer, reaches all of them. When a company requires its
+work to stay off a machine you share with other work, use a server of its own for it.
+
+## Move a conversation
+
+A conversation of a workspace can move between this computer and the server, either way, and keeps going there: same
+conversation, same history. Right-click it in the sidebar (or use its **⋯** menu), choose **Move to**, then the machine.
+Maestrly checks both sides first and shows what will happen; nothing moves until you choose **Move**.
+
+- **What goes with it:** its messages, attachments, generated images, notes, the branch's commits that are not on the
+  remote yet, and the changes you have not committed: staged, unstaged, and untracked. Files Git ignores (`.env`,
+  build output) go only if you select them in the dialog; a file that may hold a secret asks you to confirm it again.
+- **What stays behind:** the project's memory, terminals, the browser, queued messages, and usage history. The model
+  provider's session starts again at the destination from the conversation's history, so the first turn there sends
+  that history again.
+- **The project at the destination.** Maestrly looks for a workspace with the same `origin` remote. Without one, it
+  clones the repository into the destination's projects folder (on the server, its **Workspaces** folder) with the
+  destination's Git credentials: a private repository needs credentials set up on the server first. The commits the
+  remote already has come from the remote; only the others travel with the conversation.
+- **The branch.** The conversation keeps its branch name. When the destination already has that branch at an older
+  commit of it, the branch moves forward; when it is checked out there or went another way, the conversation gets
+  `<branch>-moved`, and you can type another name in the dialog.
+- **What the source keeps.** Once the destination holds a verified copy, the conversation leaves the source and its
+  worktree is removed. The branch stays, with the moved working tree saved as `refs/maestrly/moved/<id>`, and the
+  package that was sent stays for seven days in the profile's `conversation-moves` folder. A conversation that used
+  the project's main checkout leaves that checkout as it was.
+
+Moving stops the conversation first: wait for its turn to finish. If a move stops halfway (a lost connection, a clone
+that fails), the conversation stays held on both machines and Maestrly asks you to **Continue** or **Undo move**, also
+after a restart. Undo is available until the source lets the conversation go; after that, the destination already has
+it and the move can only go on.
+
+Plain chats, conversations across several repositories, bot conversations, and repositories without an `origin` remote
+cannot move. Both machines must run the same Maestrly version.
 
 ## Browser
 
@@ -101,11 +191,42 @@ and **Reload**.
   it is open, under a bar with its address and a **Close** button. It closes by itself when the sign-in finishes.
 - **One device at a time.** When another computer opens the same conversation's browser, it takes over, and this one
   says **This browser is open on another device**, with **Show here** to take it back.
+- **Pop-up and floating window.** The browser's shortcut, or **Open in a floating window**, moves it out of the drawer
+  with its tabs and address bar. It streams there instead of in the drawer, and back in the drawer once you close or
+  reattach it.
 
-The browser sends a picture of the page only when the page changes, and at most two pictures travel at once: on a slow
-connection it shows fewer pictures per second rather than falling behind. When the connection is very slow, the
-pictures are smaller and more compressed until it improves. The stream stops when you switch tabs or conversations or
-minimize the window; the page stays open on the server.
+The page streams as video, like the bots' screens: on a server's slow link, such as Tailscale Funnel, scrolling stays
+smooth and clicks quick, and the video adapts its quality to the link. When the server's eight tiles are taken (see
+[Computer](#computer)), or it runs an older version, the browser sends still pictures instead, as before: only when
+the page changes, at most two at once, so on a slow connection it shows fewer pictures per second rather than falling
+behind, smaller and more compressed while the connection is very slow. The stream stops when you switch tabs or
+conversations or minimize the window; the page stays open on the server.
+
+## Computer
+
+Each conversation on the server can have a computer of its own: a 1280×800 Linux desktop, like a bot's, where you run
+and test what the conversation produced (a dev server in its browser, a desktop app, a terminal). Open the
+**Computer** tab of the drawer to start it and watch it.
+
+- **Watch or take control.** The tab opens watching. **Take control** lets you use its mouse, keyboard and clipboard,
+  as on a bot's screen; **Release** goes back to watching. The agent keeps working while you control it, so its input
+  and yours can interleave; the tab says so.
+- **What it has.** A dock with **Browser**, **Terminal**, and **Files**. **Browser** is the conversation's own browser,
+  the one of the **Browser** tab and of the agent's `browser_*` tools. **Terminal** opens a window on the
+  conversation's terminals, and **Files** opens its folder. Links opened by programs on the computer open in that
+  browser. Graphical programs started from the conversation's shells show on the computer while it runs.
+- **The agent's computer tools.** The agent's `computer_*` tools act on the same computer, and start it when it is not
+  running; their result says when they started it.
+- **Given back when idle.** A computer is given back once, for a minute, no device showed it, the agent did not use it,
+  and no window of a program was open on it: a desktop app the agent or you started keeps it until it closes. Opening
+  the tab again starts it again; what ran on it is gone. Archiving or deleting the conversation gives it back at once.
+- **Eight at most.** A server runs up to eight computers at a time. When all are in use, the tab names the
+  conversations that hold them, with **Try again**.
+- **Update first.** A bot server from before computers asks to be updated; a workspaces environment on an older image
+  has no **Computer** tab until it restarts onto the current one.
+
+Computers keep conversations apart for clarity, not for security: every conversation on the server runs as the same
+user, as their files and shells already do.
 
 ## Code
 
@@ -160,23 +281,25 @@ either end while it moves, the transfer stops: **Try again** starts it over with
 
 ## Connection states
 
-The server's heading shows how this computer reaches the host:
+The machine switcher shows how this computer reaches the host: a dot on the server's icon (green when connected, amber
+while connecting, gray when not reached, red on a failure) and, under the server's name, one of these states:
 
 | State | Meaning | What to do |
 | --- | --- | --- |
-| No label | Connected. | — |
-| **Connecting…** or **Reconnecting…** | The connection is being opened, or dropped and is being opened again. Work on the server continues. | Wait, or use **Try again**. The section keeps its last list, dimmed, and an open conversation says it is reconnecting. |
+| **Online**, or what its conversations are doing | Connected. | — |
+| **Connecting…** or **Reconnecting…** | The connection is being opened, or dropped and is being opened again. Work on the server continues. | Wait, or use **Try again**. The server's list keeps its last state, dimmed, and an open conversation says it is reconnecting. |
 | **Update required** | The host and this app run different versions. They must run the same version, because this window calls the host's own functions. | Update the older of the two: **Update bots** for the server, or the app's own update for this computer. |
-| **Stopped**, **Starting…**, or **Failed to start** | The state of the workspaces environment on the server. | **Start** it, or open the server page for details. |
+| **Stopped**, **Starting…**, or **Failed to start** | The state of the workspaces environment on the server. | **Start** it, or open its page for details. |
 | **Not connected** | This computer does not reach the bot server. | Check the server and its connection in **Settings → Bot server**. |
 
-After a reconnection, the section and any open conversation of the host are loaded again. Messages queued behind a
+After a reconnection, the server's list and any open conversation of the host are loaded again. Messages queued behind a
 running turn are kept by this window only, and are lost if the connection drops or the window closes before they are
 sent.
 
 Two computers paired with the same server see the same chats and workspaces. Both receive a turn as it streams, and
 either can answer a permission request, a question, or a plan. A chat or workspace that the other computer created,
-renamed, or removed appears here when this window gets the focus again.
+renamed, or removed appears here when this window gets the focus again. The red dot of a conversation that needs you is
+kept by the server: opening the conversation on one computer clears it on the other.
 
 ## Not available yet
 
@@ -189,11 +312,29 @@ renamed, or removed appears here when this window gets the focus again.
   the server, or use Git. Revealing a file or folder of the server in a file manager is unavailable, because it would
   open on the server's own desktop, which nobody sees.
 - **Alert sounds** do not play for conversations on a server.
-- **Drawer tools stay docked** for those conversations: no floating windows and no pop-up shortcuts.
+- **The Computer tab stays in the drawer:** it opens in no pop-up or floating window, and has no shortcut by default.
+- **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
+  survive a restart of the server's Maestrly.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between
   folders, and workspace groups are for conversations of this computer.
-- **Several servers.** This computer pairs with one bot server, so it shows one server's chats and workspaces.
-- **Isolation between workspaces of one server.** They share one container, one user, and one set of accounts.
+- **Moving plain chats and multi-repository conversations** between this computer and the server: only conversations
+  of a workspace with one repository move (see [Move a conversation](#move-a-conversation)).
+- **Several servers.** This computer pairs with one bot server, so it shows the chats and workspaces of that server's
+  environments only.
+- **Isolation between workspaces of one environment.** They share one container, one user, and one set of accounts:
+  use another environment for work that must stay apart.
+
+## On a phone
+
+The [mobile app](mobile.md) shows the same chats and workspaces of the server, and opens new chats on it. A phone uses
+a smaller, versioned API of the host instead of a computer's full access: it reads and writes chats, answers what
+they ask, and changes their setup, but it never reaches the server's files, terminals, accounts or settings. It does
+not need the same app version as the server, only the same mobile API, so it keeps working while the server updates.
+On a server with several workspaces environments, the phone shows the chats of one of them at a time, as the
+desktop's machine switcher does: choose it under the server in the app's menu, and the phone remembers the choice.
+Until you choose, it opens the first that runs and speaks to phones. A stopped environment can be started from the
+phone's menu. A notification about a chat opens it on its own environment. While the app is open, its connection
+keeps that environment from stopping when idle, as a computer's does.
 
 ## Security
 
@@ -204,8 +345,19 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 
 ## Troubleshooting
 
-- **The server's section stays on Connecting… or Reconnecting….** Open the server page: the workspaces environment
-  must be **Running**. For a VPS, check that the SSH tunnel is connected in **Settings → Bot server**.
+- **The switcher stays on Connecting… or Reconnecting… for an environment.** Open its page: it must be **Running**. For
+  a VPS, check that the SSH tunnel is connected in **Settings → Bot server**.
+- **An environment fails with "The gateway could not join the network of this environment."** The gateway runs outside
+  a container on the fleet network, or cannot find its own container there. Run the gateway with the Compose file, or
+  set `MAESTRLY_GATEWAY_CONTAINER` to its container's name; `maestrly-bot-gateway doctor` checks it.
+- **An environment fails with "The folder of this environment could not be created on the server."** The server's
+  workspaces folder must exist and belong to user id 1000: `sudo install -d -o 1000 -g 1000 -m 0750 /srv/maestrly`.
+- **A service of the server is unreachable from an environment.** A container you run on the bot server's Docker network
+  (a model proxy, a database) is not on an environment's own network. Connect it there,
+  `docker network connect maestrly-bots-env-<environment id> <container>`, or publish its port on the server.
+- **An environment fails with "Docker could not create the network of this environment."** Docker ran out of
+  addresses for new networks, usually because of networks other software left behind: remove unused ones with
+  `docker network prune`, or widen Docker's `default-address-pools`.
 - **Update required after updating the app.** Use **Update bots**: the server moves to this app's version, and the
   workspaces environment restarts on it once no chat is running.
 - **A workspace cannot be added under `/srv/maestrly`.** The folder must belong to user id 1000 on the server:
@@ -213,40 +365,66 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 - **The Code tab says VS Code could not start on the server.** The environment must reach `code.visualstudio.com` and
   Microsoft's download servers to fetch the editor the first time. Open the tab again once it can; **Restart VS Code**
   tries again too.
+- **The agent says the server is too old to host artifacts.** The workspaces environment was created by a gateway from
+  before its artifact token. Use **Update bots**; an environment already on the current version gets its token the
+  next time it starts or restarts.
 - **A cloned repository asks for credentials.** Configure Git credentials in the environment, for example from a
   terminal of a chat on the server. They are kept in the environment's home volume.
 
 ## For developers
 
-- The design is in [`docs/superpowers/specs/2026-09-29-remote-hosts-design.md`](superpowers/specs/2026-09-29-remote-hosts-design.md).
+- The design is in [`docs/superpowers/specs/2026-09-29-remote-hosts-design.md`](superpowers/specs/2026-09-29-remote-hosts-design.md),
+  and several environments per server in
+  [`docs/superpowers/specs/2026-10-14-workspaces-environments-design.md`](superpowers/specs/2026-10-14-workspaces-environments-design.md).
 - `MAESTRLY_DEV_DIRECT_HOST=http://<control token>@<address>:<port>` connects a development or test build straight to
   the control server of an app started with `MAESTRLY_SERVER_MODE=1`, without a bot server. Packaged builds ignore it.
 - `apps/desktop/test/e2e/remote-hosts.spec.ts` runs two instances of the built app, one in server mode, and checks the
-  mixed sidebar, a chat turn, a terminal, adding a workspace, the **Files** tab (browsing, preview, rename, delete,
+  machine switcher, a chat turn, a terminal, adding a workspace, the **Files** tab (browsing, preview, rename, delete,
   upload, download, and opening a file), the **Browser** tab (frames drawn, address bar, typing with accents, and
   copying to this computer's clipboard), and the **Code** tab (the editor through both proxies, its token kept on the
   host, a Plan file opening it, and a selection reaching the composer). For the editor the host uses a stand-in for
   serve-web that the test runs: `MAESTRLY_E2E_VSCODE_SERVER=<port>:<token>`, honored only in E2E mode.
   `remote-hosts-server.spec.ts` does the same through a gateway, from the **Server** page to a stopped and started
-  environment.
-- `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, the
-  mounted folder, the bridge through the gateway, a chat turn whose model drives the host's browser, the browser
-  streamed over the bridge (JPEG frames paced by acknowledgements, input, a resize, a list, a refused file chooser, the
-  agent's screenshot while streaming, a takeover, two conversations streamed at once, the stop and the release of its
-  window), a host terminal, the host's real editor (downloaded and started on the host, its workbench, a static file and
-  its WebSocket through the gateway), an upload and a compressed range download through the gateway, and that revoking
-  the device cuts its transfers and its editor connection. It needs Docker, both images and Internet access for the
-  editor; `npm run test:e2e:bot-fleet` runs it as one of its steps.
+  environment, and creates two environments of different scopes with the dialog, checking their color, CPU limit, idle
+  stop, isolation, and their names and colors in the machine switcher. `remote-host-artifacts.spec.ts` has an agent on the host publish and open an artifact through a
+  stand-in for the gateway's internal API, and checks that the client opens it and that the host's environment no
+  longer holds the token.
+- `apps/desktop/test/e2e/mobile-bridge.spec.ts` runs the built app in server mode and drives it with the mobile
+  bridge client of `@maestrly/bot-fleet-protocol`, as a phone does: lists, a new chat, a streamed answer, a resend
+  that is not sent twice, and the chat's setup and models.
+- `npm run test:e2e:bot-fleet:workspaces` checks a workspaces environment on the real images: server mode, its own
+  mounted folder and network, a second environment out of reach of the first, the bridge through the gateway, a chat
+  turn whose model drives the host's browser, the browser streamed over the bridge (JPEG frames paced by
+  acknowledgements, input, a resize, a list, a refused file chooser, the agent's screenshot while streaming, a takeover,
+  two conversations streamed at once, the stop and the release of its window), the same browser over video (the page's
+  area in its tile, the tile's screen through the gateway, input over the bridge, a resize, and frames on request), each
+  conversation's computer (opened, watched and controlled through the gateway, a link through its desktop, its browser
+  kept above in its tile, the agent's screenshot, kept by a program window and given back after it closed, eight at
+  most, with a ninth Browser tab on still pictures), a host terminal, the host's real editor (downloaded and started on
+  the host, its workbench, a static file and its WebSocket through the gateway), an upload and a compressed range
+  download through the gateway, and that revoking the device cuts its transfers and its editor connection. It needs
+  Docker, both images and Internet access for the editor; `npm run test:e2e:bot-fleet` runs it as one of its steps.
 - The browser stream (`apps/desktop/src/main/drawer/browser-stream.ts`) uses the bridge: the host moves the
   conversation's browser views into a shown, unfocusable window of its display while someone watches (Chromium paints
-  nothing for a hidden window), streams JPEG frames from the page's DevTools session (`Page.startScreencast`), and holds
-  each frame's acknowledgement to Chromium until the window acknowledges it. Input goes back through the same DevTools
-  session; the host's display gets no input.
+  nothing for a hidden window). A window that plays H.264 asks for video: a host with a free tile of its environment
+  display puts that window in the tile, kept above, sends no frames, and reports where the page is in the tile
+  (`drawer:browser-stream-area`); the window watches the tile through the gateway's conversation screen ticket (surface
+  `browser`, view only) and crops it. Otherwise, or after `drawer:browser-stream-transport`, the host streams JPEG
+  frames from the page's DevTools session (`Page.startScreencast`), and holds each frame's acknowledgement to Chromium
+  until the window acknowledges it. Input goes back through the same DevTools session either way; the host's display
+  gets no input from the Browser tab.
 - The editor (`apps/desktop/src/main/drawer/remote-vscode.ts`) is VS Code's serve-web on the host, started on demand
   and reached under `/v1/environments/:eid/editor/` of the gateway, which passes requests and WebSockets to
   `/v1/editor/` of the host's control server (`remote-host/server/host-editor.ts`), which passes them to serve-web on
   its loopback with the editor's token. On the computer, `remote-host/client/editor-proxy.ts` gives the editor a
   loopback origin; the bridge only opens, follows, and restarts it (`editor:*` channels).
+- A conversation's computer (`apps/desktop/src/main/remote-host/server/computers.ts`) is a bot's apps desktop on a
+  display number of its own, from 10, with the conversation's browser in one of the eight tiles of the environment
+  display. The Computer tab opens it over the bridge (`drawer:computer-open`) and watches it through the gateway's
+  screen tickets for conversations (`/v1/environments/:eid/conversations/:cid/screen-tickets`), which the gateway
+  relays to `/v1/conversations/:id/screen/:surface/view|control` of the host's control server as `maestrly-video`.
+  The design is in
+  [`docs/superpowers/specs/2026-10-14-workspace-computers-design.md`](superpowers/specs/2026-10-14-workspace-computers-design.md).
 - File transfers use the `host-files` routes of the gateway (`/v1/environments/:eid/host-files/…`), passed through to
   the host's control server, never the bridge. A gateway or host without the `host-files` feature makes the **Files**
   tab ask for an update.

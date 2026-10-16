@@ -5,6 +5,280 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- See the phones and computers paired with your bot server, and remove one you
+  lost, in **Settings → Bot server → Paired devices** on a computer and
+  **Settings → Paired devices** in the mobile app. Update the bot server to use
+  it. See [Mobile app](docs/mobile.md#unpair-and-revoke).
+- The mobile app shows the chats of any of the server's workspaces
+  environments: choose one under the server's name in the menu, start a
+  stopped one from there, and a chat notification opens its chat on its own
+  environment. See [Mobile app](docs/mobile.md).
+- Interactive answers run on the phone, in an isolated web view. Sending a
+  message or opening a page from one always asks first. See
+  [interactive answers](docs/chat-context.md#interactive-answers).
+- Files a bot shares show in the mobile app: videos play in the conversation,
+  and any other file downloads and opens the share sheet.
+- **Allow everything in this chat** on a chat's permission request in the
+  mobile app gives the chat full access after the same warning as its setup,
+  and the setup pill shows when a chat has full access or approves for you.
+
+### Fixed
+
+- In the mobile app on iOS, the content of setup sheets no longer slides under
+  their Back and Done buttons, and the chat setup screen opens at its title.
+- The mobile app offers a button back to the latest message once a conversation
+  is scrolled away from it, and sending a message puts the keyboard away.
+
+## [0.19.0] - 2026-10-15
+
+### Added
+
+- Review a project conversation's changes, or a plan, once instead of in a loop.
+  **Review** in the conversation header (or `/code-review`) and **Review plan**
+  in the Plan tab open a review room: three read-only reviewers for code, or two
+  for plans, investigate in parallel, a verifier confirms or discards each
+  finding, and you decide on them one at a time before they go to the agent as
+  one message. **Check the fixes** then verifies what was sent. The review holds
+  the conversation until the hand-off, and an open review is lost if the app
+  closes first. See [code and plan reviews](docs/chat-context.md#code-and-plan-reviews).
+- Run several workspaces environments on one server, one per scope of your work
+  (for example personal and each company), so their accounts, keys, site
+  sign-ins, Git and cloud credentials never mix. Each has its own Docker network,
+  its own folder on the server, a name and a color in the sidebar's machine
+  switcher, and optional CPU limit and stop when idle. Update the bot server to
+  use it. See [several scopes on one server](docs/remote-workspaces.md#several-scopes-on-one-server).
+- Move a conversation between this computer and a remote workspaces host, either
+  way, from **Move to** in its menu. It keeps its history, attachments, notes,
+  unpushed commits and uncommitted changes; the destination clones the project
+  when it does not have it, and the source keeps the branch and a backup. A move
+  that stops halfway can be continued or undone. See
+  [remote workspaces](docs/remote-workspaces.md#move-a-conversation).
+- Maestrly for iOS and Android. Pair a phone with your bot server by scanning
+  the QR code in **Settings → Bot server → Pair a phone**, then follow and
+  direct your bots and the chats and workspaces of the server's workspaces
+  environment: read conversations as they stream, send messages, photos and
+  files, dictate, approve requests, answer questions and plans, change models,
+  modes and skills, compact, and open the pages agents publish. Messages sent
+  offline wait on the phone. See [Mobile app](docs/mobile.md).
+- Push notifications on paired phones when a bot or chat needs you, finishes a
+  turn or a routine, or fails, chosen by category in the app. The bot server
+  sends them through Expo's push service with only the bot's name or chat's
+  title and a fixed phrase; set `MAESTRLY_GATEWAY_PUSH=off` to send none. See
+  [Notifications](docs/mobile.md#notifications).
+- Any paired device can create pairing codes for other devices, at most five
+  unused at once.
+- Give each conversation on a server's workspaces environment its own Linux
+  computer. Open the **Computer** tab to watch it or take control while the
+  agent keeps working; its `computer_*` tools use the same computer. A computer
+  is given back a minute after nobody uses it and its programs are closed; a
+  server runs up to eight at a time. Update the desktop app and the bot server,
+  and restart the workspaces environments onto the new image. See
+  [remote workspaces](docs/remote-workspaces.md#computer).
+- Show the red dot of a conversation that needs you on every computer paired
+  with the same host, and clear it everywhere once you open the conversation. A
+  reload or a reconnection no longer drops a dot you have not read.
+
+### Changed
+
+- A workspaces environment created before moves to a network of its own the
+  next time it restarts, and keeps the server's whole workspaces folder until
+  you give it a folder of its own on its page.
+- The bot gateway database moves to schema 14 to keep each phone's push token
+  and notification choices. Older gateways cannot open it, so back up the
+  gateway volume before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
+- The Browser tab of conversations on a server's workspaces environment now
+  streams as video, which keeps scrolling smooth and clicks quick on slow links,
+  such as Tailscale Funnel. It falls back to still pictures on servers without
+  video. See [remote workspaces](docs/remote-workspaces.md#browser).
+
+### Fixed
+
+- Make the tool shortcuts work in conversations on a server's workspaces
+  environment. Their tools, the streamed browser included, now open in pop-ups
+  and floating windows, from the shortcuts and the drawer's buttons, as they do
+  for conversations of this computer. The Computer tab stays in the drawer.
+- Keep the browser of a conversation on a server from staying on "Connecting to
+  the browser on the server…" when its stream answered faster than its start.
+
+### Removed
+
+- **Breaking:** remove the paired review loop (a reviewer conversation
+  alternating with the executor) and the ChatGPT Web review loop, replaced by
+  the review room. ChatGPT Web loses its `start_review_loop`,
+  `submit_review_fix`, `wait_review_fix`, `finish_review_loop` and
+  `discover_frontend_previews` tools: refresh ChatGPT's tool list to continue.
+  Messages from earlier loops stay readable.
+
+## [0.18.0] - 2026-10-14
+
+### Added
+
+- Let the model search the web with a `web_search` tool, in every runtime.
+  **Settings → Tools → Web search** picks automatic selection, Tavily, Brave,
+  your ChatGPT subscription or DuckDuckGo (no key), or turns it off. Queries go
+  to the provider you pick. See [chat context](docs/chat-context.md).
+- Get answers with interactive interfaces. The model can write HTML, CSS and
+  JavaScript that render in an isolated frame in chats, projects and bot
+  conversations, and can preview an interface before showing it. Turn
+  **Interactive answers** off in Settings → Tools, or in a bot environment's
+  preferences. See [interactive answers](docs/chat-context.md#interactive-answers).
+- Publish artifacts from chats on a server's workspaces environment, with
+  nothing to set up: they go to the server that runs the chat. **Open** on their
+  cards, and the agent's `artifact_open`, open the page in your computer's
+  browser. Update the bot server to use it. See
+  [remote workspaces](docs/remote-workspaces.md#use-it).
+
+### Changed
+
+- Stream the bots' screens as H.264 video instead of VNC. Screens stay
+  responsive on slow or distant links, such as Tailscale Funnel: the bot server
+  sends each viewer only what its link carries and adapts the quality and frame
+  rate to it. Clipboard text crosses as UTF-8, so accents and emoji copy both
+  ways. Update the desktop app and the bot server, and restart each environment
+  onto the new image, to open its screens. See
+  [screens of a bot](docs/bot-fleet.md#screens-of-a-bot).
+- Make standalone chats and bots answer in a conversational voice that matches
+  yours, instead of the terse style used for coding work. Project conversations
+  are unchanged, and existing conversations start a fresh provider session on
+  their next message.
+
+### Fixed
+
+- Make automatic compaction fail less: summary calls get more time and retries,
+  and compaction, including `/compact`, reuses the summary prepared in the
+  background instead of summarizing the whole history again.
+- Make menus, selects, popovers and other floating surfaces opaque, so the
+  content behind them no longer shows through.
+- Keep a conversation hidden from the sidebar while its deletion runs, instead
+  of showing it again until the deletion ends. Deleting several conversations
+  now continues past a failure.
+
+## [0.17.0] - 2026-10-13
+
+### Added
+
+- Let the agents of different conversations read, wait for and message each
+  other. Ask a conversation to open another agent and bring its result back, send
+  a follow-up to a conversation it started, or let a conversation report back to
+  the one that gave it work. The first message to an unrelated conversation needs
+  your confirmation, and turns the agents start stop after three exchanges
+  without you. See
+  [talking to other conversations](docs/chat-context.md#talking-to-other-conversations).
+- Edit your last message to a bot with **Edit and resend**, as in desktop chats.
+  The bot's reply and everything after it are removed. The edited text runs as a
+  new turn and keeps the message's attachments. Editing is available while the
+  bot is idle with nothing queued. Update the desktop app, the bot server and the
+  bot environment to use it. See
+  [bot conversation controls](docs/bot-fleet.md#bot-conversation-controls).
+- Play videos that bots share (MP4, M4V, WebM, and MOV) in the conversation.
+  The file card shows the first frame and the duration, and opens a player with
+  speed, volume, full screen, and keyboard shortcuts. **Download** still saves
+  the file. Formats the app cannot decode keep only the download.
+- Follow a bot file's download: its card shows progress, speed, and the time
+  left, and **Cancel** stops it and removes the partial file. Leaving the chat
+  keeps the same transfer, and a system notification says when it finishes or
+  fails. See [send and download files](docs/bot-fleet.md#send-and-download-files).
+- Let a bot environment rotate between its Claude or Codex accounts when one
+  reaches its usage limit. **Automatic account rotation** appears in the
+  environment's **Accounts** tab once it has two accounts of the same kind.
+  Update the bot server and restart the environment on the new image to use it.
+  See [configure an environment from the app](docs/bot-fleet.md#configure-an-environment-from-the-app).
+- Get address suggestions in the drawer browser from your history, open tabs,
+  and Google search suggestions, with inline completion of frequent sites.
+  Cmd/Ctrl+T opens a tab and Cmd/Ctrl+W closes the active one, without closing
+  the window. Typed text that is not an address, local host, or IP address is
+  sent to Google's suggestion service without cookies. History stays on this
+  computer and **Clear browsing data** deletes it. See
+  [drawer browser history](docs/local-data.md#drawer-browser-history).
+
+### Changed
+
+- Ask the agent to start other conversations in your own words, for example
+  "send another agent to review this". When the message does not ask for them
+  in so many words, the chat asks you to confirm with **Start** or **Don't
+  start** instead of refusing; "don't open conversations" is still respected.
+  See [starting conversations by asking the agent](docs/chat-context.md#by-asking-the-agent).
+- Redesign the sidebar around an icon rail for Chats, Workspaces, and Bots,
+  with Artifacts, Usage, Settings, and Help at its bottom. Collapsing the
+  sidebar keeps the rail. With a remote workspaces server, the list shows one
+  machine at a time, with a switcher that says what each machine is doing.
+  **Show archived** moves to the list's **⋯** menu.
+- When every account of a bot has reached its usage limit, the bot waits until
+  the first account is expected back, checking at least every 10 minutes,
+  instead of retrying every few seconds. The conversation says when it will try
+  again, and other start failures back off up to 5 minutes.
+- Address bar entries such as `localhost:3000` and local IP addresses open over
+  HTTP instead of becoming a search.
+
+### Fixed
+
+- Show a confirmation the agent needs while a tool runs, such as creating a
+  public GitHub repository, as soon as it is asked in an open conversation
+  instead of only after switching back to it.
+- Use a Claude or Codex subscription account again as soon as its usage limit
+  resets and it answers, instead of treating it as exhausted until you
+  refreshed it in Settings. Account failover now also covers Codex subagents of
+  other runtimes, review loops, and background and bot compaction.
+- Keep a bot's answered question in place in its transcript instead of at the
+  end of the turn.
+- Stop showing a bot's recalled memories as a downloadable attachment of your
+  message.
+- Keep a bot environment's screen responsive when its browsers download files:
+  downloads go straight to the environment's `~/Downloads` instead of opening
+  save dialogs that blocked input. Restart the environment on the new image to
+  apply it.
+
+### Removed
+
+- **Breaking:** remove the Kanban platform: the web dashboard, the API server,
+  the headless runner, and their `client-sdk` and `runner-core` packages.
+  Desktop no longer offers **Settings → Platform**, the desktop executor, the
+  workspace link to a Kanban project, the `board_*` and `get_linked_kanban`
+  tools, the GPT Web **Linked Kanban** access, or web project chats. On first
+  launch, the desktop deletes the stored platform connections, credentials,
+  links and executor settings, and removes the executor's login item.
+  Conversations that were projected from the web remain as ordinary local
+  chats. Paired ChatGPT Web conversations ask to be paired again once, because
+  their access no longer includes the Kanban.
+
+## [0.16.0] - 2026-10-12
+
+### Added
+
+- Experimental: run your chats and workspaces on your bot server. **Set up
+  workspaces on this server** on the server page starts a second Maestrly there
+  for them, in an environment of its own that holds no bots. The sidebar lists
+  the chats and workspaces of this computer and of the server side by side, and
+  conversations on the server keep working while this computer sleeps or is
+  off. In the drawer, **Terminal**, **Plan**, **Review**, and **Notes** run on
+  the server; **Files** browses, previews, uploads, and downloads with a
+  resumable queue; **Browser** shows the agent's browser live and lets you use
+  it; and **Code** opens VS Code running on the server. Chats on the server use
+  the server's own accounts and memory, chosen in **Settings of** and **Memories
+  of**. The server and this app must run the same version, so use **Update
+  bots** after updating the app. Several computers paired with one server see the
+  same chats and workspaces, and workspaces of one server are not isolated from
+  each other. See [Remote workspaces and chats](docs/remote-workspaces.md).
+
+### Changed
+
+- The bot gateway database moves to schema 11 to tell environments that run bots
+  from the one that hosts workspaces. Older gateways cannot open it, so back up
+  the gateway volume before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
+- Update Electron to 44.7.0 and refresh the app's minor and patch dependencies.
+
+### Fixed
+
+- Wait for a bot's new browser tab to be ready before a tool drives it, so the
+  first navigation of a conversation is not replaced by the tab's empty start
+  page.
+- Keep Mermaid diagram labels from being clipped in chats when line spacing or
+  font size changes.
+
 ## [0.15.0] - 2026-10-08
 
 ### Added
@@ -212,14 +486,6 @@ User-visible changes by version. Downloads are on
   plans, subagents, published artifacts, generated images, and tool screenshots
   stay in view.
 
-- Experimental: run your chats and workspaces on your bot server. **Set up
-  workspaces on this server** on the server page starts a Maestrly there for
-  them; the sidebar then lists the chats and workspaces of this computer and of
-  the server side by side, and conversations on the server keep working while
-  this computer is off. Terminal, Plan, Review, and Notes work in the drawer;
-  the agent's browser runs on the server and is not shown yet. See
-  [Remote workspaces and chats](docs/remote-workspaces.md).
-
 ### Fixed
 
 - Share plain-text clipboard contents while controlling a bot or environment
@@ -234,9 +500,6 @@ User-visible changes by version. Downloads are on
   searchable dropdown such as the environment choice when creating a bot.
 - Never move a bot server back to an older version when another computer
   already updated it past this app.
-- Wait for a bot's new browser tab to be ready before a tool drives it, so the
-  first navigation of a conversation is not replaced by the tab's empty start
-  page.
 
 ## [0.11.0] - 2026-09-28
 

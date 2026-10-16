@@ -91,6 +91,20 @@ export const nativeImage = {
   }),
 }
 
+// System notifications are unsupported by default; tests mock `electron` to observe one.
+export class Notification {
+  static isSupported(): boolean {
+    return false
+  }
+  on(): this {
+    return this
+  }
+  once(): this {
+    return this
+  }
+  show(): void {}
+}
+
 export const nativeTheme = { themeSource: 'dark' as string }
 export const shell = { openExternal: (): Promise<void> => Promise.resolve() }
 
@@ -125,6 +139,11 @@ export const session = {
   fromPartition: (_partition: string): typeof fakeSession => fakeSession,
 }
 export const utilityProcess = { fork: (): unknown => ({ on: () => {}, postMessage: () => {} }) }
+// `protocol` lets the custom scheme modules load; tests check what they register, not Electron's handling.
+export const protocol = {
+  registerSchemesAsPrivileged: (_schemes: unknown): void => {},
+  handle: (_scheme: string, _handler: unknown): void => {},
+}
 // `net.fetch` allows HTTP client modules to load in plain Node under Vitest.
 // Reject by default to prevent network calls; tests must mock requests explicitly.
 export const net = {
@@ -144,6 +163,7 @@ export default {
   BrowserWindow,
   dialog,
   nativeImage,
+  Notification,
   nativeTheme,
   shell,
   safeStorage,

@@ -17,7 +17,6 @@ describe('settings navigation', () => {
     expect(ids).toEqual([
       'chat',
       'fleet',
-      'platform',
       'usage',
       'appearance',
       'tools',
@@ -34,8 +33,6 @@ describe('settings navigation', () => {
   it('translates the new item into English and pt-BR', () => {
     expect(resources.en.ui.settings.nav.chat).toBe('Maestrly Chat')
     expect(resources['pt-BR'].ui.settings.nav.chat).toBe('Maestrly Chat')
-    expect(resources.en.ui.settings.nav.platform).toBe('Platform')
-    expect(resources['pt-BR'].ui.settings.nav.platform).toBe('Plataforma')
     expect(resources.en.ui.settings.nav.fleet).toBe('Bot server')
     expect(resources['pt-BR'].ui.settings.nav.fleet).toBe('Servidor de bots')
   })

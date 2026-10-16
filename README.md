@@ -30,19 +30,6 @@ and tools together as you plan, build, and review.
 
 ![Maestrly desktop with integrated developer tools](docs/images/desktop-chat.png)
 
-The repository is also a modular platform with four independently buildable products:
-
-| Product | Purpose |
-| --- | --- |
-| `apps/desktop` | Existing local-first Electron workspace; platform connection is optional |
-| `apps/web` | Browser board, automations, approvals, executions, runners, and reports |
-| `apps/server` | Versioned API, Better Auth, PostgreSQL persistence, RLS, audit, and durable job claims |
-| `apps/runner` | Headless Node runner with leases, recovery, Codex, and Claude Agent adapters |
-
-Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
-`packages/runner-core`; there is no generic shared package. See
-[self-hosting](docs/self-hosting.md) and [platform security](docs/platform-security.md).
-
 ## Capabilities
 
 - **Standalone chats:** start a conversation from **Chats → New chat** without
@@ -52,7 +39,11 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
   GitHub Copilot, Cursor, Grok, Google AI (Antigravity), and ChatGPT Web
   integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,
-  review loops, permissions, and usage accounting.
+  permissions, and usage accounting.
+- **Code and plan reviews:** an independent, read-only review of a
+  conversation's changes or pending plan, with findings you decide on together
+  with the conversation's model. See
+  [code and plan reviews](docs/chat-context.md#code-and-plan-reviews).
 - **Workspaces:** conversations on the current branch or isolated Git worktrees,
   with project context and migration recovery.
 - **Developer tools:** native terminals, an embedded editor and browser,
@@ -63,7 +54,10 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
 - **Plugins:** install Codex, Claude Code, and Agent Plugins plugins from Git;
-  their skills and MCP tools work with every model. See [Plugins](docs/plugins.md).
+  their skills, MCP tools, agents, and hooks work with every model. See [Plugins](docs/plugins.md).
+- **Mobile app:** follow and direct your bots, and the chats and workspaces of
+  your bot server, from iOS or Android, with notifications when they need you.
+  See [mobile app](docs/mobile.md).
 
 ## Download
 
@@ -88,8 +82,6 @@ cd maestrly-app
 npm ci
 npm run dev
 ```
-
-Platform entry points: `npm run dev:web`, `npm run dev:server`, and `npm run dev:runner`.
 
 Development runs in a separate profile. Back up application data and project
 repositories separately; see [Local data and recovery](docs/local-data.md).
@@ -127,17 +119,10 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Context usage and compaction](docs/chat-context.md)
 - [Plugins](docs/plugins.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
-- [Changelog](CHANGELOG.md)
-
-- [Self-hosting](docs/self-hosting.md)
-- [Kanban workflows](docs/kanban-workflows.md)
-- [Personal devices](docs/personal-devices.md)
-- [Runner operations](docs/runner-operations.md)
-- [Platform protocol](docs/platform-protocol.md)
-- [Platform security](docs/platform-security.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
+- [Mobile app](docs/mobile.md)
 - [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
-- [Backup and restore](docs/backup-restore.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

@@ -3,7 +3,6 @@ import {
   AppWindow,
   BarChart3,
   Bot,
-  Cloud,
   Download,
   MessagesSquare,
   Palette,
@@ -14,7 +13,6 @@ import {
 
 export type SettingsSection =
   | 'chat'
-  | 'platform'
   | 'fleet'
   | 'usage'
   | 'appearance'
@@ -27,7 +25,6 @@ export type SettingsSection =
 export const SETTINGS_NAV: { id: SettingsSection; icon: ReactNode; labelKey: string }[] = [
   { id: 'chat', icon: <MessagesSquare className="size-4" />, labelKey: 'settings.nav.chat' },
   { id: 'fleet', icon: <Bot className="size-4" />, labelKey: 'settings.nav.fleet' },
-  { id: 'platform', icon: <Cloud className="size-4" />, labelKey: 'settings.nav.platform' },
   { id: 'usage', icon: <BarChart3 className="size-4" />, labelKey: 'settings.nav.usage' },
   { id: 'appearance', icon: <Palette className="size-4" />, labelKey: 'settings.nav.appearance' },
   { id: 'tools', icon: <PanelRight className="size-4" />, labelKey: 'settings.nav.tools' },

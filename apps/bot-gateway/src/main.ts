@@ -8,6 +8,7 @@ import { Auth } from './auth.js'
 import { loadConfig } from './config.js'
 import { DockerEngineDriver } from './docker.js'
 import { EventHub } from './events.js'
+import { findGatewayContainer } from './gateway-container.js'
 import { getGatewayVersion, HostMonitor } from './host.js'
 import { Lifecycle } from './lifecycle.js'
 import { Logger } from './logger.js'
@@ -43,7 +44,13 @@ export async function run(
     if (argv[1] === 'list') {
       for (const device of store.listDevices())
         write(
-          [device.id, device.name, device.revokedAt ? 'revoked' : 'active', device.lastSeenAt ?? 'never'].join('\t')
+          [
+            device.id,
+            device.name,
+            device.kind ? `${device.kind} (${device.platform ?? 'unknown'})` : 'unknown',
+            device.revokedAt ? 'revoked' : 'active',
+            device.lastSeenAt ?? 'never',
+          ].join('\t')
         )
       store.close()
       return 0
@@ -75,6 +82,11 @@ export async function run(
     await check('Bot image', async () => {
       if (!(await docker.imageInspect(config.botImage))) throw new Error('Image missing')
     })
+    // Workspaces environments run on networks of their own, which the gateway's container joins.
+    await check('Gateway container on the fleet network', async () => {
+      if (!(await findGatewayContainer(docker, config.network, config.gatewayContainer)))
+        throw new Error('Gateway container not found')
+    })
     store.close()
     return failures ? 1 : 0
   }
@@ -86,7 +98,7 @@ export async function run(
     events.emit({ type: 'host.updated', at: new Date().toISOString(), host: value })
   })
   lifecycle.onEvent = (event) => events.emit(event)
-  const network = new FleetNetwork(docker, config.network)
+  const network = new FleetNetwork(docker, config.network, () => lifecycle.isolatedNetworks())
   const artifacts = new ArtifactHosting({
     store,
     config,

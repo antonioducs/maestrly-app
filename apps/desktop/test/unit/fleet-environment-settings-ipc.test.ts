@@ -46,6 +46,12 @@ describe('environment settings IPC', () => {
     expect(h.fleet.call).toHaveBeenCalledWith('settingsPreferences', { params: { eid: 'empty-env' } })
     h.fleet.call.mockResolvedValue({ revision, imageGenEnabled: true, secret: 'must-not-cross' })
     await expect(h.call('preferences', 'empty-env')).rejects.toThrow()
+    h.fleet.call.mockResolvedValue({ revision, imageGenEnabled: true, generatedInterfacesEnabled: false })
+    await expect(h.call('preferences', 'empty-env')).resolves.toEqual({
+      revision,
+      imageGenEnabled: true,
+      generatedInterfacesEnabled: false,
+    })
   })
   it('guards mutations and rejects unknown fields before calling the gateway', async () => {
     const h = setup()

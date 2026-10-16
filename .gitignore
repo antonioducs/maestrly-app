@@ -3,9 +3,6 @@ out/
 dist/
 apps/desktop/out/
 apps/desktop/dist/
-apps/web/dist/
-apps/server/dist/
-apps/runner/dist/
 packages/*/dist/
 packages/artifact-host/build/
 packages/artifact-host/src/generated/
@@ -32,3 +29,12 @@ apps/desktop/resources/github-copilot/
 *.cer
 *.certSigningRequest
 *.mobileprovision
+apps/mobile/.expo/
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/web-build/
+apps/mobile/web-dist/
+*.jks
+*.keystore
+google-services.json
+GoogleService-Info.plist

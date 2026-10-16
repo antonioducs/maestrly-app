@@ -41,8 +41,23 @@ const h = vi.hoisted(() => {
   }
   const clipboardState = { text: '' }
   const browserListeners = { state: new Set<(convId: string) => void>(), popups: new Set<(convId: string) => void>() }
-  const views = { page: null as null | { webContents: FakeWebContents }, popups: [] as unknown[] }
+  const views = {
+    page: null as null | { webContents: FakeWebContents; getBounds(): Rect },
+    popups: [] as unknown[],
+  }
+  type Rect = { x: number; y: number; width: number; height: number }
+  /** The window that holds the browser on the host's display, and the page's place in it. */
+  const host = {
+    content: { x: 0, y: 0, width: 800, height: 600 } as Rect,
+    page: { x: 0, y: 0, width: 800, height: 600 } as Rect,
+    window: { isDestroyed: () => false, getContentBounds: () => host.content },
+  }
+  const computers = {
+    value: null as null | { leaseTile: ReturnType<typeof vi.fn> },
+  }
   return {
+    host,
+    computers,
     FakeWebContents,
     clipboardState,
     browserListeners,
@@ -97,11 +112,15 @@ vi.mock('../../src/main/drawer/browser', () => ({
 }))
 vi.mock('../../src/main/drawer/browser-stream-page', () => h.page)
 vi.mock('../../src/main/drawer/stream-window', () => ({
+  browserHostWindow: () => h.host.window,
   onStreamWindowClosed: vi.fn(),
   presentBrowserForStream: h.present,
   releaseBrowserStream: h.release,
 }))
+vi.mock('../../src/main/remote-host/server/computers-registry', () => ({ serverComputers: () => h.computers.value }))
 
+import { fleetEnvironmentTile } from '@maestrly/bot-fleet-protocol'
+import { setConversationTile } from '../../src/main/conversation-screen'
 import {
   STREAM_RELEASE_GRACE_MS,
   acknowledgeBrowserFrame,
@@ -110,6 +129,8 @@ import {
   inputBrowserStream,
   pasteBrowserStream,
   resetBrowserStreamsForTest,
+  resizeBrowserStream,
+  setBrowserStreamTransport,
   startBrowserStream,
   stopBrowserStream,
 } from '../../src/main/drawer/browser-stream'
@@ -155,7 +176,7 @@ let tab: WebContents
 
 beforeEach(() => {
   tab = new h.FakeWebContents()
-  h.views.page = { webContents: tab }
+  h.views.page = { webContents: tab, getBounds: () => h.host.page }
   h.views.popups = []
   h.serverMode.value = true
   h.clipboardState.text = ''
@@ -163,6 +184,8 @@ beforeEach(() => {
 
 afterEach(() => {
   resetBrowserStreamsForTest()
+  h.computers.value = null
+  for (const convId of ['conv-1', 'conv-2']) setConversationTile(convId, null)
   h.remoteSenders.clear()
   vi.clearAllMocks()
   vi.useRealTimers()
@@ -422,5 +445,128 @@ describe('remote browser stream', () => {
     sender.gone()
     vi.advanceTimersByTime(STREAM_RELEASE_GRACE_MS)
     expect(h.release).toHaveBeenCalledWith('conv-1')
+  })
+})
+
+describe('remote browser stream over video', () => {
+  const tile = fleetEnvironmentTile(1)
+  /** A host with computers whose pool has a tile for the conversation, or none when `free` is false. */
+  function computers(free = true) {
+    const release = vi.fn((convId: string) => setConversationTile(convId, null))
+    const leaseTile = vi.fn((convId: string) => {
+      if (!free) return null
+      // As the host's placement does: the browser's window moves to the tile.
+      setConversationTile(convId, tile)
+      return { tile, release: () => release(convId) }
+    })
+    h.computers.value = { leaseTile }
+    return { leaseTile, release }
+  }
+  /** The browser's window at the tile's top left, its page filling it. */
+  function inTile(width: number, height: number, top = 0) {
+    h.host.content = { x: tile.x, y: tile.y, width, height: height + top }
+    h.host.page = { x: 0, y: top, width, height }
+  }
+  async function startVideo(sender = viewer(), options: unknown = { video: true }) {
+    const answer = startBrowserStream(sender, 'conv-1', 900, 640, options)
+    await settle()
+    return { sender, ...answer }
+  }
+
+  it('streams no frames and tells the window where the page is in its tile', async () => {
+    const pool = computers()
+    inTile(900, 640)
+    const { sender, streamId, transport } = await startVideo()
+    expect(transport).toBe('video')
+    expect(pool.leaseTile).toHaveBeenCalledWith('conv-1')
+    expect(tab.debugger.sent('Page.startScreencast')).toEqual([])
+    expect(tab.invalidate).toHaveBeenCalled()
+    expect(sender.events('drawer:browser-stream-area')).toEqual([
+      { convId: 'conv-1', streamId, area: { x: 0, y: 0, width: 900, height: 640 } },
+    ])
+    // A resize moves the page; its place goes to the window once.
+    inTile(700, 500)
+    resizeBrowserStream(sender, 'conv-1', streamId, 700, 500)
+    resizeBrowserStream(sender, 'conv-1', streamId, 700, 500)
+    expect(sender.events('drawer:browser-stream-area').map((event) => (event as { area: unknown }).area)).toEqual([
+      { x: 0, y: 0, width: 900, height: 640 },
+      { x: 0, y: 0, width: 700, height: 500 },
+    ])
+    expect(tab.debugger.sent('Page.startScreencast')).toEqual([])
+  })
+
+  it("follows the computer's window: the page under its address bar, and a sign-in window above it", async () => {
+    computers()
+    // The computer's desktop presents the browser at its own size, its address bar above the page.
+    inTile(1120, 600, 40)
+    const { sender } = await startVideo()
+    expect(sender.events('drawer:browser-stream-area').at(-1)).toMatchObject({
+      area: { x: 0, y: 40, width: 1120, height: 600 },
+    })
+    const popupContents = new h.FakeWebContents()
+    const popup = {
+      isDestroyed: () => false,
+      webContents: popupContents,
+      close: vi.fn(),
+      getContentBounds: () => ({ x: tile.x + 200, y: tile.y + 100, width: 500, height: 600 }),
+    }
+    h.views.popups = [popup]
+    for (const listener of h.browserListeners.popups) listener('conv-1')
+    await settle()
+    expect(sender.events('drawer:browser-stream-area').at(-1)).toMatchObject({
+      area: { x: 200, y: 100, width: 500, height: 600 },
+    })
+  })
+
+  it('streams frames without a free tile, to a window that does not play video, and when the window asks', async () => {
+    computers(false)
+    expect((await startVideo()).transport).toBe('jpeg')
+    expect(tab.debugger.sent('Page.startScreencast')).toHaveLength(1)
+    resetBrowserStreamsForTest()
+
+    const pool = computers()
+    const plain = await startVideo(viewer(), null)
+    expect(plain.transport).toBe('jpeg')
+    expect(pool.leaseTile).not.toHaveBeenCalled()
+    resetBrowserStreamsForTest()
+
+    inTile(900, 640)
+    const { sender, streamId } = await startVideo()
+    const before = tab.debugger.sent('Page.startScreencast').length
+    setBrowserStreamTransport(sender, 'conv-1', streamId, 'video')
+    await settle()
+    expect(tab.debugger.sent('Page.startScreencast')).toHaveLength(before)
+    setBrowserStreamTransport(sender, 'conv-1', streamId, 'jpeg')
+    await settle()
+    expect(pool.release).toHaveBeenCalledTimes(1)
+    expect(tab.debugger.sent('Page.startScreencast')).toHaveLength(before + 1)
+    // Once on frames, the stream tells the window nothing more about the tile.
+    const areas = sender.events('drawer:browser-stream-area').length
+    resizeBrowserStream(sender, 'conv-1', streamId, 700, 500)
+    expect(sender.events('drawer:browser-stream-area')).toHaveLength(areas)
+  })
+
+  it('keeps the tile through the grace after the viewer leaves, and gives it to a viewer that takes over', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const pool = computers()
+    inTile(900, 640)
+    const first = await startVideo()
+    stopBrowserStream(first.sender, 'conv-1', first.streamId)
+    vi.advanceTimersByTime(STREAM_RELEASE_GRACE_MS - 1)
+    expect(pool.release).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(pool.release).toHaveBeenCalledTimes(1)
+
+    // Another device that plays video takes the tile over; one that does not gives it back at once.
+    const second = await startVideo()
+    expect(pool.leaseTile).toHaveBeenCalledTimes(2)
+    const third = await startVideo(viewer())
+    expect(third.transport).toBe('video')
+    expect(pool.leaseTile).toHaveBeenCalledTimes(2)
+    expect(second.sender.events('drawer:browser-stream-ended')).toEqual([
+      { convId: 'conv-1', streamId: second.streamId, reason: 'taken-over' },
+    ])
+    await startVideo(viewer(), {})
+    expect(pool.release).toHaveBeenCalledTimes(2)
   })
 })

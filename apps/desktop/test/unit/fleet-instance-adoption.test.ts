@@ -318,7 +318,7 @@ describe('legacy single-bot adoption', () => {
         startBot,
         stopBot: vi.fn(async () => {}),
         redecorate: vi.fn(async () => {}),
-        acquireVnc: vi.fn(async () => ({ port: 5903, release: () => {} })),
+        acquireScreen: vi.fn(async () => ({ session: {} as never, release: () => {} })),
         dispose: vi.fn(async () => {}),
       },
       floatBrowser: vi.fn(),

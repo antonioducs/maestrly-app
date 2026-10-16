@@ -16,13 +16,15 @@ import {
 } from './stream-subscribers'
 
 export { subscribeChatStream, unsubscribeChatStream } from './stream-subscribers'
-import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
+import { remoteChatPolicy } from './remote-policy'
 import {
   clearHumanTurnOrigin,
   isHumanTurnAdmission,
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
+import { clearLinkedTurnOrigin, recordLinkedTurnOrigin } from './conversation-link-authorization'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
+import type { ConversationPeerMessageKind, ConversationTurnResultStatus } from '../../shared/conversation-link'
 import {
   assertBotTurnAdmission,
   botBlocksManualSend,
@@ -233,11 +235,24 @@ import { redactClaudeCredentials } from './claude-agent-sdk/errors'
 import { redactTokens } from '../pii-scrub'
 import {
   getCompanionConversationContext,
-  getCompanionConversationRevision,
   readCompanionConversation,
   searchCompanionConversation,
 } from './chatgpt-web/conversation-context'
 import { buildAgentMentionParts, type StructuredAgentMentionDraft } from '../../shared/chat-agent-mentions'
+import {
+  parseReviewerPreference,
+  parseReviewModelChoice,
+  type ChatReviewReport,
+  type ReviewerPreference,
+  type ReviewJobInfo,
+  type ReviewModelChoice,
+  type ReviewModelInfo,
+  type ReviewReviewerOptions,
+} from '../../shared/review'
+import { executeSubagent } from './subagent-executor'
+import { resolveParentSubagentExecutionProfile } from './subagent-execution-profile'
+import { createReviewService, REVIEWER_AGENT, type ReviewService, type ReviewSpend } from './review/service'
+import { reviewReportMarkdown, reviewReportPart } from './review/report'
 import { listEffectiveAgents } from './virtual-subagents'
 import {
   chatHistoryStats,
@@ -255,6 +270,7 @@ import {
   hasConversationContextMessages,
   listExecutionContextMessages,
   listPublicChatMessagesPage,
+  listUndeliveredReviewReports,
   recordChatUsageAttempt,
   reconcileInterruptedExecutionMessages,
   searchChatMessages,
@@ -291,6 +307,15 @@ import { releaseTurnDelegationRuntimes } from './subagent-resume'
 import { registerPerformanceCache } from '../performance/metrics'
 import { builtinToolNamesForMode } from './tools'
 import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled, imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
+import { GENERATED_INTERFACES_FLAG, generatedInterfacesEnabled } from './generated-interfaces'
+import {
+  clearWebSearchKey,
+  getWebSearchProvider,
+  setWebSearchKey,
+  setWebSearchProvider,
+  webSearchKeysPresent,
+} from './web-search/settings'
+import { isWebSearchKeyProvider, isWebSearchProvider } from '../../shared/web-search'
 import { supportsChatToolImages } from './tool-capabilities'
 import {
   getAppFlag,
@@ -299,7 +324,6 @@ import {
   getConvUiPrefs,
   getHiddenChatModels,
   getLocale,
-  listAllConversations,
   patchConvUiPrefs,
   setAppFlag,
   setAppSetting,
@@ -392,15 +416,11 @@ import type {
   CodexSubscriptionAuthStatus,
   ChatExecutionScope,
   FrozenChatSelection,
+  FrozenFailoverAccount,
   InternalTurnHandle,
   InternalTurnOutcome,
   McpServerInfo,
   MessagePart,
-  ReviewLoopInfo,
-  ReviewLoopRole,
-  ReviewLoopSource,
-  ReviewLoopTurnPolicy,
-  StartPairedReviewLoopInput,
   SubagentSessionSummary,
 } from '../../shared/chat'
 import type { ConversationStatus } from '../store'
@@ -429,13 +449,7 @@ import {
   reconcileInterruptedMaestroLiveRuns,
 } from './maestro-live-store'
 import { canReplayOpenAIInferenceState, getOpenAIInferenceState } from './openai/inference-store'
-import { canonicalCwd, tryAcquireCwdActivity, tryAcquireLongCwdLease } from '../cwd-activity-coordinator'
-import {
-  createConversationReviewLoopCoordinator,
-  type ConversationReviewLoopCoordinator,
-} from './review-loop/conversation-driver'
-import { lookupReviewLoopByConversation, releaseReviewLoop, reserveReviewLoop } from './review-loop/registry'
-import type { ReviewerToolRuntime } from './tools/util'
+import { tryAcquireCwdActivity } from '../cwd-activity-coordinator'
 import {
   estimateNativeSeedContextTokens,
   estimatePortableContextTokens,
@@ -446,6 +460,7 @@ import {
   summarizePortableTranscript,
   type PortableSummaryProgress,
   type PortableSummaryCheckpoint,
+  type PortableSummaryResult,
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { getCompactionSummarizer } from './compaction-summarizer'
@@ -485,7 +500,7 @@ import {
   ChatBackgroundCompactionCoordinator,
   parseBackgroundCompactionConfig,
 } from './background-compaction'
-import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
+import type { BackgroundCompactionAttemptHandle, BackgroundCompactionCandidate } from './background-compaction/types'
 import {
   hasHookEvent,
   hookContextPart,
@@ -656,10 +671,10 @@ interface ActiveRun {
   allowAntigravityPersistence: boolean
   done: Promise<void>
   settleDone: () => void
-  /** Structured terminal outcome (internal automated turn API, e.g. review loop). Resolves ONCE. */
+  /** Structured terminal outcome (internal automated turn API). Resolves ONCE. */
   outcome: Promise<InternalTurnOutcome>
   settleOutcome: (outcome: InternalTurnOutcome) => void
-  /** Host-owned inbox for the Maestro turn; absent in Standard/review-loop. */
+  /** Host-owned inbox for the Maestro turn; absent in Standard and internal turns. */
   maestroLive?: MaestroLiveRunPort
   activeHarnessProfile: import('../../shared/chat').ChatActiveHarnessProfile | null
   midTurnSteering: boolean
@@ -860,7 +875,7 @@ let questionBroker: QuestionBroker | null = null
 let chatDisposePromise: Promise<void> | null = null
 
 /**
- * Internal review-loop turns (executionId → record): handle cancellation must abort the
+ * Internal isolated turns (executionId → record): handle cancellation must abort the
  * run EVEN before admission (cancelRequested), independently of `active` (prevents races).
  */
 interface InternalTurnEntry {
@@ -1250,7 +1265,6 @@ function chatGptWebStatusPayload(): ChatGptWebStatus & { enabled: boolean } {
 
 let chatGptWebUnsubscribe: (() => void) | null = null
 let subagentSessionUnsubscribe: (() => void) | null = null
-let pairedReviewLoopCoordinator: ConversationReviewLoopCoordinator | null = null
 
 /** Whether a profile event would reach anyone: this app's main window, or the main renderer of a connected computer. */
 function hasMainRenderer(): boolean {
@@ -1259,7 +1273,7 @@ function hasMainRenderer(): boolean {
 }
 
 /**
- * Profile events the main window shows (accounts, review loops, chat settings): this app's window and, on a host,
+ * Profile events the main window shows (accounts, reviews, chat settings): this app's window and, on a host,
  * the main renderer of every connected computer.
  */
 function sendToMainRenderers(channel: string, ...args: unknown[]): void {
@@ -1277,50 +1291,6 @@ function sendToMainRenderers(channel: string, ...args: unknown[]): void {
 function broadcastChatGptWebStatus(): void {
   if (!hasMainRenderer()) return
   sendToMainRenderers('chat:chatgpt-web:changed', chatGptWebStatusPayload())
-  sendToMainRenderers('chat:review-loop:changed', neutralReviewLoopSnapshots())
-}
-
-function webReviewLoopSnapshots(): ReviewLoopInfo[] {
-  const snapshots: ReviewLoopInfo[] = []
-  for (const session of chatGptWeb.status().sessions) {
-    const loop = session.reviewLoop
-    if (!loop) continue
-    const conversation = getConversation(session.conversationId)
-    snapshots.push({
-      loopId: loop.loopId,
-      driver: 'chatgpt-web',
-      status: loop.status,
-      iteration: loop.iteration,
-      maxIterations: loop.maxIterations,
-      participants: {
-        executor: {
-          conversationId: session.conversationId,
-          name: conversation?.name ?? 'Executor',
-          modelId: loop.modelId ?? '',
-          ...(loop.reasoning ? { reasoning: loop.reasoning } : {}),
-          fastMode: loop.fastMode === true,
-        },
-      },
-      startedAt: loop.startedAt,
-      ...(loop.jobStartedAt ? { jobStartedAt: loop.jobStartedAt } : {}),
-      ...(loop.finishReason ? { finishReason: loop.finishReason } : {}),
-    })
-  }
-  return snapshots
-}
-
-function neutralReviewLoopSnapshots(): ReviewLoopInfo[] {
-  return [...(pairedReviewLoopCoordinator?.statuses() ?? []), ...webReviewLoopSnapshots()]
-}
-
-function broadcastReviewLoopStatus(_snapshots?: ReviewLoopInfo[]): void {
-  if (!hasMainRenderer()) return
-  sendToMainRenderers('chat:review-loop:changed', neutralReviewLoopSnapshots())
-}
-
-/** Neutral participant lock, with the legacy manager fallback kept for old Web controller tests/adapters. */
-function reviewLoopLockForConversation(conversationId: string): string | null {
-  return lookupReviewLoopByConversation(conversationId)?.loopId ?? chatGptWeb.reviewLoopLockFor(conversationId)
 }
 
 function broadcastCodexAuth(status: CodexSubscriptionAuthStatus): void {
@@ -2186,6 +2156,8 @@ function buildConfig(): ChatConfig {
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),
     imageGenEnabled: getAppFlag(IMAGE_GEN_FLAG, true),
+    generatedInterfacesEnabled: generatedInterfacesEnabled(),
+    webSearch: { provider: getWebSearchProvider(), keys: webSearchKeysPresent() },
     bashFiltersEnabled: getAppFlag('chat.bashFilters', true),
     openAIHarnessEnabled: getAppFlag('chat.openAIHarness', true),
     astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
@@ -2514,7 +2486,7 @@ function toRequestPayload(req: PermissionRequest): Extract<ChatPermissionEvent, 
       action: req.action,
       title: req.title,
       resources: req.resources,
-      ...(req.save?.length && !remoteChatPolicy(req.conversationId) && !isWebManagedConversation(req.conversationId)
+      ...(req.save?.length && !remoteChatPolicy(req.conversationId)
         ? { allowAlways: true }
         : {}),
     },
@@ -2641,9 +2613,6 @@ export function convertMaestroConversationToStandard(conversationId: string): Ma
   const conversation = getConversation(conversationId)
   if (!conversation) return { ok: false, error: 'invalid-conversation' }
   if (conversation.experience !== 'maestro') return { ok: false, error: 'not-maestro' }
-  if (reviewLoopLockForConversation(conversationId)) {
-    return { ok: false, error: 'conversation-reserved' }
-  }
   if (incompleteMigrationForConversation(conversationId)) {
     return { ok: false, error: 'conversation-migrating' }
   }
@@ -2668,9 +2637,6 @@ export function convertStandardConversationToMaestro(conversationId: string): St
   const conversation = getConversation(conversationId)
   if (!conversation) return { ok: false, error: 'invalid-conversation' }
   if (conversation.experience !== 'standard') return { ok: false, error: 'not-standard' }
-  if (reviewLoopLockForConversation(conversationId)) {
-    return { ok: false, error: 'conversation-reserved' }
-  }
   if (incompleteMigrationForConversation(conversationId)) {
     return { ok: false, error: 'conversation-migrating' }
   }
@@ -2801,14 +2767,22 @@ export function getChatPermissionBroker(): PermissionBroker {
 export function getChatQuestionBroker(): QuestionBroker {
   if (!questionBroker) {
     questionBroker = new QuestionBroker()
+    // Questions asked from inside a tool other than ask_question have no card of their own: publish the list.
+    const publishPending = (conversationId: string) =>
+      active.get(conversationId)?.send(`chat:delta:${conversationId}`, {
+        kind: 'questions-pending',
+        questions: questionBroker!.pendingQuestionsFor(conversationId),
+      } satisfies ChatStreamEvent)
     questionBroker.on('asked', ({ conversationId }: { conversationId: string }) => {
       if (active.has(conversationId)) savedDeps?.emitStatus(conversationId, 'asking')
+      publishPending(conversationId)
     })
     questionBroker.on('answered', ({ conversationId }: { conversationId: string }) => {
       // Return to 'working' only when NO other question is pending in this conversation.
       if (active.has(conversationId) && questionBroker!.pendingFor(conversationId).length === 0) {
         savedDeps?.emitStatus(conversationId, 'working')
       }
+      publishPending(conversationId)
     })
   }
   return questionBroker
@@ -3388,7 +3362,7 @@ async function preflightContext(
   return { ok: true, compacted: true }
 }
 
-/** ISOLATED review-loop preflight: frozen model window + pending + harness reserve
+/** ISOLATED internal-turn preflight: frozen model window + pending + harness reserve
  * (execution history starts empty). Never compacts or inspects/retires the conversation binding. */
 async function preflightIsolatedContext(
   conversationId: string,
@@ -3679,23 +3653,20 @@ interface StartSendOpts {
 
   /** Marks the user message internal (sent to the model, but the renderer does NOT draw a bubble). */
   internal?: boolean
-  /** Extra HIDDEN parts (e.g. review-loop findings) — sent to the model, not rendered. */
+  /** Extra HIDDEN parts (e.g. a code review report) — sent to the model, not rendered. */
   hiddenParts?: MessagePart[]
   /** Reservation already acquired by a compound operation (e.g. resend/server-side selection). */
   operation?: PendingConversationOperation
-  /** Internal REVIEW LOOP turn: frozen selection + conversation lock + handle created at admission. */
+  /**
+   * Internal isolated turn (ChatGPT Web project-environment job): frozen selection + conversation lock + handle
+   * created at admission. `loopId` is the owning job id.
+   */
   internalLoop?: {
     executionId: string
     loopId: string
     iteration: number
     maxIterations: number
-    role: ReviewLoopRole
-    turnPolicy: ReviewLoopTurnPolicy
-    source: ReviewLoopSource
     cwdActivityOwner?: string
-    reviewerRuntime?: ReviewerToolRuntime
-    executorConversationId?: string
-    reviewerConversationId?: string
     selectionOverride: FrozenChatSelection
     /** Execution-isolated context (does not use/compose the main transcript). */
     contextPolicy: 'isolated'
@@ -3708,7 +3679,21 @@ interface StartSendOpts {
   /** Review-turn callback; releases the reservation if no v2 is accepted. */
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
-  dispatchSeed?: { dispatchId: string; sourceConversationId: string }
+  dispatchSeed?: { dispatchId: string; sourceConversationId: string; reportBack?: boolean }
+  /**
+   * Message, report or result sent by the agent of another conversation: a visible, attributed bubble that starts a
+   * linked (never human) turn. Framing for the model travels in hiddenParts.
+   */
+  peerMessage?: {
+    messageId: string
+    fromConversationId: string
+    fromConversationName: string
+    kind: ConversationPeerMessageKind
+    hop: number
+    reportBack: boolean
+  }
+  /** Structured outcome of this admitted turn, on every terminal path. Not called when admission fails. */
+  onOutcome?: (outcome: InternalTurnOutcome) => void
   /** How many turns in a row plugin Stop hooks already kept going (this turn is one of them when above zero). */
   stopHookContinuations?: number
 }
@@ -3750,8 +3735,6 @@ async function startSend(
   // COMPANION AUTOMATION LOCK (central guard): while review/bootstrap is active, only its owning internal turn
   // passes. Covers chat:send, resend, plans, and server-side starts — all enter here.
   if (opts?.runnerSignal?.aborted) return { ok: false, error: 'cancelled' }
-  if (isWebManagedConversation(conversationId) && !opts?.remoteAdmission)
-    return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
   if (opts?.botAdmission) {
     try {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
@@ -3765,25 +3748,23 @@ async function startSend(
   if (autonomousPolicy(conversationId) && !opts?.runnerAdmission && !opts?.internal)
     return { ok: false, error: 'executor-active' }
   const internalLoop = opts?.internalLoop
-  const internalTurnMode = internalLoop?.turnPolicy === 'reviewer-readonly' ? ('ask' as const) : ('agent' as const)
-  const turnBehavior: ChatBehavior = internalLoop ? internalTurnMode : behaviorFor(conversationId)
+  const turnBehavior: ChatBehavior = internalLoop ? 'agent' : behaviorFor(conversationId)
   const maestroTurn = turnBehavior === 'maestro' ? freezeMaestroTurn(conversationId) : undefined
-  const reviewLoopLock = reviewLoopLockForConversation(conversationId)
   const environmentLock = chatGptWeb.projectEnvironmentLockFor(conversationId)
-  if (reviewLoopLock) {
-    if (!internalLoop || internalLoop.loopId !== reviewLoopLock) return { ok: false, error: 'review-loop-active' }
-  } else if (environmentLock) {
+  if (environmentLock) {
     if (!internalLoop || internalLoop.loopId !== environmentLock) {
       return { ok: false, error: 'project-environment-active' }
     }
   } else if (internalLoop) {
-    // The loop owning this internal turn was cancelled/ended before admission.
-    return { ok: false, error: 'review-loop-inactive' }
+    // The job owning this internal turn was cancelled/ended before admission.
+    return { ok: false, error: 'internal-turn-inactive' }
   }
+  // A review (or a check of the fixes it asked for) holds the conversation until it is handed off or ends.
+  if (reviewService?.lockFor(conversationId)) return { ok: false, error: 'review-active' }
 
   // Resolve provider/model. BYOK requires a key; the built-in provider requires a valid ChatGPT session in the
   // official runtime. If no model is chosen, both auto-select the default/first and persist it in the conversation.
-  // Internal review-loop turn: FROZEN selection, without auto-selection or persistence (no fallback).
+  // Internal isolated turn: FROZEN selection, without auto-selection or persistence (no fallback).
   let selection = internalLoop
     ? { providerId: internalLoop.selectionOverride.providerId, modelId: internalLoop.selectionOverride.modelId }
     : opts?.botAdmission
@@ -3811,10 +3792,12 @@ async function startSend(
   let githubCopilotModelAtAdmission: GitHubCopilotModelInfo | undefined
   let claudeIdentityAtAdmission: ClaudeSubscriptionAccountIdentity | undefined
   let claudeModelAtAdmission: ClaudeModelInfo | undefined
+  // A loop round runs on the fallback route frozen with its profile (its own account when it had none). It never
+  // reads the live route: a route edited mid-loop must not add accounts the loop did not start with.
+  const loopFailoverChain = internalLoop ? frozenFailoverChain(internalLoop.selectionOverride) : null
+  const loopRouted = (loopFailoverChain?.length ?? 0) > 1
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? internalLoop
-      ? [selection.providerId]
-      : freezeFailoverChain(selection.providerId)
+    ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
     : []
   const claudeRequestedEffort =
     internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning
@@ -3899,7 +3882,7 @@ async function startSend(
       )
         return { ok: false, error: 'busy' }
       // With a failover chain, the logical account may be unavailable; resolveCodexRuntimeTarget decides.
-      const earlyChain = freezeFailoverChain(selection.providerId)
+      const earlyChain = loopFailoverChain ?? freezeFailoverChain(selection.providerId)
       if (!status.authenticated && earlyChain.length <= 1) return { ok: false, error: 'no-key' }
     } else if (useGitHubCopilot) {
       if (!selectionAccountId && (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)) {
@@ -4190,11 +4173,17 @@ async function startSend(
 
     // Freeze all runtime-selection inputs for this admission. Revalidation may change only the physical
     // account selected from this chain; it must not observe a concurrent model/effort preference change.
-    const codexFastMode = useCodexSubscription && getConvUiPrefs(conversationId).chat?.fastMode === true
+    const codexFastMode =
+      useCodexSubscription &&
+      (internalLoop
+        ? internalLoop.selectionOverride.fastMode === true
+        : getConvUiPrefs(conversationId).chat?.fastMode === true)
     const codexRequestedEffort = useCodexSubscription
       ? (internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning)
       : undefined
-    const frozenCodexChain = useCodexSubscription ? freezeFailoverChain(selection.providerId) : null
+    const frozenCodexChain = useCodexSubscription
+      ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+      : null
     try {
       parts.push(
         ...(await admitChatAttachments({
@@ -4226,8 +4215,19 @@ async function startSend(
     for (const part of hiddenParts) {
       if (companionPersonalMemory !== 'off' || !isMemoryContextPart(part)) parts.push(part)
     }
+    // A code review the person sent to the agent reaches the model with their message, once, whatever runs it.
+    const reviewDeliveries =
+      !opts?.internal && !internalLoop && !opts?.dispatchSeed && !opts?.peerMessage
+        ? listUndeliveredReviewReports(conversationId)
+        : []
+    for (const message of reviewDeliveries) if (message.review) parts.push(reviewReportPart(message.review))
     const turnMemory =
-      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory || companionPersonalMemory === 'off'
+      opts?.internal ||
+      internalLoop ||
+      opts?.dispatchSeed ||
+      opts?.peerMessage ||
+      opts?.skipMemory ||
+      companionPersonalMemory === 'off'
         ? null
         : await prepareTurnMemory({
             conversationId,
@@ -4247,7 +4247,7 @@ async function startSend(
         signal,
         emit: (event) => hookSend(`chat:delta:${conversationId}`, event),
       })
-    const hookTurn = !internalLoop && hooksActive({ conversationId, mode: turnBehavior, reviewer: false })
+    const hookTurn = !internalLoop && hooksActive({ conversationId, mode: turnBehavior })
     let hookSessionToRecord: string | null = null
     if (hookTurn) {
       const ctx = hookContext(operation.controller.signal)
@@ -4277,7 +4277,7 @@ async function startSend(
     if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
 
-    // Isolated = review-loop with its own context (does not touch main conversation transcript/bindings).
+    // Isolated = internal turn with its own context (does not touch main conversation transcript/bindings).
     const isolated =
       !!internalLoop && internalLoop.contextPolicy === 'isolated' && internalLoop.providerSessionPolicy === 'ephemeral'
     const frozenProfile = internalLoop?.selectionOverride
@@ -4305,33 +4305,19 @@ async function startSend(
             loopId: internalLoop.loopId,
             iteration: internalLoop.iteration,
             maxIterations: internalLoop.maxIterations,
-            role: internalLoop.role,
-            ...(internalLoop.executorConversationId
-              ? { executorConversationId: internalLoop.executorConversationId }
-              : {}),
-            ...(internalLoop.reviewerConversationId
-              ? { reviewerConversationId: internalLoop.reviewerConversationId }
-              : {}),
           }
         : undefined
-    // Findings (user) become internal via opts.internal; the round's assistant bubble is NOT internal
+    // The prompt (user) becomes internal via opts.internal; the round's assistant bubble is NOT internal
     // (UX/audit with source + reviewLoop). messageMeta does not pass internal to the runner.
     const reviewLoopMessageMeta = executionScope
       ? {
-          source: internalLoop!.source,
+          source: 'chatgpt-web-review-loop' as const,
           executionScope,
           reviewLoop: {
             loopId: executionScope.loopId,
             executionId: executionScope.executionId,
             iteration: executionScope.iteration,
             maxIterations: executionScope.maxIterations,
-            ...(executionScope.role ? { role: executionScope.role } : {}),
-            ...(executionScope.executorConversationId
-              ? { executorConversationId: executionScope.executorConversationId }
-              : {}),
-            ...(executionScope.reviewerConversationId
-              ? { reviewerConversationId: executionScope.reviewerConversationId }
-              : {}),
           },
         }
       : undefined
@@ -4552,15 +4538,14 @@ async function startSend(
     }
     if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
 
-    // ADMISSION BARRIER (after preflight): the loop may have been cancelled during authentication,
+    // ADMISSION BARRIER (after preflight): the job may have been cancelled during authentication,
     // model resolution, or compaction. Revalidate the lock AND job signal before persisting
     // the message/admitting the runner — no execution starts after Stop.
     if (internalLoop) {
-      const ownsReview = reviewLoopLockForConversation(conversationId) === internalLoop.loopId
       const ownsEnvironment = chatGptWeb.projectEnvironmentLockFor(conversationId) === internalLoop.loopId
-      if (internalLoop.signal.aborted || (!ownsReview && !ownsEnvironment)) {
+      if (internalLoop.signal.aborted || !ownsEnvironment) {
         releaseCwdActivityOnce()
-        return { ok: false, error: internalLoop.signal.aborted ? 'cancelled' : 'review-loop-inactive' }
+        return { ok: false, error: internalLoop.signal.aborted ? 'cancelled' : 'internal-turn-inactive' }
       }
     }
 
@@ -4570,7 +4555,8 @@ async function startSend(
     // the lease before compacting, lower the validated ceiling monotonically, and admit again. The frozen chain
     // bounds churn; no half-open lease is held while compactReserved/preflightContext runs.
     let admittedCodexTarget: CodexRuntimeTarget | undefined
-    if (useCodexSubscription && !isolated) {
+    // An isolated round has no preflighted window, so its routed admission takes the first eligible target.
+    if (useCodexSubscription && (!isolated || loopRouted)) {
       const maxAdmissionAttempts = Math.max(2, (frozenCodexChain?.length ?? 1) + 1)
       for (let attempt = 0; attempt < maxAdmissionAttempts; attempt += 1) {
         const admissionResolution = await resolveCodexTargetForStart(true)
@@ -4597,11 +4583,17 @@ async function startSend(
       // Failing closed is safer than starting with a target whose context ceiling was never validated.
       if (!admittedCodexTarget) return { ok: false, error: 'unavailable' }
     }
-    if (useCodexSubscription && !isolated && !admittedCodexTarget) {
+    if (useCodexSubscription && (!isolated || loopRouted) && !admittedCodexTarget) {
       throw new Error('Codex runtime target was not resolved before start')
     }
 
-    if (useClaudeSubscription && !isolated) {
+    if (useClaudeSubscription && isolated && loopRouted) {
+      // The isolated preflight never compacts, so there is no window to re-check: admit the first eligible target.
+      const result = await resolveClaudeTargetForStart(true)
+      if (!result.ok) return result
+      claudeIdentityAtAdmission = result.target.accountIdentity
+      claudeModelAtAdmission = result.target.model
+    } else if (useClaudeSubscription && !isolated) {
       let admitted = false
       for (let attempt = 0; attempt < Math.max(2, claudeFailoverChain.length + 1); attempt++) {
         const result = await resolveClaudeTargetForStart(true)
@@ -4720,6 +4712,19 @@ async function startSend(
     }
     internalLoop?.onAdmitted(run)
     opts?.runnerAdmission?.(run)
+    if (opts?.onOutcome) {
+      const onOutcome = opts.onOutcome
+      void run.outcome.then(
+        (outcome) => {
+          try {
+            onOutcome(outcome)
+          } catch {
+            // Observers never alter the turn.
+          }
+        },
+        () => undefined
+      )
+    }
     // The BYOK runner received a preallocated response ID from main; signal early so compaction
     // and mention reads count toward duration too. The Codex adapter still governs its own message.
     if (!useOfficialSubscription) {
@@ -4745,6 +4750,17 @@ async function startSend(
       ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
+      ...(opts?.peerMessage
+        ? {
+            source: 'conversation-message' as const,
+            peer: {
+              messageId: opts.peerMessage.messageId,
+              fromConversationId: opts.peerMessage.fromConversationId,
+              fromConversationName: opts.peerMessage.fromConversationName,
+              kind: opts.peerMessage.kind,
+            },
+          }
+        : {}),
       ...(reviewLoopMessageMeta ?? {}),
       ...(turnMemory?.memoryContext ? { memoryContext: turnMemory.memoryContext } : {}),
       createdAt: Date.now(),
@@ -4756,6 +4772,7 @@ async function startSend(
     if (hookSessionToRecord !== null)
       patchConvUiPrefs(conversationId, { hookSession: { boundary: hookSessionToRecord } })
     operation.pendingMessage = undefined
+    markReviewReportsDelivered(conversationId, reviewDeliveries)
     // Provenance is decided here, at admission, from how the turn entered — never from transcript roles.
     if (isHumanTurnAdmission(opts)) {
       recordHumanTurnOrigin({
@@ -4765,10 +4782,22 @@ async function startSend(
         text: typeof text === 'string' ? text : '',
         signal: controller.signal,
       })
+    } else if (opts?.peerMessage || opts?.dispatchSeed) {
+      // Started by another conversation: it may answer and follow up with linked conversations, within the hop limit.
+      recordLinkedTurnOrigin({
+        token: run,
+        conversationId,
+        messageId: userMessageId,
+        peerConversationId: opts.peerMessage?.fromConversationId ?? opts.dispatchSeed!.sourceConversationId,
+        hop: opts.peerMessage?.hop ?? 1,
+        reportBack: opts.peerMessage?.reportBack ?? opts.dispatchSeed?.reportBack ?? false,
+        signal: controller.signal,
+      })
     }
     if (
       conv.scope === 'standalone' &&
       !opts?.internal &&
+      !opts?.peerMessage &&
       !reviewLoopMessageMeta &&
       nameStandaloneConversationFromText(conversationId, text)
     ) {
@@ -4800,7 +4829,7 @@ async function startSend(
     // pin it here (undefined → default) to honor Settings. Do not pin default 'off'
     // (keeps ui_prefs clean; no runner reasoning has the same effect). User picker overrides always win.
     const dr = defaultReasoningEffort()
-    // Internal review-loop turn: selection (including reasoning) is FROZEN — never pin/persist it here.
+    // Internal isolated turn: selection (including reasoning) is FROZEN — never pin/persist it here.
     if (!internalLoop && dr !== 'off' && getConvUiPrefs(conversationId).chat?.reasoning === undefined) {
       patchConvChat(conversationId, { reasoning: dr })
     }
@@ -4969,7 +4998,8 @@ async function startSend(
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
     let stopHookContinuation: { prompt: string; count: number } | null = null
-    if (useCodexSubscription && isolated) {
+    // A routed loop round takes the admitted-target branch below, which reproduces the frozen axes on each account.
+    if (useCodexSubscription && isolated && !loopRouted) {
       const selectedModelId = selection!.modelId
       const logicalProviderId = selection!.providerId
       turnPromise = (async () => {
@@ -5052,7 +5082,6 @@ async function startSend(
           emit,
           ...backgroundPrefixHook,
           signal: controller.signal,
-          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
           contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
@@ -5153,7 +5182,6 @@ async function startSend(
           emit,
           ...backgroundPrefixHook,
           signal: controller.signal,
-          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
           contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
@@ -5315,7 +5343,6 @@ async function startSend(
           emit,
           ...backgroundPrefixHook,
           signal: controller.signal,
-          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
           contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
@@ -5407,7 +5434,7 @@ async function startSend(
         const promise = runClaudeChat({
           ...(claudeRuntimeTarget ? { initialTarget: claudeRuntimeTarget } : {}),
           failoverChain: claudeFailoverChain,
-          ...(!isolated
+          ...(!isolated || loopRouted
             ? {
                 resolveNextTarget: async (input: { attemptedProviderIds: ReadonlySet<string>; admit?: boolean }) => {
                   const resolved = await resolveClaudeRuntimeTarget({
@@ -5474,7 +5501,6 @@ async function startSend(
           emit,
           ...backgroundPrefixHook,
           signal: controller.signal,
-          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
           contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
@@ -5551,7 +5577,6 @@ async function startSend(
           mode: turnBehavior,
           harness: admittedHarness,
           permMode: permModeFor(conversationId),
-          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           maestro: maestroTurn,
           maestroLive: run.maestroLive,
           fastMode,
@@ -5619,7 +5644,6 @@ async function startSend(
           mode: turnBehavior,
           harness: admittedHarness,
           permMode: permModeFor(conversationId),
-          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           maestro: maestroTurn,
           maestroLive: run.maestroLive,
           reasoningEffort: resolved.reasoningEffort,
@@ -5674,7 +5698,6 @@ async function startSend(
         ...backgroundPrefixHook,
         signal: controller.signal,
         behaviorOverride: turnBehavior,
-        ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
         assistantMessageId,
         assistantCreatedAt,
         responseStartedAt,
@@ -5817,9 +5840,6 @@ async function startSend(
             status: 'success',
             assistantMessageId: run.messageId || null,
             ...(summaryText ? { summaryText } : {}),
-            ...(internalLoop?.reviewerRuntime?.decision?.()
-              ? { reviewDecision: internalLoop.reviewerRuntime.decision()! }
-              : {}),
           })
         }
       })
@@ -5882,6 +5902,7 @@ async function startSend(
         }
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
+        clearLinkedTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
         if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {
           scheduleMemoryExtraction(conversationId)
@@ -5949,6 +5970,7 @@ async function startSend(
   } catch (error) {
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
     if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
+    if (admittedRun) clearLinkedTurnOrigin(conversationId, admittedRun)
     releaseCwdActivityOnce()
     if (admittedRun) {
       admittedRun.maestroLive?.finish(admittedRun.controller.signal.aborted ? 'aborted' : 'error')
@@ -6055,7 +6077,12 @@ export async function runPlanRevision(
 async function waitForConversationSlot(conversationId: string): Promise<void> {
   const run = active.get(conversationId)
   const operation = pendingConversationOperations.get(conversationId)
-  await Promise.all([run?.done ?? Promise.resolve(), operation?.done ?? Promise.resolve()])
+  const review = reviewService?.lockFor(conversationId)
+  await Promise.all([
+    run?.done ?? Promise.resolve(),
+    operation?.done ?? Promise.resolve(),
+    review?.released ?? Promise.resolve(),
+  ])
 }
 
 /** Emits a conversation error when a plan decision turn (implement/revise) could not start. */
@@ -6209,6 +6236,8 @@ export async function stopChat(conversationId: string): Promise<void> {
   // router, or the tunnel and read-only cwd access survive after the conversation disappears.
   await chatGptWeb.endSession(conversationId)
   chatGptWeb.discardPlanReviews(conversationId)
+  // An open review or a running check ends with the conversation; nothing is handed off.
+  await reviewService?.close(conversationId)
 }
 
 /** Runtime barrier: confirms only after `active` and the admission operation exit through the actual finally. */
@@ -6856,7 +6885,7 @@ interface CompactOpts {
   claudeFailoverChain?: readonly string[]
   claudeExecutionAxes?: Pick<ClaudeRuntimeTarget, 'reasoningEffort' | 'fastMode'>
   operation?: PendingConversationOperation
-  /** Mid-turn compaction of an isolated execution (review-loop): reads only the execution transcript. */
+  /** Mid-turn compaction of an isolated execution: reads only the execution transcript. */
   executionId?: string
   /** Frozen profile (never selectionFor/live prefs). */
   selectionOverride?: FrozenChatSelection
@@ -6875,6 +6904,7 @@ interface CompactOpts {
   summaryMaxTokens?: number
   summaryStepTimeoutMs?: number
   summaryRetryDelayMs?: number
+  summaryMaxRetries?: number
   summaryAttemptId?: () => string
   summaryResume?: PortableSummaryCheckpoint
   onSummaryCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
@@ -6965,7 +6995,7 @@ export function startManualCompaction(
   return { ok: true }
 }
 
-/** Exported for isolated compaction frozen-profile tests (review-loop). */
+/** Exported for isolated compaction frozen-profile tests. */
 export async function compactReserved(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
   const previousStatus = opts.operation ? getConversation(conversationId)?.status : undefined
   if (opts.operation) {
@@ -6978,7 +7008,7 @@ export async function compactReserved(conversationId: string, opts: CompactOpts 
       try {
         const profile = resolver()
         if (!profile) return { ok: false, error: 'compaction-model-unavailable' }
-        const resolved = await resolveReviewLoopSelection(conversationId, {
+        const resolved = await resolveFrozenChatSelection(conversationId, {
           providerId: profile.providerId,
           modelId: profile.modelId,
           effort: profile.effort,
@@ -7196,21 +7226,37 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       }
     : selectionFor(conversationId)
   if (!selection?.providerId || !selection.modelId) return { ok: false, error: 'no-model' }
+  // A frozen profile (loop round, background compaction, a bot's compaction model) carries the fallback route its
+  // account had at freeze; the summary rotates across that route like any helper, with the frozen axes.
+  const frozenRouteChain =
+    frozen != null &&
+    (isClaudeSubscriptionProvider(selection.providerId) || isCodexSubscriptionProvider(selection.providerId)) &&
+    frozenFailoverChain(frozen).length > 1
+      ? frozenFailoverChain(frozen)
+      : null
+  const pinnedToFrozenAccount = frozen != null && !frozenRouteChain
   const compactClaudeChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? frozen
-      ? [selection.providerId]
-      : (opts.claudeFailoverChain ?? freezeFailoverChain(selection.providerId))
+    ? (frozenRouteChain ??
+      (frozen ? [selection.providerId] : (opts.claudeFailoverChain ?? freezeFailoverChain(selection.providerId))))
     : []
   let compactResolvedModelId = opts.resolvedModelId ?? frozen?.resolvedModelId
   let compactClaudeTarget: ClaudeRuntimeTarget | undefined
-  if (isClaudeSubscriptionProvider(selection.providerId) && !frozen) {
+  if (isClaudeSubscriptionProvider(selection.providerId) && !pinnedToFrozenAccount) {
     const prefs = getConvUiPrefs(conversationId).chat
     const resolved = await resolveClaudeRuntimeTarget({
       logicalProviderId: selection.providerId,
       modelId: selection.modelId,
       runtimeModelId: compactResolvedModelId,
-      reasoningEffort: opts.claudeExecutionAxes ? opts.claudeExecutionAxes.reasoningEffort : prefs?.reasoning,
-      fastMode: opts.claudeExecutionAxes ? opts.claudeExecutionAxes.fastMode : prefs?.fastMode === true,
+      reasoningEffort: frozen
+        ? frozen.reasoningEffort
+        : opts.claudeExecutionAxes
+          ? opts.claudeExecutionAxes.reasoningEffort
+          : prefs?.reasoning,
+      fastMode: frozen
+        ? frozen.fastMode
+        : opts.claudeExecutionAxes
+          ? opts.claudeExecutionAxes.fastMode
+          : prefs?.fastMode === true,
       chain: compactClaudeChain,
       attemptedProviderIds: new Set(),
       admit: false,
@@ -7260,6 +7306,17 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
   if (opts.persist !== false && !opts.allowActive && activeContext.messages.length < 2) {
     return { ok: false, error: 'too-short' }
   }
+  // Background rounds (historyOverride) and isolated executions never fold a prepared base.
+  const preparedBase = opts.historyOverride || opts.executionId ? null : preparedCompactionBase(conversationId, history)
+  if (preparedBase) {
+    chatDiag({
+      kind: 'compaction-prepared-base',
+      conv: conversationId,
+      coveredTokens: preparedBase.candidate.coveredTokens,
+      deltaEmpty: preparedBase.deltaEmpty,
+      persist: opts.persist !== false,
+    })
+  }
   let observedClaudeUsage: NormalizedAiUsage | undefined
   let observedClaudeCost = 0
   let observedClaudeCostKnown = false
@@ -7277,13 +7334,13 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     const compactAccountId = subscriptionAccountId(selection.providerId)
     // Frozen profile: revalidate identity/availability IMMEDIATELY before any summary
     // call. Account/credential changes during the round ABORT compaction (the turn ends) — never
-    // fall back to live credentials. Same semantics as revalidateReviewLoopSelection between rounds.
+    // fall back to live credentials. Same semantics as revalidateFrozenChatSelection between rounds.
     if (frozen) {
-      const revalidated = await revalidateReviewLoopSelection(frozen)
+      const revalidated = await revalidateFrozenChatSelection(frozen)
       if (!revalidated.ok) return { ok: false, error: revalidated.error }
     }
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(history, {
+    const transcript = renderTranscript(preparedBase?.history ?? history, {
       maxToolOutputChars: Number.POSITIVE_INFINITY,
       includeSkillBodies: true,
     })
@@ -7316,7 +7373,14 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       summarize = (prompt, _phase, stageSignal = compactSignal) =>
         runCodexEphemeralWithFailover({
           logicalProviderId: selection.providerId,
-          ...(frozen ? { chain: [selection.providerId] } : {}),
+          ...(frozenRouteChain
+            ? {
+                chain: frozenRouteChain,
+                ...(frozen?.reasoningEffort ? { reasoningEffort: frozen.reasoningEffort } : {}),
+              }
+            : pinnedToFrozenAccount
+              ? { chain: [selection.providerId] }
+              : {}),
           modelId: selection.modelId,
           signal: stageSignal,
           scope: 'helper',
@@ -7375,7 +7439,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           ...(frozen?.reasoningEffort ? { effort: frozen.reasoningEffort } : {}),
         })
     } else if (isClaudeSubscriptionProvider(selection.providerId)) {
-      if (!frozen) {
+      if (!pinnedToFrozenAccount) {
         const chain = compactClaudeChain
         summarize = (prompt, _phase, stageSignal = compactSignal) =>
           runClaudeEphemeralWithFailover({
@@ -7570,7 +7634,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         const attemptId = opts.summaryAttemptId?.() ?? randomUUID()
         try {
           if (frozen) {
-            const checked = await revalidateReviewLoopSelection(frozen)
+            const checked = await revalidateFrozenChatSelection(frozen)
             if (!checked.ok) throw new Error(checked.error)
           }
           const result = await rawSummarize(prompt, phase, stageSignal)
@@ -7580,7 +7644,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
           })
           if (frozen) {
-            const checked = await revalidateReviewLoopSelection(frozen)
+            const checked = await revalidateFrozenChatSelection(frozen)
             if (!checked.ok) throw new Error(checked.error)
           }
           return result
@@ -7595,15 +7659,18 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         }
       }
     }
-    const compacted = await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
-      signal: compactSignal,
-      onProgress: opts.onProgress,
-      ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
-      ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
-      ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
-      ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
-      ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
-    })
+    const compacted: PortableSummaryResult = preparedBase?.deltaEmpty
+      ? { summary: preparedBase.candidate.summary, calls: 0 }
+      : await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
+          signal: compactSignal,
+          onProgress: opts.onProgress,
+          ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
+          ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
+          ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
+          ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
+          ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
+          ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
+        })
     const summary = compacted.summary
     const usage = compacted.usage
     completedUsage = usage
@@ -7712,7 +7779,39 @@ function publishBackgroundCompactionStatus(conversationId: string, state: Backgr
   else emitChatHost(conversationId, channel, event)
 }
 
+/** Snapshot-only identity of a route account: null when signed out or not yet read. */
+function routeAccountIdentitySnapshot(providerId: string): { fingerprint: string; epoch?: number } | null {
+  const account = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = getCodexSubscriptionManager(account).getStatusSnapshot()
+    if (!status?.authenticated) return null
+    return {
+      fingerprint: codexAccountFingerprint(toCodexAuthStatus(status, account)),
+      ...(account ? {} : { epoch: codexAccountUpdateEpoch }),
+    }
+  }
+  const status = getClaudeSubscriptionManager(account).getStatusSnapshot()
+  return status?.authenticated && status.accountFingerprint
+    ? { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+    : null
+}
+
 function backgroundIdentityCurrent(frozen: FrozenChatSelection): boolean {
+  if (frozen.failoverRoute && frozen.failoverRoute.length > 1) {
+    try {
+      // Same rule as revalidation: any re-logged account invalidates the selection, signed-out ones are skipped.
+      let usable = false
+      for (const account of frozen.failoverRoute) {
+        const live = routeAccountIdentitySnapshot(account.providerId)
+        if (!live) continue
+        if (routeAccountIdentityChanged(account, live)) return false
+        usable = true
+      }
+      return usable
+    } catch {
+      return false
+    }
+  }
   try {
     const account = subscriptionAccountId(frozen.providerId)
     if (isCodexSubscriptionProvider(frozen.providerId)) {
@@ -7792,7 +7891,7 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
     // Candidates hash and summarize only what follows the last portable marker.
     getMessages: listActiveConversationContextMessages,
     resolveSelection: async (id, profile, signal) => {
-      const result = await resolveReviewLoopSelection(id, profile)
+      const result = await resolveFrozenChatSelection(id, profile)
       signal.throwIfAborted()
       if (!result.ok) return null
       const { meta } = await effectiveModelMeta(profile.modelId, profile.providerId, signal)
@@ -7811,8 +7910,9 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
         contextWindow: input.contextWindow,
         signal: input.signal,
         summaryMaxTokens: input.maxSummaryTokens,
-        summaryStepTimeoutMs: 180_000,
-        summaryRetryDelayMs: 30_000,
+        summaryStepTimeoutMs: input.stepTimeoutMs,
+        summaryRetryDelayMs: input.retryDelayMs,
+        summaryMaxRetries: input.maxRetries,
         summaryResume: input.resume,
         onSummaryCheckpoint: input.onCheckpoint,
         beforeSummaryDispatch: (signal) => waitForBackgroundDispatch(input.selection.providerId, signal),
@@ -7889,12 +7989,7 @@ async function maybeScheduleBackgroundCompaction(
   boundary?: { messageId: string; partId: string },
   contextWindow?: number
 ): Promise<void> {
-  if (
-    chatDisposePromise ||
-    !effectiveBackgroundCompactionConfig(conversationId)?.enabled ||
-    lookupReviewLoopByConversation(conversationId)
-  )
-    return
+  if (chatDisposePromise || !effectiveBackgroundCompactionConfig(conversationId)?.enabled) return
   if (active.has(conversationId) && !boundary) return
   const epoch = backgroundNotificationEpochs.get(conversationId) ?? 0
   try {
@@ -7919,6 +8014,44 @@ async function maybeScheduleBackgroundCompaction(
     getBackgroundCoordinator().notify(conversationId, { conversationWindow: window, ...(boundary ? { boundary } : {}) })
   } catch {
     // Missing provider metadata never makes a foreground send fail.
+  }
+}
+
+interface PreparedCompactionBase {
+  candidate: BackgroundCompactionCandidate
+  /** Source history with the prepared summary inserted at its boundary: renders as "Previous summary" + suffix. */
+  history: StoredChatMessage[]
+  /** Nothing portable follows the boundary, so the prepared summary already covers the whole active context. */
+  deltaEmpty: boolean
+}
+
+/**
+ * Foreground compaction folds the prepared summary with only the suffix after its boundary instead of
+ * re-summarizing source the background already covered. Synchronous on purpose: the candidate is validated
+ * against the same history snapshot that assertHistoryUnchanged protects at commit.
+ */
+function preparedCompactionBase(
+  conversationId: string,
+  history: readonly StoredChatMessage[]
+): PreparedCompactionBase | null {
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return null
+  const candidate = getBackgroundCoordinator().getCandidate(conversationId)
+  if (!candidate) return null
+  const projected = previewPreparedActivation(
+    history,
+    {
+      messageId: candidate.boundary.messageId,
+      afterPartId: candidate.boundary.partId,
+      partId: `prepared-base:${candidate.id}`,
+    },
+    candidate.summary
+  )
+  if (!projected) return null
+  const suffix = activeChatContext(projected).messages
+  return {
+    candidate,
+    history: projected,
+    deltaEmpty: !renderTranscript(suffix, { maxToolOutputChars: Number.POSITIVE_INFINITY, includeSkillBodies: true }),
   }
 }
 
@@ -8108,22 +8241,21 @@ export function resumeBackgroundCompaction(conversationId: string): void {
 let savedDeps: ChatIpcDeps | null = null
 
 // ----------------------------------------------------------------------------
-// Automatic review loop (ChatGPT Web reviewer → Maestrly Chat executor).
+// Isolated internal turns (ChatGPT Web project-environment jobs) and frozen selections.
 // Internal automated-turn API: create the handle at ActiveRun ADMISSION (never via `active.get`
 // after start — race), freeze selection (no auto-fallback), and return a structured outcome.
 // ----------------------------------------------------------------------------
 
-/** Validates conversation loop boundaries: cli=chat, no active turn/operation, no pending plan. */
-export async function validateReviewLoopStart(
+/** Validates internal-turn boundaries: project chat, no active turn/operation, no pending plan. */
+export async function validateInternalTurnStart(
   conversationId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const conv = getConversation(conversationId)
   if (!conv) return { ok: false, error: 'invalid-conversation' }
   if (conv.scope === 'standalone') return { ok: false, error: 'project-required' }
-  // Review-loop executor turns are intentionally forced to Agent. A Maestro conversation can never cross
-  // that legacy path because its parent capability boundary is structural, not a mutable chat-mode preference.
+  // Internal turns are intentionally forced to Agent. A Maestro conversation can never cross that path
+  // because its parent capability boundary is structural, not a mutable chat-mode preference.
   if (conv.experience === 'maestro') return { ok: false, error: 'maestro-experience' }
-  if (lookupReviewLoopByConversation(conversationId)) return { ok: false, error: 'review-loop-active' }
   if (chatGptWeb.projectEnvironmentLockFor(conversationId)) {
     return { ok: false, error: 'no-turn-or-operation' }
   }
@@ -8134,8 +8266,72 @@ export async function validateReviewLoopStart(
   return { ok: true }
 }
 
+type LiveRouteAccountIdentity = { authenticated: false } | { authenticated: true; fingerprint: string; epoch?: number }
+
+/** Identity a frozen route compares against; only the default Codex account also carries the global epoch. */
+async function liveRouteAccountIdentity(providerId: string): Promise<LiveRouteAccountIdentity> {
+  const accountId = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = await codexAuthStatus(false, undefined, accountId)
+    if (!status.authenticated) return { authenticated: false }
+    return {
+      authenticated: true,
+      fingerprint: codexAccountFingerprint(status),
+      ...(accountId ? {} : { epoch: codexAccountUpdateEpoch }),
+    }
+  }
+  const status = await getClaudeSubscriptionManager(accountId).status({ refresh: false })
+  if (!status.authenticated || !status.accountFingerprint) return { authenticated: false }
+  return { authenticated: true, fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+}
+
+function routeAccountIdentityChanged(
+  account: FrozenFailoverAccount,
+  live: { fingerprint: string; epoch?: number }
+): boolean {
+  return (
+    (account.identityFingerprint != null && live.fingerprint !== account.identityFingerprint) ||
+    (typeof account.identityEpoch === 'number' && live.epoch !== account.identityEpoch)
+  )
+}
+
+/**
+ * The enabled fallback route of a Claude/Codex account, with each account's identity at freeze. An account signed
+ * out right now has no identity to hold it to, so it stays out: a later sign-in must not join a frozen execution.
+ */
+async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<FrozenFailoverAccount[] | undefined> {
+  if (!isClaudeSubscriptionProvider(primary.providerId) && !isCodexSubscriptionProvider(primary.providerId)) {
+    return undefined
+  }
+  const chain = freezeFailoverChain(primary.providerId)
+  if (chain.length <= 1 || chain[0] !== primary.providerId) return undefined
+  const route: FrozenFailoverAccount[] = [primary]
+  for (const providerId of chain.slice(1)) {
+    if (!getProvider(providerId)) continue
+    try {
+      const live = await liveRouteAccountIdentity(providerId)
+      if (!live.authenticated) continue
+      route.push({
+        providerId,
+        identityFingerprint: live.fingerprint,
+        ...(live.epoch !== undefined ? { identityEpoch: live.epoch } : {}),
+      })
+    } catch {
+      // An account whose status cannot be read stays out of the frozen route.
+    }
+  }
+  return route.length > 1 ? route : undefined
+}
+
+/** Physical accounts a frozen selection may run on: its frozen fallback route, or only its own account. */
+export function frozenFailoverChain(frozen: FrozenChatSelection): string[] {
+  return frozen.failoverRoute && frozen.failoverRoute.length > 1
+    ? frozen.failoverRoute.map((account) => account.providerId)
+    : [frozen.providerId]
+}
+
 /** Resolves the CURRENT profile (provider+model+reasoning+fastMode+identity) to FREEZE for the loop. No silent fallback. */
-export async function resolveReviewLoopSelection(
+export async function resolveFrozenChatSelection(
   conversationId: string,
   profileOverride?: BackgroundCompactionConfig['selection']
 ): Promise<{ ok: true; selection: FrozenChatSelection } | { ok: false; error: string }> {
@@ -8330,6 +8526,11 @@ export async function resolveReviewLoopSelection(
     resolvedModelId,
     flags: captureHarnessFlags(),
   })
+  const failoverRoute = await freezeFailoverRoute({
+    providerId: selection.providerId,
+    ...(identityFingerprint ? { identityFingerprint } : {}),
+    ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
+  })
   return {
     ok: true,
     selection: {
@@ -8346,6 +8547,7 @@ export async function resolveReviewLoopSelection(
       ...(identityFingerprint ? { identityFingerprint } : {}),
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
+      ...(failoverRoute ? { failoverRoute } : {}),
     },
   }
 }
@@ -8365,7 +8567,7 @@ export function turnReasoning(
 
 /**
  * Resolves effective native-runtime effort (Codex/Copilot) with the SAME semantics as the turn.
- * `strict` (isolated review-loop execution): reproduce the frozen profile EXACTLY —
+ * `strict` (isolated internal execution): reproduce the frozen profile EXACTLY —
  * ok:false for unsupported levels / ultra without known levels, instead of substituting
  * `defaultEffort` (fail-closed). Manual turns remain permissive (default fallback).
  */
@@ -8442,8 +8644,43 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
 /**
  * Revalidates FROZEN profile identity/availability between rounds.
  * Any fingerprint/epoch change → executor_unavailable (never silently switch model/account).
+ * A frozen fallback route applies the same rule to every account in it: one re-logged as another identity ends
+ * the execution, while a signed-out account is only skipped. At least one account must still reproduce the frozen
+ * profile; the turn's resolver then picks among them by quota.
  */
-export async function revalidateReviewLoopSelection(
+export async function revalidateFrozenChatSelection(
+  frozen: FrozenChatSelection
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!frozen.failoverRoute || frozen.failoverRoute.length <= 1) return revalidateFrozenAccount(frozen)
+  const signedIn: FrozenFailoverAccount[] = []
+  for (const account of frozen.failoverRoute) {
+    let live: LiveRouteAccountIdentity
+    try {
+      live = await liveRouteAccountIdentity(account.providerId)
+    } catch {
+      continue
+    }
+    if (!live.authenticated) continue
+    if (routeAccountIdentityChanged(account, live)) return { ok: false, error: 'executor-unavailable' }
+    signedIn.push(account)
+  }
+  if (signedIn.length === 0) return { ok: false, error: 'no-key' }
+  let firstFailure: { ok: false; error: string } | undefined
+  for (const account of signedIn) {
+    const result = await revalidateFrozenAccount({
+      ...frozen,
+      providerId: account.providerId,
+      identityFingerprint: account.identityFingerprint,
+      identityEpoch: account.identityEpoch,
+      failoverRoute: undefined,
+    })
+    if (result.ok) return result
+    firstFailure ??= result
+  }
+  return firstFailure!
+}
+
+async function revalidateFrozenAccount(
   frozen: FrozenChatSelection
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const behaviorResolution = resolveHarnessContract(providerKindOf(frozen.providerId), frozen.modelId, {
@@ -8661,7 +8898,7 @@ export async function revalidateReviewLoopSelection(
 }
 
 /**
- * Starts an automated INTERNAL turn (one review-loop round). Create the handle in the SAME tick as
+ * Starts an automated INTERNAL turn (one isolated job round). Create the handle in the SAME tick as
  * ActiveRun admission; cancellation before admission aborts the run as soon as it exists.
  */
 export async function startInternalChatTurn(input: {
@@ -8669,13 +8906,6 @@ export async function startInternalChatTurn(input: {
   prompt: string
   hiddenParts?: MessagePart[]
   selection: FrozenChatSelection
-  source: ReviewLoopSource
-  role?: ReviewLoopRole
-  turnPolicy?: ReviewLoopTurnPolicy
-  cwdActivityOwner?: string
-  reviewerRuntime?: ReviewerToolRuntime
-  executorConversationId?: string
-  reviewerConversationId?: string
   loopId: string
   iteration: number
   maxIterations: number
@@ -8689,29 +8919,6 @@ export async function startInternalChatTurn(input: {
   const wc = getMainWebContents()
   if (!wc) return { ok: false, error: 'Window unavailable' }
   if (input.signal?.aborted) return { ok: false, error: 'cancelled' }
-  const role = input.role ?? 'executor'
-  const turnPolicy = input.turnPolicy ?? 'executor-agent'
-  if (input.source === 'maestrly-review-loop') {
-    const reservation = lookupReviewLoopByConversation(input.conversationId)
-    const expectedConversationId =
-      role === 'executor' ? reservation?.participants.executor : reservation?.participants.reviewer
-    const expectedPolicy = role === 'reviewer' ? 'reviewer-readonly' : 'executor-agent'
-    const expectedOwner = `review-loop:${input.loopId}:${role}`
-    if (
-      reservation?.loopId !== input.loopId ||
-      reservation.driver !== 'maestrly-pair' ||
-      expectedConversationId !== input.conversationId ||
-      input.executorConversationId !== reservation.participants.executor ||
-      input.reviewerConversationId !== reservation.participants.reviewer ||
-      turnPolicy !== expectedPolicy ||
-      (role === 'reviewer') !== Boolean(input.reviewerRuntime) ||
-      input.cwdActivityOwner !== expectedOwner
-    ) {
-      return { ok: false, error: 'review-loop-policy-mismatch' }
-    }
-  } else if (role !== 'executor' || turnPolicy !== 'executor-agent' || input.reviewerRuntime) {
-    return { ok: false, error: 'review-loop-policy-mismatch' }
-  }
   const executionId = randomUUID()
   let admitted = false
   let resolveHandle!: (handle: InternalTurnHandle) => void
@@ -8733,7 +8940,7 @@ export async function startInternalChatTurn(input: {
     resolveHandle,
   }
   internalTurns.set(executionId, entry)
-  // Connect external cancellation (loop Stop) to the entry BEFORE preflight: abort the run if admitted;
+  // Connect external cancellation (job Stop) to the entry BEFORE preflight: abort the run if admitted;
   // if still in preflight, startSend's admission barrier sees the aborted signal and rejects the turn.
   const onExternalAbort = () => entry.cancel()
   input.signal.addEventListener('abort', onExternalAbort, { once: true })
@@ -8745,13 +8952,6 @@ export async function startInternalChatTurn(input: {
       loopId: input.loopId,
       iteration: input.iteration,
       maxIterations: input.maxIterations,
-      role,
-      turnPolicy,
-      source: input.source,
-      ...(input.cwdActivityOwner ? { cwdActivityOwner: input.cwdActivityOwner } : {}),
-      ...(input.reviewerRuntime ? { reviewerRuntime: input.reviewerRuntime } : {}),
-      ...(input.executorConversationId ? { executorConversationId: input.executorConversationId } : {}),
-      ...(input.reviewerConversationId ? { reviewerConversationId: input.reviewerConversationId } : {}),
       selectionOverride: input.selection,
       contextPolicy: 'isolated',
       providerSessionPolicy: 'ephemeral',
@@ -8795,7 +8995,7 @@ export async function startInternalChatTurn(input: {
   return { ok: true, handle: await handlePromise }
 }
 
-/** Cancels an internal turn by executionId (loop Stop / session shutdown). */
+/** Cancels an internal turn by executionId (job Stop / session shutdown). */
 export function cancelInternalChatTurn(executionId: string): void {
   internalTurns.get(executionId)?.cancel()
 }
@@ -8805,57 +9005,8 @@ export function pendingInternalTurnsCount(): number {
   return internalTurns.size
 }
 
-/**
- * Persists the auditable final review-loop summary in the conversation (own source; does not reopen Plan).
- * STABLE messageId per loopId → retries upsert the same message, never create another.
- * The `review-summary` scope keeps the summary visible/auditable but outside inference context and the
- * resume/binding boundary (the store excludes everything except legacy/kind=conversation).
- */
-export async function persistReviewLoopSummary(input: {
-  conversationId: string
-  loopId: string
-  markdown: string
-  role?: ReviewLoopRole
-  executorConversationId?: string
-  reviewerConversationId?: string
-}): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
-  const { conversationId, loopId, markdown } = input
-  if (!getConversation(conversationId)) return { ok: false, error: 'conversation-not-found' }
-  // Deterministic ID: retries of the same loop_id collide on upsert, never duplicate the message.
-  const messageId = input.role ? `review-loop-summary:${loopId}:${input.role}` : `review-loop-summary:${loopId}`
-  try {
-    upsertChatMessage({
-      id: messageId,
-      conversationId,
-      role: 'assistant',
-      parts: [{ type: 'text', id: `${messageId}:text`, text: markdown }],
-      source: input.role ? 'maestrly-review-loop' : 'chatgpt-web-review-loop',
-      executionScope: {
-        kind: 'review-summary',
-        loopId,
-        ...(input.role ? { role: input.role } : {}),
-        ...(input.executorConversationId ? { executorConversationId: input.executorConversationId } : {}),
-        ...(input.reviewerConversationId ? { reviewerConversationId: input.reviewerConversationId } : {}),
-      },
-      createdAt: Date.now(),
-    })
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
-  }
-  try {
-    sendToMainRenderers(
-      input.role ? `chat:review-loop:delivery:${conversationId}` : `chat:chatgpt-web:delivery:${conversationId}`,
-      { messageId }
-    )
-  } catch {
-    // Renderer notification is best-effort: the message is ALREADY stored (upsert succeeded). Retry
-    // resends the same ID, and the renderer reconciles without duplication.
-  }
-  return { ok: true, messageId }
-}
-
-/** Forces Agent mode at loop start (the executor never runs in Plan) and notifies the renderer. */
-export function forceReviewLoopAgentMode(conversationId: string): void {
+/** Forces Agent mode for an internal job's turns (they never run in Plan) and notifies the renderer. */
+export function forceInternalTurnAgentMode(conversationId: string): void {
   if (getConversation(conversationId)?.experience === 'maestro') return
   if (modeFor(conversationId) !== 'agent') {
     setChatMode(conversationId, 'agent')
@@ -8863,65 +9014,228 @@ export function forceReviewLoopAgentMode(conversationId: string): void {
   }
 }
 
-function pairedReviewLoops(): ConversationReviewLoopCoordinator {
-  if (pairedReviewLoopCoordinator) return pairedReviewLoopCoordinator
-  pairedReviewLoopCoordinator = createConversationReviewLoopCoordinator({
-    getConversation,
-    listConversations: listAllConversations,
-    canonicalCwd,
-    validateStart: validateReviewLoopStart,
-    resolveSelection: resolveReviewLoopSelection,
-    revalidateSelection: (_conversationId, selection) => revalidateReviewLoopSelection(selection),
-    startTurn: (input) =>
-      startInternalChatTurn({
-        conversationId: input.conversationId,
-        prompt: input.prompt,
-        hiddenParts: input.hiddenParts,
-        selection: input.selection,
-        source: input.source,
-        role: input.role,
-        turnPolicy: input.turnPolicy,
-        cwdActivityOwner: input.cwdActivityOwner,
-        loopId: input.loopId,
-        iteration: input.iteration,
-        maxIterations: input.maxIterations,
-        signal: input.signal,
-        reviewerRuntime: input.reviewerRuntime,
-        executorConversationId: input.executorConversationId,
-        reviewerConversationId: input.reviewerConversationId,
-      }),
-    acquireLease: (cwd, owner, allowedOwners) => tryAcquireLongCwdLease(cwd, owner, allowedOwners),
-    registry: {
-      reserve: (reservation) => {
-        const result = reserveReviewLoop({
-          loopId: reservation.loopId,
-          driver: reservation.driver,
-          cwd: reservation.cwd,
-          participants: [
-            { driver: reservation.driver, conversationId: reservation.participants.executor },
-            { driver: reservation.driver, conversationId: reservation.participants.reviewer },
-          ],
-        })
-        return result.ok ? { ok: true as const } : { ok: false as const, error: 'review-loop-active' }
-      },
-      release: (loopId) => {
-        releaseReviewLoop(loopId)
-      },
-      lockFor: lookupReviewLoopByConversation,
+// ----------------------------------------------------------------------------
+// Code and plan reviews: parallel read-only reviewers and a verifier, followed live (see ./review).
+// ----------------------------------------------------------------------------
+
+/** Reviewers read and search the checkout; everything else, including paths outside it, is denied. */
+const REVIEWER_RULESET: Ruleset = [
+  { action: '*', resource: '*', effect: 'deny' },
+  { action: 'read', resource: '*', effect: 'allow' },
+  { action: 'grep', resource: '*', effect: 'allow' },
+  { action: 'glob', resource: '*', effect: 'allow' },
+  { action: 'read', resource: '*.env', effect: 'deny' },
+  { action: 'read', resource: '*.env.*', effect: 'deny' },
+  { action: 'read', resource: '*.env.example', effect: 'allow' },
+]
+
+let reviewService: ReviewService | null = null
+let reviewerBroker: PermissionBroker | null = null
+
+/** The conversation's own model, effort and Fast setting; ChatGPT Web cannot run reviewers, so it uses the default. */
+function conversationReviewSelection(conversationId: string): ReviewModelChoice | null {
+  const prefs = getConvUiPrefs(conversationId).chat
+  const chosen =
+    prefs?.providerId && getProvider(prefs.providerId) && !isChatGptWebProvider(prefs.providerId)
+      ? { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
+      : defaultSelection()
+  if (!chosen?.providerId || !chosen.modelId) return null
+  return { ...chosen, reasoning: prefs?.reasoning || 'off', fastMode: prefs?.fastMode === true }
+}
+
+const REVIEWER_PREFERENCE_KEY = 'chat.review.reviewer'
+
+function readReviewerPreference(): ReviewerPreference | null {
+  try {
+    return parseReviewerPreference(JSON.parse(getAppSetting(REVIEWER_PREFERENCE_KEY) ?? 'null'))
+  } catch {
+    return null
+  }
+}
+
+function reviewerOptions(conversationId: string): ReviewReviewerOptions {
+  const conversation = conversationReviewSelection(conversationId)
+  const providerName = conversation ? getProvider(conversation.providerId)?.name : undefined
+  return {
+    conversation: conversation ? { ...conversation, ...(providerName ? { providerName } : {}) } : null,
+    last: readReviewerPreference(),
+  }
+}
+
+/** A started review remembers its reviewer, so the next review offers the same one first. */
+async function startReview(conversationId: unknown, input: unknown) {
+  const result = await reviews().start(conversationId, input)
+  if (result.ok) {
+    // start() only succeeds with a valid reviewer, or without one.
+    const reviewer = parseReviewModelChoice((input as { reviewer?: unknown }).reviewer)
+    const preference: ReviewerPreference = reviewer ? { kind: 'model', ...reviewer } : { kind: 'conversation' }
+    try {
+      setAppSetting(REVIEWER_PREFERENCE_KEY, JSON.stringify(preference))
+    } catch {
+      // The review already runs; failing to remember the choice only affects the next review.
+    }
+  }
+  return result
+}
+
+/** A review or a check of its fixes holds the conversation: no turn starts and no plan is decided there. */
+export function isConversationUnderReview(conversationId: string): boolean {
+  return !!reviewService?.lockFor(conversationId)
+}
+
+function reviews(): ReviewService {
+  if (reviewService) return reviewService
+  reviewService = createReviewService({
+    getConversation: (conversationId) => {
+      const conversation = getConversation(conversationId)
+      return conversation
+        ? {
+            id: conversation.id,
+            cwd: conversation.cwd,
+            projectId: conversation.scope === 'standalone' ? null : conversation.workspaceId,
+            archived: conversation.archived !== 0,
+          }
+        : null
     },
-    searchExecutionContext: (conversationId, input) => searchCompanionConversation(conversationId, input),
-    readExecutionContext: (conversationId, input) => readCompanionConversation(conversationId, input),
-    getExecutionBrief: (conversationId) => getCompanionConversationContext(conversationId),
-    persistSummary: (input) => persistReviewLoopSummary(input),
-    onChange: broadcastReviewLoopStatus,
-    reviewerPrompt: () => tFor(getLocale(), 'prompts')('reviewLoop.pairedReviewerRound'),
-    executorPrompt: ({ iteration, maxIterations }) =>
-      tFor(getLocale(), 'prompts')('reviewLoop.pairedImplementFindings', {
-        iteration,
-        max: maxIterations,
+    isBusy: (conversationId) => active.has(conversationId) || pendingConversationOperations.has(conversationId),
+    pendingPlan: (conversationId) => {
+      const pending = getPendingPlan(conversationId)
+      return pending ? { plan: pending.plan, version: pending.version } : null
+    },
+    selection: conversationReviewSelection,
+    reviewerOptions,
+    resolveProfile: (selection, { chosen }) =>
+      resolveParentSubagentExecutionProfile({
+        agent: REVIEWER_AGENT,
+        parent: {
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+          effort: selection.reasoning ?? 'off',
+          ...(chosen ? { fastMode: selection.fastMode } : {}),
+        },
+        parentFastMode: selection.fastMode,
       }),
+    reviewerProviderSupported: (providerId) => !isChatGptWebProvider(providerId),
+    conversationContext: (conversationId) => JSON.stringify(getCompanionConversationContext(conversationId).messages),
+    locale: () => getLocale(),
+    runReviewer: async ({ conversation, profile, task, tools, signal, recorder }) => {
+      reviewerBroker ??= new PermissionBroker({ rulesetFor: () => REVIEWER_RULESET })
+      const run = await executeSubagent({
+        conversationId: conversation.id,
+        projectId: conversation.projectId,
+        cwd: conversation.cwd,
+        parentMessageId: randomUUID(),
+        parentMessageOwnership: { kind: 'host-managed', cleanup: 'delete' },
+        mode: 'ask',
+        permMode: 'full',
+        profile,
+        definition: REVIEWER_AGENT,
+        agentName: REVIEWER_AGENT.name,
+        task,
+        readOnly: true,
+        tools,
+        broker: reviewerBroker,
+        questionBroker: getQuestionBroker(),
+        signal,
+        sessionRecorder: recorder,
+      })
+      return {
+        text: run.text,
+        ...(run.error ? { error: run.error } : {}),
+        ...(run.usage ? { usage: run.usage } : {}),
+        ...(run.runtimeEstimatedCostUsd !== undefined ? { runtimeEstimatedCostUsd: run.runtimeEstimatedCostUsd } : {}),
+      }
+    },
+    persistReport: ({ conversationId, report, spend }) => persistReviewReport(conversationId, report, spend),
+    getReport: (conversationId, messageId) => getChatMessage(conversationId, messageId)?.review ?? null,
+    updateReport: updateReviewReport,
+    persistSpend: ({ conversationId, spend, model }) => persistReviewSpend(conversationId, spend, model),
+    // The chat view lives in the main renderer; the Plan tab is a separate one (a drawer panel or floating window).
+    onChange: (info: ReviewJobInfo) =>
+      sendToConversation(info.conversationId, 'chat:review:changed', info, { panel: 'plan' }),
   })
-  return pairedReviewLoopCoordinator
+  return reviewService
+}
+
+function reviewUsage(spend: ReviewSpend) {
+  const { usage, runtimeEstimatedCostUsd } = spend
+  const hasUsage = usage.input > 0 || usage.output > 0 || usage.cacheRead > 0 || usage.cacheCreate > 0
+  if (!hasUsage && runtimeEstimatedCostUsd <= 0) return undefined
+  return {
+    usageVersion: 2 as const,
+    input: usage.input,
+    output: usage.output,
+    ...(usage.cacheRead ? { cachedInput: usage.cacheRead } : {}),
+    ...(usage.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+    billingOnly: true,
+    ...(runtimeEstimatedCostUsd > 0 ? { runtimeEstimatedCostUsd } : {}),
+  }
+}
+
+function reviewReportParts(messageId: string, report: ChatReviewReport): MessagePart[] {
+  return [{ type: 'text', id: `${messageId}:text`, text: reviewReportMarkdown(report, tFor(getLocale(), 'prompts')) }]
+}
+
+/** Stores a review receipt as its own message, outside the model's context. */
+function persistReviewReport(conversationId: string, report: ChatReviewReport, spend: ReviewSpend): string {
+  const messageId = `review:${report.reviewId}`
+  const usage = reviewUsage(spend)
+  upsertChatMessage({
+    id: messageId,
+    conversationId,
+    role: 'assistant',
+    parts: reviewReportParts(messageId, report),
+    source: 'maestrly-review',
+    executionScope: { kind: 'review-report', reviewId: report.reviewId },
+    review: report,
+    ...(report.model ? { model: { providerId: report.model.providerId, modelId: report.model.modelId } } : {}),
+    ...(usage ? { usage } : {}),
+    createdAt: Date.now(),
+  })
+  invalidateUnifiedUsageCache()
+  return messageId
+}
+
+/** Rewrites a stored receipt in place: its usage, position and creation time stay. */
+function updateReviewReport(conversationId: string, messageId: string, report: ChatReviewReport): void {
+  const message = getChatMessage(conversationId, messageId)
+  if (!message?.review) return
+  upsertChatMessage({ ...message, parts: reviewReportParts(messageId, report), review: report })
+}
+
+/** Receipts whose report just reached the model with the person's message. */
+function markReviewReportsDelivered(conversationId: string, messages: readonly StoredChatMessage[]): void {
+  const deliveredAt = Date.now()
+  for (const message of messages) {
+    if (!message.review?.handoff) continue
+    try {
+      updateReviewReport(conversationId, message.id, {
+        ...message.review,
+        handoff: { ...message.review.handoff, deliveredAt },
+      })
+    } catch {
+      // A receipt that cannot be marked would be attached once more, never lost.
+    }
+  }
+}
+
+/** Bills a review that ended without a receipt, or a check of its fixes, on a hidden message. */
+function persistReviewSpend(conversationId: string, spend: ReviewSpend, model?: ReviewModelInfo): void {
+  const usage = reviewUsage(spend)
+  if (!usage || !getConversation(conversationId)) return
+  const messageId = `review-usage:${randomUUID()}`
+  upsertChatMessage({
+    id: messageId,
+    conversationId,
+    role: 'assistant',
+    parts: [],
+    ...(model ? { model: { providerId: model.providerId, modelId: model.modelId } } : {}),
+    usage,
+    internal: true,
+    executionScope: { kind: 'host', executionId: messageId },
+    createdAt: Date.now(),
+  })
+  invalidateUnifiedUsageCache()
 }
 
 /** Registers all `chat:*` channels. Called from `registerIpc()` in index.ts. */
@@ -8988,7 +9302,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   if (!grokAuthUpdatedUnsubscribe) {
     grokAuthUpdatedUnsubscribe = getGrokSubscriptionManager().onAuthUpdated(handleGrokAuthUpdated)
   }
-  // Boot: isolated review-loop executions without a terminal outcome → interrupted (crash/restart).
+  // Boot: isolated internal executions without a terminal outcome → interrupted (crash/restart).
   // Do not resume loops automatically; preserve usage; leave main bindings untouched.
   try {
     reconcileInterruptedExecutionMessages()
@@ -9609,8 +9923,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // never the bot's: a manual send is a new turn, not an instruction slipped into the bot's.
       if (activeTurnIsBotOwned(conversationId))
         return { ok: false, error: 'The bot is running this turn; wait for it to finish.' }
-      if (isWebManagedConversation(conversationId))
-        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       const text = typeof rawText === 'string' ? rawText : ''
       const clientUserMessageId = typeof rawClientUserMessageId === 'string' ? rawClientUserMessageId : ''
       if (
@@ -10135,17 +10447,44 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     // Stopping a chat the person never released takes it back from the bot, as it always has. In a
     // released chat they already write freely, so Stop is only Stop and the bot keeps the chat.
     if (!botSharesConversation(conversationId)) pauseBotForHuman(conversationId)
-    pairedReviewLoopCoordinator?.stop(conversationId)
-    const reservation = lookupReviewLoopByConversation(conversationId)
-    if (reservation?.participants.some((participant) => participant.driver === 'chatgpt-web')) {
-      chatGptWeb.stopReviewLoop(conversationId)
-    }
     stop(conversationId)
+  })
+  // Code and plan reviews (renderer and remote hosts): the review's stages, its hand-off, and checking the fixes.
+  deps.mhandle('chat:review:prepare', (_e, conversationId: unknown, target: unknown) =>
+    reviews().prepare(conversationId, target)
+  )
+  deps.mhandle('chat:review:start', (_e, conversationId: unknown, input: unknown) => startReview(conversationId, input))
+  deps.mhandle('chat:review:cancel', (_e, conversationId: unknown) => reviews().cancel(conversationId))
+  deps.mhandle('chat:review:discard', (_e, conversationId: unknown, reviewId: unknown) =>
+    reviews().discard(conversationId, reviewId)
+  )
+  deps.mhandle('chat:review:status', (_e, conversationId: unknown) => reviews().status(conversationId))
+  deps.mhandle('chat:review:draft', (_e, conversationId: unknown, input: unknown) =>
+    reviews().updateDraft(conversationId, input)
+  )
+  deps.mhandle('chat:review:handoff', (_e, conversationId: unknown, input: unknown) =>
+    reviews().handoff(conversationId, input)
+  )
+  deps.mhandle('chat:review:send-report', (_e, conversationId: unknown, messageId: unknown, message: unknown) =>
+    reviews().sendReport(conversationId, messageId, message)
+  )
+  deps.mhandle('chat:review:check', (_e, conversationId: unknown, messageId: unknown) =>
+    reviews().check(conversationId, messageId)
+  )
+  deps.mhandle('chat:review:dismiss', (_e, conversationId: unknown) => {
+    if (typeof conversationId === 'string') reviews().forget(conversationId)
+    return { ok: true }
+  })
+  // The Plan tab is a separate renderer: it asks the conversation's chat view to open the review there.
+  deps.mhandle('chat:review:open', (_e, conversationId: unknown, target: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId || (target !== 'code' && target !== 'plan')) {
+      return { ok: false }
+    }
+    sendToConversation(conversationId, 'chat:review:open', { conversationId, target })
+    return { ok: true }
   })
   deps.mhandle('chat:clear', async (_e, conversationId: string) => {
     if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
-    // Active review loop: clearing history would break round context — the central guard also applies here.
-    if (reviewLoopLockForConversation(conversationId)) return { ok: false, error: 'review-loop-active' }
     cancelBackgroundJob(conversationId, false)
     const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
     if (!operation) return { ok: false, error: 'busy' }
@@ -10220,6 +10559,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // DYNAMIC provider models (GET {baseURL}/models), filtered for chat usability (no TTS/ASR/image)
   // and finally by the USER filter (models hidden in Settings). `includeHidden` returns the full
   // list — consumed by the filter management screen itself.
+
+  // Usable accounts and models per provider; bots offer them as the providers a desktop grant may use.
+  deps.mhandle('chat:execution-providers', () =>
+    listChatExecutionModels({ refreshSubscriptionAuth: true, subscriptionProviderTimeoutMs: 8000 })
+  )
 
   deps.mhandle('chat:models', (_e, providerId: string, force?: boolean, includeHidden?: boolean) =>
     typeof providerId === 'string'
@@ -10321,11 +10665,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (!getConversation(conversationId)) throw new Error('invalid-conversation')
       return getCompanionConversationContext(conversationId)
     },
-    getConversationRevision: (conversationId, signal) => {
-      if (signal?.aborted) throw new Error('session-ended')
-      if (!getConversation(conversationId)) throw new Error('invalid-conversation')
-      return getCompanionConversationRevision(conversationId)
-    },
     searchConversation: (conversationId, input, signal) => {
       if (signal?.aborted) throw new Error('session-ended')
       if (!getConversation(conversationId)) throw new Error('invalid-conversation')
@@ -10336,11 +10675,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (!getConversation(conversationId)) throw new Error('invalid-conversation')
       return readCompanionConversation(conversationId, input)
     },
-    // Automatic review loop: the bridge starts/awaits/ends internal execution turns. Explicit start in
-    // ChatGPT provides consent; the loop NEVER enters the Plan tab or requests per-round approval.
-    reviewLoop: {
-      validateStart: (conversationId) => validateReviewLoopStart(conversationId),
-      resolveSelection: (conversationId) => resolveReviewLoopSelection(conversationId),
+    // Project-environment jobs: the bridge starts/awaits/ends isolated internal turns. Explicit start in
+    // ChatGPT provides consent; the job NEVER enters the Plan tab or requests per-turn approval.
+    internalTurns: {
+      validateStart: (conversationId) => validateInternalTurnStart(conversationId),
+      resolveSelection: (conversationId) => resolveFrozenChatSelection(conversationId),
       startInternalTurn: ({
         conversationId,
         prompt,
@@ -10356,17 +10695,13 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
           prompt,
           hiddenParts,
           selection,
-          source: 'chatgpt-web-review-loop',
           loopId,
           iteration,
           maxIterations,
           signal,
         }),
-      revalidateSelection: (selection) => revalidateReviewLoopSelection(selection),
       cancelInternalTurn: (executionId) => cancelInternalChatTurn(executionId),
-      persistSummary: ({ conversationId, loopId, markdown }) =>
-        persistReviewLoopSummary({ conversationId, loopId, markdown }),
-      forceAgentMode: (conversationId) => forceReviewLoopAgentMode(conversationId),
+      forceAgentMode: (conversationId) => forceInternalTurnAgentMode(conversationId),
     },
   })
   deps.mhandle('chat:chatgpt-web:status', async () => ({
@@ -10569,52 +10904,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     return { ok: true }
   })
   deps.mhandle('chat:chatgpt-web:logs', () => chatGptWeb.tunnelLogs())
-  deps.mhandle('chat:review-loop:compatible', async (_e, executorConversationId: string) => {
-    if (typeof executorConversationId !== 'string' || !executorConversationId) return []
-    return pairedReviewLoops().compatible(executorConversationId)
-  })
-  deps.mhandle('chat:review-loop:start', async (_e, input: StartPairedReviewLoopInput) => {
-    if (!input || typeof input !== 'object') return { ok: false, error: 'invalid-input' }
-    return pairedReviewLoops().start(input)
-  })
-  deps.mhandle('chat:review-loop:stop', (_e, conversationId: string) => {
-    if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
-    if (pairedReviewLoopCoordinator?.stop(conversationId)) return { ok: true }
-    const web = lookupReviewLoopByConversation(conversationId)
-    if (web?.participants.some((participant) => participant.driver === 'maestrly-pair')) return { ok: true }
-    if (web?.participants.some((participant) => participant.driver === 'chatgpt-web')) {
-      chatGptWeb.stopReviewLoop(conversationId)
-      broadcastChatGptWebStatus()
-      return { ok: true }
-    }
-    return { ok: false, error: 'review-loop-not-found' }
-  })
-  deps.mhandle('chat:review-loop:status', (_e, conversationId?: string) => {
-    const snapshots = neutralReviewLoopSnapshots()
-    if (typeof conversationId !== 'string' || !conversationId) return snapshots
-    return (
-      snapshots.find(
-        (loop) =>
-          loop.participants.executor.conversationId === conversationId ||
-          loop.participants.reviewer?.conversationId === conversationId
-      ) ?? null
-    )
-  })
-  // Stop review loop (banner): cancels the active job and prevents new rounds; chat Stop
-  // still aborts the individual turn — both coexist (loop Stop also aborts the turn).
-  deps.mhandle('chat:chatgpt-web:review-loop:stop', (_e, conversationId: string) => {
-    if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
-    const conv = getConversation(conversationId)
-    if (!conv) return { ok: false, error: 'invalid-conversation' }
-    chatGptWeb.stopReviewLoop(conversationId)
-    broadcastChatGptWebStatus()
-    return { ok: true }
-  })
-  deps.mhandle('chat:chatgpt-web:review-loop:show-preview', (_e, conversationId: string) => {
-    if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
-    if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
-    return chatGptWeb.showVisualReviewPreview(conversationId)
-  })
 
   // Additional subscription-provider ACCOUNT management (multiple accounts).
   deps.mhandle('chat:subscription-account:add', (_e, input: { kind: string; label: string }) => {
@@ -10703,6 +10992,27 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // toggle. Default ON; conversations with explicit overrides keep their own values.
   deps.mhandle('chat:set-image-gen', (_e, enabled: boolean) => {
     setAppFlag(IMAGE_GEN_FLAG, enabled === true)
+    return { ok: true }
+  })
+  // Generated interfaces (prompt section + preview_interface) — GLOBAL toggle, default ON. Applies from the next turn.
+  deps.mhandle('chat:set-generated-interfaces', (_e, enabled: boolean) => {
+    setAppFlag(GENERATED_INTERFACES_FLAG, enabled === true)
+    return { ok: true }
+  })
+  // Web search provider and keys. The renderer only learns whether each key is set.
+  deps.mhandle('chat:set-web-search-provider', (_e, provider: unknown) => {
+    if (!isWebSearchProvider(provider)) return { ok: false }
+    setWebSearchProvider(provider)
+    notifyChatRunnerCapabilityChanges(false)
+    return { ok: true }
+  })
+  deps.mhandle('chat:set-web-search-key', (_e, provider: unknown, key: unknown) => {
+    if (!isWebSearchKeyProvider(provider) || typeof key !== 'string' || !key.trim()) return { ok: false }
+    return { ok: true, mode: setWebSearchKey(provider, key) }
+  })
+  deps.mhandle('chat:clear-web-search-key', (_e, provider: unknown) => {
+    if (!isWebSearchKeyProvider(provider)) return { ok: false }
+    clearWebSearchKey(provider)
     return { ok: true }
   })
   // Bash output filters (token savings, experimental) — toggle.
@@ -10899,40 +11209,18 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // A released chat may be edited while it is idle; the reservation below keeps a running turn safe.
       if (botBlocksManualSend(conversationId))
         return { ok: false, error: 'Release this chat for your own messages before editing here.' }
-      if (isWebManagedConversation(conversationId))
-        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       if (typeof conversationId !== 'string' || typeof fromMessageId !== 'string')
         return { ok: false, error: 'invalid-input' }
       const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
       if (!operation) return { ok: false, error: 'busy' }
       try {
-        // Preserve original ATTACHMENTS (editing changes text only) — otherwise images/files disappear on resend.
-        // Exclude `hidden` parts (@file mention content): reinject them when reparsing text.
-        // COPY BYTES of images with artifactId here, BEFORE truncation: deleteChatMessagesFrom
-        // below removes the old message's sidecars — reusing artifactId would point the new message to
-        // deleted files. startSend writes NEW artifacts from the copied bytes.
-        const original = getChatMessage(conversationId, fromMessageId)
-        const attachments: ChatAttachmentInput[] = await preserveResendAttachments(
-          conversationId,
-          (original?.parts ?? []).filter(
-            (p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden
-          )
-        )
-        await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
-          preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
-        })
-        if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
+        const cut = await truncateConversationForResend(conversationId, fromMessageId, operation)
+        if (!cut) return { ok: false, error: 'busy' }
         // The EDITOR's `#agent` selection (occurrences with id/range) goes to startSend — SAME host-side
         // validation as chat:send (buildAgentMentionParts). Old agent-mention parts from the original
         // message are NOT automatically preserved: the user may have removed the chip in the editor.
         const agentMentions = Array.isArray(payload?.agentMentions) ? payload.agentMentions : undefined
-        const seq = getMessageSeq(fromMessageId)
-        if (seq != null) {
-          cancelBackgroundJob(conversationId, false)
-          deleteChatMessagesFrom(conversationId, seq)
-          publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
-        }
-        return await startSend(deps, event.sender, conversationId, text, attachments, { operation }, agentMentions)
+        return await startSend(deps, event.sender, conversationId, text, cut.attachments, { operation }, agentMentions)
       } finally {
         releaseConversationOperation(conversationId, operation)
       }
@@ -10943,14 +11231,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   deps.mon(
     'chat:permission-respond',
     (_e, requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
-      for (const conversationId of active.keys())
-        if (
-          isWebManagedConversation(conversationId) &&
-          getBroker()
-            .pendingFor(conversationId)
-            .some((p) => p.id === requestId)
-        )
-          return
       if (typeof requestId !== 'string' || !['once', 'always', 'reject'].includes(reply)) return
       try {
         getBroker().reply({ requestId, reply, message })
@@ -10963,8 +11243,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   )
   // ask_question (mark X): user answers (string[][]) → resolve the tool's blocked execute.
   deps.mon('chat:question-respond', (_e, toolCallId: string, answers: string[][]) => {
-    const owner = getQuestionBroker().conversationFor(toolCallId)
-    if (owner && isWebManagedConversation(owner)) return
     if (typeof toolCallId === 'string') getQuestionBroker().reply(toolCallId, Array.isArray(answers) ? answers : [])
   })
 }
@@ -10977,7 +11255,7 @@ export function disposeChat(): Promise<void> {
     coordinator?.dispose()
     backgroundCoordinator = null
     const pendingSnapshot = [...pendingConversationOperations.values()]
-    const pairedReviewDispose = pairedReviewLoopCoordinator?.dispose() ?? Promise.resolve()
+    const reviewsDisposed = reviewService?.dispose() ?? Promise.resolve()
     for (const operation of pendingSnapshot) operation.controller.abort(new Error('Chat service is shutting down'))
     abortAllCodexEphemeralAttempts()
     const claudeAttempts = listClaudeAttempts()
@@ -10995,7 +11273,7 @@ export function disposeChat(): Promise<void> {
         ...claudeAttempts.map((attempt) => attempt.done),
         ...snapshot.filter(([, run]) => isClaudeSubscriptionProvider(run.providerId)).map(([, run]) => run.done),
       ]),
-      pairedReviewDispose,
+      reviewsDisposed,
       maestroConfiguratorService.stop(),
       coordinator?.settled(),
     ])
@@ -11014,7 +11292,7 @@ export function disposeChat(): Promise<void> {
     chatGptWebUnsubscribe = null
     subagentSessionUnsubscribe?.()
     subagentSessionUnsubscribe = null
-    pairedReviewLoopCoordinator = null
+    reviewService = null
     await chatGptWeb.disposeChatGptWeb().catch(() => undefined)
     await codexExternalAccountRefreshPromise
     await githubCopilotIdentityTransitionPromise
@@ -11208,19 +11486,152 @@ export async function startConversationDispatchTurn(input: {
   dispatchId: string
   sourceConversationId: string
   visible: boolean
+  /** Deliver this first turn's final answer back to the source when it ends. */
+  reportBack?: boolean
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
   const wc = getMainWebContents()
   if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  const reportBack = input.reportBack === true
   try {
     const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
       ...(input.visible ? {} : { internal: true }),
-      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId },
+      ...(reportBack
+        ? {
+            hiddenParts: [
+              conversationLinkFramingPart(tFor(getLocale(), 'prompts')('conversationLink.seedReportBack')),
+            ],
+            // Lazy: the link service depends on this module.
+            onOutcome: (outcome: InternalTurnOutcome) =>
+              void import('../conversation-link-service')
+                .then(({ getConversationLinkService }) => getConversationLinkService())
+                .then((service) =>
+                  service.relayDispatchResult({
+                    dispatchId: input.dispatchId,
+                    sourceConversationId: input.sourceConversationId,
+                    conversationId: input.conversationId,
+                    outcome,
+                  })
+                )
+                .catch(() => undefined),
+          }
+        : {}),
+      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId, reportBack },
     })
     return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+}
+
+/** Model-only framing for a turn started by another conversation; the bubble shows only what the agent wrote. */
+function conversationLinkFramingPart(text: string): MessagePart {
+  return {
+    type: 'file',
+    id: randomUUID(),
+    name: 'conversation-message.md',
+    mediaType: 'text/markdown',
+    kind: 'text',
+    data: text,
+    hidden: true,
+  }
+}
+
+export interface ConversationPeerTurnInput {
+  conversationId: string
+  /** Journal id of the message being delivered. */
+  messageId: string
+  fromConversationId: string
+  fromConversationName: string
+  kind: ConversationPeerMessageKind
+  body: string
+  hop: number
+  /** The sender wants this turn's final answer (messages only). */
+  reportBack: boolean
+  resultStatus?: ConversationTurnResultStatus
+  onOutcome?: (outcome: InternalTurnOutcome) => void
+}
+
+/**
+ * Deliver a message from another conversation as a turn here. It is a visible user bubble attributed to the sender,
+ * not `internal`, so every guard of a manual send still applies (bot chats, Kanban web chats, executors, busy). The
+ * turn is linked, never human: it cannot start conversations and talks only to linked conversations.
+ */
+export async function startConversationPeerTurn(
+  input: ConversationPeerTurnInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
+  const wc = getMainWebContents()
+  if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  const t = tFor(getLocale(), 'prompts')
+  const params = { from: input.fromConversationName, fromId: input.fromConversationId }
+  const framing =
+    input.kind === 'message'
+      ? t('conversationLink.message', {
+          ...params,
+          reply: t(input.reportBack ? 'conversationLink.replyAutomatic' : 'conversationLink.replyManual'),
+        })
+      : input.kind === 'report'
+        ? t('conversationLink.report', params)
+        : t('conversationLink.result', { ...params, status: input.resultStatus ?? 'success' })
+  try {
+    const result = await startSend(savedDeps, wc, input.conversationId, input.body, undefined, {
+      hiddenParts: [conversationLinkFramingPart(framing)],
+      peerMessage: {
+        messageId: input.messageId,
+        fromConversationId: input.fromConversationId,
+        fromConversationName: input.fromConversationName,
+        kind: input.kind,
+        hop: input.hop,
+        reportBack: input.kind === 'message' && input.reportBack,
+      },
+      ...(input.onOutcome ? { onOutcome: input.onOutcome } : {}),
+    })
+    return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** Resolves once the conversation's current turn and pending operation (if any) have settled. */
+export function waitForChatConversationSlot(conversationId: string): Promise<void> {
+  return waitForConversationSlot(conversationId)
+}
+
+export function isChatConversationRunning(conversationId: string): boolean {
+  return active.has(conversationId) || pendingConversationOperations.has(conversationId)
+}
+
+/**
+ * Cuts a conversation for an edit of one of its messages (edit + resend): keeps that message's attachments (an edit
+ * changes its text only), retires the runtimes' resumable state and removes the message and everything after it.
+ *
+ * Attachments are copied as BYTES before the cut, which deletes the old message's sidecars: reusing an `artifactId`
+ * would point the new message to deleted files, so `startSend` writes new artifacts from the copies. `hidden` parts
+ * (@file mention content) are left out: they come back when the text is parsed again. The caller holds the slot
+ * `operation`; null when the slot was lost meanwhile, before anything was removed.
+ */
+export async function truncateConversationForResend(
+  conversationId: string,
+  fromMessageId: string,
+  operation: PendingConversationOperation
+): Promise<{ attachments: ChatAttachmentInput[] } | null> {
+  const original = getChatMessage(conversationId, fromMessageId)
+  const attachments = await preserveResendAttachments(
+    conversationId,
+    (original?.parts ?? []).filter((p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden)
+  )
+  await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
+    preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
+  })
+  if (!conversationOperationIsCurrent(conversationId, operation)) return null
+  const seq = getMessageSeq(fromMessageId)
+  if (seq != null) {
+    cancelBackgroundJob(conversationId, false)
+    deleteChatMessagesFrom(conversationId, seq)
+    publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
+  }
+  return { attachments }
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */

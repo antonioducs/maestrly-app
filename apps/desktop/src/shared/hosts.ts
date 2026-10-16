@@ -19,8 +19,15 @@ export interface HostEnvironmentView {
 export interface HostView {
   id: HostId
   remote: boolean
-  /** The server's name for a remote host; empty for this computer, which the window names itself. */
+  /**
+   * The name of a remote host's workspaces environment (the scope of work it holds), or the address of a host reached
+   * without a server; empty for this computer, which the window names itself.
+   */
   label: string
+  /** The name of the server a remote host runs on; empty for this computer and for a host reached without a server. */
+  server: string
+  /** The color the owner chose for a remote host's environment; null when none, and for this computer. */
+  tint: string | null
   state: HostConnectionState
   /** Increases each time a remote host answers again: what the window shows of it is loaded again. */
   epoch: number
@@ -30,7 +37,18 @@ export interface HostView {
   desktopEffects: boolean
   editor: boolean
   browser: boolean
+  /** Whether the host's conversations have computers (a Computer tab). */
+  computer: boolean
   environment: HostEnvironmentView | null
   /** The app version of a host that refused this computer's, when it said so. */
   hostVersion: string | null
+}
+
+/** A conversation of a remote host as the window lists it: what its floating windows on this computer are named. */
+export interface RemoteConversationLabel {
+  /** The window's id of the conversation: its host key. */
+  id: string
+  name: string
+  /** The project the conversation belongs to; none for a chat. */
+  projectName?: string
 }

@@ -64,12 +64,11 @@ function hook(event: ActivePluginHook['spec']['event'], body: string, matcher: s
 }
 
 const notices: unknown[] = []
-const ctx = (mode: ChatBehavior = 'agent', reviewer = false) => ({
+const ctx = (mode: ChatBehavior = 'agent') => ({
   conversationId: 'conv-1',
   cwd: dir,
   mode,
   permMode: 'full' as const,
-  reviewer,
   signal: new AbortController().signal,
   transcriptPath: async () => path.join(dir, 'transcript.jsonl'),
   notify: (notice: unknown) => notices.push(notice),
@@ -149,12 +148,11 @@ describe('plugin hooks', () => {
     expect(await runStop(ctx(), true)).toEqual({})
   })
 
-  it('runs only in Agent and Design conversations, never for a reviewer', async () => {
+  it('runs only in Agent and Design conversations', async () => {
     hooks.list = [hook('Stop', `process.exit(0)`)]
     expect(hooksActive(ctx('agent'))).toBe(true)
     expect(hooksActive(ctx('design'))).toBe(true)
     for (const mode of ['ask', 'plan', 'maestro'] as const) expect(hooksActive(ctx(mode))).toBe(false)
-    expect(hooksActive(ctx('agent', true))).toBe(false)
     expect(await runStop(ctx('maestro'), false)).toEqual({})
   })
 

@@ -6,6 +6,7 @@ import { isFloatTab } from '../shared/tool-tabs'
 import { getConversationBranchInfo } from './conversation-branch-service'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
 import * as floatingManager from './floating-manager'
+import { serverComputers } from './remote-host/server/computers-registry'
 import * as popupManager from './popup-manager'
 import { disposeConversation } from './drawer-manager'
 import type { IpcRegistrar } from './ipc-registrar'
@@ -13,8 +14,10 @@ import { unwatchNotes } from './notes/notes-service'
 import { clearPlan } from './plan-broker'
 import { unwatchConversation } from './selection-bridge'
 import {
+  clearConversationAttention,
   countOtherActiveConversationsInCwd,
   getConversation,
+  listConversationAttention,
   listConversations,
   listStandaloneConversations,
   setStandaloneConversationOrder,
@@ -23,7 +26,6 @@ import {
   setConversationPinned,
 } from './store'
 import { disposeShellTerminals } from './terminal-manager'
-import { lookupReviewLoopByConversation } from './chat/review-loop/registry'
 import {
   createConversation,
   createSiblingConversation,
@@ -35,12 +37,8 @@ import {
 export interface ConversationIpcDeps {
   stopChat: (id: string) => void | Promise<void>
   resumeBackgroundCompaction?: (id: string) => void
-}
-
-function assertReviewLoopMutationAllowed(conversationId: string): void {
-  if (lookupReviewLoopByConversation(conversationId)) {
-    throw new Error('The conversation is reserved by an active review loop.')
-  }
+  /** Tells every window, on this computer and connected ones, that the conversation's attention mark changed. */
+  emitAttention?: (conversationId: string, attention: boolean) => void
 }
 
 export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpcDeps): void {
@@ -64,7 +62,6 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   reg.mhandle(
     'conversation:createSibling',
     (_e, args: { sourceConversationId: string; experience?: ConversationExperience }) => {
-      assertReviewLoopMutationAllowed(args.sourceConversationId)
       assertConversationMigrationMutationAllowed(args.sourceConversationId, 'Create sibling conversation')
       if (args.experience !== undefined && args.experience !== 'standard' && args.experience !== 'maestro') {
         throw new Error('Invalid conversation experience.')
@@ -103,8 +100,13 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   // Pin/unpin returns the canonical timestamp or null so UI can update without refresh. Store requires a
   // regular, unarchived conversation.
   reg.mhandle('conversation:pin', (_e, id: string, pinned: boolean) => setConversationPinned(id, pinned))
+  // Conversations waiting for the person, kept by the host so that seeing one on any computer clears it everywhere.
+  reg.handle('conversation:attention-list', () => listConversationAttention())
+  reg.mhandle('conversation:attention-clear', (_e, id: unknown) => {
+    const conversationId = z.string().min(1).parse(id)
+    if (clearConversationAttention(conversationId)) deps.emitAttention?.(conversationId, false)
+  })
   reg.mhandle('conversation:archive', async (_e, id: string, archived: boolean) => {
-    assertReviewLoopMutationAllowed(id)
     assertConversationMigrationMutationAllowed(id, archived ? 'Archive conversation' : 'Unarchive conversation')
     if (archived) {
       // Stop streams and invalidate late callbacks before destroying views. stopChat retires active
@@ -112,22 +114,26 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
       clearPlan(id)
       await deps.stopChat(id)
       disposeShellTerminals(id)
+      // On a workspaces host its computer goes back at once, before the windows it presents.
+      await serverComputers()?.close(id)
       floatingManager.disposeConversation(id) // close floating windows before destroying views
       popupManager.disposeConversation(id) // clear popup state before destroying views (#328)
       disposeConversation(id)
       cleanupSharedWatchers(id) // #322: release shared watchers only when no active sibling needs them
     }
     setConversationArchived(id, archived)
+    if (archived && clearConversationAttention(id)) deps.emitAttention?.(id, false)
     if (!archived) deps.resumeBackgroundCompaction?.(id)
   })
   reg.mhandle('conversation:delete', async (_e, id: string) => {
-    assertReviewLoopMutationAllowed(id)
     assertConversationMigrationMutationAllowed(id, 'Delete conversation')
     // Permanent deletion stops the agent and drawer terminals, releases views, and removes worktree/store
     // state.
     clearPlan(id)
     await deps.stopChat(id)
     disposeShellTerminals(id)
+    // On a workspaces host its computer goes back at once, before the windows it presents.
+    await serverComputers()?.close(id)
     floatingManager.disposeConversation(id) // close floating windows before destroying views
     popupManager.disposeConversation(id) // clear popup state before destroying views (#328)
     disposeConversation(id)

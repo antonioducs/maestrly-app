@@ -1,9 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check } from 'lucide-react'
-import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
+  type FleetEnvironment,
+  type FleetPatchEnvironmentRequest,
+} from '@maestrly/bot-fleet-protocol'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { memoryLimitChoices, memoryLimitFromValue, memoryLimitValue } from '@/lib/fleet/environments'
+import {
+  cpuLimitChoices,
+  cpuLimitFromValue,
+  cpuLimitValue,
+  idleStopChoices,
+  idleStopFromValue,
+  idleStopParts,
+  idleStopValue,
+  memoryLimitChoices,
+  memoryLimitFromValue,
+  memoryLimitValue,
+} from '@/lib/fleet/environments'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import { gb } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
@@ -14,8 +30,8 @@ import { cn } from '@/lib/utils'
 const HIGH_MEMORY = 0.85
 
 /**
- * What the environment's container uses, against the limit it runs with, and that limit: one container holds every bot
- * of the environment, so these are the whole environment's.
+ * What the environment's container uses, against the limit it runs with, and its limits: one container holds every bot
+ * of the environment, so these are the whole environment's. A workspaces environment may also stop itself when idle.
  */
 export function EnvironmentResources({
   environment,
@@ -38,15 +54,17 @@ export function EnvironmentResources({
     const timer = window.setTimeout(() => setSaved(false), 2400)
     return () => window.clearTimeout(timer)
   }, [saved])
-  async function saveLimit(value: string) {
+  // CPU limits and the idle stop need a server with scopes; an older one would refuse them.
+  const scoped = fleet.state.connection.features.includes(FLEET_WORKSPACES_ENVIRONMENTS_FEATURE)
+  const workspaces = isWorkspacesEnvironment(environment)
+  const serverCpus = fleet.state.snapshot.host?.cpus ?? null
+  async function save(patch: FleetPatchEnvironmentRequest) {
     if (busy) return
     setBusy(true)
     setSaved(false)
     setError('')
     try {
-      const updated = await window.api.fleetPatchEnvironment(environment.id, {
-        memoryLimitBytes: memoryLimitFromValue(value),
-      })
+      const updated = await window.api.fleetPatchEnvironment(environment.id, patch)
       fleet.dispatch({
         type: 'event',
         value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
@@ -117,13 +135,13 @@ export function EnvironmentResources({
           </span>
         </p>
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 border-t border-border pt-3.5">
-          <label className="text-[12.5px] text-foreground/75" htmlFor="fleet-environment-memory-limit">
+          <label className="w-28 shrink-0 text-[12.5px] text-foreground/75" htmlFor="fleet-environment-memory-limit">
             {t('environment.memoryLimit')}
           </label>
           <Select
             value={memoryLimitValue(environment.memoryLimitBytes)}
             disabled={busy}
-            onValueChange={(value) => void saveLimit(value)}
+            onValueChange={(value) => void save({ memoryLimitBytes: memoryLimitFromValue(value) })}
           >
             <SelectTrigger
               id="fleet-environment-memory-limit"
@@ -150,6 +168,60 @@ export function EnvironmentResources({
           )}
           <span className="min-w-48 flex-1 text-xs text-muted-foreground">{t('environment.memoryLimitNote')}</span>
         </div>
+        {scoped && (
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+            <label className="w-28 shrink-0 text-[12.5px] text-foreground/75" htmlFor="fleet-environment-cpu-limit">
+              {t('environment.cpuLimit')}
+            </label>
+            <Select
+              value={cpuLimitValue(environment.cpuLimit)}
+              disabled={busy}
+              onValueChange={(value) => void save({ cpuLimit: cpuLimitFromValue(value) })}
+            >
+              <SelectTrigger id="fleet-environment-cpu-limit" aria-label={t('environment.cpuLimit')} className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {cpuLimitChoices(environment.cpuLimit, serverCpus).map((choice) => (
+                  <SelectItem key={choice.value} value={choice.value}>
+                    {choice.cpus === null
+                      ? t('environment.cpuLimitNone')
+                      : t('environment.cpuLimitValue', { count: choice.cpus })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="min-w-48 flex-1 text-xs text-muted-foreground">{t('environment.cpuLimitNote')}</span>
+          </div>
+        )}
+        {scoped && workspaces && (
+          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+            <label className="w-28 shrink-0 text-[12.5px] text-foreground/75" htmlFor="fleet-environment-idle-stop">
+              {t('workspaces.idleStop')}
+            </label>
+            <Select
+              value={idleStopValue(environment.idleStopMinutes)}
+              disabled={busy}
+              onValueChange={(value) => void save({ idleStopMinutes: idleStopFromValue(value) })}
+            >
+              <SelectTrigger id="fleet-environment-idle-stop" aria-label={t('workspaces.idleStop')} className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {idleStopChoices(environment.idleStopMinutes).map((choice) => (
+                  <SelectItem key={choice.value} value={choice.value}>
+                    {choice.minutes === null
+                      ? t('workspaces.idleStopNever')
+                      : t(`workspaces.idleStopAfter.${idleStopParts(choice.minutes).unit}`, {
+                          count: idleStopParts(choice.minutes).count,
+                        })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="min-w-48 flex-1 text-xs text-muted-foreground">{t('workspaces.idleStopNote')}</span>
+          </div>
+        )}
         {error && (
           <p role="alert" className="text-xs text-destructive">
             {error}

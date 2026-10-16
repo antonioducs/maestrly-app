@@ -123,12 +123,15 @@ vi.mock('../../src/main/drawer/popup', () => ({ focusViewInMain: vi.fn() }))
 vi.mock('../../src/main/drawer/performance', () => ({ setDrawerPlacementPerformance: vi.fn() }))
 
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
+import { sendToConversation } from '../../src/main/window-ipc'
 import { acquireAgentActivity } from '../../src/main/performance/resource-governor'
 import {
   BROWSER_TAB_COLD_RETRY_MS,
   BROWSER_TAB_COLD_TTL_MS,
   acquireBrowserTabForControl,
+  closeActiveBrowserTabFromShortcut,
   closeBrowserTab,
+  openBrowserTabFromShortcut,
   createBrowserTab,
   disposeBrowserTabEviction,
   ensureBrowser,
@@ -151,7 +154,8 @@ describe('lazy restoration of persisted tabs', () => {
       removeChildView: vi.fn(),
     },
     // placedSlot reads the slot zoom; this fake suffices for visibility tests.
-    webContents: { getZoomFactor: vi.fn(() => 1) },
+    webContents: { getZoomFactor: vi.fn(() => 1), focus: vi.fn() },
+    isDestroyed: () => false,
   }
 
   beforeEach(() => {
@@ -271,6 +275,70 @@ describe('lazy restoration of persisted tabs', () => {
     for (const id of ownedIds) closeBrowserTab('restore-owned', id)
     flushPendingBrowserPersists()
     expect(drawer.browserTabs.map((tab) => tab.id)).not.toContain(ownedId)
+  })
+
+  it('Cmd/Ctrl+W closes the active tab and keeps the keyboard on the next page', () => {
+    ensureBrowser('shortcut-close')
+    const drawer = getDrawer('shortcut-close')
+    const active = drawer.browserTabs.find((tab) => tab.id === drawer.activeBrowserId)!
+    vi.mocked(active.view!.webContents.isFocused).mockReturnValue(true)
+
+    closeActiveBrowserTabFromShortcut('shortcut-close')
+
+    expect(drawer.browserTabs.map((tab) => tab.url)).toEqual(['https://one.test', 'https://three.test'])
+    const next = drawer.browserTabs.find((tab) => tab.id === drawer.activeBrowserId)!
+    expect(next.url).toBe('https://three.test')
+    expect(next.view!.webContents.focus).toHaveBeenCalledOnce()
+    expect(sendToConversation).not.toHaveBeenCalledWith(
+      'shortcut-close',
+      'drawer:browser-focus-url',
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
+  it('Cmd/Ctrl+W on the last tab leaves an empty browser with a focused address bar', () => {
+    vi.mocked(getConvUiPrefs).mockReturnValue({})
+    ensureBrowser('shortcut-last')
+    const drawer = getDrawer('shortcut-last')
+    const ownedId = createBrowserTab('shortcut-last', 'https://worker.test', {
+      ownerScopeId: 'delegate-a',
+      activate: false,
+    })
+
+    closeActiveBrowserTabFromShortcut('shortcut-last')
+
+    expect(drawer.browserTabs.map((tab) => tab.id)).toEqual([ownedId])
+    expect(drawer.activeBrowserId).toBeNull()
+    expect(mainWindow.webContents.focus).toHaveBeenCalledOnce()
+    expect(sendToConversation).toHaveBeenCalledWith(
+      'shortcut-last',
+      'drawer:browser-focus-url',
+      { convId: 'shortcut-last', placement: 'slot' },
+      { panel: 'browser' }
+    )
+
+    // Nothing user-facing is left: delegated worker tabs are never closed by the shortcut.
+    closeActiveBrowserTabFromShortcut('shortcut-last')
+    expect(drawer.browserTabs.map((tab) => tab.id)).toEqual([ownedId])
+  })
+
+  it('Cmd/Ctrl+T opens an active tab and focuses its address bar', () => {
+    ensureBrowser('shortcut-new')
+    const drawer = getDrawer('shortcut-new')
+
+    openBrowserTabFromShortcut('shortcut-new')
+
+    expect(drawer.browserTabs).toHaveLength(4)
+    expect(drawer.activeBrowserId).toBe(drawer.browserTabs.at(-1)!.id)
+    expect(drawer.browserTabs.at(-1)!.url).toBe('https://www.google.com')
+    expect(mainWindow.webContents.focus).toHaveBeenCalledOnce()
+    expect(sendToConversation).toHaveBeenLastCalledWith(
+      'shortcut-new',
+      'drawer:browser-focus-url',
+      { convId: 'shortcut-new', placement: 'slot' },
+      { panel: 'browser' }
+    )
   })
 
   it('creates a UI-owned tab instead of adopting a background worker tab', () => {

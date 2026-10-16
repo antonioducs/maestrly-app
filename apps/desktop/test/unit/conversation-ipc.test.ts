@@ -41,6 +41,8 @@ vi.mock('../../src/main/selection-bridge', () => ({
 }))
 
 vi.mock('../../src/main/store', () => ({
+  clearConversationAttention: vi.fn(),
+  listConversationAttention: vi.fn(),
   countOtherActiveConversationsInCwd: vi.fn(),
   getConversation: vi.fn(),
   getLocale: vi.fn(),
@@ -56,6 +58,9 @@ vi.mock('../../src/main/terminal-manager', () => ({
   disposeShellTerminals: vi.fn(),
 }))
 
+const computers = vi.hoisted(() => ({ close: vi.fn(async (_id: string) => undefined) }))
+vi.mock('../../src/main/remote-host/server/computers-registry', () => ({ serverComputers: () => computers }))
+
 vi.mock('../../src/main/workspace-service', () => ({
   createConversation: h.createConversation,
   createSiblingConversation: vi.fn(),
@@ -65,7 +70,10 @@ vi.mock('../../src/main/workspace-service', () => ({
 }))
 
 import { registerConversationIpc } from '../../src/main/conversation-ipc'
+import * as floatingManager from '../../src/main/floating-manager'
 import {
+  clearConversationAttention,
+  listConversationAttention,
   listStandaloneConversations,
   setStandaloneConversationOrder,
   setConversationPinned,
@@ -83,6 +91,7 @@ describe('registerConversationIpc', () => {
 
     expect([...handles.keys()].sort()).toEqual([
       'conversation-dispatch:status',
+      'conversation:attention-list',
       'conversation:branch-info',
       'conversation:list',
       'conversation:list-standalone',
@@ -90,6 +99,7 @@ describe('registerConversationIpc', () => {
     expect([...mhandles.keys()].sort()).toEqual([
       'conversation-dispatch:retry',
       'conversation:archive',
+      'conversation:attention-clear',
       'conversation:create',
       'conversation:create-standalone',
       'conversation:createSibling',
@@ -137,6 +147,18 @@ describe('registerConversationIpc', () => {
     ).toThrow('Invalid payload')
   })
 
+  it("gives a workspaces conversation's computer back when it is archived or deleted, before its windows go", async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerConversationIpc(reg, { stopChat: h.stopChat })
+    const order: string[] = []
+    computers.close.mockImplementation(async (id: string) => void order.push('computer ' + id))
+    vi.mocked(floatingManager.disposeConversation).mockImplementation((id: string) => void order.push('windows ' + id))
+    await mhandles.get('conversation:archive')!({} as never, 'c1', true)
+    await mhandles.get('conversation:archive')!({} as never, 'c1', false)
+    await mhandles.get('conversation:delete')!({} as never, 'c2')
+    expect(order).toEqual(['computer c1', 'windows c1', 'computer c2', 'windows c2'])
+  })
+
   it('forwards pin state to the store and returns its canonical value', async () => {
     const { reg, mhandles } = createTestRegistrar()
     const pinnedAt = 1_700_000_000_000
@@ -158,6 +180,39 @@ describe('registerConversationIpc', () => {
 
     expect(setConversationPinned).toHaveBeenCalledWith('conv-2', false)
     expect(result).toBeNull()
+  })
+
+  it('lists the host attention marks and tells every window only when a clear changed one', async () => {
+    const { reg, handles, mhandles } = createTestRegistrar()
+    const emitAttention = vi.fn()
+    vi.mocked(listConversationAttention).mockReturnValueOnce(['conv-1'])
+    registerConversationIpc(reg, { stopChat: h.stopChat, emitAttention })
+
+    expect(handles.get('conversation:attention-list')!({} as never)).toEqual(['conv-1'])
+
+    vi.mocked(clearConversationAttention).mockReturnValueOnce(true)
+    await mhandles.get('conversation:attention-clear')!({} as never, 'conv-1')
+    expect(clearConversationAttention).toHaveBeenCalledWith('conv-1')
+    expect(emitAttention).toHaveBeenCalledWith('conv-1', false)
+
+    emitAttention.mockClear()
+    vi.mocked(clearConversationAttention).mockReturnValueOnce(false)
+    await mhandles.get('conversation:attention-clear')!({} as never, 'conv-1')
+    expect(emitAttention).not.toHaveBeenCalled()
+
+    expect(() => mhandles.get('conversation:attention-clear')!({} as never, 42)).toThrow()
+  })
+
+  it('clears the attention mark of an archived conversation everywhere', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    const emitAttention = vi.fn()
+    vi.mocked(clearConversationAttention).mockReturnValueOnce(true)
+    registerConversationIpc(reg, { stopChat: h.stopChat, emitAttention })
+
+    await mhandles.get('conversation:archive')?.({} as never, 'conv-chat', true)
+
+    expect(clearConversationAttention).toHaveBeenCalledWith('conv-chat')
+    expect(emitAttention).toHaveBeenCalledWith('conv-chat', false)
   })
 
   it('stops Maestrly Chat before archiving the conversation', async () => {

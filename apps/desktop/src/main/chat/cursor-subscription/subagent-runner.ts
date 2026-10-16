@@ -10,7 +10,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
-import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { createCursorStreamMapper, resolveCursorTerminalEvidence } from '../cursor-sdk/stream-map'
@@ -27,7 +27,7 @@ const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'review_plan',
   'ask_question',
   'todo_write',
-  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 ])
 
 export interface RunCursorSubagentArgs {

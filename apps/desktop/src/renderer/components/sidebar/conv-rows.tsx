@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Loader2,
@@ -6,7 +6,6 @@ import {
   Plus,
   GitBranch,
   GitMerge,
-  HardDrive,
   ChevronRight,
   ChevronDown,
   Folder,
@@ -26,7 +25,7 @@ import type { DragHandle } from '@/components/sidebar/WorkspaceConvList'
 import { dropdownKit, contextKit } from '@/components/sidebar/menu-kit'
 import { activeSiblingSource, type useSidebarMenus } from '@/components/sidebar/use-sidebar-menus'
 import type { SharedConversationGroupInfo } from '@/components/sidebar/conv-top-nodes'
-import { relativeTime } from '@/components/sidebar/relative-time'
+import { compactAge } from '@/components/sidebar/relative-time'
 import type { MouseEvent } from 'react'
 
 export function useConvRows({
@@ -68,6 +67,27 @@ export function useConvRows({
   const [locale] = useLocale()
   const { convMenuItems, sharedFolderMenuItems } = menus
 
+  const dateFormat = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }),
+    [locale]
+  )
+  const ageLabel = (ts: number): string => {
+    const age = compactAge(ts)
+    if (!age) return ''
+    return age.unit === 'Now' ? t('sidebar.ageNow') : t(`sidebar.age${age.unit}`, { count: age.count })
+  }
+  /** When it was last active, in full, and whether it runs in a worktree or the project folder. */
+  const timeTitle = (conv: Conversation): string | undefined => {
+    const mode =
+      conv.scope === 'standalone' || conv.isMulti
+        ? ''
+        : conv.mode === 'worktree'
+          ? t('sidebar.worktreeTitle')
+          : t('sidebar.localModeTitle')
+    const parts = [conv.lastActivityAt ? dateFormat.format(conv.lastActivityAt) : '', mode].filter(Boolean)
+    return parts.length ? parts.join(' · ') : undefined
+  }
+
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
 
   const convItem = (
@@ -93,7 +113,7 @@ export function useConvRows({
         onClick={() => !isRenaming && onSelect(conv)}
         onDoubleClick={() => startRename(conv, opts.instanceKey)}
         className={cn(
-          'conv-item group relative mx-1.5 flex cursor-pointer gap-2 rounded-md py-1.5 pr-1 text-sm text-sidebar-foreground hover:bg-white/[0.04]',
+          'conv-item group relative mx-1.5 flex cursor-pointer gap-2 rounded-md py-1.5 pr-1 text-[13px] text-sidebar-foreground hover:bg-white/[0.04]',
           contextLabel ? 'items-start' : 'items-center',
           opts.pl,
           conv.id === activeId && 'conv-selected text-foreground',
@@ -136,7 +156,7 @@ export function useConvRows({
               }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.stopPropagation()}
-              className="block w-full min-w-0 rounded border border-input bg-transparent px-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+              className="block w-full min-w-0 rounded border border-input bg-transparent px-1 text-[13px] outline-none focus:ring-1 focus:ring-ring"
             />
           ) : (
             <span
@@ -169,20 +189,21 @@ export function useConvRows({
           />
         )}
 
-        {/* Time and workspace mode give way to the menu on hover. */}
+        {/* The time gives way to the menu on hover; its tooltip has the date and how the conversation runs. */}
         {!isRenaming && (
           <span
             className={cn(
-              'flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground group-hover:hidden',
+              'flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-muted-foreground/80 group-hover:hidden',
               contextLabel && 'mt-0.5'
             )}
+            title={timeTitle(conv)}
           >
             {conv.experience === 'maestro' && (
               <span className="flex items-center text-amber-300/80" title={t('sidebar.maestroConversation')}>
                 <Sparkles className="size-3" />
               </span>
             )}
-            {conv.scope === 'standalone' ? null : conv.isMulti ? (
+            {conv.scope === 'project' && conv.isMulti ? (
               <span
                 className="flex items-center gap-0.5 text-primary/80"
                 title={conv.repos?.map((r) => `${r.linkName} → ${r.branch}`).join('\n')}
@@ -190,16 +211,8 @@ export function useConvRows({
                 <GitMerge className="size-3" />
                 {conv.repos?.length ?? ''}
               </span>
-            ) : conv.mode === 'worktree' ? (
-              <span className="flex items-center" title={t('sidebar.worktreeTitle')}>
-                <GitBranch className="size-3 opacity-50" />
-              </span>
-            ) : (
-              <span className="flex items-center" title={t('sidebar.localModeTitle')}>
-                <HardDrive className="size-3 opacity-50" />
-              </span>
-            )}
-            {relativeTime(locale, conv.lastActivityAt)}
+            ) : null}
+            {ageLabel(conv.lastActivityAt)}
           </span>
         )}
 
@@ -250,7 +263,7 @@ export function useConvRows({
             <div
               onClick={() => setCollapsedGroups((groups) => ({ ...groups, [info.key]: !groups[info.key] }))}
               className={cn(
-                'group/folder mx-1.5 flex cursor-pointer items-center gap-1.5 rounded-md py-1.5 pl-3 pr-1 text-sm text-sidebar-foreground hover:bg-white/[0.04]',
+                'group/folder mx-1.5 flex cursor-pointer items-center gap-1.5 rounded-md py-1.5 pl-3 pr-1 text-[13px] text-sidebar-foreground hover:bg-white/[0.04]',
                 opts.isOver && 'ring-1 ring-inset ring-primary/60'
               )}
             >

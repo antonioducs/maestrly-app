@@ -209,6 +209,33 @@ describe('Claude physical account resolution', () => {
     })
     expect(getSubscriptionFailoverRouter().getHealth(BASE).state).toBe('unknown')
   })
+  it('waits for another caller probing the recovered primary instead of reporting the chain exhausted', async () => {
+    fixture()
+    fixture('acc_second')
+    const router = getSubscriptionFailoverRouter()
+    router.markExhausted(SECOND, {
+      reason: 'quota',
+      source: 'probe',
+      now: Date.now(),
+      resetsAt: Date.now() + 3_600_000,
+    })
+    router.markExhausted(BASE, { reason: 'quota', source: 'probe', now: 0, resetsAt: 1000 })
+    const probe = await resolveClaudeRuntimeTarget(args())
+    expect(probe).toMatchObject({ ok: true, target: { providerId: BASE, availabilityLease: { generation: 1 } } })
+
+    expect(await resolveClaudeRuntimeTarget(args({ probeWaitMs: 10 }))).toMatchObject({
+      ok: false,
+      reason: 'quota-exhausted',
+    })
+    let settled = false
+    const waiting = resolveClaudeRuntimeTarget(args()).finally(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(settled).toBe(false)
+    router.confirmServing(BASE)
+    await expect(waiting).resolves.toMatchObject({ ok: true, target: { providerId: BASE } })
+  })
   it('honors abort after discovery and attempted accounts', async () => {
     const first = fixture()
     fixture('acc_second')

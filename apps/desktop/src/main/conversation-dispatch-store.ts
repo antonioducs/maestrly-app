@@ -27,13 +27,16 @@ export interface ConversationDispatchRecord {
   conversationName: string
   branch: string | null
   baseRevision: string | null
+  /** Deliver the destination's final answer to its first task back to the source. */
+  reportBack: boolean
   phase: ConversationDispatchPhase
   error: string | null
   createdAt: number
   updatedAt: number
 }
 
-type Row = Omit<ConversationDispatchRecord, 'settings' | 'inherited' | 'sourceRef'> & {
+type Row = Omit<ConversationDispatchRecord, 'settings' | 'inherited' | 'sourceRef' | 'reportBack'> & {
+  reportBack: number
   settingsJson: string
   inheritedJson: string
   sourceRefJson: string | null
@@ -43,7 +46,7 @@ const columns = `dispatch_id AS dispatchId, source_conversation_id AS sourceConv
   request_key AS requestKey, kind, fingerprint, title, prompt, placement, settings_json AS settingsJson,
   inherited_json AS inheritedJson, source_ref_json AS sourceRefJson, workspace_id AS workspaceId,
   conversation_id AS conversationId, conversation_name AS conversationName, branch, base_revision AS baseRevision,
-  phase, error, created_at AS createdAt, updated_at AS updatedAt`
+  report_back AS reportBack, phase, error, created_at AS createdAt, updated_at AS updatedAt`
 
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) return fallback
@@ -56,9 +59,10 @@ function parseJson<T>(value: string | null, fallback: T): T {
 
 function fromRow(row: Row | undefined): ConversationDispatchRecord | null {
   if (!row) return null
-  const { settingsJson, inheritedJson, sourceRefJson, ...rest } = row
+  const { settingsJson, inheritedJson, sourceRefJson, reportBack, ...rest } = row
   return {
     ...rest,
+    reportBack: Number(reportBack) === 1,
     settings: parseJson<ConversationDispatchSettings>(settingsJson, {
       providerId: '',
       modelId: '',
@@ -143,7 +147,10 @@ export function conversationHasMessages(conversationId: string): boolean {
   return !!getDb().prepare('SELECT 1 FROM chat_messages WHERE conversation_id=? LIMIT 1').get(conversationId)
 }
 
-export type NewConversationDispatch = Omit<ConversationDispatchRecord, 'phase' | 'error' | 'createdAt' | 'updatedAt'>
+export type NewConversationDispatch = Omit<
+  ConversationDispatchRecord,
+  'phase' | 'error' | 'createdAt' | 'updatedAt' | 'reportBack'
+> & { reportBack?: boolean }
 
 /**
  * Insert a reservation. Returns the existing record instead when a concurrent caller reserved the same
@@ -166,8 +173,8 @@ export function reserveConversationDispatch(value: NewConversationDispatch): {
         `INSERT INTO conversation_dispatches
          (dispatch_id, source_conversation_id, origin_key, request_key, kind, fingerprint, title, prompt, placement,
           settings_json, inherited_json, source_ref_json, workspace_id, conversation_id, conversation_name, branch,
-          base_revision, phase, error, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', NULL, ?, ?)`
+          base_revision, report_back, phase, error, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', NULL, ?, ?)`
       )
       .run(
         value.dispatchId,
@@ -187,6 +194,7 @@ export function reserveConversationDispatch(value: NewConversationDispatch): {
         value.conversationName,
         value.branch,
         value.baseRevision,
+        value.reportBack ? 1 : 0,
         now,
         now
       )

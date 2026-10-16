@@ -32,7 +32,6 @@ import {
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { patchConvUiPrefs, setAppFlag } from '../../src/main/store'
-import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: vi.fn() }))
@@ -572,44 +571,6 @@ describe('GitHub Copilot official runner', () => {
     expect(config).not.toHaveProperty('thinking')
     expect(config).not.toHaveProperty('betas')
     expect(config).not.toHaveProperty('toolChoice')
-  })
-
-  it('offers exactly the reviewer read-only tools and terminates after accepted submit_review', async () => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd })
-    persistUser(conversation.id, 'user-reviewer-boundary', 'Review the execution.', 1)
-    const manager = new FakeManager()
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(async () => []),
-      readExecutionContext: vi.fn(async () => []),
-    }
-    manager.queue(async () => {
-      const submitReview = manager.createCalls[0].tools?.find((entry) => entry.name === 'submit_review')
-      expect(submitReview).toBeTruthy()
-      await (
-        submitReview!.handler as unknown as (input: unknown, invocation: { toolCallId: string }) => Promise<unknown>
-      )({ result: 'clean', summary: 'No findings.' }, { toolCallId: 'reviewer-submit-1' })
-    })
-
-    const outcome = await runGitHubCopilotChat({
-      ...args(conversation.id, workspace.id, cwd, manager),
-      mode: 'agent',
-      permMode: 'full',
-      ephemeralSession: true,
-      reviewerRuntime,
-    })
-
-    expect(outcome).toEqual({ planSubmitted: true, sessionId: 'copilot-session-1' })
-    expect(manager.createCalls[0].tools?.map((entry) => entry.name)).toEqual([...REVIEWER_READONLY_TOOL_NAMES].sort())
-    expect(manager.createCalls[0].availableTools).toEqual(
-      [...REVIEWER_READONLY_TOOL_NAMES].sort().map((name) => `custom:${name}`)
-    )
-    expect(manager.createCalls[0].enableSkills).toBe(false)
-    expect(manager.createCalls[0].enableHostGitOperations).toBe(false)
-    expect(reviewerRuntime.submitReview).toHaveBeenCalledWith({ result: 'clean', summary: 'No findings.' })
-    await vi.waitFor(() => expect(manager.sessions[0].abort).toHaveBeenCalledOnce())
   })
 
   it('bounds summarized agent catalogs in instructions', () => {

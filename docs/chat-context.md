@@ -5,15 +5,16 @@
 Use **Chats → New chat** for a general conversation, explanations, or work with
 attachments. A project is not required. Projects keep their existing repository,
 branch and worktree workflows; standalone chats do not join a project or inherit
-its instructions, memory, Kanban links or saved permissions.
+its instructions, memory or saved permissions.
 
 New standalone chats start in Standard with Ask mode and Ask permissions. Saved
 “always allow” decisions belong to that chat alone. Agent, Plan and Design can
 use their usual generic capabilities under the selected permission policy.
 Maestro, Git review, branch operations and project-memory tools require a project.
 Browser, MCPs and other optional tools retain their existing enablement settings.
-Online research requires an available search tool; `webfetch` reads a supplied
-URL and does not provide a general search engine.
+Models search the web with `web_search` when web search is enabled in
+**Settings → Tools → Web search**, and read a specific URL with `webfetch`. Both
+ask for permission under the Ask policy.
 
 Each chat stores working files in `<userData>/standalone-chats/<conversationId>`.
 This managed directory is an execution location, not an operating-system sandbox.
@@ -47,6 +48,113 @@ The task card shows valid entries from the agent's latest task list. Malformed
 or incomplete task data is omitted instead of interrupting the chat interface;
 valid entries appear when the agent supplies them. This also applies when
 reopening saved conversations and does not change the stored tool input.
+
+## Code and plan reviews
+
+**Review** in the header of a project conversation, or `/code-review` in the
+composer, opens an independent, read-only review of the conversation's current
+changes: the committed difference from the default branch, staged and unstaged
+changes, and new files. In the Plan tab, **Review plan** opens a review of a
+plan that is waiting for your decision. Reviewers run read-only: they read and
+search the checkout but cannot change files.
+
+A review takes over the conversation and moves through five stages:
+
+1. **Scope** shows what will be reviewed (the changed files with their line
+   counts, or the plan's steps) and asks who reviews: the conversation's own
+   model, reasoning effort and Fast setting, or another model with its own
+   effort and Fast setting. ChatGPT Web cannot run reviewers. The choice is
+   remembered for the next review and stored in the local database. Nothing runs
+   until you choose **Start review**.
+2. **Investigate**: reviewers work in parallel, three for code (logic,
+   integration, and security and tests) and two for plans (feasibility and
+   completeness). Each one has a column with what it reads and searches as it
+   happens and the candidate findings it raises. An evidence map beside them
+   shows which files each reviewer read, inside and outside the change, and
+   where candidates point.
+3. **Verify**: a verifier rules on every candidate. It confirms it (possibly
+   with a corrected severity), discards it with a reason, or merges it into a
+   duplicate. Discarded and merged candidates stay visible with their reason.
+4. **Decide**: one finding at a time, with the code (or plan) lines it is
+   about, its evidence and a suggestion. For code, choose fix, discuss or dismiss
+   (with an optional reason); for plans, comment on the plan or dismiss. The
+   keyboard works too: `J`/`K` move, `F`, `D`, `C` and `X` decide.
+5. **Hand off**: for code, an editable message built from your decisions goes
+   to the agent with the full report attached, or you keep only the report. For
+   plans, your comments land on the plan lines (with your own comments from the
+   Plan tab) as a revision request, or you approve the plan as written.
+
+From **Start review** until you hand the result off or discard the review, the
+conversation is paused: no turn runs, nothing can be sent, and the plan cannot be
+decided. Messages from other conversations wait until the review ends. A code
+review uses up to four runs of the reviewing model and a plan review up to
+three; their usage counts toward the conversation, even when the review is
+discarded.
+
+The review then continues in the conversation as a receipt with its findings,
+your decisions and where the hand-off stands. When the agent has finished,
+**Check the fixes** (or **Check the revision**) runs one more verifier pass over
+what you sent: no new findings, only whether each fix or comment holds up. The
+conversation is paused for the few seconds it takes. A finding that is still
+open can be sent back to the agent from the receipt.
+
+One review runs per conversation at a time. Code reviews need a Git checkout
+with changes, so they are not offered in multi-repository or archived
+conversations. Receipts are stored with the conversation in the local database,
+outside the model's context; the report reaches the model only with the message
+you send it with. An open review that the app closes before it is handed off is
+lost, and the conversation is free again. The earlier automatic review loop was
+removed; older conversations keep its messages as history.
+
+## Interactive answers
+
+In chats, project conversations and bot conversations, an agent can answer with
+interfaces mixed into its text, as many as the answer needs: small pages it
+writes in HTML, CSS and JavaScript, shown in an isolated frame. They suit
+pictures such as product photos, visual comparisons, charts, diagrams,
+calculators and simulations, small tools and games.
+
+How they behave:
+
+- Before showing an interface, the agent can preview it: the app renders it
+  offscreen at the width of the chat and returns a screenshot and the problems
+  it found, so the agent can fix what looks wrong. The preview appears in the
+  answer's activity with its screenshot, and the answer then shows the
+  interface without the agent writing it again. Previews need Maestrly tools;
+  without them the agent writes interfaces without seeing them.
+- Each interface appears as soon as its block is complete, while the rest of
+  the answer is still arriving.
+- Changing a field or moving a slider runs inside the interface; it does not
+  call the model.
+- A button can send a message as you or open a web page in your browser. A sent
+  message appears in the conversation like one you typed, and waits in the
+  queue while a turn runs. An interface sends or opens something only right
+  after you interact with the app window, and at most once per second.
+- An interface keeps nothing: it starts over each time the conversation shows.
+- The app checks each interface. An image that does not load is replaced by a
+  placeholder, and a table wider than the answer scrolls sideways. What cannot
+  be fixed is listed under the interface as **problems found**: content wider
+  than the answer, text cut off, a layout that grows with its own frame, script
+  errors and blocked requests.
+- **Interface source** shows what the agent wrote.
+- The [mobile app](mobile.md) runs interfaces too, in an isolated web view with
+  the same policy, once their block is complete. On the phone, every message an
+  interface asks to send and every page it asks to open first asks you, showing
+  the message or the site, since the phone cannot tell a tap in the interface
+  from the interface's own code. **Show code** shows the source.
+
+Interfaces cannot call tools, read files or fetch data, so they show only what
+the agent put in them. They may load images, video and audio from any web
+address, and libraries and fonts from a few public CDNs; those servers see the
+addresses requested, by previews as well.
+
+The instructions that teach interfaces add about 850 tokens to each
+conversation's cached system prompt, and each preview adds its screenshot to
+the context. To save those tokens, turn off **Interactive answers** in
+**Settings → Tools**; for bots, turn it off in the **Preferences** of the
+environment's settings. Turning it off removes the instructions and the preview
+from the next turn; answers that already have interfaces keep showing them.
+Delegated subagents never receive them.
 
 ## PDF attachments
 
@@ -135,20 +243,26 @@ for example:
   Opus, high effort, Fast off."
 - "Abra uma conversa para cada card e comece o desenvolvimento."
 - "Send this plan to a new conversation."
+- "Send another agent to review this."
 
 Ask offers these handoff tools, and the project tools below, in turns you start;
-whether conversations start is still checked against your message. Your current
+a request that is not explicit still needs your confirmation. Your current
 chat stays in Ask mode; the development conversation starts in Agent mode. File
 editing and shell commands remain unavailable in the source Ask chat.
 
-The agent starts conversations only when your latest message explicitly asks for
-them, including an explicit handoff such as “Send this plan for development in
-workspace Example, on a new branch feat/example from main.” It does not start
-them when you ask for analysis or planning, ask whether
-it is possible, give an example, describe a feature, or quote text, code or card
-content. If you state a number ("open 3 conversations"), no more than that are
-started for that message. When the request is not explicit, the agent tells you
-why and does nothing.
+Ask in your own words; you do not need to rephrase. The agent judges from the
+whole conversation whether you want work started elsewhere, and a message that
+asks for it explicitly, such as “Send this plan for development in workspace
+Example, on a new branch feat/example from main”, starts the conversations
+directly. When your latest message does not ask for them in so many words, the
+chat lists the conversations the agent wants to start and asks you to confirm
+with **Start** or **Don't start**; nothing starts if you decline or dismiss the
+question. Text the agent read in files, cards, web pages or tool output can never
+answer for you. The agent should not start conversations when you only ask for
+analysis or planning, ask whether it is possible, give an example or describe a
+feature. If you say not to open conversations, none are started and you are not
+asked. If you state a number ("open 3 conversations"), no more than that are
+started for that message.
 
 Model, effort and Fast mode follow what you said. The agent matches names such
 as "Opus" against your connected providers and asks you to choose when the same
@@ -186,7 +300,13 @@ Repeating the same request does not create duplicates: the existing
 conversations are reported again, and one whose first turn failed is retried.
 A conversation you delete is not recreated. New conversations cannot start
 further conversations on their own. They can do so later only if you ask for
-it in that conversation.
+it in that conversation. They can answer the conversation that started them,
+as described in [talking to other conversations](#talking-to-other-conversations).
+
+To have the result brought back, say so ("open another agent to review this and
+bring me the result"). When the new conversation's first turn ends, its final
+answer arrives in this conversation as a new message marked **Result from …**,
+and the agent here continues with it.
 
 ### Creating or cloning the project first
 
@@ -228,15 +348,53 @@ clone progress and a link to the workspace.
   conversations follow the rules above, and "don't open conversations" is
   respected.
 
+### Talking to other conversations
+
+The agent can also read and message conversations that already exist, in any
+project or standalone chat. Ask in your own words:
+
+- "What did the review conversation conclude?"
+- "Pede pra ela corrigir o item 2."
+- "Tell the Atlas conversation that the API changed, and bring me its answer."
+
+The agent finds conversations by name, reads their latest answer and recent
+messages (tool activity is left out), and can wait for one to finish its current
+turn. A message it sends starts a turn in the other conversation, shown as a
+bubble marked **Message from …** with a link back. The receiving agent keeps its
+own mode, permissions and model, so a message from an Ask chat cannot edit files
+anywhere it could not already. A conversation that is busy receives the message
+when its current turn ends; messages wait in order and are kept across restarts.
+
+- **Confirmation.** The first message to a conversation that has no link with
+  this one asks you to confirm with **Send** or **Don't send**. Conversations
+  started from this one, the one that started it, and ones that already
+  exchanged messages with it are linked and need no confirmation.
+- **Bring the result back.** Only when you ask for it, the other conversation's
+  final answer to the message comes back as a new turn here, marked **Result
+  from …**. Otherwise the answer stays there and the agent can read it later.
+- **Reports.** A conversation that was given work can report back to the
+  conversation that gave it, marked **Report from …**, for example when the work
+  is done or blocked.
+- **Turns the agents start.** Turns started by another conversation can only
+  read and message linked conversations, can never start new conversations or
+  create projects, and stop after three agent-to-agent turns since you last typed
+  a message. The agent then tells you instead of continuing.
+
+These tools are available in Agent, Design and Ask modes. They are unavailable in
+Plan and Maestro modes, bot conversations, Kanban web chats, automations and
+subagents. Messages between conversations are stored in the local database and
+removed by a local data reset. A result whose turn was interrupted because the
+app closed is not delivered; ask again to continue.
+
 ### Limits
 
 Up to 20 conversations can be started per request; ask again for more.
 Starting conversations is available in Agent/Design mode in local standalone
 and project chats. It is unavailable in Plan and Maestro modes,
-bot conversations, Kanban web chats, archived
+bot conversations, archived
 conversations, conversations with an unfinished migration and multi-repository
-conversations, and the app gives the reason. A review loop blocks only the
-**Same checkout** option. Missing or unknown workspace IDs, invalid or existing
+conversations, and the app gives the reason. A running ChatGPT Web
+project-environment job blocks only the **Same checkout** option. Missing or unknown workspace IDs, invalid or existing
 branch names, unresolved base branches, and targets combined with **Same
 checkout** are reported as errors rather than silently choosing another target.
 Results identify the destination workspace and resolved base revision.
@@ -343,7 +501,7 @@ processing every old chat.
 Maestrly tools are enabled by default. Existing explicit global or conversation
 choices remain unchanged. **Settings → Chat → Tools** keeps the master switch
 and lets you enable or disable Terminal, Browser, Notes, Memory, Conversation
-history, Debugger, Artifacts and Kanban separately. Expand **Maestrly tools** in
+history, Debugger and Artifacts separately. Expand **Maestrly tools** in
 the conversation's **+** menu to change its groups. Changing one group pins only
 that group's choice; the others continue to inherit the global settings.
 

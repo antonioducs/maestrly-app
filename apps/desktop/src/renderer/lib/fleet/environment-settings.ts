@@ -37,7 +37,7 @@ export function useEnvironmentSettingsSource(environmentId: string) {
   }, [lifetime])
   return source
 }
-type ReadOperation = 'accounts' | 'models' | 'skills' | 'mcpServers' | 'runtimes' | 'preferences'
+type ReadOperation = 'accounts' | 'models' | 'skills' | 'mcpServers' | 'runtimes' | 'preferences' | 'failover'
 export function useEnvironmentSettingsResource<K extends ReadOperation>(environmentId: string, operation: K) {
   const source = useEnvironmentSettingsSource(environmentId)
   const [data, setData] = useState<FleetSettingsOutput<K> | null>(null)

@@ -7,7 +7,9 @@ import {
   FLEET_PORTS,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
+  FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_SCREEN_UPGRADE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   type FleetScreenSurface,
 } from '@maestrly/bot-fleet-protocol'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -16,18 +18,27 @@ import { GatewayError } from './errors.js'
 import type { Lifecycle } from './lifecycle.js'
 
 type Mode = 'view' | 'control'
-/** A bot's browser area or apps display, or the environment screen (its Maestrly settings window). */
+/**
+ * A bot's browser area or apps display, the environment screen (its Maestrly settings window), or a workspaces
+ * conversation's computer (`apps`) or browser tile (`browser`).
+ */
 type Surface = FleetScreenSurface | 'environment'
-type Target = { environmentId: string; botId: string | null; surface: Surface }
+type Target = { environmentId: string; botId: string | null; conversationId: string | null; surface: Surface }
 type Ticket = Target & { deviceId: string; mode: Mode; expiresAt: number }
 type Connection = Target & { deviceId: string; mode: Mode; ws: WebSocket; tcp: Socket }
 type Reservation = Target & { deviceId: string; mode: Mode; ws: WebSocket }
 export const SCREEN_CONTROLLED = 'Another screen in this environment is being controlled.'
 export const RESTART_TO_OPEN_SCREEN = 'Restart this environment to update it before opening this screen.'
-/** Browser areas and the environment screen are tiles of one display, whose pointer and keyboard they share. */
-const onSharedDisplay = (surface: Surface) => surface !== 'apps'
+/**
+ * Browser areas and the environment screen are tiles of one display, whose pointer and keyboard they share. A
+ * conversation's computer has a display of its own, and its browser tile is only watched.
+ */
+const onSharedDisplay = (target: Target) => target.conversationId === null && target.surface !== 'apps'
 const sameTarget = (a: Target, b: Target) =>
-  a.environmentId === b.environmentId && a.botId === b.botId && a.surface === b.surface
+  a.environmentId === b.environmentId &&
+  a.botId === b.botId &&
+  a.conversationId === b.conversationId &&
+  a.surface === b.surface
 
 export class ScreenProxy {
   readonly server = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
@@ -55,24 +66,53 @@ export class ScreenProxy {
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
     const environmentId = bot.environmentId!
-    // An instance from before environments has one display, the bot's browser area.
-    if (surface !== 'browser' && this.lifecycle.environmentCapable(environmentId) !== true)
-      throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
+    if (!this.videoCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
     if (mode === 'control' && (bot.takeover.state !== 'human' || bot.takeover.deviceId !== deviceId))
       throw new GatewayError('FORBIDDEN', 'Takeover required for control')
-    return this.issue({ environmentId, botId, surface }, deviceId, mode)
+    return this.issue({ environmentId, botId, conversationId: null, surface }, deviceId, mode)
   }
   /** A ticket for the environment screen: it shows only Maestrly's settings, so control needs no takeover. */
   environmentTicket(environmentId: string, deviceId: string, mode: Mode) {
     const environment = this.lifecycle.environment(environmentId)
     if (!environment) throw new GatewayError('NOT_FOUND', 'Environment not found')
     if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
-    if (this.lifecycle.environmentCapable(environmentId) !== true)
-      throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
-    return this.issue({ environmentId, botId: null, surface: 'environment' }, deviceId, mode)
+    if (!this.videoCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
+    return this.issue({ environmentId, botId: null, conversationId: null, surface: 'environment' }, deviceId, mode)
+  }
+  /**
+   * A ticket for a workspaces conversation's computer (`apps`) or its browser tile (`browser`, view only). The agent
+   * keeps working while its owner controls the computer, so control needs no takeover.
+   */
+  conversationTicket(
+    environmentId: string,
+    conversationId: string,
+    deviceId: string,
+    mode: Mode,
+    surface: FleetScreenSurface
+  ) {
+    const environment = this.lifecycle.environment(environmentId)
+    if (!environment) throw new GatewayError('NOT_FOUND', 'Environment not found')
+    if (environment.kind !== 'workspaces')
+      throw new GatewayError('CONFLICT', 'This environment does not host workspaces.')
+    if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
+    if (!this.conversationCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
+    if (surface === 'browser' && mode === 'control')
+      throw new GatewayError('INVALID_REQUEST', "A conversation's browser is view only")
+    return this.issue({ environmentId, botId: null, conversationId, surface }, deviceId, mode)
+  }
+  /** Screens stream as video from images with the encoder; older environments restart onto the new image first. */
+  private videoCapable(environmentId: string): boolean {
+    return this.lifecycle.environmentCapabilities(environmentId).includes(FLEET_VIDEO_SCREENS_FEATURE)
+  }
+  /** Conversations have screens on images whose workspaces host gives them computers. */
+  private conversationCapable(environmentId: string): boolean {
+    return (
+      this.videoCapable(environmentId) &&
+      this.lifecycle.environmentCapabilities(environmentId).includes(FLEET_CONVERSATION_COMPUTERS_FEATURE)
+    )
   }
   private issue(target: Target, deviceId: string, mode: Mode) {
-    if (mode === 'control' && onSharedDisplay(target.surface) && this.displayControls(target).length)
+    if (mode === 'control' && onSharedDisplay(target) && this.displayControls(target).length)
       throw new GatewayError('CONFLICT', SCREEN_CONTROLLED)
     const value = token()
     const expiresAt = this.now() + this.ticketTtlMs
@@ -93,7 +133,7 @@ export class ScreenProxy {
       (entry) =>
         entry.environmentId === target.environmentId &&
         entry.mode === 'control' &&
-        onSharedDisplay(entry.surface) &&
+        onSharedDisplay(entry) &&
         (includeSame || !sameTarget(entry, target))
     )
   }
@@ -102,20 +142,20 @@ export class ScreenProxy {
     if (this.lifecycle.store.deviceRevoked(ticket.deviceId)) return false
     const environment = this.lifecycle.environment(ticket.environmentId)
     if (environment?.lifecycle !== 'running') return false
+    if (ticket.conversationId !== null) return environment.kind === 'workspaces'
     if (ticket.botId === null) return true
     const bot = this.lifecycle.get(ticket.botId)
     if (bot?.lifecycle !== 'running' || bot.environmentId !== ticket.environmentId) return false
     return ticket.mode === 'view' || (bot.takeover.state === 'human' && bot.takeover.deviceId === ticket.deviceId)
   }
-  /** The instance's screen route for a ticket; an instance from before environments has only the bot's browser. */
-  private upstreamPath(ticket: Ticket): string | null {
+  /** The instance's screen route for a ticket. */
+  private upstreamPath(ticket: Ticket): string {
     const view = ticket.mode === 'view'
-    if (this.lifecycle.environmentCapable(ticket.environmentId) !== true)
-      return ticket.surface === 'browser'
-        ? view
-          ? FLEET_INSTANCE_ROUTES.screenView.path
-          : FLEET_INSTANCE_ROUTES.screenControl.path
-        : null
+    if (ticket.conversationId !== null)
+      return buildPath(
+        view ? FLEET_INSTANCE_ROUTES.conversationScreenView.path : FLEET_INSTANCE_ROUTES.conversationScreenControl.path,
+        { conversationId: ticket.conversationId, surface: ticket.surface }
+      )
     if (ticket.botId === null)
       return view
         ? FLEET_INSTANCE_ROUTES.environmentScreenView.path
@@ -141,18 +181,28 @@ export class ScreenProxy {
       // Tickets can be issued while the display is free and used later: the display is checked again on use.
       if (
         same >= (ticket.mode === 'view' ? 4 : 1) ||
-        (ticket.mode === 'control' && onSharedDisplay(ticket.surface) && this.displayControls(ticket, true).length)
+        (ticket.mode === 'control' && onSharedDisplay(ticket) && this.displayControls(ticket, true).length)
       ) {
         ws.close(4003, 'limit')
         return
       }
       const secret = this.lifecycle.store.environmentSecrets(ticket.environmentId)?.controlToken
-      const path = this.upstreamPath(ticket)
-      if (!secret || !path) {
+      // An environment that restarted onto an image without video screens (or computers) since the ticket was issued.
+      const capable =
+        ticket.conversationId === null
+          ? this.videoCapable(ticket.environmentId)
+          : this.conversationCapable(ticket.environmentId)
+      if (!secret || !capable) {
         ws.close(4003, 'ticket_invalid')
         return
       }
-      const target: Target = { environmentId: ticket.environmentId, botId: ticket.botId, surface: ticket.surface }
+      const path = this.upstreamPath(ticket)
+      const target: Target = {
+        environmentId: ticket.environmentId,
+        botId: ticket.botId,
+        conversationId: ticket.conversationId,
+        surface: ticket.surface,
+      }
       // Reserved before connecting upstream, so a concurrent use of another ticket sees it.
       const reservation: Reservation = { ...target, deviceId: ticket.deviceId, mode: ticket.mode, ws }
       this.pendingConnections.add(reservation)

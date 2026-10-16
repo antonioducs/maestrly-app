@@ -61,9 +61,10 @@ import { SubagentCoordinator } from '../subagent-coordinator'
 import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-catalog'
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
-import { builtinToolNamesForMode, buildTools, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
+import { builtinToolNamesForMode, buildTools } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
-import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
+import { enableConversationLinkTools } from '../tools/conversation-link'
+import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -130,6 +131,7 @@ import { renderDesignUltraGuidance } from '../design-mode-prompt'
 import { harnessFor } from '../harness/execution'
 import { captureHarnessFlags } from '../harness/flags'
 import { buildMaestrlyBasePrompt, harnessEnvironmentContext, harnessUltraGuidance } from '../harness/host-contracts'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import { createHarnessSnapshot } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
@@ -159,7 +161,7 @@ export interface RunClaudeChatArgs {
   resolvedModelId?: string
   /** Harness contract resolved once at turn admission; undefined resolves locally for direct calls. */
   harness?: ResolvedHarness
-  /** Runtime model id frozen for an isolated review-loop execution. */
+  /** Runtime model id frozen for an isolated internal execution. */
   frozenResolvedModelId?: string
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
@@ -201,7 +203,7 @@ export interface RunClaudeChatArgs {
     prepared?: PreparedBackgroundCompaction
   } | null>
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
-  /** Isolated review loop: do not resume the conversation binding; transcript = execution. */
+  /** Isolated internal turn: do not resume the conversation binding; transcript = execution. */
   ephemeralSession?: boolean
   messageMeta?: {
     source?: import('../../../shared/chat').ChatMessageSource
@@ -210,8 +212,6 @@ export interface RunClaudeChatArgs {
     reviewLoop?: import('../../../shared/chat').ChatReviewLoopMeta
   }
   executionScope?: import('../../../shared/chat').ChatExecutionScope
-  /** Isolated review turns receive only the fixed host-owned read-only surface. */
-  reviewerRuntime?: ReviewerToolRuntime
 }
 
 export interface RunClaudeChatResult {
@@ -527,13 +527,8 @@ async function prepareRuntime(
     toolCallId,
     cwd: args.cwd,
     signal: toolSignal,
-    ask: (action, resources, save) => {
-      if (args.reviewerRuntime) {
-        return action === 'read' || action === 'grep' || action === 'glob'
-          ? Promise.resolve()
-          : Promise.reject(new Error(`Reviewer read-only boundary denied ${action}`))
-      }
-      return args.broker.assert({
+    ask: (action, resources, save) =>
+      args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
         permissionScope: args.permissionScope,
@@ -543,8 +538,7 @@ async function prepareRuntime(
         toolName: action,
         toolCallId,
         signal: toolSignal,
-      })
-    },
+      }),
     askQuestion: (questions) =>
       args.questionBroker.ask({
         conversationId: args.conversationId,
@@ -559,40 +553,21 @@ async function prepareRuntime(
       activateTerminalStep(toolCallId)
       return true
     },
-    ...(args.reviewerRuntime
-      ? {
-          reviewer: {
-            recordEvidence: (kind) => args.reviewerRuntime!.recordEvidence(kind),
-            searchExecutionContext: (input) => args.reviewerRuntime!.searchExecutionContext(input),
-            readExecutionContext: (input) => args.reviewerRuntime!.readExecutionContext(input),
-            submitReview: (decision) => {
-              const result = args.reviewerRuntime!.submitReview(decision)
-              if (result.ok) activateTerminalStep(toolCallId)
-              return result
-            },
-          } satisfies ReviewerToolRuntime,
-        }
-      : {}),
     ...(state.emitGeneratedImage
       ? { emitGeneratedImage: (image: GeneratedImageEmission) => state.emitGeneratedImage?.(toolCallId, image) }
       : {}),
     ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
     ...(conversationDispatch ? { conversationDispatch } : {}),
+    ...(conversationLink ? { conversationLink } : {}),
   })
-  const enabledBuiltins = args.reviewerRuntime
-    ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-    : builtinToolNamesForMode(args.mode)
-  // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
-  const conversationDispatch = args.reviewerRuntime
-    ? undefined
-    : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+  const enabledBuiltins = builtinToolNamesForMode(args.mode)
+  // Starting other conversations: only in a main turn admitted from text the person typed.
+  const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+  // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+  const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even here, in a conversation running on Claude).
-  if (
-    !args.reviewerRuntime &&
-    state.emitGeneratedImage &&
-    (await generateImageToolEnabled(args.conversationId, args.mode))
-  ) {
+  if (state.emitGeneratedImage && (await generateImageToolEnabled(args.conversationId, args.mode))) {
     enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
   }
   const core = buildTools({ executorReport: true, enabled: enabledBuiltins, makeCtx: makeContext })
@@ -609,29 +584,27 @@ async function prepareRuntime(
       signal,
     })
   }
-  const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
+  const prefs = getConvUiPrefs(args.conversationId).chat?.tools
   const appAccess = resolveAppToolAccess(args.conversationId)
-  const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
+  const appToolsEnabled = appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
-  const mcp = args.reviewerRuntime
-    ? { tools: {}, close: async () => {} }
-    : await buildMcpTools({
+  const mcp = await buildMcpTools({
+    conversationId: args.conversationId,
+    mode: args.mode,
+    signal: args.signal,
+    gate,
+    disabledIds,
+    supportsImages: true,
+    describeImage: (image) =>
+      describeEphemeralToolImage({
+        image,
         conversationId: args.conversationId,
-        mode: args.mode,
+        cwd: args.cwd,
         signal: args.signal,
-        gate,
-        disabledIds,
-        supportsImages: true,
-        describeImage: (image) =>
-          describeEphemeralToolImage({
-            image,
-            conversationId: args.conversationId,
-            cwd: args.cwd,
-            signal: args.signal,
-          }),
-      })
+      }),
+  })
   const app =
-    !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+    appToolsEnabled || hasPersonalMemoryTools(args.conversationId)
       ? await buildAppTools({
           only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
           disabledGroups: appAccess.disabledGroups,
@@ -651,7 +624,7 @@ async function prepareRuntime(
       : { tools: {}, close: async () => {} }
   try {
     const skills =
-      args.reviewerRuntime || args.mode === 'ask'
+      args.mode === 'ask'
         ? []
         : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
     const skillTools: ToolSet = skills.length
@@ -674,13 +647,11 @@ async function prepareRuntime(
           }),
         }
       : {}
-    const allAgents = args.reviewerRuntime
-      ? []
-      : await listEffectiveAgents({
-          cwd: args.cwd,
-          conversationId: args.conversationId,
-          mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
-        })
+    const allAgents = await listEffectiveAgents({
+      cwd: args.cwd,
+      conversationId: args.conversationId,
+      mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+    })
     const agents =
       args.mode === 'maestro' && args.maestro
         ? maestroAgentsFromTurn(args.maestro, allAgents)
@@ -798,6 +769,7 @@ async function prepareRuntime(
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
         hasNotesTab: Boolean(getConversation(args.conversationId)),
+        generatedInterfaces: generatedInterfacesEnabled(),
       }),
       '# Active runtime\nYou are running through the official Anthropic Claude Agent SDK. Maestrly owns the system prompt, tools, permissions, skills, subagents, plans, questions and persistence. Use only the supplied Maestrly MCP tools; native Claude Code extensions are disabled.',
       projectContext,
@@ -923,11 +895,9 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     maestrlyUltra: currentTarget.maestrlyUltra,
   }
   const attemptedProviderIds = new Set([currentTarget.providerId])
-  const failoverEnabled =
-    !args.ephemeralSession &&
-    !args.frozenResolvedModelId &&
-    (args.failoverChain?.length ?? 0) > 1 &&
-    !!args.resolveNextTarget
+  // The host passes a multi-account chain with a resolver only where switching is allowed: a frozen loop round only
+  // within the route frozen at its start, where the resolver pins `frozenResolvedModelId` on every account.
+  const failoverEnabled = (args.failoverChain?.length ?? 0) > 1 && !!args.resolveNextTarget
   let accountAttemptSettled = false
   const settleAccountAttempt = (outcome: 'success' | 'quota' | 'other', info?: MarkExhaustedInfo): void => {
     if (accountAttemptSettled) return
@@ -1293,34 +1263,32 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         ),
         runtime!.agents.map((agent) => agent.name)
       )
-      state.runTask = args.reviewerRuntime
-        ? null
-        : createClaudeTaskRuntime({
-            conversationId: args.conversationId,
-            projectId: args.projectId,
-            permissionScope: args.permissionScope,
-            cwd: args.cwd,
-            mode: args.mode,
-            maestro: args.maestro,
-            maestroLive: args.maestroLive,
-            permMode: args.permMode,
-            selection: args.selection,
-            reasoningEffort: args.reasoningEffort,
-            fastMode: args.fastMode === true,
-            manager: args.manager,
-            accountIdentity: args.accountIdentity,
-            broker: args.broker,
-            questionBroker: args.questionBroker,
-            assistantId,
-            agents: runtime!.agents,
-            tools: runtime!.rawTools,
-            coordinator: state.coordinator,
-            subagentUsage,
-            apply,
-            emitGeneratedImage: state.emitGeneratedImage,
-            onGeneratedImageUsage: state.onGeneratedImageUsage,
-            turnState: explicitTurnState,
-          })
+      state.runTask = createClaudeTaskRuntime({
+        conversationId: args.conversationId,
+        projectId: args.projectId,
+        permissionScope: args.permissionScope,
+        cwd: args.cwd,
+        mode: args.mode,
+        maestro: args.maestro,
+        maestroLive: args.maestroLive,
+        permMode: args.permMode,
+        selection: args.selection,
+        reasoningEffort: args.reasoningEffort,
+        fastMode: args.fastMode === true,
+        manager: args.manager,
+        accountIdentity: args.accountIdentity,
+        broker: args.broker,
+        questionBroker: args.questionBroker,
+        assistantId,
+        agents: runtime!.agents,
+        tools: runtime!.rawTools,
+        coordinator: state.coordinator,
+        subagentUsage,
+        apply,
+        emitGeneratedImage: state.emitGeneratedImage,
+        onGeneratedImageUsage: state.onGeneratedImageUsage,
+        turnState: explicitTurnState,
+      })
     }
     prepareTasks()
 
@@ -2212,7 +2180,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     context = resolvedContext
     if (context?.maxTokens) args.onModelContextWindow?.(context.maxTokens, currentTarget)
     const planAcknowledgementMissing = state.planSubmitted && !state.planResultAcknowledged
-    const terminalToolLabel = args.reviewerRuntime ? 'review decision' : 'staged plan'
     if (planAcknowledgementMissing && state.planToolCallId) {
       apply(
         {
@@ -2221,7 +2188,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           toolCallId: state.planToolCallId,
           state: {
             status: 'error',
-            error: `Claude did not acknowledge the ${terminalToolLabel} tool result.`,
+            error: 'Claude did not acknowledge the staged plan tool result.',
           },
         },
         true
@@ -2239,7 +2206,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     fatal =
       fatal ??
       (planAcknowledgementMissing
-        ? `Claude did not acknowledge the ${terminalToolLabel} tool result; the provider session was discarded.`
+        ? 'Claude did not acknowledge the staged plan tool result; the provider session was discarded.'
         : intentionalPlanInterruptAccepted
           ? null
           : (resultError(result, runtimeModelId) ?? servedModelMismatch?.message ?? null))
@@ -2456,7 +2423,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       }
     )
     if (state.planSubmitted && !state.planResultAcknowledged && state.planToolCallId) {
-      const terminalToolLabel = args.reviewerRuntime ? 'review decision' : 'staged plan'
       apply(
         {
           kind: 'tool-state',
@@ -2464,7 +2430,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           toolCallId: state.planToolCallId,
           state: {
             status: 'error',
-            error: `Claude did not acknowledge the ${terminalToolLabel} tool result.`,
+            error: 'Claude did not acknowledge the staged plan tool result.',
           },
         },
         true

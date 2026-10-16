@@ -206,6 +206,14 @@ async function reply(req) {
     // The screenshot's note says where the page is scrolled; a failed capture says why instead.
     return { text: /Scroll y=\d+\/\d+/.test(last) ? 'E2E-HOST-BROWSER-OK' : 'E2E-HOST-BROWSER-NO-SCREENSHOT ' + last.slice(0, 200) }
   }
+  // A workspaces conversation's agent takes a picture of its own computer, which the call starts when it is not running.
+  if (text.includes('E2E-HOST-COMPUTER')) {
+    const { tools, last } = turn(messages, 'E2E-HOST-COMPUTER')
+    if (tools.length === 0) return validatedTool(req, 'computer_screenshot', {})
+    if (!/1280 × 800 pixels/.test(last)) return { text: 'E2E-HOST-COMPUTER-FAILED ' + last.slice(0, 200) }
+    const started = /Started this conversation's computer on display (:\d+)/.exec(last)?.[1] ?? 'no'
+    return { text: 'E2E-HOST-COMPUTER-OK started=' + started }
+  }
   // A bot reaches the owner's computers: all of them at once, then one computer per call.
   if (text.includes('E2E-DESKTOPS-LIST')) {
     const { tools, last } = turn(messages, 'E2E-DESKTOPS-LIST')

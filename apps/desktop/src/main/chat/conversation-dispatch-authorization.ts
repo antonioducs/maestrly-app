@@ -7,8 +7,9 @@
  *    unattended turns never register an origin here, so a transcript message with role `user` is not enough.
  * 2. Intent: that text contains a positive, operational request to open/create/start other conversations.
  *    The detector is deliberately conservative: quoted/code content, negation, questions about capability,
- *    hypotheticals, examples and feature descriptions do not authorize anything. Uncertainty is rejected with a
- *    reason the agent relays so the person can state the request explicitly.
+ *    hypotheticals, examples and feature descriptions do not authorize anything by themselves. When it does not
+ *    recognize a request, the tool asks the person to confirm in the chat instead (see tools/conversation-dispatch);
+ *    an explicit negation still refuses without asking.
  *
  * A grant is bound to the admitted turn and its message; it expires when the turn ends and is never inherited
  * by the conversations it creates.
@@ -36,13 +37,14 @@ export interface TurnAdmissionShape {
   runnerAdmission?: unknown
   runnerSignal?: unknown
   dispatchSeed?: unknown
+  peerMessage?: unknown
   hiddenParts?: readonly unknown[]
 }
 
 /**
  * Only text a person typed into this conversation (chat:send / edit-and-resend) is a human origin. Every host path
- * (plans, review loops, bots, remote/web, unattended executors, dispatch seeds, guard continuations) passes
- * options that exclude it.
+ * (plans, review loops, bots, remote/web, unattended executors, dispatch seeds, messages from other conversations,
+ * guard continuations) passes options that exclude it.
  */
 export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): boolean {
   return (
@@ -53,6 +55,7 @@ export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): bool
     !opts?.runnerAdmission &&
     !opts?.runnerSignal &&
     !opts?.dispatchSeed &&
+    !opts?.peerMessage &&
     !opts?.hiddenParts?.length
   )
 }
@@ -78,12 +81,13 @@ export type ConversationDispatchDenial =
   | 'question'
   | 'hypothetical'
   | 'count-exceeded'
+  | 'declined'
 
 export interface ConversationDispatchIntent {
   explicit: boolean
   /** Upper bound stated by the person ("open 3 conversations"); null when scoped per item or unbounded. */
   maxConversations: number | null
-  reason?: Exclude<ConversationDispatchDenial, 'no-human-turn' | 'turn-ended' | 'count-exceeded'>
+  reason?: Exclude<ConversationDispatchDenial, 'no-human-turn' | 'turn-ended' | 'count-exceeded' | 'declined'>
 }
 
 /** A live turn started by text the person typed. Enough to create or clone a project they asked for. */
@@ -134,6 +138,8 @@ export function conversationDispatchDenialMessage(code: ConversationDispatchDeni
       )
     case 'count-exceeded':
       return `The person asked for at most ${limit ?? 0} conversation(s) in this turn; this request would exceed it.`
+    case 'declined':
+      return 'The person declined starting these conversations. Do not start them or retry; continue without them.'
     case 'not-requested':
       return (
         'The latest message does not explicitly ask to open/create/start other conversations or send work for development in a workspace. Do not start any. If it ' +

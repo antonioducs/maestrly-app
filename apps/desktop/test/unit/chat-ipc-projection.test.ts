@@ -59,7 +59,7 @@ import {
   publishConvChatSettings,
   registerChatIpc,
 } from '../../src/main/chat/service'
-import { registerRemoteChatPolicy } from '../../src/main/chat/remote-policy'
+import { assertRemoteChatPermission, registerRemoteChatPolicy } from '../../src/main/chat/remote-policy'
 import {
   deleteChatMessage,
   listChatMessages,
@@ -122,7 +122,7 @@ describe('Maestrly app-tool groups', () => {
     const stored = () => getConvUiPrefs(conversation.id).chat?.tools?.appGroups
 
     expect(tools().app).toBe(true)
-    expect(Object.values(tools().appGroups!)).toEqual(Array(8).fill(true))
+    expect(Object.values(tools().appGroups!)).toEqual(Array(7).fill(true))
 
     await handlers.get('chat:set-conv-tools')!({}, conversation.id, { appGroups: { debug: false, computer: false } })
     await handlers.get('chat:set-conv-tools')!({}, conversation.id, { appGroups: { browser: false } })
@@ -228,6 +228,31 @@ describe('conversation settings the person did not choose', () => {
 
     expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
     expect(handlers.get('chat:get-perm-mode')!({}, conversation.id)).toBe('auto')
+  })
+})
+
+describe('remote web access policy', () => {
+  const policy = {
+    conversationId: 'remote-web',
+    cwd: '/project',
+    mode: 'agent' as const,
+    permMode: 'ask' as const,
+    providerIds: ['fixture'],
+    allowCommands: false,
+    allowWeb: true,
+    allowAppTools: false,
+    allowMcp: false,
+    allowPush: false,
+  }
+
+  it('treats web search like webfetch', () => {
+    for (const action of ['webfetch', 'web_search']) {
+      expect(assertRemoteChatPermission(policy, { action, resources: ['electron vibrancy'] })).toBe('ask')
+      expect(assertRemoteChatPermission({ ...policy, permMode: 'auto' }, { action, resources: ['q'] })).toBe('read')
+      expect(() => assertRemoteChatPermission({ ...policy, allowWeb: false }, { action, resources: ['q'] })).toThrow(
+        /web access/
+      )
+    }
   })
 })
 

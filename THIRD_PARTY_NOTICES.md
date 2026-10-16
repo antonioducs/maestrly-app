@@ -22,8 +22,9 @@ distributed beside it as
 ## noVNC
 
 The desktop app includes the npm package [`@novnc/novnc`](https://www.npmjs.com/package/@novnc/novnc)
-1.7.0 from [noVNC](https://github.com/novnc/noVNC) for remote bot screen viewing
-and control. Its core is licensed under MPL-2.0.
+1.7.0 from [noVNC](https://github.com/novnc/noVNC) for the keyboard input of bot
+screens: its keyboard module turns key events into X keysyms. Its core is
+licensed under MPL-2.0.
 The upstream notice, authors, and license are distributed in
 [`novnc-NOTICE.txt`](apps/desktop/resources/licenses/novnc-NOTICE.txt),
 [`novnc-AUTHORS.txt`](apps/desktop/resources/licenses/novnc-AUTHORS.txt), and
@@ -34,6 +35,32 @@ The other upstream texts are
 [`novnc-BSD-2-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-2-Clause.txt),
 [`novnc-BSD-3-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-3-Clause.txt),
 and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
+
+## Bot screen encoder
+
+The bot server's environment image runs `maestrly-screen-encoder`, a separate
+program that captures each bot screen and encodes it as H.264. Maestrly talks to
+it over pipes and does not link it. It runs in a Python virtual environment at
+`/opt/maestrly/screen`, installed from the published wheels below, pinned by
+hash:
+
+- [pixelflux](https://github.com/selkies-project/pixelflux) 2.1.0, licensed
+  under MPL-2.0. Its wheel bundles native libraries under their own licenses:
+  x264 (`libx264`, GPL-2.0-or-later); FFmpeg's `libavcodec`, `libavfilter`,
+  `libavformat`, `libavutil`, `libswresample` and `libswscale`, built with
+  `--enable-gpl` (GPL-2.0-or-later); x265 (GPL-2.0-or-later); kvazaar
+  (BSD-3-Clause); libvpx (BSD-3-Clause); SVT-AV1 (BSD-3-Clause-Clear, with the
+  Alliance for Open Media patent license); and dav1d (BSD-2-Clause). The
+  encoder uses x264 for H.264.
+- [python-xlib](https://github.com/python-xlib/python-xlib) 0.33, licensed under
+  LGPL-2.1-or-later, for XTEST input and clipboard notifications.
+- [six](https://github.com/benjaminp/six) 1.17.0, MIT License, which python-xlib
+  requires.
+
+Each package's license is distributed with it in the image, under
+`/opt/maestrly/screen/lib/python3.11/site-packages/<package>.dist-info/`.
+pixelflux's `licenses/LICENSES.md` there inventories every bundled library and
+its license.
 
 ## ws
 
@@ -49,6 +76,40 @@ Copyright (c) 2016 Luigi Pinca and contributors
 The complete license and attribution are distributed with the `ws` package in
 `node_modules/ws/LICENSE`, inside the gateway image and inside the packaged
 desktop app.
+
+## uqr
+
+The desktop app includes [uqr](https://github.com/unjs/uqr) 0.1.3 to draw the QR
+code that pairs a phone with the bot server. It is licensed under the MIT
+License, Copyright (c) Project Nayuki and Copyright (c) 2023 Anthony Fu. The
+complete license is distributed with the package in `node_modules/uqr/LICENSE`.
+
+## Mobile app
+
+The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 57
+(`expo` 57.0.28 and the `expo-*` modules, such as `expo-video` 57.0.5 and
+`expo-sharing` 57.0.23, Expo Router 57.0.26) and
+[React Native](https://reactnative.dev) 0.86.3, both under the MIT License. It
+also includes, under the MIT License,
+[react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2
+with [marked](https://github.com/markedjs/marked) 18.0.14,
+[react-native-svg](https://github.com/software-mansion/react-native-svg) 15.15.4,
+[react-native-webview](https://github.com/react-native-webview/react-native-webview)
+13.16.1,
+[AsyncStorage](https://github.com/react-native-async-storage/async-storage)
+2.2.0, and
+[expo-speech-recognition](https://github.com/jamsch/expo-speech-recognition)
+57.1.1 (Copyright (c) 2024 jamsch). Their complete licenses are distributed with
+each package.
+
+The app bundles three font families through `@expo-google-fonts` (MIT): Bricolage
+Grotesque (Copyright 2022 The Bricolage Grotesque Project Authors), Instrument
+Sans (Copyright 2022 The Instrument Sans Project Authors) and JetBrains Mono
+(Copyright 2020 The JetBrains Mono Project Authors). The fonts are licensed under
+the SIL Open Font License 1.1; the licenses are in
+[`BricolageGrotesque-OFL.txt`](apps/mobile/assets/licenses/BricolageGrotesque-OFL.txt),
+[`InstrumentSans-OFL.txt`](apps/mobile/assets/licenses/InstrumentSans-OFL.txt), and
+[`JetBrainsMono-OFL.txt`](apps/mobile/assets/licenses/JetBrainsMono-OFL.txt).
 
 ## ssh2
 

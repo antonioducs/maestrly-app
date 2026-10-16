@@ -10,8 +10,22 @@ import type {
   BrowserStreamInput,
   BrowserStreamNotice,
   BrowserStreamSource,
+  BrowserStreamArea,
+  BrowserStreamOptions,
   BrowserStreamStarted,
 } from '../shared/browser-stream'
+import type { ComputerOpenResult } from '../shared/conversation-computer'
+import type { OmniboxQueryResult } from '../shared/browser-omnibox'
+import type { RemoteConversationLabel } from '../shared/hosts'
+
+/** Main asks the browser chrome hosted at `placement` to focus and select its address bar. */
+export interface BrowserFocusUrl {
+  convId: string
+  placement: 'slot' | 'floating' | 'popup'
+}
+
+/** A browser tab shortcut the main window caught while the keyboard was in a browser chrome or a streamed page. */
+export type BrowserShortcut = 'new-tab' | 'close-tab'
 
 export interface FloatingBounds {
   x: number
@@ -36,26 +50,49 @@ export interface BrowserState {
   devtoolsOpen: boolean
 }
 
-export interface TerminalPanelActivity {
+/** Whether a panel renderer is on the full-speed path: shown, or working for the agent. */
+export interface PanelActivity {
   convId: string
   fullSpeed: boolean
 }
 
-let cachedTerminalPanelActivity: TerminalPanelActivity | null = null
+/** The tabs of a conversation out of the drawer slot (floating, popup or stream), sent on each change. */
+export interface DrawerPlacement {
+  convId: string
+  outOfSlot: FloatTab[]
+}
 
-function parseTerminalPanelActivity(value: unknown): TerminalPanelActivity | null {
+function parsePanelActivity(value: unknown): PanelActivity | null {
   if (!value || typeof value !== 'object') return null
-  const state = value as Partial<TerminalPanelActivity>
+  const state = value as Partial<PanelActivity>
   if (typeof state.convId !== 'string' || typeof state.fullSpeed !== 'boolean') return null
   return { convId: state.convId, fullSpeed: state.fullSpeed }
 }
 
-// This listener is installed while preload is booting, before panel.html's async React/i18n mount.
-// A later onTerminalPanelActivity subscriber can therefore consume the did-finish-load state even
-// if the WebContents message arrived before React rendered.
-ipcRenderer.on('drawer:terminal-activity', (_event, value: unknown) => {
-  cachedTerminalPanelActivity = parseTerminalPanelActivity(value)
-})
+/**
+ * A panel's activity on `channel`. Its listener is installed while preload is booting, before panel.html's async
+ * React/i18n mount, so a later subscriber still gets the did-finish-load state that arrived before React rendered.
+ */
+function panelActivity(channel: string): (cb: (state: PanelActivity) => void) => () => void {
+  let cached: PanelActivity | null = null
+  ipcRenderer.on(channel, (_event, value: unknown) => {
+    cached = parsePanelActivity(value)
+  })
+  return (cb) => {
+    const listener = (_event: unknown, value: unknown) => {
+      const state = parsePanelActivity(value)
+      if (!state) return
+      cached = state
+      cb(state)
+    }
+    ipcRenderer.on(channel, listener)
+    if (cached) cb(cached)
+    return () => ipcRenderer.removeListener(channel, listener)
+  }
+}
+
+const onTerminalPanelActivity = panelActivity('drawer:terminal-activity')
+const onBrowserPanelActivity = panelActivity('drawer:browser-activity')
 
 /** How this computer's window presents a conversation's tools: native views, floats, popups and panels. */
 export const drawerApi = {
@@ -77,6 +114,16 @@ export const drawerApi = {
   }) => ipcRenderer.send('drawer:layout', payload),
   /** Data URL of the native view docked in the slot, or null when nothing native is visible there. */
   drawerCaptureSlot: (convId: string): Promise<string | null> => ipcRenderer.invoke('drawer:capture-slot', convId),
+  /** Address-bar suggestions over this computer's native page; `prepare` resolves to a frozen frame of the page. */
+  drawerOmniboxOverlay: (convId: string, mode: 'prepare' | 'open' | 'close'): Promise<string | null> =>
+    ipcRenderer.invoke('drawer:omnibox-overlay', convId, mode),
+  /** Whether the keyboard is in a browser chrome or a streamed page of this window: main then catches the tab shortcuts. */
+  drawerBrowserKeyboardFocus: (focused: boolean) => ipcRenderer.send('drawer:browser-keyboard-focus', focused),
+  onBrowserShortcut: (cb: (action: BrowserShortcut) => void): (() => void) => {
+    const listener = (_e: unknown, action: BrowserShortcut) => cb(action)
+    ipcRenderer.on('drawer:browser-shortcut', listener)
+    return () => ipcRenderer.removeListener('drawer:browser-shortcut', listener)
+  },
   drawerLoadVSCode: (convId: string, folder: string): Promise<void> =>
     ipcRenderer.invoke('drawer:load-vscode', convId, folder),
   /** Restarts the editor server: this computer's, or the host's of a remote conversation (`convId`, its host key). */
@@ -99,17 +146,18 @@ export const drawerApi = {
   },
   getFloatingState: (convId: string): Promise<FloatingState> => ipcRenderer.invoke('drawer:floating-state-get', convId),
   isChatGptVisible: (convId: string): Promise<boolean> => ipcRenderer.invoke('drawer:chatgpt-visible', convId),
-  onTerminalPanelActivity: (cb: (state: TerminalPanelActivity) => void): (() => void) => {
-    const listener = (_event: unknown, value: unknown) => {
-      const state = parseTerminalPanelActivity(value)
-      if (!state) return
-      cachedTerminalPanelActivity = state
-      cb(state)
-    }
-    ipcRenderer.on('drawer:terminal-activity', listener)
-    if (cachedTerminalPanelActivity) cb(cachedTerminalPanelActivity)
-    return () => ipcRenderer.removeListener('drawer:terminal-activity', listener)
+  getDrawerPlacement: (convId: string): Promise<DrawerPlacement> => ipcRenderer.invoke('drawer:placement-get', convId),
+  onDrawerPlacement: (cb: (placement: DrawerPlacement) => void): (() => void) => {
+    const listener = (_e: unknown, placement: DrawerPlacement) => cb(placement)
+    ipcRenderer.on('drawer:placement', listener)
+    return () => ipcRenderer.removeListener('drawer:placement', listener)
   },
+  /** The remote hosts' conversations the window lists, which name their floating windows on this computer. */
+  drawerSetRemoteConversations: (labels: RemoteConversationLabel[]) =>
+    ipcRenderer.send('drawer:remote-conversations', labels),
+  onTerminalPanelActivity,
+  /** A remote host's browser panel (popup or floating window) streams its page while it is at full speed. */
+  onBrowserPanelActivity,
   onPrepareMemoryEviction: (
     cb: (payload: { requestId: string; convId: string; tab: string }) => void
   ): (() => void) => {
@@ -134,7 +182,20 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
     drawerSwitchTab: (convId: string, id: string) => ipcRenderer.send('drawer:tab-switch', convId, id),
     drawerReorderTab: (convId: string, from: number, to: number) =>
       ipcRenderer.send('drawer:tab-reorder', convId, from, to),
-    drawerNavigate: (convId: string, url: string) => ipcRenderer.send('drawer:navigate', convId, url),
+    drawerNavigate: (convId: string, url: string, options?: { typed?: boolean }) =>
+      ipcRenderer.send('drawer:navigate', convId, url, options),
+    /** History and open-tab candidates for address-bar text; Google suggestions too when `search` is set. */
+    drawerOmniboxQuery: (
+      convId: string,
+      text: string,
+      options?: { search?: boolean; locale?: string }
+    ): Promise<OmniboxQueryResult> => ipcRenderer.invoke('drawer:omnibox-query', convId, text, options),
+    drawerRemoveHistoryEntry: (url: string) => ipcRenderer.send('drawer:history-remove', url),
+    onBrowserFocusUrl: (cb: (payload: BrowserFocusUrl) => void): (() => void) => {
+      const listener = (_e: unknown, payload: BrowserFocusUrl) => cb(payload)
+      ipcRenderer.on('drawer:browser-focus-url', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-focus-url', listener)
+    },
     drawerBack: (convId: string) => ipcRenderer.send('drawer:back', convId),
     drawerForward: (convId: string) => ipcRenderer.send('drawer:forward', convId),
     drawerReload: (convId: string) => ipcRenderer.send('drawer:reload', convId),
@@ -194,8 +255,16 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
      * The conversation's browser on a remote host, streamed to this window (see shared/browser-stream). Only a remote
      * host serves these; one window watches a conversation's browser at a time, and the last to start takes it over.
      */
-    browserStreamStart: (convId: string, width: number, height: number): Promise<BrowserStreamStarted> =>
-      ipcRenderer.invoke('drawer:browser-stream-start', convId, width, height),
+    browserStreamStart: (
+      convId: string,
+      width: number,
+      height: number,
+      options?: BrowserStreamOptions
+    ): Promise<BrowserStreamStarted> =>
+      ipcRenderer.invoke('drawer:browser-stream-start', convId, width, height, ...(options ? [options] : [])),
+    /** This window cannot play the tile's video: the host sends frames instead. */
+    browserStreamTransport: (convId: string, streamId: string, transport: 'jpeg') =>
+      ipcRenderer.send('drawer:browser-stream-transport', convId, streamId, transport),
     browserStreamResize: (convId: string, streamId: string, width: number, height: number) =>
       ipcRenderer.send('drawer:browser-stream-resize', convId, streamId, width, height),
     /** Sent once each frame was drawn or dropped: the host sends the next ones only as earlier ones are acknowledged. */
@@ -203,6 +272,8 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       ipcRenderer.send('drawer:browser-stream-ack', convId, streamId, seq),
     browserStreamStop: (convId: string, streamId: string) =>
       ipcRenderer.send('drawer:browser-stream-stop', convId, streamId),
+    /** Starts the conversation's computer on a workspaces host, or keeps it running; only a remote host has one. */
+    computerOpen: (convId: string): Promise<ComputerOpenResult> => ipcRenderer.invoke('drawer:computer-open', convId),
     browserStreamInput: (convId: string, streamId: string, input: BrowserStreamInput) =>
       ipcRenderer.send('drawer:browser-input', convId, streamId, input),
     /** Copies (or cuts) the page's selection; resolves with its text, or null when nothing was copied. */
@@ -244,6 +315,12 @@ export function makeDrawerHostApi(ipcRenderer: IpcTransport) {
       const listener = (_e: unknown, notice: BrowserStreamNotice) => cb(notice)
       ipcRenderer.on('drawer:browser-stream-notice', listener)
       return () => ipcRenderer.removeListener('drawer:browser-stream-notice', listener)
+    },
+    /** Where the page is in the conversation's tile, for a stream on the video transport. */
+    onBrowserStreamArea: (cb: (area: BrowserStreamArea) => void): (() => void) => {
+      const listener = (_e: unknown, area: BrowserStreamArea) => cb(area)
+      ipcRenderer.on('drawer:browser-stream-area', listener)
+      return () => ipcRenderer.removeListener('drawer:browser-stream-area', listener)
     },
     savePlanDraft: (convId: string, draft: unknown): void => {
       ipcRenderer.send('panel:plan-draft-save', convId, draft)

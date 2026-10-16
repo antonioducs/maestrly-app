@@ -20,6 +20,20 @@ export default {
     siblingSourceNotFound: 'Conversa de origem não encontrada.',
     siblingSourceInvalid: 'Uma conversa-irmã exige uma conversa de origem ativa e de um único repositório.',
   },
+  conversationDispatch: {
+    confirmHeader: 'Novas conversas',
+    confirmQuestion: 'Iniciar {{count}} conversa(s) nova(s)?\n{{list}}',
+    confirmItem: '• {{title}} ({{workspace}})',
+    confirmThisProject: 'este projeto',
+    confirmStart: 'Iniciar',
+    confirmCancel: 'Não iniciar',
+  },
+  conversationLink: {
+    sendHeader: 'Mensagem para outra conversa',
+    sendQuestion: 'Enviar esta mensagem para “{{name}}”{{workspace}}?\n\n{{preview}}',
+    sendConfirm: 'Enviar',
+    sendCancel: 'Não enviar',
+  },
   debug: {
     extTimeout:
       'timeout: a extensão não respondeu. Abra a aba “Código” desta conversa (o VS Code precisa estar carregado para controlar o debug).',
@@ -32,6 +46,9 @@ export default {
     terminalTitle: 'Terminal {{number}}',
     exitOk: 'O shell terminou.',
     exitFailed: 'O shell terminou com o código {{code}}. Pressione qualquer tecla para fechar esta janela.',
+  },
+  remoteComputer: {
+    untitled: 'Conversa sem título',
   },
   floating: {
     browser: 'Navegador',

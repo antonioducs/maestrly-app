@@ -215,13 +215,11 @@ describe('harness parity: Codex runtime policy', () => {
     const base = {
       eligibleChatGptSession: true,
       ephemeral: false,
-      reviewer: false,
       requestUserInputAsyncAvailable: true,
     }
     const inputs: Array<{ name: string; modelId: string; flags?: Record<string, boolean>; facts?: Partial<typeof base>; effort?: string }> = [
       { name: 'astra/full', modelId: 'gpt-6-astra' },
       { name: 'astra/ephemeral', modelId: 'gpt-6-astra', facts: { ephemeral: true } },
-      { name: 'astra/reviewer', modelId: 'gpt-6-astra', facts: { reviewer: true } },
       { name: 'astra/ineligible', modelId: 'gpt-6-astra', facts: { eligibleChatGptSession: false } },
       { name: 'astra/no-async', modelId: 'gpt-6-astra', facts: { requestUserInputAsyncAvailable: false } },
       { name: 'astra/flag-off', modelId: 'gpt-6-astra', flags: { 'chat.astraHarness': false } },
@@ -290,6 +288,8 @@ describe('harness parity: prompt layouts', () => {
     envContext: 'OS: macOS.',
     ultraContext: 'ULTRA',
     nativeTools: { localShell: true, applyPatch: true },
+    // The baselines freeze the profile composition; generated-interface wiring has its own tests.
+    generatedInterfaces: false,
   }
 
   it('reproduces the recorded Sol baseline', () => {

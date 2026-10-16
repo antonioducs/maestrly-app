@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
-import type RFB from '@novnc/novnc'
 import { FLEET_SCREEN, type FleetScreenSurface } from '@maestrly/bot-fleet-protocol'
-import type { FleetScreenTargetInput } from '../../../preload/api-fleet'
-import { loadNoVnc } from '@/lib/fleet/load-novnc'
+import { loadScreenKeyboard } from '@/lib/fleet/load-screen-keyboard'
 import { attachScreenClipboard, type ScreenClipboardError } from '@/lib/fleet/screen-clipboard'
 import { FleetScreenChannel, ScreenRetries, screenCloseOutcome } from '@/lib/fleet/screen-channel'
+import { ScreenVideoClient } from '@/lib/fleet/screen-video-client'
 import { fleetErrorMessage, isScreenConflict, isScreenOffline } from '@/lib/fleet/errors'
+import { screenTargetOf } from '@/lib/fleet/screen-target'
 
 export type ScreenPhase = 'connecting' | 'live' | 'offline' | 'error'
 
 /**
- * Streams a screen into `container`: a bot's browser or apps area, or an environment's screen. A null surface is a
- * bot's browser area opened as before environments. Browser areas and the environment screen share one display, so
- * the gateway allows one control session on it per environment: a refused control request watches instead, until
- * the owner retries or asks for another screen. `error` is the failure's raw message, for `fleetErrorText`.
+ * Streams a screen into `container`: a bot's browser or apps area, an environment's screen, or a workspaces
+ * conversation's computer. A null surface is a bot's browser area opened as before environments. Browser areas and the
+ * environment screen share one display, so the gateway allows one control session on it per environment: a refused
+ * control request watches instead, until the owner retries or asks for another screen. `error` is the failure's raw message, for `fleetErrorText`.
  */
 export function useFleetScreen({
   container,
   kind,
   id,
+  conversationId,
   surface,
   mode,
   disabled,
@@ -28,8 +29,10 @@ export function useFleetScreen({
   onControlLost,
 }: {
   container: RefObject<HTMLDivElement | null>
-  kind: 'bot' | 'environment'
+  kind: 'bot' | 'environment' | 'conversation'
   id: string
+  /** For a conversation: its id on the host of environment `id`. */
+  conversationId?: string
   surface: FleetScreenSurface | null
   mode: 'view' | 'control'
   disabled: boolean
@@ -48,8 +51,8 @@ export function useFleetScreen({
   lost.current = onControlLost
   const presentation = useRef({ visible, autoFocus })
   presentation.current = { visible, autoFocus }
-  const remoteRef = useRef<RFB | null>(null)
-  const request = `${kind}:${id}:${surface ?? ''}`
+  const remoteRef = useRef<ScreenVideoClient | null>(null)
+  const request = `${kind}:${id}:${conversationId ?? ''}:${surface ?? ''}`
   const [blocked, setBlocked] = useState<string | null>(null)
   const conflict = mode === 'control' && blocked === request
   const effective = conflict ? 'view' : mode
@@ -67,16 +70,15 @@ export function useFleetScreen({
     if (!container.current) return
     let disposed = false
     let channel: FleetScreenChannel | null = null
-    let rfb: RFB | null = null
+    let client: ScreenVideoClient | null = null
     let detachClipboard: (() => void) | undefined
     setPhase('connecting')
     setError('')
     setClipboardError(null)
-    const target: FleetScreenTargetInput =
-      kind === 'environment' ? { environmentId: id } : surface ? { botId: id, surface } : id
+    const target = screenTargetOf({ kind, id, surface, conversationId })
     const openScreen = async () => {
-      // Load the viewer before opening the channel so a failed load never leaves a channel open.
-      const { default: NoVncClient } = await loadNoVnc()
+      // Load the keyboard before opening the channel so a failed load never leaves a channel open.
+      const { default: Keyboard } = await loadScreenKeyboard()
       if (disposed) return null
       const opened = await FleetScreenChannel.open(window.api, target, effective, (state) => {
         if (disposed) return
@@ -94,25 +96,21 @@ export function useFleetScreen({
           setAttempt((value) => value + 1)
         else setPhase('error')
       })
-      return { opened, NoVncClient }
+      return { opened, Keyboard }
     }
     void openScreen()
       .then((result) => {
         if (!result) return
-        const { opened, NoVncClient } = result
+        const { opened, Keyboard } = result
         if (disposed || !container.current) {
           opened.close()
           return
         }
         channel = opened
         if (Number(opened.readyState) === WebSocket.OPEN) setPhase('live')
-        const remote = new NoVncClient(container.current, opened, { shared: true })
+        const remote = new ScreenVideoClient(container.current, opened, { Keyboard })
         remote.viewOnly = effective === 'view' || !presentation.current.visible
         remoteRef.current = remote
-        remote.scaleViewport = true
-        remote.resizeSession = false
-        remote.qualityLevel = 6
-        remote.compressionLevel = 4
         if (effective === 'control') {
           detachClipboard = attachScreenClipboard(
             container.current,
@@ -133,7 +131,7 @@ export function useFleetScreen({
         remote.addEventListener('disconnect', () => {
           if (!disposed) setPhase((value) => (value === 'offline' ? value : 'error'))
         })
-        rfb = remote
+        client = remote
       })
       .catch((cause) => {
         if (disposed) return
@@ -152,11 +150,11 @@ export function useFleetScreen({
     return () => {
       disposed = true
       detachClipboard?.()
-      if (remoteRef.current === rfb) remoteRef.current = null
-      rfb?.disconnect()
+      if (remoteRef.current === client) remoteRef.current = null
+      client?.disconnect()
       channel?.close()
     }
-  }, [container, kind, id, surface, request, effective, disabled, attempt])
+  }, [container, kind, id, conversationId, surface, request, effective, disabled, attempt])
   /** Asks for control again once the other session is done. */
   const retryControl = useCallback(() => {
     retries.current.reset()
@@ -208,8 +206,8 @@ export function ScreenFrame({
     const timer = window.setTimeout(() => setHint(false), 2200)
     return () => window.clearTimeout(timer)
   }, [hint])
-  // noVNC puts an inline `cursor: none` on its canvas, since the screen server draws the bot's pointer into the frames.
-  // Under control that is the only pointer; a watched screen overrides it to keep the local one.
+  // Under control the screen's canvas takes the bot's own pointer sprite as its cursor. A watched screen keeps the
+  // local pointer, and shows the bot's where the screen reports it.
   const cursor = interactive ? 'cursor-default' : 'cursor-not-allowed [&_canvas]:!cursor-not-allowed'
   const framed = variant === 'window'
   const region = (
@@ -220,7 +218,7 @@ export function ScreenFrame({
       onClick={() => {
         if (!interactive) setHint(true)
       }}
-      className={`${framed ? 'absolute inset-0' : 'relative h-full w-full'} [&_canvas]:mx-auto ${cursor}`}
+      className={`${framed ? 'absolute inset-0' : 'relative h-full w-full'} ${cursor}`}
     />
   )
   const notices = (

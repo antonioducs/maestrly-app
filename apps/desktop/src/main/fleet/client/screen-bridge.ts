@@ -16,6 +16,8 @@ type Socket = Pick<WebSocket, 'binaryType' | 'readyState' | 'send' | 'close' | '
 type ScreenChannel = { socket: Socket; owner: WebContents; mode: 'view' | 'control' }
 
 const MAX_CLIPBOARD_TEXT = 1_048_576
+/** The gateway takes WebSocket messages of at most 256 KiB; the screen stream reassembles pieces of any size. */
+const MAX_SOCKET_MESSAGE = 64 * 1024
 
 export class FleetScreenBridge {
   private readonly channels = new Map<string, ScreenChannel>()
@@ -26,7 +28,10 @@ export class FleetScreenBridge {
     private readonly makeSocket: (url: string) => Socket = (url) => new WebSocket(url)
   ) {}
 
-  /** Opens a bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
+  /**
+   * Opens a bot's browser or apps area, an environment's screen, or a workspaces conversation's computer or browser
+   * tile; a bare bot id is its browser area.
+   */
   async openScreen(
     owner: WebContents,
     target: FleetScreenTargetInput,
@@ -41,9 +46,17 @@ export class FleetScreenBridge {
     try {
       api = this.getApi()
       ticket =
-        'environmentId' in screen
-          ? await api.call('environmentScreenTicket', { params: { eid: screen.environmentId }, body: { mode } })
-          : await api.call('botScreenTicket', { params: { id: screen.botId }, body: { mode, surface: screen.surface } })
+        'conversationId' in screen
+          ? await api.call('conversationScreenTicket', {
+              params: { eid: screen.environmentId, cid: screen.conversationId },
+              body: { mode, surface: screen.surface },
+            })
+          : 'environmentId' in screen
+            ? await api.call('environmentScreenTicket', { params: { eid: screen.environmentId }, body: { mode } })
+            : await api.call('botScreenTicket', {
+                params: { id: screen.botId },
+                body: { mode, surface: screen.surface },
+              })
     } finally {
       this.pending--
     }
@@ -84,7 +97,12 @@ export class FleetScreenBridge {
     const channel = this.channels.get(channelId)
     if (!channel || channel.owner !== owner) throw new Error('Screen channel unavailable')
     if (channel.socket.readyState !== WebSocket.OPEN) throw new Error('Screen channel is not open')
-    channel.socket.send(data)
+    if (data.byteLength <= MAX_SOCKET_MESSAGE) {
+      channel.socket.send(data)
+      return
+    }
+    for (let offset = 0; offset < data.byteLength; offset += MAX_SOCKET_MESSAGE)
+      channel.socket.send(data.slice(offset, Math.min(data.byteLength, offset + MAX_SOCKET_MESSAGE)))
   }
 
   /** Finish an explicit remote copy even if the user has already switched to another local app. */

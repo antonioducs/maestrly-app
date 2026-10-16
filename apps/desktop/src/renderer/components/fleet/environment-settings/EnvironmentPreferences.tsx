@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
+import { FLEET_WORKSPACES_ENVIRONMENTS_FEATURE, type FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
 import { useEnvironmentSettingsResource, useEnvironmentSettingsSource } from '@/lib/fleet/environment-settings'
 import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { EnvironmentCompaction } from '../EnvironmentCompaction'
+import { TintPicker } from '../CreateWorkspacesDialog'
 import { SettingsSwitch } from '../SettingsSwitch'
 import {
   SaveDiscard,
@@ -44,35 +45,54 @@ function PreferencesEditor({
   )
   const revision = useRef(initial.revision)
   const savedName = useRef(environment.name)
+  const tintId = useId()
+  // A workspaces environment's color tells it apart in the sidebar; a server from before scopes keeps none.
+  const tinted =
+    isWorkspacesEnvironment(environment) &&
+    fleet.state.connection.features.includes(FLEET_WORKSPACES_ENVIRONMENTS_FEATURE)
+  const savedTint = useRef(environment.tint)
   const editor = useSettingsDraft(
-    { name: environment.name, imageGenEnabled: initial.imageGenEnabled },
+    {
+      name: environment.name,
+      tint: environment.tint,
+      imageGenEnabled: initial.imageGenEnabled,
+      generatedInterfacesEnabled: initial.generatedInterfacesEnabled,
+    },
     async (draft) => {
-      if (draft.name !== savedName.current) {
+      const renames = draft.name !== savedName.current
+      const recolors = tinted && draft.tint !== savedTint.current
+      if (renames || recolors) {
         const updated = await window.api.fleetPatchEnvironment(environment.id, {
-          name: draft.name,
-          expected: { name: savedName.current },
+          ...(renames ? { name: draft.name, expected: { name: savedName.current } } : {}),
+          ...(recolors ? { tint: draft.tint } : {}),
         })
         fleet.dispatch({
           type: 'event',
           value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
         })
         savedName.current = draft.name
+        savedTint.current = draft.tint
       }
       const updated = await source.setPreferences({
         expectedRevision: revision.current,
         imageGenEnabled: draft.imageGenEnabled,
+        // An environment that did not report the setting predates it, and refuses unknown fields.
+        ...(draft.generatedInterfacesEnabled === undefined
+          ? {}
+          : { generatedInterfacesEnabled: draft.generatedInterfacesEnabled }),
       })
       revision.current = updated.revision
     },
     preferencesDirty,
-    initial.revision + ':' + environment.name
+    initial.revision + ':' + environment.name + ':' + (environment.tint ?? '')
   )
   useEffect(() => {
     if (!editor.dirty) {
       revision.current = initial.revision
       savedName.current = environment.name
+      savedTint.current = environment.tint
     }
-  }, [initial.revision, environment.name])
+  }, [initial.revision, environment.name, environment.tint])
   return (
     <SettingsPanel
       error={editor.error}
@@ -82,7 +102,12 @@ function PreferencesEditor({
           .then((updated) => {
             revision.current = updated.revision
             savedName.current = environment.name
-            editor.reset({ name: environment.name, imageGenEnabled: updated.imageGenEnabled })
+            editor.reset({
+              name: environment.name,
+              tint: environment.tint,
+              imageGenEnabled: updated.imageGenEnabled,
+              generatedInterfacesEnabled: updated.generatedInterfacesEnabled,
+            })
           })
           .catch(() => {})
       }}
@@ -96,6 +121,21 @@ function PreferencesEditor({
           onChange={(e) => editor.setDraft((d) => ({ ...d, name: e.target.value }))}
         />
       </label>
+      {tinted && (
+        <div className="space-y-1.5 border-b border-border py-3">
+          <h3 id={tintId} className="text-xs font-medium">
+            {t('workspaces.tintLabel')}
+          </h3>
+          <TintPicker
+            // No color chosen yet: no swatch is selected, and the sidebar keeps the one derived from its id.
+            value={editor.draft.tint ?? ''}
+            onChange={(tint) => editor.setDraft((d) => ({ ...d, tint }))}
+            labelledBy={tintId}
+            disabled={editor.busy}
+          />
+          <p className="text-xs text-muted-foreground">{t('workspaces.tintNote')}</p>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 border-b border-border py-3">
         <div>
           <h3 className="text-xs font-medium">{t('environmentSettings.imageGen')}</h3>
@@ -108,6 +148,22 @@ function PreferencesEditor({
           onChange={() => editor.setDraft((d) => ({ ...d, imageGenEnabled: !d.imageGenEnabled }))}
         />
       </div>
+      {editor.draft.generatedInterfacesEnabled !== undefined && (
+        <div className="flex items-center justify-between gap-3 border-b border-border py-3">
+          <div>
+            <h3 className="text-xs font-medium">{t('environmentSettings.generatedInterfaces')}</h3>
+            <p className="text-xs text-muted-foreground">{t('environmentSettings.generatedInterfacesNote')}</p>
+          </div>
+          <SettingsSwitch
+            checked={editor.draft.generatedInterfacesEnabled}
+            disabled={editor.busy}
+            label={t('environmentSettings.generatedInterfaces')}
+            onChange={() =>
+              editor.setDraft((d) => ({ ...d, generatedInterfacesEnabled: !d.generatedInterfacesEnabled }))
+            }
+          />
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 border-b border-border py-3">
         <div>
           <h3 className="text-xs font-medium">{t('environmentSettings.appTools')}</h3>

@@ -11,6 +11,7 @@ import {
   type Options as ClaudeQueryOptions,
   type Query,
   type SDKControlGetUsageResponse,
+  type SDKMessage,
   type SDKUserMessage,
   type SpawnedProcess,
   type SpawnOptions as ClaudeSpawnOptions,
@@ -38,6 +39,9 @@ import {
 } from './model-catalog'
 import { broadcast } from '../../window-ipc'
 import { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion } from './version'
+import { withSubscriptionAccount } from '../../../shared/chat'
+import { CLAUDE_SUBSCRIPTION_PROVIDER_ID as CLAUDE_SUBSCRIPTION_BASE_PROVIDER_ID } from '../../../shared/subagent-profiles'
+import { getSubscriptionFailoverRouter } from '../subscription-failover/router'
 
 export const CLAUDE_AGENT_SDK_VERSION = '0.3.285'
 export { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion }
@@ -359,6 +363,21 @@ function heldOpenPrompt(): { prompt: AsyncIterable<SDKUserMessage>; release: () 
   return {
     prompt,
     release,
+  }
+}
+
+/** Only an answering model streams events or a non-error assistant message; quota rejections never do. */
+function isClaudeModelOutput(message: SDKMessage): boolean {
+  return message.type === 'stream_event' || (message.type === 'assistant' && !message.error)
+}
+
+async function* observeClaudeModelOutput(
+  messages: AsyncGenerator<SDKMessage, void>,
+  onOutput: () => void
+): AsyncGenerator<SDKMessage, void> {
+  for await (const message of messages) {
+    if (isClaudeModelOutput(message)) onOutput()
+    yield message
   }
 }
 
@@ -1076,6 +1095,14 @@ export class ClaudeSubscriptionManager {
     } catch (error) {
       executable.release()
       throw error
+    }
+    if (typeof created[Symbol.asyncIterator] === 'function') {
+      // Every Claude path (root, subagents, helpers, compaction) reads model output through this query, so the
+      // failover circuit learns here, once for all of them, that this account answers again.
+      const providerId = withSubscriptionAccount(CLAUDE_SUBSCRIPTION_BASE_PROVIDER_ID, this.accountId)
+      const iterate = created[Symbol.asyncIterator].bind(created)
+      created[Symbol.asyncIterator] = () =>
+        observeClaudeModelOutput(iterate(), () => getSubscriptionFailoverRouter().confirmServing(providerId))
     }
     const originalClose = created.close.bind(created)
     let released = false

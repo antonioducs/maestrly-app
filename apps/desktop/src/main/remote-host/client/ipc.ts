@@ -2,7 +2,7 @@ import os from 'node:os'
 import { app, type WebContents, webContents } from 'electron'
 import { FLEET_INSTANCE_BRIDGE_PATH, FLEET_PROTOCOL_HEADER, FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
 import { WebSocket as NodeWebSocket } from 'ws'
-import { isValidHostId, parseHostKey } from '../../../shared/host-key'
+import { type HostId, isValidHostId, parseHostKey } from '../../../shared/host-key'
 import { REMOTE_BRIDGE_LIMITS, type RemoteOriginRole, type RemoteOs } from '../../../shared/remote-bridge'
 import { fleetClientService } from '../../fleet/client/service'
 import { fleetServerId, readFleetSettings } from '../../fleet/client/settings'
@@ -38,6 +38,16 @@ export function originRole(sender: WebContents): RemoteOriginRole {
 
 let registry: HostRegistry | null = null
 const hostsListeners = new Set<() => void>()
+const eventListeners = new Set<(hostId: HostId, channel: string, args: unknown[]) => void>()
+
+/**
+ * Calls `listener` with every push a host sends this computer, before it reaches the renderer it is for: how this
+ * computer's main process follows what it asked a host to do. Returns its removal.
+ */
+export function onHostEvent(listener: (hostId: HostId, channel: string, args: unknown[]) => void): () => void {
+  eventListeners.add(listener)
+  return () => eventListeners.delete(listener)
+}
 
 /** Calls `listener` whenever the hosts or their states change; returns its removal. */
 export function onHostsChanged(listener: () => void): () => void {
@@ -77,6 +87,13 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
       for (const listener of hostsListeners) listener()
     },
     onEvent: (hostId, origin, channel, args) => {
+      for (const listener of eventListeners) {
+        try {
+          listener(hostId, channel, args)
+        } catch (error) {
+          console.error('[hosts] a host event listener failed:', error)
+        }
+      }
       const target = webContents.fromId(origin)
       if (target && !target.isDestroyed()) target.send('host:event', hostId, channel, args)
     },

@@ -21,7 +21,8 @@ interface ResolveSubagentExecutionProfileInput {
 
 interface ResolveParentSubagentExecutionProfileInput {
   agent: ChatAgent
-  parent: ChatModelRef & { effort: string }
+  /** An explicit `fastMode` is validated against the model like a configured profile; omitted, Fast is inherited. */
+  parent: ChatModelRef & { effort: string; fastMode?: boolean }
   /** Effective Fast Mode of the parent turn, captured before resolving the child profile. */
   parentFastMode?: boolean
 }
@@ -45,6 +46,7 @@ export function resolveParentSubagentExecutionProfile({
         providerId: parent.providerId,
         modelId: parent.modelId,
         effort: parent.effort,
+        ...(parent.fastMode !== undefined ? { fastMode: parent.fastMode } : {}),
       },
       parentFastMode,
     },

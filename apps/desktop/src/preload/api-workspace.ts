@@ -155,6 +155,18 @@ export function makeWorkspaceApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('conversation:pin', id, pinned),
     deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation:delete', id),
 
+    /** Conversations of the host waiting for the person, whichever computer they are seen from. */
+    listConversationAttention: (): Promise<string[]> => ipcRenderer.invoke('conversation:attention-list'),
+    /** The person saw the conversation: the host clears its mark on every computer. */
+    clearConversationAttention: (id: string): Promise<void> => ipcRenderer.invoke('conversation:attention-clear', id),
+    onConversationAttention: (
+      callback: (payload: { conversationId: string; attention: boolean }) => void
+    ): (() => void) => {
+      const listener = (_event: unknown, payload: { conversationId: string; attention: boolean }) => callback(payload)
+      ipcRenderer.on('conversation:attention', listener)
+      return () => ipcRenderer.removeListener('conversation:attention', listener)
+    },
+
     setConvMainTabOrder: (convId: string, order: string[]) =>
       ipcRenderer.send('conv:set-main-tab-order', convId, order),
     setConvOpenTabs: (convId: string, tabs: string[], active: string | null) =>

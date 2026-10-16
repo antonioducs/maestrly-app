@@ -14,6 +14,7 @@ import type { ScreenProxy } from './screen.js'
 import type { BridgeProxy } from './bridge.js'
 import type { HostFilesProxy } from './host-files.js'
 import type { HostEditorProxy } from './host-editor.js'
+import type { PushNotifier } from './push.js'
 export type GatewayContext = {
   artifacts?: ArtifactHosting
   network?: FleetNetwork
@@ -31,5 +32,6 @@ export type GatewayContext = {
   hostFiles?: HostFilesProxy
   hostEditor?: HostEditorProxy
   desktops?: DesktopBridge
+  push?: PushNotifier
   revokeDevice?: (deviceId: string) => Promise<void>
 }

@@ -50,7 +50,7 @@ that isolation is required.
 | Main process to AI providers | Prompt, context, tool results, attachments, account state | User-enabled provider, host-owned tools, permission modes, redaction, bounded context |
 | Main process to Local ML | Model/runtime archive and inference payload | Target manifest, critical-file verification, utility process, package checks |
 | Loopback clients to local services | Editor or ChatGPT Web bridge requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
-| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; loopback-only VNC; screen tickets and takeover |
+| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; screens streamed only through the authenticated control server; screen tickets and takeover |
 
 ## Renderer and IPC boundary
 
@@ -68,6 +68,54 @@ sessions with stricter origin and permission controls.
 
 New renderer APIs should expose one domain operation, not a generic IPC sender,
 SQL executor, filesystem primitive, process launcher, or credential accessor.
+
+Interactive answers (`inline-html` blocks) never run in an app page. Each one
+is framed from the `maestrly-widget://frame/` scheme with
+`sandbox="allow-scripts"` and no `allow-same-origin`: the frame has an opaque
+origin and no access to the app, its storage, cookies, IPC or preload. Its page
+receives the block through `postMessage` and writes it under its own policy
+(`sandbox allow-scripts; default-src 'none'`): scripts may be inline or come
+from the artifact CDN allowlist, `connect-src`, `frame-src`, `form-action` and
+`object-src` are `'none'`, and images and media load from any `https` URL. That
+last point is a deliberate trade-off for showing pictures from the web: a block
+can reveal what it writes in those URLs to their hosts. The app's own policy
+allows framing only its own pages and that scheme, detached chat windows allow
+frame navigation only to that URL, and the permission handler grants the frame
+nothing. The host accepts a fixed set of validated messages from the frame
+(ready, loaded, size, issue, send, open); an issue is one of a fixed list of
+kinds with a short text, shown as plain text under the block. Sending a message
+as the person and opening an `http(s)` URL require transient user activation in
+the app window, at most once per second. Activation comes from any recent
+interaction with that window, not only from a click inside the frame.
+
+The mobile app runs a complete block in a `react-native-webview` of its own: a
+separate web process with an opaque `about:blank` origin, incognito, with no
+cache, shared or third-party cookies, file access, link previews or new windows.
+The page carries the same policy in a `<meta>` element, without `sandbox`, which
+only a header can set, so the web view, not the policy, keeps it from the app.
+Every navigation but the initial page load is refused; the origin allowlist
+passes every address to that check, so none is handed to the system to open.
+The block reaches the app only through the web view's message channel, whose
+messages are parsed like the desktop frame's. A phone cannot prove that the
+person tapped the interface, so sending a message always asks first, showing
+it, at most once per second, and opening a page asks first, showing its host;
+the app opens only plain `http(s)` addresses without credentials in the
+system's browser view. The web preview of the app uses a frame with
+`sandbox="allow-scripts"` instead.
+
+The `preview_interface` app tool renders a block for the model before it shows
+it. The block runs in the same frame page and policy, framed by a host page in
+an offscreen window of the in-memory `genui-previews` session. That window is
+sandboxed with context isolation and no Node integration; its session denies
+every permission and download, serves only the host and frame pages, and is
+cleared after each preview. The window opens no other window and navigates
+nowhere else. Previews run one at a time, for at most 15 seconds each, on the
+machine that runs the agent (for bots, their environment), which loads the
+images and CDN files the block asks for. The model receives the screenshot and
+the validated messages of the frame, never data from the app. An answer shows a
+preview by naming it (`inline-html preview=<id>`, where the id is a hash of the
+HTML); the renderer, or a bot environment building its transcript, replaces the
+name with the HTML of a completed preview of the same message.
 
 ## Local data and migrations
 
@@ -369,6 +417,34 @@ the server's SSH host key as a SHA-256 fingerprint on first use and stops the
 tunnel if the key changes. A server you manage separately may use private HTTPS,
 such as Tailscale Serve.
 
+Pairing codes come from the gateway's `pair` command or from an already paired
+device (`POST /v1/pairings`), which the desktop app shows as a QR code for a
+phone. Paired devices may have at most five unused codes at once; the command
+line is not limited. This adds no authority: every paired device can already
+control the whole gateway, and the new device gets exactly that authority. Each
+code is one-use, expires after ten minutes, and is stored only as a hash.
+
+Any paired device lists the devices paired with the gateway (`GET /v1/devices`:
+name, phone or computer, platform, when it paired and was last active, whether it
+gets notifications) and removes another one (`POST /v1/devices/<id>/revoke`), as the
+gateway's `devices list` and `devices revoke` commands do. This adds no
+authority either: a paired device already controls the whole gateway. A device
+cannot remove itself this way; it unpairs with `DELETE /v1/devices/self`.
+Removing a device revokes its token, deletes its push registration, and closes
+its event streams, bridges and screens.
+
+A phone is a paired device with the same authority. It registers for
+notifications with its own device token (`/v1/devices/self/push`): the gateway
+keeps its Expo push token, language and preferences, deletes them when the
+device unpairs or is revoked, and sends notifications through Expo's push
+service unless the server sets `MAESTRLY_GATEWAY_PUSH=off`. A notification
+carries only the bot's name or the chat's title, a fixed phrase in the phone's
+language, and the ids the app needs to open it, never what a bot, chat or person
+wrote; Expo and Apple or Google see that much. A phone opens an artifact as its
+owner with a single-use ticket it requests with its device token, only through
+the server's HTTPS public address, and shows the page in the system's browser
+view, outside the app.
+
 VPS setup accepts a password or private key for that job and generates a new
 ed25519 key for later access. This key grants root or passwordless `sudo`
 authority to the VPS: protect it as you would an administrator credential. The
@@ -420,10 +496,14 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   Docker bridge network. The `public` egress guard does not filter traffic
   between containers: a service a bot starts on a network port can be reached
   from other environments. The gateway's public API refuses fleet-network
-  clients, every control-server request needs the environment's control token, and VNC servers
-  start on demand and listen only on each container's loopback.
+  clients, every control-server request needs the environment's control token, and screens
+  have no port of their own: each streams through the control server from a screen encoder
+  that talks to Maestrly over pipes and starts only while the screen is open.
 - **Screens.** Takeover holds exactly one bot, and control of a bot's browser
-  area or apps screen requires that device's takeover. The environment screen
+  area or apps screen requires that device's takeover. The environment, not
+  the app, drops a watching connection's input, and a controller's pointer is
+  held to its own screen's region of the display. Clipboard text crosses only
+  while a controller is connected, CLIPBOARD only, up to 1 MiB each way. The environment screen
   shows only Maestrly's settings, so a paired device can control it without a
   takeover. The browser areas and the environment screen share one display, and
   the gateway allows one control session on it per environment at a time. While
@@ -459,10 +539,10 @@ See [environments](bot-fleet.md#environments) for what its bots share.
 
 ## Remote workspaces
 
-A bot server can run one **workspaces environment**: a container with a full
-Maestrly, in server mode, that hosts the owner's chats and workspaces instead of
-bots. A paired computer drives it through a **bridge**: see
-[remote workspaces](remote-workspaces.md).
+A bot server can run several **workspaces environments**, one per scope of the
+owner's work: each a container with a full Maestrly, in server mode, that hosts
+the owner's chats and workspaces instead of bots. A paired computer drives each
+one through a **bridge**: see [remote workspaces](remote-workspaces.md).
 
 - **A paired computer controls the host as a window controls its own
   computer.** Over the bridge, the computer's renderers call the host's IPC
@@ -478,9 +558,23 @@ bots. A paired computer drives it through a **bridge**: see
   its first use. The gateway then forwards the WebSocket handshake to the
   environment's control server with the environment's control token, which
   never leaves the gateway and the container, and passes bytes both ways
-  without reading them. A device holds at most eight bridges. Revoking a
+  without reading them. A device holds at most sixteen bridges. Revoking a
   device discards its tickets and closes its bridges; stopping or archiving
   the environment closes every bridge to it.
+- **A phone reaches only the mobile API.** A phone says it is one in its first
+  frame and then may call only the versioned `mobile:v1:*` channels
+  (`packages/bot-fleet-protocol/src/mobile-bridge.ts`): list, create, open,
+  rename and archive chats; send messages and attachments; answer permission
+  requests, questions and plans; change a chat's model, effort, Fast, mode,
+  permission mode, MCP servers and skills; compact; and read the images of what
+  it was sent. It never calls the host's IPC handlers directly: the host runs
+  them on its behalf through a window of its own that the phone cannot address,
+  so a phone cannot read files, open terminals, change accounts or change
+  settings. A phone does not change the host's language. A phone's WebSocket
+  always sends an `Origin` header, which the gateway refuses elsewhere: the
+  phone names that origin when it asks for the ticket (`phones`), the
+  upgrade may carry that one origin only, and the gateway strips it before the
+  host sees the handshake.
 - **The host refuses what belongs to a desktop.** For a computer's renderer it
   refuses channels that drive a window, native views, sound, updates, the bot
   fleet client and its installer, and the microphone, and channels whose
@@ -489,9 +583,15 @@ bots. A paired computer drives it through a **bridge**: see
   list is `apps/desktop/src/shared/host-channels.ts`, and a test checks every
   channel of the preload against it.
 - **The host sees only its own folders.** Workspaces are added from the
-  environment's home folder and, when the server names one, from a single
-  server directory mounted at the same path (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`;
-  `/srv/maestrly` on a VPS that Maestrly set up). The folder browser resolves
+  environment's home folder and, when the server names a workspaces directory
+  (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`; `/srv/maestrly` on a VPS that Maestrly
+  set up), from that environment's own subfolder of it, mounted at the same
+  path. An environment created before subfolders keeps the whole directory,
+  with the subfolders of the others, until the owner moves it to its own; its
+  page warns about it. The gateway creates each subfolder through a
+  short-lived container with no network, root in it, and only the `CHOWN`,
+  `DAC_OVERRIDE`, and `FOWNER` capabilities, running one fixed command on a
+  path built from the environment id. The folder browser resolves
   symbolic links before checking a path against those folders. No request can
   mount another directory of the server: mounts are fixed when the container
   is created. The container has no Docker socket and no `sudo`, and runs as
@@ -566,10 +666,16 @@ bots. A paired computer drives it through a **bridge**: see
 - **Several computers share one host.** Every paired computer sees the same
   conversations, receives the same streams, and can answer the same permission
   requests, questions, and plans. There is no per-computer or per-workspace
-  isolation inside a host: use separate servers for work that must stay apart.
-- **Workspaces and bots do not share a container**, and the gateway refuses to
-  place a bot in a workspaces environment. They do share the Docker host and
-  the fleet network, like any two environments.
+  isolation inside a host: use separate environments for work that must stay
+  apart.
+- **Workspaces environments are kept apart from each other and from bots.**
+  Each has its own container, home volume, keyring, browser profile, accounts,
+  and server subfolder, and a Docker network of its own that only the gateway
+  joins, so one environment cannot reach another's control server, editor, or
+  ports. The gateway refuses to place a bot in a workspaces environment. They
+  still share the Docker host, its kernel, and the owner's pairing: root on
+  the server, or a paired device, reaches all of them. Work that must not
+  share a machine at all needs a server of its own.
 
 A development or test build, never a packaged one, also accepts
 `MAESTRLY_DEV_DIRECT_HOST`, which connects it straight to a host's control

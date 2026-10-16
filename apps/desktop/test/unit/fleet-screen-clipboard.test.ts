@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DisplayManager } from '../../src/main/fleet/instance/displays'
 import { attachScreenClipboard } from '../../src/renderer/lib/fleet/screen-clipboard'
 
 function setup(isMac = true) {
@@ -17,7 +16,10 @@ function setup(isMac = true) {
     return event
   }
   const receive = (text: unknown) => remote.dispatchEvent(Object.assign(new Event('clipboard'), { detail: { text } }))
-  return { container, doc, remote, write, read, error, detach, emit, receive }
+  /** The screen's clipboard holds more than the stream carries: it sends no text, only that it is too large. */
+  const receiveTooLarge = () =>
+    remote.dispatchEvent(Object.assign(new Event('clipboard'), { detail: { text: '', tooLarge: true } }))
+  return { container, doc, remote, write, read, error, detach, emit, receive, receiveTooLarge }
 }
 
 describe('controlled screen text clipboard', () => {
@@ -35,7 +37,7 @@ describe('controlled screen text clipboard', () => {
       }
       expect(s.remote.clipboardPasteFrom).toHaveBeenCalledWith('M')
       expect(s.write).not.toHaveBeenCalled()
-      // x11vnc suppresses notifications when CLIPBOARD still matches the pasted text.
+      // The screen may send no notification when CLIPBOARD still matches the pasted text.
       s.emit('copy')
       expect(s.write.mock.calls).toEqual([['M']])
     } finally {
@@ -46,44 +48,20 @@ describe('controlled screen text clipboard', () => {
     'keeps the copied text after %s with no notification and a new PRIMARY selection',
     async (action) => {
       const s = setup()
-      let serverArgs: string[] = []
-      const manager = new DisplayManager({
-        home: '/srv/maestrly-clipboard-test',
-        mkdir: async () => {},
-        setTimeout,
-        clearTimeout,
-        log: () => {},
-        spawn: (command, args) => {
-          if (command !== 'x11vnc') return { exited: Promise.resolve(0), kill: () => {} }
-          serverArgs = [...args]
-          let exit!: (code: number) => void
-          const exited = new Promise<number>((resolve) => {
-            exit = resolve
-          })
-          return { exited, kill: () => exit(0) }
-        },
-      })
       const now = vi.spyOn(Date, 'now').mockReturnValue(100)
       try {
-        await manager.acquireVnc({ kind: 'environment' }, 'control')
-        // Model x11vnc's selection filtering using the actual server startup arguments.
-        // RFB cut text has no selection type, so PRIMARY must be filtered before receive().
-        const select = (text: string) => {
-          if (!serverArgs.includes('-noprimary')) s.receive(text)
-        }
+        // The screen encoder reports CLIPBOARD only, never PRIMARY (its smoke test and the container E2E check it), so
+        // a selection in another program raises no clipboard event here.
         s.receive('X')
-        select('selection from another app')
         s.emit(action)
         // An unchanged CLIPBOARD produces no notification; the copy remains pending.
         now.mockReturnValue(1_100)
-        select('selection')
         expect(s.write.mock.calls).toEqual([['X']])
         s.emit('paste', { clipboardData: { types: ['text/plain'], getData: () => s.write.mock.calls.at(-1)![0] } })
         expect(s.remote.clipboardPasteFrom).toHaveBeenCalledWith('X')
       } finally {
         now.mockRestore()
         s.detach()
-        await manager.dispose()
       }
     }
   )
@@ -243,14 +221,33 @@ describe('controlled screen text clipboard', () => {
       now.mockRestore()
     }
   })
-  it('refuses incompatible characters and oversized text without sending paste keys', () => {
+  it('pastes any Unicode text, and refuses text over 1 MiB of UTF-8 without sending paste keys', () => {
     const s = setup()
-    for (const text of ['emoji 😀', '日本語', 'a'.repeat(1024 * 1024 + 1)]) {
+    for (const text of ['ação ✓ 🚀', '日本語']) {
       s.emit('paste', { clipboardData: { types: ['text/plain'], getData: () => text } })
+      expect(s.remote.clipboardPasteFrom).toHaveBeenLastCalledWith(text)
     }
-    expect(s.error.mock.calls).toEqual([['unsupportedText'], ['unsupportedText'], ['tooLarge']])
+    expect(s.error.mock.calls.filter(([value]) => value !== null)).toEqual([])
+    s.remote.sendKey.mockClear()
+    s.remote.clipboardPasteFrom.mockClear()
+    // 524,289 characters, but each takes two bytes in UTF-8.
+    for (const text of ['ç'.repeat(512 * 1024 + 1), 'a'.repeat(1024 * 1024 + 1)])
+      s.emit('paste', { clipboardData: { types: ['text/plain'], getData: () => text } })
+    expect(s.error.mock.calls.filter(([value]) => value !== null)).toEqual([['tooLarge'], ['tooLarge']])
     expect(s.remote.sendKey).not.toHaveBeenCalled()
     expect(s.remote.clipboardPasteFrom).not.toHaveBeenCalled()
+  })
+  it('reports a requested copy of more than the stream carries, and forgets the cached text', () => {
+    const s = setup()
+    s.receive('earlier')
+    s.receiveTooLarge()
+    expect(s.error).not.toHaveBeenCalledWith('tooLarge')
+    s.emit('copy')
+    // Nothing stale is written when the screen's clipboard holds something else now.
+    expect(s.write).not.toHaveBeenCalled()
+    s.receiveTooLarge()
+    expect(s.error).toHaveBeenCalledWith('tooLarge')
+    expect(s.write).not.toHaveBeenCalled()
   })
   it.each(['disconnect', 'dispose'])('stops both directions after %s', (action) => {
     const s = setup()

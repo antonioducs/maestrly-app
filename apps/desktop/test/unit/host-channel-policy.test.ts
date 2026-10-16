@@ -15,7 +15,7 @@ import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
 import { performanceApi } from '../../src/preload/api-performance'
 import { transfersApi } from '../../src/preload/api-transfers'
-import { platformLocalApi } from '../../src/preload/api-platform'
+import { conversationMoveApi } from '../../src/preload/api-conversation-move'
 import { popupApi } from '../../src/preload/api-popup'
 import { settingsApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
@@ -90,13 +90,13 @@ describe('host channel policy', () => {
       ...updateApi,
       ...chatLocalApi,
       ...chatWindowApi,
-      ...platformLocalApi,
       ...fleetApi,
       ...fleetEnvironmentSettings,
       ...fleetInstallerApi,
       ...hostsApi,
       ...artifactsApi,
       ...transfersApi,
+      ...conversationMoveApi,
     }
     const byMember = channelsOf(local, seen)
     expect(new Set([...byMember.values()].flat()).size).toBeGreaterThan(100)
@@ -106,7 +106,7 @@ describe('host channel policy', () => {
     expect(allowed).toEqual([])
   })
 
-  it("lets remote origins reach the browser stream and the host's editor", () => {
+  it("lets remote origins reach the browser stream, the host's editor and the conversation's computer", () => {
     const seen: string[] = []
     const byMember = channelsOf(
       makeHostApi({
@@ -118,7 +118,7 @@ describe('host channel policy', () => {
       seen
     )
     const streamChannels = [...byMember]
-      .filter(([member]) => member.startsWith('browserStream'))
+      .filter(([member]) => member.startsWith('browserStream') || member === 'computerOpen')
       .flatMap(([, used]) => used)
     // The editor channels are invoked by this computer's main process over the bridge, not through the preload.
     expect(new Set([...streamChannels, ...Object.values(HOST_EDITOR_CHANNELS)])).toEqual(REMOTE_VIEWER_CHANNELS)

@@ -94,11 +94,6 @@ function quitHarness() {
     cancelProjectSetupsAndWait: async () => {
       order.push('projects')
     },
-    embeddedRunnerHost: {
-      stop: async () => {
-        order.push('runner')
-      },
-    },
     botHost: {
       stop: async () => {
         order.push('bot')
@@ -113,6 +108,7 @@ function quitHarness() {
       order.push('chat')
     },
     disposeConversationMigrationIpc: null,
+    disposeConversationMoveIpc: null,
     releaseInstanceLock: cleanup,
     floatingManager: { flushPendingFloatPersists: vi.fn(), disposeAll: vi.fn() },
     chatWindowManager: { dispose: vi.fn() },
@@ -349,12 +345,11 @@ describe('update-service', () => {
       })
       try {
         svc.installUpdate()
-        // Drain the bounded project, runner, chat and memory promise chain.
+        // Drain the bounded project, bot, chat and memory promise chain.
         for (let i = 0; i < 30; i++) await Promise.resolve()
         expect(fake.quitAndInstall).toHaveBeenCalledOnce()
         expect(harness.order).toEqual([
           'projects',
-          'runner',
           'bot',
           'artifacts',
           'chat',

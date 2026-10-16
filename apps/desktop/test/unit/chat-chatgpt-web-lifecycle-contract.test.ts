@@ -222,16 +222,8 @@ describe('ChatGPT Web companion lifecycle contract', () => {
     expect(drawer).toContain('<ChatGptWebAccessEditor')
     expect(drawer).toContain("t('drawer.chatgptStartWithBrowser'")
     expect(drawer).toContain("t('drawer.chatgptRestartToApply')")
-    expect(drawer).toContain('chatGptReviewLoopActive')
     expect(drawer).toContain("'top-[120px]' : 'top-11'")
-    expect(sessionBanner).toContain("reviewLoop.reviewScope === 'frontend'")
     expect(sessionBanner).toContain("t('chatgptWeb.browserAccessBadge'")
-    expect(sessionBanner).toContain('chatGptWebReviewLoopShowPreview(conversationId)')
-    expect(sessionBanner).toContain("'chatgptWeb.reviewLoopOpenPreview'")
-    expect(sessionBanner).toContain("'chatgptWeb.reviewLoopFocusTab'")
-    expect(sessionBanner).toContain("'chatgptWeb.reviewLoopVisualAttached'")
-    expect(service).toContain("'chat:chatgpt-web:review-loop:show-preview'")
-    expect(service).not.toContain('chat:chatgpt-web:review-loop:browser-command')
   })
 
   it('saves drafts before start and preserves live capabilities in place', () => {
@@ -249,13 +241,19 @@ describe('ChatGPT Web companion lifecycle contract', () => {
     expect(manager).toContain('conversation: capabilityInfo.capabilities.conversation')
   })
 
-  it('holds UI reservations during terminal teardown without Stop', () => {
-    expect(chatView).toContain('chatReviewLoopStatus(conversationId).then(setReviewLoop)')
-    expect(chatView).toContain('isReviewLoopConversationReserved(reviewLoop.status)')
-    expect(sessionBanner).toContain("finished: 'reviewLoopFinishing'")
-    expect(sessionBanner).toContain("cancelled: 'reviewLoopStopping'")
-    expect(sessionBanner).toContain("reviewLoop?.status === 'finished'")
-    expect(sessionBanner).toContain("reviewLoop?.status === 'cancelled'")
-    expect(sessionBanner).toContain('{loopActive && !loopStopping && (')
+  it('wires project-environment jobs through isolated internal turns only', () => {
+    expect(manager).toContain('internalTurns?: {')
+    expect(manager).toContain('hooks.internalTurns.validateStart(input.conversationId)')
+    expect(manager).toContain('hooks.internalTurns.startInternalTurn({')
+    expect(manager).toContain('hooks?.internalTurns?.cancelInternalTurn(executionId)')
+    expect(manager).toContain('export function projectEnvironmentLockFor(conversationId: string)')
+    expect(manager).toContain('projectEnvironmentControllers.get(conversationId)?.stop()')
+  })
+
+  it('keeps no review-loop surface in the companion lifecycle', () => {
+    expect(manager).not.toMatch(/reviewLoop|ReviewLoop|review-loop|visual-browser|preview-runtime/)
+    expect(sessionBanner).not.toMatch(/reviewLoop|ReviewLoop|review-loop/)
+    expect(drawer).not.toMatch(/reviewLoop|ReviewLoop|review-loop/)
+    expect(service).not.toContain('chat:chatgpt-web:review-loop:')
   })
 })

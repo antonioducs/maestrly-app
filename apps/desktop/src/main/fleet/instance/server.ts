@@ -1,4 +1,5 @@
 import {
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_PLUGIN_SETTINGS_OPERATIONS,
@@ -13,7 +14,6 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
-import { createConnection, type Socket } from 'node:net'
 import { Transform, type Duplex, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import {
@@ -25,6 +25,7 @@ import {
   FLEET_INSTANCE_BRIDGE_PATH,
   FLEET_INSTANCE_ROUTES,
   FLEET_MESSAGE_BODY_MAX,
+  FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
@@ -32,14 +33,18 @@ import {
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   fleetAccountSlotIdSchema,
   fleetBotIdSchema,
   fleetFileIdSchema,
   fleetFileRefSchema,
   fleetInstanceEventSchema,
+  fleetReaderWantsChatAttention,
   fleetReaderWantsReasoning,
   fleetTranscriptItemReadable,
+  fleetHostConversationIdSchema,
   fleetScreenSurfaceSchema,
+  type FleetScreenSurface,
   fleetSubscriptionKindSchema,
   type FleetAccountImportRequest,
   type FleetAddApiKeyAccountRequest,
@@ -50,6 +55,7 @@ import {
   type FleetBotMemoryPatchRequest,
   type FleetBotSkills,
   type FleetConversationCallRequest,
+  type FleetEditMessageRequest,
   type FleetFileRef,
   type FleetImportResults,
   type FleetInputReceipt,
@@ -73,11 +79,13 @@ import {
   type FleetSubscriptionKind,
   type FleetTranscriptPage,
   type FleetUiOpenRequest,
+  type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
 import type { HostFiles } from '../../remote-host/server/host-files'
 import type { BotInstanceConfig } from './config'
-import type { DisplaySurface, VncLease, VncMode } from './displays'
+import type { DisplaySurface, ScreenLease } from './displays'
+import type { ScreenClientHandle } from './screen-session'
 
 export class InstanceHttpError extends Error {
   constructor(
@@ -94,13 +102,14 @@ export class InstanceHttpError extends Error {
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
  * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
- * newer ones, and gives its bots the desktop_* tools that reach the Macs that linked them. Its health and every status
- * advertise them.
+ * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
+ * last message, and streams its screens as video. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -108,6 +117,8 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_DESKTOP_BRIDGE_FEATURE,
+  FLEET_MESSAGE_EDIT_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -134,6 +145,8 @@ export interface InstanceBot {
   file(fileId: string): Promise<InstanceFile>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
+  /** Edits the owner's last message: the conversation is cut from it and the new text queued (`message-edit`). */
+  editInput(id: string, value: FleetEditMessageRequest): Promise<FleetInputReceipt>
   cancel(): Promise<void>
   resolve(id: string, value: FleetInteractionResolution): Promise<void>
   hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold>
@@ -162,8 +175,8 @@ export interface InstanceEnvironment {
   bot(botId: string): InstanceBot
   installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus>
   uninstallBot(botId: string, options: { purge: boolean }): Promise<void>
-  /** A VNC server showing a screen surface; the tunnel gives its lease back when it ends or fails. */
-  acquireScreen(surface: DisplaySurface, mode: VncMode): Promise<VncLease>
+  /** The stream of a screen surface; the tunnel gives its lease back when it ends or fails. */
+  acquireScreen(surface: InstanceScreenSurface, mode: ScreenMode): Promise<ScreenLease>
   startLogin(request: FleetLoginStartRequest): Promise<FleetLoginAttempt>
   login(loginId: string): FleetLoginAttempt
   loginCallback(loginId: string, request: FleetLoginCallbackRequest): Promise<FleetLoginCallbackResponse>
@@ -266,6 +279,7 @@ type RouteKey = keyof typeof FLEET_INSTANCE_ROUTES
 const BODY_LIMITS: Partial<Record<RouteKey, number>> = {
   skillInstall: FLEET_SKILL_BODY_MAX,
   botInputSend: FLEET_MESSAGE_BODY_MAX,
+  botInputEdit: FLEET_MESSAGE_BODY_MAX,
 }
 /** Screen routes answer only an upgrade to the screen protocol. */
 const SCREEN_ROUTES: ReadonlySet<RouteKey> = new Set<RouteKey>([
@@ -273,6 +287,8 @@ const SCREEN_ROUTES: ReadonlySet<RouteKey> = new Set<RouteKey>([
   'botScreenControl',
   'environmentScreenView',
   'environmentScreenControl',
+  'conversationScreenView',
+  'conversationScreenControl',
 ])
 /** Bot routes that also serve a bot that is not installed: installing it, and uninstalling it again. */
 const WITHOUT_INSTALLED_BOT: ReadonlySet<RouteKey> = new Set<RouteKey>(['botInstall', 'botUninstall'])
@@ -316,11 +332,20 @@ const underTakeover = (bot: InstanceBot): boolean => {
   return hold.state === 'held' && hold.reason === 'takeover'
 }
 /** The surface and mode a screen upgrade asks for, or null for a path that is not a screen. */
-function screenFor(pathname: string): { surface: DisplaySurface; mode: VncMode } | null {
+function screenFor(pathname: string): { surface: InstanceScreenSurface; mode: ScreenMode } | null {
   const match = routeFor('GET', pathname)
   if (!match) return null
   if (match.key === 'environmentScreenView' || match.key === 'environmentScreenControl')
     return { surface: { kind: 'environment' }, mode: match.key === 'environmentScreenView' ? 'view' : 'control' }
+  if (match.key === 'conversationScreenView' || match.key === 'conversationScreenControl') {
+    const surface = fleetScreenSurfaceSchema.safeParse(match.params.surface)
+    const conversationId = fleetHostConversationIdSchema.safeParse(match.params.conversationId)
+    if (!surface.success || !conversationId.success) return null
+    return {
+      surface: { kind: 'conversation', conversationId: conversationId.data, surface: surface.data },
+      mode: match.key === 'conversationScreenView' ? 'view' : 'control',
+    }
+  }
   if (match.key !== 'botScreenView' && match.key !== 'botScreenControl') return null
   const kind = fleetScreenSurfaceSchema.safeParse(match.params.surface)
   if (!kind.success || !isBotId(match.params.botId)) return null
@@ -345,8 +370,12 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   if (!Number.isSafeInteger(since)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
   // A gateway that does not read `reasoning` items never gets them: it would fail on the whole stream.
   const reasoning = fleetReaderWantsReasoning(url.searchParams)
+  // Nor `chat.attention` events, which only a gateway that asks for them knows.
+  const chatAttention = fleetReaderWantsChatAttention(url.searchParams)
   const readable = (event: FleetInstanceEvent) =>
-    event.type !== 'transcript.upsert' || fleetTranscriptItemReadable(event.item, reasoning)
+    event.type === 'transcript.upsert'
+      ? fleetTranscriptItemReadable(event.item, reasoning)
+      : event.type !== 'chat.attention' || chatAttention
   const replay = events.replay(since)
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -369,19 +398,28 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
 const VIEWERS_MAX = 4
 const CONTROLLERS_MAX = 1
 
+/**
+ * A screen the control API serves: a bot's or the environment's, or a workspaces conversation's computer (`apps`) or
+ * browser tile (`browser`).
+ */
+export type InstanceScreenSurface =
+  | DisplaySurface
+  | { kind: 'conversation'; conversationId: string; surface: FleetScreenSurface }
+
 /** A screen connection: reserved when it is accepted, open once upgraded, and ended at most once. */
 interface Tunnel {
-  /** What it shows: `environment`, or `browser:<botId>` and `apps:<botId>`. */
+  /** What it shows: `environment`, `browser:<botId>` and `apps:<botId>`, or `conversation:<id>:<surface>`. */
   readonly surface: string
-  readonly mode: VncMode
+  readonly mode: ScreenMode
   readonly botId: string | null
   /** The bot's slot when it was accepted: a bot that moves to another slot moves its screens. */
   readonly slot: number | null
   /** A control of the environment display :0, which the environment screen and every bot's browser share. */
   readonly zero: boolean
   readonly socket: Duplex
-  lease: VncLease | null
-  vnc: Socket | null
+  lease: ScreenLease | null
+  /** The connection's place in the screen's stream, once upgraded. */
+  client: ScreenClientHandle | null
   ended: boolean
 }
 
@@ -435,8 +473,8 @@ export function createInstanceControlServer(
     if (tunnel.ended) return
     tunnel.ended = true
     tunnels.delete(tunnel)
+    tunnel.client?.detach()
     tunnel.lease?.release()
-    tunnel.vnc?.destroy()
     tunnel.socket.destroy()
   }
   const endWhere = (test: (tunnel: Tunnel) => boolean): void => {
@@ -510,6 +548,9 @@ export function createInstanceControlServer(
     settingsPreferences: () => settings().preferences(FLEET_SETTINGS_OPERATIONS.preferences.input.parse({})),
     settingsSetPreferences: ({ input }) =>
       settings().setPreferences(FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(input)),
+    settingsFailover: () => settings().failover(FLEET_SETTINGS_OPERATIONS.failover.input.parse({})),
+    settingsSetFailoverRoute: ({ input }) =>
+      settings().setFailoverRoute(FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input.parse(input)),
     ...Object.fromEntries(
       FLEET_PLUGIN_SETTINGS_OPERATIONS.map((operation): [RouteKey, Handler] => [
         fleetSettingsRouteKey(operation),
@@ -589,6 +630,7 @@ export function createInstanceControlServer(
     botFile: ({ params }) => bot(params).file(fileIdOf(params.fileId)),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
+    botInputEdit: ({ params, input }) => bot(params).editInput(params.inputId, input as FleetEditMessageRequest),
     botTurnCancel: ({ params }) => bot(params).cancel(),
     botInteractionResolve: ({ params, input }) => bot(params).resolve(params.id, input as FleetInteractionResolution),
     botHold: async ({ params, input }) => {
@@ -734,8 +776,8 @@ export function createInstanceControlServer(
         if (tunnel.ended) return
         tunnel.ended = true
         tunnels.delete(tunnel)
+        tunnel.client?.detach()
         tunnel.lease?.release()
-        tunnel.vnc?.destroy()
       }
       reject(status, code, message)
     }
@@ -766,12 +808,22 @@ export function createInstanceControlServer(
       )
         return fail(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       const { surface, mode } = screen
-      const owner = surface.kind === 'environment' ? null : environment.bot(surface.botId)
+      if (surface.kind === 'conversation' && surface.surface === 'browser' && mode === 'control')
+        return fail(400, 'INVALID_REQUEST', "A conversation's browser is view only.")
+      // A workspaces conversation's screens need no takeover: the agent keeps working while its owner controls them.
+      const owner =
+        surface.kind === 'environment' || surface.kind === 'conversation' ? null : environment.bot(surface.botId)
       if (owner && mode === 'control' && !underTakeover(owner)) return fail(409, 'CONFLICT', 'Takeover hold required.')
 
       // Accepted before anything asynchronous happens, so two requests can never both pass the limits.
-      const key = surface.kind === 'environment' ? 'environment' : `${surface.kind}:${surface.botId}`
-      const zero = mode === 'control' && surface.kind !== 'apps'
+      const key =
+        surface.kind === 'environment'
+          ? 'environment'
+          : surface.kind === 'conversation'
+            ? `conversation:${surface.conversationId}:${surface.surface}`
+            : `${surface.kind}:${surface.botId}`
+      // A conversation's computer has a display of its own, and its browser tile is only watched.
+      const zero = mode === 'control' && surface.kind !== 'apps' && surface.kind !== 'conversation'
       const open = [...tunnels]
       if (
         open.filter((entry) => entry.surface === key && entry.mode === mode).length >=
@@ -788,7 +840,7 @@ export function createInstanceControlServer(
         zero,
         socket,
         lease: null,
-        vnc: null,
+        client: null,
         ended: false,
       }
       tunnel = entry
@@ -797,7 +849,7 @@ export function createInstanceControlServer(
       socket.once('end', () => end(entry))
       socket.once('close', () => end(entry))
 
-      let lease: VncLease
+      let lease: ScreenLease
       try {
         lease = await environment.acquireScreen(surface, mode)
       } catch (error) {
@@ -806,16 +858,6 @@ export function createInstanceControlServer(
       }
       if (entry.ended) return lease.release()
       entry.lease = lease
-      const vnc = createConnection({ host: '127.0.0.1', port: lease.port })
-      entry.vnc = vnc
-      await new Promise<void>((resolve, rejectConnection) => {
-        vnc.once('connect', resolve)
-        vnc.once('error', rejectConnection)
-        vnc.once('close', () => rejectConnection(new Error('The VNC connection closed.')))
-      }).catch(() => {
-        throw new InstanceHttpError(503, 'INSTANCE_UNAVAILABLE', 'Screen unavailable.')
-      })
-      if (entry.ended) return
       if (socket.destroyed) return end(entry)
       if (owner) {
         // The bot may have been uninstalled, or its takeover released, while its screen connected.
@@ -831,10 +873,20 @@ export function createInstanceControlServer(
       socket.write(
         `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: ${FLEET_SCREEN_UPGRADE}\r\n\r\n`
       )
-      vnc.on('close', () => end(entry))
-      vnc.on('error', () => end(entry))
-      if (head.length && !vnc.write(head)) socket.pause()
-      socket.pipe(vnc).pipe(socket)
+      // The session paces what it writes by the frames the client acknowledges, so the socket never queues more than
+      // the client's window.
+      const client = lease.session.attach(
+        {
+          send: (bytes) => {
+            if (!socket.destroyed) socket.write(bytes)
+          },
+          close: () => end(entry),
+        },
+        mode
+      )
+      entry.client = client
+      if (head.length) client.receive(head)
+      socket.on('data', (chunk: Buffer) => client.receive(chunk))
     })().catch((error: unknown) => {
       const known =
         error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Screen request failed.')

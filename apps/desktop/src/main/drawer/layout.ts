@@ -7,6 +7,7 @@ import {
   activeConvId,
   convHasPopup,
   drawers,
+  isBrowserPageHiddenByOmnibox,
   isTabOutOfSlot,
   isViewAllowedDuringDialogSuppression,
   placedSlot,
@@ -28,7 +29,7 @@ import {
 import { emitBrowserState, noteBrowserSurfaceVisibility } from './browser'
 import { noteVSCodeSurfaceVisibility } from './vscode'
 import { syncDrawerResourcePerformance } from './performance'
-import { scheduleColdPanelEviction } from './panels'
+import { closeRemoteBrowserView, scheduleColdPanelEviction } from './panels'
 
 /**
  * Position all conversation views: only the active docked tab of the active conversation occupies the
@@ -50,7 +51,8 @@ export function applyLayout(): void {
       const slotLive = !!placed && !convHasPopup(convId)
       const isActiveConv = convId === activeConvId && slotLive
       const browserOutOfSlot = isTabOutOfSlot(convId, 'browser')
-      const showBrowser = isActiveConv && visibleKind === 'browser' && !browserOutOfSlot
+      const showBrowser =
+        isActiveConv && visibleKind === 'browser' && !browserOutOfSlot && !isBrowserPageHiddenByOmnibox(convId)
 
       for (const tab of d.browserTabs) {
         if (browserOutOfSlot || !tab.view) continue // cold or out-of-slot tab has no view to position here
@@ -105,6 +107,8 @@ export async function captureSlotView(convId: string): Promise<string | null> {
   if (kind === 'browser') view = d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view
   else if (kind === 'vscode') view = d.vscodeView
   else if (kind === 'chatgpt') view = d.chatgptView
+  // The Computer tab of a remote conversation is drawn by the renderer, with no native view.
+  else if (kind === 'computer') return null
   else view = d.panelViews.get(kind)
   if (!view || view.webContents.isDestroyed()) return null
   try {
@@ -129,6 +133,13 @@ export function setDialogSuppressionOwners(ownerWebContentsIds: ReadonlySet<numb
   applyLayout()
 }
 
+let placementListener: ((convId: string) => void) | null = null
+
+/** Called after each placement change of a conversation's tab; index.ts tells the main window. */
+export function onPlacementChange(listener: ((convId: string) => void) | null): void {
+  placementListener = listener
+}
+
 /**
  * Set tab placement, removing explicit state for slot. Callers own reparenting/positioning; then
  * reapply slot layout so remaining views and popup suppression update.
@@ -140,9 +151,12 @@ export function setPlacement(convId: string, tab: FloatTab, p: Placement): void 
       m.delete(tab)
       if (m.size === 0) placementByConv.delete(convId)
     }
+    // Back in the slot a remote host's browser is the drawer's streamed surface again: its panel closes.
+    if (tab === 'browser') closeRemoteBrowserView(convId)
   } else {
     if (m) m.set(tab, p)
     else placementByConv.set(convId, new Map([[tab, p]]))
   }
   applyLayout()
+  placementListener?.(convId)
 }

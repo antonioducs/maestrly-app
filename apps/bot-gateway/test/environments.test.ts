@@ -8,6 +8,10 @@ import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import {
   FLEET_PROTOCOL_HEADER,
+  FLEET_SCREEN_UPGRADE,
+  FLEET_CONVERSATION_COMPUTERS_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
+  FLEET_WORKSPACES_HOST_FEATURE,
   fleetInstanceBotInstallSchema,
   fleetInstanceHoldRequestSchema,
   fleetInstanceProfileSchema,
@@ -18,6 +22,7 @@ import {
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
 import { DockerEngineDriver, DockerError, FakeDockerDriver } from '../src/docker.js'
+import { GatewayError } from '../src/errors.js'
 import { EventHub } from '../src/events.js'
 import { HostMonitor } from '../src/host.js'
 import { InstanceClient } from '../src/instance.js'
@@ -98,7 +103,7 @@ type Installed = {
  * A synthetic environment instance. With the `environments` capability it serves the environment routes and every bot
  * under `/v1/bots/:botId`; without it, it is a Maestrly from before environments: one bot on the unprefixed routes.
  */
-async function environmentInstance(environmentId: string, capable = true) {
+async function environmentInstance(environmentId: string, capable = true, extra: string[] = []) {
   const requests: Array<{ method: string; path: string; body: unknown }> = []
   const installed = new Map<string, Installed>()
   const streams = new Set<ServerResponse>()
@@ -107,7 +112,7 @@ async function environmentInstance(environmentId: string, capable = true) {
   /** Synthetic failures by method and path: an error answer, or none (`drop` closes the connection, `hang` waits). */
   const failures: Array<{ method: string; path: string; status: number; code: string; transport?: 'drop' | 'hang' }> =
     []
-  const capabilities = capable ? ['provisioning', 'environments'] : ['provisioning']
+  const capabilities = [...(capable ? ['provisioning', 'environments'] : ['provisioning']), ...extra]
   let seq = 0
   // Screens connect with the environment's real control token, which the gateway keeps.
   let tunnelToken = 'control'
@@ -275,11 +280,11 @@ async function environmentInstance(environmentId: string, capable = true) {
     sockets.add(socket)
     socket.on('close', () => sockets.delete(socket))
     upgrades.push(req.url ?? '')
-    if (req.headers.authorization !== 'Bearer ' + tunnelToken || req.headers.upgrade !== 'maestrly-rfb') {
+    if (req.headers.authorization !== 'Bearer ' + tunnelToken || req.headers.upgrade !== FLEET_SCREEN_UPGRADE) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n')
       return
     }
-    socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: maestrly-rfb\r\n\r\n')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: ${FLEET_SCREEN_UPGRADE}\r\n\r\n`)
     if (head.length) socket.write(head)
     socket.on('data', (bytes) => socket.write(bytes))
   })
@@ -299,6 +304,8 @@ async function environmentInstance(environmentId: string, capable = true) {
     failures,
     emit,
     statusOf,
+    /** What the instance says it can do; a test adds `workspaces-host` to make it a workspaces host. */
+    capabilities,
     setTunnelToken(value: string) {
       tunnelToken = value
     },
@@ -381,8 +388,9 @@ function fixture(env: Record<string, string> = {}) {
     lifecycle,
     events,
     factory,
-    async instance(id: string, capable = true) {
-      const fake = await environmentInstance(id, capable)
+    /** `extra` capabilities join the instance's own, such as `video-screens` for an image that streams its screens. */
+    async instance(id: string, capable = true, extra: string[] = []) {
+      const fake = await environmentInstance(id, capable, extra)
       fakes.set(id, fake)
       return fake
     },
@@ -1504,7 +1512,7 @@ describe('environment screens', () => {
 
   it('binds tickets to a surface and gives one control session the environment display at a time', async () => {
     const f = fixture()
-    const work = await f.instance('work')
+    const work = await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE])
     const {
       ids: [ads, scout],
     } = await environment(f, 'Work', ['Ads', 'Scout'])
@@ -1554,23 +1562,175 @@ describe('environment screens', () => {
     expect(() => screen.environmentTicket('work', 'one', 'view')).toThrow()
   })
 
-  it('offers only the browser area of an environment that predates environments', async () => {
+  it('refuses every screen of an image without video screens', async () => {
     const f = fixture()
+    // An image from before environments, and one with environments from before video screens.
     const solo = await f.instance('solo', false)
+    const old = await f.instance('old')
     const {
-      ids: [bot],
+      ids: [soloBot],
     } = await environment(f, 'Solo', ['Solo'])
-    const { screen, base } = await screens(f, solo, 'solo')
-    expect(() => screen.ticket(bot, 'one', 'view', 'apps')).toThrow(
-      'Restart this environment to update it before opening this screen.'
+    const {
+      ids: [oldBot],
+    } = await environment(f, 'Old', ['Veteran'])
+    const restart = 'Restart this environment to update it before opening this screen.'
+    for (const [fake, environmentId, bot] of [
+      [solo, 'solo', soloBot],
+      [old, 'old', oldBot],
+    ] as const) {
+      const { screen } = await screens(f, fake, environmentId)
+      for (const surface of ['browser', 'apps'] as const)
+        expect(() => screen.ticket(bot, 'one', 'view', surface)).toThrow(restart)
+      expect(() => screen.environmentTicket(environmentId, 'one', 'view')).toThrow(restart)
+      expect(fake.upgrades).toEqual([])
+    }
+  })
+
+  it('refuses a ticket at use once its environment runs an image without video screens', async () => {
+    const f = fixture()
+    const work = await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE])
+    await environment(f, 'Work', ['Ads'])
+    const { screen, base } = await screens(f, work, 'work')
+    const ticket = screen.environmentTicket('work', 'one', 'view')
+    // The environment restarted onto an older image between the ticket and its use.
+    ;(f.lifecycle as unknown as { instances: Map<string, { capabilities: string[] }> }).instances.get(
+      'work'
+    )!.capabilities = ['provisioning', 'environments']
+    expect(await rejected(base + ticket.path)).toBe(4003)
+    expect(work.upgrades).toEqual([])
+  })
+})
+
+describe('conversation screens', () => {
+  const conversationId = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
+  async function host(screens = [FLEET_VIDEO_SCREENS_FEATURE, FLEET_CONVERSATION_COMPUTERS_FEATURE]) {
+    const f = fixture()
+    // The fake Docker has no addresses to find the gateway's container by.
+    f.lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
+    const capabilities = [FLEET_WORKSPACES_HOST_FEATURE, ...screens]
+    const fake = await f.instance('workspaces', true, capabilities)
+    f.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
+    await until(() => f.lifecycle.environment('workspaces')?.lifecycle === 'running')
+    await until(() => capabilities.every((item) => f.lifecycle.environmentCapabilities('workspaces').includes(item)))
+    fake.setTunnelToken(f.store.environmentSecrets('workspaces')!.controlToken)
+    let time = Date.now()
+    const screen = new ScreenProxy(
+      f.lifecycle,
+      () => '127.0.0.1',
+      fake.port,
+      () => time
     )
-    expect(() => screen.environmentTicket('solo', 'one', 'view')).toThrow(
-      'Restart this environment to update it before opening this screen.'
+    const cfg = { ...f.cfg, publicPort: 0, internalPort: 0 }
+    const gateway = createGatewayServers({
+      auth: new Auth(f.store),
+      config: cfg,
+      events: new EventHub(async () => {}),
+      host: new HostMonitor(cfg, f.docker),
+      lifecycle: f.lifecycle,
+      store: f.store,
+      screen,
+    })
+    await gateway.listen()
+    closers.push(() => gateway.close())
+    const base = 'ws://127.0.0.1:' + (gateway.publicServer.address() as net.AddressInfo).port
+    return { f, fake, screen, base, advance: (ms: number) => void (time += ms) }
+  }
+  const connect = (url: string) => {
+    const ws = new WebSocket(url)
+    return new Promise<WebSocket>((resolve, reject) => {
+      ws.once('open', () => resolve(ws))
+      ws.once('error', reject)
+      ws.once('close', (code) => reject(new Error('closed ' + code)))
+    })
+  }
+  const closed = (ws: WebSocket) => new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)))
+  const rejected = (url: string) => closed(new WebSocket(url))
+  const codeOf = (run: () => unknown) => {
+    try {
+      run()
+      return null
+    } catch (error) {
+      return error instanceof GatewayError ? error.code + ': ' + error.message : String(error)
+    }
+  }
+
+  it("relays a conversation's computer and browser tile with no takeover, four viewers and one controller", async () => {
+    const { f, fake, screen, base } = await host()
+    const control = await connect(
+      base + screen.conversationTicket('workspaces', conversationId, 'one', 'control', 'apps').path
     )
-    const view = await connect(base + screen.ticket(bot, 'one', 'view').path)
-    expect(view.readyState).toBe(WebSocket.OPEN)
-    await until(() => solo.upgrades.length > 0)
-    expect(solo.upgrades).toEqual(['/v1/screen/view'])
+    const echoed: Buffer[] = []
+    control.on('message', (bytes) => echoed.push(Buffer.from(bytes as Buffer)))
+    control.send(Buffer.from([4, 5, 6]))
+    await until(() => Buffer.concat(echoed).includes(Buffer.from([4, 5, 6])))
+    // A second controller from any device is refused at use.
+    expect(
+      await rejected(base + screen.conversationTicket('workspaces', conversationId, 'two', 'control', 'apps').path)
+    ).toBe(4003)
+    const views = []
+    for (let i = 0; i < 4; i++)
+      views.push(
+        await connect(base + screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps').path)
+      )
+    expect(
+      await rejected(base + screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps').path)
+    ).toBe(4003)
+    // Its computer is not the environment display: the environment screen stays free to control.
+    const settings = await connect(base + screen.environmentTicket('workspaces', 'one', 'control').path)
+    const browser = await connect(
+      base + screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'browser').path
+    )
+    const prefix = '/v1/conversations/' + conversationId + '/screen'
+    // A client's socket opens before the gateway reaches the instance.
+    await until(() => fake.upgrades.length === 7)
+    expect(fake.upgrades).toEqual([
+      prefix + '/apps/control',
+      ...Array.from({ length: 4 }, () => prefix + '/apps/view'),
+      '/v1/screen/environment/control',
+      prefix + '/browser/view',
+    ])
+    expect(codeOf(() => screen.conversationTicket('workspaces', conversationId, 'one', 'control', 'browser'))).toBe(
+      "INVALID_REQUEST: A conversation's browser is view only"
+    )
+    // Stopping the environment closes them all.
+    const closings = [control, ...views, settings, browser].map(closed)
+    await f.lifecycle.stopEnvironment('workspaces')
+    expect(new Set(await Promise.all(closings))).toEqual(new Set([4002]))
+  })
+
+  it('refuses conversation screens of bot environments, stopped environments and images without computers', async () => {
+    const { f, screen } = await host([FLEET_VIDEO_SCREENS_FEATURE])
+    expect(codeOf(() => screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps'))).toBe(
+      'CONFLICT: Restart this environment to update it before opening this screen.'
+    )
+    expect(codeOf(() => screen.conversationTicket('nowhere', conversationId, 'one', 'view', 'apps'))).toBe(
+      'NOT_FOUND: Environment not found'
+    )
+    await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE, FLEET_CONVERSATION_COMPUTERS_FEATURE])
+    await environment(f, 'Work', ['Ads'])
+    expect(codeOf(() => screen.conversationTicket('work', conversationId, 'one', 'view', 'apps'))).toBe(
+      'CONFLICT: This environment does not host workspaces.'
+    )
+    await f.lifecycle.stopEnvironment('workspaces')
+    expect(codeOf(() => screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps'))).toMatch(
+      /^BOT_NOT_RUNNING/
+    )
+  })
+
+  it('refuses a ticket at use once its device is revoked or its image no longer has computers', async () => {
+    const { f, fake, screen, base } = await host()
+    f.store.db
+      .prepare('INSERT INTO devices(id,name,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,NULL,NULL)')
+      .run('gone', 'Gone', 'sha', new Date().toISOString())
+    const revoked = screen.conversationTicket('workspaces', conversationId, 'gone', 'view', 'apps')
+    expect(f.store.revokeDevice('gone')).toBe(true)
+    expect(await rejected(base + revoked.path)).toBe(4003)
+    const older = screen.conversationTicket('workspaces', conversationId, 'one', 'view', 'apps')
+    ;(f.lifecycle as unknown as { instances: Map<string, { capabilities: string[] }> }).instances.get(
+      'workspaces'
+    )!.capabilities = ['provisioning', 'environments', FLEET_WORKSPACES_HOST_FEATURE, FLEET_VIDEO_SCREENS_FEATURE]
+    expect(await rejected(base + older.path)).toBe(4003)
+    expect(fake.upgrades).toEqual([])
   })
 })
 
@@ -1727,5 +1887,42 @@ describe('pauses during an installation', () => {
     expect(work.installed.get(scout)?.hold).toEqual(noHold)
     expect(f.lifecycle.statuses.get(scout)?.hold).toEqual(noHold)
     expect(f.lifecycle.get(scout)).toMatchObject({ paused: false, status: 'idle' })
+  })
+})
+
+describe('chats of a workspaces host', () => {
+  it('hands on what a chat needs from the host, asking the host for it, and only from a workspaces host', async () => {
+    const f = fixture()
+    // The fake Docker has no addresses to find the gateway's container by.
+    f.lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
+    const heard: Array<[string, string, string, string]> = []
+    f.lifecycle.onChatAttention = (environmentId, conversationId, name, kind) =>
+      heard.push([environmentId, conversationId, name, kind])
+    const host = await f.instance('workspaces')
+    host.capabilities.push('workspaces-host')
+    const created = f.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
+    expect(created.id).toBe('workspaces')
+    await until(() => f.lifecycle.environment(created.id)?.lifecycle === 'running')
+    await until(() => host.subscriptions.length > 0)
+    expect(host.requests.find((item) => item.path.startsWith('/v1/events'))?.path).toContain('chatAttention=1')
+    host.emit({
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'c1',
+      name: 'Fix the flaky test',
+      kind: 'question',
+    })
+    await until(() => heard.length === 1)
+    expect(heard).toEqual([['workspaces', 'c1', 'Fix the flaky test', 'question']])
+
+    // A bots environment has no chats: an event that claims one is dropped.
+    const work = await f.instance('work')
+    const { environmentId } = await environment(f, 'work', ['Scout'])
+    expect(environmentId).toBe('work')
+    await until(() => work.subscriptions.length > 0)
+    work.emit({ type: 'chat.attention', botId: null, conversationId: 'c2', name: 'Not a chat', kind: 'waiting' })
+    host.emit({ type: 'chat.attention', botId: null, conversationId: 'c3', name: 'Changelog', kind: 'finished' })
+    await until(() => heard.length === 2)
+    expect(heard.map(([, id]) => id)).toEqual(['c1', 'c3'])
   })
 })

@@ -1,4 +1,4 @@
-import { useChatOwnerWindow } from '@/lib/chat-window-context'
+import { useChatOwnerWindow, useChatSourceFocus } from '@/lib/chat-window-context'
 import { subscriptionExhaustionMessageKey } from './subscription-failover-route'
 import {
   Fragment,
@@ -15,6 +15,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, ChevronRight } from 'lucide-react'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
+import { GenUiContext, type GenUiHost } from '@/genui/context'
+import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -23,7 +25,7 @@ import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
 import { SharedToolImages, ToolCallCard } from './ToolCallCard'
-import { ConversationDispatchCard } from './ConversationDispatchCard'
+import { ConversationDispatchCard, openConversationById } from './ConversationDispatchCard'
 import { WorkspaceCreationCard } from './WorkspaceCreationCard'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { SubagentCard } from './SubagentCard'
@@ -34,6 +36,8 @@ import { GeneratedImageCard } from './GeneratedImageCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
 import { AttachmentImage } from './AttachmentImage'
 import { PdfAttachmentChip } from './PdfAttachmentChip'
+import { ReviewReceiptCard, type ReviewReceiptActions } from './review/ReviewReceiptCard'
+import type { ReviewJobInfo } from '../../../shared/review'
 import { CUT_FINISH_REASONS, estimatedCostOfUsageWithSubagents, toolOutputText } from '../../../shared/chat'
 import { formatResponseDuration, responseDurationMs } from '../../../shared/response-duration'
 import type { ChatMessage, ChatModelMeta, MessagePart } from '../../../shared/chat'
@@ -73,6 +77,29 @@ function CopyButton({ text }: { text: string }) {
       className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
     >
       {done ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
+/** Which conversation sent a message, report or result; its name opens that conversation. */
+function PeerMessageOrigin({ peer }: { peer: NonNullable<ChatMessage['peer']> }) {
+  const { t } = useTranslation('chat')
+  const focusSource = useChatSourceFocus()
+  const key = peer.kind === 'report' ? 'link.reportFrom' : peer.kind === 'result' ? 'link.resultFrom' : 'link.messageFrom'
+  const label = t(key, { name: peer.fromConversationName })
+  return (
+    <button
+      type="button"
+      data-testid="conversation-message-origin"
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        openConversationById(peer.fromConversationId)
+        focusSource()
+      }}
+      className="w-fit rounded border border-violet-400/25 bg-violet-400/[0.08] px-2 py-0.5 text-left text-[10px] text-violet-200 hover:bg-violet-400/[0.16]"
+    >
+      {label}
     </button>
   )
 }
@@ -162,8 +189,7 @@ function ReviewLoopRoundChrome({
   const modelId = message.model?.modelId
   const status = reviewLoopRoundStatus(message)
   const loop = message.reviewLoop
-  const isPaired = message.source === 'maestrly-review-loop'
-  const isSummary = (message.source === 'chatgpt-web-review-loop' || message.source === 'maestrly-review-loop') && !loop
+  const isSummary = message.source === 'chatgpt-web-review-loop' && !loop
 
   const cost =
     message.usage != null
@@ -221,15 +247,7 @@ function ReviewLoopRoundChrome({
         <span className="font-medium text-foreground/90">
           {isSummary
             ? t('chatgptWeb.reviewLoopSummaryBadge')
-            : isPaired && loop?.role
-              ? `${t(`reviewLoop.role${loop.role === 'executor' ? 'Executor' : 'Reviewer'}`)} · ${t(
-                  'reviewLoop.round',
-                  {
-                    iteration: loop.iteration,
-                    max: loop.maxIterations,
-                  }
-                )}`
-              : t('chatgptWeb.reviewLoopRoundHeader', { iteration: loop?.iteration ?? 0 })}
+            : t('chatgptWeb.reviewLoopRoundHeader', { iteration: loop?.iteration ?? 0 })}
         </span>
         {modelId && (
           <span className="max-w-[160px] truncate font-mono text-[10px] text-muted-foreground" title={modelId}>
@@ -611,8 +629,10 @@ const Bubble = memo(function Bubble({
   onCancelEdit,
   onSubmitEdit,
   onRetrySteering,
+  reviewReceipt,
   onOpenMention,
   onOpenImage,
+  onUiSend,
   searchQuery,
   currentSearchMatch,
 }: {
@@ -631,13 +651,18 @@ const Bubble = memo(function Bubble({
   onCancelEdit: () => void
   onSubmitEdit: (id: string, payload: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => void
   onRetrySteering?: (text: string) => void
+  reviewReceipt?: ReviewReceiptProps
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
   onOpenImage?: (src: string, name: string) => void
+  /** Sends what a generated interface of this message asks to send as the user. */
+  onUiSend?: (text: string) => void
   searchQuery?: string
   currentSearchMatch?: boolean
 }) {
   const { t } = useTranslation('chat')
   const { openSettings } = useSettings()
+  const previews = useMemo(() => genUiPreviewsOf(message.parts), [message.parts])
+  const genUiHost = useMemo<GenUiHost>(() => ({ live, send: onUiSend, previews }), [live, onUiSend, previews])
   const isUser = message.role === 'user'
   const text = plainText(message)
   const bodyText = textOnly(message)
@@ -652,7 +677,7 @@ const Bubble = memo(function Bubble({
   const catalogLoading = agents === null || agents === undefined
   const editBlockedByCatalog = hasAgentMentions && catalogLoading
 
-  const isReviewLoopSource = message.source === 'chatgpt-web-review-loop' || message.source === 'maestrly-review-loop'
+  const isReviewLoopSource = message.source === 'chatgpt-web-review-loop'
   const isReviewLoopRound = isReviewLoopSource && !!message.reviewLoop
   const roundStatus = isReviewLoopRound ? reviewLoopRoundStatus(message) : null
 
@@ -689,6 +714,9 @@ const Bubble = memo(function Bubble({
           >
             {t('dispatch.startedFrom')}
           </span>
+        )}
+        {message.source === 'conversation-message' && message.peer && (
+          <PeerMessageOrigin peer={message.peer} />
         )}
         {message.botName && (
           <span
@@ -762,6 +790,19 @@ const Bubble = memo(function Bubble({
           )}
         </div>
       </div>
+    )
+  }
+
+  if (message.review) {
+    return (
+      <ReviewReceiptCard
+        messageId={message.id}
+        report={message.review}
+        check={reviewReceipt?.check}
+        busy={reviewReceipt?.busy}
+        actions={reviewReceipt?.actions}
+        onOpenFile={onOpenMention}
+      />
     )
   }
 
@@ -904,7 +945,7 @@ const Bubble = memo(function Bubble({
           onToggle={isReviewLoopRound ? () => setRoundCollapsed((v) => !v) : undefined}
         />
       )}
-      {showRoundBody && body}
+      {showRoundBody && <GenUiContext.Provider value={genUiHost}>{body}</GenUiContext.Provider>}
     </div>
   )
 })
@@ -935,6 +976,17 @@ interface Props extends EditCtx {
 
   currentSearchHitId?: string | null
   onRetrySteering?: (text: string) => void
+  /** Sends what a generated interface asks to send as the user; absent where the person cannot write. */
+  onUiSend?: (text: string) => void
+  /** What review receipts need: a check that runs, whether the agent works, and their actions. */
+  reviewReceipt?: ReviewReceiptProps
+}
+
+/** Absent actions leave receipts read-only. */
+export interface ReviewReceiptProps {
+  check: ReviewJobInfo | null
+  busy: boolean
+  actions?: ReviewReceiptActions
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
@@ -957,10 +1009,16 @@ export const ChatMessageList = memo(function ChatMessageList({
   currentSearchHitId,
   readOnly = false,
   onRetrySteering,
+  onUiSend,
+  reviewReceipt,
 }: Props) {
   const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null)
+  const rowReviewReceipt = useMemo(
+    () => (readOnly && reviewReceipt ? { ...reviewReceipt, actions: undefined } : reviewReceipt),
+    [readOnly, reviewReceipt]
+  )
 
   const openImage = useCallback((src: string, name: string) => setLightbox({ src, name }), [])
   const closeImage = useCallback(() => setLightbox(null), [])
@@ -1168,8 +1226,10 @@ export const ChatMessageList = memo(function ChatMessageList({
             onCancelEdit={onCancelEdit}
             onSubmitEdit={onSubmitEdit}
             onRetrySteering={onRetrySteering}
+            reviewReceipt={rowReviewReceipt}
             onOpenMention={onOpenMention}
             onOpenImage={openImage}
+            onUiSend={readOnly ? undefined : onUiSend}
             searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
             currentSearchMatch={currentSearchHitId === m.id}
           />

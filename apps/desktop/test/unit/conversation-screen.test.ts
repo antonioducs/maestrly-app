@@ -114,7 +114,10 @@ vi.mock('../../src/main/store', () => ({
   getConvUiPrefs: vi.fn(() => ({})),
   patchConvUiPrefs: vi.fn(),
 }))
-vi.mock('../../src/main/drawer-scope', () => ({ conversationTabAllowed: vi.fn(() => true) }))
+vi.mock('../../src/main/drawer-scope', () => ({
+  conversationTabAllowed: vi.fn(() => true),
+  isRemoteConversation: vi.fn(() => false),
+}))
 vi.mock('../../src/main/drawer-manager', () => ({
   FLOAT_CHROME_H: 32,
   floatView: vi.fn(() => true),
@@ -155,10 +158,13 @@ vi.mock('../../src/main/drawer/float', () => ({ layoutFloatingTab: vi.fn() }))
 vi.mock('../../src/main/drawer/popup', () => ({ focusViewInMain: vi.fn() }))
 
 import {
+  conversationBrowserArea,
   conversationScreen,
   onConversationScreenChange,
   presentedBrowserSize,
+  presentsBrowserInArea,
   setConversationScreen,
+  setConversationTile,
   setPresentedBrowserSize,
   type ConversationScreen,
 } from '../../src/main/conversation-screen'
@@ -177,7 +183,16 @@ const botA: ConversationScreen = {
   height: 768,
   windowArea: { x: 1280, y: 800, width: 1280, height: 800 },
 }
-const conversations = ['bot-a', 'bot-late', 'plain', 'popup-bot', 'popup-plain', 'bot-presented', 'popup-presented']
+const conversations = [
+  'bot-a',
+  'bot-late',
+  'plain',
+  'popup-bot',
+  'popup-plain',
+  'bot-presented',
+  'popup-presented',
+  'tiled',
+]
 
 it('keeps the environment settings window and its native frame inside tile zero', () => {
   const bounds = environmentScreenBounds({ x: 0, y: 0, width: 3840, height: 2400 })
@@ -211,8 +226,10 @@ const withOpenboxFrame = (b: { x: number; y: number; width: number; height: numb
 afterEach(() => {
   for (const id of conversations) {
     setConversationScreen(id, null)
+    setConversationTile(id, null)
     setPresentedBrowserSize(id, null)
   }
+  delete process.env.MAESTRLY_SERVER_MODE
   disposeAll()
   flushPendingBrowserPersists()
   disposeBrowserTabEviction()
@@ -220,6 +237,39 @@ afterEach(() => {
   vi.clearAllMocks()
   vi.mocked(isBotMode).mockReturnValue(true)
   h.views.length = 0
+})
+
+describe('conversation tiles', () => {
+  it("prefers a screen's window area over a tile, and notifies listeners of tile changes", () => {
+    const tile = { x: 2560, y: 0, width: 1280, height: 800 }
+    const seen: (string | null)[] = []
+    const stop = onConversationScreenChange((id, screen) => seen.push(id + ':' + (screen?.display ?? 'none')))
+    expect(conversationBrowserArea('tiled')).toBeNull()
+    setConversationTile('tiled', tile)
+    setConversationTile('tiled', { ...tile })
+    expect(conversationBrowserArea('tiled')).toEqual(tile)
+    setConversationScreen('tiled', { ...botA, display: ':10' })
+    expect(conversationBrowserArea('tiled')).toEqual(botA.windowArea)
+    setConversationScreen('tiled', null)
+    expect(conversationBrowserArea('tiled')).toEqual(tile)
+    setConversationTile('tiled', null)
+    expect(conversationBrowserArea('tiled')).toBeNull()
+    expect(() => setConversationTile('tiled', { ...tile, width: 0 })).toThrow(TypeError)
+    stop()
+    expect(seen).toEqual(['tiled:none', 'tiled::10', 'tiled:none', 'tiled:none'])
+  })
+
+  it('presents a browser in its area for bots, and for workspaces conversations whose computer runs', () => {
+    expect(presentsBrowserInArea('tiled')).toBe(true)
+    vi.mocked(isBotMode).mockReturnValue(false)
+    expect(presentsBrowserInArea('tiled')).toBe(false)
+    process.env.MAESTRLY_SERVER_MODE = '1'
+    expect(presentsBrowserInArea('tiled')).toBe(false)
+    setConversationScreen('tiled', { ...botA, display: ':10' })
+    expect(presentsBrowserInArea('tiled')).toBe(true)
+    delete process.env.MAESTRLY_SERVER_MODE
+    expect(presentsBrowserInArea('tiled')).toBe(false)
+  })
 })
 
 describe('conversation screens', () => {

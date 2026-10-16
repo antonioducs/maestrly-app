@@ -1,4 +1,3 @@
-import { WorkspaceKanbanLink } from '../platform/WorkspaceKanbanLink'
 /** Conversation host for provider streams, queued turns, draft attachments, and paginated history.
  * Bound hidden rendering work while preserving session state and reconciling on visibility changes. */
 import {
@@ -16,11 +15,22 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Pencil, ArrowDown } from 'lucide-react'
+import { X, Pencil, ArrowDown, Lock } from 'lucide-react'
 import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPrefill } from '@/lib/composer-prefill'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { isRemoteHostId } from '../../../shared/host-key'
+import {
+  composeReviewHandoff,
+  lastAgentText,
+  REVIEW_CODE_EVENT,
+  reviewErrorText,
+  roomReview,
+  useConversationReview,
+  type ReviewCodeEventDetail,
+} from '@/lib/review'
+import { reviewLocksConversation, type ChatReviewReport, type ReviewTarget } from '../../../shared/review'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
@@ -30,7 +40,6 @@ import {
   findPendingChatQuestion,
   isMaestrlyUltraEffort,
   isChatProviderConnected,
-  isReviewLoopConversationReserved,
   MAESTRLY_ULTRA_EFFORT,
   mergePendingChatQuestions,
   nextQuickReasoningEffort,
@@ -55,7 +64,6 @@ import type {
   ChatConfig,
   ChatUserPrompt,
   MessagePart,
-  ReviewLoopInfo,
   SubagentSessionSummary,
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
@@ -107,9 +115,10 @@ import { contextMeterReading, sameContextModel, selectContextObservation } from 
 import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
-import { ReviewLoopBanner } from './ReviewLoopBanner'
 import { addHookNotice, BLOCKED_BY_HOOK, HOOK_NOTICE_INFO_MS, type HookNoticeItem, HookNotices } from './HookNotices'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
+import { ReviewRoom } from './review/ReviewRoom'
+import type { ReviewReceiptActions } from './review/ReviewReceiptCard'
 import { MaestroControl } from './MaestroControl'
 import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
 import type { DelegatePart } from './OrchestrationRun'
@@ -126,6 +135,10 @@ interface Props {
   botName?: string
   workspaceId: string | null
   conversationId: string
+  /** Shown while a review holds the conversation. */
+  conversationName?: string
+  /** Opens this conversation's Plan tab. */
+  onOpenPlan?: () => void
   cwd: string
   experience: ConversationExperience
   onExperienceChange?: (conversationId: string, experience: ConversationExperience) => void
@@ -166,6 +179,8 @@ export function ChatView({
   botName,
   workspaceId,
   conversationId,
+  conversationName,
+  onOpenPlan,
   cwd: _cwd,
   experience,
   onExperienceChange,
@@ -187,6 +202,16 @@ export function ChatView({
     const frame = requestAnimationFrame(() => composerRef.current?.focus())
     return () => cancelAnimationFrame(frame)
   }, [conversationId, visible, workspaceId])
+  const hostId = useHostId()
+  // An agent on a workspaces host cannot show an artifact in its browser: this computer, which shows the conversation,
+  // opens it through its own connection to the server.
+  useEffect(() => {
+    if (!visible || !isRemoteHostId(hostId)) return
+    return api.onChatArtifactOpen((request) => {
+      if (request.conversationId !== conversationId) return
+      void window.api.artifacts.openExternal(request.artifactId, request.version).catch(() => undefined)
+    })
+  }, [api, conversationId, hostId, visible])
   const maestroPanelHostId = `chat-maestro-panel-${conversationId}`
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [subagentSessions, setSubagentSessions] = useState<SubagentSessionSummary[]>([])
@@ -256,13 +281,12 @@ export function ChatView({
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
   const [hookNotices, setHookNotices] = useState<HookNoticeItem[]>([])
   const hookNoticeIdRef = useRef(0)
+  const { review, apply: applyReview } = useConversationReview(api, conversationId)
+  // The review room: opened at its first stage for a target, or showing the review that holds the conversation.
+  const [reviewRoomTarget, setReviewRoomTarget] = useState<ReviewTarget | null>(null)
+  const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
   const [chatProviders, setChatProviders] = useState<ChatConfig['providers']>([])
-  const [reviewLoop, setReviewLoop] = useState<ReviewLoopInfo | null>(null)
-  const reviewLoopActive =
-    reviewLoop != null &&
-    (reviewLoop.driver === 'chatgpt-web'
-      ? isReviewLoopConversationReserved(reviewLoop.status)
-      : reviewLoop.status !== 'finished' && reviewLoop.status !== 'cancelled' && reviewLoop.status !== 'interrupted')
   // A conversation opened for a purpose (such as a suggested request) starts with that text in the composer.
   const [draft, setDraft] = useState(() => peekComposerPrefill(conversationId) ?? '')
   useEffect(() => clearComposerPrefill(conversationId), [conversationId])
@@ -507,10 +531,6 @@ export function ChatView({
     () => api.onChatGptWebDelivery(conversationId, () => void reloadLatestPage()),
     [api, conversationId, reloadLatestPage]
   )
-  useEffect(
-    () => api.onChatReviewLoopDelivery(conversationId, () => void reloadLatestPage()),
-    [api, conversationId, reloadLatestPage]
-  )
 
   // Load older messages on demand and return the number prepended.
 
@@ -752,19 +772,17 @@ export function ChatView({
             ? t('view.errAccountDeleting')
             : subscriptionExhaustionMessageKey(error)
               ? t(subscriptionExhaustionMessageKey(error)!)
-              : error === 'review-loop-active'
-                ? t('view.errReviewLoopActive')
-                : error === 'context-overflow'
-                  ? t('view.errContextOverflow')
-                  : error === 'context-compaction-failed'
-                    ? t('view.errContextCompactionFailed')
-                    : error === 'invalid-attachment'
-                      ? t('view.errInvalidAttachment')
-                      : error === 'pdf-unreadable'
-                        ? t('view.errPdfUnreadable')
-                        : error?.startsWith(BLOCKED_BY_HOOK)
-                          ? t('view.errBlockedByHook', { reason: error.slice(BLOCKED_BY_HOOK.length) })
-                          : t('view.errSendFailed')
+              : error === 'context-overflow'
+                ? t('view.errContextOverflow')
+                : error === 'context-compaction-failed'
+                  ? t('view.errContextCompactionFailed')
+                  : error === 'invalid-attachment'
+                    ? t('view.errInvalidAttachment')
+                    : error === 'pdf-unreadable'
+                      ? t('view.errPdfUnreadable')
+                      : error?.startsWith(BLOCKED_BY_HOOK)
+                        ? t('view.errBlockedByHook', { reason: error.slice(BLOCKED_BY_HOOK.length) })
+                        : t('view.errSendFailed')
 
   const pushAssistantError = useCallback(
     (text: string) => {
@@ -901,6 +919,104 @@ export function ChatView({
       return res
     },
     [api, conversationId, pushAssistantError, reloadLatestPage, subagents]
+  )
+
+  // Reviews: a review takes over the conversation in the review room and continues here as a receipt.
+  const reviewRef = useRef(review)
+  useEffect(() => {
+    reviewRef.current = review
+  }, [review])
+  const openReviewRoom = useCallback((target: ReviewTarget) => {
+    setReviewNotice(null)
+    // A review that already holds the conversation is what the room shows; it is not replaced.
+    if (!reviewLocksConversation(reviewRef.current)) setReviewRoomTarget(target)
+  }, [])
+  useEffect(() => {
+    setReviewRoomTarget(null)
+    setReviewNotice(null)
+  }, [conversationId])
+  useEffect(() => {
+    const onReview = (event: Event) => {
+      const detail = (event as CustomEvent<ReviewCodeEventDetail>).detail
+      if (detail?.conversationId === conversationId && detail.hostId === hostId) openReviewRoom('code')
+    }
+    window.addEventListener(REVIEW_CODE_EVENT, onReview)
+    const off = api.onChatReviewOpen((request) => {
+      if (request.conversationId === conversationId) openReviewRoom(request.target)
+    })
+    return () => {
+      window.removeEventListener(REVIEW_CODE_EVENT, onReview)
+      off()
+    }
+  }, [api, conversationId, hostId, openReviewRoom])
+  // Once a review starts, the room follows it; when it ends, the room closes and the receipt (if any) loads.
+  const reviewEnded =
+    review && (review.status === 'completed' || review.status === 'discarded' || review.status === 'cancelled')
+      ? `${review.kind}:${review.reviewId}:${review.status}`
+      : null
+  useEffect(() => {
+    if (reviewLocksConversation(review)) setReviewRoomTarget(null)
+  }, [review])
+  useEffect(() => {
+    if (!reviewEnded) return
+    setReviewRoomTarget(null)
+    void reloadLatestPage()
+  }, [reviewEnded, reloadLatestPage])
+  const activeRoomReview = roomReview(review, dismissedReviewId)
+  const reviewRoomOpen = !!activeRoomReview || reviewRoomTarget !== null
+  const checkRunning = review?.kind === 'check' && review.status === 'running'
+  const reviewLastAgentText = useMemo(() => lastAgentText(messages), [messages])
+  const sendReviewMessage = useCallback(
+    (text: string) => {
+      if (streamingRef.current || compactingRef.current) {
+        setQueueState((current) => [...current, { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] }])
+        return
+      }
+      void doSend(text, [])
+    },
+    [doSend, setQueueState]
+  )
+  const reviewReceiptActions = useMemo<ReviewReceiptActions>(
+    () => ({
+      send: (messageId: string, report: ChatReviewReport) => {
+        const message = composeReviewHandoff(t, report.findings, {
+          decisions: report.decisions ?? {},
+          notes: report.notes ?? {},
+        })
+        void api
+          .chatReviewSendReport(conversationId, messageId, message || t('review.receipt.defaultMessage'))
+          .then((result) => {
+            if (!result.ok) {
+              setReviewNotice(reviewErrorText(t, result.error))
+              return
+            }
+            sendReviewMessage(result.message)
+            void reloadLatestPage()
+          })
+          .catch((error: unknown) => setReviewNotice(error instanceof Error ? error.message : String(error)))
+      },
+      check: async (messageId: string) => {
+        try {
+          const result = await api.chatReviewCheck(conversationId, messageId)
+          if (!result.ok) return result.error
+          applyReview(result.review)
+          return null
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error)
+        }
+      },
+      sendBack: (text: string) => {
+        setDraft(text)
+        requestAnimationFrame(() => composerRef.current?.focus())
+      },
+      errorText: (error: string) => reviewErrorText(t, error),
+    }),
+    [api, applyReview, conversationId, reloadLatestPage, sendReviewMessage, t]
+  )
+  const checkJob = review?.kind === 'check' ? review : null
+  const reviewReceipt = useMemo(
+    () => ({ check: checkJob, busy: streaming, actions: reviewReceiptActions }),
+    [checkJob, streaming, reviewReceiptActions]
   )
 
   const finishTurn = useCallback(
@@ -1054,6 +1170,11 @@ export function ChatView({
       setLiveReasoningUpdate(event.liveReasoningUpdate)
       setLiveReasoningEfforts(event.liveReasoningEfforts)
       setLiveReasoningReset(event.liveReasoningReset)
+      return
+    }
+    if (event.kind === 'questions-pending') {
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState(event.questions)
       return
     }
     if (event.kind === 'steering-accepted') {
@@ -1284,15 +1405,6 @@ export function ChatView({
   }, [api])
 
   useEffect(() => {
-    const ownsConversation = (loop: ReviewLoopInfo) =>
-      loop.participants.executor.conversationId === conversationId ||
-      loop.participants.reviewer?.conversationId === conversationId
-    const refresh = () => void api.chatReviewLoopStatus(conversationId).then(setReviewLoop)
-    void refresh()
-    return api.onChatReviewLoopChanged((loops) => setReviewLoop(loops.find(ownsConversation) ?? null))
-  }, [api, conversationId])
-
-  useEffect(() => {
     if (!selModelId) {
       setModelMeta(null)
       return
@@ -1451,6 +1563,22 @@ export function ChatView({
     }
     return result
   }, [api, conversationId, onExperienceChange])
+
+  // A generated interface sends as the user without touching the draft; a busy chat queues it like the composer.
+  const sendUiMessage = useCallback(
+    (text: string) => {
+      const enqueue = () =>
+        setQueueState((q) => [...q, { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] }])
+      if (streamingRef.current || compactingRef.current) {
+        enqueue()
+        return
+      }
+      void doSend(text, []).then((result) => {
+        if (result?.error === 'busy') enqueue()
+      })
+    },
+    [doSend, setQueueState]
+  )
 
   const submitDraft = useCallback(
     ({ text: rawText, agentMentions }: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => {
@@ -1639,6 +1767,7 @@ export function ChatView({
     () => [
       { name: 'clear', description: t('view.cmdClear'), kind: 'action', action: 'clear' },
       { name: 'compact', description: t('view.cmdCompact'), kind: 'action', action: 'compact' },
+      { name: 'code-review', description: t('view.cmdCodeReview'), kind: 'action', action: 'code-review' },
       ...remoteCmds.skills.map((s) => ({
         name: s.name,
         description: s.description,
@@ -1715,6 +1844,10 @@ export function ChatView({
           setDraft('')
           setDraftMentions([])
           runCompact()
+        } else if (cmd.action === 'code-review') {
+          setDraft('')
+          setDraftMentions([])
+          openReviewRoom('code')
         }
         return
       }
@@ -1727,7 +1860,7 @@ export function ChatView({
       setDraft((cmd.content ?? '').replace(/\$ARGUMENTS/g, '').trim())
       setDraftMentions([])
     },
-    [api, conversationId, runCompact, setQueueState]
+    [api, conversationId, runCompact, setQueueState, openReviewRoom]
   )
 
   useEffect(
@@ -2016,7 +2149,6 @@ export function ChatView({
   const experienceTransitionDisabled =
     streaming ||
     compacting ||
-    reviewLoopActive ||
     queue.length > 0 ||
     maestroPostPending > 0 ||
     pending.length > 0 ||
@@ -2043,400 +2175,465 @@ export function ChatView({
           }
         >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="relative flex min-h-0 flex-1 flex-col">
-              {workspaceId && <WorkspaceKanbanLink workspaceId={workspaceId} />}
-              {searchOpen && (
-                <ChatSearchBar
-                  query={searchQuery}
-                  onQueryChange={changeSearchQuery}
-                  total={searchHits.length}
-                  index={searchIndex}
-                  loading={searchLoading}
-                  onPrev={() => stepSearch(-1)}
-                  onNext={() => stepSearch(1)}
-                  onClose={closeSearch}
-                />
-              )}
-              <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-                <ChatMessageList
-                  messages={messages}
-                  experience={currentExperience}
-                  streaming={streaming}
-                  visible={visible}
-                  agents={subagents}
-                  editingId={editingId}
-                  onStartEdit={startEdit}
-                  onCancelEdit={cancelEdit}
-                  onSubmitEdit={submitEdit}
-                  onRetrySteering={(text) =>
-                    setQueueState((current) => [
-                      ...current,
-                      { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] },
-                    ])
+            {reviewRoomOpen && (
+              <ReviewRoom
+                conversationId={conversationId}
+                conversationName={conversationName ?? ''}
+                target={reviewRoomTarget}
+                review={activeRoomReview}
+                lastAgentText={reviewLastAgentText}
+                onClose={() => {
+                  setReviewRoomTarget(null)
+                  if (activeRoomReview?.status === 'failed') {
+                    setDismissedReviewId(activeRoomReview.reviewId)
+                    void api.chatReviewDismiss(conversationId)
                   }
-                  onOpenMention={openMention}
-                  scrollContainerRef={scrollRef}
-                  onLoadOlder={loadOlder}
-                  hasMore={hasMore}
-                  highlightMsgId={highlightMsgId}
-                  searchQuery={searchOpen && searchResultQuery === searchQuery.trim() ? searchResultQuery : undefined}
-                  searchHitIds={searchHitIds}
-                  currentSearchHitId={currentSearchHitId}
-                />
+                  requestAnimationFrame(() => composerRef.current?.focus())
+                }}
+                onRetry={(target) => {
+                  if (activeRoomReview) setDismissedReviewId(activeRoomReview.reviewId)
+                  void api.chatReviewDismiss(conversationId)
+                  setReviewRoomTarget(target)
+                }}
+                onApply={applyReview}
+                onSendMessage={sendReviewMessage}
+                onHandoffError={setReviewNotice}
+                onOpenFile={opensFiles ? openMention : undefined}
+                onOpenPlan={onOpenPlan}
+              />
+            )}
+            {/* While a review holds the conversation, nothing under the room can be used. */}
+            <div className="contents" inert={reviewRoomOpen || undefined}>
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                {searchOpen && (
+                  <ChatSearchBar
+                    query={searchQuery}
+                    onQueryChange={changeSearchQuery}
+                    total={searchHits.length}
+                    index={searchIndex}
+                    loading={searchLoading}
+                    onPrev={() => stepSearch(-1)}
+                    onNext={() => stepSearch(1)}
+                    onClose={closeSearch}
+                  />
+                )}
+                <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+                  <ChatMessageList
+                    messages={messages}
+                    experience={currentExperience}
+                    streaming={streaming}
+                    visible={visible}
+                    agents={subagents}
+                    editingId={editingId}
+                    onStartEdit={startEdit}
+                    onCancelEdit={cancelEdit}
+                    onSubmitEdit={submitEdit}
+                    onRetrySteering={(text) =>
+                      setQueueState((current) => [
+                        ...current,
+                        { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] },
+                      ])
+                    }
+                    reviewReceipt={reviewReceipt}
+                    onOpenMention={openMention}
+                    onUiSend={sendUiMessage}
+                    scrollContainerRef={scrollRef}
+                    onLoadOlder={loadOlder}
+                    hasMore={hasMore}
+                    highlightMsgId={highlightMsgId}
+                    searchQuery={searchOpen && searchResultQuery === searchQuery.trim() ? searchResultQuery : undefined}
+                    searchHitIds={searchHitIds}
+                    currentSearchHitId={currentSearchHitId}
+                  />
+                </div>
+
+                {!atBottom && messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={scrollToBottom}
+                    title={t('messages.goToBottom')}
+                    className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f] text-foreground shadow-lg transition hover:bg-[#26262d]"
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </button>
+                )}
+
+                {isMaestro ? (
+                  <MaestroActivityPill
+                    runs={maestroRuns}
+                    conversationId={conversationId}
+                    liveState={maestroLive}
+                    onOpenMention={openMention}
+                    onJumpToMessage={jumpToMessage}
+                  />
+                ) : (
+                  <SubagentActivityPill sessions={subagentSessions} />
+                )}
               </div>
 
-              {!atBottom && messages.length > 0 && (
-                <button
-                  type="button"
-                  onClick={scrollToBottom}
-                  title={t('messages.goToBottom')}
-                  className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f]/95 text-foreground shadow-lg backdrop-blur transition hover:bg-[#26262d]"
-                >
-                  <ArrowDown className="h-4 w-4" />
-                </button>
+              {pending.map((req) => (
+                <PermissionPrompt
+                  scope={workspaceId === null ? 'standalone' : 'project'}
+                  key={req.id}
+                  request={req}
+                  onDecide={(reply) => decide(req.id, reply)}
+                />
+              ))}
+
+              {compacting && (
+                <div className="mx-auto flex w-full max-w-3xl items-center gap-1.5 px-4 pb-1 text-[12px] text-muted-foreground">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+                  {t('view.compacting')}
+                </div>
               )}
 
-              {isMaestro ? (
-                <MaestroActivityPill
-                  runs={maestroRuns}
-                  conversationId={conversationId}
-                  liveState={maestroLive}
-                  onOpenMention={openMention}
-                  onJumpToMessage={jumpToMessage}
+              {showCompactBanner && (
+                <div className="mx-auto mb-1 flex w-full max-w-3xl items-center gap-2 px-4">
+                  <div className="flex flex-1 items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-1.5 text-[12px] text-amber-200">
+                    <span className="min-w-0 flex-1">
+                      {t('view.autoCompactBanner', { pct: Math.round((contextRatio ?? 0) * 100) })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={runCompact}
+                      className="shrink-0 rounded-md bg-amber-500/20 px-2 py-0.5 font-medium text-amber-100 hover:bg-amber-500/30"
+                    >
+                      {t('view.compactButton')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCompactDismissed(true)}
+                      className="shrink-0 text-amber-300/70 hover:text-amber-100"
+                      title={t('view.dismiss')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {queue.length > 0 && (
+                <div className="mx-auto w-full max-w-3xl px-4 pb-1">
+                  <div className="mb-1 text-[11px] text-muted-foreground">
+                    {t('view.queueCount', { count: queue.length })}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {queue.map((q) => (
+                      <div
+                        key={q.id}
+                        className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5 text-[13px]"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-foreground">{q.text}</span>
+                        {q.maestroLive && (
+                          <span className="shrink-0 rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+                            {t('view.maestroLiveWaiting')}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          title={t('view.queueEdit')}
+                          onClick={() => {
+                            if (q.maestroLive) {
+                              void api.chatMaestroLiveCancel(
+                                conversationId,
+                                q.maestroLive.runId,
+                                q.maestroLive.messageId
+                              )
+                            }
+                            setDraft(q.text)
+                            setDraftMentions(q.agentMentions)
+                            setAttachments(q.attachments)
+                            setQueueState((cur) => cur.filter((x) => x.id !== q.id))
+                          }}
+                          className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          title={t('view.queueRemove')}
+                          onClick={() => {
+                            if (q.maestroLive) {
+                              void api.chatMaestroLiveCancel(
+                                conversationId,
+                                q.maestroLive.runId,
+                                q.maestroLive.messageId
+                              )
+                            }
+                            revokeAttachmentPreviews(q.attachments)
+                            setQueueState((cur) => cur.filter((x) => x.id !== q.id))
+                          }}
+                          className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <ChatGptWebSessionBanner conversationId={conversationId} starting={companionStarting} />
+              <ConversationDispatchBanner conversationId={conversationId} />
+              {reviewNotice && (
+                <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
+                  <div
+                    role="alert"
+                    className="flex items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-1.5 text-[12px] text-amber-100"
+                  >
+                    <span className="min-w-0 flex-1">{reviewNotice}</span>
+                    <button
+                      type="button"
+                      onClick={() => setReviewNotice(null)}
+                      className="rounded p-0.5 text-amber-200/80 hover:text-amber-50"
+                      aria-label={t('view.dismiss')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <HookNotices
+                notices={hookNotices}
+                onDismiss={(id) => setHookNotices((current) => current.filter((notice) => notice.id !== id))}
+              />
+
+              {failoverNotice && (
+                <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
+                  <div
+                    role="status"
+                    className="flex items-center gap-2 rounded-lg border border-sky-500/25 bg-sky-500/[0.08] px-3 py-1.5 text-[12px] text-sky-100"
+                  >
+                    <span className="min-w-0 flex-1">{failoverNotice}</span>
+                    <button
+                      type="button"
+                      onClick={() => setFailoverNotice(null)}
+                      className="rounded p-0.5 text-sky-200/80 hover:text-sky-50"
+                      aria-label={t('messages.cancel')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {modeChangeError && (
+                <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
+                  <div
+                    role="alert"
+                    className="flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/[0.08] px-3 py-1.5 text-[12px] text-red-100"
+                  >
+                    <span className="min-w-0 flex-1">{modeChangeError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setModeChangeError(null)}
+                      className="rounded p-0.5 text-red-200/80 hover:text-red-50"
+                      aria-label={t('messages.cancel')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {botManaged && botConversation && (
+                <div className="mx-auto mb-1.5 w-full max-w-3xl px-3" data-testid="bot-manual-chat">
+                  <BotManualChatControl conversation={botConversation} />
+                </div>
+              )}
+              {checkRunning ? (
+                <div className="mx-auto mb-3 w-full max-w-3xl px-4" data-testid="review-check-lock">
+                  <div className="flex items-center gap-2.5 rounded-2xl border border-white/[0.12] bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.025)_0_8px,transparent_8px_16px)] px-4 py-4 text-[13px] text-foreground/85">
+                    <Lock className="size-4 shrink-0 text-amber-300" />
+                    <span>
+                      {t(review?.target === 'plan' ? 'review.receipt.lockedPlan' : 'review.receipt.lockedCode')}
+                    </span>
+                  </div>
+                </div>
+              ) : pendingQuestion ? (
+                <QuestionComposer
+                  key={pendingQuestion.toolCallId}
+                  questions={pendingQuestion.questions}
+                  onSubmit={(answers) => api.chatQuestionRespond(pendingQuestion.toolCallId, answers)}
+                  onDismiss={() => api.chatQuestionRespond(pendingQuestion.toolCallId, [])}
                 />
               ) : (
-                <SubagentActivityPill sessions={subagentSessions} />
-              )}
-            </div>
-
-            {pending.map((req) => (
-              <PermissionPrompt
-                scope={workspaceId === null ? 'standalone' : 'project'}
-                key={req.id}
-                request={req}
-                onDecide={(reply) => decide(req.id, reply)}
-              />
-            ))}
-
-            {compacting && (
-              <div className="mx-auto flex w-full max-w-3xl items-center gap-1.5 px-4 pb-1 text-[12px] text-muted-foreground">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
-                {t('view.compacting')}
-              </div>
-            )}
-
-            {showCompactBanner && (
-              <div className="mx-auto mb-1 flex w-full max-w-3xl items-center gap-2 px-4">
-                <div className="flex flex-1 items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-1.5 text-[12px] text-amber-200">
-                  <span className="min-w-0 flex-1">
-                    {t('view.autoCompactBanner', { pct: Math.round((contextRatio ?? 0) * 100) })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={runCompact}
-                    className="shrink-0 rounded-md bg-amber-500/20 px-2 py-0.5 font-medium text-amber-100 hover:bg-amber-500/30"
-                  >
-                    {t('view.compactButton')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCompactDismissed(true)}
-                    className="shrink-0 text-amber-300/70 hover:text-amber-100"
-                    title={t('view.dismiss')}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {queue.length > 0 && (
-              <div className="mx-auto w-full max-w-3xl px-4 pb-1">
-                <div className="mb-1 text-[11px] text-muted-foreground">
-                  {t('view.queueCount', { count: queue.length })}
-                </div>
-                <div className="flex flex-col gap-1">
-                  {queue.map((q) => (
-                    <div
-                      key={q.id}
-                      className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5 text-[13px]"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-foreground">{q.text}</span>
-                      {q.maestroLive && (
-                        <span className="shrink-0 rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-200">
-                          {t('view.maestroLiveWaiting')}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        title={t('view.queueEdit')}
-                        onClick={() => {
-                          if (q.maestroLive) {
-                            void api.chatMaestroLiveCancel(conversationId, q.maestroLive.runId, q.maestroLive.messageId)
-                          }
-                          setDraft(q.text)
-                          setDraftMentions(q.agentMentions)
-                          setAttachments(q.attachments)
-                          setQueueState((cur) => cur.filter((x) => x.id !== q.id))
-                        }}
-                        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        title={t('view.queueRemove')}
-                        onClick={() => {
-                          if (q.maestroLive) {
-                            void api.chatMaestroLiveCancel(conversationId, q.maestroLive.runId, q.maestroLive.messageId)
-                          }
-                          revokeAttachmentPreviews(q.attachments)
-                          setQueueState((cur) => cur.filter((x) => x.id !== q.id))
-                        }}
-                        className="rounded p-0.5 text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <ChatGptWebSessionBanner conversationId={conversationId} starting={companionStarting} />
-            <ConversationDispatchBanner conversationId={conversationId} />
-            {reviewLoopActive && reviewLoop?.driver === 'maestrly-pair' && (
-              <ReviewLoopBanner conversationId={conversationId} loop={reviewLoop} />
-            )}
-
-            <HookNotices
-              notices={hookNotices}
-              onDismiss={(id) => setHookNotices((current) => current.filter((notice) => notice.id !== id))}
-            />
-
-            {failoverNotice && (
-              <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
-                <div
-                  role="status"
-                  className="flex items-center gap-2 rounded-lg border border-sky-500/25 bg-sky-500/[0.08] px-3 py-1.5 text-[12px] text-sky-100"
-                >
-                  <span className="min-w-0 flex-1">{failoverNotice}</span>
-                  <button
-                    type="button"
-                    onClick={() => setFailoverNotice(null)}
-                    className="rounded p-0.5 text-sky-200/80 hover:text-sky-50"
-                    aria-label={t('messages.cancel')}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {modeChangeError && (
-              <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
-                <div
-                  role="alert"
-                  className="flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/[0.08] px-3 py-1.5 text-[12px] text-red-100"
-                >
-                  <span className="min-w-0 flex-1">{modeChangeError}</span>
-                  <button
-                    type="button"
-                    onClick={() => setModeChangeError(null)}
-                    className="rounded p-0.5 text-red-200/80 hover:text-red-50"
-                    aria-label={t('messages.cancel')}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {botManaged && botConversation && (
-              <div className="mx-auto mb-1.5 w-full max-w-3xl px-3" data-testid="bot-manual-chat">
-                <BotManualChatControl conversation={botConversation} />
-              </div>
-            )}
-            {pendingQuestion ? (
-              <QuestionComposer
-                key={pendingQuestion.toolCallId}
-                questions={pendingQuestion.questions}
-                onSubmit={(answers) => api.chatQuestionRespond(pendingQuestion.toolCallId, answers)}
-                onDismiss={() => api.chatQuestionRespond(pendingQuestion.toolCallId, [])}
-              />
-            ) : (
-              <ChatComposer
-                ref={composerRef}
-                value={draft}
-                onChange={setDraft}
-                onMentionsChange={setDraftMentions}
-                structuredAgentMentions={draftMentions}
-                streaming={streaming}
-                sendWhileStreaming={maestroLiveActive || midTurnSteering}
-                streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
-                disabled={keyMissing || reviewLoopActive || botBlocked}
-                disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
-                onSend={submitDraft}
-                onStop={stop}
-                attachments={attachments}
-                onAddFiles={addFiles}
-                onRemoveAttachment={removeAttachment}
-                onSearchFiles={searchFiles}
-                onOpenMention={openMention}
-                agents={subagents}
-                commands={commands}
-                onPickCommand={pickCommand}
-                onCycleMode={isMaestro ? undefined : cycleMode}
-                onCycleReasoning={canCycleReasoning ? cycleReasoning : undefined}
-                micSlot={
-                  <ChatMicButton
-                    onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
-                    onAutoSend={(t) => {
-                      if (keyMissing || reviewLoopActive || botBlocked) return false
-                      submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
-                      return true
-                    }}
-                    disabled={keyMissing}
-                  />
-                }
-                leftSlot={
-                  <>
-                    {maestroLiveActive && (
-                      <button
-                        type="button"
-                        onClick={() => setMaestroSendTarget((current) => (current === 'current' ? 'next' : 'current'))}
-                        disabled={attachments.length > 0}
-                        className={cn(
-                          'mr-1 rounded-full border px-2 py-0.5 text-[11px] transition',
-                          effectiveMaestroTarget === 'current'
-                            ? 'border-amber-400/30 bg-amber-400/10 text-amber-100'
-                            : 'border-white/10 bg-white/[0.03] text-muted-foreground',
-                          attachments.length > 0 && 'cursor-not-allowed opacity-60'
-                        )}
-                        title={
-                          attachments.length > 0
-                            ? t('composer.maestroAttachmentsNext')
-                            : t('composer.maestroTargetToggle')
-                        }
-                      >
-                        {effectiveMaestroTarget === 'current'
-                          ? t('composer.maestroTargetCurrent')
-                          : t('composer.maestroTargetNext')}
-                      </button>
-                    )}
-                    <ChatPlusMenu
-                      conversationId={conversationId}
-                      mode={mode}
-                      onAddFiles={addFiles}
-                      fontScale={fontScale}
-                      onFontScale={setFontScale}
-                      onCompanionStarting={setCompanionStarting}
+                <ChatComposer
+                  ref={composerRef}
+                  value={draft}
+                  onChange={setDraft}
+                  onMentionsChange={setDraftMentions}
+                  structuredAgentMentions={draftMentions}
+                  streaming={streaming}
+                  sendWhileStreaming={maestroLiveActive || midTurnSteering}
+                  streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
+                  disabled={keyMissing || botBlocked}
+                  disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
+                  onSend={submitDraft}
+                  onStop={stop}
+                  attachments={attachments}
+                  onAddFiles={addFiles}
+                  onRemoveAttachment={removeAttachment}
+                  onSearchFiles={searchFiles}
+                  onOpenMention={openMention}
+                  agents={subagents}
+                  commands={commands}
+                  onPickCommand={pickCommand}
+                  onCycleMode={isMaestro ? undefined : cycleMode}
+                  onCycleReasoning={canCycleReasoning ? cycleReasoning : undefined}
+                  micSlot={
+                    <ChatMicButton
+                      onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
+                      onAutoSend={(t) => {
+                        if (keyMissing || botBlocked) return false
+                        submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
+                        return true
+                      }}
+                      disabled={keyMissing}
                     />
-                    <ChatSkillsMenu conversationId={conversationId} onChanged={reloadCommands} />
-                    {isMaestro ? (
-                      <MaestroControl
+                  }
+                  leftSlot={
+                    <>
+                      {maestroLiveActive && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMaestroSendTarget((current) => (current === 'current' ? 'next' : 'current'))
+                          }
+                          disabled={attachments.length > 0}
+                          className={cn(
+                            'mr-1 rounded-full border px-2 py-0.5 text-[11px] transition',
+                            effectiveMaestroTarget === 'current'
+                              ? 'border-amber-400/30 bg-amber-400/10 text-amber-100'
+                              : 'border-white/10 bg-white/[0.03] text-muted-foreground',
+                            attachments.length > 0 && 'cursor-not-allowed opacity-60'
+                          )}
+                          title={
+                            attachments.length > 0
+                              ? t('composer.maestroAttachmentsNext')
+                              : t('composer.maestroTargetToggle')
+                          }
+                        >
+                          {effectiveMaestroTarget === 'current'
+                            ? t('composer.maestroTargetCurrent')
+                            : t('composer.maestroTargetNext')}
+                        </button>
+                      )}
+                      <ChatPlusMenu
                         conversationId={conversationId}
-                        panelHostId={maestroPanelHostId}
-                        onChanged={reloadSubagents}
-                        onConvertToStandard={convertMaestroToStandard}
-                        convertToStandardDisabled={experienceTransitionDisabled}
-                        directModelId={selModelId}
-                        orchestratorSlot={
-                          <>
-                            {(modelMeta?.reasoning || maestrlyUltraActive) && (
-                              <ChatReasoningPicker
-                                value={reasoning}
-                                onChange={applyReasoning}
-                                efforts={reasoningEfforts}
-                                nativeUltraMode={modelMeta?.nativeUltraMode === true}
-                              />
-                            )}
-                            {modelMeta?.fastModeCapability === true && (
-                              <ChatFastModeToggle conversationId={conversationId} />
-                            )}
-                            <ChatModelChip
-                              ref={modelChipRef}
-                              conversationId={conversationId}
-                              refreshToken={modelRefresh}
-                              onChange={(selection) => {
-                                if (!sameContextModel(selection, selectedContextModel))
-                                  setContextObservationBoundary({ conversationId, after: Date.now() })
-                                setSelProviderId(selection.providerId)
-                                setSelModelId(selection.modelId)
-                                setModelMeta(null)
-                                setModelRefresh((n) => n + 1)
-                              }}
-                            />
-                          </>
-                        }
+                        mode={mode}
+                        onAddFiles={addFiles}
+                        fontScale={fontScale}
+                        onFontScale={setFontScale}
+                        onCompanionStarting={setCompanionStarting}
                       />
-                    ) : (
-                      <>
-                        <ChatModePicker
+                      <ChatSkillsMenu conversationId={conversationId} onChanged={reloadCommands} />
+                      {isMaestro ? (
+                        <MaestroControl
                           conversationId={conversationId}
-                          mode={mode}
-                          onChange={applyMode}
-                          onUseMaestro={workspaceId ? convertStandardToMaestro : undefined}
-                          maestroDisabled={experienceTransitionDisabled || !selModelId}
-                          modelId={selModelId}
+                          panelHostId={maestroPanelHostId}
+                          onChanged={reloadSubagents}
+                          onConvertToStandard={convertMaestroToStandard}
+                          convertToStandardDisabled={experienceTransitionDisabled}
+                          directModelId={selModelId}
+                          orchestratorSlot={
+                            <>
+                              {(modelMeta?.reasoning || maestrlyUltraActive) && (
+                                <ChatReasoningPicker
+                                  value={reasoning}
+                                  onChange={applyReasoning}
+                                  efforts={reasoningEfforts}
+                                  nativeUltraMode={modelMeta?.nativeUltraMode === true}
+                                />
+                              )}
+                              {modelMeta?.fastModeCapability === true && (
+                                <ChatFastModeToggle conversationId={conversationId} />
+                              )}
+                              <ChatModelChip
+                                ref={modelChipRef}
+                                conversationId={conversationId}
+                                refreshToken={modelRefresh}
+                                onChange={(selection) => {
+                                  if (!sameContextModel(selection, selectedContextModel))
+                                    setContextObservationBoundary({ conversationId, after: Date.now() })
+                                  setSelProviderId(selection.providerId)
+                                  setSelModelId(selection.modelId)
+                                  setModelMeta(null)
+                                  setModelRefresh((n) => n + 1)
+                                }}
+                              />
+                            </>
+                          }
                         />
-                        {(modelMeta?.reasoning || maestrlyUltraActive) && (
-                          <ChatReasoningPicker
-                            value={reasoning}
-                            onChange={applyReasoning}
-                            efforts={reasoningEfforts}
-                            nativeUltraMode={modelMeta?.nativeUltraMode === true}
+                      ) : (
+                        <>
+                          <ChatModePicker
+                            conversationId={conversationId}
+                            mode={mode}
+                            onChange={applyMode}
+                            onUseMaestro={workspaceId ? convertStandardToMaestro : undefined}
+                            maestroDisabled={experienceTransitionDisabled || !selModelId}
+                            modelId={selModelId}
                           />
-                        )}
-                        {modelMeta?.fastModeCapability === true && (
-                          <ChatFastModeToggle conversationId={conversationId} />
-                        )}
-                        <ChatModelChip
-                          ref={modelChipRef}
+                          {(modelMeta?.reasoning || maestrlyUltraActive) && (
+                            <ChatReasoningPicker
+                              value={reasoning}
+                              onChange={applyReasoning}
+                              efforts={reasoningEfforts}
+                              nativeUltraMode={modelMeta?.nativeUltraMode === true}
+                            />
+                          )}
+                          {modelMeta?.fastModeCapability === true && (
+                            <ChatFastModeToggle conversationId={conversationId} />
+                          )}
+                          <ChatModelChip
+                            ref={modelChipRef}
+                            conversationId={conversationId}
+                            refreshToken={modelRefresh}
+                            onChange={(selection) => {
+                              if (!sameContextModel(selection, selectedContextModel))
+                                setContextObservationBoundary({ conversationId, after: Date.now() })
+                              setSelProviderId(selection.providerId)
+                              setSelModelId(selection.modelId)
+                              setModelMeta(null)
+                              setModelRefresh((n) => n + 1)
+                              requestAnimationFrame(() => composerRef.current?.focus())
+                            }}
+                          />
+                        </>
+                      )}
+                    </>
+                  }
+                  metaSlot={
+                    <>
+                      {!isMaestro && <ChatPermModePicker conversationId={conversationId} />}
+                      <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                        <ContextCompactionStatus progress={contextObservation.progress} />
+                        <BackgroundCompactionStatus
+                          key={conversationId}
                           conversationId={conversationId}
-                          refreshToken={modelRefresh}
-                          onChange={(selection) => {
-                            if (!sameContextModel(selection, selectedContextModel))
-                              setContextObservationBoundary({ conversationId, after: Date.now() })
-                            setSelProviderId(selection.providerId)
-                            setSelModelId(selection.modelId)
-                            setModelMeta(null)
+                          state={backgroundCompaction}
+                        />
+                        <ChatContextMeter
+                          key={`${conversationId}:${selProviderId}:${selModelId}`}
+                          stats={historyStats}
+                          snapshot={contextObservation.snapshot}
+                          meta={modelMeta}
+                          metaByModel={metaByModel}
+                          providerId={selProviderId}
+                          modelId={selModelId}
+                          onLimitChange={() => {
                             setModelRefresh((n) => n + 1)
-                            requestAnimationFrame(() => composerRef.current?.focus())
+                            refreshStats()
                           }}
                         />
-                      </>
-                    )}
-                  </>
-                }
-                metaSlot={
-                  <>
-                    {!isMaestro && <ChatPermModePicker conversationId={conversationId} />}
-                    <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
-                      <ContextCompactionStatus progress={contextObservation.progress} />
-                      <BackgroundCompactionStatus
-                        key={conversationId}
-                        conversationId={conversationId}
-                        state={backgroundCompaction}
-                      />
-                      <ChatContextMeter
-                        key={`${conversationId}:${selProviderId}:${selModelId}`}
-                        stats={historyStats}
-                        snapshot={contextObservation.snapshot}
-                        meta={modelMeta}
-                        metaByModel={metaByModel}
-                        providerId={selProviderId}
-                        modelId={selModelId}
-                        onLimitChange={() => {
-                          setModelRefresh((n) => n + 1)
-                          refreshStats()
-                        }}
-                      />
-                    </div>
-                  </>
-                }
-              />
-            )}
+                      </div>
+                    </>
+                  }
+                />
+              )}
+            </div>
           </div>
 
           {selectedSubagentSessionId && (

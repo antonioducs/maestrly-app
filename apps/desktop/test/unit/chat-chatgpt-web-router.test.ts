@@ -8,47 +8,28 @@ import {
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean }
 
-/** Deterministic fake controller; real behavior is tested separately. */
-function fakeLoop(overrides: Record<string, unknown> = {}) {
+/** Deterministic fake project-environment controller; real behavior is tested separately. */
+function fakeEnvironment(overrides: Record<string, unknown> = {}) {
   return {
     start: vi.fn(async () => ({
-      loopId: 'rl_test',
-      status: 'reviewing',
-      iteration: 1,
-      maxIterations: 5,
-      severityThreshold: 'important',
-      baseline: { branch: 'main', head: 'abc', workspaceFingerprint: 'fp' },
+      jobId: 'pej_test',
+      status: 'running',
+      startedAt: 1,
+      skillName: 'bootstrap',
       executor: { providerId: 'builtin_codex', modelId: 'gpt-5.6' },
     })),
-    submit: vi.fn(async () => ({ loopId: 'rl_test', jobId: 'j_1', iteration: 1, status: 'running', startedAt: 1 })),
-    wait: vi.fn(async () => ({
-      status: 'completed',
-      iteration: 1,
-      startedAt: 1,
-      finishedAt: 2,
-      madeProgress: true,
-      beforeFingerprint: 'fp-b',
-      afterFingerprint: 'fp-a',
-      nextIteration: 2,
-      canContinue: true,
-    })),
-    finish: vi.fn(async () => ({
-      loopId: 'rl_test',
-      result: 'clean',
-      iterations: 2,
-      durationMs: 100,
-      startedAt: 1,
-      finishedAt: 101,
-      baselineFingerprint: 'fp',
-      finalFingerprint: 'fp2',
-      finishReason: 'clean',
-    })),
+    wait: vi.fn(),
     cancel: vi.fn(),
+    stop: vi.fn(),
     info: vi.fn(() => null),
-    activeLoopId: vi.fn(() => null),
-    getState: vi.fn(() => null),
     ...overrides,
   }
+}
+
+const ENVIRONMENT_OPTIONS = {
+  browserCapability: 'interact' as const,
+  listSkills: () => [{ name: 'bootstrap', description: 'Start the dev server' }],
+  readSkill: (name: string) => (name === 'bootstrap' ? '# Bootstrap skill' : null),
 }
 
 async function callRouter(
@@ -75,7 +56,7 @@ function bridge(label: string, overrides: Partial<Parameters<typeof createChatGp
 
 describe('multi-session companion router', () => {
   it('publishes one gateway catalog version bump', () => {
-    expect(CHATGPT_WEB_TOOL_CATALOG_VERSION).toBe('13')
+    expect(CHATGPT_WEB_TOOL_CATALOG_VERSION).toBe('14')
   })
   it('supports stateless MCP discovery probes', async () => {
     const router = createBridgeRouter()
@@ -142,17 +123,24 @@ describe('multi-session companion router', () => {
       result: { tools: Array<{ name: string }> }
     }
     expect(list.result.tools.some((tool) => tool.name === 'send_to_maestrly')).toBe(true)
-    // Static catalogs announce every capability, including review loops.
-    for (const name of ['start_review_loop', 'submit_review_fix', 'wait_review_fix', 'finish_review_loop']) {
+    // Static catalogs announce every capability, including project-environment bootstrap.
+    for (const name of ['start_project_environment', 'wait_project_environment', 'cancel_project_environment']) {
       expect(list.result.tools.some((tool) => tool.name === name)).toBe(true)
+    }
+    for (const name of [
+      'start_review_loop',
+      'submit_review_fix',
+      'wait_review_fix',
+      'finish_review_loop',
+      'discover_frontend_previews',
+    ]) {
+      expect(list.result.tools.some((tool) => tool.name === name)).toBe(false)
     }
     expect(list.result.tools.some((tool) => tool.name === 'get_context')).toBe(true)
     for (const name of ['get_conversation_context', 'search_conversation', 'read_conversation']) {
       expect(list.result.tools.some((tool) => tool.name === name)).toBe(true)
     }
     expect(list.result.tools.some((tool) => tool.name === 'read_file')).toBe(true)
-    expect(list.result.tools.some((tool) => tool.name === 'board_create_card')).toBe(true)
-    expect(list.result.tools.some((tool) => tool.name === 'get_linked_kanban')).toBe(true)
     expect(router.size()).toBe(0)
   })
 
@@ -190,7 +178,7 @@ describe('multi-session companion router', () => {
     router.unregister('current-session')
   })
 
-  it('keeps catalogs identical across registration and controller state', async () => {
+  it('keeps catalogs identical across registration and adapter state', async () => {
     const router = createBridgeRouter()
     const names = (tools: Array<{ name: string }>) => tools.map((tool) => tool.name).sort()
     const listTools = async () =>
@@ -201,62 +189,46 @@ describe('multi-session companion router', () => {
           }
         ).result.tools
       )
-    const reviewNames = ['start_review_loop', 'submit_review_fix', 'wait_review_fix', 'finish_review_loop']
+    const environmentNames = ['start_project_environment', 'wait_project_environment', 'cancel_project_environment']
 
     const before = await listTools()
-    for (const name of reviewNames) expect(before).toContain(name)
+    for (const name of environmentNames) expect(before).toContain(name)
 
     // Registration without a controller does not alter the catalog.
-    router.register('without-loop', bridge('without-loop'))
+    router.register('without-environment', bridge('without-environment'))
     expect(await listTools()).toEqual(before)
 
     // Registration with a fake controller also preserves the catalog.
-    router.register('with-loop', bridge('with-loop', { reviewLoop: fakeLoop() as never }))
+    router.register(
+      'with-environment',
+      bridge('with-environment', { ...ENVIRONMENT_OPTIONS, projectEnvironment: fakeEnvironment() as never })
+    )
     expect(await listTools()).toEqual(before)
 
     // Unregister restores the same set.
-    router.unregister('without-loop')
-    router.unregister('with-loop')
+    router.unregister('without-environment')
+    router.unregister('with-environment')
     expect(await listTools()).toEqual(before)
     expect(router.size()).toBe(0)
   })
 
-  it('requires session_key even for review tools', async () => {
+  it('requires session_key even for write-capable tools', async () => {
     const router = createBridgeRouter()
-    const missing = await callRouter(router, 'start_review_loop', {})
+    const missing = await callRouter(router, 'start_project_environment', {})
     expect(missing.isError).toBe(true)
     expect(missing.content[0].text).toContain('session_key is required')
   })
 
-  it('rejects review calls without a controller', async () => {
+  it('rejects project-environment calls without a controller', async () => {
     const router = createBridgeRouter()
-    router.register('without-loop', bridge('without-loop'))
-    const refused = await callRouter(router, 'submit_review_fix', {
-      session_key: 'without-loop',
-      loop_id: 'rl_test',
-      iteration: 1,
-      findings: [{ id: 'f1', severity: 'blocking', title: 't', details: 'd' }],
+    router.register('without-environment', bridge('without-environment', ENVIRONMENT_OPTIONS))
+    const refused = await callRouter(router, 'start_project_environment', {
+      session_key: 'without-environment',
+      skill: 'bootstrap',
       idempotency_key: 'valid-key-102',
     })
     expect(refused.isError).toBe(true)
-    expect(refused.content[0].text).toContain('review loop is unavailable')
-  })
-
-  it('routes review calls through the session controller', async () => {
-    const router = createBridgeRouter()
-    const loop = fakeLoop({
-      submit: async () => ({ loopId: 'rl_test', jobId: 'j_1', iteration: 1, status: 'running', startedAt: 1 }),
-    })
-    router.register('with-loop', bridge('with-loop', { reviewLoop: loop as never }))
-    const out = await callRouter(router, 'submit_review_fix', {
-      session_key: 'with-loop',
-      loop_id: 'rl_test',
-      iteration: 1,
-      findings: [{ id: 'f1', severity: 'blocking', title: 't', details: 'd' }],
-      idempotency_key: 'valid-key-103',
-    })
-    expect(out.isError).not.toBe(true)
-    expect(out.content[0].text).toContain('"jobId": "j_1"')
+    expect(refused.content[0].text).toContain('Project environment bootstrap is unavailable')
   })
 
   it('discovers and executes actions during app creation and update', async () => {
@@ -275,33 +247,29 @@ describe('multi-session companion router', () => {
         tools: Array<{ name: string; inputSchema: { properties?: Record<string, unknown>; required?: string[] } }>
       }
     }
-    for (const name of ['start_review_loop', 'submit_review_fix', 'wait_review_fix', 'finish_review_loop']) {
+    for (const name of ['start_project_environment', 'wait_project_environment', 'cancel_project_environment']) {
       const tool = list.result.tools.find((candidate) => candidate.name === name)
       expect(tool).toBeDefined()
       expect(tool?.inputSchema.properties).toHaveProperty('session_key')
       expect(tool?.inputSchema.required).toContain('session_key')
     }
     // Register a session with a controller.
-    const loop = fakeLoop({
-      start: async () => ({
-        loopId: 'rl_abc',
-        status: 'reviewing',
-        iteration: 1,
-        maxIterations: 2,
-        severityThreshold: 'important',
-        baseline: { branch: 'main', head: 'abc', workspaceFingerprint: 'fp' },
-        executor: { providerId: 'builtin_codex', modelId: 'gpt-5.6' },
-      }),
-    })
-    router.register('new-session', bridge('ctx', { reviewLoop: loop as never }))
-    // 5. Execute an action with the matching session_key.
-    const started = await callRouter(router, 'start_review_loop', {
+    const environment = fakeEnvironment()
+    router.register('new-session', bridge('ctx', { ...ENVIRONMENT_OPTIONS, projectEnvironment: environment as never }))
+    // Execute an action with the matching session_key.
+    const requestId = 'valid-request-104'
+    const started = await callRouter(router, 'start_project_environment', {
       session_key: 'new-session',
-      idempotency_key: 'valid-key-104',
-      max_iterations: 2,
+      skill: 'bootstrap',
+      idempotency_key: requestId,
     })
     expect(started.isError).not.toBe(true)
-    expect(started.content[0].text).toContain('rl_abc')
+    expect(started.content[0].text).toContain('pej_test')
+    expect(environment.start).toHaveBeenCalledWith({
+      skillName: 'bootstrap',
+      skillBody: '# Bootstrap skill',
+      idempotencyKey: requestId,
+    })
   })
 
   it('returns complete stateless envelopes after discovery', async () => {
@@ -339,7 +307,6 @@ describe('multi-session companion router', () => {
       bridge('alpha-context', {
         conversation: {
           getContext: () => ({ marker: 'alpha-conversation', latest_seq: 0, revision: 'revision-alpha' }),
-          getRevision: () => 'revision-alpha',
           search: () => ({ hits: [] }),
           read: () => ({ messages: [] }),
         },
@@ -353,7 +320,6 @@ describe('multi-session companion router', () => {
       bridge('beta-context', {
         conversation: {
           getContext: () => ({ marker: 'beta-conversation', latest_seq: 0, revision: 'revision-beta' }),
-          getRevision: () => 'revision-beta',
           search: () => ({ hits: [] }),
           read: () => ({ messages: [] }),
         },

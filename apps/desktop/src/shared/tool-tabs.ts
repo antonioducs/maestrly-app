@@ -1,4 +1,14 @@
-export const FLOAT_TABS = ['browser', 'vscode', 'terminal', 'files', 'plan', 'review', 'notes', 'chatgpt'] as const
+export const FLOAT_TABS = [
+  'browser',
+  'computer',
+  'vscode',
+  'terminal',
+  'files',
+  'plan',
+  'review',
+  'notes',
+  'chatgpt',
+] as const
 
 export type FloatTab = (typeof FLOAT_TABS)[number]
 

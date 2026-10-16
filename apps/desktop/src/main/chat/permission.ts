@@ -1,6 +1,6 @@
 import { permissionScopeKey, type PermissionScope } from '../../shared/conversation-scope'
 import { autonomousPolicy, assertAutonomousPermission } from './autonomous'
-import { remoteChatPolicy, assertRemoteChatPermission, isWebManagedConversation } from './remote-policy'
+import { remoteChatPolicy, assertRemoteChatPermission } from './remote-policy'
 /**
  * BYOK chat tool permission broker. Faithfully ported without Effect from opencode `permission.ts`
  * + `permission/saved.ts` + `util/wildcard.ts`.
@@ -28,7 +28,16 @@ export interface Rule {
 }
 export type Ruleset = Rule[]
 
-export type PermissionAction = 'bash' | 'edit' | 'read' | 'grep' | 'glob' | 'webfetch' | 'external_directory' | 'mcp'
+export type PermissionAction =
+  | 'bash'
+  | 'edit'
+  | 'read'
+  | 'grep'
+  | 'glob'
+  | 'webfetch'
+  | 'web_search'
+  | 'external_directory'
+  | 'mcp'
 export type Reply = 'once' | 'always' | 'reject'
 
 export interface AssertInput {
@@ -161,6 +170,7 @@ export const BYOK_DEFAULT_RULESET: Ruleset = [
   { action: 'bash', resource: '*', effect: 'ask' },
   { action: 'edit', resource: '*', effect: 'ask' }, // Covers write/edit.
   { action: 'webfetch', resource: '*', effect: 'ask' },
+  { action: 'web_search', resource: '*', effect: 'ask' },
   { action: 'external_directory', resource: '*', effect: 'ask' },
   { action: 'mcp', resource: '*', effect: 'ask' }, // External MCP server tools → request approval.
   { action: 'read', resource: '*.env', effect: 'ask' },
@@ -206,6 +216,8 @@ function titleFor(action: string, resources: string[]): string {
       return `Write file: ${first}`
     case 'webfetch':
       return `Fetch URL: ${first}`
+    case 'web_search':
+      return `Search the web: ${first}`
     case 'external_directory':
       return `Access directory outside the project: ${first}`
     case 'mcp':
@@ -289,8 +301,6 @@ export class PermissionBroker extends EventEmitter {
   async assertDecision(input: AssertInput): Promise<'once' | 'always'> {
     if (input.signal?.aborted) throw new PermissionCancelledError()
     const remote = remoteChatPolicy(input.conversationId)
-    if (!remote && isWebManagedConversation(input.conversationId))
-      throw new Error('Remote conversation has no active lease.')
     const remoteEffect = remote ? assertRemoteChatPermission(remote, input) : null
     if (remoteEffect === 'read') return 'once'
     const autonomous = autonomousPolicy(input.conversationId)
@@ -340,10 +350,7 @@ export class PermissionBroker extends EventEmitter {
   reply(input: ReplyInput): void {
     const existing = this.pending.get(input.requestId)
     if (!existing) return
-    if (
-      input.reply === 'always' &&
-      (remoteChatPolicy(existing.request.conversationId) || isWebManagedConversation(existing.request.conversationId))
-    )
+    if (input.reply === 'always' && remoteChatPolicy(existing.request.conversationId))
       throw new Error('Web chat permissions are valid for one operation only.')
 
     if (input.reply === 'reject') {

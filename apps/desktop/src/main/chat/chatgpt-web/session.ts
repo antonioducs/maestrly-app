@@ -6,7 +6,7 @@
  * page automation; the session stays `arming` until the first successfully routed tool call.
  */
 import { createHmac, randomBytes } from 'node:crypto'
-import type { ChatGptWebReviewLoopInfo, ChatGptWebSessionInfo, ChatGptWebSessionState } from '../../../shared/chat'
+import type { ChatGptWebSessionInfo, ChatGptWebSessionState } from '../../../shared/chat'
 import { createChatGptWebBridge, type BridgeEvent, type BridgeOptions } from './bridge-server'
 
 export interface SessionOptions {
@@ -27,14 +27,12 @@ export interface SessionOptions {
   bridge?: Pick<
     BridgeOptions,
     | 'projectContext'
-    | 'kanban'
     | 'listSkills'
     | 'readSkill'
     | 'listChecks'
     | 'runCheck'
     | 'deliver'
     | 'planReview'
-    | 'reviewLoop'
     | 'browserSession'
     | 'projectEnvironment'
     | 'external'
@@ -47,8 +45,6 @@ export interface SessionOptions {
     | 'browserCapability'
     | 'toolHooks'
   >
-  /** Sanitized summary of this conversation's review-loop state (manager-owned controller). */
-  reviewLoopInfo?: () => ChatGptWebReviewLoopInfo | null
 }
 
 export function createChatGptWebSession(options: SessionOptions) {
@@ -128,7 +124,6 @@ export function createChatGptWebSession(options: SessionOptions) {
 
   function info(): ChatGptWebSessionInfo {
     const stats = bridge.stats()
-    const reviewLoop = options.reviewLoopInfo?.() ?? null
     return {
       state,
       pairingRequired,
@@ -139,7 +134,6 @@ export function createChatGptWebSession(options: SessionOptions) {
       toolCalls: stats.toolCalls,
       deliveries: stats.deliveries,
       ...(options.capabilitySummary ? { capabilities: options.capabilitySummary } : {}),
-      ...(reviewLoop ? { reviewLoop } : {}),
       ...(error ? { error } : {}),
     }
   }
@@ -254,9 +248,9 @@ export function buildCompanionPrompt(options: CompanionPromptOptions): string {
     'api-get are global and can query resources visible to the local gh login; use query/endpoint qualifiers',
     'to restrict the target.',
     'MAESTRLY CONVERSATION CONTEXT (when Conversation=Read is authorized):',
-    '- Before `start_review_loop`, call `get_conversation_context` once to load the bounded main-conversation',
-    '  brief. Explicit decisions and constraints are review requirements, not findings.',
-    '- If a potential finding could contradict an earlier decision, use `search_conversation`, then',
+    '- Call `get_conversation_context` to load the bounded main-conversation brief when earlier decisions',
+    '  or constraints could affect the task. Explicit decisions and constraints are requirements.',
+    '- If a conclusion could contradict an earlier decision, use `search_conversation`, then',
     '  `read_conversation` around the returned seq. Do not load old history unnecessarily.',
     '- The conversation brief does not replace `get_context`, `git_diff`, `grep`/`glob` or `read_file`:',
     '  requirements context and fresh code investigation are different evidence.',
@@ -269,43 +263,24 @@ export function buildCompanionPrompt(options: CompanionPromptOptions): string {
     'On waiting, wait again. On revise, treat feedback as continuation of the same task, investigate again',
     'as needed and send a new version with a NEW idempotency_key; it receives a new plan_review_id.',
     'Do not call `notify_turn_complete` between versions. Finish normally only after approved, discarded,',
-    'cancelled/superseded or terminal failure. Sending a plan to the Plan tab never starts an automatic',
-    '`start_review_loop` by itself.',
+    'cancelled/superseded or terminal failure.',
     '',
     'INTERACTION COMPLETION (attention in Maestrly):',
     '- After pairing, call `notify_turn_complete` exactly once for each normal user message.',
-    '- Finish all investigation, checks, review loops and other tools first; this must be the final tool call',
+    '- Finish all investigation, checks and other tools first; this must be the final tool call',
     '  before the final response. It sends no text and writes nothing to the repository.',
     '- Generate a new idempotency_key per interaction; reuse it only for retries.',
-    '- Skip this call during initial pairing validation and between review iterations. After',
-    '  `finish_review_loop`, call it once before the final response. Also call it before a normal final',
-    '  response following a failed or cancelled loop.',
+    '- Skip this call during initial pairing validation.',
     '',
-    'AUTOMATIC REVIEW LOOP (only when I explicitly request automatic review/fixes):',
-    '- `review_scope="code"` uses the code protocol. For frontend review, first use `browser_list_tabs`.',
-    '  If the app is already open, pass its opaque browser_id to `start_review_loop(review_scope="frontend", ...)`.',
-    '  If no tab exists, ONLY after an explicit request to start the environment, use start_project_environment',
-    '  with an enabled skill, wait for the job and list tabs again. For simple projects,',
-    '  discover_frontend_previews + preview_id remains available. Never pass localhost URLs directly or scan ports.',
-    '- Start with `start_review_loop` (new idempotency_key; optional max_iterations). Maestrly freezes the',
-    '  executor provider/model and blocks manual messages in that conversation during the loop.',
-    '- Investigate the current state between rounds: each iteration requires git_diff + grep/glob + read_file',
-    '  of the changed implementation BEFORE `submit_review_fix` is accepted. Never resubmit old findings',
-    '  without rereading the code after the previous fix.',
-    '- For frontend review, screenshots provide visual evidence and do not replace code reads. In EVERY',
-    '  iteration, including after `wait_review_fix`, reread the diff/implementation, confirm preview health,',
-    '  reload or wait for HMR, call browser_wait_for and capture NEW browser_snapshot + browser_screenshot.',
-    '  Never reuse an image/snapshot from a previous round. Reproduce click/type/key/drag when the reviewed behavior',
-    '  depends on interaction; interaction is not required for purely visual changes.',
-    '- Stay on the approved local origin. Do not bypass Browser=Inspect through MCP or another tool.',
-    '  Use browser_console_logs/browser_network_logs for functional errors; finish clean only with fresh evidence.',
-    '- `submit_review_fix` starts ONE local execution at a time. Follow with `wait_review_fix` until completion;',
-    '  call again if still running, and never submit another round while a job is active.',
-    '- Use `finish_review_loop` only when clean after fresh investigation or when the bridge reports a terminal',
-    '  state (max_iterations | no_progress | failed | cancelled). `cancelled` requires actual cancellation via',
-    '  the Stop button/session; never use it merely because the current response is ending. While reviewing,',
-    '  continue investigating and submit the round. Do not continue for optional findings; respect iteration',
-    '  limits and confirmed cancellation.',
+    'BROWSER AND PROJECT ENVIRONMENT (only when Browser access is authorized):',
+    '- Use `browser_list_tabs` to list loopback tabs of the built-in browser, then `browser_attach` with an',
+    '  opaque browser_id. Browser tools act only on the attached tab and stay on its approved local origin;',
+    '  never scan ports. Do not bypass Browser=Inspect through MCP or another tool.',
+    '- Capture a fresh `browser_snapshot`/`browser_screenshot` after changes, and use browser_console_logs and',
+    '  browser_network_logs for functional errors. Interaction (click/type/key/drag) requires Interact.',
+    '- If no tab exists, ONLY after an explicit request to start the environment, use',
+    '  `start_project_environment` with an enabled skill, wait for the job with `wait_project_environment`',
+    '  and list tabs again.',
     '',
     'Validate pairing by calling `get_context` once now. Briefly confirm that the companion is connected',
     'and wait for my next message in this chat.',

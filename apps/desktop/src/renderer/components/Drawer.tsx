@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
   Globe,
+  Monitor,
   Code2,
   SquareTerminal,
   Maximize2,
@@ -29,9 +30,8 @@ import {
   Plus,
   LayoutGrid,
 } from 'lucide-react'
-import type { ChatGptWebSessionInfo, Conversation, PlanReceived } from '../../preload'
+import type { ChatGptWebSessionInfo, Conversation, DrawerPlacement, PlanReceived } from '../../preload'
 import type { ChatGptWebCapabilitiesInfo } from '../../shared/chat'
-import { isReviewLoopConversationReserved } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
@@ -40,6 +40,7 @@ import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
+import { ConversationComputer } from '@/components/ConversationComputer'
 import { companionStartError, restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from '@/components/chat/ChatGptWebAccessEditor'
 import { ToolPalette } from '@/components/ToolPalette'
@@ -81,13 +82,14 @@ export interface TermTab {
   label?: string
 }
 
-const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'chatgpt'])
+const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'files', 'chatgpt'])
 
 const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'files', 'chatgpt'])
 const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal', 'files']) // panel.html hosts the second renderer.
 
 const mainTabDefs = (t: TFunction): Record<Tab, { label: string; icon: React.ReactNode }> => ({
   browser: { label: t('drawer.tabBrowser'), icon: <Globe className="size-4" /> },
+  computer: { label: t('drawer.tabComputer'), icon: <Monitor className="size-4" /> },
   vscode: { label: t('drawer.tabCode'), icon: <Code2 className="size-4" /> },
   terminal: { label: t('drawer.tabTerminal'), icon: <SquareTerminal className="size-4" /> },
   files: { label: t('drawer.tabFiles'), icon: <Files className="size-4" /> },
@@ -156,6 +158,10 @@ export function Drawer({
 
   const [floating, setFloating] = useState<Set<Tab>>(new Set())
   const isFloating = (t: Tab): boolean => floating.has(t)
+  // The tabs main placed out of the slot (popup or floating window). Unknown until main answers for this conversation.
+  const [placement, setPlacement] = useState<DrawerPlacement | null>(null)
+  // A host streams a browser to one viewer at a time: out of the slot, the popup or window streams it instead.
+  const remoteBrowserDocked = placement?.convId === convId && !placement.outOfSlot.includes('browser')
   const [chatGptSession, setChatGptSession] = useState<ChatGptWebSessionInfo | null>(null)
   const [chatGptStarting, setChatGptStarting] = useState(false)
   const [chatGptError, setChatGptError] = useState<string | null>(null)
@@ -166,7 +172,6 @@ export function Drawer({
   const [chatGptAccessBusy, setChatGptAccessBusy] = useState(false)
   const chatGptSessionActive = chatGptSession !== null
   const chatGptPairingRequired = chatGptSession?.pairingRequired === true
-  const chatGptReviewLoopActive = isReviewLoopConversationReserved(chatGptSession?.reviewLoop?.status)
 
   const [restarting, setRestarting] = useState(false)
   // Closing a floating tab reattaches it first so the native view returns to the drawer slot.
@@ -180,7 +185,7 @@ export function Drawer({
       window.api.drawerReattach(convId, t)
       return
     }
-    if (t === 'browser') api.drawerEnsureBrowser(convId)
+    if (t === 'browser' && hostConvId) api.drawerEnsureBrowser(hostConvId)
     if (t === 'vscode') {
       if (!activeConv) return
       void window.api
@@ -221,6 +226,22 @@ export function Drawer({
       if (s.convId !== convId) return
       setFloating(new Set<Tab>(s.floating))
     })
+  }, [convId])
+
+  useEffect(() => {
+    setPlacement(null)
+    if (!convId) return
+    let alive = true
+    // Main answers and pushes in order: the answer holds every change pushed before it.
+    const apply = (next: DrawerPlacement): void => {
+      if (alive && next.convId === convId) setPlacement(next)
+    }
+    void window.api.getDrawerPlacement(convId).then(apply)
+    const off = window.api.onDrawerPlacement(apply)
+    return () => {
+      alive = false
+      off()
+    }
   }, [convId])
 
   useEffect(() => {
@@ -294,14 +315,14 @@ export function Drawer({
   }
 
   const restartCompanionWithAccess = async (): Promise<void> => {
-    if (!convId || !chatGptCapabilities || chatGptAccessBusy || chatGptReviewLoopActive) return
+    if (!convId || !chatGptCapabilities || chatGptAccessBusy) return
     setChatGptAccessBusy(true)
     setChatGptError(null)
     let previousSessionEnded = false
     try {
       const capabilities = chatGptCapabilities.capabilities
 
-      const result = await restartChatGptWebCompanion(convId, capabilities, chatGptReviewLoopActive, {
+      const result = await restartChatGptWebCompanion(convId, capabilities, {
         chatGptWebCompanionStart: (conversationId) => api.chatGptWebCompanionStart(conversationId),
         chatGptWebCompanionCopyPrompt: (conversationId) => api.chatGptWebCompanionCopyPrompt(conversationId),
         chatGptWebCompanionOpen: (conversationId) => api.chatGptWebCompanionOpen(conversationId),
@@ -482,21 +503,17 @@ export function Drawer({
             <RotateCw className={cn('size-4', restarting && 'animate-spin')} />
           </Button>
         )}
-        {/* The tools of a remote host's conversation stay docked here. */}
-        {tab &&
-          DETACHABLE.has(tab) &&
-          !(convId && isRemoteKey(convId)) &&
-          (tab !== 'chatgpt' || chatGptSessionActive) && (
-            <Button
-              variant={isFloating(tab) ? 'secondary' : 'ghost'}
-              size="icon"
-              className="no-drag size-7 shrink-0"
-              onClick={() => toggleDetach(tab)}
-              title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
-            >
-              {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
-            </Button>
-          )}
+        {tab && DETACHABLE.has(tab) && (tab !== 'chatgpt' || chatGptSessionActive) && (
+          <Button
+            variant={isFloating(tab) ? 'secondary' : 'ghost'}
+            size="icon"
+            className="no-drag size-7 shrink-0"
+            onClick={() => toggleDetach(tab)}
+            title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
+          >
+            {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -534,8 +551,12 @@ export function Drawer({
           />
         )}
 
-        {tab === 'browser' && remoteConv && hostConvId && (
+        {tab === 'browser' && remoteConv && hostConvId && remoteBrowserDocked && (
           <RemoteBrowserSurface key={convId} convId={hostConvId} active={visible} onFocusAddress={focusAddress} />
+        )}
+
+        {tab === 'computer' && remoteConv && hostConvId && (
+          <ConversationComputer key={convId} convId={hostConvId} active={visible} />
         )}
 
         {tab &&
@@ -623,7 +644,7 @@ export function Drawer({
         )}
 
         {tab === 'chatgpt' && chatGptSessionActive && chatGptAccessOpen && !isFloating('chatgpt') && (
-          <div className="absolute inset-x-0 bottom-0 top-11 overflow-y-auto bg-surface p-4 sm:p-6">
+          <div className="absolute inset-x-0 bottom-0 top-11 overflow-y-auto bg-[#111113] p-4 sm:p-6">
             <div className="mx-auto w-full max-w-3xl">
               <div className="mb-4 flex items-start gap-3 rounded-xl border border-violet-400/20 bg-violet-500/[0.07] p-3 text-[11px] text-violet-100">
                 <Shield className="mt-0.5 size-4 shrink-0 text-violet-300" />
@@ -649,11 +670,6 @@ export function Drawer({
                   <Loader2 className="size-4 animate-spin" /> {t('drawer.chatgptAccessLoading')}
                 </div>
               )}
-              {chatGptReviewLoopActive && (
-                <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2 text-[11px] text-amber-200">
-                  {t('drawer.chatgptRestartBlockedByReview')}
-                </div>
-              )}
               {chatGptError && (
                 <div
                   role="alert"
@@ -665,7 +681,7 @@ export function Drawer({
               <div className="mt-4 flex justify-end">
                 <Button
                   className="gap-1.5 bg-violet-500 text-white hover:bg-violet-400"
-                  disabled={!chatGptCapabilities || chatGptAccessBusy || chatGptReviewLoopActive}
+                  disabled={!chatGptCapabilities || chatGptAccessBusy}
                   onClick={() => void restartCompanionWithAccess()}
                 >
                   {chatGptAccessBusy ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
@@ -804,7 +820,7 @@ export function Drawer({
           )}
 
         {tab && isFloating(tab) && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface p-6 text-center">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#111113] p-6 text-center">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-white/[0.04] ring-1 ring-white/[0.06]">
               <PictureInPicture2 className="size-6 text-muted-foreground" />
             </div>

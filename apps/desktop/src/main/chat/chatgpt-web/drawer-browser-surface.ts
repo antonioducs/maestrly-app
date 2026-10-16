@@ -2,7 +2,7 @@ import type { WebContents } from 'electron'
 import * as browserControl from '../../browser-control'
 import { BROWSER_PARTITION, acquireBrowserTabForControl, type AcquiredBrowserTab } from '../../drawer/browser'
 import type { BrowserSurface, BrowserSurfaceInfo, BrowserSurfaceState } from '../browser-surface'
-import { normalizeLoopbackPreviewUrl } from './preview-runtime'
+import { normalizeLoopbackPreviewUrl } from './loopback-url'
 
 export interface DrawerBrowserSurfaceOptions {
   convId: string
@@ -30,8 +30,8 @@ function allowedUrl(raw: string, origin: string): string | null {
  */
 export async function createDrawerBrowserSurface(options: DrawerBrowserSurfaceOptions): Promise<BrowserSurface> {
   const initialUrl = normalizeLoopbackPreviewUrl(options.url)
-  if (!initialUrl) throw new Error('Drawer browser review requires an HTTP loopback URL.')
-  if (options.signal?.aborted) throw new Error('Drawer browser review startup aborted.')
+  if (!initialUrl) throw new Error('Drawer browser control requires an HTTP loopback URL.')
+  if (options.signal?.aborted) throw new Error('Drawer browser startup aborted.')
   const origin = new URL(initialUrl).origin
   const acquired = (options.acquireTab ?? acquireBrowserTabForControl)(options.convId, options.tabId)
   const wc = acquired.webContents

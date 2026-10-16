@@ -57,21 +57,16 @@ import {
   wrapInterleavedReplayModel,
   type InterleavedReplayStats,
 } from './reasoning-replay'
-import {
-  buildTools,
-  builtinToolNamesForMode,
-  isSubagentReadOnly,
-  REVIEWER_READONLY_TOOL_NAMES,
-  selectSubagentToolNames,
-} from './tools'
+import { buildTools, builtinToolNamesForMode, isSubagentReadOnly, selectSubagentToolNames } from './tools'
 import { enableConversationDispatchTools } from './tools/conversation-dispatch'
+import { enableConversationLinkTools } from './tools/conversation-link'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
   GENERATE_IMAGE_TOOL_NAME,
   normalizeGeneratedImageUsage,
 } from './image-gen'
-import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from './tools/util'
+import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from './tools/util'
 import { getAppFlag, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../store'
 import {
   applyPersistedToolImageEnrichment,
@@ -133,6 +128,7 @@ import type { PermissionBroker } from './permission'
 import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
 import { buildHarnessPrompt } from './harness/prompt-builder'
 import { buildMaestrlyBasePrompt, harnessUltraGuidance } from './harness/host-contracts'
+import { generatedInterfacesEnabled } from './generated-interfaces'
 import { openAINativeToolsPromptOverlay } from './harness/strategies/prompt-layout'
 import { withEnvironmentOnLastUserMessage } from './harness/strategies/environment'
 import { captureHarnessFlags } from './harness/flags'
@@ -369,7 +365,7 @@ export interface RunChatArgs {
   selection: ChatModelRef
   /** Flags captured once at turn admission. undefined keeps direct-call compatibility by capturing locally. */
   harnessFlags?: Readonly<Record<string, boolean>>
-  /** Frozen behavioral identity of a review-loop execution, when one applies. */
+  /** Frozen behavioral identity of an isolated execution, when one applies. */
   frozenBehaviorProfileId?: string | null
   broker: PermissionBroker
   questionBroker: QuestionBroker
@@ -391,7 +387,7 @@ export interface RunChatArgs {
   } | null>
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /**
-   * Frozen internal-turn selection (review-loop): runner does NOT reread ui_prefs. Service ALWAYS
+   * Frozen internal-turn selection (isolated execution): runner does NOT reread ui_prefs. Service ALWAYS
    * sets an explicit loop value (`'off'` = no effort, materialized default); absence
    * means "no override" → runner rereads live prefs.
    */
@@ -405,9 +401,9 @@ export interface RunChatArgs {
   maestro?: MaestroTurnSnapshotV1
   /** Maestro run inbox delivered with the next root delegate result. */
   maestroLive?: MaestroLiveRunPort
-  /** Frozen Fast Mode (review-loop); when defined, runner does NOT reread ui_prefs. */
+  /** Frozen Fast Mode (isolated execution); when defined, runner does NOT reread ui_prefs. */
   fastModeOverride?: boolean
-  /** Isolated review-loop: transcript = execution; metadata centralized on bubble. */
+  /** Isolated internal turn: transcript = execution; metadata centralized on bubble. */
   ephemeralSession?: boolean
   messageMeta?: {
     source?: import('../../shared/chat').ChatMessageSource
@@ -416,8 +412,6 @@ export interface RunChatArgs {
     reviewLoop?: import('../../shared/chat').ChatReviewLoopMeta
   }
   executionScope?: import('../../shared/chat').ChatExecutionScope
-  /** Exact host-owned capability surface for an isolated read-only reviewer round. */
-  reviewerRuntime?: ReviewerToolRuntime
 }
 
 export interface RunChatResult {
@@ -426,7 +420,7 @@ export interface RunChatResult {
 }
 
 /**
- * EFFECTIVE turn Fast Mode: frozen `fastModeOverride` (review-loop) takes precedence; normal path
+ * EFFECTIVE turn Fast Mode: frozen `fastModeOverride` (isolated execution) takes precedence; normal path
  * rereads ui_prefs. SINGLE source — service freezes profile, but this converts value to transport.
  */
 export function resolveTurnFastMode(override: boolean | undefined, prefsFastMode: boolean): boolean {
@@ -434,7 +428,7 @@ export function resolveTurnFastMode(override: boolean | undefined, prefsFastMode
 }
 
 /**
- * EFFECTIVE BYOK turn effort: frozen `reasoningOverride` (review-loop, including explicit `'off'`)
+ * EFFECTIVE BYOK turn effort: frozen `reasoningOverride` (isolated execution, including explicit `'off'`)
  * takes precedence; normal path without override rereads ui_prefs. Mirrors resolveTurnFastMode.
  */
 export function resolveTurnReasoning(
@@ -445,7 +439,7 @@ export function resolveTurnReasoning(
 }
 
 /**
- * Isolated execution (review-loop) effort FAIL-CLOSED: frozen EFFECT (effective value resolved
+ * Isolated execution effort FAIL-CLOSED: frozen EFFECT (effective value resolved
  * at freeze) must be reproduced EXACTLY against LIVE metadata — unlisted level, empty list
  * (no evidence), offline metadata, or Ultra with changed list (different effective value) must never
  * run with degraded/substituted effort (throws `executor-unavailable` so loop ends with correct
@@ -495,7 +489,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     compactHistory,
   } = args
 
-  // Turn context: isolated review-loop → execution only; normal turn → MAIN context
+  // Turn context: isolated internal turn → execution only; normal turn → MAIN context
   // (isolated rounds NEVER seed/replay into manual turns). UI/audit still use listChatMessages.
   let history = runnerContextHistory(conversationId, {
     ephemeralSession: args.ephemeralSession,
@@ -613,12 +607,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const capabilityMode = capabilityBehaviorFor(mode)
   const conversation = getConversation(conversationId)
   const hasNotesTab = Boolean(conversation)
-  const enabledNames = args.reviewerRuntime ? new Set(REVIEWER_READONLY_TOOL_NAMES) : builtinToolNamesForMode(mode)
+  const enabledNames = builtinToolNamesForMode(mode)
 
-  // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
-  const conversationDispatch = args.reviewerRuntime
-    ? undefined
-    : enableConversationDispatchTools(enabledNames, conversationId, mode)
+  // Starting other conversations: only in a main turn admitted from text the person typed.
+  const conversationDispatch = enableConversationDispatchTools(enabledNames, conversationId, mode)
+  // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+  const conversationLink = enableConversationLinkTools(enabledNames, conversationId, mode)
 
   if (autonomousPolicy(conversationId))
     for (const name of enabledNames) {
@@ -716,12 +710,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     toolCallId,
     cwd,
     signal: toolSignal,
-    ask: (action, resources, save) => {
-      if (args.reviewerRuntime) {
-        if (action === 'read' || action === 'grep' || action === 'glob') return Promise.resolve()
-        return Promise.reject(new Error(`Reviewer capability denied: ${action}`))
-      }
-      return broker.assert({
+    ask: (action, resources, save) =>
+      broker.assert({
         conversationId,
         projectId,
         permissionScope,
@@ -731,39 +721,24 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         toolName: action,
         toolCallId,
         signal: toolSignal,
-      })
-    },
+      }),
     // ask_question (mark X): blocks until user answers chat card (or dismisses → []).
     askQuestion: (questions) =>
-      args.reviewerRuntime
-        ? Promise.reject(new Error('Reviewer capability denied: ask_question'))
-        : questionBroker.ask({ conversationId, messageId: assistantId, toolCallId, questions, signal: toolSignal }),
-    ...(args.reviewerRuntime
-      ? {
-          reviewer: {
-            ...args.reviewerRuntime,
-            submitReview: (decision) => {
-              const result = args.reviewerRuntime!.submitReview(decision)
-              if (result.ok) planSubmitted = true
-              return result
-            },
-          },
-        }
-      : {
-          submitPlan: (plan: string, title?: string) => {
-            const result = stagePlan({ agentId: conversationId, cwd, plan, title })
-            planSubmitted = result.ok
-            return result.ok
-          },
-          emitGeneratedImage: (image: GeneratedImageEmission) =>
-            emitGeneratedImagePart(apply, assistantId, toolCallId, image),
-          onGeneratedImageUsage: recordGeneratedImageUsage,
-          ...(conversationDispatch ? { conversationDispatch } : {}),
-        }),
+      questionBroker.ask({ conversationId, messageId: assistantId, toolCallId, questions, signal: toolSignal }),
+    submitPlan: (plan: string, title?: string) => {
+      const result = stagePlan({ agentId: conversationId, cwd, plan, title })
+      planSubmitted = result.ok
+      return result.ok
+    },
+    emitGeneratedImage: (image: GeneratedImageEmission) =>
+      emitGeneratedImagePart(apply, assistantId, toolCallId, image),
+    onGeneratedImageUsage: recordGeneratedImageUsage,
+    ...(conversationDispatch ? { conversationDispatch } : {}),
+    ...(conversationLink ? { conversationLink } : {}),
   })
   // generate_image is OPT-IN: requires global/conversation imagegen toggle and connected ChatGPT
   // subscription — it generates the image even when the conversation uses another provider.
-  if (!args.reviewerRuntime && (await generateImageToolEnabled(conversationId, mode))) {
+  if (await generateImageToolEnabled(conversationId, mode)) {
     enabledNames.add(GENERATE_IMAGE_TOOL_NAME)
   }
   const tools = buildTools({ executorReport: true, enabled: enabledNames, makeCtx: makeMainToolContext })
@@ -790,22 +765,20 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // MCP servers follow enabled + conversation override. Wrapper retains everything in Agent, filters
   // defensively by annotations in Plan/Ask; all calls remain gated under action 'mcp'.
-  const mcp = args.reviewerRuntime
-    ? { tools: {}, close: async () => {} }
-    : await buildMcpTools({
-        conversationId,
-        mode,
-        signal,
-        gate: mcpGate,
-        disabledIds: mcpDisabled,
-        supportsImages: true,
-        describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
-      })
+  const mcp = await buildMcpTools({
+    conversationId,
+    mode,
+    signal,
+    gate: mcpGate,
+    disabledIds: mcpDisabled,
+    supportsImages: true,
+    describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
+  })
 
   // General app tools follow the switch and its groups; personal memory is independently enabled. The wrapper
   // applies the mode allowlist. Blocking MCP review_plan is always excluded; Plan uses built-in submit & release.
   const app =
-    !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(conversationId))
+    appToolsEnabled || hasPersonalMemoryTools(conversationId)
       ? await buildAppTools({
           only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
           disabledGroups: appAccess.disabledGroups,
@@ -821,10 +794,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Project skills (model-discovered SKILL.md folders): prompt catalog + use_skill tool to load
   // body + root + inventory on demand. In plan/agent; ask stays lean (read to answer, no
   // skill catalog). DISABLED skills (global/conversation) never enter or consume context.
-  const skills =
-    args.reviewerRuntime || mode === 'ask'
-      ? []
-      : (await effectiveSkills(cwd, conversationId)).filter((s) => s.modelInvocable)
+  const skills = mode === 'ask' ? [] : (await effectiveSkills(cwd, conversationId)).filter((s) => s.modelInvocable)
   const skillTools: ToolSet = skills.length
     ? {
         use_skill: tool({
@@ -851,9 +821,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // plan/ask also receive `task`, restricted to `explore` (parallel read-only investigation — preserves
   // these modes' read-only contract; runSubagent also clamps tools via readOnly). Model delegates
   // subtasks via `task` → ISOLATED sub-run (no nested `task` → no recursion). Catalog in prompt.
-  const agents = args.reviewerRuntime
-    ? []
-    : mode === 'maestro' && args.maestro
+  const agents =
+    mode === 'maestro' && args.maestro
       ? maestroAgentsFromTurn(args.maestro, await listEffectiveAgents({ cwd, conversationId, mode: 'agent' }))
       : capabilityMode === 'agent'
         ? await listEffectiveAgents({ cwd, conversationId, mode: 'agent' })
@@ -1225,7 +1194,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   let allTools: ToolSet = { ...tools, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }
   governAutonomousTools(allTools, conversationId)
   if (useOpenAIHarness) {
-    if (capabilityMode === 'agent' && !args.reviewerRuntime) {
+    if (capabilityMode === 'agent') {
       const nativeTools = buildOpenAINativeTools({
         cwd,
         capabilities: resolvedModel.capabilities,
@@ -1256,15 +1225,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       nonStrict: optimized.nonStrictToolNames,
       deferred: optimized.deferredToolNames.length,
       toolSearch: optimized.toolSearchEnabled,
-      nativeShell: capabilityMode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeShell,
-      nativeApplyPatch:
-        capabilityMode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeApplyPatch,
+      nativeShell: capabilityMode === 'agent' && resolvedModel.capabilities.nativeShell,
+      nativeApplyPatch: capabilityMode === 'agent' && resolvedModel.capabilities.nativeApplyPatch,
     })
   }
   // Plugin hooks run around every tool, the same way for every provider.
   allTools = wrapToolSetWithHooks(
     allTools,
-    runnerHookContext({ conversationId, cwd, mode, signal, reviewerRuntime: args.reviewerRuntime, emit })
+    runnerHookContext({ conversationId, cwd, mode, signal, emit })
   )
   allTools = adaptToolSetForModel({
     tools: allTools,
@@ -1308,7 +1276,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // orchestration still applies. Shared/testable buildProviderOptions resolves by KIND: anthropic → effort;
   // openai-responses → store:false + include (ALWAYS) + valid reasoningEffort/summary; compatible → reasoning_effort.
   const providerKind = resolvedModel.transport
-  // Isolated execution (review-loop): reproduce frozen EFFECT EXACTLY against live metadata
+  // Isolated execution: reproduce frozen EFFECT EXACTLY against live metadata
   // — fail instead of silently omitting/substituting (fail-closed). Manual turns remain permissive.
   assertFrozenEffortReproducible({
     ephemeralSession: args.ephemeralSession,
@@ -1325,7 +1293,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // xAI Priority Processing: conversation Fast toggle becomes body `service_tier: "priority"`
   // (extra field accepted by @ai-sdk/openai-compatible outside typed schema). Internal
-  // review-loop carries FROZEN `fastModeOverride` — never rereads live ui_prefs.
+  // An isolated execution carries FROZEN `fastModeOverride` — never rereads live ui_prefs.
   const fastMode = resolveTurnFastMode(args.fastModeOverride, getConvUiPrefs(conversationId).chat?.fastMode === true)
   providerOptions = applyFastModeServiceTier(providerOptions, fastMode, selection.providerId)
   chatDiag({
@@ -1375,7 +1343,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }).catch(() => undefined)
       // Rejection-triggering TOOL images persisted WITHOUT descriptions (optimistic catalog skipped
       // interpretation). Enrich this bubble in background — current MESSAGE only, never other
-      // conversations/review-loop scopes — while ephemeral bytes exist, so dropImages replay receives
+      // conversations/isolated scopes — while ephemeral bytes exist, so dropImages replay receives
       // text instead of "image omitted". Already stopped → do not start (turn ended).
       if (!signal.aborted) {
         void describePersistedToolImages({
@@ -1438,6 +1406,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     disabledAppToolGroups: appAccess.disabledGroups,
     mode,
     hasNotesTab,
+    generatedInterfaces: generatedInterfacesEnabled(),
   })
   const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
@@ -1472,6 +1441,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
         hasNotesTab,
+        generatedInterfaces: generatedInterfacesEnabled(),
         projectContext,
         skillsContext: skillsCatalog,
         agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${

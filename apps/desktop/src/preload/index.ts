@@ -10,13 +10,13 @@ import { performanceApi } from './api-performance'
 import { settingsApi } from './api-settings'
 import { soundApi } from './api-sound'
 import { updateApi } from './api-update'
-import { platformLocalApi } from './api-platform'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { hostsApi } from './api-hosts'
 import { localHostApi } from './host-api'
 import { artifactsApi } from './api-artifacts'
 import { transfersApi } from './api-transfers'
+import { conversationMoveApi } from './api-conversation-move'
 
 export type * from '../shared/chat-window'
 
@@ -90,10 +90,6 @@ export type {
   ChatGptWebSessionInfo,
   ChatGptWebSessionState,
   ChatGptWebTunnelState,
-  ReviewLoopInfo,
-  ReviewLoopParticipantInfo,
-  StartPairedReviewLoopInput,
-  StartPairedReviewLoopResult,
   McpServerInfo,
   PermissionReply,
 } from '../shared/chat'
@@ -103,6 +99,7 @@ export type { UnifiedUsageStats, UsageModelRow, UsageSource } from '../shared/us
 export type * from '../shared/local-conversation'
 export type * from '../shared/performance'
 export type * from '../shared/conversation-migration'
+export type * from '../shared/conversation-move'
 export type * from '../shared/subagent-profile-effort'
 export type * from '../shared/subagent-profiles'
 export type * from '../shared/runtime-assets'
@@ -111,6 +108,7 @@ export type * from './api-local-data'
 export type * from './api-app'
 export type * from './api-chat'
 export type * from './api-conversation-migration'
+export type * from './api-conversation-move'
 export type * from './api-drawer'
 export type * from './api-memory'
 export type * from './api-notes'
@@ -125,7 +123,6 @@ export type * from './api-settings'
 export type * from './api-sound'
 export type * from './api-update'
 export type * from './api-workspace'
-export type * from './api-platform'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
 export type * from './api-hosts'
@@ -144,7 +141,6 @@ const localApi = {
   ...updateApi,
   ...chatLocalApi,
   ...chatWindowApi,
-  ...platformLocalApi,
   ...fleetApi,
   fleetEnvironmentSettings,
   fleetEnvironmentPlugins,
@@ -152,6 +148,7 @@ const localApi = {
   ...hostsApi,
   ...artifactsApi,
   ...transfersApi,
+  ...conversationMoveApi,
 }
 const api = { ...localHostApi, ...localApi }
 

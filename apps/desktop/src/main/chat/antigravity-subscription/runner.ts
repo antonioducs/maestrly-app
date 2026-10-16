@@ -53,9 +53,10 @@ import type { QuestionBroker } from '../question-broker'
 import { findEffectiveSkill } from '../skill-state'
 import { renderSkillContext } from '../skills'
 import { adaptToolSetForModel } from '../tool-capabilities'
-import { buildTools, builtinToolNamesForMode, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
+import { buildTools, builtinToolNamesForMode } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
-import type { GeneratedImageEmission, ReviewerToolRuntime, ToolContext } from '../tools/util'
+import { enableConversationLinkTools } from '../tools/conversation-link'
+import type { GeneratedImageEmission, ToolContext } from '../tools/util'
 import {
   AntigravityModelUnavailableError,
   AntigravityToolsUnavailableError,
@@ -70,12 +71,7 @@ import {
   type AntigravitySubscriptionManager,
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
-import {
-  buildAntigravityInstructions,
-  buildAntigravityPromptBlocks,
-  buildAntigravitySeedTranscript,
-  hashAntigravityInstructions,
-} from './session'
+import { buildAntigravityInstructions, buildAntigravityPromptBlocks, buildAntigravitySeedTranscript } from './session'
 import {
   getAntigravitySessionBinding,
   putAntigravitySessionBinding,
@@ -141,7 +137,6 @@ export interface RunAntigravitySubscriptionChatArgs {
     reviewLoop?: ChatReviewLoopMeta
   }
   executionScope?: ChatExecutionScope
-  reviewerRuntime?: ReviewerToolRuntime
 }
 
 export interface RunAntigravitySubscriptionChatResult {
@@ -270,13 +265,8 @@ export async function runAntigravitySubscriptionChat(
       toolCallId,
       cwd: args.cwd,
       signal,
-      ask: (action, resources, save) => {
-        if (args.reviewerRuntime) {
-          return action === 'read' || action === 'grep' || action === 'glob'
-            ? Promise.resolve()
-            : Promise.reject(new Error(`Reviewer read-only boundary denied ${action}`))
-        }
-        return args.broker.assert({
+      ask: (action, resources, save) =>
+        args.broker.assert({
           conversationId: args.conversationId,
           projectId: args.projectId,
           permissionScope: args.permissionScope,
@@ -286,8 +276,7 @@ export async function runAntigravitySubscriptionChat(
           toolName: action,
           toolCallId,
           signal,
-        })
-      },
+        }),
       askQuestion: (questions) =>
         args.questionBroker.ask({
           conversationId: args.conversationId,
@@ -301,32 +290,17 @@ export async function runAntigravitySubscriptionChat(
         planSubmitted = result.ok
         return result.ok
       },
-      ...(args.reviewerRuntime
-        ? {
-            reviewer: {
-              recordEvidence: (kind) => args.reviewerRuntime!.recordEvidence(kind),
-              searchExecutionContext: (input) => args.reviewerRuntime!.searchExecutionContext(input),
-              readExecutionContext: (input) => args.reviewerRuntime!.readExecutionContext(input),
-              submitReview: (decision) => {
-                const result = args.reviewerRuntime!.submitReview(decision)
-                if (result.ok) planSubmitted = true
-                return result
-              },
-            } satisfies ReviewerToolRuntime,
-          }
-        : {}),
       emitGeneratedImage: (image: GeneratedImageEmission) => emitGeneratedImage(toolCallId, image),
       onGeneratedImageUsage,
       ...(conversationDispatch ? { conversationDispatch } : {}),
+      ...(conversationLink ? { conversationLink } : {}),
     })
 
-    const enabledBuiltins = args.reviewerRuntime
-      ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-      : builtinToolNamesForMode(args.mode)
-    const conversationDispatch = args.reviewerRuntime
-      ? undefined
-      : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
-    if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
+    const enabledBuiltins = builtinToolNamesForMode(args.mode)
+    const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+    // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+    const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
+    if (await generateImageToolEnabled(args.conversationId, args.mode)) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }
     const core = buildTools({ enabled: enabledBuiltins, makeCtx: makeContext })
@@ -344,24 +318,22 @@ export async function runAntigravitySubscriptionChat(
       })
     const describeImage = (image: Parameters<typeof describeEphemeralToolImage>[0]['image']) =>
       describeEphemeralToolImage({ image, conversationId: args.conversationId, cwd: args.cwd, signal: args.signal })
-    const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
+    const prefs = getConvUiPrefs(args.conversationId).chat?.tools
     const appAccess = resolveAppToolAccess(args.conversationId)
-    const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
-    const mcp = args.reviewerRuntime
-      ? { tools: {}, close: async () => {} }
-      : await buildMcpTools({
-          conversationId: args.conversationId,
-          mode: args.mode,
-          signal: args.signal,
-          gate,
-          disabledIds: new Set(prefs?.mcpDisabled ?? []),
-          codexSafeNames: true,
-          supportsImages: true,
-          describeImage,
-        })
+    const appToolsEnabled = appAccess.enabled
+    const mcp = await buildMcpTools({
+      conversationId: args.conversationId,
+      mode: args.mode,
+      signal: args.signal,
+      gate,
+      disabledIds: new Set(prefs?.mcpDisabled ?? []),
+      codexSafeNames: true,
+      supportsImages: true,
+      describeImage,
+    })
     mcpClose = mcp.close
     const app =
-      !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+      appToolsEnabled || hasPersonalMemoryTools(args.conversationId)
         ? await buildAppTools({
             only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
             disabledGroups: appAccess.disabledGroups,
@@ -375,27 +347,18 @@ export async function runAntigravitySubscriptionChat(
         : { tools: {}, close: async () => {} }
     appClose = app.close
 
-    const reviewerInstructions =
-      'This is an isolated internal review turn. Use only the supplied reviewer read-only tools and finish by calling submit_review exactly once.'
-    const { instructions, instructionHash, skills, agents } = args.reviewerRuntime
-      ? {
-          instructions: reviewerInstructions,
-          instructionHash: hashAntigravityInstructions(reviewerInstructions),
-          skills: [],
-          agents: [],
-        }
-      : await buildAntigravityInstructions({
-          projectId: args.projectId,
-          cwd: args.cwd,
-          conversationId: args.conversationId,
-          mode: args.mode,
-          maestro: args.maestro,
-          modelId: args.selection.modelId,
-          maestrlyUltra: args.maestrlyUltra,
-          harness: args.harness,
-          appToolsEnabled,
-          disabledAppToolGroups: appAccess.disabledGroups,
-        })
+    const { instructions, instructionHash, skills, agents } = await buildAntigravityInstructions({
+      projectId: args.projectId,
+      cwd: args.cwd,
+      conversationId: args.conversationId,
+      mode: args.mode,
+      maestro: args.maestro,
+      modelId: args.selection.modelId,
+      maestrlyUltra: args.maestrlyUltra,
+      harness: args.harness,
+      appToolsEnabled,
+      disabledAppToolGroups: appAccess.disabledGroups,
+    })
 
     const skillTools: ToolSet = skills.length
       ? {

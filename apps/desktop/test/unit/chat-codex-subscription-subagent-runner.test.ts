@@ -149,6 +149,22 @@ describe('Codex subagent quota classification', () => {
     )
   })
 
+  it('never offers native search together with the inherited host web_search tool', async () => {
+    const native = harness()
+    await runCodexSubagent(native.args).catch(() => undefined)
+    const nativeConfig = (native.client.startThread.mock.calls[0] as unknown as [{ config: Record<string, unknown> }])[0]
+      .config
+    expect(nativeConfig).not.toHaveProperty('web_search')
+
+    const host = harness()
+    host.args.dynamicTools = [{ type: 'function', name: 'web_search', description: 'Search', inputSchema: {} }]
+    await runCodexSubagent(host.args).catch(() => undefined)
+    expect(host.client.startThread).toHaveBeenCalledWith(
+      expect.objectContaining({ config: expect.objectContaining({ web_search: 'disabled' }) }),
+      expect.anything()
+    )
+  })
+
   it.each([
     { label: 'enveloped', response: { rateLimits: { primary: { usedPercent: 100 } } } },
     { label: 'direct', response: { primary: { usedPercent: 100 } } },

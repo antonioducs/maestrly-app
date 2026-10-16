@@ -96,3 +96,36 @@ it('omits injected memory, internal rows and tools even on user messages', () =>
   expect(blocks).toHaveLength(1)
   expect(JSON.parse(blocks[0].text)).toEqual({ role: 'user', messageId: 'human', text: 'Prefer concise answers.' })
 })
+
+it('never attributes a message from another conversation or a dispatched task to the person', () => {
+  const messages = [
+    {
+      seq: 1,
+      message: {
+        id: 'dispatch-seed',
+        conversationId: 'chat',
+        role: 'user' as const,
+        source: 'conversation-dispatch' as const,
+        createdAt: 1,
+        parts: [{ type: 'text' as const, id: 't1', text: 'I always deploy on Fridays.' }],
+      },
+    },
+    {
+      seq: 2,
+      message: {
+        id: 'peer',
+        conversationId: 'chat',
+        role: 'user' as const,
+        source: 'conversation-message' as const,
+        peer: { messageId: 'pm', fromConversationId: 'source', fromConversationName: 'Planning', kind: 'message' as const },
+        createdAt: 2,
+        parts: [{ type: 'text' as const, id: 't2', text: 'My name is Ana.' }],
+      },
+    },
+  ]
+  expect(renderExtractionTranscript(messages, { bot: false, personal: true })).toEqual([])
+  expect(renderExtractionTranscript(messages, { bot: false }).map((block) => block.text)).toEqual([
+    'Task from another conversation: I always deploy on Fridays.',
+    'Message from the conversation "Planning": My name is Ana.',
+  ])
+})

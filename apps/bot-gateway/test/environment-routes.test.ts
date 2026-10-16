@@ -73,7 +73,7 @@ describe('environment routes', () => {
     expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
       'files',
       'environment-settings-v1',
-      'environment-plugins-v1',
+      'account-failover',
       'artifacts',
       'artifacts-gateway-viewer',
       'artifacts-transfer',
@@ -86,9 +86,14 @@ describe('environment routes', () => {
       'runtime-updates',
       'desktop-bridge',
       'workspaces-host',
+      'workspaces-environments',
       'host-files',
       'host-editor',
+      'message-edit',
+      'video-screens',
     ])
+    // Past the 20 features installed desktops read.
+    expect((await json(await h.request('GET', '/v1/meta'))).moreFeatures).toContain('environment-plugins-v1')
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)
     expect(created.status).toBe(201)
@@ -376,7 +381,7 @@ describe('environment routes', () => {
   })
 
   it('issues screen tickets for bot surfaces and for the environment screen without a takeover', async () => {
-    const h = await harness(Date.now, { environments: true })
+    const h = await harness(Date.now, { environments: true, videoScreens: true })
     for (const body of [{ mode: 'view' }, { mode: 'view', surface: 'browser' }, { mode: 'view', surface: 'apps' }]) {
       const response = await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, body)
       expect(response.status).toBe(201)
@@ -394,6 +399,35 @@ describe('environment routes', () => {
     expect((await h.request('POST', '/v1/environments/missing/screen-tickets', { mode: 'view' })).status).toBe(404)
     expect(
       (await h.request('POST', '/v1/environments/test/screen-tickets', { mode: 'view' }, false, h.botHeaders())).status
+    ).toBe(401)
+  })
+
+  it('issues screen tickets for the computers and browsers of workspaces conversations only', async () => {
+    const h = await harness(Date.now, { environments: true, videoScreens: true })
+    h.instance.provisioning.capabilities.push('workspaces-host', 'conversation-computers')
+    const created = h.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
+    for (let i = 0; i < 200 && h.lifecycle.environment(created.id)?.lifecycle !== 'running'; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    const conversation = randomUUID()
+    const route = (eid: string, cid = conversation) => `/v1/environments/${eid}/conversations/${cid}/screen-tickets`
+    for (const body of [
+      { mode: 'control', surface: 'apps' },
+      { mode: 'view', surface: 'apps' },
+      { mode: 'view', surface: 'browser' },
+    ]) {
+      const response = await h.request('POST', route(created.id), body)
+      expect(response.status).toBe(201)
+      expect((await response.json()).path).toMatch(/^\/v1\/screen\?ticket=/)
+    }
+    expect((await h.request('POST', route(created.id), { mode: 'control', surface: 'browser' })).status).toBe(400)
+    expect((await h.request('POST', route(created.id), { mode: 'view' })).status).toBe(400)
+    expect((await h.request('POST', route(created.id, 'a%20b'), { mode: 'view', surface: 'apps' })).status).toBe(400)
+    const bots = await h.request('POST', route('test'), { mode: 'view', surface: 'apps' })
+    expect(bots.status).toBe(409)
+    expect((await bots.json()).message).toBe('This environment does not host workspaces.')
+    expect((await h.request('POST', route('missing'), { mode: 'view', surface: 'apps' })).status).toBe(404)
+    expect(
+      (await h.request('POST', route(created.id), { mode: 'view', surface: 'apps' }, false, h.botHeaders())).status
     ).toBe(401)
   })
 

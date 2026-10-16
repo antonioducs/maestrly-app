@@ -5,13 +5,18 @@ import {
   BROWSER_STREAM_LIMITS,
   BROWSER_MODIFIERS,
   type BrowserSelectRequest,
+  type BrowserStreamArea,
   type BrowserStreamCursorName,
+  type BrowserStreamEnded,
   type BrowserStreamFrame,
   type BrowserStreamInput,
   type BrowserStreamSource,
 } from '../../shared/browser-stream'
+import { FleetScreenChannel } from '@/lib/fleet/screen-channel'
+import { ScreenPicturePlayer, type ScreenPictureEnd } from '@/lib/fleet/screen-picture-stream'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { nextSource, type SourceEvent, type SourceState } from '@/lib/remote-browser-source'
 import { keyUpInput, routeKeyDown, type KeyInput, type KeyOs } from '@/lib/remote-browser-keys'
 import { fitFrame, toFramePoint, toSurfaceRect, wheelPixels, type FrameFit } from '@/lib/remote-browser-view'
 import { Button } from '@/components/ui/button'
@@ -22,6 +27,10 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
  * shared/browser-stream). Unlike this computer's browser it is DOM, not a native view: the drawer's menus, the tool
  * palette and dialogs simply cover it. Pointer input maps from the canvas to the page; keys and text go through a
  * hidden text field, which composes accents, IME input and emoji before they are sent.
+ *
+ * Where the host has a tile for the conversation, the picture comes from that tile's H.264 screen through the gateway
+ * instead, cropped to the page's area; everything else still goes over the bridge. A video that breaks falls back to
+ * the host's frames.
  */
 
 type Phase = 'connecting' | 'live' | 'taken-over' | 'offline' | 'error'
@@ -84,6 +93,7 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
   const api = useHostApi()
   const host = useHostInfo()
   const online = host.state === 'online'
+  const environmentId = host.environment?.id ?? null
   const os = osOf()
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -180,6 +190,68 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
     setSelect(null)
     setNotice(null)
 
+    // The video transport: the tile's screen, cropped to where the host says the page is.
+    let transport: SourceState = { transport: 'jpeg', pictures: 0 }
+    let area: BrowserStreamArea['area'] | null = null
+    let player: ScreenPicturePlayer | null = null
+    const stopVideo = () => {
+      player?.close()
+      player = null
+    }
+    const onVideo = (event: SourceEvent) => {
+      const next = nextSource(transport, event)
+      transport = next.state
+      if (!next.fallBack) return
+      stopVideo()
+      if (stream.streamId) api.browserStreamTransport(convId, stream.streamId, 'jpeg')
+    }
+    const drawPicture = async (picture: VideoFrame) => {
+      try {
+        const current = area
+        if (!current || disposed || stream.kind === 'none') return
+        const bitmap = await createImageBitmap(picture, current.x, current.y, current.width, current.height)
+        if (disposed) {
+          bitmap.close()
+          return
+        }
+        drawnRef.current?.bitmap.close()
+        drawnRef.current = { bitmap, width: current.width, height: current.height, kind: stream.kind }
+        paint()
+        setHasFrame(true)
+        setPhase('live')
+        onVideo({ type: 'picture' })
+      } finally {
+        picture.close()
+      }
+    }
+    const startVideo = async () => {
+      if (!environmentId) return onVideo({ type: 'video-error' })
+      let channel: FleetScreenChannel
+      try {
+        channel = await FleetScreenChannel.open(
+          window.api,
+          { environmentId, conversationId: convId, surface: 'browser' },
+          'view'
+        )
+      } catch {
+        // A refused ticket: an older bot server, or a tile that went away.
+        if (!disposed) onVideo({ type: 'video-error' })
+        return
+      }
+      if (disposed || transport.transport !== 'video') {
+        channel.close()
+        return
+      }
+      const playing = new ScreenPicturePlayer(channel, drawPicture)
+      playing.addEventListener('disconnect', (event) => {
+        if (disposed || player !== playing) return
+        player = null
+        const { code, error } = (event as CustomEvent<ScreenPictureEnd>).detail
+        onVideo(error ? { type: 'video-error' } : { type: 'video-closed', code })
+      })
+      player = playing
+    }
+
     const decode = async () => {
       decoder.busy = true
       while (decoder.pending && !disposed) {
@@ -203,72 +275,149 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
       decoder.busy = false
     }
 
+    const onFrame = (frame: BrowserStreamFrame) => {
+      const ack = () => api.browserStreamAck(convId, frame.streamId, frame.seq)
+      if (frame.streamId !== stream.streamId || frame.source !== stream.source) return ack()
+      // A frame that arrives while another decodes replaces the one waiting, which is dropped.
+      decoder.pending?.ack()
+      decoder.pending = { frame, ack }
+      if (!decoder.busy) void decode()
+    }
+    const onSource = (next: BrowserStreamSource) => {
+      if (next.streamId !== stream.streamId || next.source < stream.source) return
+      if (next.source !== stream.source || next.kind !== stream.kind) {
+        stream.source = next.source
+        stream.kind = next.kind
+        setSelect(null)
+        if (next.kind === 'none') clearFrame()
+      }
+      setSource({ kind: next.kind, popup: next.popup })
+      setPhase('live')
+    }
+    const onEnded = (ended: BrowserStreamEnded) => {
+      if (ended.streamId !== stream.streamId) return
+      stopVideo()
+      stream.streamId = null
+      setSelect(null)
+      setPhase(ended.reason === 'taken-over' ? 'taken-over' : ended.reason === 'unavailable' ? 'error' : 'connecting')
+    }
+    const onSelect = (request: BrowserSelectRequest) => {
+      if (request.streamId !== stream.streamId || request.source !== stream.source) return
+      selectAnswered.current = false
+      setSelect(request)
+    }
+
+    // The host answers the start before it sends the stream's events, but in this window its answer can come after
+    // them: until it has, they wait. Dropped, the stream's first source (or the page's area in the video) would leave
+    // every picture of it unshown.
+    let answered = false
+    const early: Array<() => void> = []
+    const whenAnswered = (deliver: () => void) => {
+      if (answered) deliver()
+      else early.push(deliver)
+    }
+    const answer = (streamId: string | null) => {
+      stream.streamId = streamId
+      answered = true
+      for (const deliver of early.splice(0)) deliver()
+    }
+
     const offs = [
       api.onBrowserStreamFrame((frame) => {
-        if (frame.convId !== convId) return
-        const ack = () => api.browserStreamAck(convId, frame.streamId, frame.seq)
-        if (frame.streamId !== stream.streamId || frame.source !== stream.source) return ack()
-        // A frame that arrives while another decodes replaces the one waiting, which is dropped.
-        decoder.pending?.ack()
-        decoder.pending = { frame, ack }
-        if (!decoder.busy) void decode()
+        if (frame.convId === convId) whenAnswered(() => onFrame(frame))
       }),
       api.onBrowserStreamSource((next) => {
-        if (next.convId !== convId || next.streamId !== stream.streamId || next.source < stream.source) return
-        if (next.source !== stream.source || next.kind !== stream.kind) {
-          stream.source = next.source
-          stream.kind = next.kind
-          setSelect(null)
-          if (next.kind === 'none') clearFrame()
-        }
-        setSource({ kind: next.kind, popup: next.popup })
-        setPhase('live')
+        if (next.convId === convId) whenAnswered(() => onSource(next))
       }),
       api.onBrowserStreamEnded((ended) => {
-        if (ended.convId !== convId || ended.streamId !== stream.streamId) return
-        stream.streamId = null
-        setSelect(null)
-        setPhase(ended.reason === 'taken-over' ? 'taken-over' : ended.reason === 'unavailable' ? 'error' : 'connecting')
+        if (ended.convId === convId) whenAnswered(() => onEnded(ended))
       }),
       api.onBrowserStreamCursor((next) => {
-        if (next.convId === convId && next.streamId === stream.streamId) setCursor(next.cursor)
+        if (next.convId === convId)
+          whenAnswered(() => {
+            if (next.streamId === stream.streamId) setCursor(next.cursor)
+          })
       }),
       api.onBrowserSelect((request) => {
-        if (request.convId !== convId || request.streamId !== stream.streamId || request.source !== stream.source)
-          return
-        selectAnswered.current = false
-        setSelect(request)
+        if (request.convId === convId) whenAnswered(() => onSelect(request))
       }),
       api.onBrowserStreamNotice((next) => {
-        if (next.convId === convId && next.streamId === stream.streamId) setNotice(next.notice)
+        if (next.convId === convId)
+          whenAnswered(() => {
+            if (next.streamId === stream.streamId) setNotice(next.notice)
+          })
+      }),
+      api.onBrowserStreamArea((next) => {
+        if (next.convId === convId)
+          whenAnswered(() => {
+            if (next.streamId === stream.streamId) area = next.area
+          })
       }),
     ]
 
     const { width, height } = surfaceSize()
-    api.browserStreamStart(convId, width, height).then(
-      ({ streamId }) => {
+    const playsVideo = typeof VideoDecoder === 'function'
+    api.browserStreamStart(convId, width, height, playsVideo ? { video: true } : undefined).then(
+      (started) => {
         if (disposed) {
-          api.browserStreamStop(convId, streamId)
+          api.browserStreamStop(convId, started.streamId)
           return
         }
-        stream.streamId = streamId
+        answer(started.streamId)
+        // A host from before video says nothing: frames.
+        onVideo({ type: 'started', transport: started.transport === 'video' ? 'video' : 'jpeg' })
+        if (transport.transport === 'video') void startVideo()
         if (document.activeElement === inputRef.current) send({ type: 'focus', focused: true })
       },
       () => {
-        if (!disposed) setPhase('error')
+        if (disposed) return
+        // Frames that waited for a stream that never started are acknowledged all the same.
+        answer(null)
+        setPhase('error')
       }
     )
     return () => {
       disposed = true
       for (const off of offs) off()
       decoder.pending = null
+      stopVideo()
       if (stream.streamId) api.browserStreamStop(convId, stream.streamId)
       if (streamRef.current === stream) streamRef.current = null
     }
-  }, [api, convId, active, online, visible, surfaceReady, host.epoch, retry, surfaceSize, paint, clearFrame, send])
+  }, [
+    api,
+    convId,
+    active,
+    online,
+    visible,
+    surfaceReady,
+    host.epoch,
+    environmentId,
+    retry,
+    surfaceSize,
+    paint,
+    clearFrame,
+    send,
+  ])
 
   // A new conversation or host starts from a blank surface.
   useEffect(() => clearFrame, [convId, host.id, clearFrame])
+
+  // Main catches Cmd/Ctrl+T and W while the keyboard is here; a surface removed with the focus must not keep them.
+  const keyboardReported = useRef(false)
+  const reportKeyboard = (focused: boolean) => {
+    if (keyboardReported.current === focused) return
+    keyboardReported.current = focused
+    window.api.drawerBrowserKeyboardFocus(focused)
+  }
+  useEffect(
+    () => () => {
+      if (!keyboardReported.current) return
+      keyboardReported.current = false
+      window.api.drawerBrowserKeyboardFocus(false)
+    },
+    []
+  )
 
   // The host's page follows the surface's size; the last frame is redrawn at once meanwhile.
   useLayoutEffect(() => {
@@ -576,7 +725,13 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
   })()
 
   return (
-    <div ref={containerRef} className="absolute inset-0 overflow-hidden bg-[#0A0A0B]" data-testid="remote-browser">
+    <div
+      ref={containerRef}
+      className="absolute inset-0 overflow-hidden bg-[#0A0A0B]"
+      data-testid="remote-browser"
+      // The browser chrome of the same conversation runs Cmd/Ctrl+T and W pressed over this page.
+      data-browser-surface={convId}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full touch-none select-none outline-none"
@@ -607,8 +762,12 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
           if (!(event.nativeEvent as InputEvent).isComposing) flushText()
         }}
         onCompositionEnd={flushText}
-        onFocus={() => send({ type: 'focus', focused: true })}
+        onFocus={() => {
+          reportKeyboard(true)
+          send({ type: 'focus', focused: true })
+        }}
         onBlur={() => {
+          reportKeyboard(false)
           releaseKeys()
           send({ type: 'focus', focused: false })
         }}
@@ -653,7 +812,7 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
       )}
 
       {overlay && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#0A0A0B]/90 text-sm text-muted-foreground">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#0A0A0B] text-sm text-muted-foreground">
           {'busy' in overlay && overlay.busy && <Loader2 className="size-5 animate-spin" />}
           <p className="max-w-xs text-center" data-testid="remote-browser-status">
             {overlay.text}

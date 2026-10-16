@@ -82,7 +82,6 @@ import { supportsChatToolImages } from '../../src/main/chat/tool-capabilities'
 import { closeDb, freshDb } from '../helpers/db'
 import { setAppFlag } from '../../src/main/store'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 
 type Script = () => AsyncGenerator<SDKMessage, void>
 
@@ -1310,63 +1309,6 @@ describe('Cursor subscription runner', () => {
     } finally {
       vi.unstubAllEnvs()
     }
-  })
-
-  it('restricts isolated reviewers to host read-only tools and bypasses reader prompts', async () => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd })
-    persistUser(conversation.id, 'user-reviewer-boundary', 'Review the execution.', 1)
-    const manager = new FakeManager()
-    manager.queue(async function* () {
-      yield msg('status', { status: 'FINISHED' })
-    })
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(async () => []),
-      readExecutionContext: vi.fn(async () => []),
-    }
-    let customToolNames: string[] = []
-    const originalCreate = manager.createAgent.bind(manager)
-    manager.createAgent = vi.fn(async (options) => {
-      const lease = await originalCreate(options)
-      const customTools = (
-        options as {
-          local?: { customTools?: Record<string, { execute: (a: unknown, c: unknown) => Promise<unknown> }> }
-        }
-      ).local?.customTools
-      customToolNames = Object.keys(customTools ?? {}).sort()
-      const send = lease.agent.send.bind(lease.agent)
-      lease.agent.send = async (message, sendOptions) => {
-        await customTools?.glob?.execute({ pattern: '**/*' }, { toolCallId: 'reviewer-glob-1' })
-        await customTools?.submit_review?.execute(
-          { result: 'clean', summary: 'No findings.' },
-          { toolCallId: 'reviewer-submit-1' }
-        )
-        return send(message, sendOptions)
-      }
-      return lease
-    }) as FakeManager['createAgent']
-    const brokerAssert = vi.fn(async () => undefined)
-
-    const result = await runCursorSubscriptionChat({
-      ...baseArgs(manager, conversation.id, cwd),
-      mode: 'agent',
-      broker: { assert: brokerAssert } as never,
-      ephemeralSession: true,
-      reviewerRuntime,
-      emit: () => undefined,
-    })
-
-    expect(result.planSubmitted).toBe(true)
-    expect(customToolNames).toEqual([...REVIEWER_READONLY_TOOL_NAMES].sort())
-    expect(h.buildMcpTools).not.toHaveBeenCalled()
-    expect(h.buildAppTools).not.toHaveBeenCalled()
-    expect(brokerAssert).not.toHaveBeenCalled()
-    expect(reviewerRuntime.recordEvidence).toHaveBeenCalledWith('search')
-    expect(reviewerRuntime.submitReview).toHaveBeenCalledWith({ result: 'clean', summary: 'No findings.' })
-    expect(manager.createCalls[0]).toMatchObject({ mode: 'plan' })
-    expect(manager.lastAgent()?.sends[0].options).toMatchObject({ mode: 'plan' })
   })
 
   it('closes MCP and app connections after errors', async () => {

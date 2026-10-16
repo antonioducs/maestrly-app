@@ -1,7 +1,9 @@
 import type { MemorySettings } from '../shared/memory'
 import type { AppToolGroup } from '../shared/app-tool-groups'
+import type { WebSearchKeyProvider, WebSearchProvider } from '../shared/web-search'
 import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
+import { ARTIFACT_OPEN_REQUEST_CHANNEL, type ArtifactOpenRequest, parseArtifactOpenRequest } from '../shared/artifacts'
 import type { IpcTransport } from './ipc-transport'
 import type { PluginScope } from '../shared/plugins'
 import type {
@@ -51,15 +53,22 @@ import type {
   ChatSubscriptionUsage,
   CodexSubscriptionAuthStatus,
   CodexSubscriptionLoginResult,
-  ReviewLoopInfo,
-  ReviewLoopParticipantInfo,
-  StartPairedReviewLoopInput,
-  StartPairedReviewLoopResult,
   SubagentSessionChangedEvent,
   SubagentSessionOrigin,
   SubagentSessionSummary,
   SubagentTranscriptPage,
 } from '../shared/chat'
+import type {
+  ReviewDraftInput,
+  ReviewHandoffInput,
+  ReviewHandoffResult,
+  ReviewJobInfo,
+  ReviewPrepareResult,
+  ReviewSendReportResult,
+  ReviewStartInput,
+  ReviewStartResult,
+  ReviewTarget,
+} from '../shared/review'
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
 import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
@@ -317,36 +326,9 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatGptWebCompanionOpen: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:chatgpt-web:companion-open', { conversationId }),
 
-    chatGptWebReviewLoopStop: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:review-loop:stop', conversationId),
-
-    chatGptWebReviewLoopShowPreview: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:review-loop:show-preview', conversationId),
-
     chatGptWebBrowserReset: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:chatgpt-web:browser-reset'),
 
     chatGptWebLogs: (): Promise<string[]> => ipcRenderer.invoke('chat:chatgpt-web:logs'),
-    /** Compatible regular Maestrly conversations sharing the executor's canonical checkout. */
-    chatReviewLoopCompatible: (executorConversationId: string): Promise<ReviewLoopParticipantInfo[]> =>
-      ipcRenderer.invoke('chat:review-loop:compatible', executorConversationId),
-    chatReviewLoopStart: (input: StartPairedReviewLoopInput): Promise<StartPairedReviewLoopResult> =>
-      ipcRenderer.invoke('chat:review-loop:start', input),
-    chatReviewLoopStop: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:review-loop:stop', conversationId),
-    chatReviewLoopStatus: (conversationId: string): Promise<ReviewLoopInfo | null> =>
-      ipcRenderer.invoke('chat:review-loop:status', conversationId),
-    chatReviewLoopStatuses: (): Promise<ReviewLoopInfo[]> => ipcRenderer.invoke('chat:review-loop:status'),
-    onChatReviewLoopChanged: (cb: (loops: ReviewLoopInfo[]) => void): (() => void) => {
-      const listener = (_event: unknown, loops: ReviewLoopInfo[]) => cb(loops)
-      ipcRenderer.on('chat:review-loop:changed', listener)
-      return () => ipcRenderer.removeListener('chat:review-loop:changed', listener)
-    },
-    onChatReviewLoopDelivery: (conversationId: string, cb: () => void): (() => void) => {
-      const channel = `chat:review-loop:delivery:${conversationId}`
-      const listener = () => cb()
-      ipcRenderer.on(channel, listener)
-      return () => ipcRenderer.removeListener(channel, listener)
-    },
 
     onChatGptWebStatus: (cb: (status: ChatGptWebStatusPayload) => void): (() => void) => {
       const listener = (_event: unknown, status: ChatGptWebStatusPayload) => cb(status)
@@ -371,6 +353,16 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       const listener = (_event: unknown, payload: ChatGptWebTurnCompletedPayload) => cb(payload)
       ipcRenderer.on('chat:chatgpt-web:turn-completed', listener)
       return () => ipcRenderer.removeListener('chat:chatgpt-web:turn-completed', listener)
+    },
+
+    /** A workspaces host asks the computer showing one of its conversations to open an artifact an agent opened. */
+    onChatArtifactOpen: (cb: (request: ArtifactOpenRequest) => void): (() => void) => {
+      const listener = (_event: unknown, payload: unknown) => {
+        const request = parseArtifactOpenRequest(payload)
+        if (request) cb(request)
+      }
+      ipcRenderer.on(ARTIFACT_OPEN_REQUEST_CHANNEL, listener)
+      return () => ipcRenderer.removeListener(ARTIFACT_OPEN_REQUEST_CHANNEL, listener)
     },
 
     chatAddProvider: (input: {
@@ -480,6 +472,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       return () => ipcRenderer.removeListener(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)
     },
 
+    chatExecutionProviders: (): Promise<Array<{ id: string; name: string; models: string[] }>> =>
+      ipcRenderer.invoke('chat:execution-providers'),
     chatModels: (providerId: string, force?: boolean, includeHidden?: boolean): Promise<string[]> =>
       ipcRenderer.invoke('chat:models', providerId, force, includeHidden),
     onChatModelsCatalogChanged: (callback: () => void): (() => void) => {
@@ -529,6 +523,19 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:set-app-tool-group', group, enabled),
 
     chatSetImageGen: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-image-gen', enabled),
+    chatSetGeneratedInterfaces: (enabled: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-generated-interfaces', enabled),
+
+    chatSetWebSearchProvider: (provider: WebSearchProvider): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-web-search-provider', provider),
+
+    chatSetWebSearchKey: (
+      provider: WebSearchKeyProvider,
+      key: string
+    ): Promise<{ ok: boolean; mode?: 'secure' | 'memory' }> => ipcRenderer.invoke('chat:set-web-search-key', provider, key),
+
+    chatClearWebSearchKey: (provider: WebSearchKeyProvider): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:clear-web-search-key', provider),
 
     chatSetBashFilters: (enabled: boolean): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:set-bash-filters', enabled),
@@ -819,6 +826,49 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
 
     chatCompact: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:compact', conversationId),
+
+    /** What a code or plan review would look at and who can run it; nothing starts. */
+    chatReviewPrepare: (conversationId: string, target: ReviewTarget): Promise<ReviewPrepareResult> =>
+      ipcRenderer.invoke('chat:review:prepare', conversationId, target),
+    /** Starts a read-only review; the conversation is held until the review is handed off or discarded. */
+    chatReviewStart: (conversationId: string, input: ReviewStartInput): Promise<ReviewStartResult> =>
+      ipcRenderer.invoke('chat:review:start', conversationId, input),
+    /** Stops a running review or check. */
+    chatReviewCancel: (conversationId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:cancel', conversationId),
+    /** Ends a review without handing anything off. */
+    chatReviewDiscard: (conversationId: string, reviewId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:discard', conversationId, reviewId),
+    /** The conversation's open review or running check, or the last one that ended until dismissed. */
+    chatReviewStatus: (conversationId: string): Promise<ReviewJobInfo | null> =>
+      ipcRenderer.invoke('chat:review:status', conversationId),
+    /** Records decisions, dismissal notes and plan comments while the review is open. */
+    chatReviewDraft: (conversationId: string, input: ReviewDraftInput): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('chat:review:draft', conversationId, input),
+    /** Hands an open review off: stores its receipt and frees the conversation. */
+    chatReviewHandoff: (conversationId: string, input: ReviewHandoffInput): Promise<ReviewHandoffResult> =>
+      ipcRenderer.invoke('chat:review:handoff', conversationId, input),
+    /** Marks a saved code report as sent with this message; the caller then sends the message. */
+    chatReviewSendReport: (conversationId: string, messageId: string, message: string): Promise<ReviewSendReportResult> =>
+      ipcRenderer.invoke('chat:review:send-report', conversationId, messageId, message),
+    /** Checks whether the fixes or the plan revision a receipt asked for hold up. */
+    chatReviewCheck: (conversationId: string, messageId: string): Promise<ReviewStartResult> =>
+      ipcRenderer.invoke('chat:review:check', conversationId, messageId),
+    chatReviewDismiss: (conversationId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:dismiss', conversationId),
+    /** Asks the conversation's chat view to open a review (the Plan tab runs in its own renderer). */
+    chatReviewOpen: (conversationId: string, target: ReviewTarget): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:review:open', conversationId, target),
+    onChatReviewOpen: (cb: (request: { conversationId: string; target: ReviewTarget }) => void): (() => void) => {
+      const listener = (_event: unknown, request: { conversationId: string; target: ReviewTarget }) => cb(request)
+      ipcRenderer.on('chat:review:open', listener)
+      return () => ipcRenderer.removeListener('chat:review:open', listener)
+    },
+    onChatReviewChanged: (cb: (review: ReviewJobInfo) => void): (() => void) => {
+      const listener = (_event: unknown, review: ReviewJobInfo) => cb(review)
+      ipcRenderer.on('chat:review:changed', listener)
+      return () => ipcRenderer.removeListener('chat:review:changed', listener)
+    },
 
     chatSetKey: (providerId: string, key: string): Promise<{ ok: boolean; mode?: string; present?: boolean }> =>
       ipcRenderer.invoke('chat:key-set', providerId, key),

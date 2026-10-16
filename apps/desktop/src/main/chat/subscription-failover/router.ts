@@ -22,16 +22,98 @@ export type {
 
 /** Default backoff when exhaustion has no known resetsAt (never "forever"). */
 export const DEFAULT_PROBE_TTL_MS = 5 * 60_000
+/** How long `recoveryAt` gives a half-open probe in flight before its account is checked again. */
+export const HALF_OPEN_RECHECK_MS = 30_000
+
+/**
+ * How long a caller with no other usable account waits for another caller's half-open probe. A probe closes at
+ * its first model output, so this bound only matters for a probe that never answers.
+ */
+export const HALF_OPEN_PROBE_WAIT_MS = 60_000
+
+/** Chain members that another caller is probing right now; accounts this caller already tried are excluded. */
+export function probingCandidates(
+  router: SubscriptionFailoverRouter,
+  chain: readonly string[],
+  attemptedProviderIds: ReadonlySet<string>
+): string[] {
+  return [...new Set(chain)].filter(
+    (providerId) => !attemptedProviderIds.has(providerId) && router.getHealth(providerId).state === 'half-open'
+  )
+}
 
 function unknownHealth(providerId: string): SubscriptionAccountHealth {
   return { providerId, state: 'unknown' }
 }
 
+interface ProbeWaiter {
+  providerIds: ReadonlySet<string>
+  resolve: (settled: boolean) => void
+}
+
 export class SubscriptionFailoverRouter {
   private readonly healthByProvider = new Map<string, SubscriptionAccountHealth>()
+  private readonly probeWaiters = new Set<ProbeWaiter>()
 
   getHealth(providerId: string): SubscriptionAccountHealth {
     return this.healthByProvider.get(providerId) ?? unknownHealth(providerId)
+  }
+
+  private store(health: SubscriptionAccountHealth): void {
+    this.healthByProvider.set(health.providerId, health)
+    this.wakeProbeWaiters(health.providerId)
+  }
+
+  private wakeProbeWaiters(providerId: string): void {
+    if (this.getHealth(providerId).state === 'half-open') return
+    for (const waiter of [...this.probeWaiters]) {
+      if (waiter.providerIds.has(providerId)) waiter.resolve(true)
+    }
+  }
+
+  /**
+   * Waits until one of the providers leaves its half-open probe (recovered, exhausted again, or released).
+   * Resolves false on timeout or abort; true immediately when none of them is half-open.
+   */
+  waitForProbeSettlement(providerIds: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    const watched = new Set(providerIds)
+    if (![...watched].some((id) => this.getHealth(id).state === 'half-open')) return Promise.resolve(true)
+    if (signal?.aborted || timeoutMs <= 0) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | undefined
+      const waiter: ProbeWaiter = {
+        providerIds: watched,
+        resolve: (settled) => {
+          if (!this.probeWaiters.delete(waiter)) return
+          if (timer) clearTimeout(timer)
+          signal?.removeEventListener('abort', onAbort)
+          resolve(settled)
+        },
+      }
+      const onAbort = () => waiter.resolve(false)
+      this.probeWaiters.add(waiter)
+      timer = setTimeout(() => waiter.resolve(false), timeoutMs)
+      timer.unref?.()
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+
+  /**
+   * Model output observed on a physical account proves it is serving again. A half-open probe therefore closes
+   * its circuit at the first output instead of when its (possibly long) turn ends, which would keep every other
+   * caller off a recovered account. The probe's own settlement still applies afterwards: a later quota reopens
+   * the circuit, success/other become no-ops. Outside half-open the signal is ignored, because an exhausted
+   * circuit may still be draining output from requests admitted before the exhaustion.
+   */
+  confirmServing(providerId: string): void {
+    const current = this.getHealth(providerId)
+    if (current.state !== 'half-open') return
+    failoverDiag('half-open-serving', {
+      providerId,
+      leaseId: current.halfOpenLeaseId ?? null,
+      generation: current.exhaustion?.generation ?? null,
+    })
+    this.markAvailable(providerId, { generation: current.exhaustion?.generation })
   }
 
   /**
@@ -63,7 +145,7 @@ export class SubscriptionFailoverRouter {
       state: 'exhausted',
       exhaustion,
     }
-    this.healthByProvider.set(providerId, health)
+    this.store(health)
     failoverDiag('mark-exhausted', {
       providerId,
       generation,
@@ -101,7 +183,7 @@ export class SubscriptionFailoverRouter {
     }
 
     const health: SubscriptionAccountHealth = { providerId, state: 'available' }
-    this.healthByProvider.set(providerId, health)
+    this.store(health)
     failoverDiag('mark-available', {
       providerId,
       generation: opts?.generation ?? null,
@@ -141,7 +223,7 @@ export class SubscriptionFailoverRouter {
       exhaustion: current.exhaustion,
       halfOpenLeaseId: leaseId,
     }
-    this.healthByProvider.set(providerId, health)
+    this.store(health)
     failoverDiag('half-open-begin', { providerId, leaseId, generation, now })
     return { allowed: true, leaseId, generation }
   }
@@ -186,7 +268,7 @@ export class SubscriptionFailoverRouter {
       state: 'exhausted',
       exhaustion: current.exhaustion,
     }
-    this.healthByProvider.set(providerId, health)
+    this.store(health)
     failoverDiag('half-open-release-other', {
       providerId,
       leaseId,
@@ -309,9 +391,25 @@ export class SubscriptionFailoverRouter {
     })
   }
 
+  /**
+   * The earliest time an account of `chain` may be admitted again: `now` when one already may. An account whose
+   * half-open probe is in flight is checked again `HALF_OPEN_RECHECK_MS` later, when that probe has likely settled.
+   */
+  recoveryAt(chain: readonly string[], now = Date.now()): number {
+    let earliest = Number.POSITIVE_INFINITY
+    for (const providerId of chain) {
+      const current = this.getHealth(providerId)
+      if (current.state === 'available' || current.state === 'unknown') return now
+      const at = current.state === 'half-open' ? now + HALF_OPEN_RECHECK_MS : (current.exhaustion?.nextProbeAt ?? now)
+      earliest = Math.min(earliest, Math.max(now, at))
+    }
+    return Number.isFinite(earliest) ? earliest : now
+  }
+
   /** Forget the circuit state for one physical provider after its identity has been drained. */
   resetProvider(providerId: string): void {
     this.healthByProvider.delete(providerId)
+    this.wakeProbeWaiters(providerId)
   }
 
   /**
@@ -337,6 +435,7 @@ export class SubscriptionFailoverRouter {
   /** Test helper — wipe all health state. */
   reset(): void {
     this.healthByProvider.clear()
+    for (const waiter of [...this.probeWaiters]) waiter.resolve(true)
   }
 }
 

@@ -21,6 +21,8 @@ vi.mock('../../src/main/pty-manager', () => ({
 
 vi.mock('../../src/main/floating-manager', () => ({
   detach: vi.fn(),
+  disposeConversation: vi.fn(),
+  refreshFloatingTitles: vi.fn(),
   reattach: vi.fn(),
   setFloatBounds: vi.fn(),
   setPinned: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('../../src/main/floating-manager', () => ({
 vi.mock('../../src/main/popup-manager', () => ({
   closePopup: vi.fn(),
   closeTopPopup: vi.fn(),
+  disposeConversation: vi.fn(),
   releasePopupForFloating: vi.fn(),
   setSuppressedByDialog: vi.fn(),
   setDialogSuppressionOwners: vi.fn(),
@@ -56,10 +59,14 @@ vi.mock('../../src/main/drawer-manager', () => ({
   isTabVisibleInSlot: vi.fn(() => false),
   applyLayout: vi.fn(),
   navigateBrowser: vi.fn(),
+  outOfSlotTabsOf: vi.fn(() => []),
+  queryOmnibox: vi.fn(async () => ({ history: [], tabs: [], searchSuggestions: [] })),
+  removeBrowserHistoryEntry: vi.fn(),
   reorderBrowserTab: vi.fn(),
   reloadAllVSCode: vi.fn(),
   setLayout: vi.fn(),
   setDialogSuppressionOwners: vi.fn(),
+  setOmniboxOverlay: vi.fn(async () => null),
   setViewsSuppressed: vi.fn(),
   showVSCodeLoadingAll: vi.fn(),
   switchBrowserTab: vi.fn(),
@@ -100,13 +107,19 @@ import * as floatingManager from '../../src/main/floating-manager'
 import * as popupManager from '../../src/main/popup-manager'
 import {
   applyLayout,
+  disposeConversation,
   ensurePanelTab,
   isTabVisibleInSlot,
+  navigateBrowser,
+  queryOmnibox,
+  removeBrowserHistoryEntry,
   setDialogSuppressionOwners,
   setLayout,
+  setOmniboxOverlay,
   showVSCodeLoadingAll,
 } from '../../src/main/drawer-manager'
-import { setRemoteEditorHosts } from '../../src/main/drawer-scope'
+import { hasBrowserKeyboardFocus } from '../../src/main/browser-hotkeys'
+import { setRemoteToolHosts } from '../../src/main/drawer-scope'
 import { waitForEditorReady } from '../../src/main/vscode/vscode-server'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
 import {
@@ -174,6 +187,7 @@ describe('registerDrawerIpc', () => {
       'drawer:capture-slot',
       'drawer:chatgpt-visible',
       'drawer:floating-state-get',
+      'drawer:placement-get',
       'drawer:read-terminal',
       'drawer:terminal-state-get',
       'panel:plan-draft-get',
@@ -182,7 +196,10 @@ describe('registerDrawerIpc', () => {
       'drawer:browser-copy',
       'drawer:browser-stream-start',
       'drawer:clear-cache',
+      'drawer:computer-open',
       'drawer:load-vscode',
+      'drawer:omnibox-overlay',
+      'drawer:omnibox-query',
       'drawer:restart-vscode',
       'popup:state-get',
     ])
@@ -190,12 +207,14 @@ describe('registerDrawerIpc', () => {
     expect([...mons.keys()].sort()).toEqual([
       'drawer:back',
       'drawer:browser-input',
+      'drawer:browser-keyboard-focus',
       'drawer:browser-paste',
       'drawer:browser-popup-close',
       'drawer:browser-select-choose',
       'drawer:browser-stream-ack',
       'drawer:browser-stream-resize',
       'drawer:browser-stream-stop',
+      'drawer:browser-stream-transport',
       'drawer:close-terminal',
       'drawer:create-terminal',
       'drawer:detach',
@@ -205,10 +224,12 @@ describe('registerDrawerIpc', () => {
       'drawer:ensure-panel',
       'drawer:focus-terminal',
       'drawer:forward',
+      'drawer:history-remove',
       'drawer:layout',
       'drawer:navigate',
       'drawer:reattach',
       'drawer:reload',
+      'drawer:remote-conversations',
       'drawer:set-active-terminal',
       'drawer:set-float-bounds',
       'drawer:suppress-views',
@@ -238,7 +259,8 @@ describe('registerDrawerIpc', () => {
     mons.get('drawer:browser-stream-ack')!({ sender } as never, 'conv', 'stream-id', 3)
     mons.get('drawer:browser-input')!({ sender } as never, 'conv', 'stream-id', { type: 'text', text: 'a' })
     await mhandles.get('drawer:browser-copy')!({ sender } as never, 'conv', 'stream-id', true)
-    expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600)
+    // A window that plays video says so in a fifth argument; this one says nothing.
+    expect(startBrowserStream).toHaveBeenCalledWith(sender, 'conv', 800, 600, undefined)
     expect(acknowledgeBrowserFrame).toHaveBeenCalledWith(sender, 'conv', 'stream-id', 3)
     expect(inputBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', { type: 'text', text: 'a' })
     expect(copyBrowserStream).toHaveBeenCalledWith(sender, 'conv', 'stream-id', true)
@@ -252,11 +274,11 @@ describe('registerDrawerIpc', () => {
     // A host that does not serve its editor has no Code tab to restart.
     await restart({} as never, 'server-1/workspaces#conv-1')
     expect(restartRemoteVSCode).not.toHaveBeenCalled()
-    setRemoteEditorHosts(() => true)
+    setRemoteToolHosts(() => true)
     try {
       await restart({} as never, 'server-1/workspaces#conv-1')
     } finally {
-      setRemoteEditorHosts(() => false)
+      setRemoteToolHosts(() => false)
     }
     expect(restartRemoteVSCode).toHaveBeenCalledWith('server-1/workspaces#conv-1')
     expect(showVSCodeLoadingAll).not.toHaveBeenCalled()
@@ -307,6 +329,70 @@ describe('registerDrawerIpc', () => {
 
     expect(setDialogSuppressionOwners).toHaveBeenLastCalledWith(new Set())
     expect(popupManager.setDialogSuppressionOwners).toHaveBeenLastCalledWith(new Set())
+  })
+
+  it("detaches and floats the tools of a remote host's conversation, its streamed browser included", () => {
+    const { reg, mons } = createTestRegistrar()
+    const openPopup = vi.fn()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup })
+    vi.mocked(popupManager.releasePopupForFloating).mockReturnValue(true)
+    const remote = 'server-1/workspaces#conv-1'
+    setRemoteToolHosts((_hostId, tool) => tool === 'browser')
+    try {
+      mons.get('drawer:detach')!({} as never, remote, 'terminal')
+      mons.get('drawer:detach')!({} as never, remote, 'browser')
+      mons.get('popup:open')!({} as never, remote, 'files')
+      mons.get('popup:open-floating')!({} as never, remote, 'notes')
+      // Nor its companion, nor an editor its host does not serve.
+      mons.get('drawer:detach')!({} as never, remote, 'chatgpt')
+      mons.get('popup:open')!({} as never, remote, 'vscode')
+    } finally {
+      setRemoteToolHosts(() => false)
+    }
+    expect(vi.mocked(floatingManager.detach).mock.calls).toEqual([
+      [remote, 'terminal'],
+      [remote, 'browser'],
+      [remote, 'notes'],
+    ])
+    expect(openPopup.mock.calls).toEqual([[remote, 'files']])
+  })
+
+  it('closes the floating windows and popups of a dropped conversation before its views', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const remote = 'server-1/workspaces#conv-1'
+
+    mons.get('drawer:dispose-conversation')!({} as never, remote)
+    mons.get('drawer:dispose-conversation')!({} as never, 42)
+
+    expect(floatingManager.disposeConversation).toHaveBeenCalledExactlyOnceWith(remote)
+    expect(popupManager.disposeConversation).toHaveBeenCalledExactlyOnceWith(remote)
+    expect(disposeConversation).toHaveBeenCalledExactlyOnceWith(remote)
+    const order = [floatingManager.disposeConversation, popupManager.disposeConversation, disposeConversation].map(
+      (fn) => vi.mocked(fn).mock.invocationCallOrder[0]
+    )
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it("names the floating windows of remote hosts' conversations again only when their names change", () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const send = mons.get('drawer:remote-conversations')!
+    const a = 'server-1/workspaces#a'
+    const b = 'server-1/workspaces#b'
+
+    send({} as never, [
+      { id: a, name: 'A', projectName: 'P' },
+      { id: b, name: 'B' },
+    ])
+    send({} as never, [
+      { id: a, name: 'A', projectName: 'P' },
+      { id: b, name: 'B' },
+    ])
+    send({} as never, [{ id: a, name: 'A2', projectName: 'P' }])
+
+    expect(vi.mocked(floatingManager.refreshFloatingTitles).mock.calls).toEqual([[new Set([a, b])], [new Set([a, b])]])
+    send({} as never, [])
   })
 
   it('popup:open-floating ignores tools that already left the stack', () => {
@@ -394,5 +480,88 @@ describe('registerDrawerIpc', () => {
     vi.mocked(floatingManager.isChatGptVisible).mockReturnValue(true)
 
     expect(handles.get('drawer:chatgpt-visible')!({} as never, 'background-conv')).toBe(true)
+  })
+
+  it('forwards address-bar navigation as typed only when the renderer says so', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const navigate = mons.get('drawer:navigate')!
+
+    navigate({} as never, 'c1', 'example.com')
+    navigate({} as never, 'c1', 'example.com', { typed: true })
+    navigate({} as never, 'c1', 'example.com', { typed: 'yes' })
+
+    expect(vi.mocked(navigateBrowser).mock.calls).toEqual([
+      ['c1', 'example.com', { typed: false }],
+      ['c1', 'example.com', { typed: true }],
+      ['c1', 'example.com', { typed: false }],
+    ])
+  })
+
+  it('validates omnibox queries and keys suggestion cancellation by the asking renderer', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const query = mhandles.get('drawer:omnibox-query')!
+
+    expect(await query({ sender: { id: 7 } } as never, 42, 'text')).toEqual({
+      history: [],
+      tabs: [],
+      searchSuggestions: [],
+    })
+    expect(queryOmnibox).not.toHaveBeenCalled()
+
+    await query({ sender: { id: 7 } } as never, 'c1', 'olivia', { search: true, locale: 'pt-BR', extra: 1 })
+    await query({ sender: { id: 8 } } as never, 'c1', 'oli', { search: 'yes', locale: 3 })
+    expect(vi.mocked(queryOmnibox).mock.calls).toEqual([
+      ['c1', 'olivia', { search: true, locale: 'pt-BR' }, 7],
+      ['c1', 'oli', { search: false }, 8],
+    ])
+  })
+
+  it('accepts only known overlay modes and passes the owning renderer', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const overlay = mhandles.get('drawer:omnibox-overlay')!
+    const sender = { id: 3 }
+
+    expect(await overlay({ sender } as never, 'c1', 'hide-everything')).toBeNull()
+    expect(await overlay({ sender } as never, null, 'open')).toBeNull()
+    expect(setOmniboxOverlay).not.toHaveBeenCalled()
+
+    await overlay({ sender } as never, 'c1', 'prepare')
+    await overlay({ sender } as never, 'c1', 'open')
+    await overlay({ sender } as never, 'c1', 'close')
+    expect(vi.mocked(setOmniboxOverlay).mock.calls).toEqual([
+      ['c1', 'prepare', sender],
+      ['c1', 'open', sender],
+      ['c1', 'close', sender],
+    ])
+  })
+
+  it('removes history entries only for string URLs', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const remove = mons.get('drawer:history-remove')!
+
+    remove({} as never, { url: 'https://example.com/' })
+    remove({} as never, 'https://example.com/')
+
+    expect(vi.mocked(removeBrowserHistoryEntry).mock.calls).toEqual([['https://example.com/']])
+  })
+
+  it('tracks browser keyboard focus per reporting renderer', () => {
+    const { reg, mons } = createTestRegistrar()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup: vi.fn() })
+    const focus = mons.get('drawer:browser-keyboard-focus')!
+
+    focus({ sender: { id: 51 } } as never, true)
+    focus({ sender: { id: 52 } } as never, true)
+    expect(hasBrowserKeyboardFocus(51)).toBe(true)
+    expect(hasBrowserKeyboardFocus(52)).toBe(true)
+
+    focus({ sender: { id: 51 } } as never, false)
+    focus({ sender: { id: 52 } } as never, 'yes')
+    expect(hasBrowserKeyboardFocus(51)).toBe(false)
+    expect(hasBrowserKeyboardFocus(52)).toBe(false)
   })
 })

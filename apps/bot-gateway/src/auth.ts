@@ -1,5 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { formatPairingCode, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ACTIVE_PAIRINGS_MAX,
+  formatPairingCode,
+  normalizePairingCode,
+  type FleetDeviceClient,
+} from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 import type { Store, Device } from './store.js'
 
@@ -13,14 +18,22 @@ export function token(): string {
 export class Auth {
   private attempts = new Map<string, number[]>()
   constructor(readonly store: Store) {}
-  createPairing(): { code: string; expiresAt: string } {
+  createPairing(options: { limitActive?: boolean } = {}): { code: string; expiresAt: string } {
+    // A paired device may create codes for other devices; the CLI, run by whoever administers the server, is not limited.
+    if (options.limitActive && this.store.activePairings() >= FLEET_ACTIVE_PAIRINGS_MAX)
+      throw new GatewayError('RATE_LIMITED', 'Too many unused pairing codes; wait for one to expire')
     let raw = ''
     for (const byte of randomBytes(8)) raw += alphabet[byte & 31]
     const expiresAt = new Date(Date.now() + 600_000).toISOString()
     this.store.addPairing(sha256(raw), expiresAt)
     return { code: formatPairingCode(raw), expiresAt }
   }
-  pair(code: string, deviceName: string, remote: string): { deviceId: string; token: string } {
+  pair(
+    code: string,
+    deviceName: string,
+    remote: string,
+    client?: FleetDeviceClient
+  ): { deviceId: string; token: string } {
     const now = Date.now(),
       recent = (this.attempts.get(remote) ?? []).filter((at) => now - at < 60_000)
     if (recent.length >= 5) throw new GatewayError('RATE_LIMITED', 'Too many pairing attempts')
@@ -34,6 +47,8 @@ export class Auth {
     const device: Device = {
       id: deviceId,
       name: deviceName,
+      kind: client?.kind ?? null,
+      platform: client?.platform ?? null,
       createdAt: new Date().toISOString(),
       lastSeenAt: null,
       revokedAt: null,
@@ -60,5 +75,13 @@ export class Auth {
     const id = this.store.botByGatewayHash(hash)
     if (!id) throw new GatewayError('UNAUTHORIZED', 'Invalid bot token')
     return id
+  }
+  /** Who calls the internal API: a bot, or the workspaces environment that hosts the owner's chats. */
+  internalCaller(bearer: string | undefined): { botId: string } | { environmentId: string } {
+    if (bearer?.startsWith('Bearer ')) {
+      const environmentId = this.store.hostByGatewayHash(sha256(bearer.slice(7)))
+      if (environmentId) return { environmentId }
+    }
+    return { botId: this.internalBot(bearer) }
   }
 }

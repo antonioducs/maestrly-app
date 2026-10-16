@@ -1,6 +1,15 @@
 import type { WebContentsView } from 'electron'
 import { unregisterPanelTarget } from '../window-ipc'
-import { drawers, fkey, floatWinByKey, placementByConv, setActiveConvId, win, type ConvDrawer } from './state'
+import {
+  drawers,
+  fkey,
+  floatWinByKey,
+  omniboxOverlays,
+  placementByConv,
+  setActiveConvId,
+  win,
+  type ConvDrawer,
+} from './state'
 import { applyLayout } from './layout'
 import { disposeBrowserTabEviction, persistTimers, scheduleColdBrowserEviction } from './browser'
 import { disposePanelEviction, scheduleColdPanelEviction } from './panels'
@@ -41,6 +50,8 @@ function destroyDrawer(convId: string, d: ConvDrawer): void {
   d.panelInactiveSince.clear()
   closeView(d.browserChromeView)
   d.browserChromeView = null
+  closeView(d.remoteBrowserView)
+  d.remoteBrowserView = null
   // Close conversation-owned OAuth windows during archive/delete/quit so none become orphaned (#560).
   for (const w of d.oauthWindows) {
     try {
@@ -63,6 +74,7 @@ export function disposeConversation(convId: string): void {
   }
   destroyDrawer(convId, d)
   drawers.delete(convId)
+  omniboxOverlays.delete(convId)
   disposeConversationResources(convId)
   for (const tab of placementByConv.get(convId)?.keys() ?? []) floatWinByKey.delete(fkey(convId, tab))
   placementByConv.delete(convId)
@@ -77,6 +89,7 @@ export function disposeDrawer(): void {
   disposeChatGptWebViews()
   for (const [convId, d] of drawers) destroyDrawer(convId, d)
   drawers.clear()
+  omniboxOverlays.clear()
   placementByConv.clear()
   floatWinByKey.clear()
   setActiveConvId(null)

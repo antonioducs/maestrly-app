@@ -2,15 +2,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import {
-  assertReviewerPathInside,
-  defineTool,
-  isBinaryExt,
-  isProbablyBinary,
-  mimeOf,
-  resolveInside,
-  type ToolContext,
-} from './util'
+import { defineTool, isBinaryExt, isProbablyBinary, mimeOf, resolveInside, type ToolContext } from './util'
 
 const MAX_READ_LINES = 2000
 const MAX_LINE_LENGTH = 2000
@@ -28,18 +20,17 @@ type ReadResult =
 async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<ReadResult> {
   const { abs, external } = resolveInside(ctx.cwd, args.path)
   if (external) await ctx.ask('external_directory', [abs], [abs])
-  const effectiveAbs = await assertReviewerPathInside(ctx, abs)
   const rel = path.relative(ctx.cwd, abs) || path.basename(abs)
   await ctx.ask('read', [rel])
 
-  const stat = await fs.stat(effectiveAbs)
+  const stat = await fs.stat(abs)
   if (stat.isDirectory()) {
     const offset = (args.offset ?? 1) - 1
     const limit = args.limit ?? 100
-    const names = await fs.readdir(effectiveAbs)
+    const names = await fs.readdir(abs)
     const entries = await Promise.all(
       names.map(async (name) => {
-        const s = await fs.stat(path.join(effectiveAbs, name)).catch(() => null)
+        const s = await fs.stat(path.join(abs, name)).catch(() => null)
         const type: 'file' | 'dir' = s?.isDirectory() ? 'dir' : 'file'
         return { name, type, mime: type === 'dir' ? 'application/x-directory' : mimeOf(name) }
       }),
@@ -50,8 +41,8 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Read
   }
 
   // File.
-  if (isBinaryExt(effectiveAbs)) throw new Error(`Unsupported binary file: ${rel}`)
-  const buf = await fs.readFile(effectiveAbs)
+  if (isBinaryExt(abs)) throw new Error(`Unsupported binary file: ${rel}`)
+  const buf = await fs.readFile(abs)
   if (isProbablyBinary(buf)) throw new Error(`Unsupported binary file: ${rel}`)
   let text: string
   try {
@@ -80,11 +71,7 @@ export const readTool = defineTool({
   name: 'read',
   description: "Reads a file's contents (paginated by lines) or lists a directory.",
   parameters: params,
-  execute: async (args, ctx) => {
-    const result = await run(args, ctx)
-    ctx.reviewer?.recordEvidence('read')
-    return result
-  },
+  execute: run,
   toModelText: (_args, r) => {
     if (r.kind === 'dir') {
       const lines = r.entries.map((e) => `${e.type === 'dir' ? '📁' : '📄'} ${e.name}`)

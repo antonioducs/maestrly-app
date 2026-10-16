@@ -13,13 +13,11 @@ import { editTool } from './edit'
 import { grepTool } from './grep'
 import { globTool } from './glob'
 import { webfetchTool } from './webfetch'
+import { webSearchTool } from './web-search'
 import { questionTool } from './question'
 import { todoWriteTool } from './todo'
 import { reviewPlanTool } from './review-plan'
 import { generateImageTool } from './generate-image'
-import { gitDiffTool } from './git-diff'
-import { readExecutionContextTool, searchExecutionContextTool } from './execution-context'
-import { submitReviewTool } from './submit-review'
 import {
   createWorkspaceTool,
   findGithubRepositoriesTool,
@@ -27,12 +25,26 @@ import {
   listConversationWorkspacesTool,
   startConversationsTool,
 } from './conversation-dispatch'
+import {
+  listConversationsTool,
+  readConversationTool,
+  reportToSourceTool,
+  sendToConversationTool,
+  waitConversationTool,
+} from './conversation-link'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
-import { CONVERSATION_DISPATCH_TOOL_NAMES, isHostToolReadOnly } from '../tool-policy'
+import {
+  CONVERSATION_DISPATCH_TOOL_NAMES,
+  CONVERSATION_LINK_TOOL_NAMES,
+  isHostToolReadOnly,
+  PARENT_ONLY_CONVERSATION_TOOL_NAMES,
+} from '../tool-policy'
 import { OPENAI_APPLY_PATCH_TOOL_NAME, OPENAI_LOCAL_SHELL_TOOL_NAME } from '../openai/native-tools'
+import { webSearchToolEnabled } from '../web-search/settings'
+import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 
 export const ALL_TOOLS: ToolDef<any, any>[] = [
   readTool,
@@ -42,19 +54,21 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   writeTool,
   editTool,
   webfetchTool,
+  webSearchTool,
   questionTool,
   todoWriteTool,
   reviewPlanTool,
   generateImageTool,
-  gitDiffTool,
-  searchExecutionContextTool,
-  readExecutionContextTool,
-  submitReviewTool,
   listConversationModelsTool,
   listConversationWorkspacesTool,
   startConversationsTool,
   findGithubRepositoriesTool,
   createWorkspaceTool,
+  listConversationsTool,
+  readConversationTool,
+  waitConversationTool,
+  sendToConversationTool,
+  reportToSourceTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 
@@ -69,23 +83,10 @@ const PLAN_TOOL_NAME = 'review_plan'
  * (generate_image requires imagegen toggle + connected ChatGPT subscription — see chat/image-gen.ts). */
 const OPT_IN_TOOL_NAMES = new Set<string>([
   'generate_image',
-  'git_diff',
-  'search_execution_context',
-  'read_execution_context',
-  'submit_review',
   // Only for a main turn admitted from text the person typed; runners add them via conversationDispatchRuntimeFor.
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
-])
-
-/** Exact built-in surface for a technically read-only reviewer turn. */
-export const REVIEWER_READONLY_TOOL_NAMES = new Set([
-  'read',
-  'grep',
-  'glob',
-  'git_diff',
-  'search_execution_context',
-  'read_execution_context',
-  'submit_review',
+  // Only for a main turn typed by the person or started by another conversation (conversationLinkRuntimeFor).
+  ...CONVERSATION_LINK_TOOL_NAMES,
 ])
 
 /** Capabilities that make an Agent subagent a worker instead of a read-only investigator. */
@@ -101,7 +102,7 @@ const PARENT_ONLY_CHILD_TOOL_NAMES = new Set([
   'list_delegations',
   'inspect_subagent',
   'cancel_delegation',
-  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 ])
 
 /**
@@ -233,7 +234,7 @@ export function selectSubagentToolNames(args: {
     'ask_question',
     'todo_write',
     'executor_report',
-    ...CONVERSATION_DISPATCH_TOOL_NAMES,
+    ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
   ]) {
     selected.delete(forbidden)
   }
@@ -260,6 +261,7 @@ export function builtinToolNamesForMode(mode: ChatBehavior): Set<string> {
         ? new Set([...READ_ONLY_TOOL_NAMES, PLAN_TOOL_NAME])
         : new Set(READ_ONLY_TOOL_NAMES)
   if (isBotMode()) selected.delete(PLAN_TOOL_NAME)
+  if (!webSearchToolEnabled()) selected.delete(WEB_SEARCH_TOOL_NAME)
   return selected
 }
 
@@ -292,6 +294,8 @@ export function buildTools(opts: {
   const out: ToolSet = {}
   for (const def of ALL_TOOLS) {
     if (def.name === PLAN_TOOL_NAME && isBotMode()) continue
+    // The single gate for `off`: subagent surfaces also derive from READ_ONLY_TOOL_NAMES directly.
+    if (def.name === WEB_SEARCH_TOOL_NAME && !webSearchToolEnabled()) continue
     if (opts.enabled && !opts.enabled.has(def.name)) continue
     out[def.name] = toAiTool(def, opts.makeCtx)
   }

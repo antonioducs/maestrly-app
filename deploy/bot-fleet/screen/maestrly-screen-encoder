@@ -1,0 +1,339 @@
+#!/opt/maestrly/screen/bin/python3
+"""Streams one region of an X display as H.264 and types the owner's input into it.
+
+Maestrly's display manager runs one per screen and talks to it over stdin and stdout: each message is a type byte, a
+big-endian u32 payload length and the payload (docs/superpowers/specs/2026-10-13-video-screens-design.md). Closing
+stdin stops it.
+"""
+import argparse
+import json
+import os
+import select
+import signal
+import struct
+import subprocess
+import sys
+import threading
+import time
+
+# pixelflux's native code prints its diagnostics on file descriptor 1, which would corrupt the message stream: keep a
+# private copy of stdout for messages and point descriptor 1 at stderr before pixelflux loads.
+_messages = os.fdopen(os.dup(1), 'wb', buffering=0)
+os.dup2(2, 1)
+sys.stdout = sys.stderr
+
+import pixelflux  # noqa: E402
+from Xlib import X, display as xdisplay  # noqa: E402
+from Xlib.ext import xfixes, xtest  # noqa: E402
+
+READY, FRAME, CURSOR, POINTER, CLIPBOARD, LOG = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+KEYFRAME, INVALIDATE, TUNE, POINTER_IN, WHEEL, KEY, CLIPBOARD_IN, WATCH, RELEASE = range(0x81, 0x8A)
+COMMAND_MAX = 1024 * 1024 + 64
+CLIPBOARD_MAX = 1024 * 1024
+# The viewer's letters already carry the case its locks give: forwarding a lock would turn it on here too, and the
+# display's lock stays off.
+LOCKS = {0xFFE5, 0xFFE6, 0xFF7F}
+SHIFT_L, SHIFTS = 0xFFE1, {0xFFE1, 0xFFE2}
+BUTTONS = ((1, 1), (2, 2), (4, 3))  # wire bit, X button: left, middle, right
+POINTER_HZ = 30
+_send_lock = threading.Lock()
+
+
+def send(kind, payload=b''):
+    data = memoryview(struct.pack('>BI', kind, len(payload)) + bytes(payload))
+    with _send_lock:
+        while data:
+            data = data[_messages.write(data):]
+
+
+def log(text):
+    send(LOG, text.encode('utf-8', 'replace')[:4096])
+
+
+def is_idr(au):
+    i = au.find(b'\x00\x00\x01')
+    while 0 <= i < len(au) - 3:
+        kind = au[i + 3] & 0x1F
+        if kind == 5:
+            return True
+        if kind == 1:
+            return False
+        i = au.find(b'\x00\x00\x01', i + 3)
+    return False
+
+
+class Input:
+    """XTEST input on a connection of its own, clamped to the region."""
+
+    def __init__(self, region):
+        self.d = xdisplay.Display()
+        self.x, self.y, self.w, self.h = region
+        self.buttons = 0
+        self.keys = {}
+        self.shift = 0
+        self.shift_code = self.d.keysym_to_keycode(SHIFT_L)
+        self.bound = {}
+        first = self.d.display.info.min_keycode
+        count = self.d.display.info.max_keycode - first + 1
+        mapping = self.d.get_keyboard_mapping(first, count)
+        # Keycodes with no symbols take the keysyms the keymap lacks, as x11vnc binds them.
+        self.spare = [first + i for i, syms in enumerate(mapping) if not any(syms)][-8:]
+
+    def pointer(self, x, y, buttons):
+        x, y = min(max(x, 0), self.w - 1), min(max(y, 0), self.h - 1)
+        xtest.fake_input(self.d, X.MotionNotify, x=self.x + x, y=self.y + y)
+        for bit, button in BUTTONS:
+            if (buttons ^ self.buttons) & bit:
+                xtest.fake_input(self.d, X.ButtonPress if buttons & bit else X.ButtonRelease, button)
+        self.buttons = buttons
+        self.d.sync()
+
+    def wheel(self, dx, dy):
+        for steps, negative, positive in ((dy, 4, 5), (dx, 6, 7)):
+            button = positive if steps > 0 else negative
+            for _ in range(min(abs(steps), 20)):
+                xtest.fake_input(self.d, X.ButtonPress, button)
+                xtest.fake_input(self.d, X.ButtonRelease, button)
+        self.d.sync()
+
+    def keycode(self, keysym):
+        for code, index in self.d.keysym_to_keycodes(keysym):
+            if index in (0, 1):
+                return code, index
+        if keysym in self.bound:
+            return self.bound[keysym], 0
+        held = set(self.keys.values())
+        free = [code for code in self.spare if code not in held]
+        if not free:
+            return None, 0
+        code = free[0]
+        for sym in [sym for sym, bound in self.bound.items() if bound == code]:
+            del self.bound[sym]
+        self.spare.remove(code)
+        self.spare.append(code)
+        self.d.change_keyboard_mapping(code, [(keysym, keysym)])
+        self.d.sync()
+        self.bound[keysym] = code
+        return code, 0
+
+    def key(self, keysym, down):
+        if keysym in LOCKS:
+            return
+        if keysym in SHIFTS:
+            self.shift = max(0, self.shift + (1 if down else -1))
+        if not down:
+            code = self.keys.pop(keysym, None)
+            if code is not None:
+                xtest.fake_input(self.d, X.KeyRelease, code)
+                self.d.sync()
+            return
+        if keysym in self.keys:
+            xtest.fake_input(self.d, X.KeyPress, self.keys[keysym])
+            self.d.sync()
+            return
+        code, level = self.keycode(keysym)
+        if code is None:
+            log(f'No keycode is free for keysym {keysym:#x}.')
+            return
+        # A character keysym carries its case: press or lift Shift around the key so it types that character.
+        adjust = keysym < 0xFF00 and (level == 1) != (self.shift > 0)
+        if adjust:
+            xtest.fake_input(self.d, X.KeyPress if level == 1 else X.KeyRelease, self.shift_code)
+        xtest.fake_input(self.d, X.KeyPress, code)
+        if adjust:
+            xtest.fake_input(self.d, X.KeyRelease if level == 1 else X.KeyPress, self.shift_code)
+        self.keys[keysym] = code
+        self.d.sync()
+
+    def release(self):
+        for code in self.keys.values():
+            xtest.fake_input(self.d, X.KeyRelease, code)
+        self.keys.clear()
+        self.shift = 0
+        for bit, button in BUTTONS:
+            if self.buttons & bit:
+                xtest.fake_input(self.d, X.ButtonRelease, button)
+        self.buttons = 0
+        self.d.sync()
+
+    def set_clipboard(self, data):
+        """Hands the text to xclip, which owns CLIPBOARD until another program does, and waits until it owns it."""
+        atom = self.d.intern_atom('CLIPBOARD')
+        before = self.d.get_selection_owner(atom)
+        try:
+            subprocess.run(['xclip', '-selection', 'clipboard', '-in', '-target', 'UTF8_STRING'], input=data,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            log(f'Could not set the clipboard: {error}')
+            return
+        # A paste typed right after this must find the new owner.
+        for _ in range(50):
+            if self.d.get_selection_owner(atom) != before:
+                return
+            time.sleep(0.01)
+
+
+class Watcher(threading.Thread):
+    """Reports the pointer while someone watches, and CLIPBOARD changes while the owner controls."""
+
+    def __init__(self, region):
+        super().__init__(daemon=True)
+        self.x, self.y, self.w, self.h = region
+        self.flags = 0
+        self.wake = threading.Event()
+
+    def watch(self, flags):
+        self.flags = flags
+        self.wake.set()
+
+    def run(self):
+        d = xdisplay.Display()
+        root = d.screen().root
+        d.xfixes_query_version()
+        d.xfixes_select_selection_input(root, d.intern_atom('CLIPBOARD'), xfixes.XFixesSetSelectionOwnerNotifyMask)
+        last = None
+        while True:
+            if not self.flags:
+                self.wake.wait()
+                self.wake.clear()
+                last = None
+            select.select([d], [], [], 1 / POINTER_HZ if self.flags & 1 else 0.5)
+            changed = False
+            for _ in range(d.pending_events()):
+                event = d.next_event()
+                if (event.type, getattr(event, 'sub_code', None)) == d.extension_event.SetSelectionOwnerNotify:
+                    changed = True
+            if changed and self.flags & 2:
+                read_clipboard()
+            if self.flags & 1:
+                p = root.query_pointer()
+                x, y = p.root_x - self.x, p.root_y - self.y
+                where = (x, y) if 0 <= x < self.w and 0 <= y < self.h else (-1, -1)
+                if where != last:
+                    last = where
+                    send(POINTER, struct.pack('>ii', *where))
+
+
+def read_clipboard():
+    try:
+        done = subprocess.run(['xclip', '-selection', 'clipboard', '-out', '-target', 'UTF8_STRING'],
+                              stdin=subprocess.DEVNULL, capture_output=True, timeout=2, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        log(f'Could not read the clipboard: {error}')
+        return
+    if done.returncode != 0:
+        return  # an owner without text, such as a copied image
+    if len(done.stdout) > CLIPBOARD_MAX:
+        send(CLIPBOARD, b'\x01')
+        return
+    send(CLIPBOARD, b'\x00' + done.stdout.decode('utf-8', 'replace').encode('utf-8'))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--display', required=True)
+    parser.add_argument('--region', required=True, help='X,Y,WIDTH,HEIGHT')
+    args = parser.parse_args()
+    try:
+        region = tuple(int(value) for value in args.region.split(','))
+    except ValueError:
+        region = ()
+    if len(region) != 4 or min(region) < 0 or region[2] == 0 or region[3] == 0:
+        parser.error('--region takes X,Y,WIDTH,HEIGHT')
+    os.environ['DISPLAY'] = args.display
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    settings = pixelflux.CaptureSettings()
+    for name, value in dict(capture_x=region[0], capture_y=region[1], capture_width=region[2],
+                            capture_height=region[3], codec='h264', video_fullframe=True, omit_stripe_headers=True,
+                            video_streaming_mode=False, capture_cursor=False, target_fps=30.0, video_crf=25,
+                            video_paintover_crf=18, video_paintover_burst_frames=3,
+                            # The session turns paint-over on once it has measured that the links carry its key
+                            # frame quickly: on a full frame it is a key frame of the whole region.
+                            use_paint_over_quality=False, paint_over_trigger_frames=10).items():
+        setattr(settings, name, value)
+    capture = pixelflux.ScreenCapture()
+    last_cursor = [None]
+
+    def on_cursor(kind, data, hot_x, hot_y):
+        if kind != 'png':
+            return
+        payload = struct.pack('>HH', max(0, hot_x), max(0, hot_y)) + bytes(data)
+        if payload != last_cursor[0]:
+            last_cursor[0] = payload
+            send(CURSOR, payload)
+
+    def on_frame(frame):
+        if frame.data_type != 1 or len(frame) == 0:
+            return
+        au = bytes(frame)
+        send(FRAME, struct.pack('>IiB', frame.frame_id & 0xFFFFFFFF, frame.reference_frame_id, 1 if is_idr(au) else 0)
+             + au)
+
+    keys = Input(region)
+    watcher = Watcher(region)
+    watcher.start()
+    capture.set_cursor_callback(on_cursor)
+    capture.start_capture(on_frame, settings)
+    info = capture.stream_info() or {}
+    send(READY, json.dumps({'width': region[2], 'height': region[3], 'capture': info.get('capture'),
+                            'encoder': info.get('encoder')}).encode())
+    stdin = sys.stdin.buffer
+    try:
+        while True:
+            header = stdin.read(5)
+            if len(header) < 5:
+                return 0
+            kind, length = struct.unpack('>BI', header)
+            if length > COMMAND_MAX:
+                log(f'Command of {length} bytes is too large.')
+                return 2
+            payload = stdin.read(length) if length else b''
+            if len(payload) < length:
+                return 0
+            try:
+                if kind == KEYFRAME:
+                    capture.request_idr_frame()
+                elif kind == INVALIDATE:
+                    capture.invalidate_reference(struct.unpack('>I', payload)[0])
+                elif kind == TUNE:
+                    tune = json.loads(payload)
+                    fps = float(min(max(tune['fps'], 1), 60))
+                    settings.video_crf = int(min(max(tune['crf'], 0), 51))
+                    settings.video_paintover_crf = int(min(max(tune['paintoverCrf'], 0), 51))
+                    settings.video_paintover_burst_frames = int(min(max(tune['paintoverBurst'], 0), 10))
+                    settings.use_paint_over_quality = tune['paintover'] is True
+                    settings.paint_over_trigger_frames = int(min(max(tune['paintoverAfterFrames'], 1), 600))
+                    changed = fps != settings.target_fps
+                    settings.target_fps = fps
+                    capture.update_tunables(settings)
+                    if changed:
+                        capture.update_framerate(fps)
+                elif kind == POINTER_IN:
+                    keys.pointer(*struct.unpack('>HHB', payload))
+                elif kind == WHEEL:
+                    keys.wheel(*struct.unpack('>hh', payload))
+                elif kind == KEY:
+                    keysym, down = struct.unpack('>IB', payload)
+                    keys.key(keysym, down == 1)
+                elif kind == CLIPBOARD_IN:
+                    keys.set_clipboard(payload)
+                elif kind == WATCH:
+                    watcher.watch(payload[0] if payload else 0)
+                elif kind == RELEASE:
+                    keys.release()
+                else:
+                    log(f'Unknown command {kind:#x}.')
+                    return 2
+            except (struct.error, ValueError, KeyError, TypeError) as error:
+                log(f'Invalid command {kind:#x}: {error}')
+                return 2
+    finally:
+        try:
+            keys.release()
+        except Exception:  # noqa: BLE001 - the display may be gone already
+            pass
+        capture.stop_capture()
+
+
+if __name__ == '__main__':
+    sys.exit(main())

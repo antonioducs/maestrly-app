@@ -81,6 +81,7 @@ import {
   FLEET_RUNTIME_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
   fleetTargetKey,
 } from '../../src/shared/fleet-targets'
 import { fleetReducer, initialFleetState, type FleetState } from '../../src/renderer/lib/fleet/state'
@@ -88,7 +89,7 @@ import {
   botEnvironments,
   groupBotsByEnvironment,
   isWorkspacesEnvironment,
-  workspacesEnvironment,
+  workspacesEnvironments,
 } from '../../src/renderer/lib/fleet/selectors'
 import { memorySegments } from '../../src/renderer/lib/fleet/format'
 import {
@@ -117,6 +118,10 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
     setup: { step: 'ready', error: null, errorMessage: null },
     resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
     memoryLimitBytes: null,
+    cpuLimit: null,
+    idleStopMinutes: null,
+    tint: null,
+    isolation: null,
     compaction: null,
     appVersion: '1.0.0',
     capabilities: ['provisioning', 'environments'],
@@ -558,17 +563,19 @@ describe('environment IPC', () => {
     expect(mocks.call).not.toHaveBeenCalled()
   })
 
-  it('opens bot areas and the environment screen, keeping older gateways and views on the browser area', async () => {
+  it('opens bot areas and the environment screen, and needs a gateway that streams them as video', async () => {
     const ipc = register()
+    // A gateway from before video screens opens none, not even a bot's browser area.
+    for (const features_ of [[], ['environments']]) {
+      features.list = features_
+      for (const target of ['scout', { botId: 'scout', surface: 'apps' }, { environmentId: 'work' }])
+        expect(() => ipc.mutate('fleet:screenOpen', target, 'view')).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    }
+    expect(mocks.openScreen).not.toHaveBeenCalled()
+    features.list = ['environments', 'video-screens']
+    // A bare bot id is that bot's browser area, as the views from before environments open it.
     await ipc.mutate('fleet:screenOpen', 'scout', 'view')
     await ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'browser' }, 'control')
-    expect(() => ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).toThrow(
-      FLEET_ENVIRONMENTS_UNSUPPORTED
-    )
-    expect(() => ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'view')).toThrow(
-      FLEET_ENVIRONMENTS_UNSUPPORTED
-    )
-    features.list = ['environments']
     await ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'control')
     await ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')
     for (const [target, mode] of [
@@ -587,8 +594,48 @@ describe('environment IPC', () => {
     ])
   })
 
-  it('marks a screen conflict so the view can tell that the environment display is in use', async () => {
+  it("opens a workspaces conversation's computer and browser tile, and refuses malformed targets", async () => {
+    const ipc = register()
+    const conversationId = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
     features.list = ['environments']
+    expect(() =>
+      ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'view')
+    ).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    features.list = ['environments', 'video-screens']
+    await ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'control')
+    await ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'browser' }, 'view')
+    for (const target of [
+      { environmentId: 'workspaces', conversationId: 'ação', surface: 'apps' },
+      { environmentId: 'workspaces', conversationId, surface: 'desktop' },
+      { environmentId: 'workspaces', conversationId, surface: 'apps', extra: 1 },
+      { environmentId: 'Work Space', conversationId, surface: 'apps' },
+    ])
+      expect(() => ipc.mutate('fleet:screenOpen', target, 'view')).toThrow()
+    expect(mocks.openScreen.mock.calls.map(([, target, mode]) => [target, mode])).toEqual([
+      [{ environmentId: 'workspaces', conversationId, surface: 'apps' }, 'control'],
+      [{ environmentId: 'workspaces', conversationId, surface: 'browser' }, 'view'],
+    ])
+  })
+
+  it('asks for an update of a gateway that does not know conversation screens', async () => {
+    features.list = ['environments', 'video-screens']
+    const ipc = register()
+    const target = { environmentId: 'workspaces', conversationId: 'c-1', surface: 'apps' }
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Route not found'))
+    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_RESTART_TO_OPEN_SCREEN))
+    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow(FLEET_SCREEN_RESTART_REQUIRED)
+    // A missing environment is not an old gateway, nor is a bot's missing route.
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Environment not found'))
+    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow('Environment not found')
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Route not found'))
+    await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
+      'Route not found'
+    )
+  })
+
+  it('marks a screen conflict so the view can tell that the environment display is in use', async () => {
+    features.list = ['environments', 'video-screens']
     const ipc = register()
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_SCREEN_CONTROLLED))
     await expect(ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')).rejects.toThrow(
@@ -743,10 +790,15 @@ describe('environment screens', () => {
     await bridge.openScreen(owner, 'scout', 'view')
     await bridge.openScreen(owner, { botId: 'scout', surface: 'apps' }, 'control')
     await bridge.openScreen(owner, { environmentId: 'work' }, 'control')
+    await bridge.openScreen(owner, { environmentId: 'workspaces', conversationId: 'c-1', surface: 'browser' }, 'view')
     expect(call.mock.calls).toEqual([
       ['botScreenTicket', { params: { id: 'scout' }, body: { mode: 'view', surface: 'browser' } }],
       ['botScreenTicket', { params: { id: 'scout' }, body: { mode: 'control', surface: 'apps' } }],
       ['environmentScreenTicket', { params: { eid: 'work' }, body: { mode: 'control' } }],
+      [
+        'conversationScreenTicket',
+        { params: { eid: 'workspaces', cid: 'c-1' }, body: { mode: 'view', surface: 'browser' } },
+      ],
     ])
     bridge.closeAll()
   })
@@ -879,8 +931,10 @@ describe('workspaces environment', () => {
     const all = [environment('work', 'Work'), host, environment('home', 'Home')]
     expect(isWorkspacesEnvironment(host)).toBe(true)
     expect(botEnvironments(all).map((item) => item.id)).toEqual(['work', 'home'])
-    expect(workspacesEnvironment(all)).toBe(host)
-    expect(workspacesEnvironment([environment('work')])).toBeNull()
+    // Several, one per scope, by name.
+    const company = environment('company', 'Company', { kind: 'workspaces' })
+    expect(workspacesEnvironments([...all, company])).toEqual([company, host])
+    expect(workspacesEnvironments([environment('work')])).toEqual([])
     // Bot lists never offer it: not as a group, and not as a place a bot could be listed under.
     const grouped = groupBotsByEnvironment(all, [bot('coder', { environmentId: 'work' })])
     expect(grouped.groups.map((group) => group.environment.id)).toEqual(['home', 'work'])
@@ -903,10 +957,63 @@ describe('workspaces environment', () => {
     ])
   })
 
+  it('is created with its name, color, limits and idle stop on a server with scopes, and only the name otherwise', async () => {
+    const { mutate } = register()
+    const input = { name: 'Company A', tint: '#4c9a87', memoryLimitBytes: null, cpuLimit: 2, idleStopMinutes: 60 }
+    features.list = ['environments', 'workspaces-host']
+    mocks.call.mockResolvedValue(host)
+    await mutate('fleet:createWorkspaces', input)
+    features.list = ['environments', 'workspaces-host', 'workspaces-environments']
+    await mutate('fleet:createWorkspaces', input)
+    expect(calls()).toEqual([
+      [
+        'environmentsCreate',
+        { body: { name: 'Company A', memoryLimitBytes: null, kind: 'workspaces', idempotencyKey: KEY } },
+      ],
+      [
+        'environmentsCreate',
+        {
+          body: {
+            name: 'Company A',
+            memoryLimitBytes: null,
+            kind: 'workspaces',
+            cpuLimit: 2,
+            idleStopMinutes: 60,
+            tint: '#4c9a87',
+            idempotencyKey: KEY,
+          },
+        },
+      ],
+    ])
+    for (const bad of [
+      { name: '' },
+      { name: 'X', cpuLimit: 0.3 },
+      { name: 'X', idleStopMinutes: 5 },
+      { name: 'X', root: '/' },
+    ])
+      expect(() => mutate('fleet:createWorkspaces', bad), JSON.stringify(bad)).toThrow()
+  })
+
+  it('changes the settings of scopes only on a server that has them', async () => {
+    const { mutate } = register()
+    features.list = ['environments', 'workspaces-host']
+    for (const patch of [{ cpuLimit: 2 }, { idleStopMinutes: 60 }, { tint: '#4c9a87' }, { hostFolder: 'own' }])
+      expect(() => mutate('fleet:patchEnvironment', 'work', patch), JSON.stringify(patch)).toThrow(
+        'FLEET_SCOPES_UNSUPPORTED'
+      )
+    expect(mocks.call).not.toHaveBeenCalled()
+    features.list = ['environments', 'workspaces-host', 'workspaces-environments']
+    mocks.call.mockResolvedValue(host)
+    await mutate('fleet:patchEnvironment', 'work', { hostFolder: 'own' })
+    expect(calls()).toEqual([['environmentPatch', { params: { eid: 'work' }, body: { hostFolder: 'own' } }]])
+  })
+
   it('reaches its IPC channel from the preload', async () => {
     const invoke = vi.spyOn(ipcRenderer, 'invoke').mockResolvedValue(host)
     expect(await fleetApi.fleetCreateWorkspaces()).toBe(host)
     expect(invoke).toHaveBeenCalledWith('fleet:createWorkspaces')
+    expect(await fleetApi.fleetCreateWorkspaces({ name: 'Personal' })).toBe(host)
+    expect(invoke).toHaveBeenLastCalledWith('fleet:createWorkspaces', { name: 'Personal' })
     invoke.mockRestore()
   })
 })
@@ -944,6 +1051,21 @@ describe('environment memory', () => {
         ['system', 'system', '', 0.1875, 'var(--muted-foreground)'],
       ]
     )
+  })
+
+  it("colors an environment with the color chosen for it, before its bots' and for one with none", () => {
+    const segments = memorySegments(
+      host,
+      [bot('writer', { environmentId: 'work', tint: '#00bb00' })],
+      [
+        environment('work', 'Work', { tint: '#4c9a87', resources: resources(1) }),
+        environment('personal', 'Personal', { kind: 'workspaces', tint: '#c29a43', resources: resources(1) }),
+      ]
+    )
+    expect(segments.slice(0, 2).map((segment) => [segment.id, segment.tint])).toEqual([
+      ['work', '#4c9a87'],
+      ['personal', '#c29a43'],
+    ])
   })
 
   it('keeps one segment per bot for gateways without environments', () => {

@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import readline from 'node:readline'
 import { z } from 'zod'
-import { assertReviewerPathInside, defineTool, isBinaryExt, resolveInside, type ToolContext } from './util'
+import { defineTool, isBinaryExt, resolveInside, type ToolContext } from './util'
 
 // Do not skip all dot-directories (keep .github/.vscode searchable); list LARGE dot-directories by name.
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.cache', 'coverage', '.turbo', '.agents', '.claude', '.venv', '.idea', '.vs', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', '.svn', '.hg', '.terraform'])
@@ -179,7 +179,6 @@ async function runNode(args: z.infer<typeof params>, ctx: ToolContext, root: str
 async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Match[]> {
   const { abs: root, external } = resolveInside(ctx.cwd, args.path ?? '.')
   if (external) await ctx.ask('external_directory', [root], [root])
-  const effectiveRoot = await assertReviewerPathInside(ctx, root)
   await ctx.ask('grep', [args.pattern])
 
   let re: RegExp
@@ -189,18 +188,14 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Matc
     throw new Error(`Invalid regex: ${(e as Error).message}`)
   }
   const limit = args.limit ?? 500
-  return (await runRipgrep(args, ctx, effectiveRoot, limit)) ?? runNode(args, ctx, effectiveRoot, re, limit)
+  return (await runRipgrep(args, ctx, root, limit)) ?? runNode(args, ctx, root, re, limit)
 }
 
 export const grepTool = defineTool({
   name: 'grep',
   description: "Searches a regex in the project's file contents (ignores .git/node_modules/dist).",
   parameters: params,
-  execute: async (args, ctx) => {
-    const result = await run(args, ctx)
-    ctx.reviewer?.recordEvidence('search')
-    return result
-  },
+  execute: run,
   toModelText: (_args, matches) => {
     if (matches.length === 0) return 'No matches.'
     const byFile = new Map<string, Match[]>()

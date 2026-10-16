@@ -17,6 +17,8 @@ import { TerminalViewers, xdotoolActivate, xdotoolRaise, type TerminalViewerProc
 export interface BotDesktopHooks {
   /** Opens the bot conversation's browser window on the environment display, with its first tab when it has none. */
   floatBrowser?(conversationId: string): void
+  /** The folder **Files** opens: the home folder unless this says otherwise (a conversation's working folder). */
+  filesFolder?(conversationId: string): string
 }
 /** How long showing the browser waits for its presenter to connect, for example right after the display started. */
 const PRESENTER_WAIT_MS = 5_000
@@ -102,6 +104,8 @@ export async function startBotDesktop(
     presenter.present({ activate })
   }
   const terminals = desktopTerminals()
+  /** The file managers this desktop opened while they run: their windows are the desktop's own. */
+  const filesPids = new Set<number>()
   /** Keeps a busy bot's windows from flickering, and its tools from taking the screen during a takeover. */
   const gate = new PresentationGate()
   const viewers = new TerminalViewers({
@@ -118,7 +122,13 @@ export async function startBotDesktop(
     terminals,
     viewers,
     openFiles: async () => {
-      spawnOnDisplay('pcmanfm', [os.homedir()], env)
+      const conversationId = target.conversationId()
+      const folder = (conversationId && hooks.filesFolder?.(conversationId)) || os.homedir()
+      const files = spawnOnDisplay('pcmanfm', [folder], env)
+      const pid = files.pid
+      if (pid === undefined) return
+      filesPids.add(pid)
+      void files.exited.then(() => filesPids.delete(pid))
     },
     // The link opener is also the $BROWSER of the bot's own programs: the window comes forward without the keyboard.
     openUrl: async (conversationId, url) => {
@@ -156,6 +166,7 @@ export async function startBotDesktop(
   }
   log(`Desktop of bot ${target.botId} listens on ${path.basename(env.MAESTRLY_DESKTOP_SOCKET)}`)
   return {
+    ownProcessIds: () => [...viewers.processIds(), ...filesPids],
     present: (request) => {
       if (!gate.allow(request, target.hold())) return
       if (request.app === 'browser') {

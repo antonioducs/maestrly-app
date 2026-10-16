@@ -1,6 +1,6 @@
 /** Second renderer for native drawer panels and floating windows. Resolve the persisted locale before
  * mounting, subscribe to local events, and retain panel state when its native view is reparented. */
-import { StrictMode, useEffect, useState } from 'react'
+import { StrictMode, useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { I18nextProvider, useTranslation } from 'react-i18next'
 import { usePanelMemoryEviction } from '@/lib/panel-memory-eviction'
@@ -8,6 +8,7 @@ import { NotesPanel } from '@/components/notes/NotesPanel'
 import { ReviewPanel } from '@/components/ReviewPanel'
 import { PlanPanel } from '@/components/PlanPanel'
 import { BrowserChrome } from '@/components/BrowserChrome'
+import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
 import { TerminalTabs } from '@/components/TerminalTabs'
 import { FilesPanel } from '@/components/files/FilesPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -16,6 +17,7 @@ import { HostProvider, useHostApi } from '@/lib/hosts/host-context'
 import type { PlanReceived } from '../preload'
 import { hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { BROWSER_CHROME_HEIGHT } from '../shared/browser-omnibox'
 import './styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -84,6 +86,34 @@ function TerminalPanelHost({ conv }: { conv: string }) {
   return <TerminalTabs convId={conv} active={fullSpeed} />
 }
 
+/**
+ * A remote host's browser out of the drawer, in a popup or a floating window: its chrome over the page the host
+ * streams. The page streams only while main says this panel is shown.
+ */
+function RemoteBrowserPanel({ conv }: { conv: string }) {
+  const [active, setActive] = useState(false)
+  useEffect(
+    () =>
+      window.api.onBrowserPanelActivity((state) => {
+        if (state.convId === convKey) setActive(state.fullSpeed)
+      }),
+    []
+  )
+  const addressRef = useRef<HTMLInputElement>(null)
+  const focusAddress = useCallback(() => {
+    addressRef.current?.focus()
+    addressRef.current?.select()
+  }, [])
+  return (
+    <div className="flex h-full flex-col">
+      <BrowserChrome convId={conv} addressRef={addressRef} />
+      <div className="relative min-h-0 flex-1">
+        <RemoteBrowserSurface convId={conv} active={active} onFocusAddress={focusAddress} />
+      </div>
+    </div>
+  )
+}
+
 /** A panel of a remote host's conversation is mounted again each time the host answers again. */
 function HostPanel() {
   const info = useHostInfo()
@@ -111,7 +141,12 @@ function PanelRoot() {
     case 'plan':
       return <PlanPanelHost conv={conv} />
     case 'browser':
-      return <BrowserChrome convId={conv} />
+      // This computer's floating browser has native pages below this chrome; a remote host's is drawn here whole.
+      return host === LOCAL_HOST_ID ? (
+        <BrowserChrome convId={conv} host="floating" height={BROWSER_CHROME_HEIGHT} />
+      ) : (
+        <RemoteBrowserPanel conv={conv} />
+      )
     case 'terminal':
       return <TerminalPanelHost conv={conv} />
     case 'files':

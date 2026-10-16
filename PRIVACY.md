@@ -18,6 +18,12 @@ Google Antigravity ACP server keeps each Google account's sign-in in a file
 inside the profile, in a directory with owner-only permissions rather than
 operating-system encryption.
 
+The mobile app keeps each paired server's device token in the iOS Keychain or
+the Android Keystore. The list of paired servers, preferences, and messages not
+yet sent stay in the app's storage on the phone. The app talks only to the bot
+servers you paired and, for notifications, to the push services below. It has no
+telemetry. See [Mobile app](docs/mobile.md#data-on-the-phone).
+
 Logs stay local unless deliberately shared. Redaction cannot remove every
 sensitive filename, project name, path, model name, or content excerpt; review
 and sanitize diagnostics before posting them.
@@ -33,10 +39,15 @@ and sanitize diagnostics before posting them.
 | Model metadata | `models.dev` may receive metadata requests for model limits and pricing. |
 | Git and GitHub | Remote operations contact the selected Git host or GitHub. |
 | Browser and web tools | Navigation and fetches contact their selected destinations. |
+| Web search | Search queries go to the provider selected in Settings → Tools → Web search: Tavily (`api.tavily.com`), Brave Search (`api.search.brave.com`), OpenAI through your ChatGPT subscription, or DuckDuckGo (`html.duckduckgo.com`). Automatic mode can try them in that order. Tavily and Brave keys are stored in the operating-system keyring. |
+| Browser address bar | Text typed in the drawer browser's address bar goes to Google's suggestion service (`suggestqueries.google.com`) without cookies, except URLs with a scheme, local hosts, and IP addresses. Favicons of visited pages are fetched with the browser's session. Browsing history stays in the local profile. |
 | MCP | HTTP servers receive requests at their configured URLs; stdio servers run locally but can make their own network requests. |
 | Skills and runtimes | Searches and installs can contact skills.sh, GitHub, npm, OpenAI asset hosts, and configured upstream sources. |
 | Embedded editor | Initial VS Code CLI/server setup can contact Microsoft's download service. The editor server binds to loopback with a token. |
 | Local ML | Inference runs locally; runtime/model preparation may download assets from npm, native dependency hosts, and Hugging Face. |
+| Mobile notifications | When you turn them on, the phone gets a push token from Apple or Google through Expo and gives it to each paired server. The server sends notifications through Expo's push service to Apple or Google; each carries the bot's name or the chat's title and a fixed phrase, never message content. |
+| Interactive answers | Interfaces in answers, on a computer or on a phone, may load images, video and audio from any web address, and libraries and fonts from a few public CDNs. Those servers see the device's IP address and the addresses requested. |
+| Mobile dictation | The phone's speech recognition (Apple's, Google's, or the phone maker's) turns your speech into text and may process the audio on its servers. Maestrly and your server receive only the text you send. |
 | Voice dictation | Audio is transcribed locally and never uploaded. The voice model is downloaded from Hugging Face (`huggingface.co` and its `hf.co` CDN) only after you confirm; a sent transcription goes to the provider like any typed message. |
 
 Providers and integrations apply their own privacy and retention policies.

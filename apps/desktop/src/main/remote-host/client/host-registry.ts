@@ -53,10 +53,11 @@ export const DIRECT_HOST_ID: HostId = 'direct/host'
 
 const TICKET_PATH = /^\/v1\/bridge\?ticket=[A-Za-z0-9_-]+$/
 
-type Remote = { connection: HostConnection; label: string; environment: FleetEnvironment | null }
+type Remote = { connection: HostConnection; label: string; server: string; environment: FleetEnvironment | null }
 
 /**
- * The hosts this computer's windows can show: this computer, and the workspaces environment of the paired server.
+ * The hosts this computer's windows can show: this computer, and the workspaces environments of the paired server, one
+ * per scope of the owner's work, each named after its environment.
  * A remote host has a connection while its environment runs; stopped, starting or failed, it stays listed as offline
  * with its environment's state, so the window can offer to start it.
  */
@@ -71,7 +72,12 @@ export class HostRegistry {
     const direct = this.deps.direct
     if (direct) {
       const connection = this.connection(DIRECT_HOST_ID, async () => direct.openSocket(direct.host))
-      this.remotes.set(DIRECT_HOST_ID, { connection, label: new URL(direct.host.origin).host, environment: null })
+      this.remotes.set(DIRECT_HOST_ID, {
+        connection,
+        label: new URL(direct.host.origin).host,
+        server: '',
+        environment: null,
+      })
       connection.start()
     }
     this.stopFleet = this.deps.fleet.onChange(() => this.sync())
@@ -90,6 +96,8 @@ export class HostRegistry {
       id: LOCAL_HOST_ID,
       remote: false,
       label: '',
+      server: '',
+      tint: null,
       state: 'online',
       epoch: 0,
       os: this.deps.local.os,
@@ -97,6 +105,7 @@ export class HostRegistry {
       desktopEffects: true,
       editor: true,
       browser: true,
+      computer: false,
       environment: null,
       hostVersion: null,
     }
@@ -110,6 +119,8 @@ export class HostRegistry {
       id,
       remote: true,
       label: remote.label,
+      server: remote.server,
+      tint: environment?.tint ?? null,
       state,
       epoch,
       os: info?.os ?? 'linux',
@@ -117,6 +128,7 @@ export class HostRegistry {
       desktopEffects: info?.desktopEffects ?? false,
       editor: info?.editor ?? false,
       browser: info?.browser ?? false,
+      computer: info?.computer ?? false,
       environment: environment && {
         id: environment.id,
         lifecycle: environment.lifecycle,
@@ -194,14 +206,21 @@ export class HostRegistry {
       remote.connection.stop()
       this.remotes.delete(id)
     }
-    const label = fleet.getConnection().hostname ?? ''
+    const server = fleet.getConnection().hostname ?? ''
     for (const [id, environment] of wanted) {
       let remote = this.remotes.get(id)
       if (!remote) {
-        remote = { connection: this.connection(id, () => this.gatewaySocket(environment.id)), label, environment }
+        remote = {
+          connection: this.connection(id, () => this.gatewaySocket(environment.id)),
+          label: environment.name,
+          server,
+          environment,
+        }
         this.remotes.set(id, remote)
       }
-      remote.label = label || environment.name
+      // A server holds several environments, one per scope: each host is named after its own.
+      remote.label = environment.name
+      remote.server = server
       remote.environment = environment
       // A bridge exists only while the environment runs: restarted or updated, it is dialed again from scratch.
       if (environment.lifecycle === 'running') remote.connection.start()

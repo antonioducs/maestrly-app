@@ -26,22 +26,30 @@ import {
   applyLayout,
   captureSlotView,
   navigateBrowser,
+  outOfSlotTabsOf,
+  queryOmnibox,
+  removeBrowserHistoryEntry,
   reorderBrowserTab,
   reloadAllVSCode,
   setLayout,
   setDialogSuppressionOwners,
+  setOmniboxOverlay,
   showVSCodeLoadingAll,
   switchBrowserTab,
   toggleBrowserDevTools,
   type Bounds,
   type PanelTab,
 } from './drawer-manager'
+import { setBrowserKeyboardFocus } from './browser-hotkeys'
+import type { OmniboxQueryResult } from '../shared/browser-omnibox'
 import { getMergedSettingsJson, getVSCodeUrl, restartVSCodeServer, waitForEditorReady } from './vscode/vscode-server'
 import { setVisibleConversation } from './selection-bridge'
 import { getConversation, patchConvUiPrefs, type FloatingBounds, type FloatTab } from './store'
 import { receiveMemoryEvictionReady } from './window-ipc'
+import { setRemoteConversationLabels } from './remote-conversation-labels'
 import type { IpcRegistrar } from './ipc-registrar'
 import { createDialogSuppressionLeases } from './drawer/dialog-suppression'
+import { openComputerForViewer } from './remote-host/server/computers-registry'
 import {
   acknowledgeBrowserFrame,
   chooseBrowserStreamOption,
@@ -50,9 +58,12 @@ import {
   inputBrowserStream,
   pasteBrowserStream,
   resizeBrowserStream,
+  setBrowserStreamTransport,
   startBrowserStream,
   stopBrowserStream,
 } from './drawer/browser-stream'
+
+const EMPTY_OMNIBOX_RESULT: OmniboxQueryResult = { history: [], tabs: [], searchSuggestions: [] }
 
 export interface DrawerIpcDeps {
   loadVSCodeFolder: (convId: string, folder: string) => Promise<void>
@@ -112,7 +123,32 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   reg.mon('drawer:tab-close', (_e, convId: string, id: string) => closeBrowserTab(convId, id))
   reg.mon('drawer:tab-switch', (_e, convId: string, id: string) => switchBrowserTab(convId, id))
   reg.mon('drawer:tab-reorder', (_e, convId: string, from: number, to: number) => reorderBrowserTab(convId, from, to))
-  reg.mon('drawer:navigate', (_e, convId: string, url: string) => navigateBrowser(convId, url))
+  reg.mon('drawer:navigate', (_e, convId: string, url: string, options?: { typed?: unknown }) =>
+    navigateBrowser(convId, url, { typed: options?.typed === true })
+  )
+  // Address bar: history and tab candidates, optionally with Google suggestions (network egress, so guarded).
+  reg.mhandle('drawer:omnibox-query', (event, convId: unknown, text: unknown, options: unknown) => {
+    if (typeof convId !== 'string' || typeof text !== 'string') return EMPTY_OMNIBOX_RESULT
+    const opts = options && typeof options === 'object' ? (options as { search?: unknown; locale?: unknown }) : {}
+    return queryOmnibox(
+      convId,
+      text,
+      { search: opts.search === true, ...(typeof opts.locale === 'string' ? { locale: opts.locale } : {}) },
+      event.sender.id
+    )
+  })
+  // Suggestions over the native page: frozen frame, then the page moves offscreen until closed.
+  reg.mhandle('drawer:omnibox-overlay', (event, convId: unknown, mode: unknown) => {
+    if (typeof convId !== 'string' || (mode !== 'prepare' && mode !== 'open' && mode !== 'close')) return null
+    return setOmniboxOverlay(convId, mode, event.sender)
+  })
+  reg.mon('drawer:history-remove', (_e, url: unknown) => {
+    if (typeof url === 'string') removeBrowserHistoryEntry(url)
+  })
+  // The main window catches Cmd/Ctrl+T and W only while its renderer reports the keyboard in a browser.
+  reg.mon('drawer:browser-keyboard-focus', (event, focused: unknown) => {
+    setBrowserKeyboardFocus(event.sender, focused === true)
+  })
   reg.mon('drawer:back', (_e, convId: string) => browserBack(convId))
   reg.mon('drawer:forward', (_e, convId: string) => browserForward(convId))
   reg.mon('drawer:reload', (_e, convId: string) => browserReload(convId))
@@ -126,8 +162,11 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
   // The browser streamed to a remote viewer (drawer/browser-stream): each call checks that it comes from the
   // viewer's renderer through the host bridge, and the stream it names is that viewer's.
-  reg.mhandle('drawer:browser-stream-start', (e, convId: unknown, width: unknown, height: unknown) =>
-    startBrowserStream(e.sender, convId, width, height)
+  reg.mhandle('drawer:browser-stream-start', (e, convId: unknown, width: unknown, height: unknown, options: unknown) =>
+    startBrowserStream(e.sender, convId, width, height, options)
+  )
+  reg.mon('drawer:browser-stream-transport', (e, convId: unknown, streamId: unknown, transport: unknown) =>
+    setBrowserStreamTransport(e.sender, convId, streamId, transport)
   )
   reg.mon('drawer:browser-stream-resize', (e, convId: unknown, streamId: unknown, width: unknown, height: unknown) =>
     resizeBrowserStream(e.sender, convId, streamId, width, height)
@@ -153,6 +192,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   reg.mon('drawer:browser-popup-close', (e, convId: unknown, streamId: unknown) =>
     closeBrowserStreamPopup(e.sender, convId, streamId)
   )
+  // The conversation's computer on a workspaces host, which another computer's Computer tab opens.
+  reg.mhandle('drawer:computer-open', (e, convId: unknown) => openComputerForViewer(e.sender, convId))
   // loadVSCodeFolder owns serve-web startup, settings, URL, and the loading page (#318), allowing
   // popup-manager to reuse the flow when opening a cold editor and resolving cwd itself.
   reg.mhandle('drawer:load-vscode', async (_e, convId: string, folder: string) => {
@@ -177,7 +218,19 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     await waitForEditorReady().catch(() => {}) // wait for the new server to respond; continue on timeout
     reloadAllVSCode(getVSCodeUrl, settingsJson)
   })
-  reg.mon('drawer:dispose-conversation', (_e, convId: string) => disposeConversation(convId))
+  // The window drops a conversation this computer does not store (a remote host's that left its host's list): its
+  // floating windows and popups close before its views, as for one of this computer's.
+  reg.mon('drawer:dispose-conversation', (_e, convId: unknown) => {
+    if (typeof convId !== 'string' || !convId) return
+    floatingManager.disposeConversation(convId)
+    popupManager.disposeConversation(convId)
+    disposeConversation(convId)
+  })
+  // The names of remote hosts' conversations, which name their floating windows here.
+  reg.mon('drawer:remote-conversations', (_e, labels: unknown) => {
+    const changed = setRemoteConversationLabels(labels)
+    if (changed.length > 0) floatingManager.refreshFloatingTitles(new Set(changed))
+  })
 
   // ensure the docked React panel view when opening a panel tab
   reg.mon('drawer:ensure-panel', (_e, convId: string, tab: PanelTab) => {
@@ -186,8 +239,7 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
 
   // --- detach drawer tabs by reparenting their native views ---
   reg.mon('drawer:detach', (_e, convId: string, tab: FloatTab) => {
-    // The tools of a remote host's conversation stay docked in the drawer.
-    if (conversationTabAllowed(convId, tab) && !isRemoteConversation(convId)) floatingManager.detach(convId, tab)
+    if (conversationTabAllowed(convId, tab)) floatingManager.detach(convId, tab)
   })
   reg.mon('drawer:reattach', (_e, convId: string, tab: FloatTab) => floatingManager.reattach(convId, tab))
   reg.mon('drawer:set-float-bounds', (_e, convId: string, tab: FloatTab, bounds: FloatingBounds) =>
@@ -204,6 +256,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     visible: floatingManager.visibleFloatingTabsOf(convId),
   }))
   reg.handle('drawer:chatgpt-visible', (_e, convId: string) => isChatGptVisible(convId))
+  // The tabs a conversation has out of the drawer slot; drawer:placement follows each change.
+  reg.handle('drawer:placement-get', (_e, convId: string) => ({ convId, outOfSlot: outOfSlotTabsOf(convId) }))
   // App reports the visible conversation (null for project notes/settings), controlling floating windows and
   // popups. It also routes VS Code selections to the visible sibling when conversations share a cwd (#322).
   reg.mon('drawer:visible-conversation', (_e, convId: string | null) => {
@@ -217,7 +271,7 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     if (conversationTabAllowed(convId, tab)) deps.openPopup(convId, tab)
   })
   reg.mon('popup:open-floating', (_e, convId: string, tab: FloatTab) => {
-    if (!conversationTabAllowed(convId, tab) || isRemoteConversation(convId)) return
+    if (!conversationTabAllowed(convId, tab)) return
     // Release popup placement and stack state before floating-manager reparents the same view.
     if (popupManager.releasePopupForFloating(convId, tab)) floatingManager.detach(convId, tab)
   })

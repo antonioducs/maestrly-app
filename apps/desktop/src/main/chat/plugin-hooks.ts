@@ -35,8 +35,6 @@ export interface HookTurnContext {
   cwd: string
   mode: ChatBehavior
   permMode: ChatPermMode
-  /** A review-loop reviewer runs no hooks. */
-  reviewer: boolean
   signal: AbortSignal
   /** A JSONL transcript of the conversation's text, written on first use. */
   transcriptPath(): Promise<string>
@@ -49,13 +47,16 @@ const NOTICE_MAX_CHARS = 500
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
 
-/** Hooks run only where the conversation may run commands: Agent and Design modes, never a reviewer. */
-function canRunHooks(mode: ChatBehavior, reviewer: boolean): boolean {
-  return capabilityBehaviorFor(mode) === 'agent' && !reviewer
+/**
+ * Hooks run only where the conversation may run commands: Agent and Design modes. Code and plan reviewers run in Ask,
+ * so they never run hooks.
+ */
+function canRunHooks(mode: ChatBehavior): boolean {
+  return capabilityBehaviorFor(mode) === 'agent'
 }
 
-export function hooksActive(ctx: Pick<HookTurnContext, 'conversationId' | 'mode' | 'reviewer'>): boolean {
-  return canRunHooks(ctx.mode, ctx.reviewer) && listPluginHooks({ conversationId: ctx.conversationId }).length > 0
+export function hooksActive(ctx: Pick<HookTurnContext, 'conversationId' | 'mode'>): boolean {
+  return canRunHooks(ctx.mode) && listPluginHooks({ conversationId: ctx.conversationId }).length > 0
 }
 
 const TOOL_EVENTS: ReadonlySet<PluginHookEvent> = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'])
@@ -63,13 +64,13 @@ const TOOL_EVENTS: ReadonlySet<PluginHookEvent> = new Set(['PreToolUse', 'PostTo
 /** Whether a conversation has hooks on tool calls: then every tool call must go through Maestrly's tools. */
 export function hasToolHooks(conversationId: string, mode: ChatBehavior): boolean {
   return (
-    canRunHooks(mode, false) && listPluginHooks({ conversationId }).some((hook) => TOOL_EVENTS.has(hook.spec.event))
+    canRunHooks(mode) && listPluginHooks({ conversationId }).some((hook) => TOOL_EVENTS.has(hook.spec.event))
   )
 }
 
 /** Whether a conversation has hooks on one event (and may run them in this mode). */
 export function hasHookEvent(conversationId: string, mode: ChatBehavior, event: PluginHookEvent): boolean {
-  return canRunHooks(mode, false) && listPluginHooks({ conversationId }).some((hook) => hook.spec.event === event)
+  return canRunHooks(mode) && listPluginHooks({ conversationId }).some((hook) => hook.spec.event === event)
 }
 
 /** Whether a conversation has hooks on events only a Maestrly-run turn has: the session's start, prompts, turn ends. */
@@ -85,7 +86,7 @@ export function pluginsWithTurnHooks(conversationId: string): string[] {
  * tool calls, so hooks on the session's start, prompts or turn ends could not run. Null when nothing stops it.
  */
 export function companionHooksRefusal(conversationId: string, mode: ChatBehavior): string | null {
-  if (!canRunHooks(mode, false)) return null
+  if (!canRunHooks(mode)) return null
   const blocking = pluginsWithTurnHooks(conversationId)
   return blocking.length ? `companion-hooks-unsupported: ${blocking.join(', ')}` : null
 }
@@ -116,7 +117,7 @@ async function runEvent(
   fields: Record<string, unknown>,
   subject?: string
 ): Promise<HookAnswer[]> {
-  if (!canRunHooks(ctx.mode, ctx.reviewer)) return []
+  if (!canRunHooks(ctx.mode)) return []
   const hooks = listPluginHooks({ conversationId: ctx.conversationId }).filter(
     (hook) => hook.spec.event === event && matches(hook, subject)
   )
@@ -431,7 +432,6 @@ export function runnerHookContext(args: {
   cwd: string
   mode: ChatBehavior
   signal: AbortSignal
-  reviewerRuntime?: unknown
   emit?: (event: ChatStreamEvent) => void
 }): HookTurnContext {
   return {
@@ -442,7 +442,6 @@ export function runnerHookContext(args: {
     get permMode() {
       return getConvUiPrefs(args.conversationId).chat?.permMode ?? 'ask'
     },
-    reviewer: !!args.reviewerRuntime,
     signal: args.signal,
     transcriptPath: async () => writeHookTranscript(args.conversationId),
     notify: (notice) => {

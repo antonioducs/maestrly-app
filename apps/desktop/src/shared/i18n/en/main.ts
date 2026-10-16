@@ -19,6 +19,20 @@ export default {
     siblingSourceInvalid: 'A sibling conversation requires an active, single-repository source conversation.',
   },
 
+  conversationDispatch: {
+    confirmHeader: 'New conversations',
+    confirmQuestion: 'Start {{count}} new conversation(s)?\n{{list}}',
+    confirmItem: '• {{title}} ({{workspace}})',
+    confirmThisProject: 'this project',
+    confirmStart: 'Start',
+    confirmCancel: "Don't start",
+  },
+  conversationLink: {
+    sendHeader: 'Message another conversation',
+    sendQuestion: 'Send this message to “{{name}}”{{workspace}}?\n\n{{preview}}',
+    sendConfirm: 'Send',
+    sendCancel: "Don't send",
+  },
   debug: {
     extTimeout:
       'timeout: the extension did not respond. Open the “Code” tab of this conversation (VS Code must be loaded to control debugging).',
@@ -31,6 +45,9 @@ export default {
     terminalTitle: 'Terminal {{number}}',
     exitOk: 'The shell ended.',
     exitFailed: 'The shell ended with code {{code}}. Press any key to close this window.',
+  },
+  remoteComputer: {
+    untitled: 'Untitled conversation',
   },
   floating: {
     browser: 'Browser',

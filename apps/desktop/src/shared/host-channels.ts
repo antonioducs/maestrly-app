@@ -4,7 +4,9 @@
  * on the host's own desktop, which nobody sees on a server.
  */
 // `artifacts:` is this computer's artifacts center, which reaches the paired server's artifacts itself; `chat-window:`
-// opens a conversation of this computer in a window of its own; `transfers:` drives this computer's own transfer queue.
+// opens a conversation of this computer in a window of its own; `transfers:` drives this computer's own transfer queue;
+// `conversation-move:` is the move coordinator, which runs on this computer only (hosts serve
+// `conversation-move-endpoint:` to it instead).
 const LOCAL_ONLY_PREFIXES = [
   'fleet:',
   'update:',
@@ -19,6 +21,7 @@ const LOCAL_ONLY_PREFIXES = [
   'transfers:',
   // Signing in to an MCP server opens this computer's browser and listens on its loopback, whichever host runs it.
   'mcp-oauth:',
+  'conversation-move:',
 ]
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:info',
@@ -30,6 +33,10 @@ const LOCAL_ONLY_CHANNELS = new Set([
   'drawer:suppress-views',
   'drawer:layout',
   'drawer:capture-slot',
+  // The address-bar overlay moves this computer's native page; a remote host's page is streamed into the DOM.
+  'drawer:omnibox-overlay',
+  // Which renderer of this computer catches the browser tab shortcuts.
+  'drawer:browser-keyboard-focus',
   'drawer:load-vscode',
   'drawer:restart-vscode',
   'drawer:dispose-conversation',
@@ -39,6 +46,8 @@ const LOCAL_ONLY_CHANNELS = new Set([
   'drawer:set-float-bounds',
   'drawer:visible-conversation',
   'drawer:floating-state-get',
+  'drawer:placement-get',
+  'drawer:remote-conversations',
   'drawer:chatgpt-visible',
   'panel:memory-eviction-ready',
   'settings:onboarding-get',
@@ -74,9 +83,10 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Channels a host serves only to another computer: the conversation's browser, streamed to that computer's window, and
- * its editor, which that computer's main process opens and drives. A window of the host itself shows both natively, so
- * their handlers refuse every local sender.
+ * Channels a host serves only to another computer: the conversation's browser, streamed to that computer's window, its
+ * editor, which that computer's main process opens and drives, and its computer, which that window watches through
+ * the gateway. A window of the host itself shows the first two natively and has no computer, so their handlers refuse
+ * every local sender.
  */
 export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
   'editor:open',
@@ -93,6 +103,8 @@ export const REMOTE_VIEWER_CHANNELS: ReadonlySet<string> = new Set([
   'drawer:browser-paste',
   'drawer:browser-select-choose',
   'drawer:browser-popup-close',
+  'drawer:browser-stream-transport',
+  'drawer:computer-open',
 ])
 
 export type RemoteChannelRefusal = 'local-only' | 'desktop-effect'

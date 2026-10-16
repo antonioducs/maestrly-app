@@ -137,7 +137,7 @@ describe('transcript reasoning', () => {
   it('reads the event stream with reasoning items, which the gateway passes on to devices that ask', async () => {
     const event = { seq: 1, at, botId: 'alpha', type: 'transcript.upsert', item: reasoning }
     const origin = await instance({
-      'GET /v1/events?since=0&reasoning=1': (res) => {
+      'GET /v1/events?since=0&reasoning=1&chatAttention=1': (res) => {
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         res.end('id: 1\nevent: fleet\ndata: ' + JSON.stringify(event) + '\n\n')
       },

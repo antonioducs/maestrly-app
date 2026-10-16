@@ -63,6 +63,9 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
     ipcRenderer.invoke('fleet:settings:patchMcpOAuthAccount', environmentId, input),
   setMcpOAuthClient: (environmentId, input) =>
     ipcRenderer.invoke('fleet:settings:setMcpOAuthClient', environmentId, input),
+  failover: (environmentId, input) => ipcRenderer.invoke('fleet:settings:failover', environmentId, input),
+  setFailoverRoute: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setFailoverRoute', environmentId, input),
 }
 
 /**

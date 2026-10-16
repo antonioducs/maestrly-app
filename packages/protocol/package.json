@@ -1,7 +1,7 @@
 {
   "name": "@maestrly/protocol",
   "version": "0.1.0",
-  "description": "Public Maestrly platform contracts and runtime schemas",
+  "description": "Maestrly bot conversation contracts and runtime schemas",
   "license": "MIT",
   "private": false,
   "type": "module",

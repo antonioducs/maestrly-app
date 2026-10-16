@@ -32,6 +32,9 @@ import { APP_TOOL_POLICY } from '../../src/main/chat/tool-policy'
 import { toolsFromClient } from '../../src/main/chat/mcp'
 import { InstanceHoldManager, registerInstanceHoldGate } from '../../src/main/fleet/instance/gate'
 import { setConversationScreen, type ConversationScreen } from '../../src/main/conversation-screen'
+import { registerServerModeTools, SERVER_COMPUTER_DESCRIPTION } from '../../src/main/mcp/tools/server-computer'
+import type { ComputerOpenResult } from '../../src/shared/conversation-computer'
+import type { BotDisplay } from '../../src/main/fleet/instance/displays'
 
 async function clientForComputer(convId = 'primary') {
   const server = new McpServer({ name: 'computer-test', version: '1' })
@@ -544,5 +547,122 @@ describe('computer tools on a conversation screen', () => {
         vi.mocked(childProcess.spawnSync).mockReset()
       }
     }
+  })
+})
+
+describe('computer tools on a workspaces host', () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('computer')])
+  const display = {
+    botId: 'c1',
+    slot: 1,
+    display: ':10',
+    width: 1280,
+    height: 800,
+    env: {},
+    browserArea: { x: 1280, y: 0, width: 1280, height: 800 },
+  } as unknown as BotDisplay
+
+  /** A host's computers: `busy` names the holders of every slot; otherwise the first call starts the computer. */
+  function computers(busy: string[] | null = null) {
+    const state = { running: false, controlled: false }
+    return {
+      state,
+      open: vi.fn(async (): Promise<ComputerOpenResult> => {
+        if (busy) return { ok: false, reason: 'busy', holders: busy }
+        const started = !state.running
+        state.running = true
+        return { ok: true, display: ':10', started }
+      }),
+      computer: () => (state.running ? display : null),
+      controlled: () => state.controlled,
+    }
+  }
+
+  async function client(fake: ReturnType<typeof computers> | null) {
+    const server = new McpServer({ name: 'server-computer-test', version: '1' })
+    // A server needs one tool to list its tools at all.
+    server.registerTool('noop', { description: 'Does nothing.' }, async () => ({ content: [] }))
+    registerServerModeTools({ server, convId: 'chat', locale: 'en', t: (() => '') as never }, fake)
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const connected = new Client({ name: 'server-computer-client', version: '1' })
+    await server.connect(serverTransport)
+    await connected.connect(clientTransport)
+    return connected
+  }
+
+  const texts = (result: unknown) =>
+    (result as { content: { type: string; text?: string }[] }).content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+
+  it("registers the computer tools on the conversation's own computer, and none without computers", async () => {
+    const tools = (await (await client(computers())).listTools()).tools.filter((tool) =>
+      tool.name.startsWith('computer_')
+    )
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      'computer_click',
+      'computer_drag',
+      'computer_key',
+      'computer_move',
+      'computer_screenshot',
+      'computer_scroll',
+      'computer_type',
+    ])
+    for (const tool of tools) expect(tool.description).toContain(SERVER_COMPUTER_DESCRIPTION)
+    expect((await (await client(null)).listTools()).tools.map((tool) => tool.name)).toEqual(['noop'])
+  })
+
+  it('starts the computer on the first call and says so once, never capturing the primary screen', async () => {
+    fakeXdotool((_args, child, _options, command) => {
+      queueMicrotask(() => {
+        if (command === 'import') child.stdout.emit('data', png)
+        child.emit('close', 0)
+      })
+    })
+    const fake = computers()
+    const tools = await client(fake)
+    const first = await tools.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(first.isError).toBeFalsy()
+    expect(vi.mocked(spawn).mock.calls[0].slice(0, 2)).toEqual([
+      'import',
+      ['-display', ':10', '-window', 'root', 'png:-'],
+    ])
+    expect(texts(first).join('\n')).toContain("Started this conversation's computer on display :10")
+    expect(texts(first).join('\n')).toContain('DISPLAY=:10')
+    const second = await tools.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(texts(second).join('\n')).not.toContain('Started')
+    expect(fake.open).toHaveBeenCalledWith('chat', 'agent')
+    expect(capture.getSources).not.toHaveBeenCalled()
+
+    fake.state.controlled = true
+    const clicked = await tools.callTool({ name: 'computer_click', arguments: { x: 10, y: 20 } })
+    expect(clicked.isError).toBeFalsy()
+    expect(texts(clicked).join('\n')).toContain('The owner is controlling this computer too')
+    expect((vi.mocked(spawn).mock.calls.at(-1)?.[2] as SpawnOptions | undefined)?.env?.DISPLAY).toBe(':10')
+  })
+
+  it("fails a call when the server's computers cannot start one, never falling back to the primary screen", async () => {
+    const fake = computers()
+    fake.open.mockResolvedValue({ ok: false, reason: 'unavailable' })
+    const tools = await client(fake)
+    const result = await tools.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(result.isError).toBe(true)
+    expect(texts(result).join('\n')).toContain('This server has no computers.')
+    // Opened but stopped before the call ran.
+    fake.open.mockResolvedValue({ ok: true, display: ':10', started: false })
+    const stopped = await tools.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } })
+    expect(stopped.isError).toBe(true)
+    expect(texts(stopped).join('\n')).toContain("This conversation's computer stopped")
+    expect(spawn).not.toHaveBeenCalled()
+    expect(capture.getSources).not.toHaveBeenCalled()
+  })
+
+  it('fails a call while every computer of the server is in use, naming who uses them', async () => {
+    const tools = await client(computers(['A', 'B']))
+    const result = await tools.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } })
+    expect(result.isError).toBe(true)
+    expect(texts(result).join('\n')).toContain('All 8 computers of this server are in use by: A, B')
+    expect(spawn).not.toHaveBeenCalled()
+    expect(capture.getSources).not.toHaveBeenCalled()
   })
 })

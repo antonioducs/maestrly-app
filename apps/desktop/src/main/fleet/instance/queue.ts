@@ -112,6 +112,20 @@ export async function appendSettledLog(file: string, values: readonly unknown[])
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   await fs.appendFile(file, values.map((value) => '\n' + JSON.stringify(value)).join(''), { mode: 0o600 })
 }
+/**
+ * Writes a settled log again with only `values`, in the format `appendSettledLog` uses: what a truncated conversation no
+ * longer holds leaves the log. Written beside it and renamed over it, so a crash leaves the old log or the new one.
+ */
+export async function rewriteSettledLog(file: string, values: readonly unknown[]): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+  const temporary = file + '.' + randomUUID() + '.tmp'
+  try {
+    await fs.writeFile(temporary, values.map((value) => '\n' + JSON.stringify(value)).join(''), { mode: 0o600 })
+    await fs.rename(temporary, file)
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined)
+  }
+}
 /** An input that started and whose native message is known: nothing about it changes any more. */
 const settledInput = (item: QueuedInput) => item.started && !!item.nativeMessageId
 
@@ -321,6 +335,33 @@ export class InstanceInputQueue {
   /** The input whose transcript item has this id. */
   byItemId(itemId: string): QueuedInput | undefined {
     return this.lookups().byItem.get(itemId) ?? this.settledBy.item.get(itemId)
+  }
+  /** The receipt of the input sent with this idempotency key within the last 24 hours, or null. */
+  receipt(idempotencyKey: string): FleetInputReceipt | null {
+    const existing = this.all()
+      .reverse()
+      .find((item) => item.input.idempotencyKey === idempotencyKey && Date.now() - Date.parse(item.at) < 86_400_000)
+    return existing ? { inputId: existing.id, itemId: existing.itemId, queued: !existing.started } : null
+  }
+  /**
+   * Removes settled inputs whose native messages a truncation deleted: the settled log is written again without them.
+   * Inputs that can still change stay.
+   */
+  async forget(ids: readonly string[]): Promise<void> {
+    const drop = new Set(ids)
+    const write = this.writeTail.then(async () => {
+      const kept = this.settled.filter((item) => !drop.has(item.id))
+      if (kept.length === this.settled.length) return
+      await rewriteSettledLog(this.log, kept)
+      this.settled = []
+      this.settledBy = { native: new Map(), item: new Map() }
+      this.settle(kept)
+    })
+    this.writeTail = write.then(
+      () => undefined,
+      () => undefined
+    )
+    return write
   }
   /** What a transcript projection links native user messages to. */
   transcriptInputs(): TranscriptInputs {

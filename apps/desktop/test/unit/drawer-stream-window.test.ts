@@ -17,11 +17,26 @@ const h = vi.hoisted(() => {
     destroyed = false
     shown = false
     ignoresMouse = false
+    alwaysOnTop = false
+    readonly setAlwaysOnTop = vi.fn((flag: boolean) => {
+      this.alwaysOnTop = flag
+    })
+    position: [number, number]
     contentSize: [number, number]
     listeners = new Map<string, () => void>()
     constructor(readonly options: Record<string, unknown> = {}) {
       this.contentSize = [Number(options.width ?? 0), Number(options.height ?? 0)]
+      this.position = [Number(options.x ?? 0), Number(options.y ?? 0)]
       FakeWindow.created.push(this)
+    }
+    isAlwaysOnTop(): boolean {
+      return this.alwaysOnTop
+    }
+    getPosition(): [number, number] {
+      return this.position
+    }
+    setPosition(x: number, y: number): void {
+      this.position = [x, y]
     }
     isDestroyed(): boolean {
       return this.destroyed
@@ -76,6 +91,8 @@ vi.mock('../../src/main/drawer/layout', async () => {
   }
 })
 
+import { fleetEnvironmentTile } from '@maestrly/bot-fleet-protocol'
+import { setConversationScreen, setConversationTile, setPresentedBrowserSize } from '../../src/main/conversation-screen'
 import {
   OFFSCREEN,
   drawers,
@@ -87,6 +104,7 @@ import {
 } from '../../src/main/drawer/state'
 import {
   disposeStreamWindow,
+  handOverStreamWindow,
   onStreamWindowClosed,
   presentBrowserForStream,
   releaseBrowserStream,
@@ -122,6 +140,11 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  for (const convId of ['tiled', 'computer']) {
+    setConversationTile(convId, null)
+    setConversationScreen(convId, null)
+    setPresentedBrowserSize(convId, null)
+  }
   for (const convId of [...streamWinByConv.keys()]) disposeStreamWindow(convId)
   drawers.clear()
   placementByConv.clear()
@@ -201,5 +224,64 @@ describe('stream window', () => {
     host.destroy()
     expect(main.contentView.children).toEqual([first, second])
     expect(getPlacement('conv-5', 'browser')).toBe('slot')
+  })
+})
+
+describe('stream window of a workspaces conversation', () => {
+  it('puts the window in the tile the conversation holds, above other windows, and moves it as the tile changes', () => {
+    browserWith('tiled', 2)
+    setConversationTile('tiled', fleetEnvironmentTile(2))
+    presentBrowserForStream('tiled', { width: 900, height: 640 })
+    const host = streamWindowOf('tiled') as unknown as Window
+    expect([host.options.x, host.options.y]).toEqual([2560, 0])
+    expect(host.setAlwaysOnTop).toHaveBeenCalledWith(true)
+    setConversationTile('tiled', null)
+    presentBrowserForStream('tiled', { width: 900, height: 640 })
+    expect(host.position).toEqual([0, 0])
+    expect(host.alwaysOnTop).toBe(false)
+    setConversationTile('tiled', fleetEnvironmentTile(5))
+    presentBrowserForStream('tiled', { width: 900, height: 640 })
+    expect(host.position).toEqual([2560, 800])
+    expect(host.alwaysOnTop).toBe(true)
+    expect(h.FakeWindow.created).toHaveLength(2)
+  })
+
+  it('cascades a window without a tile and keeps it at its place', () => {
+    browserWith('conv-c', 2)
+    presentBrowserForStream('conv-c', { width: 800, height: 600 })
+    const host = streamWindowOf('conv-c') as unknown as Window
+    presentBrowserForStream('conv-c', { width: 700, height: 500 })
+    expect(host.setAlwaysOnTop).not.toHaveBeenCalled()
+    expect(host.position).toEqual([0, 0])
+  })
+
+  it("makes no window while the conversation's computer presents its browser", () => {
+    browserWith('computer', 2)
+    placementByConv.set('computer', new Map([['browser', 'floating']]))
+    setConversationScreen('computer', {
+      display: ':10',
+      width: 1280,
+      height: 800,
+      windowArea: fleetEnvironmentTile(1),
+    })
+    expect(presentBrowserForStream('computer', { width: 900, height: 640 })).toEqual({ width: 900, height: 640 })
+    setPresentedBrowserSize('computer', { width: 1120, height: 640 })
+    expect(presentBrowserForStream('computer', { width: 900, height: 640 })).toEqual({ width: 1120, height: 640 })
+    expect(h.FakeWindow.created).toHaveLength(1)
+  })
+
+  it('hands the browser over to another window without ending its stream', () => {
+    const [first, second] = browserWith('conv-h', 2)
+    presentBrowserForStream('conv-h', { width: 800, height: 600 })
+    const host = streamWindowOf('conv-h') as unknown as Window
+    const closed = vi.fn()
+    const off = onStreamWindowClosed(closed)
+    handOverStreamWindow('conv-h')
+    off()
+    expect(closed).not.toHaveBeenCalled()
+    expect(host.destroyed).toBe(true)
+    expect(streamWindowOf('conv-h')).toBeNull()
+    expect(main.contentView.children).toEqual([first, second])
+    expect(getPlacement('conv-h', 'browser')).toBe('slot')
   })
 })

@@ -12,6 +12,7 @@ import { resolveFileImageBytesSync } from '../attachment-artifacts'
 import { resolveAntigravityHarness } from '../harness/adapters/antigravity'
 import { harnessUltraGuidance } from '../harness/host-contracts'
 import { buildHarnessPrompt } from '../harness/prompt-builder'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import type { ResolvedHarness } from '../harness/types'
 import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-delegation'
 import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
@@ -119,6 +120,7 @@ export async function buildAntigravityInstructions(
       skillsContext: skillsCatalog(skills, args.projectId !== null),
       agentsContext: agentContext,
       envContext: environment,
+      generatedInterfaces: generatedInterfacesEnabled(),
     }).instructions,
     'You are running inside Maestrly through the official Google Antigravity ACP server.',
     `Maestrly mode: ${args.mode}.`,

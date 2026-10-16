@@ -15,6 +15,10 @@ import { loadMemoryCoreExtras } from '../../src/main/memory/core'
 import { getOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
 import { botMemorySpaceId, memorySpaceForConversation } from '../../src/main/memory/spaces'
 import { freshDb, closeDb } from '../helpers/db'
+import {
+  getSubscriptionFailoverRouter,
+  resetSubscriptionFailoverRouterForTests,
+} from '../../src/main/chat/subscription-failover/router'
 
 const at = '2026-09-20T10:00:00.000Z'
 const entry = {
@@ -276,6 +280,8 @@ describe('runtime turn memory integration', () => {
         botId: 'scout',
         stored: { primaryConversationId: conversation.id },
         retryAt: 0,
+        startFailures: 0,
+        reportedStartFailure: null,
         ready: true,
         turning: false,
         accountOptions: [{}],
@@ -348,4 +354,92 @@ describe('runtime turn memory integration', () => {
       expect(bot.currentInput()).toBeNull()
     }
   )
+  it('waits out the usage limit of all its accounts instead of retrying every few seconds, and says so once', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const item = {
+      id: 'input-1',
+      itemId: 'input:input-1',
+      at,
+      started: false,
+      input: { source: 'owner' as const, text: 'Check the portal' },
+    }
+    const events = new InstanceEvents()
+    const queue = {
+      list: () => (item.started ? [] : [item]),
+      all: () => [item],
+      transcriptInputs: () => ({ forMessage: () => undefined, unmapped: item.started ? [item] : [] }),
+      byItemId: () => undefined,
+      readAttachments: async () => [],
+      markStarted: async () => {
+        item.started = true
+      },
+      cleanup: async () => {},
+      // Its native message was never saved: the input goes back to the queue.
+      reconcile: async () => {
+        item.started = false
+      },
+    }
+    const system = vi.fn(async () => {})
+    const bot = Object.create(BotRuntime.prototype) as BotRuntime
+    Object.assign(bot, {
+      botId: 'scout',
+      stored: { primaryConversationId: conversation.id },
+      retryAt: 0,
+      startFailures: 0,
+      reportedStartFailure: null,
+      ready: true,
+      turning: false,
+      accountOptions: [{}],
+      compactionProblem: null,
+      manualCompacting: false,
+      refreshAccounts: async () => {},
+      applyProfile: () => {},
+      changed: () => {},
+      refreshUsage: async () => {},
+      currentSelection: () => ({ providerId: 'builtin_claude_subscription', modelId: 'claude-test' }),
+      holdManager: { state: { state: 'none' } },
+      events,
+      images: { toolRefs: () => [] },
+      live: new LiveTranscript({
+        conversationId: () => conversation.id,
+        queue: queue as never,
+        extras: { list: () => [], questionToolCallIds: () => new Set() } as never,
+        images: { captureMessages: async () => {}, toolRefs: () => [] } as never,
+        publish: () => {},
+      }),
+      system,
+      queue,
+    })
+    const reset = Date.now() + 60 * 60_000
+    getSubscriptionFailoverRouter().markExhausted('builtin_claude_subscription', {
+      reason: 'usage limit',
+      source: 'structured-error',
+      resetsAt: reset,
+    })
+    const start = vi
+      .spyOn(chatService, 'startExecutorChatTurn')
+      .mockRejectedValue(new Error('claude-accounts-exhausted'))
+    const runtime = bot as unknown as { tick(): Promise<void>; retryAt: number }
+    try {
+      await runtime.tick()
+      // The reset is an hour away: the bot checks again in ten minutes, not in five seconds.
+      expect(runtime.retryAt).toBeGreaterThanOrEqual(Date.now() + 9 * 60_000)
+      expect(runtime.retryAt).toBeLessThanOrEqual(Date.now() + 10 * 60_000)
+      await runtime.tick()
+      expect(start).toHaveBeenCalledTimes(1)
+      runtime.retryAt = 0
+      await runtime.tick()
+      expect(start).toHaveBeenCalledTimes(2)
+      expect(item.started).toBe(false)
+      expect(system).toHaveBeenCalledTimes(1)
+      expect(system).toHaveBeenCalledWith(
+        'turn_failed',
+        `claude-accounts-exhausted until=${new Date(reset).toISOString()}`,
+        null
+      )
+      expect((events.replay(0) ?? []).filter((event) => event.type === 'turn.finished')).toHaveLength(1)
+    } finally {
+      resetSubscriptionFailoverRouterForTests()
+    }
+  })
 })

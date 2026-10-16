@@ -7,13 +7,15 @@ import { registerTerminalTools } from './mcp/tools/terminal'
 import { registerConversationNotesTools, registerProjectNotesTools } from './mcp/tools/notes'
 import { registerMemoryTools } from './mcp/tools/memory'
 import { registerDebugTools } from './mcp/tools/debug'
-import { registerBoardTools } from './mcp/tools/board'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
 import { registerBotModeTools } from './mcp/tools/bot-instance'
+import { registerServerModeTools } from './mcp/tools/server-computer'
 import { registerArtifactTools } from './mcp/tools/artifacts'
 import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
 import { botRuntimeForConversation } from './fleet/instance'
 import { isBotMode } from './fleet/instance/config'
+import { registerInterfaceTools } from './mcp/tools/interfaces'
+import { generatedInterfacesEnabled } from './chat/generated-interfaces'
 
 /**
  * In-process native Chat tool registry. Client and server connect exclusively through
@@ -51,7 +53,9 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
     registerArtifactTools(ctx, undefined, { open: false })
     registerArtifactCommentTools(ctx)
   }
-  if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
   registerBotModeTools(ctx)
+  registerServerModeTools(ctx)
+  // Only where the prompt teaches interfaces: never for delegated workers, and not when the person turned them off.
+  if (!workerScope && generatedInterfacesEnabled()) registerInterfaceTools(ctx)
   return server
 }

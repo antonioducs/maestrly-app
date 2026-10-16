@@ -18,6 +18,7 @@ export {
   isTabFloating,
   isTabOutOfSlot,
   floatingTabsOf,
+  outOfSlotTabsOf,
   type ViewKind,
   type PanelTab,
   type Bounds,
@@ -27,6 +28,7 @@ export {
 export {
   applyLayout,
   captureSlotView,
+  onPlacementChange,
   setDialogSuppressionOwners,
   setPlacement,
   setViewsSuppressed,
@@ -93,7 +95,15 @@ export {
   getBrowserStateForScope,
   toggleBrowserDevTools,
   focusBrowserPopup,
+  type NavigateBrowserOptions,
+  focusBrowserAddressBar,
+  openBrowserTabFromShortcut,
+  closeActiveBrowserTabFromShortcut,
+  queryOmnibox,
+  setOmniboxOverlay,
+  type OmniboxOverlayMode,
 } from './drawer/browser'
+export { clearBrowserHistory, flushBrowserHistory, removeBrowserHistoryEntry } from './drawer/browser-history'
 export {
   showVSCodeLoading,
   showVSCodeLoadingAll,

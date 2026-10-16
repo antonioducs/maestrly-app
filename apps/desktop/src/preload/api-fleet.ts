@@ -1,6 +1,15 @@
-import type { FleetLoginAttempt, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetDevicesResponse,
+  FleetLoginAttempt,
+  FleetLoginStartRequest,
+  FleetPairingCodeResponse,
+} from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
-import type { FleetProvisioningTargetInput, FleetScreenTargetInput } from '../shared/fleet-targets'
+import type {
+  FleetCreateWorkspacesInput,
+  FleetProvisioningTargetInput,
+  FleetScreenTargetInput,
+} from '../shared/fleet-targets'
 import type {
   FleetBotAccounts,
   FleetBotSkills,
@@ -9,6 +18,7 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetInstallerStatus } from '../shared/fleet-installer'
 import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
+import type { FleetDownloadEvent, FleetDownloadFileKey, FleetDownloadProgress } from '../shared/fleet-downloads'
 import { ipcRenderer } from 'electron'
 import type {
   FleetOwnerMemory,
@@ -122,6 +132,8 @@ export type FleetOutgoingAttachment = {
 }
 /** Bytes of a bot image (a FleetImageRef from the transcript). */
 export type FleetImageData = { mediaType: FleetImageMediaType; data: Uint8Array }
+/** How much of a shared video main has copied to its cache so far. */
+export type FleetMediaProgress = { botId: string; fileId: string; received: number; total: number }
 export type FleetScreenState = {
   channelId: string
   state: 'connecting' | 'open' | 'closed' | 'error'
@@ -214,6 +226,12 @@ export const fleetApi = {
   fleetConnect: (input: { url: string; code: string; deviceName?: string }): Promise<FleetConnectionView> =>
     ipcRenderer.invoke('fleet:connect', input),
   fleetDisconnect: (): Promise<void> => ipcRenderer.invoke('fleet:disconnect'),
+  /** A one-use code that pairs another device (a phone) with this computer's bot server. */
+  fleetCreatePairing: (): Promise<FleetPairingCodeResponse> => ipcRenderer.invoke('fleet:createPairing'),
+  /** The phones and computers paired with the bot server. */
+  fleetDevices: (): Promise<FleetDevicesResponse> => ipcRenderer.invoke('fleet:devices'),
+  /** Removes another paired device; it can no longer reach the bot server. */
+  fleetRevokeDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('fleet:revokeDevice', deviceId),
   fleetGetSnapshot: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:getSnapshot'),
   fleetRefresh: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:refresh'),
   fleetGetHost: (): Promise<FleetHostInfo> => ipcRenderer.invoke('fleet:getHost'),
@@ -236,8 +254,14 @@ export const fleetApi = {
     environmentId: string,
     action: 'start' | 'stop' | 'restart' | 'archive'
   ): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:environmentAction', environmentId, action),
-  /** Creates the server's workspaces environment: Maestrly running there for the owner's chats and workspaces. */
-  fleetCreateWorkspaces: (): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:createWorkspaces'),
+  /**
+   * Creates a workspaces environment: Maestrly running on the server for the owner's chats and workspaces of one scope.
+   * Without input, as older views ask, it is named Workspaces and takes the server's defaults.
+   */
+  fleetCreateWorkspaces: (input?: FleetCreateWorkspacesInput): Promise<FleetEnvironment> =>
+    input === undefined
+      ? ipcRenderer.invoke('fleet:createWorkspaces')
+      : ipcRenderer.invoke('fleet:createWorkspaces', input),
   /**
    * Moves the environment to the server's bot image: `idle` schedules it for when none of its bots is busy and answers
    * at once; `now` restarts it at once, interrupting its bots. Gateways with `environment-updates` only.
@@ -293,13 +317,32 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
   fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
     ipcRenderer.invoke('fleet:getImage', botId, imageId),
+  /** Resolves with a receipt; joins the transfer already running for the file instead of starting another. */
   fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
     ipcRenderer.invoke('fleet:downloadFile', botId, fileId),
+  fleetCancelDownload: (botId: string, fileId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:cancelDownload', botId, fileId),
+  fleetGetActiveDownload: (botId: string, fileId: string): Promise<FleetDownloadProgress | null> =>
+    ipcRenderer.invoke('fleet:getActiveDownload', botId, fileId),
+  /** The bot files this window shows, replacing its previous list: they finish without a system notification. */
+  fleetAttendDownloads: (files: FleetDownloadFileKey[]): Promise<void> =>
+    ipcRenderer.invoke('fleet:attendDownloads', files),
+  onFleetDownload: (cb: (event: FleetDownloadEvent) => void): (() => void) => subscribe('fleet:download', cb),
   fleetRevealDownload: (receipt: string): Promise<void> => ipcRenderer.invoke('fleet:revealDownload', receipt),
   fleetGetDownload: (botId: string, fileId: string): Promise<string | null> =>
     ipcRenderer.invoke('fleet:getDownload', botId, fileId),
+  /** A `maestrly-media:` URL that plays a shared video once main has it in its cache. */
+  fleetPrepareMedia: (botId: string, fileId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:prepareMedia', botId, fileId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
+  /** Edits the owner's last message (feature `message-edit`): the conversation is cut there and runs again. */
+  fleetEditMessage: (
+    botId: string,
+    inputId: string,
+    text: string
+  ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
+    ipcRenderer.invoke('fleet:editMessage', botId, inputId, text),
   fleetResolveInteraction: (
     botId: string,
     interactionId: string,
@@ -372,6 +415,8 @@ export const fleetApi = {
   onFleetDesktopAccess: (cb: (payload: { botId: string }) => void): (() => void) =>
     subscribe('fleet:desktop-access', cb),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
+  onFleetMediaProgress: (cb: (progress: FleetMediaProgress) => void): (() => void) =>
+    subscribe('fleet:mediaProgress', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),

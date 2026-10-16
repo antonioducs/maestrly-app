@@ -279,7 +279,7 @@ async function captureDisplay(scope: ScreenActionScope, display: string, signal:
   return png
 }
 
-function screenshotResult(png: Buffer, width: number, height: number) {
+function screenshotResult(png: Buffer, width: number, height: number, notes: readonly string[] = []) {
   return {
     content: [
       { type: 'image' as const, data: png.toString('base64'), mimeType: 'image/png' },
@@ -287,29 +287,59 @@ function screenshotResult(png: Buffer, width: number, height: number) {
         type: 'text' as const,
         text: `Screen: ${width} × ${height} pixels. Coordinates for computer_* are screen pixels from this screenshot.`,
       },
+      ...notes.map((note) => ({ type: 'text' as const, text: note })),
     ],
   }
 }
 
-export function registerComputerTools(ctx: McpToolContext): void {
+/** How a host other than a bot gives the tools their screen. */
+export interface ComputerToolOptions {
+  /** Replaces the tools' description of the screen they act on. */
+  description?: string
+  /**
+   * Runs before each call: the screen to use and notes appended to the result. Throwing fails the call with its
+   * message.
+   */
+  prepare?(conversationId: string): Promise<{ screen: ConversationScreen; notes: string[] }>
+}
+
+/** The screen a call acts on, and what its result should add. */
+async function prepareCall(
+  conversationId: string | undefined,
+  options: ComputerToolOptions
+): Promise<{ scope: ScreenActionScope; notes: string[] }> {
+  if (!options.prepare) return { scope: screenScope(conversationId), notes: [] }
+  if (!conversationId) throw new Error('The computer tools need a conversation.')
+  const { screen, notes } = await options.prepare(conversationId)
+  return { scope: screenScope(conversationId, screen), notes }
+}
+
+export function registerComputerTools(ctx: McpToolContext, options: ComputerToolOptions = {}): void {
   const { server } = ctx
+  const about = options.description ?? description
   server.registerTool(
     'computer_screenshot',
     {
-      description: `Capture the whole desktop screen as PNG. The screenshot stays in the tool details unless you set share=true. ${description}`,
+      description: `Capture the whole desktop screen as PNG. The screenshot stays in the tool details unless you set share=true. ${about}`,
       // Read by the UI only: the capture does not change.
       inputSchema: { share: z.boolean().optional().describe(shareDescription) },
       annotations: { readOnlyHint: true },
     },
     async (_args, extra) => {
-      const scope = screenScope(ctx.convId)
+      let prepared: { scope: ScreenActionScope; notes: string[] }
+      try {
+        prepared = await prepareCall(ctx.convId, options)
+      } catch (error) {
+        return err(`Screen capture failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      const { scope, notes } = prepared
       try {
         const { width, height } = dimensions(scope.screen)
         if (scope.screen) {
           const png = await captureDisplay(scope, scope.screen.display, extra.signal)
           if (png.length <= pngSignature.length || !png.subarray(0, pngSignature.length).equals(pngSignature))
             return err('Could not capture the screen: import returned no PNG image.')
-          return screenshotResult(png, width, height)
+          return screenshotResult(png, width, height, notes)
         }
         const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } })
         const source =
@@ -333,13 +363,19 @@ export function registerComputerTools(ctx: McpToolContext): void {
     server.registerTool(
       `computer_${name}`,
       {
-        description: `${summary} ${description}`,
+        description: `${summary} ${about}`,
         inputSchema: schema,
         annotations: { readOnlyHint: false },
       },
       async (args, extra) => {
         let buttonDown = false
-        const scope = screenScope(ctx.convId)
+        let prepared: { scope: ScreenActionScope; notes: string[] }
+        try {
+          prepared = await prepareCall(ctx.convId, options)
+        } catch (error) {
+          return err(`Desktop ${name} failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        const { scope, notes } = prepared
         try {
           const commands = computerArguments(name, args as T, dimensions(scope.screen))
           const signal = AbortSignal.any([extra.signal, AbortSignal.timeout(5_000)])
@@ -351,7 +387,7 @@ export function registerComputerTools(ctx: McpToolContext): void {
           }
           await new Promise((resolve) => setTimeout(resolve, 150))
           checkScreenAction(scope)
-          return ok(`Desktop ${name} completed.`)
+          return ok([`Desktop ${name} completed.`, ...notes].join('\n'))
         } catch (error) {
           if (buttonDown)
             await runXdotool(['mouseup', '1'], undefined, screenScope(scope.conversationId, scope.screen)).catch(

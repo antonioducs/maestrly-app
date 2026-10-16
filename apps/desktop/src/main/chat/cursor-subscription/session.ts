@@ -1,6 +1,7 @@
 import { isBotMode } from '../../fleet/instance/config'
 import { resolveCursorHarness } from '../harness/adapters/cursor'
 import { buildHarnessPrompt } from '../harness/prompt-builder'
+import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { harnessUltraGuidance } from '../harness/host-contracts'
 import { createHarnessSnapshot } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
@@ -151,6 +152,7 @@ export async function buildCursorHarnessContext(
       skillsContext: skillContext,
       agentsContext: agentContext,
       envContext: environment,
+      generatedInterfaces: generatedInterfacesEnabled(),
     }).instructions,
     'You are running inside Maestrly through the official Cursor Agent SDK runtime.',
     `Maestrly mode: ${args.mode}.`,

@@ -70,7 +70,7 @@ function ids(raw: string | null): string[] {
 /**
  * Observe local edits, imports and remote edits at their shared durable write boundary.
  * Resource keys: accounts (aggregate), models:<providerId>, skill:<name>, skill-groups,
- * mcp:<id> and mcp (aggregate), preferences, runtime:<id>.
+ * mcp:<id> and mcp (aggregate), preferences, runtime:<id>, failover.
  */
 function invalidateSettingsRevisions(key: string, previous: string | null, value: string): void {
   if (key.startsWith('fleet.settings.')) return
@@ -113,6 +113,7 @@ function invalidateSettingsRevisions(key: string, previous: string | null, value
   if (key === 'chat.skills.disabled' || key === 'chat.skills.installed')
     for (const name of [...ids(previous), ...ids(value)]) resources.add('skill:' + name)
   if (key === 'chat.imageGen') resources.add('preferences')
+  if (key === 'chat.subscriptionFailover.v1') resources.add('failover')
   const runtimes: Record<string, string> = {
     'runtimeAssets.claudeCodeReleases': 'claude-code',
     'runtimeAssets.codexReleases': 'codex',

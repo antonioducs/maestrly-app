@@ -34,9 +34,10 @@ import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
 import { renderSkillContext } from '../skills'
 import { findEffectiveSkill } from '../skill-state'
-import { builtinToolNamesForMode, buildTools, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
+import { builtinToolNamesForMode, buildTools } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
-import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
+import { enableConversationLinkTools } from '../tools/conversation-link'
+import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -140,8 +141,6 @@ export interface RunCursorSubscriptionChatArgs {
     reviewLoop?: import('../../../shared/chat').ChatReviewLoopMeta
   }
   executionScope?: import('../../../shared/chat').ChatExecutionScope
-
-  reviewerRuntime?: ReviewerToolRuntime
 }
 
 export interface RunCursorSubscriptionChatResult {
@@ -421,13 +420,8 @@ async function runCursorSubscriptionChatInScope(
       toolCallId,
       cwd: args.cwd,
       signal: toolSignal,
-      ask: (action, resources, save) => {
-        if (args.reviewerRuntime) {
-          return action === 'read' || action === 'grep' || action === 'glob'
-            ? Promise.resolve()
-            : Promise.reject(new Error(`Reviewer read-only boundary denied ${action}`))
-        }
-        return args.broker.assert({
+      ask: (action, resources, save) =>
+        args.broker.assert({
           conversationId: args.conversationId,
           projectId: args.projectId,
           permissionScope: args.permissionScope,
@@ -437,8 +431,7 @@ async function runCursorSubscriptionChatInScope(
           toolName: action,
           toolCallId,
           signal: toolSignal,
-        })
-      },
+        }),
       askQuestion: (questions) =>
         args.questionBroker.ask({
           conversationId: args.conversationId,
@@ -452,39 +445,20 @@ async function runCursorSubscriptionChatInScope(
         state.planSubmitted = result.ok
         return result.ok
       },
-      ...(args.reviewerRuntime
-        ? {
-            reviewer: {
-              recordEvidence: (kind) => args.reviewerRuntime!.recordEvidence(kind),
-              searchExecutionContext: (input) => args.reviewerRuntime!.searchExecutionContext(input),
-              readExecutionContext: (input) => args.reviewerRuntime!.readExecutionContext(input),
-              submitReview: (decision) => {
-                const result = args.reviewerRuntime!.submitReview(decision)
-                if (result.ok) state.planSubmitted = true
-                return result
-              },
-            } satisfies ReviewerToolRuntime,
-          }
-        : {}),
       ...(state.emitGeneratedImage
         ? { emitGeneratedImage: (image: GeneratedImageEmission) => state.emitGeneratedImage?.(toolCallId, image) }
         : {}),
       ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
       ...(conversationDispatch ? { conversationDispatch } : {}),
+      ...(conversationLink ? { conversationLink } : {}),
     })
 
-    const enabledBuiltins = args.reviewerRuntime
-      ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-      : builtinToolNamesForMode(args.mode)
-    // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
-    const conversationDispatch = args.reviewerRuntime
-      ? undefined
-      : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
-    if (
-      !args.reviewerRuntime &&
-      state.emitGeneratedImage &&
-      (await generateImageToolEnabled(args.conversationId, args.mode))
-    ) {
+    const enabledBuiltins = builtinToolNamesForMode(args.mode)
+    // Starting other conversations: only in a main turn admitted from text the person typed.
+    const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
+    // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
+    const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
+    if (state.emitGeneratedImage && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }
     const core = buildTools({ enabled: enabledBuiltins, makeCtx: makeContext })
@@ -501,30 +475,28 @@ async function runCursorSubscriptionChatInScope(
         signal,
       })
     }
-    const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
+    const prefs = getConvUiPrefs(args.conversationId).chat?.tools
     const appAccess = resolveAppToolAccess(args.conversationId)
-    const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
+    const appToolsEnabled = appAccess.enabled
     const disabledIds = new Set(prefs?.mcpDisabled ?? [])
-    const mcp = args.reviewerRuntime
-      ? { tools: {}, close: async () => {} }
-      : await buildMcpTools({
+    const mcp = await buildMcpTools({
+      conversationId: args.conversationId,
+      mode: args.mode,
+      signal: args.signal,
+      gate,
+      disabledIds,
+      codexSafeNames: true,
+      supportsImages: true,
+      describeImage: (image) =>
+        describeEphemeralToolImage({
+          image,
           conversationId: args.conversationId,
-          mode: args.mode,
+          cwd: args.cwd,
           signal: args.signal,
-          gate,
-          disabledIds,
-          codexSafeNames: true,
-          supportsImages: true,
-          describeImage: (image) =>
-            describeEphemeralToolImage({
-              image,
-              conversationId: args.conversationId,
-              cwd: args.cwd,
-              signal: args.signal,
-            }),
-        })
+        }),
+    })
     const app =
-      !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+      appToolsEnabled || hasPersonalMemoryTools(args.conversationId)
         ? await buildAppTools({
             only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
             disabledGroups: appAccess.disabledGroups,
@@ -544,35 +516,18 @@ async function runCursorSubscriptionChatInScope(
         : { tools: {}, close: async () => {} }
 
     try {
-      const { skills, agents, envelope } = args.reviewerRuntime
-        ? {
-            skills: [],
-            agents: [],
-            envelope: {
-              mode: args.mode,
-              modelId: resolvedModel.modelId,
-              cwd: args.cwd,
-              projectContext: '',
-              skillCatalog: '',
-              agentCatalog: '',
-              environment: `Project directory: ${args.cwd}.`,
-              ultra: false,
-              instructions:
-                'This is an isolated internal review turn. Use only the supplied reviewer read-only tools and finish by calling submit_review exactly once.',
-            },
-          }
-        : await buildCursorHarnessContext({
-            projectId: args.projectId,
-            cwd: args.cwd,
-            conversationId: args.conversationId,
-            mode: args.mode,
-            maestro: args.maestro,
-            modelId: resolvedModel.modelId,
-            maestrlyUltra: args.maestrlyUltra,
-            harness: args.harness,
-            appToolsEnabled,
-            disabledAppToolGroups: appAccess.disabledGroups,
-          })
+      const { skills, agents, envelope } = await buildCursorHarnessContext({
+        projectId: args.projectId,
+        cwd: args.cwd,
+        conversationId: args.conversationId,
+        mode: args.mode,
+        maestro: args.maestro,
+        modelId: resolvedModel.modelId,
+        maestrlyUltra: args.maestrlyUltra,
+        harness: args.harness,
+        appToolsEnabled,
+        disabledAppToolGroups: appAccess.disabledGroups,
+      })
       const skillTools: ToolSet = skills.length
         ? {
             use_skill: tool({
@@ -755,7 +710,7 @@ async function runCursorSubscriptionChatInScope(
       }
       const agentOptions: Omit<AgentOptions, 'apiKey' | 'tools' | 'disallowedTools'> = {
         model: selection,
-        mode: args.reviewerRuntime ? 'plan' : cursorSdkMode(args.mode),
+        mode: cursorSdkMode(args.mode),
         local: {
           cwd: args.cwd,
           customTools: bridge.customTools,
@@ -807,7 +762,7 @@ async function runCursorSubscriptionChatInScope(
             text: sendText,
             ...(input.images.length ? { images: input.images } : {}),
           },
-          { model: selection, mode: args.reviewerRuntime ? 'plan' : cursorSdkMode(args.mode) }
+          { model: selection, mode: cursorSdkMode(args.mode) }
         ),
         {
           signal: args.signal,

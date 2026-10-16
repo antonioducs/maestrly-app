@@ -242,19 +242,32 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await menu('Beta standalone', 'Archive')
     await expect(row('Beta standalone')).toHaveCount(0)
     expect((await call('listStandaloneConversations')).map((c: any) => c.id)).toEqual([first.id])
-    await page.getByRole('button', { name: /Show archived/ }).click()
+    await page.getByRole('button', { name: 'View options', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Show archived/ }).click()
     await menu('Beta standalone', 'Unarchive')
     await expect.poll(async () => (await list()).find((c: any) => c.id === second.id).archived).toBe(0)
 
     await page.getByRole('tab', { name: 'Workspaces' }).click()
     await expect(page.getByRole('tab', { name: 'Chats' })).toHaveAttribute('aria-selected', 'false')
 
+    // Collapsing the sidebar leaves its icon rail, with the sections and the footer's actions.
+    await page.getByTestId('sidebar-toggle').click()
+    await expect(page.getByTestId('sidebar-toggle')).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('#sidebar-panel')).toBeHidden()
+    await expect(page.getByRole('tab', { name: 'Chats' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible()
+
     await app!.close()
     app = undefined
     await launch()
     await expect(page.getByText('Welcome to Maestrly')).toHaveCount(0)
     await expect(page.getByRole('tab', { name: 'Workspaces' })).toHaveAttribute('aria-selected', 'true')
+    // The collapse is remembered, and a section of the rail opens the panel on it.
+    await expect(page.getByTestId('sidebar-toggle')).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('#sidebar-panel')).toBeHidden()
     await page.getByRole('tab', { name: 'Chats' }).click()
+    await expect(page.getByTestId('sidebar-toggle')).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('#sidebar-panel')).toBeVisible()
     expect((await list()).map((c: any) => c.id)).toEqual([second.id, first.id])
     await row('Alpha standalone').click()
     await expect(page.getByText('Standalone reply 2.', { exact: true })).toBeVisible()

@@ -498,14 +498,14 @@ describe('portable context', () => {
       })
     })
 
-    it('rejects exhausted empty summaries with billing for prior stages and both failed attempts', async () => {
+    it('rejects exhausted empty summaries with billing for prior stages and every failed attempt', async () => {
       const summarize = vi.fn().mockResolvedValueOnce(measured()).mockResolvedValue(measured(''))
       await expect(summarizePortableTranscript('x'.repeat(2_000), 1_000, summarize)).rejects.toMatchObject({
         message: 'The context compactor returned an empty summary',
-        partialUsage: { totalInput: 42, output: 6 },
-        runtimeEstimatedCostUsd: 0.03,
+        partialUsage: { totalInput: 70, output: 10 },
+        runtimeEstimatedCostUsd: 0.05,
       })
-      expect(summarize).toHaveBeenCalledTimes(3)
+      expect(summarize).toHaveBeenCalledTimes(5)
     })
 
     it('attaches complete aggregate billing to a terminal error without mutating provider errors', async () => {
@@ -566,13 +566,23 @@ describe('portable context', () => {
       expect(signals[1].aborted).toBe(true)
     })
 
-    it('fails after the default single retry of a stalled stage', async () => {
+    it('fails after the default three retries of a stalled stage', async () => {
       const summarize = vi.fn(() => new Promise<PortableSummaryCallResult>(() => {}))
       const pending = summarizePortableTranscript('source', 1_000, summarize, { stepTimeoutMs: 100 })
       const failure = pending.catch((error: unknown) => error)
-      await vi.advanceTimersByTimeAsync(200)
+      await vi.advanceTimersByTimeAsync(400)
       expect(await failure).toMatchObject({ name: 'TimeoutError' })
-      expect(summarize).toHaveBeenCalledTimes(2)
+      expect(summarize).toHaveBeenCalledTimes(4)
+    })
+
+    it('lets a slow but healthy stage run past the former three-minute limit by default', async () => {
+      const summarize = vi.fn(
+        () => new Promise<PortableSummaryCallResult>((resolve) => setTimeout(() => resolve(measured()), 5 * 60_000))
+      )
+      const pending = summarizePortableTranscript('source', 1_000, summarize)
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      expect(await pending).toMatchObject({ summary: 'summary', calls: 1 })
+      expect(summarize).toHaveBeenCalledTimes(1)
     })
 
     it('caps the default overall budget at sixty minutes for large transcripts', async () => {

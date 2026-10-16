@@ -69,7 +69,6 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { insertConversation, patchConvUiPrefs, setAppSetting, setAppFlag } from '../../src/main/store'
-import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 
 interface HostMcpToolSpec {
@@ -977,6 +976,7 @@ describe('Codex subscription runner', () => {
         const request = client.startThreadCalls[0] as {
           baseInstructions?: string
           developerInstructions: string
+          personality?: string
           config: Record<string, unknown>
           environments: unknown[]
           dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
@@ -991,10 +991,13 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          '760c532074302469142eb296ddad0d42e29ef60ef2e44d4d9329b7a21c7a23fc'
+          '37115024b896e45e4ffc158baf48f27b774c29386bc62bafb24a5de7a9156e98'
         )
         expect(request.baseInstructions).toBeUndefined()
+        expect(request.personality).toBe('friendly')
         expect(request.developerInstructions).toContain('general assistant')
+        expect(request.developerInstructions).toContain('# Conversation style')
+        expect(request.developerInstructions).toContain('# Style for requested work')
         expect(request.developerInstructions).toContain('when start_conversations is exposed')
         expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
         expect(request.developerInstructions).not.toContain('# Durable project memory')
@@ -1971,6 +1974,8 @@ describe('Codex subscription runner', () => {
         expect.objectContaining({ name: 'glob' }),
         expect.objectContaining({ name: 'grep' }),
         expect.objectContaining({ name: 'read' }),
+        // Native search is disabled here, so the permission-gated host tool replaces it.
+        expect.objectContaining({ name: 'web_search' }),
         expect.objectContaining({ name: 'webfetch' }),
       ],
     })
@@ -2038,14 +2043,14 @@ describe('Codex subscription runner', () => {
       kind: 'codex-subscription-tools-profile',
       mode: 'ask',
       model: 'gpt-5.6-sol',
-      tools: expect.objectContaining({ total: 4, eager: 4, deferred: 0 }),
+      tools: expect.objectContaining({ total: 5, eager: 5, deferred: 0 }),
     })
     expect(chatDiagMock).toHaveBeenCalledWith({
       kind: 'codex-subscription-initial-context',
       mode: 'ask',
       model: 'gpt-5.6-sol',
       contextInput: 40,
-      tools: expect.objectContaining({ total: 4, eager: 4, deferred: 0 }),
+      tools: expect.objectContaining({ total: 5, eager: 5, deferred: 0 }),
     })
     expect(getCodexThreadBinding(conversation.id)).toEqual({
       conversationId: conversation.id,
@@ -2410,6 +2415,30 @@ describe('Codex subscription runner', () => {
     )
   })
 
+  it('disables native search and omits the host tool when web search is turned off', async () => {
+    setAppSetting('chat.webSearch.provider', 'off')
+    for (const [mode, permMode] of [
+      ['agent', 'full'],
+      ['ask', 'ask'],
+    ] as const) {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, `user_off_${mode}`, 'Search the web', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({
+        turnId: `turn_off_${mode}`,
+        notifications: [completedNotification('thread_1', `turn_off_${mode}`)],
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = mode
+      args.permMode = permMode
+      await runCodexSubscriptionChat(args)
+      const start = client.startThreadCalls[0] as { config: Record<string, unknown>; dynamicTools: Array<{ name: string }> }
+      expect(start.config.web_search).toBe('disabled')
+      expect(start.dynamicTools.map((spec) => spec.name)).not.toContain('web_search')
+    }
+  })
+
   it('keeps delegation optional at xhigh without applying the prescriptive Ultra overlay', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -2454,6 +2483,9 @@ describe('Codex subscription runner', () => {
     const readers = start.dynamicTools.filter((spec) => ['read', 'grep', 'glob', 'webfetch'].includes(spec.name))
     expect(readers.map((spec) => spec.name).sort()).toEqual(['glob', 'grep', 'read', 'webfetch'])
     expect(readers.every((spec) => spec.deferLoading !== true)).toBe(true)
+    // Agent with full permission keeps Codex native search, so the same-named host tool is not bridged.
+    expect(start.config).not.toHaveProperty('web_search')
+    expect(start.dynamicTools.map((spec) => spec.name)).not.toContain('web_search')
     expect(client.startTurnCalls[0]).toMatchObject({
       effort: 'xhigh',
       collaborationMode: {
@@ -2518,6 +2550,7 @@ describe('Codex subscription runner', () => {
         expect.objectContaining({ name: 'glob' }),
         expect.objectContaining({ name: 'grep' }),
         expect.objectContaining({ name: 'read' }),
+        expect.objectContaining({ name: 'web_search' }),
         expect.objectContaining({ name: 'webfetch' }),
       ],
       config: {
@@ -3480,6 +3513,7 @@ describe('Codex subscription runner', () => {
       'grep',
       'read',
       'review_plan',
+      'web_search',
       'webfetch',
     ])
     expect(
@@ -3554,100 +3588,6 @@ describe('Codex subscription runner', () => {
     await expect(running).resolves.toEqual({ planSubmitted: true, threadId: 'thread_1' })
     expect(emitted).toContainEqual(expect.objectContaining({ kind: 'finish', finishReason: 'stop' }))
     expect(emitted).not.toContainEqual(expect.objectContaining({ kind: 'finish', finishReason: 'interrupted' }))
-  })
-
-  it('isolates the reviewer to the exact read-only surface and stops after submit_review is accepted', async () => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd: process.cwd() })
-    persistUser(conversation.id, 'user_reviewer_boundary', 'Review the execution.', 1)
-    const client = new FakeCodexClient()
-    client.queueTurn({ turnId: 'turn_reviewer_boundary', notifications: [] })
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(async () => []),
-      readExecutionContext: vi.fn(async () => []),
-    }
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
-    args.mode = 'agent'
-    args.permMode = 'full'
-    args.reviewerRuntime = reviewerRuntime
-    args.ephemeralSession = true
-
-    const running = runCodexSubscriptionChat(args)
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
-
-    const threadStart = client.startThreadCalls[0] as {
-      config: Record<string, unknown>
-      dynamicTools: Array<{ name: string }>
-      environments?: unknown
-    }
-    expect(threadStart.dynamicTools.map((entry) => entry.name)).toEqual([...REVIEWER_READONLY_TOOL_NAMES].sort())
-    expect(threadStart.environments).toEqual([])
-    expect(threadStart.config).toMatchObject({
-      'features.shell_tool': false,
-      'features.apps': false,
-      'features.plugins': false,
-      web_search: 'disabled',
-    })
-    expect(client.startTurnCalls[0]).toMatchObject({ sandboxPolicy: { type: 'readOnly', networkAccess: false } })
-
-    await expect(
-      client.serverRequest({
-        id: 'reviewer_read',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_reviewer_boundary',
-          itemId: 'reviewer_read',
-          callId: 'reviewer_read',
-          tool: 'read',
-          arguments: { path: 'package.json', limit: 1 },
-        },
-      })
-    ).resolves.toMatchObject({ success: true })
-    expect(args.broker.assert).not.toHaveBeenCalled()
-
-    await expect(
-      client.serverRequest({
-        id: 'reviewer_external_read',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_reviewer_boundary',
-          itemId: 'reviewer_external_read',
-          callId: 'reviewer_external_read',
-          tool: 'read',
-          arguments: { path: path.dirname(process.cwd()), limit: 1 },
-        },
-      })
-    ).resolves.toMatchObject({ success: false })
-    expect(args.broker.assert).not.toHaveBeenCalled()
-
-    await expect(
-      client.serverRequest({
-        id: 'reviewer_submit',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_reviewer_boundary',
-          itemId: 'reviewer_submit',
-          callId: 'reviewer_submit',
-          tool: 'submit_review',
-          arguments: { result: 'clean', summary: 'No findings.' },
-        },
-      })
-    ).resolves.toMatchObject({ success: true })
-    await vi.waitFor(() =>
-      expect(client.interruptTurnCalls).toContainEqual({
-        threadId: 'thread_1',
-        turnId: 'turn_reviewer_boundary',
-      })
-    )
-    client.emit(completedNotification('thread_1', 'turn_reviewer_boundary', 'interrupted'))
-
-    await expect(running).resolves.toEqual({ planSubmitted: true, threadId: 'thread_1' })
-    expect(reviewerRuntime.submitReview).toHaveBeenCalledWith({ result: 'clean', summary: 'No findings.' })
   })
 
   it('exposes .agents, .claude and .codex skills through use_skill governed by effective state', async () => {

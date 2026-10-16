@@ -1,5 +1,6 @@
 import type { BrowserWindow, WebContentsView } from 'electron'
 import type { FloatTab } from '../store'
+import { BROWSER_CHROME_HEIGHT } from '../../shared/browser-omnibox'
 
 /**
  * Single owner of conversation-isolated drawer state: views, active conversation, placement, and
@@ -22,8 +23,10 @@ export interface Bounds {
 }
 
 export const OFFSCREEN: Bounds = { x: -100000, y: 0, width: 1000, height: 800 }
+/** The governor's resource of a remote host's browser panel; distinct from this computer's floating chrome. */
+export const REMOTE_BROWSER_RESOURCE = 'remote-browser'
 // Fixed DIP height for floating browser tabs/URL chrome; reparented page content fills the rest.
-export const BROWSER_CHROME_H = 78
+export const BROWSER_CHROME_H = BROWSER_CHROME_HEIGHT
 
 export interface BrowserTab {
   id: string
@@ -35,6 +38,8 @@ export interface BrowserTab {
   lastUsedAt?: number
   /** Runtime-only Maestro delegation owner; never persisted in ui_prefs. */
   ownerScopeId?: string
+  /** Runtime-only: the next committed navigation came from the address bar. */
+  typedNavigation?: boolean
 }
 
 export interface ConvDrawer {
@@ -56,6 +61,11 @@ export interface ConvDrawer {
   panelInactiveSince: Map<PanelTab, number>
   /** Browser panel chrome exists only while the browser is floating. */
   browserChromeView: WebContentsView | null
+  /**
+   * A remote host's browser out of the drawer (popup or floating): a panel with its chrome over the page the host
+   * streams. In the slot that browser is DOM of the main window, so this view exists only while it is out of it.
+   */
+  remoteBrowserView: WebContentsView | null
   /**
    * OAuth windows opened by this conversation's embedded browser. ChatGPT Companion owns its popups
    * separately so resetting one session cannot close another tab's login. Close these windows on
@@ -102,6 +112,23 @@ export let suppressed = false
 /** Native renderers hosting their own Dialog remain visible during the suppression they create. */
 export let dialogSuppressionOwnerIds: ReadonlySet<number> = new Set()
 
+/**
+ * Address-bar suggestions drawn over a conversation's browser page. `prepared`: the renderer is painting a frozen
+ * frame of the page and the floating chrome view already covers the page area (under the page). `open`: the active
+ * page is also moved offscreen so the suggestions and the frozen frame show.
+ */
+export const omniboxOverlays = new Map<string, 'prepared' | 'open'>()
+
+/** Whether the address-bar suggestions hide this conversation's active browser page. */
+export function isBrowserPageHiddenByOmnibox(convId: string): boolean {
+  return omniboxOverlays.get(convId) === 'open'
+}
+
+/** Whether the floating browser chrome view extends over the page area for the suggestions. */
+export function isBrowserChromeExpandedByOmnibox(convId: string): boolean {
+  return omniboxOverlays.has(convId)
+}
+
 // Shared-state setters: ESM let exports are live bindings readable by other drawer modules, but assignments
 // must occur in the owning module.
 export function setActiveConvId(id: string | null): void {
@@ -141,6 +168,7 @@ export function getDrawer(convId: string): ConvDrawer {
       panelViews: new Map(),
       panelInactiveSince: new Map(),
       browserChromeView: null,
+      remoteBrowserView: null,
       oauthWindows: new Set(),
     }
     drawers.set(convId, d)
@@ -190,7 +218,8 @@ export function isViewAllowedDuringDialogSuppression(view: WebContentsView | nul
 }
 
 function viewForTab(drawer: ConvDrawer, tab: FloatTab): WebContentsView | null | undefined {
-  if (tab === 'browser') return drawer.browserTabs.find((item) => item.id === drawer.activeBrowserId)?.view
+  if (tab === 'browser')
+    return drawer.remoteBrowserView ?? drawer.browserTabs.find((item) => item.id === drawer.activeBrowserId)?.view
   if (tab === 'vscode') return drawer.vscodeView
   if (tab === 'chatgpt') return drawer.chatgptView
   return drawer.panelViews.get(tab as PanelTab)
@@ -240,6 +269,11 @@ export function isBrowserStreamed(convId: string): boolean {
 /** Whether the tab is outside the drawer slot (floating, popup or stream), so applyLayout leaves it alone. */
 export function isTabOutOfSlot(convId: string, tab: FloatTab): boolean {
   return getPlacement(convId, tab) !== 'slot'
+}
+
+/** Tabs placed outside the drawer slot (floating, popup or stream); the main window is told of each change. */
+export function outOfSlotTabsOf(convId: string): FloatTab[] {
+  return [...(placementByConv.get(convId)?.keys() ?? [])]
 }
 
 /** Floating tabs for the drawer reattach chips; excludes popups. */

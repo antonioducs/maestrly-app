@@ -115,6 +115,7 @@ describe('Maestro full worker tool runtime', () => {
         'write',
         'edit',
         'webfetch',
+        'web_search',
         'browser_click',
         'terminal_run',
         'notes_write_page',

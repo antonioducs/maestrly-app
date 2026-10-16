@@ -1,6 +1,8 @@
-import { conversationTabAllowed } from './drawer-scope'
+import { conversationTabAllowed, isRemoteConversation } from './drawer-scope'
+import { remoteConversationLabel } from './remote-conversation-labels'
 import { BrowserWindow, screen } from 'electron'
 import { convAccentColor } from '../shared/conv-color'
+import { FLOAT_TABS } from '../shared/tool-tabs'
 import { resolvePreload } from './resolve-preload'
 import { broadcast, registerPanelTarget } from './window-ipc'
 import {
@@ -40,6 +42,7 @@ import {
   conversationScreen,
   onConversationScreenChange,
   presentedBrowserSize,
+  presentsBrowserInArea,
   type ConversationScreen,
   type ScreenArea,
 } from './conversation-screen'
@@ -49,14 +52,24 @@ function tabTitle(tab: FloatTab): string {
   return tMain('main')(`floating.${tab}`)
 }
 
+/** The conversation's name and project; a remote host's conversation is named as the window lists it. */
+function conversationContext(convId: string): { conversationName?: string; projectName?: string } {
+  if (isRemoteConversation(convId)) {
+    const label = remoteConversationLabel(convId)
+    return { conversationName: label?.name || undefined, projectName: label?.projectName }
+  }
+  const conv = getConversation(convId)
+  const ws = conv?.scope === 'project' ? getWorkspace(conv.workspaceId) : undefined
+  return { conversationName: conv?.name, projectName: ws?.name }
+}
+
 /**
  * `Project · Conversation — Tool` identifies the window outside the app, including Mission Control,
  * app switching, and the taskbar.
  */
 function windowTitle(convId: string, tab: FloatTab): string {
-  const conv = getConversation(convId)
-  const ws = conv?.scope === 'project' ? getWorkspace(conv.workspaceId) : undefined
-  const ctx = [ws?.name, conv?.name].filter(Boolean).join(' · ')
+  const { conversationName, projectName } = conversationContext(convId)
+  const ctx = [projectName, conversationName].filter(Boolean).join(' · ')
   return ctx ? `${ctx} — ${tabTitle(tab)}` : tabTitle(tab)
 }
 
@@ -69,16 +82,15 @@ function windowTitle(convId: string, tab: FloatTab): string {
  */
 function stripHtml(convId: string, tab: FloatTab, pinned: boolean): string {
   const t = tMain('main')
-  const conv = getConversation(convId)
-  const ws = conv?.scope === 'project' ? getWorkspace(conv.workspaceId) : undefined
+  const { conversationName, projectName } = conversationContext(convId)
   return floatingStripHtml({
     chromeHeight: FLOAT_CHROME_H,
     color: convAccentColor(convId),
     convId,
-    conversationName: conv?.name,
+    conversationName,
     pinTitle: t('floating.pin'),
     pinned,
-    projectName: ws?.name,
+    projectName,
     tab,
     tabTitle: tabTitle(tab),
     title: windowTitle(convId, tab),
@@ -123,6 +135,12 @@ const floats = new Map<string, Map<FloatTab, FloatEntry>>()
 // conversation; only pinned floating windows remain visible.
 let visibleConvId: string | null = null
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// A remote host's conversation has no ui_prefs here: its windows keep their bounds for this session only.
+const remoteBounds = new Map<string, FloatingBounds>()
+
+function savedBounds(convId: string, tab: FloatTab): FloatingBounds | undefined {
+  return isRemoteConversation(convId) ? remoteBounds.get(keyOf(convId, tab)) : getConvUiPrefs(convId).floating?.[tab]
+}
 
 export function initFloatingManager(window: BrowserWindow): void {
   mainWindow = window
@@ -208,26 +226,30 @@ function clampBounds(saved?: FloatingBounds, area?: ScreenArea): FloatingBounds 
  * browser its desktop presents sits at the top left of its area at the presented size.
  */
 function floatingBounds(
+  convId: string,
   tab: FloatTab,
   saved: FloatingBounds | undefined,
   area: ScreenArea | undefined,
   presented: PresentedSize | null = null
 ) {
-  if (area && presented && fillsScreenArea(tab, isBotMode())) return presentedBrowserBounds(area, presented)
+  const presents = presentsBrowserInArea(convId)
+  if (area && presented && fillsScreenArea(tab, presents)) return presentedBrowserBounds(area, presented)
   return clampBounds(
-    initialFloatingBounds<FloatingBounds>(tab, isBotMode(), area ?? screen.getPrimaryDisplay().workArea, saved),
+    initialFloatingBounds<FloatingBounds>(tab, presents, area ?? screen.getPrimaryDisplay().workArea, saved),
     area
   )
 }
 
 function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   // The bot browser fills its screen area exactly and has no window manager frame: openbox would draw its title bar
-  // and borders around those bounds, outside the area, and move a frame that starts above the display down.
-  const frameless = fillsScreenArea(tab, isBotMode())
+  // and borders around those bounds, outside the area, and move a frame that starts above the display down. So does
+  // the browser of a workspaces conversation whose computer runs.
+  const frameless = fillsScreenArea(tab, presentsBrowserInArea(convId))
   const win = new BrowserWindow({
     ...floatingBounds(
+      convId,
       tab,
-      getConvUiPrefs(convId).floating?.[tab],
+      savedBounds(convId, tab),
       conversationScreen(convId)?.windowArea,
       presentedBrowserSize(convId)
     ),
@@ -375,7 +397,9 @@ export function setFloatBounds(convId: string, tab: FloatTab, bounds: FloatingBo
 function placeConversationWindows(convId: string, registered: ConversationScreen | null): void {
   for (const [tab, en] of floats.get(convId) ?? []) {
     if (en.win.isDestroyed()) continue
-    en.win.setBounds(floatingBounds(tab, en.win.getBounds(), registered?.windowArea, presentedBrowserSize(convId)))
+    en.win.setBounds(
+      floatingBounds(convId, tab, en.win.getBounds(), registered?.windowArea, presentedBrowserSize(convId))
+    )
     layoutFloatingTab(convId, tab, en.win)
   }
 }
@@ -468,9 +492,10 @@ export function getFloatWin(convId: string, tab: FloatTab): BrowserWindow | null
   return en && !en.win.isDestroyed() ? en.win : null
 }
 
-/** Reload all floating titles and identity strips after locale or conversation-name changes. */
-export function refreshFloatingTitles(): void {
+/** Reload floating titles and identity strips after locale or conversation-name changes; `only` limits them. */
+export function refreshFloatingTitles(only?: ReadonlySet<string>): void {
   for (const [convId, byTab] of floats) {
+    if (only && !only.has(convId)) continue
     for (const [tab, en] of byTab) {
       if (en.win.isDestroyed()) continue
       en.win.setTitle(windowTitle(convId, tab))
@@ -484,6 +509,7 @@ export function refreshFloatingTitles(): void {
  * closes views; this only destroys containers with reattaching set to prevent reattachment.
  */
 export function disposeConversation(convId: string): void {
+  for (const tab of FLOAT_TABS) remoteBounds.delete(keyOf(convId, tab))
   const byTab = floats.get(convId)
   if (!byTab) return
   for (const [tab, en] of byTab) {
@@ -510,6 +536,7 @@ export function disposeAll(): void {
   floats.clear()
   for (const t of persistTimers.values()) clearTimeout(t)
   persistTimers.clear()
+  remoteBounds.clear()
   visibleConvId = null
 }
 
@@ -518,8 +545,13 @@ export function disposeAll(): void {
 function persistNow(convId: string, tab: FloatTab, win: BrowserWindow): void {
   if (win.isDestroyed()) return
   const b = win.getBounds()
+  const bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
+  if (isRemoteConversation(convId)) {
+    remoteBounds.set(keyOf(convId, tab), bounds)
+    return
+  }
   const cur = getConvUiPrefs(convId).floating ?? {}
-  patchConvUiPrefs(convId, { floating: { ...cur, [tab]: { x: b.x, y: b.y, width: b.width, height: b.height } } })
+  patchConvUiPrefs(convId, { floating: { ...cur, [tab]: bounds } })
 }
 
 function schedulePersist(convId: string, tab: FloatTab): void {

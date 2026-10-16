@@ -9,6 +9,7 @@ import { getDb, transaction } from '../store/db'
 import { collectChatToolImageRefs, releaseUnreferencedChatToolImages } from '../chat/chat-store'
 import { deleteConversationToolImageMetadata } from '../chat/tool-output'
 import { deleteConversation, getConversation, setConversationLocation } from '../store/conversations'
+import { activeMoveEndpointForConversation } from '../conversation-move/endpoint-store'
 
 const terminalStatuses = new Set<MigrationStatus>(['completed', 'cancelled', 'rolled-back'])
 
@@ -110,6 +111,8 @@ export function incompleteMigrationForConversation(conversationId: string): Conv
 export function assertConversationMigrationMutationAllowed(conversationId: string, action: string): void {
   const migration = incompleteMigrationForConversation(conversationId)
   if (migration) throw new Error(`${action} is blocked by incomplete migration ${migration.id}.`)
+  if (activeMoveEndpointForConversation(conversationId))
+    throw new Error(`${action} is blocked while the conversation is being moved.`)
 }
 
 export function findIncompleteMigrationForScope(

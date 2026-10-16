@@ -5,6 +5,10 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   fleetErrorCodeSchema,
+  fleetPushRegistrationSchema,
+  type FleetDeviceClient,
+  type FleetPushRegistration,
+  type FleetPushRegistrationRequest,
   type FleetRoutineRun,
   type FleetOwnerMemoryEntry,
   type FleetActivityEntry,
@@ -14,6 +18,7 @@ import {
   type FleetCompactionConfig,
   type FleetEnvironmentKind,
   type FleetEnvironmentSetup,
+  type FleetHostFolderMode,
   type FleetLifecycle,
   type FleetPeerMessage,
   type FleetRoutine,
@@ -23,9 +28,25 @@ import { GatewayError } from './errors.js'
 export type StoredRoutineRun = FleetRoutineRun & { inputId: string }
 
 type Row = Record<string, unknown>
+const DEVICE_KINDS = new Set<string>(['computer', 'phone'])
+const DEVICE_PLATFORMS = new Set<string>(['macos', 'windows', 'linux', 'ios', 'android'])
+function deviceRow(row: Row): Device {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    kind: DEVICE_KINDS.has(String(row.kind)) ? (String(row.kind) as Device['kind']) : null,
+    platform: DEVICE_PLATFORMS.has(String(row.platform)) ? (String(row.platform) as Device['platform']) : null,
+    createdAt: String(row.created_at),
+    lastSeenAt: row.last_seen_at as string | null,
+    revokedAt: row.revoked_at as string | null,
+  }
+}
 export type Device = {
   id: string
   name: string
+  /** What the device said it is when it paired; null for devices paired before schema 15. */
+  kind: FleetDeviceClient['kind'] | null
+  platform: FleetDeviceClient['platform'] | null
   createdAt: string
   lastSeenAt: string | null
   revokedAt: string | null
@@ -42,6 +63,14 @@ export type StoredEnvironment = {
   volumeName: string
   /** The limit the owner set for the container; null uses the gateway's default. */
   memoryLimitBytes: number | null
+  /** The CPUs its container may use; null: every CPU of the server. */
+  cpuLimit: number | null
+  /** A workspaces environment stops itself after this many idle minutes; null: never. */
+  idleStopMinutes: number | null
+  /** The color the owner chose for it; null: none. */
+  tint: string | null
+  /** Which server folder a workspaces environment mounts; null for bots environments. */
+  hostFolder: FleetHostFolderMode | null
   /** The compaction model of its bots that have none of their own; null when the owner has not chosen one. */
   compaction: FleetCompactionConfig | null
   /** When the owner asked to update it once its bots are idle; null when no update waits. */
@@ -51,7 +80,19 @@ export type StoredEnvironment = {
   archivedAt: string | null
 }
 export type EnvironmentChanges = Partial<
-  Pick<StoredEnvironment, 'name' | 'lifecycle' | 'setup' | 'memoryLimitBytes' | 'compaction' | 'updateRequestedAt'>
+  Pick<
+    StoredEnvironment,
+    | 'name'
+    | 'lifecycle'
+    | 'setup'
+    | 'memoryLimitBytes'
+    | 'cpuLimit'
+    | 'idleStopMinutes'
+    | 'tint'
+    | 'hostFolder'
+    | 'compaction'
+    | 'updateRequestedAt'
+  >
 >
 /** What an environment's container is started with: the token of its control API and the password of its keyring. */
 export type EnvironmentSecrets = { controlToken: string; keyringPassword: string }
@@ -115,6 +156,17 @@ function sameJson(a: unknown, b: unknown): boolean {
 const environmentCreating: FleetEnvironmentSetup = { step: 'container', error: null, errorMessage: null }
 const botCreating: FleetBotSetup = { step: 'container', error: null, errorMessage: null }
 const botInstalling: FleetBotSetup = { step: 'profile', error: null, errorMessage: null }
+function pushRegistrationRow(row: Row): FleetPushRegistration {
+  return fleetPushRegistrationSchema.parse({
+    provider: row.provider,
+    token: row.token,
+    platform: row.platform,
+    locale: row.locale,
+    preferences: JSON.parse(String(row.preferences_json)),
+    updatedAt: row.updated_at,
+  })
+}
+
 export class Store {
   readonly db: DatabaseSync
   private depth = 0
@@ -173,7 +225,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 11) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 15) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -245,6 +297,22 @@ export class Store {
       this.db.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
     }
     if (version <= 10) this.migrateEnvironmentKinds()
+    if (version <= 11) this.migrateHostSecrets()
+    if (version <= 12) this.migrateEnvironmentScopes()
+    if (version <= 13) {
+      // Schema 14: the push token and notification preferences of each phone.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS push_registrations (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, provider TEXT NOT NULL, token TEXT NOT NULL, platform TEXT NOT NULL, locale TEXT NOT NULL, preferences_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      `)
+      this.db.prepare("UPDATE meta SET value='14' WHERE key='schema_version'").run()
+    }
+    if (version <= 14) {
+      // Schema 15: whether each device is a phone or a computer, and its platform, as it said when it paired.
+      const columns = (this.db.prepare('PRAGMA table_info(devices)').all() as Row[]).map((column) => column.name)
+      if (columns.length && !columns.includes('kind')) this.db.exec('ALTER TABLE devices ADD COLUMN kind TEXT')
+      if (columns.length && !columns.includes('platform')) this.db.exec('ALTER TABLE devices ADD COLUMN platform TEXT')
+      this.db.prepare("UPDATE meta SET value='15' WHERE key='schema_version'").run()
+    }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -343,6 +411,36 @@ export class Store {
       "ALTER TABLE environments ADD COLUMN kind TEXT NOT NULL DEFAULT 'bots' CHECK (kind IN ('bots','workspaces'))"
     )
     this.db.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 12: the token a workspaces environment publishes artifacts with. Environments get one when their container
+   * is next created.
+   */
+  private migrateHostSecrets() {
+    this.db.exec(
+      'CREATE TABLE IF NOT EXISTS host_secrets (environment_id TEXT PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE, gateway_token TEXT NOT NULL, gateway_token_sha256 TEXT NOT NULL UNIQUE)'
+    )
+    this.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 13: environments get a CPU limit, an idle stop and a tint, and workspaces environments a server folder mode.
+   * Workspaces environments so far mount the whole server folder (`shared`), so the paths of their workspaces keep
+   * working; new ones get a folder of their own.
+   */
+  private migrateEnvironmentScopes() {
+    const existing = new Set(
+      (this.db.prepare('PRAGMA table_info(environments)').all() as Row[]).map((column) => String(column.name))
+    )
+    const columns: Array<[string, string]> = [
+      ['cpu_limit', 'REAL CHECK (cpu_limit IS NULL OR cpu_limit > 0)'],
+      ['idle_stop_minutes', 'INTEGER CHECK (idle_stop_minutes IS NULL OR idle_stop_minutes > 0)'],
+      ['tint', 'TEXT'],
+      ['host_folder', "TEXT CHECK (host_folder IS NULL OR host_folder IN ('own','shared'))"],
+    ]
+    for (const [name, definition] of columns)
+      if (!existing.has(name)) this.db.exec(`ALTER TABLE environments ADD COLUMN ${name} ${definition}`)
+    this.db.exec("UPDATE environments SET host_folder='shared' WHERE kind='workspaces' AND host_folder IS NULL")
+    this.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     return {
@@ -489,6 +587,13 @@ export class Store {
   addPairing(hash: string, expiresAt: string) {
     this.db.prepare('INSERT INTO pairing_codes(code_sha256,expires_at) VALUES(?,?)').run(hash, expiresAt)
   }
+  /** Codes that can still pair a device: not used, not expired, not locked by failed attempts. */
+  activePairings(now = new Date().toISOString()): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS n FROM pairing_codes WHERE used_at IS NULL AND expires_at > ? AND attempts < 5')
+      .get(now) as { n: number }
+    return Number(row.n)
+  }
   consumePairing(hash: string, device: Device, tokenHash: string): void {
     this.transaction(() => {
       const row = this.db.prepare('SELECT * FROM pairing_codes WHERE code_sha256=?').get(hash) as Row | undefined
@@ -499,9 +604,9 @@ export class Store {
       this.db.prepare('UPDATE pairing_codes SET used_at=? WHERE code_sha256=?').run(new Date().toISOString(), hash)
       this.db
         .prepare(
-          'INSERT INTO devices(id,name,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,NULL,NULL)'
+          'INSERT INTO devices(id,name,kind,platform,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,?,?,NULL,NULL)'
         )
-        .run(device.id, device.name, tokenHash, device.createdAt)
+        .run(device.id, device.name, device.kind, device.platform, tokenHash, device.createdAt)
     })
   }
   recordPairingAttempt(hash: string) {
@@ -517,24 +622,10 @@ export class Store {
     for (const item of this.db.prepare('SELECT * FROM devices WHERE revoked_at IS NULL').all() as Row[]) {
       if (this.digestMatches(hash, item.token_sha256)) row = item
     }
-    return row
-      ? {
-          id: String(row.id),
-          name: String(row.name),
-          createdAt: String(row.created_at),
-          lastSeenAt: row.last_seen_at as string | null,
-          revokedAt: row.revoked_at as string | null,
-        }
-      : null
+    return row ? deviceRow(row) : null
   }
   listDevices(): Device[] {
-    return (this.db.prepare('SELECT * FROM devices ORDER BY created_at DESC').all() as Row[]).map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      createdAt: String(row.created_at),
-      lastSeenAt: row.last_seen_at as string | null,
-      revokedAt: row.revoked_at as string | null,
-    }))
+    return (this.db.prepare('SELECT * FROM devices ORDER BY created_at DESC').all() as Row[]).map(deviceRow)
   }
   deviceRevoked(id: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM devices WHERE id=? AND revoked_at IS NOT NULL').get(id)
@@ -543,23 +634,57 @@ export class Store {
     this.db.prepare('UPDATE devices SET last_seen_at=? WHERE id=?').run(new Date().toISOString(), id)
   }
   revokeDevice(id: string) {
-    return (
+    const revoked =
       this.db
         .prepare('UPDATE devices SET revoked_at=? WHERE id=? AND revoked_at IS NULL')
         .run(new Date().toISOString(), id).changes > 0
-    )
+    // A removed phone gets no more notifications, and its push token is not kept.
+    this.deletePushRegistration(id)
+    return revoked
+  }
+  pushRegistration(deviceId: string): FleetPushRegistration | null {
+    const row = this.db.prepare('SELECT * FROM push_registrations WHERE device_id=?').get(deviceId) as Row | undefined
+    return row ? pushRegistrationRow(row) : null
+  }
+  savePushRegistration(deviceId: string, request: FleetPushRegistrationRequest): FleetPushRegistration {
+    const at = new Date().toISOString()
+    this.db
+      .prepare(
+        'INSERT INTO push_registrations(device_id,provider,token,platform,locale,preferences_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET provider=excluded.provider, token=excluded.token, platform=excluded.platform, locale=excluded.locale, preferences_json=excluded.preferences_json, updated_at=excluded.updated_at'
+      )
+      .run(
+        deviceId,
+        request.provider,
+        request.token,
+        request.platform,
+        request.locale,
+        JSON.stringify(request.preferences),
+        at,
+        at
+      )
+    return this.pushRegistration(deviceId)!
+  }
+  deletePushRegistration(deviceId: string): boolean {
+    return this.db.prepare('DELETE FROM push_registrations WHERE device_id=?').run(deviceId).changes > 0
+  }
+  /** The registrations of phones still paired. */
+  activePushRegistrations(): { deviceId: string; registration: FleetPushRegistration }[] {
+    const rows = this.db
+      .prepare(
+        'SELECT push_registrations.* FROM push_registrations JOIN devices ON devices.id = push_registrations.device_id WHERE devices.revoked_at IS NULL'
+      )
+      .all() as Row[]
+    return rows.flatMap((row) => {
+      try {
+        return [{ deviceId: String(row.device_id), registration: pushRegistrationRow(row) }]
+      } catch {
+        return []
+      }
+    })
   }
   device(id: string): Device | null {
     const row = this.db.prepare('SELECT * FROM devices WHERE id=?').get(id) as Row | undefined
-    return row
-      ? {
-          id: String(row.id),
-          name: String(row.name),
-          createdAt: String(row.created_at),
-          lastSeenAt: row.last_seen_at as string | null,
-          revokedAt: row.revoked_at as string | null,
-        }
-      : null
+    return row ? deviceRow(row) : null
   }
 
   private desktopLink(row: Row): StoredDesktopLink {
@@ -634,6 +759,11 @@ export class Store {
       containerName: String(row.container_name),
       volumeName: String(row.volume_name),
       memoryLimitBytes: row.memory_limit_bytes === null ? null : Number(row.memory_limit_bytes),
+      cpuLimit: row.cpu_limit === null || row.cpu_limit === undefined ? null : Number(row.cpu_limit),
+      idleStopMinutes:
+        row.idle_stop_minutes === null || row.idle_stop_minutes === undefined ? null : Number(row.idle_stop_minutes),
+      tint: typeof row.tint === 'string' ? row.tint : null,
+      hostFolder: row.host_folder === 'own' || row.host_folder === 'shared' ? row.host_folder : null,
       compaction: row.compaction_json ? (JSON.parse(String(row.compaction_json)) as FleetCompactionConfig) : null,
       updateRequestedAt: (row.update_requested_at as string | null) ?? null,
       createdAt: String(row.created_at),
@@ -656,7 +786,7 @@ export class Store {
       if (this.getEnvironment(environment.id)) throw new GatewayError('CONFLICT', 'Environment already exists')
       this.db
         .prepare(
-          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,cpu_limit,idle_stop_minutes,tint,host_folder,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
         .run(
           environment.id,
@@ -667,6 +797,10 @@ export class Store {
           environment.containerName,
           environment.volumeName,
           environment.memoryLimitBytes,
+          environment.cpuLimit ?? null,
+          environment.idleStopMinutes ?? null,
+          environment.tint ?? null,
+          environment.hostFolder ?? null,
           environment.compaction ? JSON.stringify(environment.compaction) : null,
           environment.updateRequestedAt,
           environment.createdAt,
@@ -710,6 +844,10 @@ export class Store {
         lifecycle: changes.lifecycle ?? current.lifecycle,
         setup: changes.setup ?? current.setup,
         memoryLimitBytes: changes.memoryLimitBytes === undefined ? current.memoryLimitBytes : changes.memoryLimitBytes,
+        cpuLimit: changes.cpuLimit === undefined ? current.cpuLimit : changes.cpuLimit,
+        idleStopMinutes: changes.idleStopMinutes === undefined ? current.idleStopMinutes : changes.idleStopMinutes,
+        tint: changes.tint === undefined ? current.tint : changes.tint,
+        hostFolder: changes.hostFolder === undefined ? current.hostFolder : changes.hostFolder,
         compaction: changes.compaction === undefined ? current.compaction : changes.compaction,
         updateRequestedAt:
           changes.updateRequestedAt === undefined ? current.updateRequestedAt : changes.updateRequestedAt,
@@ -717,13 +855,17 @@ export class Store {
       }
       this.db
         .prepare(
-          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,compaction_json=?,update_requested_at=?,updated_at=? WHERE id=?'
+          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,cpu_limit=?,idle_stop_minutes=?,tint=?,host_folder=?,compaction_json=?,update_requested_at=?,updated_at=? WHERE id=?'
         )
         .run(
           next.name,
           next.lifecycle,
           JSON.stringify(next.setup),
           next.memoryLimitBytes,
+          next.cpuLimit,
+          next.idleStopMinutes,
+          next.tint,
+          next.hostFolder,
           next.compaction ? JSON.stringify(next.compaction) : null,
           next.updateRequestedAt,
           next.updatedAt,
@@ -735,6 +877,40 @@ export class Store {
   environmentSecrets(id: string): EnvironmentSecrets | null {
     const row = this.db.prepare('SELECT * FROM environment_secrets WHERE environment_id=?').get(id) as Row | undefined
     return row ? { controlToken: String(row.control_token), keyringPassword: String(row.keyring_password) } : null
+  }
+  /** The token a workspaces environment publishes artifacts with, or null until its container is created with one. */
+  hostGatewaySecrets(environmentId: string): BotGatewaySecrets | null {
+    const row = this.db.prepare('SELECT * FROM host_secrets WHERE environment_id=?').get(environmentId) as
+      | Row
+      | undefined
+    return row
+      ? { gatewayToken: String(row.gateway_token), gatewayTokenSha256: String(row.gateway_token_sha256) }
+      : null
+  }
+  /** Gives a workspaces environment its token, unless it already has one; returns the token it keeps. */
+  ensureHostGatewaySecrets(environmentId: string, secrets: BotGatewaySecrets): BotGatewaySecrets {
+    return this.transaction(() => {
+      const environment = this.activeEnvironment(environmentId)
+      if (environment.kind !== 'workspaces') throw new Error('Only a workspaces environment has a host token')
+      this.db
+        .prepare(
+          'INSERT INTO host_secrets(environment_id,gateway_token,gateway_token_sha256) VALUES(?,?,?) ON CONFLICT(environment_id) DO NOTHING'
+        )
+        .run(environmentId, secrets.gatewayToken, secrets.gatewayTokenSha256)
+      return this.hostGatewaySecrets(environmentId)!
+    })
+  }
+  /** The active workspaces environment a host token belongs to; an archived one's token is refused. */
+  hostByGatewayHash(hash: string): string | null {
+    let row: Row | undefined
+    for (const item of this.db
+      .prepare(
+        "SELECT s.environment_id,s.gateway_token_sha256 FROM host_secrets s JOIN environments e ON e.id=s.environment_id WHERE e.kind='workspaces' AND e.archived_at IS NULL"
+      )
+      .all() as Row[]) {
+      if (this.digestMatches(hash, item.gateway_token_sha256)) row = item
+    }
+    return row ? String(row.environment_id) : null
   }
   /**
    * Archives an active environment with its active bots, which are flagged so that restoring the environment brings
@@ -816,6 +992,7 @@ export class Store {
       if (ownerMemoriesDeleted) this.bumpOwnerMemoryRevision()
       this.db.prepare('DELETE FROM activity WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environment_secrets WHERE environment_id=?').run(id)
+      this.db.prepare('DELETE FROM host_secrets WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environments WHERE id=?').run(id)
       return { botIds, ownerMemoriesDeleted }
     })
@@ -910,6 +1087,10 @@ export class Store {
             containerName: legacyContainerName(bot.id),
             volumeName: legacyVolumeName(bot.id),
             memoryLimitBytes: null,
+            cpuLimit: null,
+            idleStopMinutes: null,
+            tint: null,
+            hostFolder: null,
             compaction: null,
             updateRequestedAt: null,
             createdAt: bot.createdAt,
@@ -1089,9 +1270,10 @@ export class Store {
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db
-        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?)')
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?)')
         .run(
           'botMessageSend:' + id,
+          'botMessageEdit:' + id,
           'routineCreate:' + id,
           'botRoutineCreate:' + id,
           'botOwnerMemorySave:' + id,

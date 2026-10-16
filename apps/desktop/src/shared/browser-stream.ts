@@ -2,6 +2,11 @@
  * The browser of a conversation that runs on a remote host, shown live in a window of another computer. The host
  * streams JPEG frames of the page its agent drives, and the window sends the person's input back; everything travels
  * over the host bridge. Frames, cursor and notices go to the one renderer that opened the stream.
+ *
+ * A window that plays video asks for it (`BrowserStreamOptions.video`). A host with computers then answers with the
+ * `video` transport: it sends no frames, the page's picture comes from the H.264 screen of the conversation's tile
+ * through the gateway, and the host tells the window where the page is in that tile (`drawer:browser-stream-area`).
+ * Input, cursor, lists and notices still travel over the bridge.
  */
 
 export const BROWSER_STREAM_LIMITS = {
@@ -20,6 +25,32 @@ export type BrowserStreamEndReason = 'taken-over' | 'stopped' | 'unavailable'
 
 export interface BrowserStreamStarted {
   streamId: string
+  /** Where the picture comes from; a host from before video says nothing, which is `jpeg`. */
+  transport?: BrowserStreamTransport
+}
+
+export type BrowserStreamTransport = 'video' | 'jpeg'
+
+/** What the window can play: `video` when it decodes H.264. */
+export interface BrowserStreamOptions {
+  video?: boolean
+}
+
+/** The options of a start request; anything malformed asks for nothing. */
+export function parseBrowserStreamOptions(value: unknown): BrowserStreamOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const video = (value as { video?: unknown }).video
+  return typeof video === 'boolean' ? { video } : {}
+}
+
+/**
+ * Where the page (or the sign-in window above it) is in the conversation's tile, in the tile's pixels: the part of the
+ * tile's video the window shows. Input coordinates are this area's pixels, as they are a JPEG frame's.
+ */
+export interface BrowserStreamArea {
+  convId: string
+  streamId: string
+  area: { x: number; y: number; width: number; height: number }
 }
 
 /** What the window shows: the active tab, a sign-in window the page opened above it, or nothing when no tab is open. */

@@ -118,6 +118,7 @@ export function QuestionComposer({
     <div className="mx-auto w-full max-w-3xl px-4 pb-3">
       <div
         ref={rootRef}
+        data-testid="question-composer"
         tabIndex={0}
         onKeyDown={onKey}
         className="rounded-xl border border-violet-500/30 bg-[#161618] p-3 outline-none focus:border-violet-500/50"

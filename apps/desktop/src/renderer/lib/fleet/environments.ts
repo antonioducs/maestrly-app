@@ -124,6 +124,65 @@ export function memoryLimitChoices(current: number | null): MemoryLimitChoice[] 
   ]
 }
 
+/** CPU limits offered, in CPUs; those above the server's CPUs are left out. */
+export const CPU_LIMIT_CHOICES = [0.5, 1, 2, 4, 8, 16] as const
+export type CpuLimitChoice = { value: string; cpus: number | null }
+export function cpuLimitValue(cpus: number | null): string {
+  return cpus === null ? 'none' : String(cpus)
+}
+export function cpuLimitFromValue(value: string): number | null {
+  return value === 'none' ? null : Number(value)
+}
+/** No limit, the whole limits up to the server's CPUs (all of them when unknown), and a limit set elsewhere. */
+export function cpuLimitChoices(current: number | null, serverCpus: number | null): CpuLimitChoice[] {
+  const cpus: number[] = CPU_LIMIT_CHOICES.filter((value) => !serverCpus || value <= serverCpus)
+  if (serverCpus && !cpus.includes(serverCpus) && serverCpus <= 64) cpus.push(serverCpus)
+  if (current !== null && !cpus.includes(current)) cpus.push(current)
+  return [
+    { value: 'none', cpus: null },
+    ...cpus.sort((a, b) => a - b).map((value) => ({ value: cpuLimitValue(value), cpus: value })),
+  ]
+}
+
+/** How long a workspaces environment may stay idle before it stops itself, in minutes. */
+export const IDLE_STOP_CHOICES_MINUTES = [30, 60, 120, 240, 480, 1440] as const
+export type IdleStopChoice = { value: string; minutes: number | null }
+export function idleStopValue(minutes: number | null): string {
+  return minutes === null ? 'never' : String(minutes)
+}
+export function idleStopFromValue(value: string): number | null {
+  return value === 'never' ? null : Number(value)
+}
+export function idleStopChoices(current: number | null): IdleStopChoice[] {
+  const minutes: number[] = [...IDLE_STOP_CHOICES_MINUTES]
+  if (current !== null && !minutes.includes(current)) minutes.push(current)
+  return [
+    { value: 'never', minutes: null },
+    ...minutes.sort((a, b) => a - b).map((value) => ({ value: idleStopValue(value), minutes: value })),
+  ]
+}
+/** An idle stop as words: minutes below an hour, hours otherwise. */
+export function idleStopParts(minutes: number): { unit: 'minutes' | 'hours'; count: number } {
+  return minutes < 60 || minutes % 60 ? { unit: 'minutes', count: minutes } : { unit: 'hours', count: minutes / 60 }
+}
+
+/** The colors offered for an environment, told apart at a glance in the sidebar. */
+export const ENVIRONMENT_TINTS = [
+  '#4978c6',
+  '#4c9a87',
+  '#c29a43',
+  '#d47754',
+  '#9b65b6',
+  '#c55a6e',
+  '#5aa0b5',
+  '#6379a5',
+] as const
+/** The first color no other environment uses yet, so a new one stands apart from those before it. */
+export function nextEnvironmentTint(taken: Array<string | null>): string {
+  const used = new Set(taken.flatMap((tint) => (tint ? [tint.toLowerCase()] : [])))
+  return ENVIRONMENT_TINTS.find((tint) => !used.has(tint)) ?? ENVIRONMENT_TINTS[taken.length % ENVIRONMENT_TINTS.length]
+}
+
 export type OwnerMemoryScope = { kind: 'global' } | { kind: 'environment'; id: string; name: string | null }
 /** Who reads an owner memory entry: every bot, or the bots of one environment (named when it is still listed). */
 export function ownerMemoryScope(

@@ -1,4 +1,5 @@
 import {
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
@@ -19,6 +20,8 @@ export async function environmentSettingsRoute(
   if (!environment) throw new GatewayError('NOT_FOUND', 'Environment not found')
   if (!environment.capabilities.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE))
     throw new GatewayError('CONFLICT', 'Environment settings are unavailable. Restart it to update.')
+  if (key.includes('Failover') && !environment.capabilities.includes(FLEET_ACCOUNT_FAILOVER_FEATURE))
+    throw new GatewayError('CONFLICT', 'Account failover is unavailable. Restart the environment to update it.')
   if (body && typeof body === 'object') {
     for (const [key, value] of Object.entries(params)) {
       if (key === 'eid') continue
@@ -218,6 +221,18 @@ export async function environmentSettingsRoute(
       return {
         body: FLEET_SETTINGS_OPERATIONS.setPreferences.response.parse(
           await client.settingsSetPreferences(FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(body))
+        ),
+      }
+    case 'settingsFailover':
+      return {
+        body: FLEET_SETTINGS_OPERATIONS.failover.response.parse(
+          await client.settingsFailover(FLEET_SETTINGS_OPERATIONS.failover.input.parse({}))
+        ),
+      }
+    case 'settingsSetFailoverRoute':
+      return {
+        body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response.parse(
+          await client.settingsSetFailoverRoute(FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input.parse(body))
         ),
       }
     default:

@@ -322,15 +322,15 @@ artifact data too. See [bot server management](bot-fleet.md#update-disconnect-an
 
 ## Remote workspaces data
 
-A [workspaces environment](remote-workspaces.md) keeps a whole Maestrly profile
-on the server, not on this computer:
+Each [workspaces environment](remote-workspaces.md) keeps a whole Maestrly
+profile of its own on the server, not on this computer:
 
 | Data | Where it is kept |
 | --- | --- |
 | The host's profile: conversations, messages, memory, notes, settings, model accounts and their keys, skills, MCP servers, and the agent's browser profile | The environment's home volume, `maestrly-env-<id>-home`, mounted at `/home/bot`. Secrets are encrypted with the keyring of the environment, as in a bot environment. |
 | Files of plain chats and worktrees of conversations | The same home volume, inside the profile |
-| Workspaces added from the server's **Workspaces** folder | That folder of the server itself (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`; `/srv/maestrly` on a VPS that Maestrly set up), as ordinary files owned by uid 1000 |
-| The environment's record and kind | The gateway's database (`environments.kind`, schema 11) |
+| Workspaces added from the server's **Workspaces** folder | The environment's own folder of the server (`<MAESTRLY_GATEWAY_WORKSPACES_ROOT>/<id>`; `/srv/maestrly/<id>` on a VPS that Maestrly set up), as ordinary files owned by uid 1000. An environment created before these folders keeps the whole `MAESTRLY_GATEWAY_WORKSPACES_ROOT` until you move it. Deleting an environment never deletes its folder. |
+| The environment's record, kind, limits, idle stop, color, and folder mode | The gateway's database (`environments`, schemas 11 and 13) |
 | Uploads in progress | A hidden `.maestrly-upload-<id>.part` file next to the destination, and its record under `host-file-uploads/` in the profile. An upload untouched for 7 days is removed with its partial file. |
 
 This computer keeps only what it needs to show the host: its own id for the
@@ -352,7 +352,30 @@ Files moved with the **Files** tab are the exception, because you ask for them:
 Archiving a workspaces environment removes its container and keeps its home
 volume; deleting it forever removes the volume and everything in the host's
 profile. Neither touches the files under the server's **Workspaces** folder.
-Back up that folder and the environment's home volume to keep both.
+Both remove the environment's Docker network, which holds no data. Back up that
+folder and the environment's home volume to keep both.
+
+## Drawer browser history
+
+The drawer browser keeps one history for all conversations, like its shared
+session. `browser-history.json` in the application profile (created `0600`)
+holds each visited `http`/`https` page without its fragment: its URL, title,
+visit and typed-visit counts, last visit time, and favicon address. Favicons are
+stored there too, as images of at most 32 KiB, for up to 500 sites. Error pages
+and tabs that delegated agents open are not recorded. The history keeps at most
+5,000 pages, dropping the least used and least recent first, and is written a
+moment after each change and when the app quits.
+
+Remove a page from the address bar suggestions with **Shift+Delete** or the ×
+button; removing a search removes every visit of that query. **Clear browsing
+data** in the browser toolbar deletes the whole history together with the
+browser's cache, cookies, and storage. Exports do not include the history. Reset
+deletes the file. A file that cannot be read is kept
+as `browser-history.json.corrupt` and the history starts empty.
+
+A conversation of a [workspaces environment](remote-workspaces.md) browses on
+the server, so its visits, and the requests for its search suggestions, belong
+to the host's profile rather than this computer's.
 
 ## Temporary tool output
 

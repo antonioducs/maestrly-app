@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   runApprovedPlan: vi.fn(),
   runPlanRevision: vi.fn(),
   setChatMode: vi.fn(),
+  isConversationUnderReview: vi.fn((_conversationId: string) => false),
   createMaestroSibling: vi.fn(),
   deleteConversation: vi.fn(),
   isConversationReserved: vi.fn(),
@@ -50,6 +51,7 @@ vi.mock('../../src/main/chat/service', () => ({
   runApprovedPlan: h.runApprovedPlan,
   runPlanRevision: h.runPlanRevision,
   setChatMode: h.setChatMode,
+  isConversationUnderReview: h.isConversationUnderReview,
 }))
 
 import { registerPlanIpc } from '../../src/main/plan-ipc'
@@ -293,6 +295,19 @@ describe('registerPlanIpc', () => {
 
     expect(h.runPlanRevision).toHaveBeenCalledWith('conv-chat', 'redo with X')
     expect(h.setChatMode).not.toHaveBeenCalled()
+    expect(h.runApprovedPlan).not.toHaveBeenCalled()
+  })
+
+  it('refuses to decide a plan while a review holds the conversation', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    h.isConversationUnderReview.mockReturnValueOnce(true)
+    registerPlanIpc(reg, { sendToWindow: vi.fn() })
+
+    expect(await mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'approve' })).toEqual({
+      ok: false,
+      error: 'review-active',
+    })
+    expect(h.decidePlan).not.toHaveBeenCalled()
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
   })
 

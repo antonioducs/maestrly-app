@@ -25,6 +25,12 @@ describe('plugin hooks reach every runtime', () => {
     expect(steer).toContain("hasHookEvent(conversationId, behaviorFor(conversationId), 'UserPromptSubmit')")
   })
 
+  it('runs code and plan reviewers in Ask, where no hook runs', () => {
+    const service = readFileSync(path.join(main, 'service.ts'), 'utf8')
+    const reviewer = service.slice(service.indexOf('runReviewer: async'), service.indexOf('persistReport:'))
+    expect(reviewer).toContain("mode: 'ask'")
+  })
+
   it('runs tool hooks around the ChatGPT web companion tools', () => {
     expect(readFileSync(path.join(main, 'chatgpt-web/bridge-server.ts'), 'utf8')).toContain('toolHooks')
     const manager = readFileSync(path.join(main, 'chatgpt-web/manager.ts'), 'utf8')

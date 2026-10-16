@@ -231,7 +231,7 @@ test('renders official Claude and OpenAI usage windows', async ({
   await expect(quickDialog).toHaveCount(0)
   await expect(emptyState).toBeVisible()
 
-  await win.getByTitle('Settings').click()
+  await win.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(win.getByRole('heading', { name: 'Maestrly Chat' })).toBeVisible()
 
   const codex = win.locator('[data-subscription-provider="codex-subscription"][data-subscription-account="default"]')

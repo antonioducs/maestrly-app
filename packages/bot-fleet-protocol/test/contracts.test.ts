@@ -46,11 +46,13 @@ import {
   fleetUiOpenRequestSchema,
 } from '../src/index.js'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
   FLEET_ERROR_STATUS,
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_ROUTES,
   FLEET_SCREEN_UPGRADE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   FLEET_INTERNAL_ROUTES,
   FLEET_ROUTINE_LIMITS,
   FLEET_COMPACTION_LIMITS,
@@ -423,6 +425,22 @@ describe('domain contracts', () => {
       }).success
     ).toBe(false)
     expect(fleetPairRequestSchema.parse({ code: '0123ABCD', deviceName: 'MacBook' }).code).toBe('0123ABCD')
+    // A device says what it is when it pairs; devices that predate it say nothing.
+    expect(fleetPairRequestSchema.parse({ code: '0123ABCD', deviceName: 'MacBook' }).client).toBeUndefined()
+    expect(
+      fleetPairRequestSchema.parse({
+        code: '0123ABCD',
+        deviceName: 'Pixel',
+        client: { kind: 'phone', platform: 'android' },
+      }).client
+    ).toEqual({ kind: 'phone', platform: 'android' })
+    expect(
+      fleetPairRequestSchema.safeParse({
+        code: '0123ABCD',
+        deviceName: 'Fridge',
+        client: { kind: 'fridge', platform: 'android' },
+      }).success
+    ).toBe(false)
     expect(
       fleetInternalPeerMessageRequestSchema.parse({ to: 'dev', text: 'x'.repeat(4000), idempotencyKey: key }).to
     ).toBe('dev')
@@ -466,9 +484,8 @@ describe('routes and helpers', () => {
     expect(FLEET_GATEWAY_ROUTES.botMessageDelete.response).toBeNull()
     expect(FLEET_INTERNAL_ROUTES.peerMessageSend.path).toBe('/internal/v1/peers/messages')
     expect(FLEET_INSTANCE_ROUTES.interactionResolve.path).toBe('/v1/interactions/:id/resolve')
-    expect(FLEET_INSTANCE_ROUTES.screenView.path).toBe('/v1/screen/view')
-    expect(FLEET_INSTANCE_ROUTES.screenControl.path).toBe('/v1/screen/control')
-    expect(FLEET_SCREEN_UPGRADE).toBe('maestrly-rfb')
+    expect(FLEET_SCREEN_UPGRADE).toBe('maestrly-video')
+    expect(FLEET_VIDEO_SCREENS_FEATURE).toBe('video-screens')
     expect(
       buildPath(FLEET_GATEWAY_ROUTES.botRoutineRun.path, { id: 'bot one', rid: 'r/1' }, { limit: 20, before: null })
     ).toBe('/v1/bots/bot%20one/routines/r%2F1/run?limit=20')
@@ -883,6 +900,19 @@ describe('bot provisioning contracts', () => {
     expect(fleetInstanceStatusSchema.parse(status).capabilities).toEqual([])
     expect(fleetActivityKindSchema.options).toContain('bot_configured')
   })
+  it('announces features past those installed desktops read in a list they drop', () => {
+    const features = Array.from({ length: provisioning.FLEET_META_FEATURES_LEGACY_MAX }, (_, index) => `f${index}`)
+    const meta = { protocol: 1, gatewayVersion: '1', botImage: 'i', botImageVersion: null, features }
+    const answer = { ...meta, moreFeatures: ['phones', 'f0'] }
+    // What a desktop up to 0.18 parses: at most 20 features, and no field it does not know.
+    const legacy = provisioning.fleetMetaResponseSchema.omit({ moreFeatures: true }).extend({
+      features: z.array(z.string()).max(provisioning.FLEET_META_FEATURES_LEGACY_MAX),
+    })
+    expect(legacy.parse(answer)).toEqual(meta)
+    const parsed = provisioning.fleetMetaResponseSchema.parse(answer)
+    expect(provisioning.fleetMetaFeatures(parsed)).toEqual([...features, 'phones'])
+    expect(provisioning.fleetMetaResponseSchema.parse(meta).moreFeatures).toEqual([])
+  })
   it('allows only provider sign-in URLs and extracts loopback redirects', () => {
     for (const [kind, url] of [
       ['codex', 'https://auth.openai.com/oauth/authorize?x=1'],
@@ -968,8 +998,13 @@ describe('environment contracts', () => {
     expect(FLEET_ENVIRONMENTS_FEATURE).toBe('environments')
     expect(FLEET_ENVIRONMENT_LIMITS).toEqual({
       botsMax: 8,
+      workspacesMax: 8,
       memoryLimitMinBytes: 2 * GiB,
       memoryLimitMaxBytes: 64 * GiB,
+      cpuLimitMin: 0.5,
+      cpuLimitMax: 64,
+      idleStopMinutesMin: 15,
+      idleStopMinutesMax: 10080,
     })
     expect(FLEET_ENVIRONMENT_DISPLAY).toEqual({ columns: 3, rows: 3, width: 3840, height: 2400 })
     expect(FLEET_BOT_ENV.environmentId).toBe('MAESTRLY_ENVIRONMENT_ID')
@@ -1106,6 +1141,9 @@ describe('environment contracts', () => {
       ...request,
       memoryLimitBytes: null,
       kind: 'bots',
+      cpuLimit: null,
+      idleStopMinutes: null,
+      tint: null,
     })
     expect(fleetCreateEnvironmentRequestSchema.parse({ ...request, memoryLimitBytes: 4 * GiB }).memoryLimitBytes).toBe(
       4 * GiB
@@ -1513,6 +1551,7 @@ describe('environment contracts', () => {
       'image',
       'inputSend',
       'inputDelete',
+      'inputEdit',
       'turnCancel',
       'interactionResolve',
       'hold',
@@ -1560,8 +1599,9 @@ describe('environment contracts', () => {
       fleetInstanceStatusSchema
     )
     expectRoute(FLEET_INSTANCE_ROUTES.status, 'GET', '/v1/status', null, fleetInstanceStatusSchema)
-    expectRoute(FLEET_INSTANCE_ROUTES.screenView, 'GET', '/v1/screen/view', null, null)
-    expectRoute(FLEET_INSTANCE_ROUTES.screenControl, 'GET', '/v1/screen/control', null, null)
+    // Screens stream as video only from environment images: the single-bot screen routes are gone.
+    expect('screenView' in FLEET_INSTANCE_ROUTES).toBe(false)
+    expect('screenControl' in FLEET_INSTANCE_ROUTES).toBe(false)
   })
 
   it('reaches exactly one route of its method from every concrete path, in every route family', () => {
@@ -1773,4 +1813,35 @@ it('supports Google browser sign-in without accepting Google credential imports'
   ]) {
     expect(provisioning.fleetLoginUrlAllowed('antigravity', url)).toBe(false)
   }
+})
+
+describe('message edits', () => {
+  it('names the feature and routes an edit to the input it replaces, on the gateway and on a bot', () => {
+    expect(provisioning.FLEET_MESSAGE_EDIT_FEATURE).toBe('message-edit')
+    const edit = { body: provisioning.fleetEditMessageRequestSchema, response: provisioning.fleetInputReceiptSchema }
+    expect(FLEET_GATEWAY_ROUTES.botMessageEdit).toEqual({
+      method: 'POST',
+      path: '/v1/bots/:id/messages/:inputId/edit',
+      ...edit,
+    })
+    expect(FLEET_INSTANCE_ROUTES.inputEdit).toEqual({ method: 'POST', path: '/v1/inputs/:inputId/edit', ...edit })
+    expect(FLEET_INSTANCE_ROUTES.botInputEdit).toEqual({
+      method: 'POST',
+      path: '/v1/bots/:botId/inputs/:inputId/edit',
+      ...edit,
+    })
+  })
+
+  it('keeps the attachments unless the edit replaces them', () => {
+    const schema = provisioning.fleetEditMessageRequestSchema
+    expect(schema.parse({ text: 'Edited', idempotencyKey: key })).toEqual({ text: 'Edited', idempotencyKey: key })
+    expect(schema.parse({ text: '', idempotencyKey: key, attachments: [] }).attachments).toEqual([])
+    const image = { kind: 'image', name: 'pixel.png', mediaType: 'image/png', dataBase64: 'iVBORw0KGgo=' }
+    expect(schema.parse({ text: '', idempotencyKey: key, attachments: [image] }).attachments).toEqual([image])
+    expect(schema.safeParse({ text: 'Edited' }).success).toBe(false)
+    expect(schema.safeParse({ text: 'x'.repeat(16_001), idempotencyKey: key }).success).toBe(false)
+    expect(
+      schema.safeParse({ text: '', idempotencyKey: key, attachments: Array.from({ length: 9 }, () => image) }).success
+    ).toBe(false)
+  })
 })

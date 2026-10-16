@@ -1,4 +1,10 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
+import { fleetBridgeOrigin } from './helpers.js'
+import {
+  fleetChatAttentionKindSchema,
+  fleetPushRegistrationRequestSchema,
+  fleetPushRegistrationSchema,
+} from './push.js'
 import {
   fleetHostFileDigestRequestSchema,
   fleetHostFileDigestSchema,
@@ -41,6 +47,10 @@ import {
   fleetEnvironmentIdSchema,
   fleetEnvironmentKindSchema,
   fleetEnvironmentSchema,
+  fleetCpuLimitSchema,
+  fleetHostFolderModeSchema,
+  fleetIdleStopMinutesSchema,
+  fleetTintSchema,
   fleetRuntimesSchema,
   fleetHostInfoSchema,
   fleetIdSchema,
@@ -204,10 +214,9 @@ export const fleetAttachmentInputSchema = z
   })
 export type FleetAttachmentInput = z.infer<typeof fleetAttachmentInputSchema>
 
-const fleetAttachmentsSchema = z
+const fleetAttachmentListSchema = z
   .array(fleetAttachmentInputSchema)
   .max(FLEET_FILE_LIMITS.attachmentsMax)
-  .default([])
   .refine(
     (items) =>
       items.reduce((sum, item) => sum + base64DecodedBytes(item.dataBase64), 0) <=
@@ -218,29 +227,68 @@ const fleetAttachmentsSchema = z
     (items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax,
     'too many PDF attachments'
   )
+const fleetAttachmentsSchema = fleetAttachmentListSchema.default([])
 
 /** A message needs text or at least one image. */
 const hasContent = (value: { text: string; attachments: unknown[] }) =>
   value.text.trim().length > 0 || value.attachments.length > 0
 
-export const fleetFeaturesSchema = z.array(z.string().max(40)).max(20).default([])
+export const fleetFeaturesSchema = z.array(z.string().max(40)).max(40).default([])
 
+/** How many `features` desktops up to 0.18 accept in `/v1/meta`; they refuse the whole answer past it. */
+export const FLEET_META_FEATURES_LEGACY_MAX = 20
 export const fleetMetaResponseSchema = z.object({
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
   gatewayVersion: z.string(),
   botImage: z.string(),
   botImageVersion: z.string().nullable(),
+  /** At most `FLEET_META_FEATURES_LEGACY_MAX`, so that every desktop can read the answer. */
   features: fleetFeaturesSchema,
+  /** The features past those: desktops up to 0.18 drop this field. Read both lists with `fleetMetaFeatures`. */
+  moreFeatures: fleetFeaturesSchema,
 })
 export type FleetMetaResponse = z.infer<typeof fleetMetaResponseSchema>
+/** Every feature a gateway announces, from both lists of `/v1/meta`. */
+export function fleetMetaFeatures(meta: { features?: string[]; moreFeatures?: string[] }): string[] {
+  return [...new Set([...(meta.features ?? []), ...(meta.moreFeatures ?? [])])]
+}
 
+/** What a device says it is when it pairs, so the list of devices can tell a phone from a computer. */
+export const fleetDeviceClientSchema = z.object({
+  kind: z.enum(['computer', 'phone']),
+  platform: z.enum(['macos', 'windows', 'linux', 'ios', 'android']),
+})
+export type FleetDeviceClient = z.infer<typeof fleetDeviceClientSchema>
 export const fleetPairRequestSchema = z.object({
   code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{8}$/),
   deviceName: z.string().min(1),
+  // Absent from devices that predate it; gateways that predate it drop it.
+  client: fleetDeviceClientSchema.optional(),
 })
 export type FleetPairRequest = z.infer<typeof fleetPairRequestSchema>
+/** A device paired with the server. Kind and platform are null for devices paired before they were recorded. */
+export const fleetDeviceSchema = z.object({
+  id: fleetIdSchema,
+  name: z.string(),
+  kind: fleetDeviceClientSchema.shape.kind.nullable(),
+  platform: fleetDeviceClientSchema.shape.platform.nullable(),
+  pairedAt: fleetTimestampSchema,
+  lastSeenAt: fleetTimestampSchema.nullable(),
+  /** The device that asked for the list. */
+  current: z.boolean(),
+  /** Whether the device registered for push notifications. */
+  notifications: z.boolean(),
+})
+export type FleetDevice = z.infer<typeof fleetDeviceSchema>
+export const fleetDevicesResponseSchema = z.object({ devices: z.array(fleetDeviceSchema) })
+export type FleetDevicesResponse = z.infer<typeof fleetDevicesResponseSchema>
 export const fleetPairResponseSchema = z.object({ deviceId: fleetIdSchema, token: fleetIdSchema })
 export type FleetPairResponse = z.infer<typeof fleetPairResponseSchema>
+export const fleetPairingCodeResponseSchema = z.object({
+  code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/),
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetPairingCodeResponse = z.infer<typeof fleetPairingCodeResponseSchema>
 
 export const fleetBotsResponseSchema = z.object({ bots: z.array(fleetBotSchema) })
 export type FleetBotsResponse = z.infer<typeof fleetBotsResponseSchema>
@@ -264,6 +312,11 @@ export const fleetCreateEnvironmentRequestSchema = z.object({
   /** Null uses the gateway's default limit. */
   memoryLimitBytes: fleetMemoryLimitSchema.nullable().default(null),
   kind: fleetEnvironmentKindSchema.default('bots'),
+  /** Gateways with `workspaces-environments` only; older ones drop these. Null: no CPU limit. */
+  cpuLimit: fleetCpuLimitSchema.nullable().default(null),
+  /** Workspaces environments only. Null: it never stops by itself. */
+  idleStopMinutes: fleetIdleStopMinutesSchema.nullable().default(null),
+  tint: fleetTintSchema.nullable().default(null),
   idempotencyKey: fleetIdempotencyKeySchema,
 })
 export type FleetCreateEnvironmentRequest = z.infer<typeof fleetCreateEnvironmentRequestSchema>
@@ -272,6 +325,13 @@ export const fleetPatchEnvironmentRequestSchema = z
     name: fleetNameSchema.optional(),
     /** Null goes back to the gateway's default limit. */
     memoryLimitBytes: fleetMemoryLimitSchema.nullable().optional(),
+    /** Null removes the CPU limit. Gateways with `workspaces-environments` only, as are the fields below. */
+    cpuLimit: fleetCpuLimitSchema.nullable().optional(),
+    /** Workspaces environments only; null: it never stops by itself. */
+    idleStopMinutes: fleetIdleStopMinutesSchema.nullable().optional(),
+    tint: fleetTintSchema.nullable().optional(),
+    /** Workspaces environments only; it applies when the environment next starts or restarts. */
+    hostFolder: fleetHostFolderModeSchema.optional(),
     /** The default compaction model of its bots; null removes it. */
     compaction: fleetCompactionConfigSchema.nullable().optional(),
     /** Optional compare-and-set values for the shared settings editor; legacy callers omit them. */
@@ -284,7 +344,14 @@ export const fleetPatchEnvironmentRequestSchema = z
       .optional(),
   })
   .refine(
-    (value) => value.name !== undefined || value.memoryLimitBytes !== undefined || value.compaction !== undefined,
+    (value) =>
+      value.name !== undefined ||
+      value.memoryLimitBytes !== undefined ||
+      value.cpuLimit !== undefined ||
+      value.idleStopMinutes !== undefined ||
+      value.tint !== undefined ||
+      value.hostFolder !== undefined ||
+      value.compaction !== undefined,
     'nothing to change'
   )
 export type FleetPatchEnvironmentRequest = z.infer<typeof fleetPatchEnvironmentRequestSchema>
@@ -556,6 +623,16 @@ export const fleetSendMessageRequestSchema = z
   })
   .refine(hasContent, 'a message needs text or an image')
 export type FleetSendMessageRequest = z.infer<typeof fleetSendMessageRequestSchema>
+/**
+ * The owner's last message, edited (`message-edit`): the bot's conversation is cut from that message and the new text
+ * runs as a new turn. Without `attachments` the message keeps the ones it had; with them, they replace those.
+ */
+export const fleetEditMessageRequestSchema = z.object({
+  text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
+  idempotencyKey: fleetIdempotencyKeySchema,
+  attachments: fleetAttachmentListSchema.optional(),
+})
+export type FleetEditMessageRequest = z.infer<typeof fleetEditMessageRequestSchema>
 export const fleetInputReceiptSchema = z.object({ inputId: fleetIdSchema, itemId: fleetIdSchema, queued: z.boolean() })
 export type FleetInputReceipt = z.infer<typeof fleetInputReceiptSchema>
 export const fleetTakeoverReleaseRequestSchema = z.object({ note: fleetNoteSchema.nullable(), continue: z.boolean() })
@@ -569,12 +646,37 @@ export type FleetScreenTicketRequest = z.infer<typeof fleetScreenTicketRequestSc
 /** The environment screen shows only Maestrly's settings: control needs no takeover. */
 export const fleetEnvironmentScreenTicketRequestSchema = z.object({ mode: z.enum(['view', 'control']) })
 export type FleetEnvironmentScreenTicketRequest = z.infer<typeof fleetEnvironmentScreenTicketRequestSchema>
+/**
+ * A workspaces conversation's screens: its computer (`apps`), or its browser's tile (`browser`), which is only watched:
+ * the Browser tab sends its input over the bridge.
+ */
+export const fleetConversationScreenTicketRequestSchema = z
+  .object({ mode: z.enum(['view', 'control']), surface: fleetScreenSurfaceSchema })
+  .strict()
+  .refine((value) => value.surface !== 'browser' || value.mode === 'view', {
+    message: "A conversation's browser is view only",
+  })
+export type FleetConversationScreenTicketRequest = z.infer<typeof fleetConversationScreenTicketRequestSchema>
 export const fleetScreenTicketResponseSchema = z.object({
   ticket: fleetIdSchema,
   path: z.string().startsWith('/v1/screen?ticket='),
   expiresAt: fleetTimestampSchema,
 })
 export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
+/**
+ * A bridge ticket request. A phone names the `origin` its WebSocket sends (React Native always sends one); the gateway
+ * then accepts that one Origin on the upgrade (`phones`). Computers send no Origin and leave it out.
+ */
+export const fleetBridgeTicketRequestSchema = z
+  .object({
+    origin: z
+      .string()
+      .max(300)
+      .refine((value) => fleetBridgeOrigin(value) === value, 'Invalid origin')
+      .optional(),
+  })
+  .strict()
+export type FleetBridgeTicketRequest = z.infer<typeof fleetBridgeTicketRequestSchema>
 /** A one-use ticket to open the bridge of a workspaces environment. */
 export const fleetBridgeTicketResponseSchema = z.object({
   ticket: fleetIdSchema,
@@ -836,6 +938,14 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
     summary: z.string().nullable(),
   }),
   z.object({ ...instanceEventBase, type: z.literal('reset') }),
+  /** A workspaces host's chat needs the owner (`chatAttention` readers only); the gateway turns it into a push. */
+  z.object({
+    ...instanceEventBase,
+    type: z.literal('chat.attention'),
+    conversationId: z.string().min(1).max(200),
+    name: z.string().max(200),
+    kind: fleetChatAttentionKindSchema,
+  }),
 ])
 export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
 export const fleetInstanceHealthSchema = z.object({
@@ -1165,6 +1275,18 @@ export const FLEET_GATEWAY_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.input,
     response: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.response,
   },
+  settingsFailover: {
+    method: 'GET',
+    path: '/v1/environments/:eid/settings/failover',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+  },
+  settingsSetFailoverRoute: {
+    method: 'PUT',
+    path: '/v1/environments/:eid/settings/failover/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
+    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+  },
   artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
   artifactHostPatch: {
     method: 'PATCH',
@@ -1220,7 +1342,18 @@ export const FLEET_GATEWAY_ROUTES = {
 
   meta: { method: 'GET', path: '/v1/meta', body: null, response: fleetMetaResponseSchema },
   pair: { method: 'POST', path: '/v1/pair', body: fleetPairRequestSchema, response: fleetPairResponseSchema },
+  /** A paired device creates a one-use code for another device; the CLI `pair` command is the other way. */
+  pairingsCreate: {
+    method: 'POST',
+    path: '/v1/pairings',
+    body: z.object({}).strict(),
+    response: fleetPairingCodeResponseSchema,
+  },
   devicesSelfDelete: { method: 'DELETE', path: '/v1/devices/self', body: null, response: null },
+  /** The devices still paired, oldest first (`devices` feature). */
+  devicesList: { method: 'GET', path: '/v1/devices', body: null, response: fleetDevicesResponseSchema },
+  /** Removes another paired device, as the CLI's `devices revoke`; a device unpairs itself with `devicesSelfDelete`. */
+  deviceRevoke: { method: 'POST', path: '/v1/devices/:deviceId/revoke', body: null, response: null },
   host: { method: 'GET', path: '/v1/host', body: null, response: fleetHostInfoSchema },
   botsList: { method: 'GET', path: '/v1/bots', body: null, response: fleetBotsResponseSchema },
   botsCreate: { method: 'POST', path: '/v1/bots', body: fleetCreateBotRequestSchema, response: fleetBotSchema },
@@ -1391,6 +1524,12 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   /** Irreversible: removes the home volume and every gateway record of the environment and its bots. */
   archivedEnvironmentDelete: { method: 'DELETE', path: '/v1/archived-environments/:eid', body: null, response: null },
+  conversationScreenTicket: {
+    method: 'POST',
+    path: '/v1/environments/:eid/conversations/:cid/screen-tickets',
+    body: fleetConversationScreenTicketRequestSchema,
+    response: fleetScreenTicketResponseSchema,
+  },
   environmentScreenTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/screen-tickets',
@@ -1503,6 +1642,13 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetInputReceiptSchema,
   },
   botMessageDelete: { method: 'DELETE', path: '/v1/bots/:id/messages/:inputId', body: null, response: null },
+  /** Feature `message-edit`: the owner's last message only, while the bot is idle with nothing queued. */
+  botMessageEdit: {
+    method: 'POST',
+    path: '/v1/bots/:id/messages/:inputId/edit',
+    body: fleetEditMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
   botInteractionResolve: {
     method: 'POST',
     path: '/v1/bots/:id/interactions/:interactionId',
@@ -1523,10 +1669,30 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetScreenTicketResponseSchema,
   },
   screen: { method: 'GET', path: '/v1/screen', body: null, response: null },
+  devicePushGet: {
+    method: 'GET',
+    path: '/v1/devices/self/push',
+    body: null,
+    response: z.object({ registration: fleetPushRegistrationSchema.nullable() }),
+  },
+  devicePushSet: {
+    method: 'PUT',
+    path: '/v1/devices/self/push',
+    body: fleetPushRegistrationRequestSchema,
+    response: fleetPushRegistrationSchema,
+  },
+  devicePushDelete: { method: 'DELETE', path: '/v1/devices/self/push', body: null, response: null },
+  /** Sends this phone a test notification. */
+  devicePushTest: {
+    method: 'POST',
+    path: '/v1/devices/self/push/test',
+    body: z.object({}).strict(),
+    response: z.object({ sent: z.literal(true) }),
+  },
   environmentBridgeTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/bridge-tickets',
-    body: z.object({}).strict(),
+    body: fleetBridgeTicketRequestSchema,
     response: fleetBridgeTicketResponseSchema,
   },
   /** The bridge itself: a WebSocket upgrade with a ticket, passed through to the workspaces environment. */
@@ -1975,6 +2141,18 @@ export const FLEET_INSTANCE_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.input,
     response: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.response,
   },
+  settingsFailover: {
+    method: 'GET',
+    path: '/v1/settings/failover',
+    body: null,
+    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+  },
+  settingsSetFailoverRoute: {
+    method: 'PUT',
+    path: '/v1/settings/failover/:kind/:slot',
+    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
+    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+  },
   memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
   memoryPatch: {
     method: 'PATCH',
@@ -2049,6 +2227,12 @@ export const FLEET_INSTANCE_ROUTES = {
   image: { method: 'GET', path: '/v1/images/:imageId', body: null, response: null },
   inputSend: { method: 'POST', path: '/v1/inputs', body: fleetInstanceInputSchema, response: fleetInputReceiptSchema },
   inputDelete: { method: 'DELETE', path: '/v1/inputs/:inputId', body: null, response: null },
+  inputEdit: {
+    method: 'POST',
+    path: '/v1/inputs/:inputId/edit',
+    body: fleetEditMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
   turnCancel: { method: 'POST', path: '/v1/turn/cancel', body: null, response: null },
   interactionResolve: {
     method: 'POST',
@@ -2071,8 +2255,6 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetConversationCallResponseSchema,
   },
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
-  screenView: { method: 'GET', path: '/v1/screen/view', body: null, response: null },
-  screenControl: { method: 'GET', path: '/v1/screen/control', body: null, response: null },
 
   // An environment instance (capability `environments`) hosts several bots: their routes live under /v1/bots/:botId,
   // with the bodies and responses of the unprefixed routes above, which keep serving gateways without the capability.
@@ -2136,6 +2318,13 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetInputReceiptSchema,
   },
   botInputDelete: { method: 'DELETE', path: '/v1/bots/:botId/inputs/:inputId', body: null, response: null },
+  /** Capability `message-edit`. */
+  botInputEdit: {
+    method: 'POST',
+    path: '/v1/bots/:botId/inputs/:inputId/edit',
+    body: fleetEditMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
   botTurnCancel: { method: 'POST', path: '/v1/bots/:botId/turn/cancel', body: null, response: null },
   botInteractionResolve: {
     method: 'POST',
@@ -2167,6 +2356,19 @@ export const FLEET_INSTANCE_ROUTES = {
   botScreenControl: { method: 'GET', path: '/v1/bots/:botId/screen/:surface/control', body: null, response: null },
   environmentScreenView: { method: 'GET', path: '/v1/screen/environment/view', body: null, response: null },
   environmentScreenControl: { method: 'GET', path: '/v1/screen/environment/control', body: null, response: null },
+  // A workspaces conversation's computer (`apps`) and its browser's tile (`browser`, view only).
+  conversationScreenView: {
+    method: 'GET',
+    path: '/v1/conversations/:conversationId/screen/:surface/view',
+    body: null,
+    response: null,
+  },
+  conversationScreenControl: {
+    method: 'GET',
+    path: '/v1/conversations/:conversationId/screen/:surface/control',
+    body: null,
+    response: null,
+  },
   // A workspaces host's files: content and chunks carry raw bytes, so their bodies and answers are not JSON.
   hostFileStat: {
     method: 'POST',

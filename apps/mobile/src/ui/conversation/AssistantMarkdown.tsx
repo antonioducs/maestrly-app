@@ -1,0 +1,102 @@
+import { memo, useEffect, useMemo, useRef } from 'react'
+import { Animated, Platform, View } from 'react-native'
+import { useMarkdown } from 'react-native-marked'
+import { useI18n } from '../../i18n'
+import { useTheme } from '../../theme/ThemeProvider'
+import { fonts } from '../../theme/tokens'
+import { useReducedMotion } from '../useReducedMotion'
+import { InterfaceCard } from './InterfaceCard'
+import { ReplyRenderer } from './markdown-renderer'
+import { replySegments } from './reply-segments'
+
+function Caret() {
+  const { palette } = useTheme()
+  const reduced = useReducedMotion()
+  const opacity = useRef(new Animated.Value(1)).current
+  useEffect(() => {
+    if (reduced) return
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.25, duration: 500, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(opacity, { toValue: 1, duration: 500, useNativeDriver: Platform.OS !== 'web' }),
+      ])
+    )
+    loop.start()
+    return () => loop.stop()
+  }, [opacity, reduced])
+  return (
+    <Animated.View
+      style={{ width: 9, height: 9, marginTop: 4, borderRadius: 5, backgroundColor: palette.ink, opacity }}
+    />
+  )
+}
+
+/** A reply, rendered from Markdown with the app's type and colors, with a card for each interactive interface in it. */
+export const AssistantMarkdown = memo(function AssistantMarkdown({
+  text,
+  streaming,
+}: {
+  text: string
+  streaming: boolean
+}) {
+  const segments = useMemo(() => replySegments(text), [text])
+  return (
+    <View>
+      {segments.map((segment, index) =>
+        segment.kind === 'interface' ? (
+          // Segments have no identity of their own; their order is stable while a reply streams.
+          <InterfaceCard key={index} html={segment.html} complete={segment.complete} />
+        ) : (
+          <MarkdownBlock key={index} text={segment.text} />
+        )
+      )}
+      {streaming ? <Caret /> : null}
+    </View>
+  )
+})
+
+/** Markdown with the app's type and colors; links open only web pages and email. */
+function MarkdownBlock({ text }: { text: string }) {
+  const { palette, scheme } = useTheme()
+  const { t } = useI18n()
+  const options = useMemo(
+    () => ({
+      renderer: new ReplyRenderer({
+        image: (name: string) => t('markdown.image', { name }),
+        opens: t('markdown.opens'),
+      }),
+      colorScheme: scheme,
+      theme: { colors: { code: palette.codeBg, link: palette.brass, text: palette.ink, border: palette.line } },
+      styles: {
+        text: { fontFamily: fonts.body, fontSize: 16, lineHeight: 24, color: palette.ink },
+        strong: { fontFamily: fonts.bodySemi, fontWeight: '600' as const },
+        paragraph: { marginTop: 0, marginBottom: 10, paddingVertical: 0 },
+        li: { fontFamily: fonts.body, fontSize: 16, lineHeight: 24, color: palette.ink },
+        list: { marginBottom: 10 },
+        codespan: {
+          fontFamily: fonts.mono,
+          fontSize: 13,
+          fontStyle: 'normal' as const,
+          backgroundColor: palette.surface,
+          color: palette.ink,
+        },
+        code: { backgroundColor: palette.codeBg, borderRadius: 12, padding: 12, marginBottom: 10 },
+        codeText: { fontFamily: fonts.mono, fontSize: 12.5, lineHeight: 20, color: palette.codeInk },
+        link: { color: palette.brass, textDecorationLine: 'underline' as const },
+        h1: { fontFamily: fonts.display, fontSize: 22, color: palette.ink },
+        h2: { fontFamily: fonts.display, fontSize: 19, color: palette.ink },
+        h3: { fontFamily: fonts.bodySemi, fontSize: 17, color: palette.ink },
+      },
+    }),
+    [palette, scheme, t]
+  )
+  const elements = useMarkdown(text, options)
+  return (
+    <View>
+      {elements.map((element, index) => (
+        // Markdown blocks have no identity of their own; their order is stable while a reply streams.
+        <View key={index}>{element}</View>
+      ))}
+    </View>
+  )
+}

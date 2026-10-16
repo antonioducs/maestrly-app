@@ -1,4 +1,4 @@
-import { conversationTabAllowed } from './drawer-scope'
+import { conversationTabAllowed, isRemoteConversation } from './drawer-scope'
 import type { BrowserWindow } from 'electron'
 import { broadcast } from './window-ipc'
 import {
@@ -109,8 +109,9 @@ export function setPopupVscodeLoader(fn: (convId: string) => void): void {
   vscodeLoader = fn
 }
 
-const chromeTopFor = (tab: FloatTab): number =>
-  tab === 'browser' ? POPUP_CHROME_H + POPUP_BROWSER_CHROME_H : POPUP_CHROME_H
+/** Browser-toolbar height in the popup's DOM: none for a remote host's browser, whose panel draws its own. */
+const browserChromeFor = (convId: string, tab: FloatTab): number =>
+  tab === 'browser' && !isRemoteConversation(convId) ? POPUP_BROWSER_CHROME_H : 0
 
 const clamp = (v: number, min: number, max: number): number => Math.min(Math.max(v, min), max)
 
@@ -131,6 +132,7 @@ function frameAt(tab: FloatTab, i: number, n: number, W: number, H: number): Bou
  * the renderer. Divide by zoom for DIP-to-CSS conversion, including the unusual non-unit zoom case.
  */
 function computeSlots(
+  convId: string,
   stack: FloatTab[],
   W: number,
   H: number,
@@ -139,7 +141,8 @@ function computeSlots(
   const n = stack.length
   return stack.map((tab, i) => {
     const frame = frameAt(tab, i, n, W, H)
-    const chromeTop = chromeTopFor(tab)
+    const browserChromeH = browserChromeFor(convId, tab)
+    const chromeTop = POPUP_CHROME_H + browserChromeH
     const viewBounds: Bounds = {
       x: frame.x,
       y: frame.y + chromeTop,
@@ -150,7 +153,7 @@ function computeSlots(
       tab,
       frame: { x: frame.x / zoom, y: frame.y / zoom, width: frame.width / zoom, height: frame.height / zoom },
       chromeTop: chromeTop / zoom,
-      browserChromeH: (tab === 'browser' ? POPUP_BROWSER_CHROME_H : 0) / zoom,
+      browserChromeH: browserChromeH / zoom,
     }
     return { slot, viewBounds }
   })
@@ -181,7 +184,7 @@ function layoutPopups(convId: string | null): void {
   }
   const [W, H] = win.getContentSize()
   const zoom = win.webContents.getZoomFactor() || 1
-  const computed = computeSlots(stack, W, H, zoom)
+  const computed = computeSlots(convId, stack, W, H, zoom)
   const topIndex = computed.length - 1
   for (let i = 0; i < topIndex; i++) hideViewOffscreen(convId, computed[i].slot.tab)
   const top = computed[topIndex]
@@ -203,7 +206,11 @@ export function stateFor(convId: string): PopupState {
   }
   const [W, H] = win.getContentSize()
   const zoom = win.webContents.getZoomFactor() || 1
-  return { convId, stack: computeSlots(stackOf(convId), W, H, zoom).map((c) => c.slot), suppressed: isSuppressed() }
+  return {
+    convId,
+    stack: computeSlots(convId, stackOf(convId), W, H, zoom).map((c) => c.slot),
+    suppressed: isSuppressed(),
+  }
 }
 
 /** Open or raise a tool popup. Reopening the same tool reorders it without duplication. */

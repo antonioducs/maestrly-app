@@ -8,6 +8,7 @@ import { normalizeForSearch } from '../memory/relevance'
  * goes in `meta_json`. Idempotent upserts persist the assistant under construction at every checkpoint.
  */
 
+import type { SQLInputValue } from 'node:sqlite'
 import { getDb, inTransaction } from '../store'
 import type {
   ChatContextSnapshot,
@@ -25,6 +26,7 @@ import type {
   MessagePart,
 } from '../../shared/chat'
 import { totalTokensOf, toolOutputImages } from '../../shared/chat'
+import { parseChatReviewReport } from '../../shared/review'
 import { deleteConversationGeneratedImages, deleteGeneratedImages } from './generated-images'
 import { deleteAttachmentImages, deleteConversationAttachmentImages } from './attachment-artifacts'
 import { clipPersistedToolOutput, isPortableCompactionMarker, parseParts } from './message'
@@ -88,6 +90,7 @@ interface MetaJson {
   model?: ChatModelRef
   providerFingerprint?: string
   source?: ChatMessage['source']
+  peer?: ChatMessage['peer']
   botName?: string
   finishReason?: string
   usage?: StoredChatUsage
@@ -97,6 +100,8 @@ interface MetaJson {
   internal?: boolean
   /** Execution scope; absent = main conversation (legacy). */
   executionScope?: ChatExecutionScope
+  /** Code review report carried by a `review-report` message. */
+  review?: unknown
   memoryContext?: ChatMessage['memoryContext']
   steering?: ChatMessage['steering']
   contextSnapshot?: ChatMessage['contextSnapshot']
@@ -140,20 +145,14 @@ function parseExecutionScope(raw: unknown): ChatExecutionScope | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const scope = raw as Record<string, unknown>
   if (scope.kind === 'conversation') return { kind: 'conversation' }
-  // Final loop summary: outside main context and resume boundary. Deliberately lenient —
-  // degrading to main-context (undefined) would reintroduce contamination; kind alone suffices for exclusion.
+  // Summary of a removed review loop (older conversations) and code review reports: outside main context and the
+  // resume boundary. Deliberately lenient — degrading to main-context (undefined) would reintroduce contamination;
+  // kind alone suffices for exclusion.
   if (scope.kind === 'review-summary') {
-    return {
-      kind: 'review-summary',
-      loopId: typeof scope.loopId === 'string' ? scope.loopId : '',
-      ...(scope.role === 'executor' || scope.role === 'reviewer' ? { role: scope.role } : {}),
-      ...(typeof scope.executorConversationId === 'string'
-        ? { executorConversationId: scope.executorConversationId }
-        : {}),
-      ...(typeof scope.reviewerConversationId === 'string'
-        ? { reviewerConversationId: scope.reviewerConversationId }
-        : {}),
-    }
+    return { kind: 'review-summary', loopId: typeof scope.loopId === 'string' ? scope.loopId : '' }
+  }
+  if (scope.kind === 'review-report') {
+    return { kind: 'review-report', reviewId: typeof scope.reviewId === 'string' ? scope.reviewId : '' }
   }
   if (scope.kind === 'host') {
     return typeof scope.executionId === 'string' && scope.executionId
@@ -170,20 +169,7 @@ function parseExecutionScope(raw: unknown): ChatExecutionScope | undefined {
       ? Math.floor(scope.maxIterations)
       : 0
   if (!executionId || !loopId || iteration < 1 || maxIterations < 1) return undefined
-  return {
-    kind: 'review-loop',
-    executionId,
-    loopId,
-    iteration,
-    maxIterations,
-    ...(scope.role === 'executor' || scope.role === 'reviewer' ? { role: scope.role } : {}),
-    ...(typeof scope.executorConversationId === 'string'
-      ? { executorConversationId: scope.executorConversationId }
-      : {}),
-    ...(typeof scope.reviewerConversationId === 'string'
-      ? { reviewerConversationId: scope.reviewerConversationId }
-      : {}),
-  }
+  return { kind: 'review-loop', executionId, loopId, iteration, maxIterations }
 }
 
 function reviewLoopMetaOf(scope: ChatExecutionScope | undefined): ChatReviewLoopMeta | undefined {
@@ -193,9 +179,6 @@ function reviewLoopMetaOf(scope: ChatExecutionScope | undefined): ChatReviewLoop
     executionId: scope.executionId,
     iteration: scope.iteration,
     maxIterations: scope.maxIterations,
-    ...(scope.role ? { role: scope.role } : {}),
-    ...(scope.executorConversationId ? { executorConversationId: scope.executorConversationId } : {}),
-    ...(scope.reviewerConversationId ? { reviewerConversationId: scope.reviewerConversationId } : {}),
   }
 }
 
@@ -204,7 +187,7 @@ export function isConversationContextMessage(message: Pick<StoredChatMessage, 'e
   return !message.executionScope || message.executionScope.kind === 'conversation'
 }
 
-/** Isolated review-loop execution messages. */
+/** Isolated internal execution messages. */
 export function isExecutionContextMessage(
   message: Pick<StoredChatMessage, 'executionScope'>,
   executionId: string
@@ -384,6 +367,19 @@ function addHistoryUsage(byModel: Map<string, ChatPerModelUsage>, usage: StoredC
   }
 }
 
+function parsePeerOrigin(raw: unknown): ChatMessage['peer'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const text = (key: string, max: number) =>
+    typeof value[key] === 'string' && value[key] ? (value[key] as string).slice(0, max) : null
+  const messageId = text('messageId', 200)
+  const fromConversationId = text('fromConversationId', 300)
+  const kind = value.kind
+  if (!messageId || !fromConversationId || (kind !== 'message' && kind !== 'report' && kind !== 'result'))
+    return undefined
+  return { messageId, fromConversationId, fromConversationName: text('fromConversationName', 200) ?? '', kind }
+}
+
 function rowToMessage(r: any): StoredChatMessage {
   let meta: MetaJson = {}
   try {
@@ -397,10 +393,13 @@ function rowToMessage(r: any): StoredChatMessage {
   const source =
     meta.source === 'chatgpt-web' ||
     meta.source === 'chatgpt-web-review-loop' ||
-    meta.source === 'maestrly-review-loop' ||
-    meta.source === 'conversation-dispatch'
+    meta.source === 'maestrly-review' ||
+    meta.source === 'conversation-dispatch' ||
+    meta.source === 'conversation-message'
       ? meta.source
       : undefined
+  const peer = source === 'conversation-message' ? parsePeerOrigin(meta.peer) : undefined
+  const review = source === 'maestrly-review' ? parseChatReviewReport(meta.review) : undefined
   return {
     id: r.id,
     conversationId: r.conversation_id,
@@ -412,6 +411,7 @@ function rowToMessage(r: any): StoredChatMessage {
       ? { providerFingerprint: meta.providerFingerprint }
       : {}),
     ...(source ? { source } : {}),
+    ...(peer ? { peer } : {}),
     ...(typeof meta.botName === 'string' && meta.botName ? { botName: meta.botName.slice(0, 160) } : {}),
     finishReason: meta.finishReason,
     usage: parseStoredUsage(meta.usage),
@@ -423,6 +423,7 @@ function rowToMessage(r: any): StoredChatMessage {
     ...(meta.internal ? { internal: true } : {}),
     ...(executionScope ? { executionScope } : {}),
     ...(reviewLoop ? { reviewLoop } : {}),
+    ...(review ? { review } : {}),
     ...(memoryContext ? { memoryContext } : {}),
     ...(meta.steering?.status === 'queued' || meta.steering?.status === 'failed'
       ? { steering: { status: meta.steering.status } }
@@ -438,6 +439,7 @@ function metaOf(m: StoredChatMessage): string {
     meta.providerFingerprint = m.providerFingerprint
   }
   if (m.source) meta.source = m.source
+  if (m.peer) meta.peer = m.peer
   if (m.botName) meta.botName = m.botName.slice(0, 160)
   if (m.finishReason) meta.finishReason = m.finishReason
   if (m.usage) meta.usage = m.usage
@@ -455,11 +457,9 @@ function metaOf(m: StoredChatMessage): string {
       loopId: m.reviewLoop.loopId,
       iteration: m.reviewLoop.iteration,
       maxIterations: m.reviewLoop.maxIterations,
-      ...(m.reviewLoop.role ? { role: m.reviewLoop.role } : {}),
-      ...(m.reviewLoop.executorConversationId ? { executorConversationId: m.reviewLoop.executorConversationId } : {}),
-      ...(m.reviewLoop.reviewerConversationId ? { reviewerConversationId: m.reviewLoop.reviewerConversationId } : {}),
     }
   }
+  if (m.review) meta.review = m.review
   if (m.steering?.status === 'queued' || m.steering?.status === 'failed') meta.steering = m.steering
   const memoryContext = parseMemoryContext(m.memoryContext)
   if (memoryContext) {
@@ -761,7 +761,7 @@ export function listChatMessages(conversationId: string): StoredChatMessage[] {
 
 /**
  * SQL predicate: MAIN-context message (legacy without executionScope OR kind=conversation).
- * Excludes isolated review-loop messages. NULL/invalid meta_json DEGRADES to legacy main-context — store
+ * Excludes isolated internal-turn messages. NULL/invalid meta_json DEGRADES to legacy main-context — store
  * parses corruption defensively, so SQL predicates must not throw `malformed JSON`.
  */
 const CONVERSATION_CONTEXT_SQL = `(json_valid(meta_json) <> 1
@@ -808,6 +808,28 @@ export function listConversationContextMessages(conversationId: string): StoredC
          ORDER BY seq ASC`
       )
       .all(conversationId) as any[]
+  ).map(rowToMessage)
+}
+
+/**
+ * Code review receipts the person sent to the agent whose report has not reached the model yet, oldest first. The next
+ * message the person sends carries them, once.
+ */
+export function listUndeliveredReviewReports(conversationId: string, limit = 3): StoredChatMessage[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT * FROM chat_messages
+         WHERE conversation_id = @conversationId
+           AND json_valid(meta_json) = 1
+           AND json_extract(meta_json, '$.executionScope.kind') = 'review-report'
+           AND json_extract(meta_json, '$.review.target') = 'code'
+           AND json_extract(meta_json, '$.review.handoff.state') = 'sent'
+           AND json_extract(meta_json, '$.review.handoff.deliveredAt') IS NULL
+         ORDER BY seq ASC
+         LIMIT @limit`
+      )
+      .all({ conversationId, limit }) as any[]
   ).map(rowToMessage)
 }
 
@@ -1990,6 +2012,44 @@ export function findGeneratedImagePart(
 }
 
 /**
+ * Writes the messages of a conversation that moved here from another host, as they were there. Usage stays billed to
+ * the machine that spent it: the ledger rows the insert trigger copies are dropped again, while rows this machine
+ * already had for those messages (a conversation coming back) are kept.
+ */
+export function insertMovedChatMessages(conversationId: string, rows: Array<Record<string, SQLInputValue>>): void {
+  const db = getDb()
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(chat_messages)').all() as Array<{ name: string }>).map((column) => column.name)
+  )
+  const ids = rows.map((row) => String(row.id))
+  const kept = new Set<string>()
+  for (let index = 0; index < ids.length; index += 500) {
+    const chunk = ids.slice(index, index + 500)
+    const existing = db
+      .prepare(`SELECT message_id FROM chat_usage_ledger WHERE message_id IN (${chunk.map(() => '?').join(',')})`)
+      .all(...chunk) as Array<{ message_id: string }>
+    for (const row of existing) kept.add(row.message_id)
+  }
+  for (const row of rows) {
+    if (row.conversation_id !== conversationId) throw new Error('A moved message belongs to another conversation.')
+    const names = Object.keys(row)
+    if (names.some((name) => !columns.has(name))) throw new Error('A moved message has columns this schema lacks.')
+    db.prepare(`INSERT INTO chat_messages (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`).run(
+      ...names.map((name) => row[name])
+    )
+  }
+  const copied = ids.filter((id) => !kept.has(id))
+  for (let index = 0; index < copied.length; index += 500) {
+    const chunk = copied.slice(index, index + 500)
+    db.prepare(`DELETE FROM chat_usage_ledger WHERE message_id IN (${chunk.map(() => '?').join(',')})`).run(...chunk)
+  }
+  contextStarts.delete(conversationId)
+  newestMarkers.delete(conversationId)
+  noteHistoryStatsWrite(conversationId, null)
+  noteHistoryStatsLedger(conversationId)
+}
+
+/**
  * Deletes all conversation messages ("clear") + generated-image artifacts. Deliberately ASYNC and
  * awaitable: `chat:clear` may release the conversation reservation only AFTER directory rm
  * finishes — in-flight rm could delete an artifact just written by the next generation.
@@ -2225,6 +2285,27 @@ export function newestChatSeq(conversationId: string): number | null {
     .prepare('SELECT MAX(seq) AS seq FROM chat_messages WHERE conversation_id = ?')
     .get(conversationId) as { seq: number | null } | undefined
   return row?.seq == null ? null : Number(row.seq)
+}
+
+/** Up to `limit` messages before `beforeSeq` (or the newest), oldest first, and whether older ones exist. */
+export function listSequencedChatMessagesBefore(
+  conversationId: string,
+  beforeSeq: number | undefined,
+  limit: number
+): { messages: SequencedChatMessage[]; hasMore: boolean } {
+  const db = getDb()
+  const rows = (
+    typeof beforeSeq === 'number'
+      ? db
+          .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?')
+          .all(conversationId, beforeSeq, limit)
+      : db.prepare('SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT ?').all(conversationId, limit)
+  ) as any[]
+  rows.reverse()
+  const hasMore =
+    rows.length > 0 &&
+    !!db.prepare('SELECT 1 FROM chat_messages WHERE conversation_id = ? AND seq < ? LIMIT 1').get(conversationId, rows[0].seq)
+  return { messages: sequenced(rows), hasMore }
 }
 
 /** The messages with seq above `afterSeq`, oldest first. */

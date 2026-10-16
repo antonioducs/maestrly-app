@@ -24,7 +24,6 @@ import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
-import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
@@ -34,6 +33,7 @@ import { hostsApi } from '../../src/preload/api-hosts'
 import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 import { transfersApi } from '../../src/preload/api-transfers'
+import { conversationMoveApi } from '../../src/preload/api-conversation-move'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -73,8 +73,6 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['chatLocalApi', chatLocalApi],
   ['chatWindowApi', chatWindowApi],
   ['pluginsApi', pluginsApi],
-  ['platformApi', platformApi],
-  ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
@@ -84,6 +82,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['hostFsApi', hostFsApi],
   ['artifactsApi', artifactsApi],
   ['transfersApi', transfersApi],
+  ['conversationMoveApi', conversationMoveApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -157,6 +156,22 @@ const KNOWN_MAIN_ONLY: string[] = [
   // sign-in (mcp-oauth:connect), directly or over the host bridge; no renderer calls them.
   'chat:mcp-oauth:descriptor',
   'chat:mcp-oauth:store',
+  // A host's conversation move endpoint: this computer's main process (the move coordinator) invokes it over the host
+  // bridge (conversation-move/remote-endpoint), never a renderer through the preload.
+  'conversation-move-endpoint:inspect-source',
+  'conversation-move-endpoint:check-ancestry',
+  'conversation-move-endpoint:inspect-target',
+  'conversation-move-endpoint:freeze-source',
+  'conversation-move-endpoint:export-source',
+  'conversation-move-endpoint:staging-directory',
+  'conversation-move-endpoint:prepare-target-workspace',
+  'conversation-move-endpoint:import-target',
+  'conversation-move-endpoint:verify-target',
+  'conversation-move-endpoint:release-source',
+  'conversation-move-endpoint:commit-target',
+  'conversation-move-endpoint:discard-target',
+  'conversation-move-endpoint:thaw-source',
+  'conversation-move-endpoint:cleanup',
 ]
 
 // Read sources without importing them to inventory channels and event emissions.
@@ -327,7 +342,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(587)
+    expect(keys).toHaveLength(608)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -455,6 +470,36 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-status-get')
     api.rebuildPersonalMemoryIndex()
     expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-rebuild')
+  })
+
+  it('drawer address-bar wrappers keep their channels and argument order', () => {
+    api.drawerOmniboxQuery('conv', 'text', { search: true, locale: 'en' })
+    api.drawerOmniboxOverlay('conv', 'prepare')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['drawer:omnibox-query', 'conv', 'text', { search: true, locale: 'en' }],
+      ['drawer:omnibox-overlay', 'conv', 'prepare'],
+    ])
+    api.drawerNavigate('conv', 'example.com', { typed: true })
+    api.drawerRemoveHistoryEntry('https://example.com/')
+    api.drawerBrowserKeyboardFocus(true)
+    expect(sendSpy.mock.calls).toEqual([
+      ['drawer:navigate', 'conv', 'example.com', { typed: true }],
+      ['drawer:history-remove', 'https://example.com/'],
+      ['drawer:browser-keyboard-focus', true],
+    ])
+    for (const [method, channel, payload] of [
+      ['onBrowserFocusUrl', 'drawer:browser-focus-url', { convId: 'conv', placement: 'slot' }],
+      ['onBrowserShortcut', 'drawer:browser-shortcut', 'close-tab'],
+    ] as const) {
+      const callback = vi.fn()
+      const off = api[method](callback) as () => void
+      const listener = onSpy.mock.calls.at(-1)![1] as Fn
+      expect(onSpy).toHaveBeenLastCalledWith(channel, listener)
+      listener({}, payload)
+      expect(callback).toHaveBeenCalledWith(payload)
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, listener)
+    }
   })
 
   it('runtime assets preserve IDs and explicit channels', () => {
@@ -754,6 +799,36 @@ describe('preload API — main-to-renderer events (ipcRenderer.on)', () => {
     expect(callback).toHaveBeenCalledWith(state)
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('drawer:terminal-activity', listener)
+  })
+
+  it('onBrowserPanelActivity registers its own channel, delivers state, and removes its listener', () => {
+    const callback = vi.fn()
+    const off = api.onBrowserPanelActivity(callback) as () => void
+    expect(onSpy).toHaveBeenCalledWith('drawer:browser-activity', expect.any(Function))
+    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown, payload: unknown) => void
+    listener({}, { convId: 'server-1/workspaces#conv-1', fullSpeed: true })
+    listener({}, { convId: 'conv', fullSpeed: 'yes' })
+    expect(callback).toHaveBeenCalledExactlyOnceWith({ convId: 'server-1/workspaces#conv-1', fullSpeed: true })
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('drawer:browser-activity', listener)
+  })
+
+  it('reads and follows the tabs of a conversation out of the drawer slot', () => {
+    void api.getDrawerPlacement('conv-1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('drawer:placement-get', 'conv-1')
+    const callback = vi.fn()
+    const off = api.onDrawerPlacement(callback) as () => void
+    const listener = onSpy.mock.calls.find(([channel]) => channel === 'drawer:placement')?.[1] as (
+      event: unknown,
+      payload: unknown
+    ) => void
+    listener({}, { convId: 'conv-1', outOfSlot: ['browser'] })
+    expect(callback).toHaveBeenCalledWith({ convId: 'conv-1', outOfSlot: ['browser'] })
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('drawer:placement', listener)
+    const labels = [{ id: 'server-1/workspaces#conv-1', name: 'Fix login', projectName: 'api' }]
+    api.drawerSetRemoteConversations(labels)
+    expect(sendSpy).toHaveBeenLastCalledWith('drawer:remote-conversations', labels)
   })
 
   it('onMemoryAutoReclaimChanged synchronizes state and removes its listener', () => {
@@ -1359,35 +1434,6 @@ describe('preload API — chat pagination (#559)', () => {
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:browser-reset')
   })
 
-  it('exposes the paired review loop contract and its sanitized event', () => {
-    api.chatReviewLoopCompatible('executor')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:compatible', 'executor')
-
-    const input = {
-      executorConversationId: 'executor',
-      reviewerConversationId: 'reviewer',
-      maxIterations: 5,
-      severityThreshold: 'important',
-    }
-    api.chatReviewLoopStart(input)
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:start', input)
-    api.chatReviewLoopStop('reviewer')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:stop', 'reviewer')
-    api.chatReviewLoopStatus('executor')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:status', 'executor')
-    api.chatReviewLoopStatuses()
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:review-loop:status')
-
-    const callback = vi.fn()
-    const off = api.onChatReviewLoopChanged(callback) as () => void
-    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (...args: unknown[]) => void]
-    expect(channel).toBe('chat:review-loop:changed')
-    listener({}, [{ loopId: 'loop' }])
-    expect(callback).toHaveBeenCalledWith([{ loopId: 'loop' }])
-    off()
-    expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
-  })
-
   it('queries native ChatGPT visibility by conversation', () => {
     api.isChatGptVisible('conv-visible')
     expect(invokeSpy).toHaveBeenLastCalledWith('drawer:chatgpt-visible', 'conv-visible')
@@ -1403,6 +1449,26 @@ describe('preload API — chat pagination (#559)', () => {
     listener({}, { conversationId: 'conv-completed' })
     expect(callback).toHaveBeenCalledWith({ conversationId: 'conv-completed' })
 
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
+  })
+
+  it('passes on only well-formed requests of a workspaces host to open an artifact', () => {
+    const callback = vi.fn()
+    const off = api.onChatArtifactOpen(callback) as () => void
+    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (...args: unknown[]) => void]
+    expect(channel).toBe('chat:artifact-open')
+    const request = { conversationId: 'conv-remote', artifactId: 'A'.repeat(22), version: 2 }
+    listener({}, request)
+    expect(callback).toHaveBeenCalledExactlyOnceWith(request)
+    for (const malformed of [
+      null,
+      { ...request, artifactId: '../a' },
+      { ...request, version: 0 },
+      { ...request, conversationId: '' },
+    ])
+      listener({}, malformed)
+    expect(callback).toHaveBeenCalledTimes(1)
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
   })

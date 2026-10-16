@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { EnvironmentRuntime } from '../../src/main/fleet/instance/environment'
+import type { ScreenLease } from '../../src/main/fleet/instance/displays'
 import { type InstanceEnvironment, InstanceEvents, InstanceHttpError } from '../../src/main/fleet/instance/server'
-import { HostEnvironment } from '../../src/main/remote-host/server/host-environment'
+import { ComputerUnavailableError } from '../../src/main/remote-host/server/computers'
+import { HostEnvironment, type HostComputers } from '../../src/main/remote-host/server/host-environment'
 
-function setup(busy = false) {
+function setup(busy = false, computers: HostComputers | null = null) {
   const runtime = {
     events: new InstanceEvents(),
     health: vi.fn(() => ({
@@ -45,7 +47,8 @@ function setup(busy = false) {
   // Used as the control server uses it: through the interface of any environment.
   const environment: InstanceEnvironment = new HostEnvironment(
     runtime as unknown as EnvironmentRuntime,
-    () => state.busy
+    () => state.busy,
+    computers
   )
   return { runtime, environment, state }
 }
@@ -66,7 +69,7 @@ describe('workspaces host environment', () => {
       appVersion: '1.2.3',
       protocol: 1,
       ready: true,
-      capabilities: ['provisioning', 'environments', 'workspaces-host', 'host-files', 'host-editor'],
+      capabilities: ['provisioning', 'environments', 'workspaces-host', 'host-files', 'host-editor', 'mobile-api'],
       busy: false,
     })
     state.busy = true
@@ -77,7 +80,7 @@ describe('workspaces host environment', () => {
     const { environment } = setup()
     expect(await environment.environmentStatus()).toMatchObject({
       environmentId: 'workspaces',
-      capabilities: ['provisioning', 'environments', 'workspaces-host', 'host-files', 'host-editor'],
+      capabilities: ['provisioning', 'environments', 'workspaces-host', 'host-files', 'host-editor', 'mobile-api'],
       bots: [],
     })
   })
@@ -89,6 +92,31 @@ describe('workspaces host environment', () => {
     expect(await statusOf(() => environment.uninstallBot('dev', { purge: false }))).toBe(409)
     expect(await statusOf(() => environment.acquireScreen({ kind: 'environment' }, 'view'))).toBe(409)
     expect(await statusOf(() => environment.open('accounts'))).toBe(409)
+  })
+
+  it("serves its conversations' computers and browser tiles when it has computers", async () => {
+    const lease = { session: {}, release: vi.fn() } as unknown as ScreenLease
+    const acquireScreen = vi.fn(async (conversationId: string) => {
+      if (conversationId === 'idle') throw new ComputerUnavailableError('This conversation has no computer running.')
+      return lease
+    })
+    const { environment } = setup(false, {
+      computers: { acquireScreen },
+      conversationExists: (id) => id !== 'gone',
+    })
+    expect(environment.health().capabilities).toContain('conversation-computers')
+    expect((await environment.environmentStatus()).capabilities).toContain('conversation-computers')
+    const surface = (conversationId: string) => ({ kind: 'conversation', conversationId, surface: 'apps' }) as const
+    expect(await environment.acquireScreen(surface('chat'), 'control')).toBe(lease)
+    expect(acquireScreen).toHaveBeenCalledWith('chat', 'apps', 'control')
+    expect(await statusOf(() => environment.acquireScreen(surface('gone'), 'view'))).toBe(404)
+    expect(await statusOf(() => environment.acquireScreen(surface('idle'), 'view'))).toBe(409)
+    expect(await statusOf(() => environment.acquireScreen({ kind: 'environment' }, 'view'))).toBe(409)
+    expect(await statusOf(() => environment.acquireScreen({ kind: 'apps', botId: 'dev' }, 'view'))).toBe(409)
+    // Without computers it has no such screens, and does not say it has.
+    const plain = setup().environment
+    expect(plain.health().capabilities).not.toContain('conversation-computers')
+    expect(await statusOf(() => plain.acquireScreen(surface('chat'), 'view'))).toBe(409)
   })
 
   it("provisions accounts, skills and MCP servers with the environment runtime's code", async () => {

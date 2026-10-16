@@ -4,7 +4,18 @@ import {
   browserStreamCursor,
   isBrowserStreamId,
   parseBrowserStreamInput,
+  parseBrowserStreamOptions,
 } from '../../src/shared/browser-stream'
+
+describe('remote browser stream options', () => {
+  it('asks for video only when the window says it plays it', () => {
+    expect(parseBrowserStreamOptions({ video: true })).toEqual({ video: true })
+    expect(parseBrowserStreamOptions({ video: false })).toEqual({ video: false })
+    expect(parseBrowserStreamOptions({ video: true, extra: 1 })).toEqual({ video: true })
+    for (const value of [undefined, null, 'video', 1, [], { video: 'yes' }])
+      expect(parseBrowserStreamOptions(value)).toEqual({})
+  })
+})
 
 describe('remote browser stream input', () => {
   it('keeps well-formed mouse, wheel, key, text, edit and focus input', () => {

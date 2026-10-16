@@ -5,17 +5,23 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
+  FLEET_SCREEN_UPDATE_REQUIRED,
 } from '../../src/shared/fleet-targets'
 
 const mocks = vi.hoisted(() => ({
-  hasFeature: vi.fn(() => false),
+  hasFeature: vi.fn((_feature: string) => false),
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   downloadFile: vi.fn(async () => {}),
+  cancelDownload: vi.fn(),
+  getActiveDownload: vi.fn(() => null),
+  attend: vi.fn(),
   revealDownload: vi.fn(),
   getDownload: vi.fn(async () => null),
+  prepareMedia: vi.fn(async () => 'maestrly-media://fleet/bot/f-file/' + '0'.repeat(32)),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
 }))
+vi.mock('../../src/main/fleet/client/download-notices', () => ({ setAttendedFleetFiles: mocks.attend }))
 vi.mock('../../src/main/fleet/client/service', () => ({
   fleetClientService: {
     start: vi.fn(),
@@ -29,8 +35,11 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     hasFeature: mocks.hasFeature,
     getImage: mocks.getImage,
     downloadFile: mocks.downloadFile,
+    cancelDownload: mocks.cancelDownload,
+    getActiveDownload: mocks.getActiveDownload,
     revealDownload: mocks.revealDownload,
     getDownload: mocks.getDownload,
+    prepareMedia: mocks.prepareMedia,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
   },
@@ -69,6 +78,54 @@ describe('fleet IPC validation', () => {
     expect(() => lookup({}, 'bot', '../file')).toThrow()
     await lookup({}, 'bot', 'f-file')
     expect(mocks.getDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+  })
+  it('prepares videos only from trusted windows, by bot and opaque file id, and marks missing files', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    expect(reads.has('fleet:prepareMedia')).toBe(false)
+    const prepare = mutations.get('fleet:prepareMedia')!
+    expect(() => prepare({}, '../bot', 'f-file')).toThrow()
+    expect(() => prepare({}, 'bot', '../../secret')).toThrow()
+    expect(mocks.prepareMedia).not.toHaveBeenCalled()
+    await expect(prepare({}, 'bot', 'f-file')).resolves.toMatch(/^maestrly-media:\/\/fleet\/bot\/f-file\//)
+    expect(mocks.prepareMedia).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    mocks.prepareMedia.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'gone'))
+    await expect(prepare({}, 'bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
+  })
+  it('validates file ids to follow and cancel a transfer, and takes only valid lists of shown files', () => {
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    // Canceling changes main's state, so it is guarded; following a transfer only reads it.
+    const cancel = mutations.get('fleet:cancelDownload')!
+    const active = reads.get('fleet:getActiveDownload')!
+    expect(reads.has('fleet:cancelDownload')).toBe(false)
+    expect(() => cancel({}, '../bot', 'f-file')).toThrow()
+    expect(() => active({}, 'bot', '../file')).toThrow()
+    cancel({}, 'bot', 'f-file')
+    active({}, 'bot', 'f-file')
+    expect(mocks.cancelDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    expect(mocks.getActiveDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
+    const attend = mutations.get('fleet:attendDownloads')!
+    const sender = {}
+    for (const invalid of [
+      null,
+      [{ botId: '../bot', fileId: 'f-file' }],
+      [{ botId: 'bot', fileId: 'f-file', path: '/tmp' }],
+      Array.from({ length: 1_001 }, () => ({ botId: 'bot', fileId: 'f-file' })),
+    ])
+      expect(() => attend({ sender }, invalid)).toThrow()
+    expect(mocks.attend).not.toHaveBeenCalled()
+    attend({ sender }, [{ botId: 'bot', fileId: 'f-file' }])
+    expect(mocks.attend).toHaveBeenCalledExactlyOnceWith(sender, [{ botId: 'bot', fileId: 'f-file' }])
   })
   it('validates all login mutations before dispatch', () => {
     process.env.MAESTRLY_BOT_MODE = '1'
@@ -326,6 +383,8 @@ describe('fleet IPC validation', () => {
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const screenOpen = handlers.get('fleet:screenOpen')
     if (!screenOpen) throw new Error('fleet:screenOpen is not registered')
+    // A gateway that streams screens as video.
+    mocks.hasFeature.mockReturnValue(true)
     const open = (mode: 'view' | 'control') =>
       (screenOpen({ sender: {} }, 'scout', mode) as Promise<unknown>).then(
         () => 'opened',
@@ -349,6 +408,66 @@ describe('fleet IPC validation', () => {
         mocks.screens.openScreen.mockRejectedValueOnce(error)
         await expect(open(mode)).resolves.toBe(expected)
       }
+  })
+  it('creates a pairing code for a phone only on a gateway that offers it', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: () => {},
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+      on: () => {},
+      mon: () => {},
+    } as unknown as IpcRegistrar)
+    const create = mutations.get('fleet:createPairing')!
+    mocks.hasFeature.mockReturnValue(false)
+    await expect(create({})).rejects.toMatchObject({
+      code: 'PROTOCOL_INCOMPATIBLE',
+      message: 'Update the bot server to pair a phone',
+    })
+    expect(mocks.call).not.toHaveBeenCalled()
+    mocks.hasFeature.mockReturnValue(true)
+    await create({})
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('pairingsCreate', { body: {} })
+    mocks.hasFeature.mockReturnValue(false)
+  })
+
+  it('lists and removes paired devices only on a gateway that offers it', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const list = handlers.get('fleet:devices')!
+    const revoke = handlers.get('fleet:revokeDevice')!
+    mocks.call.mockClear()
+    mocks.hasFeature.mockReturnValue(false)
+    await expect(async () => list({})).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
+    await expect(async () => revoke({}, 'device-2')).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
+    expect(mocks.call).not.toHaveBeenCalled()
+    mocks.hasFeature.mockReturnValue(true)
+    await list({})
+    await revoke({}, 'device-2')
+    expect(mocks.call.mock.calls).toEqual([['devicesList'], ['deviceRevoke', { params: { deviceId: 'device-2' } }]])
+    await expect(async () => revoke({}, '')).rejects.toThrow()
+    mocks.hasFeature.mockReturnValue(false)
+  })
+
+  it('refuses screens on gateways without video screens', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const open = (target: unknown) => handlers.get('fleet:screenOpen')!({ sender: {} }, target, 'view')
+    mocks.hasFeature.mockImplementation((feature: string) => feature === 'environments')
+    for (const target of ['scout', { botId: 'scout', surface: 'apps' }, { environmentId: 'work' }])
+      expect(() => open(target)).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    expect(mocks.screens.openScreen).not.toHaveBeenCalled()
+    mocks.hasFeature.mockImplementation((feature: string) => ['environments', 'video-screens'].includes(feature))
+    mocks.screens.openScreen.mockResolvedValueOnce({ channelId: 'c1' })
+    await expect(open('scout')).resolves.toEqual({ channelId: 'c1' })
+    mocks.hasFeature.mockReset()
+    mocks.hasFeature.mockReturnValue(false)
   })
   it('recognizes the screen refusals by the exact messages the gateway sends', () => {
     const gateway = readFileSync(new URL('../../../bot-gateway/src/screen.ts', import.meta.url), 'utf8')

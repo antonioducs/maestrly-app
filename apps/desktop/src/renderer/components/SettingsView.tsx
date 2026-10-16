@@ -2,7 +2,7 @@
  * without uploading telemetry or coupling settings to a Maestrly account. */
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Settings, X, PanelLeft } from 'lucide-react'
+import { Settings, X } from 'lucide-react'
 import type { ChatPermMode, ShortcutOpenMode } from '../../preload'
 import { UsagePanel } from '@/components/UsagePanel'
 import { hostApi, HostProvider, useHostApi } from '@/lib/hosts/host-context'
@@ -44,13 +44,12 @@ import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/Termi
 import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components/settings/ExecutionSections'
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
-import { PlatformSection } from '@/components/platform/PlatformSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
 import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 /** The sections about a Maestrly profile, which a host has; the others are this computer's window and app. */
-const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'platform', 'usage', 'execution'])
+const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'usage', 'execution'])
 
 interface Props {
   fleet?: FleetController
@@ -62,19 +61,10 @@ interface Props {
   /** A place to show, such as Chat → Plugins on the host of the conversation that asked. */
   request?: SettingsRequest | null
 
-  onShowSidebar?: () => void
   onClose: () => void
 }
 
-export function SettingsView({
-  fleet,
-  initialSection = 'chat',
-  sections,
-  chat,
-  request,
-  onShowSidebar,
-  onClose,
-}: Props) {
+export function SettingsView({ fleet, initialSection = 'chat', sections, chat, request, onClose }: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
   // Sections about a Maestrly profile (its chat, bots, platform, usage and execution settings) show the profile of
@@ -338,23 +328,7 @@ export function SettingsView({
 
   return (
     <div className="flex h-full flex-col">
-      <header
-        className={cn(
-          'drag flex h-10 shrink-0 items-center gap-2 hairline-b pr-3',
-          onShowSidebar ? 'pl-[var(--tt-offset)]' : 'pl-3'
-        )}
-      >
-        {onShowSidebar && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="no-drag size-7 text-muted-foreground"
-            onClick={onShowSidebar}
-            title={t('common.showWorkspaces')}
-          >
-            <PanelLeft className="size-4" />
-          </Button>
-        )}
+      <header className="drag flex h-10 shrink-0 items-center gap-2 hairline-b pl-[var(--view-header-inset)] pr-3">
         <Settings className="size-4 text-muted-foreground" />
         <h1 ref={headingRef} tabIndex={-1} className="truncate text-[13px] font-medium text-foreground/90 outline-none">
           {t('settings.title')}
@@ -437,7 +411,6 @@ export function SettingsView({
 
             {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chatOptions} />)}
 
-            {section === 'platform' && inProfile(<PlatformSection />)}
             {section === 'artifacts' && (
               <ArtifactsSettings
                 onOpenFleet={() => selectSection('fleet')}

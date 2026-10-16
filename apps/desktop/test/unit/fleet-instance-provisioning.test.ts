@@ -267,6 +267,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'files',
     'environment-settings-v1',
     'environment-plugins-v1',
+    'account-failover',
     'provisioning',
     'environments',
     'environment-compaction',
@@ -274,6 +275,8 @@ it('advertises provisioning, environments, environment compaction and transcript
     'transcript-reasoning',
     'runtime-updates',
     'desktop-bridge',
+    'message-edit',
+    'video-screens',
   ])
 })
 

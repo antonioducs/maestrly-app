@@ -116,7 +116,6 @@ import {
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
-import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import type { ClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 import { harnessUltraGuidance } from '../../src/main/chat/harness/host-contracts'
@@ -293,90 +292,6 @@ class PlanQuery implements AsyncIterable<SDKMessage> {
     } finally {
       this.iteratorFinished = true
     }
-  }
-}
-
-class ReviewerQuery implements AsyncIterable<SDKMessage> {
-  readonly close = vi.fn()
-  readonly interrupt = vi.fn(async () => {})
-  readonly getContextUsage = vi.fn(async () => ({
-    totalTokens: 300,
-    maxTokens: 200_000,
-    percentage: 0.15,
-    model: 'claude-sonnet',
-  }))
-  readonly initializationResult = vi.fn(async () => ({ account: { apiProvider: 'firstParty' } }))
-
-  constructor(private readonly options: Record<string, unknown>) {}
-
-  async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
-    yield {
-      type: 'assistant',
-      uuid: 'reviewer-assistant-uuid',
-      session_id: 'claude-reviewer-session',
-      parent_tool_use_id: null,
-      message: {
-        id: 'reviewer-assistant-message',
-        type: 'message',
-        role: 'assistant',
-        model: 'claude-sonnet',
-        content: [
-          {
-            type: 'tool_use',
-            id: 'tool-review-1',
-            name: 'mcp__maestrly__submit_review',
-            input: { result: 'clean', summary: 'No findings.' },
-          },
-        ],
-        stop_reason: 'tool_use',
-        stop_sequence: null,
-        usage: {
-          input_tokens: 80,
-          output_tokens: 4,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 10,
-        },
-      },
-    } as unknown as SDKMessage
-
-    const server = (this.options.mcpServers as Record<string, { instance: any }>).maestrly.instance
-    const preToolUse = (
-      this.options.hooks as {
-        PreToolUse: Array<{
-          hooks: Array<(input: unknown, toolUseId: string, options: { signal: AbortSignal }) => Promise<unknown>>
-        }>
-      }
-    ).PreToolUse[0].hooks[0]
-    await preToolUse(
-      {
-        hook_event_name: 'PreToolUse',
-        tool_name: 'mcp__maestrly__submit_review',
-        tool_input: { result: 'clean', summary: 'No findings.' },
-        tool_use_id: 'tool-review-1',
-      },
-      'tool-review-1',
-      { signal: new AbortController().signal }
-    )
-    await server._registeredTools.submit_review.handler({ result: 'clean', summary: 'No findings.' }, {})
-
-    yield {
-      type: 'user',
-      uuid: 'reviewer-result-uuid',
-      session_id: 'claude-reviewer-session',
-      parent_tool_use_id: null,
-      message: {
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: 'tool-review-1',
-            content: 'Review accepted.',
-            is_error: false,
-          },
-        ],
-      },
-    } as unknown as SDKMessage
-    yield resultMessage('claude-reviewer-session')
   }
 }
 
@@ -1885,73 +1800,6 @@ describe('Claude official chat runner', () => {
       }
     }
   )
-
-  it('offers exactly the reviewer tools and waits for submit_review tool-result acknowledgement', async () => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
-    upsertChatMessage({
-      id: 'user-reviewer-boundary',
-      conversationId: conversation.id,
-      role: 'user',
-      parts: [{ type: 'text', id: 'text-reviewer-boundary', text: 'Review the execution.' }],
-      createdAt: 1,
-    })
-    const calls: Array<{ prompt: unknown; options?: Record<string, unknown> }> = []
-    const queries: ReviewerQuery[] = []
-    const manager = {
-      accountId: null,
-      assertAccountIdentity: vi.fn(),
-      assertSubscriptionRuntimeAccount: vi.fn(),
-      deleteManagedSession: vi.fn(async () => {}),
-      createQuery: (input: { prompt: unknown; options?: Record<string, unknown> }) => {
-        calls.push(input)
-        const query = new ReviewerQuery(input.options ?? {})
-        queries.push(query)
-        return query
-      },
-    }
-    const reviewerRuntime = {
-      recordEvidence: vi.fn(),
-      submitReview: vi.fn(() => ({ ok: true as const })),
-      searchExecutionContext: vi.fn(async () => []),
-      readExecutionContext: vi.fn(async () => []),
-    }
-
-    const outcome = await runClaudeChat({
-      conversationId: conversation.id,
-      projectId: workspace.id,
-      cwd: '/repo',
-      selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-      mode: 'agent',
-      permMode: 'full',
-      manager: manager as unknown as ClaudeSubscriptionManager,
-      accountIdentity: identity,
-      broker: { assert: vi.fn() } as never,
-      questionBroker: { ask: vi.fn() } as never,
-      emit: vi.fn(),
-      signal: new AbortController().signal,
-      ephemeralSession: true,
-      reviewerRuntime,
-    })
-
-    expect(outcome).toEqual({ planSubmitted: true, sessionId: 'claude-reviewer-session' })
-    expect(calls[0].options?.allowedTools).toEqual(
-      [...REVIEWER_READONLY_TOOL_NAMES].sort().map((name) => `mcp__maestrly__${name}`)
-    )
-    expect(calls[0].options).toMatchObject({
-      tools: [],
-      skills: [],
-      plugins: [],
-      agents: {},
-      permissionMode: 'dontAsk',
-    })
-    expect(h.buildMcpTools).not.toHaveBeenCalled()
-    expect(h.buildAppTools).not.toHaveBeenCalled()
-    expect(h.listAgents).not.toHaveBeenCalled()
-    expect(h.stagePlan).not.toHaveBeenCalled()
-    expect(reviewerRuntime.submitReview).toHaveBeenCalledWith({ result: 'clean', summary: 'No findings.' })
-    expect(queries[0].interrupt).toHaveBeenCalledOnce()
-  })
 
   // Non-Codex image generation uses an ephemeral Codex thread and therefore
   // offered with the toggle enabled AND the ChatGPT subscription connected.
@@ -3646,6 +3494,47 @@ describe('Claude account rotation', () => {
     expect(run.a.manager.deleteManagedSession).toHaveBeenCalledWith('session-a', '/repo')
     const assistant = listChatMessages(run.conversation.id).find((m) => m.role === 'assistant')!
     expect(assistant.usage).toMatchObject({ input: 240, output: 16, runtimeEstimatedCostUsd: 0.0246 })
+  })
+
+  it('rotates an ephemeral review-loop round with a frozen model and deletes each account session', async () => {
+    const run = await setupRotation(quotaAfterTool)
+    for (const manager of [run.a.manager, run.b.manager])
+      Object.assign(manager, { resolveModelId: vi.fn(async () => 'claude-sonnet') })
+    const messageMeta = {
+      source: 'chatgpt-web-review-loop' as const,
+      internal: true as const,
+      executionScope: {
+        kind: 'review-loop' as const,
+        executionId: 'exec-rotation',
+        loopId: 'loop-rotation',
+        iteration: 1,
+        maxIterations: 3,
+      },
+    }
+    upsertChatMessage({
+      id: 'rotation-loop-user',
+      conversationId: run.conversation.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'rotation-loop-prompt', text: 'Apply the review findings.' }],
+      createdAt: 2,
+      ...messageMeta,
+    })
+
+    await runClaudeChat({
+      ...run.args,
+      ephemeralSession: true,
+      frozenResolvedModelId: 'claude-sonnet',
+      messageMeta,
+    })
+
+    expect(run.resolve).toHaveBeenCalled()
+    expect(run.b.manager.createQuery).toHaveBeenCalledOnce()
+    expect(run.b.received[0]).toContain('Apply the review findings.')
+    expect(run.events.at(-1)?.kind).toBe('finish')
+    expect(run.router.getHealth(run.targetA.providerId).state).toBe('exhausted')
+    expect(run.a.manager.deleteManagedSession).toHaveBeenCalledWith('session-a', '/repo')
+    expect(run.b.manager.deleteManagedSession).toHaveBeenCalledWith('session-b', '/repo')
+    expect(getClaudeSessionBinding(run.conversation.id)).toBeNull()
   })
 
   it('does not rotate generic transport failures', async () => {

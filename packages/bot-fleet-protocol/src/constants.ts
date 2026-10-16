@@ -1,6 +1,7 @@
 export const FLEET_PROTOCOL_VERSION = 1 as const
 export const FLEET_PROTOCOL_HEADER = 'X-Maestrly-Fleet-Protocol' as const
-export const FLEET_SCREEN_UPGRADE = 'maestrly-rfb' as const
+/** The upgrade token of a screen connection: the video stream of `screen-stream.ts`. */
+export const FLEET_SCREEN_UPGRADE = 'maestrly-video' as const
 
 export const FLEET_MESSAGE_TEXT_MAX = 16_000
 export const FLEET_INSTRUCTIONS_MAX = 8_000
@@ -73,8 +74,6 @@ export const FLEET_PORTS = {
   public: 7443,
   internal: 7444,
   instanceControl: 7680,
-  vncControl: 5900,
-  vncView: 5901,
 } as const
 
 export const FLEET_SCREEN = { width: 1280, height: 800 } as const
@@ -94,10 +93,22 @@ export const FLEET_GATEWAY_ENV = {
   botMemory: 'MAESTRLY_GATEWAY_BOT_MEMORY',
   botEgress: 'MAESTRLY_GATEWAY_BOT_EGRESS',
   botShm: 'MAESTRLY_GATEWAY_BOT_SHM',
-  /** A directory of the Docker host that the gateway mounts into its workspaces environment at the same path. */
+  /**
+   * A directory of the Docker host whose subfolders the gateway mounts into its workspaces environments, each at the
+   * same path.
+   */
   workspacesRoot: 'MAESTRLY_GATEWAY_WORKSPACES_ROOT',
+  /**
+   * The gateway's own container (name or id), which joins the network of each workspaces environment. Unset: the
+   * gateway finds it on the fleet network by its own address.
+   */
+  container: 'MAESTRLY_GATEWAY_CONTAINER',
   /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
   botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
+  /** `off` sends no push notifications to phones; `expo` (the default) sends them through Expo's push service. */
+  push: 'MAESTRLY_GATEWAY_PUSH',
+  /** An Expo access token, when the Expo account requires one for push notifications. */
+  expoAccessToken: 'MAESTRLY_GATEWAY_EXPO_ACCESS_TOKEN',
   timezone: 'TZ',
 } as const
 
@@ -114,8 +125,13 @@ export const FLEET_BOT_ENV = {
   egress: 'MAESTRLY_BOT_EGRESS',
   /** Set instead of `mode` in a workspaces environment: the full Maestrly, driven from the owner's computers. */
   serverMode: 'MAESTRLY_SERVER_MODE',
-  /** The mounted host directory of a workspaces environment, when the gateway has one. */
+  /** The server folder mounted into a workspaces environment (its own, or the shared root), when the gateway has one. */
   workspacesRoot: 'MAESTRLY_WORKSPACES_ROOT',
+  /**
+   * The token a workspaces environment publishes its chats' artifacts with on the gateway's internal API. It is not
+   * `gatewayToken`, which images from before environments read as the token of their one bot.
+   */
+  hostGatewayToken: 'MAESTRLY_HOST_GATEWAY_TOKEN',
   runtimeUpdates: 'MAESTRLY_BOT_RUNTIME_UPDATES',
 } as const
 
@@ -192,6 +208,11 @@ export const FLEET_TRANSCRIPT_REASONING_FEATURE = 'transcript-reasoning'
 /** The query parameter a reader of transcripts and events sets to `1` to receive `reasoning` items. */
 export const FLEET_REASONING_QUERY = 'reasoning'
 /**
+ * Gateway feature (`/v1/meta`) and instance capability: the owner may edit their last message to an idle bot. The
+ * bot's conversation is cut from that message and the edited text runs as a new turn.
+ */
+export const FLEET_MESSAGE_EDIT_FEATURE = 'message-edit'
+/**
  * Gateway feature (`/v1/meta`) and instance capability: an environment reports the versions of its Claude Code and
  * Codex runtimes and can be asked to check for newer releases.
  */
@@ -202,6 +223,12 @@ export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
  * Apps areas.
  */
 export const FLEET_UNIFIED_DESKTOP_FEATURE = 'unified-desktop'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: screens stream as acknowledged H.264 video
+ * (`FLEET_SCREEN_UPGRADE`, see `screen-stream.ts`). Gateways refuse screens of environments without it, which restart
+ * onto a newer image first; apps refuse screens through gateways without it.
+ */
+export const FLEET_VIDEO_SCREENS_FEATURE = 'video-screens'
 export const FLEET_RUNTIME_IDS = ['claude-code', 'codex', 'antigravity-acp'] as const
 /** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
 export const FLEET_RUNTIME_STATES = [
@@ -233,15 +260,50 @@ export const FLEET_WORKSPACES_HOST_FEATURE = 'workspaces-host'
  * As an instance capability: the environment's Maestrly serves those files.
  */
 export const FLEET_HOST_FILES_FEATURE = 'host-files'
+/**
+ * Gateway feature (`/v1/meta`): a server hosts several workspaces environments, one per scope of the owner's work, each
+ * with a Docker network and a server folder of its own, and every environment may have a CPU limit, a tint and (for
+ * workspaces) an idle stop.
+ */
+export const FLEET_WORKSPACES_ENVIRONMENTS_FEATURE = 'workspaces-environments'
+/**
+ * Instance capability: a workspaces host gives its conversations computers of their own, and streams a conversation's
+ * browser from its tile of the environment display. Not a gateway feature: a gateway serves conversation screens once
+ * it knows the conversation screen ticket route.
+ */
+export const FLEET_CONVERSATION_COMPUTERS_FEATURE = 'conversation-computers'
+/**
+ * A workspaces host's computers: as many as the environment display has tiles for browsers, given back once idle for
+ * `idleMs` (checked every `checkEveryMs`), on X display numbers from `firstDisplay` to `lastDisplay`, one per
+ * conversation, so they never meet a bot's display numbers (its slot).
+ */
+export const FLEET_CONVERSATION_COMPUTER_LIMITS = {
+  slots: 8,
+  idleMs: 60_000,
+  checkEveryMs: 5_000,
+  firstDisplay: 10,
+  lastDisplay: 4095,
+} as const
 /** Where a workspaces environment's control server accepts the bridge, as a WebSocket upgrade. */
 export const FLEET_INSTANCE_BRIDGE_PATH = '/v1/bridge'
-/** A bridge ticket is one-use and short-lived; each paired computer holds a bounded number of bridges. */
-export const FLEET_BRIDGE_LIMITS = { ticketTtlMs: 30_000, perDevice: 8 } as const
-/** Bots per environment, and the range of the container memory limit the owner may set. */
+/**
+ * A bridge ticket is one-use and short-lived; each paired computer holds a bounded number of bridges: one per
+ * workspaces environment, with room for those still closing while their replacements open.
+ */
+export const FLEET_BRIDGE_LIMITS = { ticketTtlMs: 30_000, perDevice: 16 } as const
+/**
+ * Bots per environment; workspaces environments per server; and the ranges of the container memory limit, the CPU
+ * limit (in CPUs) and the idle stop (in minutes) the owner may set.
+ */
 export const FLEET_ENVIRONMENT_LIMITS = {
   botsMax: 8,
+  workspacesMax: 8,
   memoryLimitMinBytes: 2 * 1024 ** 3,
   memoryLimitMaxBytes: 64 * 1024 ** 3,
+  cpuLimitMin: 0.5,
+  cpuLimitMax: 64,
+  idleStopMinutesMin: 15,
+  idleStopMinutesMax: 7 * 24 * 60,
 } as const
 /**
  * The environment display: a grid of `FLEET_SCREEN`-sized tiles. Tile 0 holds the environment screen (Maestrly's
@@ -256,6 +318,12 @@ export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'
  * own) and keeps the OAuth sign-ins of its remote MCP servers, which the owner's computer runs in its browser.
  */
 export const FLEET_ENVIRONMENT_PLUGINS_FEATURE = 'environment-plugins-v1'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: an environment's settings read and set the order in which its
+ * Claude and Codex subscription accounts take over a turn once one reaches its usage limit (`failover`,
+ * `setFailoverRoute`). An older gateway or image has no such routes.
+ */
+export const FLEET_ACCOUNT_FAILOVER_FEATURE = 'account-failover'
 
 /**
  * Gateway feature (`/v1/meta`) and instance capability: a bot reaches the workspaces of the Macs that gave it access,
@@ -277,3 +345,23 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
   inputBytesMax: 320 * 1024,
   resultBytesMax: 2 * 1024 * 1024,
 } as const
+
+/**
+ * Gateway feature: what phones need of the gateway. A paired device may create one-use pairing codes for another
+ * device, which the desktop shows as a QR code; a bridge ticket may name the Origin its WebSocket will send, which
+ * phones always send; and phones register for push notifications (`/v1/devices/self/push`). These ship together, so
+ * they are one feature, announced in `moreFeatures` of `/v1/meta`.
+ */
+export const FLEET_PHONES_FEATURE = 'phones'
+/**
+ * Gateway feature: a paired device lists the devices paired with the server, and removes another one
+ * (`/v1/devices`), as the CLI's `devices list` and `devices revoke` do. Announced in `moreFeatures` of `/v1/meta`.
+ */
+export const FLEET_DEVICES_FEATURE = 'devices'
+/** Unused, unexpired codes paired devices may have at once. The CLI is not limited. */
+export const FLEET_ACTIVE_PAIRINGS_MAX = 5
+/** Workspaces host capability: it speaks the mobile API (`mobile:v1:*` channels) to phones over the bridge. */
+export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
+
+/** A gateway reading an environment's events with this query set to 1 also gets `chat.attention` events. */
+export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'

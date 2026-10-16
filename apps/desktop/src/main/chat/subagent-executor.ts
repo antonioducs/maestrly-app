@@ -8,6 +8,7 @@ import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles
 import type { GeneratedImageEmission, GeneratedImageUsage } from './tools/util'
 import type { ChatAgent } from './agents'
 import {
+  getProvider,
   isAntigravitySubscriptionProvider,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
@@ -25,8 +26,18 @@ import {
   sandboxPolicyFor,
   toolSetRuntimes,
 } from './codex-subscription/runner'
-import { runCodexSubagent } from './codex-subscription/subagent-runner'
+import {
+  buildSubagentContinuationPrompt,
+  CodexSubagentQuotaError,
+  mergeSubagentCheckpoints,
+  runCodexSubagent,
+  type CodexSubagentCheckpoint,
+} from './codex-subscription/subagent-runner'
+import { classifyCodexQuotaFailureWithRateLimits } from './codex-subscription/quota-error'
 import { queueCodexThreadCleanup } from './codex-subscription/thread-store'
+import { freezeFailoverChain } from './subscription-failover/config'
+import { getSubscriptionFailoverRouter, type MarkExhaustedInfo } from './subscription-failover/router'
+import type { NormalizedAiUsage } from './runner'
 import {
   planSubagentResume,
   claudeSubagentRuntimeSignature,
@@ -40,7 +51,7 @@ import {
 import { harnessFor } from './harness/execution'
 import { captureHarnessFlags } from './harness/flags'
 import type { ResolvedHarness } from './harness/types'
-import { resolveCodexSubagentServiceTier } from './subscription-failover/codex-adapter'
+import { resolveCodexRuntimeTarget, resolveCodexSubagentServiceTier } from './subscription-failover/codex-adapter'
 import type { CursorSubscriptionAccountIdentity, CursorSubscriptionManager } from './cursor-subscription/manager'
 import { getCursorSubscriptionManager } from './cursor-subscription/manager'
 import { runCursorSubagent } from './cursor-subscription/subagent-runner'
@@ -295,6 +306,174 @@ export async function executeSubagent(args: {
     if (result.resumed) recordResume('resumed')
     else recordResume('recreated', result.resumeReason ?? 'resume-rejected')
   }
+  /**
+   * A Codex child whose account has a fallback route walks it like the root turn and helpers do: a confirmed quota
+   * opens that account's circuit and the same task continues from its checkpoint on the next account, while a
+   * later child starts again from the recovered primary.
+   */
+  const runCodexOnFailoverChain = async (
+    chain: readonly string[],
+    childMode: 'plan' | 'agent'
+  ): Promise<SubagentExecutionResult> => {
+    const logicalProviderId = effective.providerId
+    const router = getSubscriptionFailoverRouter()
+    const runtimes = (await toolSetRuntimes(tools, deferred)).filter((entry) => allowed.has(entry.spec.name))
+    const toolSignature = subagentToolSignature(runtimes.map((entry) => entry.spec))
+    const approval = approvalConfig(childMode, args.permMode)
+    const attempted = new Set<string>()
+    const usage: NormalizedAiUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, totalInput: 0 }
+    const addUsage = (next: NormalizedAiUsage | undefined): void => {
+      if (!next) return
+      for (const key of ['input', 'output', 'cacheRead', 'cacheCreate', 'totalInput'] as const) usage[key] += next[key]
+    }
+    const accumulatedUsage = (): NormalizedAiUsage | undefined =>
+      usage.totalInput || usage.output ? { ...usage } : undefined
+    const accountLabel = (providerId: string): string =>
+      getProvider(providerId)?.accountLabel?.trim() ||
+      subscriptionAccountId(providerId) ||
+      getProvider(providerId)?.name?.trim() ||
+      providerId
+    let checkpoint: CodexSubagentCheckpoint | undefined
+    let lastText = ''
+    let exhaustedProviderId: string | null = null
+    while (true) {
+      if (args.signal.aborted) throw Object.assign(new Error('Subagent aborted'), { subagentUsage: accumulatedUsage() })
+      const resolved = await resolveCodexRuntimeTarget({
+        logicalProviderId,
+        modelId: effective.modelId,
+        reasoningEffort:
+          effective.configuredEffort && effective.configuredEffort !== 'off'
+            ? effective.configuredEffort
+            : effective.sentEffort && effective.sentEffort !== 'off'
+              ? effective.sentEffort
+              : undefined,
+        fastMode: effective.fastMode === true,
+        harnessFlags: captureHarnessFlags(),
+        chain,
+        attemptedProviderIds: attempted,
+        signal: args.signal,
+      })
+      if (!resolved.ok) {
+        if (resolved.error === 'aborted') {
+          throw Object.assign(new Error('Subagent aborted'), { subagentUsage: accumulatedUsage() })
+        }
+        const partialUsage = accumulatedUsage()
+        return {
+          text: lastText,
+          error:
+            resolved.reason === 'quota-exhausted'
+              ? 'All Codex subscription accounts in the failover chain are exhausted for this task.'
+              : resolved.message,
+          errorCode: 'agent-unavailable',
+          ...(partialUsage ? { usage: partialUsage } : {}),
+          model: { providerId: logicalProviderId, modelId: effective.modelId },
+        }
+      }
+      const target = resolved.target
+      attempted.add(target.providerId)
+      let settled = false
+      const settle = (outcome: 'success' | 'quota' | 'other', info?: MarkExhaustedInfo): void => {
+        if (settled) return
+        settled = true
+        if (outcome === 'success') router.confirmAttemptSuccess(target.providerId, target.availabilityLease)
+        else if (outcome === 'quota') router.confirmAttemptQuota(target.providerId, target.availabilityLease, info!)
+        else router.confirmAttemptOther(target.providerId, target.availabilityLease)
+      }
+      const registration = registerCodexSubagentRequestRoute({
+        client: target.client,
+        conversationId: args.conversationId,
+        projectId: args.projectId,
+        permissionScope: args.permissionScope,
+        messageId: args.parentMessageId,
+        broker: args.broker,
+        questionBroker: args.questionBroker,
+        runtimes,
+        signal: args.signal,
+        mode: childMode,
+        toolCallIdPrefix: args.toolCallId,
+      })
+      try {
+        if (exhaustedProviderId) {
+          progress(`${accountLabel(exhaustedProviderId)} hit limit; continuing on ${accountLabel(target.providerId)}`)
+          exhaustedProviderId = null
+        }
+        const resume = resumeFor(logicalProviderId, target.accountId, toolSignature)
+        const result = await runCodexSubagent({
+          conversationScope: args.projectId === null ? 'standalone' : 'project',
+          client: target.client,
+          cwd: args.cwd,
+          profile: args.profile,
+          definition: effectiveDefinition,
+          signal: args.signal,
+          agentName: args.agentName,
+          task: buildSubagentContinuationPrompt(resume.task, checkpoint),
+          readOnly: effectiveReadOnly,
+          serviceTier: target.serviceTier ?? 'default',
+          approvalPolicy: approval.approvalPolicy,
+          sandboxPolicy: sandboxPolicyFor(approval.sandbox, args.cwd),
+          dynamicTools: runtimes.map((entry) => entry.spec),
+          shellEnvironment: conversationShellEnv(args.conversationId),
+          physicalProviderId: target.providerId,
+          accountId: target.accountId,
+          registerThread: (threadId) => registration.addThread(threadId),
+          removeThread: (threadId) => registration.removeThread(threadId),
+          progress,
+          onTextUpdate,
+          persistRuntime,
+          ...(resume.handle?.kind === 'codex-thread'
+            ? { resume: { threadId: resume.handle.threadId, fallbackTask: resume.fallbackTask } }
+            : {}),
+          onThreadStarted: ({ threadId }) => {
+            if (!persistRuntime) return
+            recorder?.runtimeHandle({ kind: 'codex-thread', threadId, accountId: target.accountId, toolSignature })
+            queueCodexThreadCleanup(args.conversationId, threadId, target.accountId)
+          },
+        })
+        settleResume(result)
+        settle(result.error ? 'other' : 'success')
+        addUsage(result.usage)
+        const totalUsage = accumulatedUsage()
+        return { ...result, ...(totalUsage ? { usage: totalUsage } : {}) }
+      } catch (error) {
+        if (args.signal.aborted) throw error
+        const quotaError = error instanceof CodexSubagentQuotaError ? error : null
+        const classification = await classifyCodexQuotaFailureWithRateLimits(error, () =>
+          target.manager.getRateLimits(true)
+        )
+        if (!quotaError && classification.kind !== 'quota') {
+          const failed = error as Error & { subagentUsage?: NormalizedAiUsage }
+          if (error instanceof Error && 'subagentUsage' in error) {
+            addUsage(failed.subagentUsage)
+            failed.subagentUsage = accumulatedUsage()
+          }
+          throw error
+        }
+        const quota =
+          classification.kind === 'quota'
+            ? classification
+            : { confidence: 'strong-marker' as const, message: quotaError!.message, resetsAt: null }
+        settle('quota', {
+          reason: quota.message,
+          source:
+            quota.confidence === 'structured'
+              ? 'structured-error'
+              : quota.confidence === 'rate-limits-confirmed'
+                ? 'rate-limits'
+                : 'usage-limit-marker',
+          resetsAt: quota.resetsAt ?? null,
+        })
+        if (quotaError) {
+          addUsage(quotaError.partial.usage)
+          checkpoint = mergeSubagentCheckpoints(checkpoint, quotaError.partial.checkpoint)
+          if (quotaError.partial.text) lastText = quotaError.partial.text
+        }
+        exhaustedProviderId = target.providerId
+      } finally {
+        settle('other')
+        registration.remove()
+      }
+    }
+  }
   const runProvider = async (): Promise<SubagentExecutionResult> => {
     if (!autonomousProviderAllowed(effective.providerId, args.conversationId))
       throw new Error('This provider account is not authorized for the desktop executor.')
@@ -452,6 +631,8 @@ export async function executeSubagent(args: {
     if (isCodexSubscriptionProvider(effective.providerId)) {
       // Parent Maestro is read-only, but a Pool worker owns its own capability boundary.
       const childMode = effectiveReadOnly ? ('plan' as const) : ('agent' as const)
+      const failoverChain = freezeFailoverChain(effective.providerId)
+      if (failoverChain.length > 1) return runCodexOnFailoverChain(failoverChain, childMode)
       const manager = getCodexSubscriptionManager(subscriptionAccountId(effective.providerId))
       let serviceTier: string
       try {

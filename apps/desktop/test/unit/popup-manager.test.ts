@@ -25,6 +25,7 @@ vi.mock('../../src/main/drawer-manager', () => ({
 }))
 
 import * as popupManager from '../../src/main/popup-manager'
+import { setRemoteToolHosts } from '../../src/main/drawer-scope'
 
 function init(): void {
   popupManager.initPopupManager({
@@ -123,6 +124,46 @@ describe('popup-manager — stack z-order', () => {
     expect(popupManager.stateFor('c1').stack.map((slot) => slot.tab)).toEqual(['browser', 'vscode'])
     expect(h.hideViewOffscreen).toHaveBeenCalledExactlyOnceWith('c1', 'browser')
     expect(h.placeViewInMain).toHaveBeenCalledExactlyOnceWith('c1', 'vscode', expect.any(Object))
+  })
+})
+
+describe("popup-manager — a remote host's conversation", () => {
+  const REMOTE = 'server-1/workspaces#c1'
+
+  afterEach(() => setRemoteToolHosts(() => false))
+
+  it('opens its tools in popups, and its browser with the toolbar its panel draws', () => {
+    setRemoteToolHosts((_hostId, tool) => tool === 'browser')
+    popupManager.initPopupManager({
+      on: vi.fn(),
+      getContentSize: () => [1000, 800],
+      webContents: { getZoomFactor: () => 1, focus: vi.fn() },
+    } as never)
+    popupManager.showFor(REMOTE)
+
+    popupManager.openPopup(REMOTE, 'terminal')
+    popupManager.openPopup(REMOTE, 'browser')
+
+    const stack = popupManager.stateFor(REMOTE).stack
+    expect(stack.map((slot) => slot.tab)).toEqual(['terminal', 'browser'])
+    const browser = stack[1]
+    // No browser toolbar in the popup's DOM: the view starts right below the title.
+    expect(browser.browserChromeH).toBe(0)
+    expect(browser.chromeTop).toBe(40)
+    expect(h.setPlacement).toHaveBeenCalledWith(REMOTE, 'browser', 'popup')
+    expect(h.placeViewInMain).toHaveBeenLastCalledWith(
+      REMOTE,
+      'browser',
+      expect.objectContaining({ y: browser.frame.y + 40, height: browser.frame.height - 40 })
+    )
+  })
+
+  it("keeps the DOM toolbar of this computer's browser popup", () => {
+    init()
+    popupManager.openPopup('c1', 'browser')
+    const [browser] = popupManager.stateFor('c1').stack
+    expect(browser.browserChromeH).toBe(78)
+    expect(browser.chromeTop).toBe(118)
   })
 })
 

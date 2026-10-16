@@ -46,14 +46,15 @@
 
   --background: rgba(0, 0, 0, 0);
   --surface: rgba(20, 20, 22, 0.62);
-  --surface-elevated: rgba(30, 30, 33, 0.82); /* cards, inputs, popovers, menus */
+  --surface-elevated: rgba(30, 30, 33, 0.82); /* cards and inputs; anything floating uses --popover */
   --terminal-bg: rgba(10, 10, 11, 0.82);
   --chat-canvas: #0d0d10; /* the agent chat's black, which a bot's view shares */
 
   --foreground: rgba(237, 234, 227, 0.96);
   --card: var(--surface-elevated);
   --card-foreground: var(--foreground);
-  --popover: rgba(26, 26, 29, 0.86);
+  /* Opaque: menus, popovers, tooltips and dialogs open over content that would otherwise show through. */
+  --popover: #1e1e21;
   --popover-foreground: var(--foreground);
 
   --primary: #EDEAE3;
@@ -167,10 +168,6 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   backdrop-filter: blur(30px) saturate(180%);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
 }
-.glass-strong {
-  backdrop-filter: blur(40px) saturate(200%);
-  -webkit-backdrop-filter: blur(40px) saturate(200%);
-}
 
 .hairline-r {
   box-shadow: inset -0.5px 0 0 0 var(--border);
@@ -191,14 +188,28 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 
 :root {
   --tt-offset: 4.875rem; /* 78px */
+  /* The sidebar's icon rail, and the room its icons leave above them for the traffic lights. */
+  --rail-width: 3rem;
+  --rail-top: 2.5rem;
+  /* A row that starts after the rail clears the traffic lights reaching past it. */
+  --tt-past-rail: max(0.75rem, calc(var(--tt-offset) - var(--rail-width) + 0.75rem));
+  /* Where a view's header starts: after the sidebar, or after the lights once only the rail is beside it. */
+  --view-header-inset: 0.75rem;
 }
 :root.is-fullscreen {
   --tt-offset: 0.75rem; /* 12px */
+  --rail-top: 0px;
 }
 
 :root.is-windows,
 :root.is-linux {
-  --tt-offset: 0;
+  /* With a unit: a bare 0 makes the calc() of --tt-past-rail invalid. */
+  --tt-offset: 0px;
+  --rail-top: 0px;
+}
+
+.sidebar-collapsed {
+  --view-header-inset: var(--tt-past-rail);
 }
 
 .conv-item {
@@ -658,6 +669,17 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   overflow-x: auto;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+/*
+ * What a generated interface shows around its frame (its problems, its source) is styled with utilities, which sit in
+ * a cascade layer and so lose to the unlayered prose rules above, whatever their specificity. Inside an interface
+ * those rules step back to the layers. The `:not(#…)` only lifts this rule above every prose selector.
+ */
+.dark-glass-prose
+  .genui-widget
+  :is(p, h1, h2, h3, h4, ul, ol, li, a, strong, blockquote, hr, code, pre, table, th, td):not(#genui-prose-reset) {
+  all: revert-layer;
 }
 
 .mermaid-zoom-stage {

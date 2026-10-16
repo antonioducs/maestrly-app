@@ -32,8 +32,10 @@ export function osFromPlatform(platform: string): ShortcutOs {
   return 'linux'
 }
 
-const DEFAULT_KEYS: Record<FloatTab, string> = {
+const DEFAULT_KEYS: Record<FloatTab, string | null> = {
   browser: 'b',
+  // A remote conversation's computer stays in its drawer: these shortcuts open pop-ups and floating windows.
+  computer: null,
   vscode: 'e',
   terminal: 'j',
   // F with these modifiers is the macOS full-screen shortcut.
@@ -51,7 +53,10 @@ function defaultMods(os: ShortcutOs): ShortcutMod[] {
 export function defaultShortcuts(os: ShortcutOs): EffectiveShortcuts {
   const mods = defaultMods(os)
   const out = {} as EffectiveShortcuts
-  for (const tab of FLOAT_TABS) out[tab] = { key: DEFAULT_KEYS[tab], mods: [...mods] }
+  for (const tab of FLOAT_TABS) {
+    const key = DEFAULT_KEYS[tab]
+    out[tab] = key ? { key, mods: [...mods] } : null
+  }
   return out
 }
 

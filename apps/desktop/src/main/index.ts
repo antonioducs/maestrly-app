@@ -1,13 +1,14 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
-import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import os from 'node:os'
-import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
-import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import { isHeadlessInstance, isServerMode, takeHostGatewayAccess } from './remote-host/server/config'
+import { createHostSources } from './remote-host/server/host-artifacts'
+import { ARTIFACT_OPEN_REQUEST_CHANNEL } from '../shared/artifacts'
+import { saveHeadlessDownloads } from './headless-downloads'
 import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
 import { startServerHostMode } from './remote-host/server/start'
 import { isSupportedLocale } from '../shared/locale'
@@ -38,16 +39,34 @@ import {
   setTerminalFloatFocuser,
   setTerminalPopupFocuser,
 } from './terminal-manager'
-import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
+import {
+  safeWindowSend,
+  setBroadcastMainWindow,
+  broadcast,
+  guardHandle,
+  guardOn,
+  focusMainWindow,
+  sendToConversation,
+} from './window-ipc'
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
-import { hostRegistry, originRole, registerHostsIpc } from './remote-host/client/ipc'
+import { hostRegistry, onHostEvent, originRole, registerHostsIpc } from './remote-host/client/ipc'
 import { RemoteEditors } from './remote-host/client/editor'
 import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
 import { setRemoteVSCodeHandlers } from './drawer/vscode'
-import { registerHostTransfersIpc } from './host-transfers/ipc'
-import { conversationTabAllowed, isRemoteConversation, setRemoteEditorHosts } from './drawer-scope'
+import { hostTransferEngine, registerHostTransfersIpc } from './host-transfers/ipc'
+import { createLocalMoveEndpoint, type MoveEndpoint } from './conversation-move/endpoint'
+import { registerConversationMoveEndpointIpc } from './conversation-move/endpoint-ipc'
+import { MoveError } from './conversation-move/errors'
+import { registerConversationMoveIpc } from './conversation-move/ipc'
+import { restoreMoveEndpointLeases } from './conversation-move/leases'
+import { createPackageRelay } from './conversation-move/relay'
+import { createRemoteMoveEndpoint } from './conversation-move/remote-endpoint'
+import { ConversationMoveService } from './conversation-move/service'
+import { moveStagingDirectory, removeMoveStaging, sweepMoveStaging } from './conversation-move/staging'
+import { LOCAL_HOST_ID, type HostId } from '../shared/host-key'
+import { conversationTabAllowed, isRemoteConversation, setRemoteToolHosts } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -55,6 +74,7 @@ import { setMainLocale, tMain } from './i18n'
 import * as floatingManager from './floating-manager'
 import * as popupManager from './popup-manager'
 import { setHotkeyHandler, attachHotkeyCapture } from './hotkeys'
+import { attachMainWindowBrowserHotkeys, setBrowserShortcutHandlers } from './browser-hotkeys'
 import { AgentRegistry } from './agent-registry'
 
 import { initMemoryService, disposeMemory, migrateAllLegacyMemories } from './memory-service'
@@ -90,6 +110,9 @@ import { initPlanBroker, clearPlan } from './plan-broker'
 import {
   initDrawer,
   flushPendingBrowserPersists,
+  flushBrowserHistory,
+  openBrowserTabFromShortcut,
+  closeActiveBrowserTabFromShortcut,
   hardenBrowserSession,
   loadVSCode,
   navigateFocusedBrowser,
@@ -105,7 +128,12 @@ import {
   setFloatFocuser,
   ensureViewFor,
   focusBrowserPopup,
+  getPlacement,
+  onPlacementChange,
+  outOfSlotTabsOf,
 } from './drawer-manager'
+import { placeConversationBrowser } from './drawer/conversation-tile'
+import { serverComputers } from './remote-host/server/computers-registry'
 import {
   startVSCodeServer,
   restartVSCodeServer,
@@ -124,6 +152,7 @@ import {
   initStore,
   listAllConversations,
   updateConversationStatus,
+  markConversationAttention,
   getConversation,
   getWorkspace,
   getSoundSettings,
@@ -137,6 +166,7 @@ import {
 } from './store'
 import {
   invalidateMcpConfiguration,
+  projectEnvironmentLockFor,
   resolvePlanReview as resolveChatGptWebPlanReview,
   restoreCompanionWindow as restoreChatGptWebCompanionWindow,
   status as getChatGptWebStatus,
@@ -147,7 +177,7 @@ import {
   getGlobalMaestroOrchestratorProfile,
   primeChatTurnSelection,
   registerChatIpc,
-  resolveReviewLoopSelection,
+  resolveFrozenChatSelection,
   resumeBackgroundCompaction,
   stopChat,
 } from './chat/service'
@@ -176,7 +206,6 @@ import { getConversationDispatchService } from './conversation-dispatch-service'
 import { registerDrawerIpc } from './drawer-ipc'
 import { registerConversationIpc } from './conversation-ipc'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
-import { lookupReviewLoopByConversation } from './chat/review-loop/registry'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerConversationMigrationIpc } from './conversation-migration/ipc'
 import { registerMemoryIpc } from './memory-ipc'
@@ -198,7 +227,6 @@ import {
 import { cleanupToolOutputs } from './chat/tool-output-store'
 import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
-import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
@@ -209,6 +237,12 @@ import { createDesktopSources, serverUnavailable } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
+import { handleFleetMediaProtocol } from './fleet/client/media-scheme'
+import { appPolicyHeaders } from './content-security-policy'
+import { isGenUiWidgetUrl } from '../shared/genui-widget'
+import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
+import { registerPrivilegedSchemes } from './privileged-schemes'
+import { noticeFleetDownload } from './fleet/client/download-notices'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
 import { playSound } from './platform'
@@ -223,13 +257,14 @@ import { createConversationFileScope } from './conversation-file-scope'
 import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
-import { embeddedRunnerHost } from './platform/runner-host'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !!process.env.ELECTRON_RENDERER_URL
 
 // Isolate the application profile before acquiring locks or opening persistent stores.
 applyChannelIdentity()
+// Privileged schemes can only be declared before the app is ready.
+registerPrivilegedSchemes()
 
 // Disable hardware acceleration for the Linux configurations affected by Chromium GPU startup loops.
 const isWaylandSession = !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland'
@@ -250,6 +285,8 @@ let mainWindow: BrowserWindow | null = null
 let chatWindowManager: ChatWindowManager | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
+let conversationMoveService: ConversationMoveService | null = null
+let disposeConversationMoveIpc: (() => void) | null = null
 
 /** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
 const sendToWindow = (channel: string, payload?: unknown): void => {
@@ -300,15 +337,19 @@ function initArtifacts(): void {
       onChanged: () => broadcast('artifacts:changed'),
     })
   }
+  // A workspaces host is not paired with the server it runs on: it publishes there with the token the gateway gave it.
+  const hostAccess = takeHostGatewayAccess()
   const sources = isBotMode()
     ? createBotSources((id) => {
         const bot = botRuntimeForConversation(id)
         return bot?.artifactsEnabled ? botArtifactSource(bot) : null
       })
-    : createDesktopSources({
-        server: () => server.source(),
-        unavailable: () => server.unavailable() ?? serverUnavailable(),
-      })
+    : isServerMode()
+      ? createHostSources(hostAccess)
+      : createDesktopSources({
+          server: () => server.source(),
+          unavailable: () => server.unavailable() ?? serverUnavailable(),
+        })
   const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
   if (!isBotMode())
     fleetClientService.onArtifactEvent = (event) => {
@@ -319,7 +360,7 @@ function initArtifacts(): void {
   const service = new ArtifactsService({
     sources,
     emitChanged: () => broadcast('artifacts:changed'),
-    server: isBotMode() ? undefined : server,
+    server: isHeadlessInstance() ? undefined : server,
     legacy: legacyArtifacts ?? undefined,
     botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
     vault,
@@ -333,6 +374,10 @@ function initArtifacts(): void {
       createBrowserTab(convId, url, { activate })
       if (activate) focusBrowserDrawer(convId)
     },
+    // Only the main window of a computer showing the conversation acts on it; panels do not listen.
+    openOnViewer: isServerMode()
+      ? (convId, request) => sendToConversation(convId, ARTIFACT_OPEN_REQUEST_CHANNEL, request)
+      : undefined,
   })
   setArtifactsService(service)
   thumbnails = new ThumbnailQueue({
@@ -373,9 +418,8 @@ function cleanupFailedChatGptShortcutRestore(convId: string): void {
 }
 
 function openPopupGuarded(convId: string, tab: FloatTab): boolean {
-  // The tools of a remote host's conversation stay docked in the drawer; a shortcut never opens a tool the
-  // conversation does not have.
-  if (popupManager.isSuppressed() || isRemoteConversation(convId) || !conversationTabAllowed(convId, tab)) return false
+  // A shortcut never opens a tool the conversation does not have.
+  if (popupManager.isSuppressed() || !conversationTabAllowed(convId, tab)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -402,7 +446,7 @@ function openPopupGuarded(convId: string, tab: FloatTab): boolean {
 }
 
 function openFloatingGuarded(convId: string, tab: FloatTab): boolean {
-  if (popupManager.isSuppressed() || isRemoteConversation(convId) || !conversationTabAllowed(convId, tab)) return false
+  if (popupManager.isSuppressed() || !conversationTabAllowed(convId, tab)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -487,6 +531,8 @@ async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
 }
 
 async function loadVSCodeForConv(convId: string): Promise<void> {
+  // A remote host's conversation is not stored here: its editor opens the folder the host knows.
+  if (isRemoteConversation(convId)) return loadVSCodeFolder(convId, '')
   const conv = getConversation(convId)
   if (conv) await loadVSCodeFolder(convId, conv.cwd)
 }
@@ -509,7 +555,18 @@ async function applyVSCodeUpdateOnIdle(): Promise<void> {
 }
 
 function broadcastStatus(payload: { agentId: string; status: string }): void {
+  // The registry emits ready/error only when a turn ends, and asking once per question: either needs the person.
+  // The host keeps the mark so that seeing it on one computer clears it on every other.
+  let attention = false
+  if (payload.status === 'ready' || payload.status === 'error' || payload.status === 'asking') {
+    try {
+      attention = markConversationAttention(payload.agentId)
+    } catch {
+      /* The conversation may no longer exist in the store. */
+    }
+  }
   sendToWindow('agent:status', payload)
+  if (attention) sendToWindow('conversation:attention', { conversationId: payload.agentId, attention: true })
 
   onAgentStatus(payload.agentId, payload.status)
 
@@ -521,22 +578,20 @@ function broadcastStatus(payload: { agentId: string; status: string }): void {
 }
 
 function setupSessionPermissions(): void {
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) =>
-    cb(permission === 'media' || permission === 'clipboard-sanitized-write')
+  // Inline HTML answers get no permission at all, whatever their frame asks.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) =>
+    cb(
+      !isGenUiWidgetUrl(details.requestingUrl ?? '') &&
+        (permission === 'media' || permission === 'clipboard-sanitized-write')
+    )
   )
 }
 
 function applyProdCsp(): void {
   if (isDev) return
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
-    cb({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-        ],
-      },
-    })
+    const responseHeaders = appPolicyHeaders(details.url, details.responseHeaders)
+    cb(responseHeaders ? { responseHeaders } : {})
   })
 }
 
@@ -564,15 +619,10 @@ function setupApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-// Set once at startup and consumed by the first window; later windows come from explicit reveals.
-let startHiddenAtLogin = false
-
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
-  const startHidden = startHiddenAtLogin
-  startHiddenAtLogin = false
   mainWindow = new BrowserWindow({
-    show: !isHeadlessInstance() && !startHidden,
+    show: !isHeadlessInstance(),
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -633,6 +683,10 @@ async function createWindow(): Promise<void> {
   wc.setVisualZoomLevelLimits(1, 1).catch(() => {})
 
   initDrawer(mainWindow)
+  // The drawer keeps a remote host's streamed browser only while the browser is in its slot.
+  onPlacementChange((convId) =>
+    safeWindowSend(mainWindow, 'drawer:placement', { convId, outOfSlot: outOfSlotTabsOf(convId) })
+  )
   if (isE2E()) {
     const { installE2EAppToolsBridge } = await import('./e2e-app-tools')
     installE2EAppToolsBridge()
@@ -678,6 +732,8 @@ async function createWindow(): Promise<void> {
     },
   })
   attachHotkeyCapture(mainWindow.webContents)
+  setBrowserShortcutHandlers({ newTab: openBrowserTabFromShortcut, closeTab: closeActiveBrowserTabFromShortcut })
+  attachMainWindowBrowserHotkeys(mainWindow.webContents)
   attachWindowNavigation(mainWindow, (direction) => {
     const convId = popupManager.getVisibleConvId()
     return !!convId && (navigateFocusedVSCode(convId, direction) || navigateFocusedBrowser(convId, direction))
@@ -686,11 +742,6 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('close', (e) => {
     if (isHeadlessInstance() && !backgroundQuit) {
-      e.preventDefault()
-      mainWindow?.hide()
-      return
-    }
-    if (executorSettings().background && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -743,7 +794,7 @@ function registerIpc(): void {
     resolveChatGptWebPlanReview,
     createMaestroSibling: (sourceConversationId, options) => createSiblingConversation(sourceConversationId, options),
     deleteConversation,
-    isConversationReserved: (conversationId) => !!lookupReviewLoopByConversation(conversationId),
+    isConversationReserved: (conversationId) => !!projectEnvironmentLockFor(conversationId),
     applyMaestroStrategyProfile: async (conversationId, profileId) => {
       const profile = resolveMaestroStrategyProfile(profileId, getGlobalMaestroOrchestratorProfile())
       if (!profile) return { ok: false, error: 'maestro-strategy-profile-not-found' }
@@ -751,7 +802,7 @@ function registerIpc(): void {
       const applied = setConversationMaestroConfig(conversationId, profile.config)
       if (!applied.ok) return { ok: false, error: 'maestro-strategy-profile-config-invalid' }
       primeChatTurnSelection(conversationId, profile.orchestrator)
-      const available = await resolveReviewLoopSelection(conversationId)
+      const available = await resolveFrozenChatSelection(conversationId)
       return available.ok ? { ok: true } : { ok: false, error: available.error }
     },
     markMaestroStrategyProfileUsed: setLastUsedMaestroStrategyProfile,
@@ -785,7 +836,11 @@ function registerIpc(): void {
     stopChat,
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
-  registerConversationIpc(reg, { stopChat, resumeBackgroundCompaction })
+  registerConversationIpc(reg, {
+    stopChat,
+    resumeBackgroundCompaction,
+    emitAttention: (conversationId, attention) => sendToWindow('conversation:attention', { conversationId, attention }),
+  })
   registerLocalConversationIpc(reg)
   disposeConversationMigrationIpc?.()
   disposeConversationMigrationIpc = registerConversationMigrationIpc(reg, {
@@ -847,6 +902,11 @@ function registerIpc(): void {
   void getConversationDispatchService()
     .then((service) => service.reconcile())
     .catch((error) => console.warn('[conversation-dispatch] reconciliation failed:', error))
+  // Messages queued for busy conversations are delivered again; results lost with the previous run are not.
+  void import('./conversation-link-service')
+    .then(({ getConversationLinkService }) => getConversationLinkService())
+    .then((service) => service.reconcile())
+    .catch((error) => console.warn('[conversation-link] reconciliation failed:', error))
 
   registerUsageIpc({ mhandle })
   registerMemoryIpc(reg)
@@ -878,10 +938,10 @@ function registerIpc(): void {
   registerPerformanceIpc(reg)
   registerSoundIpc(reg)
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
-  registerPlatformIpc(reg)
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
+  fleetClientService.onDownloadSettled = noticeFleetDownload
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(reg, fleetClientService)
@@ -915,15 +975,16 @@ function registerIpc(): void {
     origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
   })
   setRemoteVSCodeHandlers(remoteVSCodeHandlers({ editors: remoteEditors }))
-  // A remote host's conversation shows a Code tab once the host says it serves its editor.
-  setRemoteEditorHosts(
-    (hostId) =>
+  // A remote host's conversation shows a Browser and a Code tab once the host says it serves them.
+  setRemoteToolHosts(
+    (hostId, tool) =>
       hostRegistry()
         ?.list()
-        .some((host) => host.id === hostId && host.editor) ?? false
+        .some((host) => host.id === hostId && (tool === 'browser' ? host.browser : host.editor)) ?? false
   )
   app.once('before-quit', () => remoteEditors?.close())
   registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })
+  registerConversationMove(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -959,6 +1020,8 @@ app.on('child-process-gone', (_e, details) => {
 })
 
 app.whenReady().then(async () => {
+  // Before any session exists, so that every session of a headless instance saves its downloads without a dialog.
+  if (isHeadlessInstance()) saveHeadlessDownloads()
   fixPathForGuiApp()
   if (process.env.MAESTRLY_PACKAGED_LOCAL_ML_SMOKE === '1') {
     try {
@@ -1025,16 +1088,21 @@ app.whenReady().then(async () => {
   setupSessionPermissions()
   hardenBrowserSession()
   applyProdCsp()
+  handleFleetMediaProtocol(fleetClientService)
+  handleGenUiWidgetProtocol()
   registry.on('status', broadcastStatus)
   registry.setSoundSettings(getSoundSettings())
 
   registerIpc()
+  // Before anything resumes a turn: a conversation an unfinished move holds stays leased.
+  restoreMoveEndpointLeases()
+  conversationMoveService?.markInterrupted()
+  void sweepMoveStaging().catch((error) => console.warn('[conversation-move] staging sweep failed:', error))
   const migrationRecoveries = await conversationMigrationService.recoverIncomplete()
   if (migrationRecoveries.length > 0) {
     console.warn(`[conversation-migration] ${migrationRecoveries.length} incomplete operation(s) recovered.`)
   }
   setupApplicationMenu()
-  startHiddenAtLogin = !isBotMode() && shouldStartHidden(executorSettings(), wasLaunchedAtLogin())
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
@@ -1059,23 +1127,18 @@ app.whenReady().then(async () => {
           .resize({ width: process.platform === 'win32' ? 16 : 22, height: process.platform === 'win32' ? 16 : 22 })
   if (!trayIcon.isEmpty()) {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
-    executorTray = new Tray(trayIcon)
-    executorTray.setToolTip('Maestrly')
+    appTray = new Tray(trayIcon)
+    appTray.setToolTip('Maestrly')
     const reveal = () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show()
         mainWindow.focus()
-        mainWindow.webContents.send('executor:open')
       } else void createWindow()
     }
-    executorTray.on('click', reveal)
-    executorTray.setContextMenu(
+    appTray.on('click', reveal)
+    appTray.setContextMenu(
       Menu.buildFromTemplate([
         { label: 'Maestrly', click: reveal },
-        {
-          label: getLocale().startsWith('pt') ? 'Pausar executor' : 'Pause executor',
-          click: () => void embeddedRunnerHost.stop(),
-        },
         { type: 'separator' },
         { label: getLocale().startsWith('pt') ? 'Sair' : 'Quit', click: () => app.quit() },
       ])
@@ -1119,10 +1182,12 @@ app.whenReady().then(async () => {
         homeDir: os.homedir(),
         roots: hostFsRoots().map((root) => root.path),
         // Nobody sees this host's desktop. Its browser is streamed to the computer that shows it (drawer/browser-stream),
-        // and that computer opens its editor through the control server (remote-host/server/host-editor).
+        // and that computer opens its editor through the control server (remote-host/server/host-editor) and its
+        // conversations' computers through the gateway (remote-host/server/computers).
         desktopEffects: false,
         editor: true,
         browser: true,
+        computer: serverComputers() !== null,
       }),
       // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
       // language of the computer that connected last.
@@ -1138,6 +1203,19 @@ app.whenReady().then(async () => {
         busy: () => activeChatRunCount() > 0,
         closeConversation: (id) => stopConversationLive(id),
         purgeConversation: (id) => deleteConversation(id),
+        watchStatuses: (listener) => {
+          const onStatus = ({ agentId, status }: { agentId: string; status: string }) => listener(agentId, status)
+          registry.on('status', onStatus)
+          return () => registry.off('status', onStatus)
+        },
+        placeBrowser: (id, placement) =>
+          placeConversationBrowser(id, placement, {
+            detach: (convId) => floatingManager.detach(convId, 'browser', { focus: false }),
+            setPinned: (convId) => floatingManager.setPinned(convId, 'browser', true),
+            reattach: (convId) => floatingManager.reattach(convId, 'browser'),
+            floatWindow: (convId) => floatingManager.getFloatWin(convId, 'browser'),
+            placement: (convId) => getPlacement(convId, 'browser'),
+          }),
       })
     } catch (error) {
       console.error(
@@ -1151,9 +1229,6 @@ app.whenReady().then(async () => {
       return
     }
   }
-  recoverDesktopExecutions()
-  const executor = executorSettings()
-  if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   void botHost.restore()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1163,9 +1238,13 @@ app.whenReady().then(async () => {
   })
 })
 
+// History writes are debounced; persist the last visits in every mode, bots included.
+app.on('will-quit', () => flushBrowserHistory())
+
 app.on('window-all-closed', () => {
   if (isHeadlessInstance()) return
   flushPendingBrowserPersists()
+  flushBrowserHistory()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()
   popupManager.disposeAll()
@@ -1210,10 +1289,10 @@ let shutdownComplete = false
 
 let chatDisposed = false
 let chatDisposing = false
-let platformRunnerStopped = false
-let platformRunnerStopping = false
+let backgroundServicesStopped = false
+let backgroundServicesStopping = false
 
-let executorTray: Tray | null = null
+let appTray: Tray | null = null
 let backgroundQuit = false
 let quitConfirmed = false
 let quitDialogOpen = false
@@ -1222,6 +1301,46 @@ function shutdownConversationMigration(): void {
   const disposeIpc = disposeConversationMigrationIpc
   disposeConversationMigrationIpc = null
   disposeIpc?.()
+  disposeConversationMoveIpc?.()
+  disposeConversationMoveIpc = null
+}
+
+/**
+ * Every instance serves its move endpoint (a host to the computer coordinating a move); a computer with windows also
+ * coordinates moves, reaching its hosts' endpoints over their bridges and relaying packages through its transfer queue.
+ */
+function registerConversationMove(reg: IpcRegistrar): void {
+  const local = createLocalMoveEndpoint({ appVersion: () => app.getVersion() })
+  registerConversationMoveEndpointIpc(reg, local)
+  if (isHeadlessInstance()) return
+  const online = (hostId: HostId): boolean =>
+    hostId === LOCAL_HOST_ID || !!hostRegistry()?.list().some((host) => host.id === hostId && host.state === 'online')
+  const remote = (hostId: HostId): MoveEndpoint =>
+    createRemoteMoveEndpoint(hostId, {
+      call: (channel, input) => {
+        const registry = hostRegistry()
+        const origin = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null
+        if (!registry || origin === null) throw new MoveError('host-unavailable', 'No window can reach the host.')
+        return registry.use(hostId, origin, () => ({ role: 'main' })).invoke(origin, channel, [input])
+      },
+      onEvent: onHostEvent,
+    })
+  conversationMoveService = new ConversationMoveService({
+    endpoint: (hostId) => {
+      if (hostId === LOCAL_HOST_ID) return local
+      if (!online(hostId)) throw new MoveError('host-unavailable', 'The host is not connected.')
+      return remote(hostId)
+    },
+    hostOnline: online,
+    relay: createPackageRelay(hostTransferEngine),
+    localStagingDirectory: moveStagingDirectory,
+    removeLocalStaging: removeMoveStaging,
+  })
+  disposeConversationMoveIpc?.()
+  disposeConversationMoveIpc = registerConversationMoveIpc(reg, {
+    service: conversationMoveService,
+    emitChanged: (event) => broadcast('conversation-move:changed', event),
+  })
 }
 
 /** Share one quit confirmation between window close and application quit; cancellation keeps all work alive. */
@@ -1270,13 +1389,13 @@ app.on('before-quit', (e) => {
     return
   }
 
-  if (!platformRunnerStopped) {
+  if (!backgroundServicesStopped) {
     e.preventDefault()
-    if (!platformRunnerStopping) {
-      platformRunnerStopping = true
-      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop(), artifactHost?.stop()]).finally(() => {
-        platformRunnerStopped = true
-        platformRunnerStopping = false
+    if (!backgroundServicesStopping) {
+      backgroundServicesStopping = true
+      void Promise.allSettled([botHost.stop(), artifactHost?.stop()]).finally(() => {
+        backgroundServicesStopped = true
+        backgroundServicesStopping = false
         app.quit()
       })
     }

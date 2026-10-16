@@ -4,6 +4,7 @@ import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { FleetNetwork } from './network.js'
 import {
+  type FleetGatewayEvent,
   FLEET_GATEWAY_ROUTES,
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
@@ -30,6 +31,7 @@ import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
+import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge } from './desktop-bridge.js'
 
@@ -91,7 +93,9 @@ export function createGatewayServers(ctx: GatewayContext) {
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
-  const network = ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network)
+  const network =
+    ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network, () => ctx.lifecycle.isolatedNetworks())
+  ctx.lifecycle.onNetworksChanged = () => void network.refresh().catch(() => {})
   const desktops = ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events)
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
   ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
@@ -103,6 +107,24 @@ export function createGatewayServers(ctx: GatewayContext) {
     hostFiles.closeEnvironment(id)
     hostEditor.closeEnvironment(id)
   }
+  // A workspaces environment that a device uses through any of these is not idle.
+  ctx.lifecycle.hostConnections = (id) => bridge.count(id) + hostFiles.count(id) + hostEditor.count(id)
+  // Phones hear of what waits on the owner even while no app streams events.
+  const push =
+    ctx.push ??
+    new PushNotifier({
+      store: ctx.store,
+      sender:
+        ctx.config.push === 'off'
+          ? disabledPushSender
+          : new ExpoPushSender({ accessToken: ctx.config.expoAccessToken }),
+      serverName: () => ctx.config.displayName ?? ctx.config.publicHost,
+      log: (message) => console.error(JSON.stringify({ component: 'push', level: 'warn', message })),
+    })
+  const observePush = (event: FleetGatewayEvent) => push.observe(event)
+  ctx.events.observers.add(observePush)
+  ctx.lifecycle.onChatAttention = (environmentId, conversationId, name, kind) =>
+    void push.chat(environmentId, conversationId, name, kind)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -135,6 +157,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   const activeCtx: GatewayContext = {
     ...ctx,
+    push,
     ownerMemory,
     peers,
     routines,
@@ -183,7 +206,11 @@ export function createGatewayServers(ctx: GatewayContext) {
         req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION)
       )
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
-      const caller = internal ? ctx.auth.internalBot(req.headers.authorization) : null
+      const internalCaller = internal ? ctx.auth.internalCaller(req.headers.authorization) : null
+      // A workspaces environment's token publishes its chats' artifacts and reaches nothing else of the internal API.
+      if (internalCaller && 'environmentId' in internalCaller && !match.key.startsWith('artifact'))
+        throw new GatewayError('FORBIDDEN', 'Host token is limited to artifacts')
+      const caller = internalCaller && 'botId' in internalCaller ? internalCaller.botId : null
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
       // Host-file bodies are streamed to the workspaces host as they arrive; the gateway never buffers or parses them.
       if (!internal && isHostFileRoute(match.key))
@@ -203,7 +230,7 @@ export function createGatewayServers(ctx: GatewayContext) {
                 ? FLEET_ARTIFACT_BODY_MAX
                 : !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
                   ? FLEET_SKILL_BODY_MAX
-                  : !internal && match.key === 'botMessageSend'
+                  : !internal && (match.key === 'botMessageSend' || match.key === 'botMessageEdit')
                     ? FLEET_MESSAGE_BODY_MAX
                     : !internal && match.key === 'desktopCallResult'
                       ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
@@ -212,7 +239,7 @@ export function createGatewayServers(ctx: GatewayContext) {
           )
         : undefined
       if (match.key.startsWith('artifact')) {
-        const identity = internal ? { botId: caller! } : { deviceId: ctx.auth.device(req.headers.authorization).id }
+        const identity = internal ? internalCaller! : { deviceId: ctx.auth.device(req.headers.authorization).id }
         const result = await artifactRoute(activeCtx, match.key, body, identity)
         return send(res, 200, match.route.response?.parse(result) ?? result)
       }
@@ -290,9 +317,10 @@ export function createGatewayServers(ctx: GatewayContext) {
     let error: GatewayError = new GatewayError('NOT_FOUND', 'Route not found')
     try {
       if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
-      if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       const { pathname, search } = new URL(req.url ?? '/', 'http://gateway')
+      // A bridge ticket says which Origin, if any, its upgrade may carry (`phones`).
       if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
+      if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       // The editor's WebSockets authenticate with the device token, as its requests do.
       const editor = parseFleetGatewayEditorPath(pathname)
       if (editor) {
@@ -356,6 +384,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       bridge.close()
       hostFiles.close()
       hostEditor.close()
+      ctx.events.observers.delete(observePush)
       ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(

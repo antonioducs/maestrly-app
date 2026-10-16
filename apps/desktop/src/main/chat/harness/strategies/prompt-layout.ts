@@ -3,7 +3,7 @@ import { BOT_APP_TOOLS_GUIDANCE } from '../../../fleet/instance/identity'
 import { capabilityBehaviorFor } from '../../../../shared/chat-mode'
 import { renderDesignModePrompt } from '../../design-mode-prompt'
 import { MEMORY_TOOL_GUIDANCE } from '../../memory-tool-guidance'
-import { HOST_ASK_DISPATCH_GUIDANCE } from '../host-contracts'
+import { HOST_ASK_DISPATCH_GUIDANCE, hostGenUiSection } from '../host-contracts'
 import type { AppToolGroup } from '../../../../shared/app-tool-groups'
 import { appToolPromptGroups, listJoin } from '../app-tool-prompt'
 
@@ -30,6 +30,8 @@ export interface OpenAIPromptLayoutInput {
   envContext?: string | null
   ultraContext?: string | null
   nativeTools?: { localShell: boolean; applyPatch: boolean }
+  /** Teach the generated-interface language; on unless the output never reaches a person. */
+  generatedInterfaces?: boolean
 }
 
 export interface CompiledPromptLayout {
@@ -166,6 +168,7 @@ export function composeOpenAICodexPortPrompt(input: OpenAIPromptLayoutInput): Co
     appToolsOverlay(input.appToolsEnabled, input.hasNotesTab, input.mode, input.disabledAppToolGroups),
     MEMORY_TOOL_GUIDANCE,
     '# Rendering\n\nThe chat supports GitHub-flavored Markdown, tables, and Mermaid diagrams. Use a Mermaid code block for diagrams instead of ASCII art.',
+    hostGenUiSection(input.generatedInterfaces),
   ])
 
   const stablePrefix = joinSections([
@@ -217,6 +220,7 @@ export function composeOpenAIConcisePrompt(input: OpenAIPromptLayoutInput): Comp
     `\n\n# Active mode\n\n${ASTRA_MODE_INSTRUCTIONS[input.mode]}`,
     designPrompt ? `\n\n${designPrompt}` : '',
     astraToolPolicy(input),
+    hostGenUiSection(input.generatedInterfaces),
     optionalSection('Project and workspace instructions', input.projectContext),
     optionalSection('Memory Center', MEMORY_TOOL_GUIDANCE),
     optionalSection('Available skills', input.skillsContext),

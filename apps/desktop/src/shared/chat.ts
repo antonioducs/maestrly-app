@@ -8,6 +8,7 @@ import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 import type { AppToolGroupState } from './app-tool-groups'
 import type { PluginScope } from './plugins'
+import type { WebSearchConfig } from './web-search'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -929,6 +930,12 @@ export interface ChatSkillSearchHit {
   installed: boolean
 }
 
+/**
+ * Where a message belongs. Only `conversation` (or no scope) is part of the model's context.
+ * `review-loop` is an isolated internal execution (ChatGPT Web project-environment jobs); the persisted kind keeps
+ * its historical name. `review-summary` only exists in older conversations. `review-report` holds a code review,
+ * which reaches the model attached to the person's next message instead.
+ */
 export type ChatExecutionScope =
   | { kind: 'conversation' }
   | {
@@ -937,36 +944,38 @@ export type ChatExecutionScope =
       loopId: string
       iteration: number
       maxIterations: number
-      /** Present for the neutral paired driver; absent means the legacy Web executor round. */
-      role?: 'executor' | 'reviewer'
-      executorConversationId?: string
-      reviewerConversationId?: string
     }
   | { kind: 'host'; executionId: string }
-  | {
-      kind: 'review-summary'
-      loopId: string
-      role?: 'executor' | 'reviewer'
-      executorConversationId?: string
-      reviewerConversationId?: string
-    }
+  | { kind: 'review-summary'; loopId: string }
+  | { kind: 'review-report'; reviewId: string }
 
+/** Isolated internal execution round, projected from a `review-loop` execution scope. */
 export interface ChatReviewLoopMeta {
   loopId: string
   executionId: string
   iteration: number
   maxIterations: number
-  role?: 'executor' | 'reviewer'
-  executorConversationId?: string
-  reviewerConversationId?: string
 }
 
-/** `conversation-dispatch`: first message of a conversation started from another conversation (host-generated). */
+/**
+ * `conversation-dispatch`: first message of a conversation started from another conversation (host-generated).
+ * `conversation-message`: a message, report or result sent by the agent of another conversation (see `peer`).
+ */
 export type ChatMessageSource =
   | 'chatgpt-web'
   | 'chatgpt-web-review-loop'
-  | 'maestrly-review-loop'
+  | 'maestrly-review'
   | 'conversation-dispatch'
+  | 'conversation-message'
+
+/** Sender of a message that came from another conversation; the name is captured when it was delivered. */
+export interface ChatMessagePeerOrigin {
+  /** Journal id of the delivered message. */
+  messageId: string
+  fromConversationId: string
+  fromConversationName: string
+  kind: import('./conversation-link').ConversationPeerMessageKind
+}
 
 /** Last observed occupancy of this message's runtime, independent of billing and next-request estimates. */
 export interface ChatContextSnapshot {
@@ -1005,6 +1014,8 @@ export interface ChatMessage {
   model?: ChatModelRef
 
   source?: ChatMessageSource
+  /** Present with source `conversation-message`. */
+  peer?: ChatMessagePeerOrigin
   /** Trusted bot identity captured when this particular message was admitted by main. */
   botName?: string
   createdAt: number
@@ -1025,6 +1036,9 @@ export interface ChatMessage {
   executionScope?: ChatExecutionScope
 
   reviewLoop?: ChatReviewLoopMeta
+
+  /** Present with source `maestrly-review`. */
+  review?: import('./review').ChatReviewReport
 
   memoryContext?: import('./memory').MemoryContextMeta
 
@@ -1124,6 +1138,11 @@ export type ChatStreamEvent =
       activeHarnessProfile: ChatActiveHarnessProfile | null
     }
   | { kind: 'steering-accepted'; message: ChatMessage }
+  /**
+   * Questions a running tool is waiting on, replacing the previous list. ask_question cards come from their tool
+   * part; this also covers confirmations asked from inside other tools (for example starting conversations).
+   */
+  | { kind: 'questions-pending'; questions: PendingChatQuestion[] }
   | {
       kind: 'message-start'
       messageId: string
@@ -1267,8 +1286,6 @@ export type ChatGptWebCapabilityScope = 'off' | 'read' | 'write'
 export type ChatGptWebBrowserCapability = 'off' | 'inspect' | 'interact'
 
 export interface ChatGptWebCapabilities {
-  /** Linked Kanban project. Read by default; mutations require explicit write access. */
-  kanban?: ChatGptWebCapabilityScope
   git: 'off' | 'read'
   gh: 'off' | 'read'
   /** Read-only access to the visible main Maestrly conversation. Missing values fail closed to off. */
@@ -1339,7 +1356,6 @@ export interface ChatGptWebSessionInfo {
 
   diagnostic?: ChatGptWebSessionDiagnostic
 
-  reviewLoop?: ChatGptWebReviewLoopInfo
   error?: string
 }
 
@@ -1363,26 +1379,6 @@ export interface ChatGptWebStatus {
 // ----------------------------------------------------------------------------
 
 // ----------------------------------------------------------------------------
-
-export type ChatGptWebReviewLoopStatus =
-  | 'reviewing'
-  | 'executing'
-  | 'finishing'
-  | 'cancelling'
-  | 'finished'
-  | 'cancelled'
-  | 'interrupted'
-
-export function isReviewLoopConversationReserved(status: ChatGptWebReviewLoopStatus | null | undefined): boolean {
-  return (
-    status === 'reviewing' ||
-    status === 'executing' ||
-    status === 'finishing' ||
-    status === 'cancelling' ||
-    status === 'finished' ||
-    status === 'cancelled'
-  )
-}
 
 export interface FrozenChatSelection {
   /** Effective Cursor model and catalog parameters, frozen for isolated execution. */
@@ -1410,6 +1406,19 @@ export interface FrozenChatSelection {
   identityEpoch?: number
 
   providerFingerprint?: string
+
+  /**
+   * Physical accounts the frozen execution may use, in failover order, each with the identity it had at freeze.
+   * Present only for a Claude/Codex account whose fallback route was enabled; the first entry is `providerId`.
+   * Accounts switch only on quota or unavailability; one re-logged as another identity ends the execution.
+   */
+  failoverRoute?: ReadonlyArray<FrozenFailoverAccount>
+}
+
+export interface FrozenFailoverAccount {
+  providerId: string
+  identityFingerprint?: string
+  identityEpoch?: number
 }
 
 export type FrozenChatExecutionProfile = FrozenChatSelection
@@ -1419,17 +1428,6 @@ export type InternalTurnOutcome =
       status: 'success'
       assistantMessageId: string | null
       summaryText?: string
-      reviewDecision?: {
-        result: 'clean' | 'findings'
-        summary: string
-        findings?: Array<{
-          id: string
-          severity: 'blocking' | 'important' | 'optional'
-          title: string
-          details: string
-          paths?: string[]
-        }>
-      }
     }
   | { status: 'error'; error: string; assistantMessageId: string | null }
   | { status: 'cancelled'; assistantMessageId: string | null }
@@ -1441,81 +1439,6 @@ export interface InternalTurnHandle {
   done: Promise<InternalTurnOutcome>
   cancel(): void
 }
-
-export interface ChatGptWebReviewLoopInfo {
-  loopId: string
-  status: ChatGptWebReviewLoopStatus
-  iteration: number
-  maxIterations: number
-  startedAt: number
-  jobStartedAt?: number
-  finishReason?: string
-
-  modelId?: string
-
-  reasoning?: string
-  /** Frozen Fast mode. */
-  fastMode?: boolean
-
-  contextPolicy?: 'isolated'
-
-  roundsCompleted?: number
-  roundsFailed?: number
-  roundsCancelled?: number
-  /** Review protocol axis; absent in older persisted/public payloads means code. */
-  reviewScope?: 'code' | 'frontend'
-  /** Sanitized visual runtime state. Never includes process/session/browser internals. */
-  visual?: {
-    state: 'starting' | 'ready' | 'inspecting' | 'error'
-    url?: string
-    managedPreview: boolean
-  }
-}
-
-export type ReviewLoopDriver = 'chatgpt-web' | 'maestrly-pair'
-export type ReviewLoopRole = 'executor' | 'reviewer'
-export type ReviewLoopTurnPolicy = 'executor-agent' | 'reviewer-readonly'
-export type ReviewLoopSource = 'chatgpt-web-review-loop' | 'maestrly-review-loop'
-export type ReviewLoopSeverityThreshold = 'blocking' | 'important'
-
-export interface ReviewLoopParticipantInfo {
-  conversationId: string
-  name: string
-  modelId: string
-  reasoning?: string
-  fastMode: boolean
-}
-
-/** Sanitized neutral projection. It deliberately excludes prompts, fingerprints, findings and handles. */
-export interface ReviewLoopInfo {
-  loopId: string
-  driver: ReviewLoopDriver
-  status: ChatGptWebReviewLoopStatus
-  iteration: number
-  maxIterations: number
-  activeRole?: ReviewLoopRole
-  participants: {
-    executor: ReviewLoopParticipantInfo
-    reviewer?: ReviewLoopParticipantInfo
-  }
-  startedAt: number
-  jobStartedAt?: number
-  finishReason?: string
-}
-
-export interface ReviewLoopCompatibleCandidate extends ReviewLoopParticipantInfo {
-  compatible: boolean
-  unavailableReason?: string
-}
-
-export interface StartPairedReviewLoopInput {
-  executorConversationId: string
-  reviewerConversationId: string
-  maxIterations?: number
-  severityThreshold?: ReviewLoopSeverityThreshold
-}
-
-export type StartPairedReviewLoopResult = { ok: true; loop: ReviewLoopInfo } | { ok: false; error: string }
 
 // ----------------------------------------------------------------------------
 
@@ -1807,6 +1730,14 @@ export interface ChatConfig {
   appToolGroups?: AppToolGroupState
 
   imageGenEnabled: boolean
+  /** Generated interfaces: the inline HTML instructions in the prompt and the preview tool. Default on. */
+  generatedInterfacesEnabled: boolean
+
+  /**
+   * Selected provider and whether each key is stored; never the keys themselves. Absent on hosts that predate web
+   * search, whose settings then omit the section.
+   */
+  webSearch?: WebSearchConfig
 
   bashFiltersEnabled: boolean
 

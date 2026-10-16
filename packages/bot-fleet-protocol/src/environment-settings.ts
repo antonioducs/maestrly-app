@@ -240,7 +240,21 @@ export const fleetSettingsRuntimeSchema = z
   })
   .strict()
 export const fleetSettingsRuntimesSchema = z.object({ runtimes: z.array(fleetSettingsRuntimeSchema).max(3) }).strict()
-export const fleetSettingsPreferencesSchema = z.object({ revision, imageGenEnabled: z.boolean() }).strict()
+/** `generatedInterfacesEnabled` is absent from environments that predate it; send it only to one that reported it. */
+export const fleetSettingsPreferencesSchema = z
+  .object({ revision, imageGenEnabled: z.boolean(), generatedInterfacesEnabled: z.boolean().optional() })
+  .strict()
+/** Subscription kinds whose accounts can take over from one another when one reaches its usage limit. */
+export const FLEET_FAILOVER_KINDS = ['claude', 'codex'] as const
+const failoverKind = z.enum(FLEET_FAILOVER_KINDS)
+const fallbacks = z.array(slot).max(50)
+/** A primary account (`slot`, null for the kind's default account) and the accounts tried after it, in order. */
+export const fleetSettingsFailoverRouteSchema = z
+  .object({ kind: failoverKind, slot, enabled: z.boolean(), fallbacks })
+  .strict()
+export const fleetSettingsFailoverSchema = z
+  .object({ revision, routes: z.array(fleetSettingsFailoverRouteSchema).max(200) })
+  .strict()
 
 function operation<I extends z.ZodType, O extends z.ZodType>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT',
@@ -390,7 +404,9 @@ export const FLEET_SETTINGS_OPERATIONS = {
   setPreferences: operation(
     'PUT',
     '/preferences',
-    z.object({ ...expected, imageGenEnabled: z.boolean() }).strict(),
+    z
+      .object({ ...expected, imageGenEnabled: z.boolean(), generatedInterfacesEnabled: z.boolean().optional() })
+      .strict(),
     fleetSettingsPreferencesSchema
   ),
   // Plugins and MCP sign-in: only for environments with `FLEET_ENVIRONMENT_PLUGINS_FEATURE`.
@@ -506,6 +522,20 @@ export const FLEET_SETTINGS_OPERATIONS = {
     '/mcp-oauth/:id/client',
     z.object({ id: fleetMcpServerIdSchema, client: fleetMcpOAuthClientSchema.nullable() }).strict(),
     fleetMcpOAuthClientResultSchema
+  ),
+  /** Needs `FLEET_ACCOUNT_FAILOVER_FEATURE` from both the gateway and the environment. */
+  failover: operation('GET', '/failover', empty, fleetSettingsFailoverSchema),
+  setFailoverRoute: operation(
+    'PUT',
+    '/failover/:kind/:slot',
+    z
+      .object({ kind: failoverKind, slot, ...expected, enabled: z.boolean(), fallbacks })
+      .strict()
+      .refine(
+        (value) => !value.fallbacks.includes(value.slot) && new Set(value.fallbacks).size === value.fallbacks.length,
+        'Each account appears once in a route'
+      ),
+    fleetSettingsFailoverSchema
   ),
 } as const
 export type FleetSettingsOperation = keyof typeof FLEET_SETTINGS_OPERATIONS

@@ -34,14 +34,15 @@ export function codexAdapterCapabilities(facts: CodexRuntimeFacts): HarnessCapab
 export interface CodexEligibilityFacts {
   eligibleChatGptSession: boolean
   ephemeral: boolean
-  reviewer: boolean
   experimentalContextFallbackDisabled?: boolean
   requestUserInputAsyncAvailable: boolean
+  /** A standalone chat, with no project: a conversation rather than a coding session. */
+  standalone?: boolean
 }
 
 export interface CodexThreadPolicy {
   promptVersion: string
-  personality: 'pragmatic' | undefined
+  personality: 'pragmatic' | 'friendly' | undefined
   nativeCompactionFirst: boolean
   experimentalContextEnabled: boolean
   asyncQuestionGuidance: boolean
@@ -50,7 +51,7 @@ export interface CodexThreadPolicy {
 
 /**
  * Experimental context needs the profile request, the effective capability and every eligibility
- * fact: a normal session's experimental context never leaks into reviewer or ephemeral executions.
+ * fact: a normal session's experimental context never leaks into ephemeral executions.
  */
 export function resolveCodexThreadPolicy(
   harness: ResolvedHarness,
@@ -62,12 +63,13 @@ export function resolveCodexThreadPolicy(
     harness.capabilities.experimentalContext &&
     facts.eligibleChatGptSession &&
     !facts.ephemeral &&
-    !facts.reviewer &&
     !facts.experimentalContextFallbackDisabled
   const serializable = serializableReasoningEffort(harness.reasoning, reasoningEffort)
+  // A profile without a personality keeps none; one that takes the coding personality talks as a friend in chats.
+  const personality = harness.runtime.personality ? (facts.standalone ? 'friendly' : harness.runtime.personality) : undefined
   return {
     promptVersion: harness.runtime.codexPromptVersion,
-    personality: harness.runtime.personality ?? undefined,
+    personality,
     nativeCompactionFirst: harness.runtime.nativeCompactionFirst && harness.capabilities.compaction,
     experimentalContextEnabled,
     asyncQuestionGuidance: harness.capabilities.asyncTools && facts.requestUserInputAsyncAvailable,

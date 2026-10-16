@@ -19,10 +19,13 @@ import {
   Layers,
   Pin,
   PinOff,
+  ArrowRightLeft,
 } from 'lucide-react'
 import type { Conversation, WorkspaceGroup, WorkspaceWithConversations } from '../../../preload'
 import type { MenuKit } from '@/components/sidebar/menu-kit'
 import { isApparentlyMigrationEligible } from '@/components/conversation-migration/flow'
+import { isApparentlyMoveEligible, type MoveTarget } from '@/lib/conversation-move/flow'
+import type { HostId } from '../../../shared/host-key'
 import { isRemoteKey } from '@/lib/hosts/shell-keys'
 
 export interface OpenTargets {
@@ -43,6 +46,8 @@ export function useSidebarMenus({
   onArchiveConversation,
   onDeleteConversation,
   onMigrateConversation,
+  moveTargetsOf,
+  onMoveConversation,
   onArchiveSiblings,
   onDeleteSiblings,
   onNewConversation,
@@ -65,6 +70,9 @@ export function useSidebarMenus({
   onArchiveConversation: (conv: Conversation, archived: boolean) => void
   onDeleteConversation: (conv: Conversation) => void
   onMigrateConversation: (conv: Conversation) => void
+  /** The hosts a conversation can move to now. */
+  moveTargetsOf: (conv: Conversation) => MoveTarget[]
+  onMoveConversation: (conv: Conversation, targetHostId: HostId) => void
   onArchiveSiblings: (members: Conversation[], archived: boolean) => void
   onDeleteSiblings: (members: Conversation[]) => void
   onNewConversation: (workspaceId: string) => void
@@ -148,6 +156,34 @@ export function useSidebarMenus({
     )
   }
 
+  const moveSubmenu = (conv: Conversation, m: MenuKit) => {
+    if (!isApparentlyMoveEligible(conv)) return null
+    const targets = moveTargetsOf(conv)
+    if (targets.length === 0) return null
+    return (
+      <m.Sub>
+        <m.SubTrigger className="gap-2">
+          <ArrowRightLeft /> {t('conversationMove.menuAction')}
+        </m.SubTrigger>
+        <m.SubContent>
+          {targets.map((target) => (
+            <m.Item
+              key={target.hostId}
+              onClick={(e: MouseEvent) => {
+                e.stopPropagation()
+                onMoveConversation(conv, target.hostId)
+              }}
+            >
+              {target.label === null
+                ? t('conversationMove.thisComputer')
+                : target.label || t('sidebar.hostUnnamed')}
+            </m.Item>
+          ))}
+        </m.SubContent>
+      </m.Sub>
+    )
+  }
+
   const convMenuItems = (conv: Conversation, isArchived: boolean, instanceKey: string, m: MenuKit) => (
     <>
       {!isArchived && (
@@ -179,6 +215,7 @@ export function useSidebarMenus({
           <GitBranch /> {t('conversationMigration.menuAction')}
         </m.Item>
       )}
+      {moveSubmenu(conv, m)}
       {canCreateSibling(conv, isArchived) && (
         <m.Sub>
           <m.SubTrigger className="gap-2">

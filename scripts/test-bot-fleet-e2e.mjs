@@ -7,6 +7,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ScreenStreamClient } from './fleet-screen-client.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const composeFile = path.join(root, 'deploy/bot-fleet/compose.yml')
@@ -69,7 +70,13 @@ function run(command, args, options = {}) {
       const stdout = Buffer.concat(out).toString()
       const stderr = Buffer.concat(err).toString()
       if (code === 0 || options.allowFailure) resolve({ code, stdout, stderr })
-      else reject(new Error(command + ' ' + args.join(' ') + ' exited ' + code + ': ' + stderr.slice(-3000)))
+      else {
+        // A test script prints its failure before the logs of its containers, which can push it out of the tail.
+        const failure = /^FAIL .*(?:\n {4}at .*){0,8}/m.exec(stderr)?.[0]
+        const tail = stderr.slice(-3000)
+        const shown = failure && !tail.includes(failure) ? failure + '\n...\n' + tail : tail
+        reject(new Error(command + ' ' + args.join(' ') + ' exited ' + code + ': ' + shown))
+      }
     })
   })
 }
@@ -436,7 +443,11 @@ async function tcpListeners(name) {
   }
   return listeners
 }
-const vncListeners = async (name) => (await tcpListeners(name)).filter((item) => item.port >= 5900 && item.port < 6000)
+/** Listeners on the ports VNC servers used to take: screens stream through the control port now, so none. */
+const screenListeners = async (name) =>
+  (await tcpListeners(name)).filter((item) => item.port >= 5900 && item.port < 6000)
+/** The screen encoders running in a container; the brackets keep the pattern from matching the shell that runs it. */
+const ENCODER_PATTERN = '[m]aestrly-screen-encoder'
 async function canConnect(from, host, targetPort) {
   const attempt = await docker(
     ['exec', from, 'bash', '-c', `timeout 3 bash -c 'echo >/dev/tcp/${host}/${targetPort}'`],
@@ -451,11 +462,11 @@ async function memorySample(name) {
   const script = [
     'cat /sys/fs/cgroup/memory.current 2>/dev/null || echo 0',
     'for f in /proc/[0-9]*/smaps_rollup; do cat "$f" 2>/dev/null; done | awk \'/^Pss:/ {s += $2} END {print s + 0}\'',
-    'pgrep -c x11vnc || true',
+    `pgrep -c -f '${ENCODER_PATTERN}' || true`,
     'pgrep -c Xvfb || true',
     'pgrep -c -f electron/dist/electron || true',
   ].join('; ')
-  const [cgroup, pss, vnc, xvfb, electron] = (await docker(['exec', name, 'sh', '-c', script])).stdout
+  const [cgroup, pss, encoders, xvfb, electron] = (await docker(['exec', name, 'sh', '-c', script])).stdout
     .trim()
     .split('\n')
     .map(Number)
@@ -463,15 +474,15 @@ async function memorySample(name) {
     dockerStats: stats,
     cgroupMiB: mib(cgroup),
     pssMiB: mib(pss * 1024),
-    processes: { x11vnc: vnc, Xvfb: xvfb, electron },
+    processes: { screenEncoder: encoders, Xvfb: xvfb, electron },
   }
 }
 /**
- * Memory of an environment's container at rest: once its VNC servers stopped (a minute after their last client left)
- * and its cgroup memory stopped moving, three readings 5 s apart within 2% (two minutes at most).
+ * Memory of an environment's container at rest: once its screen encoders stopped (a minute after their last client
+ * left) and its cgroup memory stopped moving, three readings 5 s apart within 2% (two minutes at most).
  */
 async function idleMemorySample(name, conditions) {
-  await waitForNoVnc(name)
+  await waitForNoEncoder(name)
   const readings = []
   const settleStarted = Date.now()
   while (Date.now() - settleStarted < 120000) {
@@ -487,11 +498,11 @@ async function idleMemorySample(name, conditions) {
     settleReadingsMiB: readings.map(mib),
   }
 }
-/** VNC servers stop a minute after their last client leaves; measuring memory waits for that. */
-async function waitForNoVnc(name) {
+/** Screen encoders stop a minute after their last client leaves; measuring memory waits for that. */
+async function waitForNoEncoder(name) {
   await poll(
-    name + ' VNC servers stopped',
-    async () => (await docker(['exec', name, 'pgrep', 'x11vnc'], { allowFailure: true })).code === 1,
+    name + ' screen encoders stopped',
+    async () => (await docker(['exec', name, 'pgrep', '-f', ENCODER_PATTERN], { allowFailure: true })).code === 1,
     90000
   )
 }
@@ -592,121 +603,6 @@ async function settingsWindows(name) {
   }
   return windows
 }
-class Rfb {
-  constructor(url) {
-    this.ws = new WebSocket(url)
-    this.chunks = []
-    this.waiters = []
-    this.bytes = 0
-    this.closed = null
-  }
-  async open() {
-    await new Promise((resolve, reject) => {
-      this.ws.addEventListener('open', resolve, { once: true })
-      this.ws.addEventListener('error', reject, { once: true })
-    })
-    this.ws.addEventListener('message', async (event) => {
-      const data = Buffer.from(await event.data.arrayBuffer())
-      this.chunks.push(data)
-      this.bytes += data.length
-      this.flush()
-    })
-    this.ws.addEventListener('close', (event) => {
-      this.closed = event.code
-      this.flush()
-    })
-  }
-  flush() {
-    for (const wake of this.waiters.splice(0)) wake()
-  }
-  send(data) {
-    this.ws.send(data)
-  }
-  async read(length) {
-    while (this.bytes < length) {
-      if (this.closed !== null) throw new Error('RFB closed: ' + this.closed)
-      await Promise.race([
-        new Promise((resolve) => this.waiters.push(resolve)),
-        sleep(10000).then(() => {
-          throw new Error('RFB read timeout')
-        }),
-      ])
-    }
-    const value = Buffer.alloc(length)
-    let offset = 0
-    while (offset < length) {
-      const first = this.chunks[0]
-      const amount = Math.min(length - offset, first.length)
-      first.copy(value, offset, 0, amount)
-      if (amount === first.length) this.chunks.shift()
-      else this.chunks[0] = first.subarray(amount)
-      offset += amount
-    }
-    this.bytes -= length
-    return value
-  }
-  async handshake() {
-    assert.equal((await this.read(12)).toString(), 'RFB 003.008\n')
-    this.send(Buffer.from('RFB 003.008\n'))
-    const count = (await this.read(1))[0]
-    assert.ok(count > 0)
-    assert.ok((await this.read(count)).includes(1))
-    this.send(Buffer.from([1]))
-    assert.equal((await this.read(4)).readUInt32BE(0), 0)
-    this.send(Buffer.from([1]))
-    const init = await this.read(24)
-    this.width = init.readUInt16BE(0)
-    this.height = init.readUInt16BE(2)
-    this.bpp = init[4]
-    await this.read(init.readUInt32BE(20))
-    assert.equal(this.width, 1280)
-    assert.equal(this.height, 800)
-    const encodings = Buffer.from([2, 0, 0, 1, 0, 0, 0, 0])
-    this.send(encodings)
-  }
-  async pixels() {
-    const ask = Buffer.alloc(10)
-    ask[0] = 3
-    ask.writeUInt16BE(this.width, 6)
-    ask.writeUInt16BE(this.height, 8)
-    this.send(ask)
-    assert.equal((await this.read(1))[0], 0)
-    const header = await this.read(3)
-    const count = header.readUInt16BE(1)
-    assert.ok(count > 0)
-    let pixelCount = 0
-    for (let i = 0; i < count; i++) {
-      const rect = await this.read(12)
-      assert.equal(rect.readInt32BE(8), 0, 'Expected raw RFB pixels')
-      const size = rect.readUInt16BE(4) * rect.readUInt16BE(6) * (this.bpp / 8)
-      const pixels = await this.read(size)
-      assert.ok(pixels.some((value) => value !== pixels[0]) || size > 0)
-      pixelCount += size
-    }
-    return pixelCount
-  }
-  pointer(x, y, buttons = 0) {
-    this.send(Buffer.from([5, buttons, x >> 8, x & 255, y >> 8, y & 255]))
-  }
-  key(keysym, down) {
-    const message = Buffer.alloc(8)
-    message[0] = 4
-    message[1] = down ? 1 : 0
-    message.writeUInt32BE(keysym, 4)
-    this.send(message)
-  }
-  tap(keysym) {
-    this.key(keysym, true)
-    this.key(keysym, false)
-  }
-  async closeCode() {
-    await poll('RFB socket close', () => this.closed !== null && this.closed, 10000)
-    return this.closed
-  }
-  close() {
-    this.ws.close()
-  }
-}
 /** A ticket for a bot's screen. Without `surface` the body is an older Mac's, which only knows the browser area. */
 async function screenTicket(id, mode, surface, options) {
   return request('POST', '/v1/bots/' + id + '/screen-tickets', { mode, ...(surface ? { surface } : {}) }, options)
@@ -715,11 +611,13 @@ async function screenTicket(id, mode, surface, options) {
 async function environmentTicket(environmentId, mode, options) {
   return request('POST', '/v1/environments/' + environmentId + '/screen-tickets', { mode }, options)
 }
-async function openScreen(ticket) {
-  const rfb = new Rfb('ws://127.0.0.1:' + port + ticket.path)
-  await rfb.open()
-  await rfb.handshake()
-  return rfb
+/** Opens a screen through the gateway; it greets with a 1280×800 screen in `mode` when one is given. */
+async function openScreen(ticket, mode) {
+  const screen = await ScreenStreamClient.webSocket('ws://127.0.0.1:' + port + ticket.path)
+  const hello = await screen.hello()
+  assert.deepEqual([hello.width, hello.height], [1280, 800])
+  if (mode) assert.equal(hello.mode, mode)
+  return screen
 }
 async function capture(name, display = ':0', fileName = 'e2e-scout.png') {
   const target = path.join(root, '.bot-fleet-local/screens', fileName)
@@ -1021,42 +919,26 @@ async function main() {
     'node ' + nodeVersion + ', python venv, uv, mise, git and gcc on PATH in plain and login shells'
   )
 
-  // VNC servers start when a screen opens. Nothing listens before; with Scout's browser and apps views open, the
-  // real servers must accept loopback connections only (slot 1: browser view 5903, apps view 5953).
-  assert.deepEqual(await vncListeners(containers[1]), [])
+  // Screens stream through the instance's control port: no screen ever listens on a port of its own, before or while
+  // Scout's browser and apps views are open, and nothing answers where the VNC servers used to (5900-5999).
+  assert.deepEqual(await screenListeners(containers[1]), [])
   const isolationViews = []
-  for (const surface of ['browser', 'apps'])
-    isolationViews.push(await openScreen(await screenTicket(scoutId, 'view', surface)))
-  const livePorts = [5903, 5953]
-  const listening = await vncListeners(containers[1])
-  for (const vncPort of livePorts)
-    assert.ok(
-      listening.some((item) => item.port === vncPort),
-      'No VNC server on ' + vncPort + ' while its view is open'
-    )
-  assert.ok(
-    listening.every((item) => item.loopback),
-    'A VNC server listens beyond loopback: ' + JSON.stringify(listening)
-  )
-  // Each server listens on its own surface's port only: no other surface's port is taken.
-  assert.deepEqual(
-    [...new Set(listening.map((item) => item.port))].sort((a, b) => a - b),
-    livePorts,
-    'VNC ports other than the open views listen: ' + JSON.stringify(listening)
-  )
-  const ownAddresses = (await docker(['exec', containers[1], 'hostname', '-I'])).stdout.trim().split(/\s+/)
-  assert.ok(ownAddresses.length && ownAddresses.every(Boolean))
-  for (const vncPort of livePorts) {
-    assert.equal(await canConnect(containers[1], '127.0.0.1', vncPort), true)
-    for (const address of ownAddresses)
-      assert.equal(await canConnect(containers[1], address, vncPort), false, `VNC port ${vncPort} open on ${address}`)
+  for (const surface of ['browser', 'apps']) {
+    const screen = await openScreen(await screenTicket(scoutId, 'view', surface), 'view')
+    await screen.keyFrame()
+    isolationViews.push(screen)
   }
-  for (const vncPort of [5900, 5901, ...livePorts]) {
+  const listening = await screenListeners(containers[1])
+  assert.deepEqual(listening, [], 'Something listens on a former VNC port: ' + JSON.stringify(listening))
+  assert.equal(await processRuns(containers[1], ENCODER_PATTERN), true)
+  const formerPorts = [5900, 5901, 5903, 5953]
+  for (const formerPort of formerPorts) {
+    assert.equal(await canConnect(containers[1], '127.0.0.1', formerPort), false, `Port ${formerPort} answers`)
     const attempt = await docker(
-      ['exec', containers[0], 'bash', '-c', `timeout 3 bash -c 'echo >/dev/tcp/${containers[1]}/${vncPort}'`],
+      ['exec', containers[0], 'bash', '-c', `timeout 3 bash -c 'echo >/dev/tcp/${containers[1]}/${formerPort}'`],
       { allowFailure: true }
     )
-    assert.notEqual(attempt.code, 0, `Bot reached another bot's VNC port ${vncPort}`)
+    assert.notEqual(attempt.code, 0, `Bot reached another bot's port ${formerPort}`)
   }
   for (const view of isolationViews) view.close()
   const gatewayFromBot = await docker([
@@ -1073,9 +955,9 @@ async function main() {
   assert.equal(gatewayFromBot.stdout.trim(), '403')
   pass(
     'bot network isolation',
-    'VNC starts on demand and listens on ' +
-      [...new Set(listening.map((item) => item.address + ':' + item.port))].join(', ') +
-      ' only; cross-bot VNC ports refuse connections; gateway public API returns 403'
+    'screen encoders start on demand and listen nowhere; ports ' +
+      formerPorts.join(', ') +
+      ' refuse connections from the container and the other bot; gateway public API returns 403'
   )
   for (const name of containers) {
     const stat = await docker(['stats', '--no-stream', '--format', '{{.MemUsage}}', name])
@@ -1213,12 +1095,10 @@ async function main() {
   )
   // No surface: the older Macs' ticket shows the browser area, tile 1 of :0. The apps view shows :1.
   const viewTicket = await screenTicket(scoutId, 'view')
-  const view = await openScreen(viewTicket)
-  const pixels = await view.pixels()
-  assert.ok(pixels > 0)
-  const appsView = await openScreen(await screenTicket(scoutId, 'view', 'apps'))
-  const appsPixels = await appsView.pixels()
-  assert.ok(appsPixels > 0)
+  const view = await openScreen(viewTicket, 'view')
+  const keyFrame = await view.keyFrame()
+  const appsView = await openScreen(await screenTicket(scoutId, 'view', 'apps'), 'view')
+  const appsKeyFrame = await appsView.keyFrame()
   const before = await mouse(containers[1])
   const appsBefore = await mouse(containers[1], ':1')
   view.pointer(220, 180)
@@ -1230,11 +1110,11 @@ async function main() {
   const appsPng = await capture(containers[1], ':1', 'e2e-scout-apps.png')
   pass(
     'view screen',
-    'RFB 3.8, ' +
-      pixels +
+    'video at 1280x800, key frames of ' +
+      keyFrame.bytes +
       ' browser and ' +
-      appsPixels +
-      ' apps pixel bytes, pointers unchanged, PNG ' +
+      appsKeyFrame.bytes +
+      ' apps bytes with IDR slices, viewer pointers dropped, PNG ' +
       png +
       ', ' +
       appsPng
@@ -1242,7 +1122,7 @@ async function main() {
   await request('POST', '/v1/bots/' + scoutId + '/takeover')
   const scoutTile = tile(1)
   const controlTicket = await screenTicket(scoutId, 'control')
-  const control = await openScreen(controlTicket)
+  const control = await openScreen(controlTicket, 'control')
   control.pointer(100, 100)
   await poll(
     'control pointer',
@@ -1252,7 +1132,7 @@ async function main() {
     },
     10000
   )
-  const appsControl = await openScreen(await screenTicket(scoutId, 'control', 'apps'))
+  const appsControl = await openScreen(await screenTicket(scoutId, 'control', 'apps'), 'control')
   appsControl.pointer(100, 100)
   await poll(
     'apps control pointer',
@@ -1823,7 +1703,7 @@ async function main() {
     const stat = await docker(['stats', '--no-stream', '--format', '{{.MemUsage}}', name])
     timings[name + 'IdleMemory'] = stat.stdout.trim()
   }
-  // One bot in the environment, idle, with no screen open: its container, once the VNC servers stopped.
+  // One bot in the environment, idle, with no screen open: its container, once the screen encoders stopped.
   memory.oneBotIdle = await idleMemorySample(
     containers[1],
     "Scout's environment with Scout only, idle after its turns, no screen open, memory settled"
@@ -2252,8 +2132,8 @@ async function main() {
   ]
   const views = []
   for (const [label, issue] of surfaces) {
-    const screen = await openScreen(await issue())
-    assert.ok((await screen.pixels()) > 0, label + ' view has no pixels')
+    const screen = await openScreen(await issue(), 'view')
+    assert.ok((await screen.keyFrame()).bytes > 0, label + ' view has no key frame')
     views.push(screen)
   }
   const partnerAppsPointer = await mouse(containers[1], ':2')
@@ -2261,7 +2141,7 @@ async function main() {
   await sleep(500)
   assert.deepEqual(await mouse(containers[1], ':2'), partnerAppsPointer)
   // The environment screen shows only Maestrly's settings: controlling it needs no takeover.
-  const environmentControl = await openScreen(await environmentTicket(scoutEnvId, 'control'))
+  const environmentControl = await openScreen(await environmentTicket(scoutEnvId, 'control'), 'control')
   environmentControl.pointer(50, 60)
   await poll(
     'environment screen control pointer',
@@ -2284,7 +2164,7 @@ async function main() {
     [refusedWhileEnvironment.code, refusedWhileEnvironment.message],
     ['CONFLICT', 'Another screen in this environment is being controlled.']
   )
-  const scoutAppsControl = await openScreen(await screenTicket(scoutId, 'control', 'apps'))
+  const scoutAppsControl = await openScreen(await screenTicket(scoutId, 'control', 'apps'), 'control')
   scoutAppsControl.pointer(300, 300)
   await poll(
     'Scout apps control pointer',
@@ -2294,8 +2174,8 @@ async function main() {
     },
     10000
   )
-  // With Caps Lock on, a Mac viewer (noVNC) sends the lock key on each toggle and letters already capitalised. The
-  // letters keep the viewer's case, Shift included, and the display's own lock stays off.
+  // With Caps Lock on, a Mac (noVNC's keyboard module) sends the lock key on each toggle and letters already
+  // capitalised. The letters keep the viewer's case, Shift included, and the display's own lock stays off.
   const capsWindow = 'e2e-apps-capslock'
   await openEventWindow(containers[1], ':1', capsWindow)
   scoutAppsControl.pointer(300, 300, 1)
@@ -2329,8 +2209,43 @@ async function main() {
   )
   assert.equal(capsTyped.text, 'ABCd', 'Caps Lock on the viewer changed the case of its letters')
   await docker(['exec', containers[1], 'pkill', '-f', 'xev -name ' + capsWindow], { allowFailure: true })
+  // Clipboard text crosses in UTF-8 both ways, and only CLIPBOARD: a selection never reaches the controller.
+  const readClipboard = async () =>
+    (
+      await docker(['exec', containers[1], 'sh', '-c', 'DISPLAY=:1 xclip -o -selection clipboard 2>/dev/null'], {
+        allowFailure: true,
+      })
+    ).stdout
+  scoutAppsControl.clipboard('ação ✓')
+  await poll('UTF-8 clipboard on :1', async () => (await readClipboard()) === 'ação ✓', 10000)
+  await scoutAppsControl.until('the screen to report the pasted clipboard', () =>
+    scoutAppsControl.events.some((event) => event.type === 'clipboard' && event.text === 'ação ✓')
+  )
+  let clipboardMark = scoutAppsControl.events.length
+  await docker([
+    'exec',
+    containers[1],
+    'sh',
+    '-c',
+    "printf 'do bot\\n' | DISPLAY=:1 xclip -i -selection clipboard >/dev/null 2>&1",
+  ])
+  await scoutAppsControl.until(
+    'a copy on the bot reaching the controller',
+    () => scoutAppsControl.clipboardsSince(clipboardMark).find((event) => event.text === 'do bot\n'),
+    5000
+  )
+  clipboardMark = scoutAppsControl.events.length
+  await docker([
+    'exec',
+    containers[1],
+    'sh',
+    '-c',
+    'printf primario | DISPLAY=:1 xclip -i -selection primary >/dev/null 2>&1',
+  ])
+  await sleep(1000)
+  assert.deepEqual(scoutAppsControl.clipboardsSince(clipboardMark), [], 'A PRIMARY selection reached the controller')
   await request('POST', '/v1/bots/' + partnerId + '/takeover')
-  const partnerAppsControl = await openScreen(await screenTicket(partnerId, 'control', 'apps'))
+  const partnerAppsControl = await openScreen(await screenTicket(partnerId, 'control', 'apps'), 'control')
   partnerAppsControl.pointer(200, 250)
   await poll(
     'Partner apps control pointer',
@@ -2378,20 +2293,19 @@ async function main() {
     },
     10000
   )
-  const late = new Rfb('ws://127.0.0.1:' + port + lateTicket.path)
-  await late.open()
+  const late = await ScreenStreamClient.webSocket('ws://127.0.0.1:' + port + lateTicket.path)
   assert.equal(await late.closeCode(), 4003)
   // Giving back Scout's takeover ends Scout's controls only.
   await request('POST', '/v1/bots/' + scoutId + '/takeover/release', { note: null, continue: false })
   assert.equal(await scoutAppsControl.closeCode(), 4001)
   await sleep(1000)
-  assert.equal(partnerAppsControl.closed, null)
-  assert.equal(partnerBrowserControl.closed, null)
+  assert.equal(partnerAppsControl.closed, undefined)
+  assert.equal(partnerBrowserControl.closed, undefined)
   await request('POST', '/v1/bots/' + partnerId + '/takeover/release', { note: null, continue: false })
   assert.equal(await partnerAppsControl.closeCode(), 4001)
   assert.equal(await partnerBrowserControl.closeCode(), 4001)
   for (const screen of views) {
-    assert.equal(screen.closed, null)
+    assert.equal(screen.closed, undefined)
     screen.close()
   }
   const environmentPng = await capture(containers[1], ':0', 'e2e-environment.png')
@@ -2399,6 +2313,7 @@ async function main() {
     'screens of a shared environment',
     '5 surfaces viewed; environment control without takeover at :0 (50,60); second :0 control 409 and 4003 at use; ' +
       `apps controls at :1 (300,300) and :2 (200,250) at once; Caps Lock typed ${capsTyped.text} at :1; ` +
+      'UTF-8 clipboard both ways, PRIMARY never sent; ' +
       `browser controls at :0 (${scoutTile.x + 100},100) and ` +
       `(${partnerTile.x + 100},100); release closed only that bot's controls; PNG ${environmentPng}`
   )
@@ -2923,7 +2838,8 @@ async function main() {
   pass(
     'browser keyboard focus',
     focusSummary.checks +
-      " checks over RFB: Alpha kept the keyboard through settings, a new browser, Beta's popup and its dialogs, and " +
+      ' checks over the screen stream: Alpha kept the keyboard through settings, a new browser, ' +
+      "Beta's popup and its dialogs, and " +
       'Alt+Tab; its own popup, the release and the environment screen took it in turn; report ' +
       focusSummary.report
   )

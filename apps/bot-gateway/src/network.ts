@@ -1,5 +1,5 @@
 import { BlockList, isIP } from 'node:net'
-import type { DockerDriver } from './docker.js'
+import { DockerError, type DockerDriver, type FleetNetworkSubnet } from './docker.js'
 import { GatewayError } from './errors.js'
 
 const remote = (address: string | undefined) => {
@@ -7,17 +7,30 @@ const remote = (address: string | undefined) => {
   return { address: normalized, family: isIP(normalized) }
 }
 
-/** Shared network boundary for both gateway APIs and public artifact content. */
+/**
+ * Shared network boundary for both gateway APIs and public artifact content: the fleet network, and the networks of
+ * the workspaces environments (`others`), each shared only by one environment and the gateway.
+ */
 export class FleetNetwork {
   private subnets = new BlockList()
   private gateways = new Set<string>()
   constructor(
     private readonly docker: DockerDriver,
-    private readonly name: string
+    private readonly name: string,
+    private readonly others: () => string[] = () => []
   ) {}
   async refresh() {
-    const subnets = await this.docker.networkInspect(this.name)
+    const subnets: FleetNetworkSubnet[] = [...(await this.docker.networkInspect(this.name))]
     if (!subnets.length) throw new GatewayError('DOCKER_UNAVAILABLE', 'Fleet network has no subnet')
+    for (const other of new Set(this.others())) {
+      if (other === this.name) continue
+      try {
+        subnets.push(...(await this.docker.networkInspect(other)))
+      } catch (error) {
+        // An environment's network may not exist yet, or any more.
+        if (!(error instanceof DockerError && error.status === 404)) throw error
+      }
+    }
     const next = new BlockList()
     const gateways = new Set<string>()
     for (const { subnet, gateway } of subnets) {

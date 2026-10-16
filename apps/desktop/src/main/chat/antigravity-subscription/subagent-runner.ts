@@ -10,7 +10,7 @@ import type { ResolvedHarness } from '../harness/types'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
-import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { selectSubagentToolNames } from '../tools'
 import { AntigravityModelUnavailableError, AntigravityToolsUnavailableError, antigravityErrorMessage } from './errors'
 import { type AntigravityHostToolset, registerAntigravityHostToolset } from './host-mcp'
@@ -28,7 +28,7 @@ const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'review_plan',
   'ask_question',
   'todo_write',
-  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 ])
 
 export interface RunAntigravitySubagentArgs {

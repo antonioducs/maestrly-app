@@ -213,4 +213,13 @@ describe('artifact tools', () => {
     await call('artifact_open', { id, version: 1 })
     expect(service.openInConversation).toHaveBeenLastCalledWith('c1', id, 1, { checkScope: true, activate: false })
   })
+
+  it('tells the agent of a workspaces host that the computer showing the conversation opens it', async () => {
+    const drawer = await call('artifact_open', { id })
+    expect(drawer.text).toBe('Opened "Landing" (version 2) in the browser drawer.')
+    Object.assign(service, { opensOnViewer: true })
+    const viewer = await call('artifact_open', { id, version: 1 })
+    expect(viewer.isError).toBe(false)
+    expect(viewer.text).toContain('Asked the computer showing this conversation to open "Landing" (version 1)')
+  })
 })

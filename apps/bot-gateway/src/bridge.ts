@@ -7,12 +7,14 @@ import {
   FLEET_PORTS,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
+  fleetBridgeOrigin,
   type FleetBridgeTicketResponse,
 } from '@maestrly/bot-fleet-protocol'
 import { token } from './auth.js'
 import type { Lifecycle } from './lifecycle.js'
 
-type Ticket = { environmentId: string; deviceId: string; expiresAt: number }
+/** `origin`: the one Origin header the upgrade may carry (a phone's); none for a computer's ticket. */
+type Ticket = { environmentId: string; deviceId: string; expiresAt: number; origin: string | null }
 
 export interface BridgeProxyDeps {
   now: () => number
@@ -62,10 +64,10 @@ export class BridgeProxy {
 
   constructor(private readonly deps: BridgeProxyDeps) {}
 
-  ticket(environmentId: string, deviceId: string): FleetBridgeTicketResponse {
+  ticket(environmentId: string, deviceId: string, origin: string | null = null): FleetBridgeTicketResponse {
     const value = this.deps.token()
     const expiresAt = this.deps.now() + FLEET_BRIDGE_LIMITS.ticketTtlMs
-    this.tickets.set(value, { environmentId, deviceId, expiresAt })
+    this.tickets.set(value, { environmentId, deviceId, expiresAt, origin })
     setTimeout(() => this.tickets.delete(value), FLEET_BRIDGE_LIMITS.ticketTtlMs).unref()
     return {
       ticket: value,
@@ -84,6 +86,11 @@ export class BridgeProxy {
     // One use: a ticket is spent whether or not the upgrade then succeeds.
     this.tickets.delete(value)
     if (!ticket || ticket.expiresAt <= this.deps.now() || !this.deps.deviceActive(ticket.deviceId))
+      return reject(403, 'Forbidden')
+    // React Native always sends an Origin. The device named it when it asked for the ticket (its token and the ticket
+    // are the credentials); any other Origin is a page that got hold of the ticket. It never travels upstream.
+    const origin = req.headers.origin
+    if (origin !== undefined && (ticket.origin === null || fleetBridgeOrigin(origin) !== ticket.origin))
       return reject(403, 'Forbidden')
     if (req.headers.upgrade?.toLowerCase() !== 'websocket') return reject(400, 'Bad Request')
     const held = [...this.open.values()].filter((entry) => entry.deviceId === ticket.deviceId).length
@@ -149,6 +156,11 @@ export class BridgeProxy {
   closeDevice(deviceId: string): void {
     for (const [value, ticket] of this.tickets) if (ticket.deviceId === deviceId) this.tickets.delete(value)
     for (const [socket, entry] of this.open) if (entry.deviceId === deviceId) socket.destroy()
+  }
+
+  /** The bridges open to an environment. */
+  count(environmentId: string): number {
+    return [...this.open.values()].filter((entry) => entry.environmentId === environmentId).length
   }
 
   /** The environment's container stops or goes away. */

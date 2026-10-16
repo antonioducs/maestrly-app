@@ -16,8 +16,14 @@ export const REMOTE_BRIDGE_LIMITS = {
 } as const
 
 export type RemoteOs = 'mac' | 'win' | 'linux'
+/** A computer, or a phone (`kind: 'mobile'`), which speaks only the versioned mobile API (`mobile:v1:*`). */
+export type RemoteClientOs = RemoteOs | 'ios' | 'android'
+export type RemoteClientKind = 'desktop' | 'mobile'
 
-/** What a host tells a client about itself; `desktopEffects`, `editor` and `browser` gate the UI that needs them. */
+/**
+ * What a host tells a client about itself; `desktopEffects`, `editor`, `browser` and `computer` gate the UI that needs
+ * them.
+ */
 export interface RemoteHostInfo {
   os: RemoteOs
   hostName: string
@@ -28,13 +34,28 @@ export interface RemoteHostInfo {
   desktopEffects: boolean
   editor: boolean
   browser: boolean
+  /** Whether the host gives its conversations computers of their own (a workspaces host on the bot image). */
+  computer: boolean
 }
 
 /** Which of this computer's renderers an origin is: the main window, or a drawer panel of one conversation. */
 export type RemoteOriginRole = { role: 'main' } | { role: 'panel'; convId: string; panel: string }
 
 export type BridgeClientFrame =
-  | { t: 'hello'; protocol: number; appVersion: string; client: { deviceName: string; os: RemoteOs; locale: string } }
+  | {
+      t: 'hello'
+      protocol: number
+      appVersion: string
+      client: {
+        deviceName: string
+        os: RemoteClientOs
+        locale: string
+        /** Absent: a computer. */
+        kind?: RemoteClientKind
+        /** A phone's mobile API version. */
+        mobileApi?: number
+      }
+    }
   | ({ t: 'open'; origin: number } & RemoteOriginRole)
   | { t: 'close'; origin: number }
   | { t: 'invoke'; id: number; origin: number; channel: string; args: unknown[] }
@@ -43,8 +64,8 @@ export type BridgeClientFrame =
   | { t: 'pong'; n: number }
 
 export type BridgeHostFrame =
-  | { t: 'welcome'; protocol: number; appVersion: string; host: RemoteHostInfo }
-  | { t: 'refused'; reason: 'protocol' | 'version'; hostVersion: string }
+  | { t: 'welcome'; protocol: number; appVersion: string; host: RemoteHostInfo; mobileApi?: number }
+  | { t: 'refused'; reason: 'protocol' | 'version' | 'mobile-api'; hostVersion: string }
   | { t: 'result'; id: number; ok: true; value?: unknown }
   | { t: 'result'; id: number; ok: false; error: { message: string; code?: string } }
   | { t: 'event'; origin: number; channel: string; args: unknown[] }
