@@ -391,6 +391,9 @@ test('plugins: a remote workspaces host installs and serves its own plugins', as
     await page.reload()
     await page.waitForFunction(() => Boolean((window as any).api))
     await page.getByRole('tab', { name: 'Chats', exact: true }).click()
+    // The sidebar lists one machine at a time: show the host's chats first.
+    await page.locator(`[data-host-shortcut="${HOST_ID}"]`).click()
+    await expect(page.locator('[data-host-switcher]')).toHaveAttribute('data-host-switcher', HOST_ID)
     await page
       .locator(`#sidebar-panel-chats [data-host-section="${HOST_ID}"] .conv-item`, { hasText: 'Remote plugin chat' })
       .click()
