@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import { z } from 'zod'
+import { trackCommandGroup } from '../../process-ownership/owned-groups'
 import { conversationShellEnv } from '../conversation-env'
 import { defineTool, resolveInside, type ToolContext } from './util'
 
@@ -206,6 +207,9 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Bash
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: !isWin,
     })
+    // `server &` returns at once and leaves the server in this group; it is ended with the conversation. Windows has
+    // no process group to follow, so what a command leaves running there is not tracked.
+    if (!isWin) trackCommandGroup(ctx.conversationId, child)
     let out: Buffer<ArrayBufferLike> = Buffer.alloc(0)
     let err: Buffer<ArrayBufferLike> = Buffer.alloc(0)
     let outTrunc = false

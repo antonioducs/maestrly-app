@@ -43,8 +43,8 @@ vi.mock('../../src/main/plan-broker', () => ({
   clearPlan: vi.fn(),
 }))
 
-vi.mock('../../src/main/terminal-manager', () => ({
-  disposeShellTerminals: vi.fn(),
+vi.mock('../../src/main/process-ownership/conversation-processes', () => ({
+  stopConversationProcesses: vi.fn(),
 }))
 
 vi.mock('../../src/main/floating-manager', () => ({
@@ -72,7 +72,7 @@ import { registerWorkspaceIpc } from '../../src/main/workspace-ipc'
 import { deleteConversation, removeWorkspace } from '../../src/main/workspace-service'
 import { listConversations, listConvIdsByWorkspaceRepo } from '../../src/main/store'
 import { clearPlan } from '../../src/main/plan-broker'
-import { disposeShellTerminals } from '../../src/main/terminal-manager'
+import { stopConversationProcesses } from '../../src/main/process-ownership/conversation-processes'
 import * as floatingManager from '../../src/main/floating-manager'
 import * as popupManager from '../../src/main/popup-manager'
 import { disposeConversation } from '../../src/main/drawer-manager'
@@ -130,7 +130,12 @@ describe('registerWorkspaceIpc', () => {
     vi.mocked(listConversations).mockReturnValue([{ id: 'c1' }, { id: 'c2' }] as never)
     vi.mocked(listConvIdsByWorkspaceRepo).mockReturnValue(['c1', 'c2'])
     vi.mocked(clearPlan).mockImplementation((id: string) => void calls.push(`clearPlan:${id}`))
-    vi.mocked(disposeShellTerminals).mockImplementation((id: string) => void calls.push(`terminals:${id}`))
+    vi.mocked(stopConversationProcesses).mockImplementation(async (id: string) => {
+      calls.push(`processes:${id}`)
+      await Promise.resolve()
+      calls.push(`processes-gone:${id}`)
+      return { ok: true, terminalsExited: true, survivors: [] }
+    })
     vi.mocked(floatingManager.disposeConversation).mockImplementation((id: string) => void calls.push(`floating:${id}`))
     vi.mocked(popupManager.disposeConversation).mockImplementation((id: string) => void calls.push(`popup:${id}`))
     vi.mocked(disposeConversation).mockImplementation((id: string) => void calls.push(`drawer:${id}`))
@@ -153,7 +158,8 @@ describe('registerWorkspaceIpc', () => {
     expect(calls).toEqual([
       'clearPlan:c1',
       'chat:c1',
-      'terminals:c1',
+      'processes:c1',
+      'processes-gone:c1',
       'floating:c1',
       'popup:c1',
       'drawer:c1',
@@ -161,7 +167,8 @@ describe('registerWorkspaceIpc', () => {
       'delete:c1',
       'clearPlan:c2',
       'chat:c2',
-      'terminals:c2',
+      'processes:c2',
+      'processes-gone:c2',
       'floating:c2',
       'popup:c2',
       'drawer:c2',

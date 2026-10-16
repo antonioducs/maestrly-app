@@ -25,6 +25,7 @@ import { deleteAntigravitySessionForConversation } from './chat/antigravity-subs
 import { deleteClaudeSessionForConversation } from './chat/claude-agent-sdk/lifecycle'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
 import { scheduleWorkspaceMemoryIndexWarmup, stopWorkspaceMemoryIndex } from './memory/index'
+import { stopConversationProcesses } from './process-ownership/conversation-processes'
 
 /** Validate a non-bare Git repository and register its top-level directory as a workspace. */
 export async function addWorkspace(
@@ -118,6 +119,10 @@ export async function deleteConversation(
   const conv = store.getConversation(id)
   if (!conv) return
   assertConversationMigrationMutationAllowed(id, 'Delete conversation')
+
+  // Every deletion path (purge, dispatch rollback, a moved conversation's source) ends what the conversation left
+  // running before its directory goes; the IPC handlers already did it, and then nothing is left to stop.
+  await stopConversationProcesses(id)
 
   await deleteCursorAgentForConversation(id)
   await deleteAntigravitySessionForConversation(id)

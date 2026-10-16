@@ -84,6 +84,10 @@ vi.mock('../../src/main/i18n', () => ({
   tMain: () => (key: string) => key,
 }))
 
+vi.mock('../../src/main/process-ownership/conversation-processes', () => ({
+  stopConversationProcesses: vi.fn(async () => ({ ok: true, terminalsExited: true, survivors: [] })),
+}))
+
 import * as git from '../../src/main/git-service'
 import * as store from '../../src/main/store'
 import * as codexLifecycle from '../../src/main/chat/codex-subscription/lifecycle'
@@ -92,6 +96,8 @@ import * as cursorLifecycle from '../../src/main/chat/cursor-subscription/lifecy
 import * as claudeLifecycle from '../../src/main/chat/claude-agent-sdk/lifecycle'
 import * as attachmentArtifacts from '../../src/main/chat/attachment-artifacts'
 import * as memoryIndex from '../../src/main/memory/index'
+import * as aggregator from '../../src/main/aggregator-service'
+import { stopConversationProcesses } from '../../src/main/process-ownership/conversation-processes'
 import {
   addWorkspace,
   createConversation,
@@ -421,6 +427,28 @@ describe('workspace-service deleteConversation', () => {
     )
   })
 
+  it.each([
+    ['an exclusive worktree', { mode: 'worktree', isMulti: 0, cwd: '/worktrees/feature', branch: 'feature' }, {}],
+    ['a borrowed worktree', { mode: 'worktree', isMulti: 0, cwd: '/worktrees/feature', branch: 'f' }, { preserveWorktree: true }],
+    ['a local checkout', { mode: 'local', isMulti: 0, cwd: '/repo', branch: 'main' }, {}],
+    ['a multi-repository', { mode: 'worktree', isMulti: 1, repos: [{ path: '/repo' }], cwd: '/agg', branch: 'm' }, {}],
+  ])('ends what %s conversation left running before anything of it is removed', async (_kind, conv, options) => {
+    vi.mocked(store.getConversation).mockReturnValue({ id: 'c-proc', scope: 'project', workspaceId: 'ws-1', ...conv } as never)
+
+    await deleteConversation('c-proc', options)
+
+    expect(stopConversationProcesses).toHaveBeenCalledWith('c-proc')
+    const stoppedAt = vi.mocked(stopConversationProcesses).mock.invocationCallOrder[0]
+    for (const removal of [
+      vi.mocked(git.removeWorktree),
+      vi.mocked(aggregator.cleanupAggregator),
+      vi.mocked(store.deleteConversation),
+      vi.mocked(codexLifecycle.deleteCodexThreadForConversation),
+    ]) {
+      for (const order of removal.mock.invocationCallOrder) expect(stoppedAt).toBeLessThan(order)
+    }
+  })
+
   it('keeps a shared worktree while sibling conversations use the same directory', async () => {
     vi.mocked(store.countOtherConversationsInCwd).mockReturnValue(1)
     vi.mocked(store.getConversation).mockReturnValue({
@@ -459,6 +487,9 @@ describe('standalone lifecycle', () => {
   })
   it('cleans provider sessions, then the managed directory, permission key and row', async () => {
     await deleteConversation('standalone')
+    expect(vi.mocked(stopConversationProcesses).mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.removeDirectory.mock.invocationCallOrder[0]
+    )
     expect(lifecycle.removeDirectory).toHaveBeenCalledWith(standalone)
     expect(lifecycle.deletePermission).toHaveBeenCalledWith('conversation:standalone')
     expect(store.deleteConversation).toHaveBeenCalledWith('standalone')

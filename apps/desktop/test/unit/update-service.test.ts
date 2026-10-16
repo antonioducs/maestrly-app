@@ -107,6 +107,9 @@ function quitHarness() {
     disposeChat: async () => {
       order.push('chat')
     },
+    stopAllConversationProcesses: async () => {
+      order.push('processes')
+    },
     disposeConversationMigrationIpc: null,
     disposeConversationMoveIpc: null,
     releaseInstanceLock: cleanup,
@@ -345,14 +348,16 @@ describe('update-service', () => {
       })
       try {
         svc.installUpdate()
-        // Drain the bounded project, bot, chat and memory promise chain.
-        for (let i = 0; i < 30; i++) await Promise.resolve()
+        // Drain the bounded project, bot, chat, process and memory promise chain.
+        for (let i = 0; i < 40; i++) await Promise.resolve()
         expect(fake.quitAndInstall).toHaveBeenCalledOnce()
         expect(harness.order).toEqual([
           'projects',
           'bot',
           'artifacts',
           'chat',
+          // What conversations left running ends after the runners that could start more, before the terminals go.
+          'processes',
           'cleanup',
           'memory',
           'install',

@@ -24,8 +24,8 @@ vi.mock('../../src/main/pty-manager', () => ({
 vi.mock('../../src/main/selection-bridge', () => ({
   unwatchConversation: vi.fn(),
 }))
-vi.mock('../../src/main/terminal-manager', () => ({
-  disposeShellTerminalsAndWait: vi.fn(),
+vi.mock('../../src/main/process-ownership/conversation-processes', () => ({
+  stopConversationProcesses: vi.fn(),
 }))
 vi.mock('../../src/main/cwd-activity-coordinator', () => ({
   setOwnedCwdActivity: vi.fn(),
@@ -42,7 +42,7 @@ import { clearPlan } from '../../src/main/plan-broker'
 import * as popupManager from '../../src/main/popup-manager'
 import { killPtyAndWait } from '../../src/main/pty-manager'
 import { unwatchConversation } from '../../src/main/selection-bridge'
-import { disposeShellTerminalsAndWait } from '../../src/main/terminal-manager'
+import { stopConversationProcesses } from '../../src/main/process-ownership/conversation-processes'
 import { setOwnedCwdActivity, waitForCwdActivityDrain } from '../../src/main/cwd-activity-coordinator'
 import { quiesceConversation } from '../../src/main/conversation-migration/quiesce'
 
@@ -50,7 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   computers.current = null
   vi.mocked(killPtyAndWait).mockResolvedValue(true)
-  vi.mocked(disposeShellTerminalsAndWait).mockResolvedValue(true)
+  vi.mocked(stopConversationProcesses).mockResolvedValue({ ok: true, terminalsExited: true, survivors: [] })
   vi.mocked(stopChatAndWait).mockResolvedValue(true)
   vi.mocked(waitForCwdActivityDrain).mockResolvedValue(true)
 })
@@ -62,7 +62,11 @@ describe('conversation migration quiesce', () => {
     expect(clearPlan).toHaveBeenCalledWith('conv')
     expect(killPtyAndWait).toHaveBeenCalledWith('conv')
     expect(stopChatAndWait).toHaveBeenCalledWith('conv')
-    expect(disposeShellTerminalsAndWait).toHaveBeenCalledWith('conv')
+    expect(stopConversationProcesses).toHaveBeenCalledWith('conv')
+    // The chat stops first, so no command starts after the conversation's processes were read.
+    expect(vi.mocked(stopChatAndWait).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(stopConversationProcesses).mock.invocationCallOrder[0]
+    )
     expect(setOwnedCwdActivity).toHaveBeenCalledWith('pty:conv', '/source', 'pty', false)
     expect(setOwnedCwdActivity).toHaveBeenCalledWith('chat:conv', '/source', 'chat', false)
     expect(waitForCwdActivityDrain).toHaveBeenCalledWith('/source', ['pty', 'chat', 'terminal'])
@@ -83,12 +87,16 @@ describe('conversation migration quiesce', () => {
 
   it('fails closed when any runtime does not confirm the barrier', async () => {
     vi.mocked(killPtyAndWait).mockResolvedValue(false)
-    vi.mocked(disposeShellTerminalsAndWait).mockResolvedValue(false)
+    vi.mocked(stopConversationProcesses).mockResolvedValue({
+      ok: false,
+      terminalsExited: false,
+      survivors: [{ pid: 4321, startTime: '99', name: 'stuck' }],
+    })
     vi.mocked(stopChatAndWait).mockResolvedValue(false)
 
     await expect(quiesceConversation('conv', '/source')).resolves.toEqual({
       ok: false,
-      failed: ['pty', 'terminal', 'chat'],
+      failed: ['pty', 'terminal', 'processes', 'chat'],
     })
     expect(setOwnedCwdActivity).not.toHaveBeenCalled()
   })

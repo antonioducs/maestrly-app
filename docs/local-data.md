@@ -392,6 +392,26 @@ messages can stop working after expiration or eviction. Save any output you need
 to keep in your project. Cleanup failures do not interrupt tools; if space cannot
 be reclaimed, the app stops saving full output until storage is available.
 
+## Processes a conversation leaves running
+
+A conversation's drawer terminals and the agent's `bash` commands can start
+programs that keep running, such as a development server sent to the background
+or a command started with `nohup` or `disown`. Closing one terminal keeps them.
+When the conversation is archived or deleted, and when Maestrly quits, Maestrly
+ends them: SIGTERM first, SIGKILL three seconds later for what is still there.
+Deleting a conversation waits for them to exit before its worktree is removed.
+
+Only processes Maestrly can show belong to the conversation are ended: the
+shell of each terminal and what it started, its session on Linux, and the
+process group of each `bash` command. Nothing is matched by name or working
+directory, so a shared or local checkout and processes of other conversations
+are never touched. Programs that leave on purpose keep running: `setsid`,
+daemons that fork twice, `docker compose up -d`, tmux and screen. On macOS what
+a closed terminal left running is no longer followed, and on Windows neither are
+the background processes of `bash` commands. Commands that Codex
+runs with its own shell, in Agent mode with full access, are not followed
+either, because its runtime is shared by every conversation of the account.
+
 ## Upgrades and reset
 
 SQLite upgrades are forward-only and transactional. If an upgrade fails, close

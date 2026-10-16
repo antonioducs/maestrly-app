@@ -25,7 +25,7 @@ import {
   setConversationOrder,
   setConversationPinned,
 } from './store'
-import { disposeShellTerminals } from './terminal-manager'
+import { stopConversationProcesses } from './process-ownership/conversation-processes'
 import {
   createConversation,
   createSiblingConversation,
@@ -110,10 +110,11 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     assertConversationMigrationMutationAllowed(id, archived ? 'Archive conversation' : 'Unarchive conversation')
     if (archived) {
       // Stop streams and invalidate late callbacks before destroying views. stopChat retires active
-      // official sessions; preserve completed sessions because archive is reversible.
+      // official sessions; preserve completed sessions because archive is reversible. What its terminals and commands
+      // left running ends too: after a restart nothing could tell it belonged to this conversation.
       clearPlan(id)
       await deps.stopChat(id)
-      disposeShellTerminals(id)
+      await stopConversationProcesses(id)
       // On a workspaces host its computer goes back at once, before the windows it presents.
       await serverComputers()?.close(id)
       floatingManager.disposeConversation(id) // close floating windows before destroying views
@@ -127,11 +128,11 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   })
   reg.mhandle('conversation:delete', async (_e, id: string) => {
     assertConversationMigrationMutationAllowed(id, 'Delete conversation')
-    // Permanent deletion stops the agent and drawer terminals, releases views, and removes worktree/store
-    // state.
+    // Permanent deletion stops the agent, the drawer terminals and what both started, releases views, and removes
+    // worktree/store state.
     clearPlan(id)
     await deps.stopChat(id)
-    disposeShellTerminals(id)
+    await stopConversationProcesses(id)
     // On a workspaces host its computer goes back at once, before the windows it presents.
     await serverComputers()?.close(id)
     floatingManager.disposeConversation(id) // close floating windows before destroying views
