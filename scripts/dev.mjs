@@ -33,8 +33,11 @@ function resolveBin(name) {
   return exe
 }
 
+/** `--local`: run as a desktop app even from a shell inside a Maestrly bot or workspaces host container. */
+const local = process.argv.includes('--local')
+
 function requestedInstanceFromArgv() {
-  const args = process.argv.slice(2).filter((a) => a !== '--')
+  const args = process.argv.slice(2).filter((a) => a !== '--' && a !== '--local')
   if (args.length === 0) return null
   if (args.length > 1) {
     console.error('Use a single instance ID: npm run dev -- feat-chat')
@@ -91,13 +94,51 @@ const env = {
   AGENTS_CHANNEL: 'dev',
   AGENTS_INSTANCE: instance,
 }
+if (local) {
+  // The container's variables would start a second host on its control port, which the running one already holds.
+  const { FLEET_BOT_ENV, FLEET_CONVERSATION_COMPUTER_LIMITS } = await import('@maestrly/bot-fleet-protocol')
+  const removed = Object.values(FLEET_BOT_ENV).filter((name) => name in env)
+  for (const name of removed) delete env[name]
+  if (removed.length > 0) console.log(`Running as a desktop app; ignoring ${removed.join(', ')}.`)
+  const display = Number(/^:(\d+)/.exec(env.DISPLAY ?? '')?.[1])
+  if (removed.includes(FLEET_BOT_ENV.serverMode) && !(display >= FLEET_CONVERSATION_COMPUTER_LIMITS.firstDisplay)) {
+    console.log(
+      "The window opens on the environment's own display, which no one sees. To see it, open this conversation's " +
+        'Computer tab, then run this command in a terminal opened after it.'
+    )
+  }
+}
+
+// The app asks before quitting, and in a container it may ask where no one sees it. So that stopping never leaves it
+// running, it gets a process group of its own, and whatever is left of that group shortly after a stop is ended.
+const ownGroup = local && process.platform !== 'win32'
+const STOP_GRACE_MS = 5_000
 
 const child = spawn(electronVite, ['dev'], {
   cwd: desktopRoot,
   env,
-  stdio: 'inherit',
+  // Outside the terminal's foreground group a read from it would stop the process; nothing here needs input.
+  stdio: ownGroup ? ['ignore', 'inherit', 'inherit'] : 'inherit',
   shell: process.platform === 'win32',
+  detached: ownGroup,
 })
+
+function groupAlive() {
+  try {
+    process.kill(-child.pid, 0)
+    return true
+  } catch (error) {
+    return error.code === 'EPERM'
+  }
+}
+
+function signalGroup(signal) {
+  try {
+    process.kill(-child.pid, signal)
+  } catch {
+    // The group is gone.
+  }
+}
 
 const reinforce = setTimeout(() => {
   setTerminalBackground(instance)
@@ -114,14 +155,33 @@ function cleanup() {
 
 child.on('exit', (code, signal) => {
   cleanup()
-
-  process.exit(signal ? 1 : (code ?? 0))
+  const exit = () => process.exit(signal ? 1 : (code ?? 0))
+  if (!ownGroup || !groupAlive()) return exit()
+  // electron-vite is gone but the app is not: it may be waiting on its quit confirmation.
+  signalGroup('SIGTERM')
+  const deadline = Date.now() + STOP_GRACE_MS
+  const timer = setInterval(() => {
+    if (groupAlive() && Date.now() < deadline) return
+    clearInterval(timer)
+    if (groupAlive()) {
+      signalGroup('SIGKILL')
+      console.log('The development app did not close, so it was stopped.')
+    }
+    exit()
+  }, 200)
 })
+
+if (ownGroup) {
+  // A closed terminal must not end this script before it stopped the app.
+  for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {})
+}
 
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(sig, () => {
+    // Signal first: once the terminal is gone, writing to it can fail.
+    if (ownGroup) signalGroup(sig)
+    else child.kill(sig)
     cleanup()
-    child.kill(sig)
   })
 }
 

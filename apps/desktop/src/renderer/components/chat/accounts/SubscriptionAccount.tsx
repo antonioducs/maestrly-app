@@ -1,0 +1,577 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { ExternalLink, Loader2, LogIn, LogOut, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useHostApi } from '@/lib/hosts/host-context'
+import { cn } from '@/lib/utils'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import type {
+  ChatConfig,
+  ChatSubscriptionAuthStatus,
+  ChatSubscriptionLoginResult,
+  ChatSubscriptionProviderKind,
+  ChatSubscriptionUsage,
+} from '../../../../shared/chat'
+import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../../shared/runtime-assets'
+import { SubscriptionUsagePanel } from '../SubscriptionUsagePanel'
+import { supportsSubscriptionUsage } from '../subscription-usage-presentation'
+import { assetProgress, formatBytes } from '../runtime-asset-presentation'
+import type { SubscriptionAccountEntry, SubscriptionAccountSnapshot } from './account-entries'
+import {
+  DetailBackButton,
+  DetailHeader,
+  DetailSection,
+  iconButtonCls,
+  inputCls,
+  ProviderMark,
+  secondaryButtonCls,
+} from './account-ui'
+import { FailoverRouteEditor } from './FailoverRouteEditor'
+import { ProviderModelFilter } from './ProviderModelFilter'
+
+export const PROVIDER_RUNTIME_ASSET: Partial<Record<ChatSubscriptionProviderKind, RuntimeAssetId>> = {
+  'codex-subscription': 'codex-runtime',
+  'github-copilot-subscription': 'github-copilot-runtime',
+  'antigravity-subscription': 'antigravity-acp-runtime',
+}
+
+export type SubscriptionCopyPrefix =
+  | 'codexSubscription'
+  | 'githubCopilotSubscription'
+  | 'claudeSubscription'
+  | 'grokSubscription'
+  | 'cursorSubscription'
+  | 'antigravitySubscription'
+
+export const subscriptionProviderCopy: Record<
+  ChatSubscriptionProviderKind,
+  { prefix: SubscriptionCopyPrefix; buttonClass: string }
+> = {
+  'codex-subscription': { prefix: 'codexSubscription', buttonClass: 'bg-emerald-600 hover:bg-emerald-500' },
+  'github-copilot-subscription': { prefix: 'githubCopilotSubscription', buttonClass: 'bg-sky-600 hover:bg-sky-500' },
+  'claude-subscription': { prefix: 'claudeSubscription', buttonClass: 'bg-orange-600 hover:bg-orange-500' },
+  'cursor-subscription': { prefix: 'cursorSubscription', buttonClass: 'bg-violet-600 hover:bg-violet-500' },
+  'grok-subscription': { prefix: 'grokSubscription', buttonClass: 'bg-zinc-700 hover:bg-zinc-600' },
+  'antigravity-subscription': { prefix: 'antigravitySubscription', buttonClass: 'bg-blue-600 hover:bg-blue-500' },
+}
+
+/** The name shown for a slot: its label, or "Default account" for an unlabeled default slot. */
+export function useSubscriptionAccountTitle() {
+  const { t } = useTranslation('chat')
+  return (entry: Pick<SubscriptionAccountEntry, 'accountId' | 'accountLabel'>): string =>
+    entry.accountLabel?.trim() || (entry.accountId ?? t('settings.accountDefaultLabel'))
+}
+
+export function SubscriptionAccount({
+  entry,
+  config,
+  selected,
+  autoLogin,
+  onAutoLoginHandled,
+  onSnapshot,
+  onConnectAnother,
+  onBack,
+  showSubscriptionFailover,
+  onChanged,
+  onModelFilterChanged,
+}: {
+  entry: SubscriptionAccountEntry
+  config: ChatConfig
+  selected: boolean
+  /** Start the sign-in once the slot's status is known, as asked from the Add account dialog. */
+  autoLogin: boolean
+  onAutoLoginHandled: () => void
+  onSnapshot: (key: string, snapshot: SubscriptionAccountSnapshot | null) => void
+  onConnectAnother: (kind: ChatSubscriptionProviderKind) => void
+  onBack: () => void
+  showSubscriptionFailover: boolean
+  onChanged: () => void
+  onModelFilterChanged: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const api = useHostApi()
+  const titleFor = useSubscriptionAccountTitle()
+  const { providerKind, provider, accountId, accountLabel } = entry
+  const [status, setStatus] = useState<ChatSubscriptionAuthStatus | null>(null)
+  const [loginInstructions, setLoginInstructions] = useState<ChatSubscriptionLoginResult | null>(null)
+  const [busy, setBusy] = useState<'refresh' | 'login' | 'logout' | null>(null)
+  const [usage, setUsage] = useState<ChatSubscriptionUsage | null>(null)
+  const [usageBusy, setUsageBusy] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const runtimeId = PROVIDER_RUNTIME_ASSET[providerKind]
+  const [runtime, setRuntime] = useState<RuntimeAssetInfo | null>(null)
+  const runtimeStateRef = useRef<RuntimeAssetInfo['status']['state'] | null>(null)
+  const runtimeInstallInProgressRef = useRef(false)
+  const runtimeStatusRefreshInProgressRef = useRef(false)
+  const usageRequestRef = useRef(0)
+  const renameRequestedRef = useRef(false)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const copy = subscriptionProviderCopy[providerKind]
+  const copyKey = (suffix: string) => `settings.${copy.prefix}${suffix}`
+  const usageSupported = supportsSubscriptionUsage(providerKind)
+
+  useEffect(() => {
+    onSnapshot(entry.key, { status, usage, runtime })
+  }, [entry.key, onSnapshot, status, usage, runtime])
+  useEffect(() => () => onSnapshot(entry.key, null), [entry.key, onSnapshot])
+
+  const refreshUsage = useCallback(
+    async (force = false): Promise<ChatSubscriptionUsage | null> => {
+      if (!usageSupported) return null
+      const request = ++usageRequestRef.current
+      setUsageBusy(true)
+      try {
+        const next = await api.chatSubscriptionUsage(providerKind, force, accountId)
+        if (request === usageRequestRef.current) setUsage(next)
+        return next
+      } catch (error) {
+        const failed: ChatSubscriptionUsage = {
+          state: 'error',
+          providerKind,
+          accountId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+        if (request === usageRequestRef.current) setUsage(failed)
+        return failed
+      } finally {
+        if (request === usageRequestRef.current) setUsageBusy(false)
+      }
+    },
+    [accountId, providerKind, usageSupported, api]
+  )
+
+  const refreshStatus = async (force = false): Promise<ChatSubscriptionAuthStatus | null> => {
+    setBusy((current) => current ?? 'refresh')
+    setActionError(null)
+    try {
+      const next = await api.chatSubscriptionStatus(providerKind, force, accountId)
+      setStatus(next)
+
+      onChanged()
+      return next
+    } catch (error) {
+      setStatus({
+        state: 'error',
+        authenticated: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    } finally {
+      setBusy((current) => (current === 'refresh' ? null : current))
+    }
+  }
+
+  useEffect(() => {
+    void refreshStatus()
+    return api.onChatSubscriptionStatus(providerKind, (next) => {
+      if ((next.accountId ?? null) !== accountId) return
+      setStatus(next)
+      setBusy(null)
+      setActionError(null)
+      if (next.state === 'signed-in' || next.state === 'signed-out') setLoginInstructions(null)
+      if (next.state === 'signed-in') void refreshUsage(true)
+      else {
+        usageRequestRef.current += 1
+        setUsage(null)
+        setUsageBusy(false)
+      }
+      onChanged()
+    })
+    // `onChanged` is the stable config refresher owned by ApiKeySettings.
+  }, [accountId, api])
+
+  useEffect(() => {
+    if (status?.state === 'signed-in' && usageSupported) {
+      void refreshUsage()
+      return
+    }
+    usageRequestRef.current += 1
+    setUsage(null)
+    setUsageBusy(false)
+  }, [refreshUsage, status?.state, usageSupported])
+
+  useEffect(() => {
+    if (!runtimeId) return
+    void api.runtimeAssetStatus(runtimeId).then((next) => {
+      if (runtimeStateRef.current !== null) return
+      runtimeStateRef.current = next.status.state
+      setRuntime(next)
+    })
+    return api.onRuntimeAssetChanged((next) => {
+      if (next.id !== runtimeId) return
+      const previousState = runtimeStateRef.current
+      runtimeStateRef.current = next.status.state
+      setRuntime(next)
+      if (
+        next.status.state === 'ready' &&
+        previousState !== 'ready' &&
+        !runtimeInstallInProgressRef.current &&
+        !runtimeStatusRefreshInProgressRef.current
+      ) {
+        runtimeStatusRefreshInProgressRef.current = true
+        void refreshStatus(true).finally(() => {
+          runtimeStatusRefreshInProgressRef.current = false
+        })
+      }
+    })
+  }, [runtimeId, api])
+
+  const login = async () => {
+    setBusy('login')
+    setActionError(null)
+    try {
+      // A bot's image runtime needs no install; a managed one does.
+      if (runtimeId && runtime?.status.state !== 'ready' && runtime?.provided?.active !== true) {
+        runtimeInstallInProgressRef.current = true
+        try {
+          const installed =
+            runtime?.status.state === 'failed' || runtime?.status.state === 'corrupt'
+              ? await api.runtimeAssetRepair(runtimeId)
+              : await api.runtimeAssetInstall(runtimeId)
+          runtimeStateRef.current = installed.status.state
+          setRuntime(installed)
+          if (installed.status.state !== 'ready')
+            throw new Error(installed.status.error || t('settings.componentInstallFailed'))
+        } finally {
+          runtimeInstallInProgressRef.current = false
+        }
+
+        const recovered = await refreshStatus(true)
+        if (recovered?.authenticated || recovered?.state === 'signed-in') {
+          setLoginInstructions(null)
+          return
+        }
+        if (recovered?.state !== 'signed-out') {
+          throw new Error(recovered?.error || t(copyKey('LoginFailed')))
+        }
+      }
+      const result = await api.chatSubscriptionLogin(providerKind, accountId)
+      if (!result.ok) {
+        if (result.status) setStatus(result.status)
+        throw new Error(result.error || t(copyKey('LoginFailed')))
+      }
+      setLoginInstructions(result)
+      setStatus(result.status ?? { state: 'signing-in', authenticated: false })
+      const loginUrl = result.authUrl ?? result.verificationUrl
+      if (loginUrl) window.api.openExternalUrl(loginUrl)
+      onChanged()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const logout = async () => {
+    setBusy('logout')
+    setActionError(null)
+    try {
+      const result = await api.chatSubscriptionLogout(providerKind, accountId)
+      if (!result.ok) {
+        throw new Error(result.error || t(copyKey('LogoutFailed')))
+      }
+      setLoginInstructions(null)
+      setStatus(result.status ?? { state: 'signed-out', authenticated: false })
+      usageRequestRef.current += 1
+      setUsage(null)
+      setUsageBusy(false)
+      onChanged()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const removeAccount = async () => {
+    if (!accountId) return
+    if (
+      !confirm(
+        t('settings.confirmRemoveAccount', {
+          label: accountLabel ?? accountId,
+        })
+      )
+    )
+      return
+    setBusy('logout')
+    setActionError(null)
+    try {
+      const result = await api.chatSubscriptionAccountRemove(accountId)
+      if (!result.ok) throw new Error(result.error || t('settings.accountRemoveFailed'))
+      onChanged()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const commitRename = async () => {
+    if (accountId && renaming?.trim()) {
+      setActionError(null)
+      const result = await api.chatSubscriptionAccountRename(accountId, renaming.trim())
+      if (!result.ok) setActionError(result.error || t('settings.accountRenameFailed'))
+      onChanged()
+    }
+    setRenaming(null)
+  }
+
+  const signedIn = status?.state === 'signed-in'
+  const signingIn = status?.state === 'signing-in'
+  const unavailable = status?.state === 'unavailable'
+  const runtimeActive =
+    runtime !== null && ['downloading', 'verifying', 'installing', 'removing'].includes(runtime.status.state)
+  const runtimeReady = !runtimeId || runtime?.status.state === 'ready' || runtime?.provided?.active === true
+  const loginDisabled =
+    busy !== null || signingIn || (runtimeReady && unavailable) || (runtimeId !== undefined && runtime === null)
+
+  const renameOpen = renaming !== null
+  useEffect(() => {
+    if (!renameOpen) return
+    // Wait for the menu that opened the field to close and release focus.
+    const timer = setTimeout(() => renameInputRef.current?.focus(), 0)
+    return () => clearTimeout(timer)
+  }, [renameOpen])
+
+  useEffect(() => {
+    if (!autoLogin || status === null || (runtimeId !== undefined && runtime === null) || busy !== null) return
+    onAutoLoginHandled()
+    if (signedIn || loginDisabled) return
+    void login()
+  }, [autoLogin, status, runtime, busy])
+
+  if (!selected) return null
+
+  const statusLabel = !status
+    ? t('settings.loading')
+    : signedIn
+      ? t(copyKey('Connected'))
+      : signingIn
+        ? t(copyKey('Waiting'))
+        : unavailable
+          ? t(copyKey('Unavailable'))
+          : t(copyKey('Disconnected'))
+  const identity = status?.username ?? status?.email
+  const providerName = t(`settings.accountProviderName_${providerKind}`)
+
+  const refreshAll = async () => {
+    const next = await refreshStatus(true)
+    if (next?.state === 'signed-in') await refreshUsage(true)
+  }
+
+  const defaultEntry = config.providers.find((entry) => entry.kind === providerKind && !entry.accountId)
+  const defaultLabel = titleFor({ accountId: null, accountLabel: defaultEntry?.accountLabel })
+  const showUsage = signedIn && usageSupported && usage?.state !== 'unsupported' && (usage !== null || usageBusy)
+
+  return (
+    <div data-subscription-provider={providerKind} data-subscription-account={accountId ?? 'default'}>
+      <DetailBackButton onBack={onBack} />
+      <DetailHeader
+        mark={<ProviderMark kind={providerKind} size="lg" />}
+        title={
+          accountId && renaming !== null ? (
+            <input
+              ref={renameInputRef}
+              className={cn(inputCls, 'py-1 text-[13px] font-normal')}
+              value={renaming}
+              aria-label={t('settings.renameAccountTitle')}
+              onChange={(e) => setRenaming(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void commitRename()
+                if (e.key === 'Escape') setRenaming(null)
+              }}
+              onBlur={() => void commitRename()}
+            />
+          ) : (
+            titleFor(entry)
+          )
+        }
+        status={
+          <span
+            className={cn(
+              'text-[12px]',
+              signedIn
+                ? 'text-emerald-400'
+                : signingIn
+                  ? 'text-amber-300'
+                  : status?.state === 'error'
+                    ? 'text-rose-300'
+                    : 'text-muted-foreground'
+            )}
+          >
+            {statusLabel}
+          </span>
+        }
+        subtitle={t(copyKey('Heading'))}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => void refreshAll()}
+              disabled={busy !== null || usageBusy}
+              className={iconButtonCls}
+              title={t(copyKey('Refresh'))}
+              aria-label={t(copyKey('Refresh'))}
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', (busy === 'refresh' || usageBusy) && 'animate-spin')} />
+            </button>
+            {signedIn || signingIn ? (
+              <button
+                type="button"
+                onClick={() => void logout()}
+                disabled={busy !== null}
+                className={secondaryButtonCls}
+              >
+                {busy === 'logout' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <LogOut className="h-3.5 w-3.5" />
+                )}
+                {signingIn ? t('settings.cancel') : t(copyKey('Logout'))}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void login()}
+                disabled={loginDisabled}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-50',
+                  copy.buttonClass
+                )}
+              >
+                {busy === 'login' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <LogIn className="h-3.5 w-3.5" />
+                )}
+                {runtime && runtime.status.state !== 'ready'
+                  ? runtime.status.state === 'failed' || runtime.status.state === 'corrupt'
+                    ? t('settings.componentRetryAndConnect')
+                    : t('settings.componentInstallAndConnect')
+                  : t(copyKey('Login'))}
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={iconButtonCls}
+                  disabled={busy !== null}
+                  aria-label={t('settings.accountMoreActions')}
+                  title={t('settings.accountMoreActions')}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-[13rem]"
+                onCloseAutoFocus={(event) => {
+                  // The rename field takes focus; handing it back to the trigger would blur and commit it at once.
+                  if (renameRequestedRef.current) event.preventDefault()
+                  renameRequestedRef.current = false
+                }}
+              >
+                {accountId && (
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      renameRequestedRef.current = true
+                      setRenaming(accountLabel ?? '')
+                    }}
+                  >
+                    <Pencil /> {t('settings.renameAccountTitle')}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onSelect={() => onConnectAnother(providerKind)}>
+                  <Plus /> {t('settings.accountConnectAnother', { provider: providerName })}
+                </DropdownMenuItem>
+                {accountId && (
+                  <DropdownMenuItem destructive onSelect={() => void removeAccount()}>
+                    <Trash2 /> {t('settings.removeAccountTitle')}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+      />
+
+      {signedIn && (identity || status.planType) && (
+        <p className="mt-3 text-[12px] text-foreground/80">{[identity, status.planType].filter(Boolean).join(' · ')}</p>
+      )}
+      {!signedIn && <p className="mt-3 text-[12px] text-muted-foreground">{t(copyKey('Description'))}</p>}
+      {runtime && runtime.status.state !== 'ready' && (
+        <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 text-[12px]">
+          <p className="font-medium text-amber-200">
+            {t('settings.componentRequired', {
+              name: t(`settings.componentName_${runtime.id}`),
+            })}
+          </p>
+          <p className="mt-0.5 text-muted-foreground">
+            v{runtime.availableVersion} ·{' '}
+            {t('settings.componentSizes', {
+              download: formatBytes(runtime.downloadBytes),
+              installed: formatBytes(runtime.status.diskUsageBytes || runtime.unpackedBytes),
+            })}
+          </p>
+          {runtimeActive && runtime.status.state !== 'removing' && (
+            <div className="mt-2 flex items-center gap-2">
+              <div className="h-1 flex-1 overflow-hidden rounded bg-white/10">
+                <div
+                  className="h-full bg-amber-400"
+                  style={{
+                    width: `${assetProgress(runtime)}%`,
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                className="text-amber-200 hover:text-white"
+                onClick={() => void api.runtimeAssetCancel(runtime.id)}
+              >
+                {t('settings.componentCancel')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {signedIn && status.storageMode === 'memory' ? (
+        <p className="mt-2 text-[12px] text-amber-300">{t('settings.subscriptionMemoryOnly')}</p>
+      ) : null}
+      {signingIn && loginInstructions?.userCode && (
+        <div className="mt-3 rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
+          <p className="text-[12px] text-amber-100">{t(copyKey('DeviceCodeHint'))}</p>
+          <code className="mt-1 block select-all font-mono text-[15px] font-semibold tracking-[0.18em] text-foreground">
+            {loginInstructions.userCode}
+          </code>
+        </div>
+      )}
+      {(actionError || status?.error) && (
+        <p className="mt-2 text-[12px] text-destructive">
+          {actionError ||
+            (status?.errorCode === 'claude-authentication-required'
+              ? t('messages.claudeAuthenticationRequired')
+              : status?.error)}
+        </p>
+      )}
+      {!provider && signedIn && <p className="mt-2 text-[12px] text-amber-300">{t(copyKey('ProviderPending'))}</p>}
+
+      {showUsage && (
+        <DetailSection title={t('settings.subscriptionUsageHeading')}>
+          <SubscriptionUsagePanel usage={usage} loading={usageBusy} showHeading={false} />
+        </DetailSection>
+      )}
+      {showSubscriptionFailover && (
+        <FailoverRouteEditor
+          primaryProviderId={entry.key}
+          defaultLabel={defaultLabel}
+          disconnectedLabel={t(copyKey('Disconnected'))}
+          config={config}
+          onChanged={onChanged}
+        />
+      )}
+      {provider && signedIn && <ProviderModelFilter providerId={provider.id} onFilterChanged={onModelFilterChanged} />}
+    </div>
+  )
+}

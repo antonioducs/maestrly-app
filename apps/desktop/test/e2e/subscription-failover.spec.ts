@@ -45,21 +45,23 @@ for (const locale of ['en', 'pt-BR'] as const) {
             settings: 'Settings',
             close: 'Close',
             rotation: 'Automatic rotation',
+            rotationOn: 'Automatic rotation on',
             add: 'Add fallback account',
             up: 'Move up',
             down: 'Move down',
             remove: 'Remove fallback',
-            default: 'Claude subscription',
+            default: 'Default account',
           }
         : {
             settings: 'Configurações',
             close: 'Fechar',
             rotation: 'Rotação automática',
+            rotationOn: 'Rotação automática ativada',
             add: 'Adicionar conta de fallback',
             up: 'Mover para cima',
             down: 'Mover para baixo',
             remove: 'Remover fallback',
-            default: 'Assinatura Claude',
+            default: 'Conta padrão',
           }
     app = await electron.launch({
       executablePath: process.env.MAESTRLY_PACKAGED_EXECUTABLE,
@@ -159,6 +161,8 @@ for (const locale of ['en', 'pt-BR'] as const) {
     // Reload after stubbing so every settings read uses the isolated fake accounts.
     await win.reload()
     await win.getByRole('button', { name: copy.settings, exact: true }).click()
+    const workRow = win.locator(`[data-account-entry="${work}"]`)
+    await workRow.click()
     const card = win.locator('[data-subscription-provider="claude-subscription"][data-subscription-account="acc_work"]')
     const checkbox = card.getByRole('checkbox', {
       name: new RegExp(copy.rotation),
@@ -218,6 +222,8 @@ for (const locale of ['en', 'pt-BR'] as const) {
     await expect(checkbox).toBeChecked()
     await win.getByRole('button', { name: copy.close, exact: true }).click()
     await win.getByRole('button', { name: copy.settings, exact: true }).click()
+    await expect(workRow.getByLabel(copy.rotationOn)).toBeVisible()
+    await workRow.click()
     await expect(checkbox).toBeChecked()
     await expect(card.getByRole('button', { name: copy.remove, exact: true })).toHaveCount(1)
     await expect(card.getByRole('button', { name: copy.remove, exact: true }).locator('..')).toContainText('Personal')

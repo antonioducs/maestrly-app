@@ -35,6 +35,18 @@ User-visible changes by version. Downloads are on
   mobile app gives the chat full access after the same warning as its setup,
   and the setup pill shows when a chat has full access or approves for you.
 
+### Changed
+
+- **Settings › Maestrly Chat › Accounts** lists every account in one compact
+  list grouped by provider, with its status and usage, and shows the selected
+  account's details beside it. Search the list, show only the accounts that need
+  attention or are near a usage limit, and connect subscriptions or API keys
+  from **Add account**. Providers you have not connected appear under
+  **Available to connect**. Each account shows its provider's logo.
+- The ChatGPT Web Companion is no longer marked experimental. Its settings show
+  the active sessions first, each with its own **End session**, followed by
+  the setup steps.
+
 ### Fixed
 
 - In the mobile app on iOS, the content of setup sheets no longer slides under

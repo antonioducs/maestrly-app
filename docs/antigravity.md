@@ -1,12 +1,14 @@
 # Google AI subscription (Antigravity)
 
 Maestrly's desktop chat can use a Google AI Pro or Ultra plan through Google's
-official Antigravity ACP server (version 1.2.1 or a newer validated release). In provider settings, open
-**Google AI (Antigravity)** and choose **Sign in with Google**. The first sign-in
-downloads the server; then complete Google's sign-in in your browser and choose a
-Gemini model in the conversation model picker. Use **Connect another account** to
-add another Google account with its own label. An eligible Google AI plan and an
-internet connection are required.
+official Antigravity ACP server (version 1.2.1 or a newer validated release). In
+**Settings › Maestrly Chat › Accounts**, choose **Add account**, pick
+**Google AI**, and choose **Sign in with Google**. The first sign-in downloads
+the server; then complete Google's sign-in in your browser and choose a Gemini
+model in the conversation model picker. To add another Google account with its
+own label, choose **Add account** again, or **Connect another Google AI account**
+in an account's **⋯** menu. An eligible Google AI plan and an internet connection
+are required.
 
 Google AI is available for chat, Maestro, subagent profiles, and the desktop
 executor's provider selection, and bot environments. The model list comes from the

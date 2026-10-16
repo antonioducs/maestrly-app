@@ -8,6 +8,10 @@ const apiSettings = readFileSync(
   new URL('../../src/renderer/components/chat/ApiKeySettings.tsx', import.meta.url),
   'utf8'
 )
+const subscriptionAccount = readFileSync(
+  new URL('../../src/renderer/components/chat/accounts/SubscriptionAccount.tsx', import.meta.url),
+  'utf8'
+)
 const webSettings = readFileSync(
   new URL('../../src/renderer/components/chat/ChatGptWebSettings.tsx', import.meta.url),
   'utf8'
@@ -19,33 +23,33 @@ const componentSettings = readFileSync(
 
 describe('managed runtime renderer contract', () => {
   it('gates Codex and Copilot login behind their explicit managed runtime installs', () => {
-    expect(apiSettings).toContain("'codex-subscription': 'codex-runtime'")
-    expect(apiSettings).toContain("'github-copilot-subscription': 'github-copilot-runtime'")
-    expect(apiSettings).toContain("t('settings.componentInstallAndConnect')")
-    expect(apiSettings).toContain('api.runtimeAssetRepair(runtimeId)')
-    expect(apiSettings.indexOf('runtimeAssetInstall(runtimeId)')).toBeLessThan(
-      apiSettings.indexOf('chatSubscriptionLogin(providerKind, accountId)')
+    expect(subscriptionAccount).toContain("'codex-subscription': 'codex-runtime'")
+    expect(subscriptionAccount).toContain("'github-copilot-subscription': 'github-copilot-runtime'")
+    expect(subscriptionAccount).toContain("t('settings.componentInstallAndConnect')")
+    expect(subscriptionAccount).toContain('api.runtimeAssetRepair(runtimeId)')
+    expect(subscriptionAccount.indexOf('runtimeAssetInstall(runtimeId)')).toBeLessThan(
+      subscriptionAccount.indexOf('chatSubscriptionLogin(providerKind, accountId)')
     )
   })
 
   it('re-probes the account slot after install before allowing OAuth/reset', () => {
-    const install = apiSettings.indexOf('api.runtimeAssetInstall(runtimeId)')
-    const probe = apiSettings.indexOf('const recovered = await refreshStatus(true)')
-    const login = apiSettings.indexOf('api.chatSubscriptionLogin(providerKind, accountId)')
+    const install = subscriptionAccount.indexOf('api.runtimeAssetInstall(runtimeId)')
+    const probe = subscriptionAccount.indexOf('const recovered = await refreshStatus(true)')
+    const login = subscriptionAccount.indexOf('api.chatSubscriptionLogin(providerKind, accountId)')
 
     expect(install).toBeGreaterThanOrEqual(0)
     expect(probe).toBeGreaterThan(install)
     expect(probe).toBeLessThan(login)
-    expect(apiSettings).toContain("recovered?.authenticated || recovered?.state === 'signed-in'")
-    expect(apiSettings).toContain("recovered?.state !== 'signed-out'")
-    expect(apiSettings).toContain('chatSubscriptionStatus(providerKind, force, accountId)')
+    expect(subscriptionAccount).toContain("recovered?.authenticated || recovered?.state === 'signed-in'")
+    expect(subscriptionAccount).toContain("recovered?.state !== 'signed-out'")
+    expect(subscriptionAccount).toContain('chatSubscriptionStatus(providerKind, force, accountId)')
   })
 
   it('refreshes the matching account card once when a managed runtime becomes ready', () => {
-    expect(apiSettings).toContain("next.status.state === 'ready'")
-    expect(apiSettings).toContain("previousState !== 'ready'")
-    expect(apiSettings).toContain('!runtimeInstallInProgressRef.current')
-    expect(apiSettings).toContain('void refreshStatus(true).finally')
+    expect(subscriptionAccount).toContain("next.status.state === 'ready'")
+    expect(subscriptionAccount).toContain("previousState !== 'ready'")
+    expect(subscriptionAccount).toContain('!runtimeInstallInProgressRef.current')
+    expect(subscriptionAccount).toContain('void refreshStatus(true).finally')
   })
 
   it('shows all managed components through list/onChanged with install, cancel, repair, and remove actions', () => {
