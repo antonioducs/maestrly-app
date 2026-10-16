@@ -79,6 +79,38 @@ test('bot fleet workflow builds the server images and runs real containers witho
     assert.ok(triggerBlock.includes(`- ${glob}`), glob)
 })
 
+test('mobile iOS workflow publishes the phone app only on request, through its environment', () => {
+  const source = read('.github/workflows/mobile-ios.yml')
+  const mobile = JSON.parse(read('apps/mobile/package.json'))
+  const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
+  const triggers = [...triggerBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1])
+
+  assert.deepEqual(triggers, ['workflow_dispatch'])
+  assert.match(source, /^permissions:\n {2}contents: read$/m)
+  assert.match(source, /^concurrency:\n {2}group: mobile-ios\n {2}cancel-in-progress: false$/m)
+  assert.match(source, /^ {4}environment: mobile-ios$/m)
+  assert.match(source, /- name: Check the app\n\s+run: npm run check:mobile\n/)
+  // Every step that publishes waits for the checks, and only the steps that need a credential get it.
+  const steps = source.split(/\n(?= {6}- name: )/)
+  const checks = steps.findIndex((step) => step.includes('npm run check:mobile'))
+  steps.forEach((step, index) => {
+    if (/secrets\./.test(step)) assert.ok(index > checks, `credentials before the checks: ${step.split('\n')[0]}`)
+  })
+  assert.doesNotMatch(source.slice(0, source.indexOf('\n    steps:')), /secrets\./)
+  for (const match of source.matchAll(/eas-cli@(\S+)/g)) {
+    assert.match(match[1], /^\d+\.\d+\.\d+$/, 'pin the EAS CLI version')
+  }
+  assert.match(
+    source,
+    /eas-cli@[\d.]+ build --platform ios --profile production --non-interactive --wait --auto-submit/
+  )
+  assert.match(source, /- name: Build on EAS and upload to TestFlight\n\s+if: inputs\.action != 'submit'\n/)
+  for (const step of ['Push the store listing', 'Submit to App Review'])
+    assert.match(source, new RegExp(`- name: ${step}\\n\\s+if: inputs\\.action != 'upload'\\n`))
+  assert.match(source, /run: node scripts\/submit-for-review\.mjs/)
+  assert.ok(mobile.scripts['eas-build-post-install'], 'EAS builds the fleet protocol before bundling')
+})
+
 test('release workflow publishes verified native artifacts only from version tags', () => {
   const source = read('.github/workflows/release.yml')
   const manifest = JSON.parse(read('package.json'))

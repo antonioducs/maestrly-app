@@ -25,6 +25,11 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6823673162",
+        "metadataPath": "./store.config.cjs"
+      }
+    }
   }
 }

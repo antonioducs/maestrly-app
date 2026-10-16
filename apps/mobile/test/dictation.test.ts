@@ -3,13 +3,34 @@ import {
   appendDictation,
   createDictation,
   DICTATION_STOP_GRACE_MS,
-  dictationLanguage,
+  dictationLanguages,
+  recognizerLanguage,
   type SpeechEngine,
   type SpeechError,
   type SpeechResult,
 } from '../src/dictation/session'
 
-function fakeEngine({ granted = true, available = true } = {}) {
+/** Part of the tags Apple's recognizer takes (SFSpeechRecognizer.supportedLocales), in the order it lists them. */
+const APPLE = [
+  'de-AT',
+  'de-DE',
+  'en-AE',
+  'en-AU',
+  'en-GB',
+  'en-IN',
+  'en-US',
+  'es-ES',
+  'es-MX',
+  'fr-CA',
+  'fr-FR',
+  'ja-JP',
+  'pt-BR',
+  'pt-PT',
+  'zh-CN',
+  'zh-TW',
+]
+
+function fakeEngine({ granted = true, available = true, supported = [] as readonly string[] } = {}) {
   const results = new Set<(result: SpeechResult) => void>()
   const errors = new Set<(error: SpeechError) => void>()
   const ends = new Set<() => void>()
@@ -26,6 +47,7 @@ function fakeEngine({ granted = true, available = true } = {}) {
             permission = resolve
           })
         : Promise.resolve(granted),
+    languages: () => Promise.resolve(supported),
     start: (lang: string) => {
       engine.started.push(lang)
     },
@@ -76,11 +98,48 @@ describe('dictation', () => {
     expect(appendDictation('  ', 'Hello')).toBe('Hello')
   })
 
-  it('listens in the phone language first, else in the app language', () => {
-    expect(dictationLanguage(['pt-BR', 'en-US'], 'en')).toBe('pt-BR')
-    expect(dictationLanguage(['en-GB'], 'pt-BR')).toBe('en-GB')
-    expect(dictationLanguage([], 'pt-BR')).toBe('pt-BR')
-    expect(dictationLanguage(['', 'not a tag'], 'en')).toBe('en-US')
+  it('wants the language chosen in the app first, in the phone variant of it', () => {
+    expect(dictationLanguages(['en-BR', 'pt-BR'], 'pt-BR')).toEqual(['pt-BR', 'en-BR'])
+    expect(dictationLanguages(['en-BR'], 'pt-BR')).toEqual(['pt-BR', 'en-BR'])
+    expect(dictationLanguages(['pt-BR', 'en-GB'], 'en')).toEqual(['en-GB', 'pt-BR'])
+    expect(dictationLanguages(['pt-PT'], 'pt-BR')).toEqual(['pt-PT'])
+    expect(dictationLanguages([], 'en')).toEqual(['en-US'])
+    expect(dictationLanguages(['', 'not a tag'], 'pt-BR')).toEqual(['pt-BR'])
+  })
+
+  it('wants the phone languages in their order when the app follows the system', () => {
+    expect(dictationLanguages(['en-BR', 'pt-BR'], 'system')).toEqual(['en-BR', 'pt-BR', 'en-US'])
+    expect(dictationLanguages(['pt-BR', 'en-US'], 'system')).toEqual(['pt-BR', 'en-US'])
+    expect(dictationLanguages(['fr-FR', 'pt-BR'], 'system')).toEqual(['fr-FR', 'pt-BR'])
+    expect(dictationLanguages([], 'system')).toEqual(['en-US'])
+  })
+
+  it("listens in the phone's language even when its region has no recognizer", () => {
+    // An iPhone in English set to Brazil names its language en-BR, which Apple's recognizer does not list.
+    expect(recognizerLanguage(['en-BR', 'pt-BR'], APPLE)).toBe('en-US')
+    expect(recognizerLanguage(['en', 'pt-BR'], APPLE)).toBe('en-US')
+    expect(recognizerLanguage(['pt-BR', 'en-US'], APPLE)).toBe('pt-BR')
+    expect(recognizerLanguage(['pt-PT'], APPLE)).toBe('pt-PT')
+    expect(recognizerLanguage(['pt-AO'], APPLE)).toBe('pt-BR')
+    expect(recognizerLanguage(['fr-BR'], APPLE)).toBe('fr-FR')
+    expect(recognizerLanguage(['ja'], APPLE)).toBe('ja-JP')
+    expect(recognizerLanguage(['zh-Hant-TW'], APPLE)).toBe('zh-TW')
+    expect(recognizerLanguage(['en_gb'], APPLE)).toBe('en-GB')
+  })
+
+  it('moves to the next language only when the recognizer has none of the first', () => {
+    expect(recognizerLanguage(['ga-IE', 'pt-BR'], APPLE)).toBe('pt-BR')
+    // Then the recognizer itself says it cannot listen.
+    expect(recognizerLanguage(['ga-IE'], APPLE)).toBe('ga-IE')
+    // A recognizer that takes any tag gets the phone's own.
+    expect(recognizerLanguage(['en-BR', 'pt-BR'], [])).toBe('en-BR')
+  })
+
+  it('starts the recognizer in a language it takes', async () => {
+    const engine = fakeEngine({ supported: APPLE })
+    const dictation = createDictation(engine, () => {})
+    await dictation.start('en-BR', 'en-US')
+    expect(engine.started).toEqual(['en-US'])
   })
 
   it('shows the words as they are heard and hands them over when listening ends', async () => {

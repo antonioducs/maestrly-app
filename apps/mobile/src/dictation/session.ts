@@ -2,6 +2,7 @@
  * Dictation turns speech into text for the composer with the phone's own speech recognition (Apple's or Google's):
  * the audio never reaches Maestrly or the bot server, only the text the person then sends.
  */
+import { detectLocale, type Locale } from '../i18n/translate'
 
 export type DictationIssue = 'denied' | 'unavailable' | 'noSpeech' | 'network' | 'language' | 'busy' | 'failed'
 
@@ -30,6 +31,8 @@ export type SpeechError =
 export interface SpeechEngine {
   available(): boolean
   requestPermission(): Promise<boolean>
+  /** The language tags the recognizer takes, exactly as it names them; empty when it takes any tag. */
+  languages(): Promise<readonly string[]>
   start(lang: string): void
   stop(): void
   abort(): void
@@ -42,8 +45,11 @@ export interface Dictation {
   state(): DictationState
   subscribe(listener: (state: DictationState) => void): () => void
   available(): boolean
-  /** Asks for the microphone and speech recognition the first time, then listens until `stop`. */
-  start(lang: string): Promise<void>
+  /**
+   * Asks for the microphone and speech recognition the first time, then listens until `stop`, in the first of the
+   * wanted languages the recognizer takes (see `recognizerLanguage`).
+   */
+  start(...wanted: string[]): Promise<void>
   /** Ends listening; the text heard so far goes to `onText` once the recognizer finishes. */
   stop(): void
   /** Ends listening and drops what was heard. */
@@ -73,10 +79,48 @@ export function appendDictation(draft: string, dictated: string): string {
   return /\s$/.test(draft) ? `${draft}${text}` : `${draft} ${text}`
 }
 
-/** The language to listen for: the phone's first language, else the app's. */
-export function dictationLanguage(systemTags: readonly string[], appLocale: string): string {
-  const tag = systemTags.find((value) => /^[a-z]{2,3}(-[A-Za-z0-9]+)*$/.test(value))
-  return tag ?? (appLocale === 'pt-BR' ? 'pt-BR' : 'en-US')
+/** The tag an app language is listened for in when the phone names no variant of it. */
+const APP_LANGUAGE: Record<Locale, string> = { en: 'en-US', 'pt-BR': 'pt-BR' }
+
+/**
+ * The languages to listen for, best first. A language chosen in the app's settings comes first, in the phone's variant
+ * of it when the phone has one (`en-GB` for English on a British phone), then the phone's languages. With the app
+ * following the system, the phone's languages come in their order, then the app's.
+ */
+export function dictationLanguages(systemTags: readonly string[], preference: Locale | 'system'): string[] {
+  const phone = systemTags.filter((value) => /^[a-z]{2,3}(-[A-Za-z0-9]+)*$/.test(value))
+  if (preference === 'system') return [...new Set([...phone, APP_LANGUAGE[detectLocale(null, phone)]])]
+  const language = preference.split('-')[0]
+  const variant = phone.find((tag) => tag.split('-')[0] === language) ?? APP_LANGUAGE[preference]
+  return [...new Set([variant, ...phone])]
+}
+
+/** A language's main region, where it is not the language's own code (as French's is `fr-FR`). */
+const MAIN_REGION: Record<string, string> = { en: 'us', pt: 'br' }
+
+/**
+ * The first wanted language the recognizer takes, as it names it. Apple's takes only the tags of its own list, while
+ * phones name a language with the phone's region (an iPhone in English set to Brazil says `en-BR`), so a language
+ * whose region has no recognizer is listened for in its main one: `en-BR` as `en-US`, `fr-BR` as `fr-FR`. A recognizer
+ * that takes any tag gets the first; one that takes none of them gets it too, and then says it cannot listen.
+ */
+export function recognizerLanguage(wanted: readonly string[], supported: readonly string[]): string {
+  const first = wanted[0] ?? 'en-US'
+  if (!supported.length) return first
+  const key = (tag: string) => tag.replace(/_/g, '-').toLowerCase()
+  const named = new Map(supported.map((tag) => [key(tag), tag]))
+  for (const tag of wanted) {
+    const [language, ...rest] = key(tag).split('-')
+    // Without its script: `zh-Hant-TW` is `zh-TW`.
+    const region = rest.find((part) => /^([a-z]{2}|\d{3})$/.test(part))
+    const match =
+      named.get(key(tag)) ??
+      (region ? named.get(`${language}-${region}`) : undefined) ??
+      named.get(`${language}-${MAIN_REGION[language] ?? language}`) ??
+      supported.find((each) => key(each).split('-')[0] === language)
+    if (match) return match
+  }
+  return first
 }
 
 /**
@@ -132,7 +176,7 @@ export function createDictation(engine: SpeechEngine, onText: (text: string) => 
       return () => listeners.delete(listener)
     },
     available: () => engine.available(),
-    async start(lang) {
+    async start(...wanted) {
       if (current.phase !== 'idle') return
       const mine = ++session
       keep = true
@@ -146,8 +190,15 @@ export function createDictation(engine: SpeechEngine, onText: (text: string) => 
       // Stopped or cancelled while the permission prompt was up.
       if (mine !== session) return
       if (!granted) return set({ phase: 'idle', issue: 'denied' })
+      let supported: readonly string[] = []
       try {
-        engine.start(lang)
+        supported = await engine.languages()
+      } catch {
+        supported = []
+      }
+      if (mine !== session) return
+      try {
+        engine.start(recognizerLanguage(wanted, supported))
         if (mine === session) set({ phase: 'listening', text: '' })
       } catch {
         session += 1

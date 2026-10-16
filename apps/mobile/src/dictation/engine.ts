@@ -12,6 +12,7 @@ let subscribed = false
 
 type SpeechModule = typeof import('expo-speech-recognition').ExpoSpeechRecognitionModule
 let loaded: SpeechModule | null | undefined
+let recognized: Promise<readonly string[]> | undefined
 /**
  * The recognizer module, or null where the app was built without it, such as Expo Go: the package looks its native
  * module up as it loads and throws when it is missing, so it is loaded only once that module is known to exist.
@@ -65,6 +66,15 @@ export const speechEngine: SpeechEngine = {
     if (Platform.OS === 'web') return true
     const response = await speech()?.requestPermissionsAsync()
     return response?.granted === true
+  },
+  languages() {
+    // Only Apple's recognizer refuses a tag outside its list. Android's takes any tag, and the list it gives covers
+    // only on-device recognition; browsers give none.
+    if (Platform.OS !== 'ios') return Promise.resolve([])
+    recognized ??= Promise.resolve(speech()?.getSupportedLocales({}))
+      .then((response) => response?.locales ?? [])
+      .catch(() => [])
+    return recognized
   },
   start(lang) {
     const module = speech()

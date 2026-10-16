@@ -118,6 +118,9 @@ export default function Settings() {
           { value: 'pt-BR', label: t('language.pt-BR') },
         ]}
       />
+      <AppText variant="small" tone="muted" style={{ marginTop: 7, marginHorizontal: 6 }}>
+        {t('settings.languageFoot')}
+      </AppText>
       {active ? (
         <Group label={t('settings.thisPhone')} foot={t('settings.unpairFoot', { server })}>
           <Cell label={t('settings.deviceName')} value={active.deviceName || deviceName} />
