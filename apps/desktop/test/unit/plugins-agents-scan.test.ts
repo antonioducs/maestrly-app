@@ -18,15 +18,15 @@ describe('plugin agents', () => {
     const pkg = await load({
       ...claudeManifest('demo'),
       'agents/reviewer.md':
-        '---\nname: reviewer\ndescription: Reviews a change\ntools: Read, Grep, WebSearch, mcp__plugin_demo_x__y\nmodel: sonnet\n---\nReview the change carefully.\n',
+        '---\nname: reviewer\ndescription: Reviews a change\ntools: Read, Grep, WebSearch, TodoWrite, mcp__plugin_demo_x__y\nmodel: sonnet\n---\nReview the change carefully.\n',
     })
     expect(pkg.agents).toEqual([
       {
         name: 'reviewer',
         filePath: 'agents/reviewer.md',
         description: 'Reviews a change',
-        tools: ['read', 'grep', 'mcp_search', 'mcp_call'],
-        droppedTools: ['WebSearch'],
+        tools: ['read', 'grep', 'web_search', 'mcp_search', 'mcp_call'],
+        droppedTools: ['TodoWrite'],
       },
     ])
     expect(pkg.components).toEqual(
@@ -34,7 +34,7 @@ describe('plugin agents', () => {
         expect.objectContaining({ kind: 'agent', name: 'agents/reviewer.md', status: 'adapted' }),
         expect.objectContaining({
           kind: 'agent',
-          name: 'reviewer: WebSearch',
+          name: 'reviewer: TodoWrite',
           status: 'not-run',
           reason: 'component-unsupported',
         }),

@@ -82,6 +82,7 @@ beforeEach(() => {
 describe('plugin hook tool names', () => {
   it('maps Maestrly tools and inputs to Claude Code names and back', () => {
     expect(claudeToolName('bash')).toBe('Bash')
+    expect(claudeToolName('web_search')).toBe('WebSearch')
     expect(claudeToolName('edit')).toBe('Edit')
     expect(claudeToolName('protected__whoami')).toBe('mcp__protected__whoami')
     expect(toClaudeInput('edit', { path: 'a.ts', oldString: 'x', newString: 'y' })).toEqual({

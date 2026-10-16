@@ -35,15 +35,15 @@ export const AGENT_TOOL_MAP: Record<string, string | null> = {
   MultiEdit: 'edit',
   Write: 'write',
   WebFetch: 'webfetch',
+  WebSearch: 'web_search',
   NotebookRead: 'read',
   TodoWrite: null,
   Task: null,
   Agent: null,
-  WebSearch: null,
   NotebookEdit: null,
 }
 /** Maestrly's own names, accepted as written (lowercase) by agents made for Maestrly or Codex. */
-const MAESTRLY_TOOLS = new Set(['read', 'grep', 'glob', 'bash', 'edit', 'write', 'webfetch'])
+const MAESTRLY_TOOLS = new Set(['read', 'grep', 'glob', 'bash', 'edit', 'write', 'webfetch', 'web_search'])
 const AGENT_TEXT_MAX_BYTES = 1024 * 1024
 
 /** Immediate `*.md` children of agent folders, or listed Markdown files. */

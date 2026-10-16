@@ -12,6 +12,7 @@ const TOOL_NAMES: Record<string, string> = {
   grep: 'Grep',
   glob: 'Glob',
   webfetch: 'WebFetch',
+  web_search: 'WebSearch',
   task: 'Task',
   todo_write: 'TodoWrite',
   local_shell: 'Bash',

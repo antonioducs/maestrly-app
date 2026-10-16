@@ -1799,8 +1799,10 @@ describe('Codex subscription runner', () => {
       }
       expect(threadStart.environments).toEqual([])
       expect(threadStart.config['features.shell_tool']).toBe(false)
+      // Native search would skip the hooks: the gated host web_search, which they see, takes its place.
+      expect(threadStart.config.web_search).toBe('disabled')
       expect(threadStart.dynamicTools.map((entry) => entry.name)).toEqual(
-        expect.arrayContaining(['bash', 'read', 'write', 'edit', 'grep', 'glob'])
+        expect.arrayContaining(['bash', 'read', 'write', 'edit', 'grep', 'glob', 'web_search'])
       )
     } finally {
       pluginHooksH.list = []
