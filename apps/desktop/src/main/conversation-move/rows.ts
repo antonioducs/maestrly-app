@@ -1,4 +1,5 @@
 import type { SQLInputValue } from 'node:sqlite'
+import type { ConvUiPrefs } from '../../shared/conversation'
 import type { ConversationExperience } from '../../shared/conversation-experience'
 import { forgetChatStoreCaches, insertMovedChatMessages } from '../chat/chat-store'
 import { deleteConversation, getConversation, insertConversation } from '../store/conversations'
@@ -82,7 +83,7 @@ export function readConversationRows(conversationId: string, now = Date.now()): 
       createdAt: conversation.createdAt,
       lastActivityAt: conversation.lastActivityAt,
       pinnedAt: conversation.pinnedAt,
-      uiPrefs: (conversation.uiPrefs ?? {}) as Record<string, unknown>,
+      uiPrefs: hostIndependentPrefs(conversation.uiPrefs),
     },
     tables: {
       chat_messages: messages,
@@ -106,6 +107,15 @@ function sqlValue(value: unknown, table: string, column: string): SQLInputValue 
   if (value === null || value === undefined) return null
   if (SQL_VALUE_TYPES.has(typeof value)) return value as SQLInputValue
   throw new MoveError('package-invalid', `Unexpected value in ${table}.${column}.`)
+}
+
+/**
+ * The conversation's preferences without what belongs to this host: where its plugin `SessionStart` hooks last ran.
+ * The destination's plugins are its own, so their hooks start the session again there (as `resume`).
+ */
+function hostIndependentPrefs(prefs: ConvUiPrefs | undefined): Record<string, unknown> {
+  const { hookSession: _hookSession, ...rest } = prefs ?? {}
+  return rest as Record<string, unknown>
 }
 
 /** Inserts a moved conversation with its own ids at its new location, in one transaction. */

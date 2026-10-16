@@ -236,10 +236,12 @@ describe('plugin hook sessions', () => {
     })
     expect(hookSessionBoundary([])).toBe('')
     expect(hookSessionBoundary([marker('a'), marker('b')])).toBe('b')
-    expect(sessionStartSource(undefined, '')).toBe('startup')
-    expect(sessionStartSource({ cleared: true }, '')).toBe('clear')
-    expect(sessionStartSource({ boundary: '' }, '')).toBeNull()
-    expect(sessionStartSource({ boundary: 'a' }, 'b')).toBe('compact')
+    expect(sessionStartSource(undefined, '', false)).toBe('startup')
+    // Hooks that never ran for a conversation with history, here or on the host it moved from, resume it.
+    expect(sessionStartSource(undefined, '', true)).toBe('resume')
+    expect(sessionStartSource({ cleared: true }, '', false)).toBe('clear')
+    expect(sessionStartSource({ boundary: '' }, '', true)).toBeNull()
+    expect(sessionStartSource({ boundary: 'a' }, 'b', true)).toBe('compact')
   })
 
   it('words the prompt that keeps the agent going', () => {

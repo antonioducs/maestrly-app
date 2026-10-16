@@ -4251,12 +4251,16 @@ async function startSend(
     let hookSessionToRecord: string | null = null
     if (hookTurn) {
       const ctx = hookContext(operation.controller.signal)
-      const boundary = hookSessionBoundary(listConversationContextMessages(conversationId))
-      const source = sessionStartSource(getConvUiPrefs(conversationId).hookSession, boundary)
+      const history = listConversationContextMessages(conversationId)
+      const source = sessionStartSource(
+        getConvUiPrefs(conversationId).hookSession,
+        hookSessionBoundary(history),
+        history.length > 0
+      )
       if (source) {
         const started = await runSessionStart(ctx, source)
         if (started.context.length) parts.push(hookContextPart('SessionStart', started.context))
-        hookSessionToRecord = boundary
+        hookSessionToRecord = hookSessionBoundary(history)
       }
       if (!opts?.internal) {
         const prompt = await runUserPromptSubmit(ctx, text)

@@ -236,6 +236,15 @@ describe('plugin session, prompt and Stop hooks in a Maestrly turn', () => {
     })
     await send('after clearing')
     expect(hookParts(userMessages()[0].parts)[0].data).toContain('SESSION clear')
+
+    // A conversation with history whose hooks never ran here (it moved from another host) resumes the session.
+    h.upsertChatMessage.mockClear()
+    h.listConversationContextMessages.mockReturnValue([
+      { role: 'user', parts: [{ type: 'text', id: 'p1', text: 'earlier' }] },
+    ])
+    h.getConvUiPrefs.mockReturnValue({ chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent' } })
+    await send('after moving')
+    expect(hookParts(userMessages()[0].parts)[0].data).toContain('SESSION resume')
   })
 
   it('refuses a prompt a hook blocks: nothing is stored and no model runs', async () => {

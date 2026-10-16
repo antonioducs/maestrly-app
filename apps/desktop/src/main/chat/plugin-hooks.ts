@@ -63,9 +63,7 @@ const TOOL_EVENTS: ReadonlySet<PluginHookEvent> = new Set(['PreToolUse', 'PostTo
 
 /** Whether a conversation has hooks on tool calls: then every tool call must go through Maestrly's tools. */
 export function hasToolHooks(conversationId: string, mode: ChatBehavior): boolean {
-  return (
-    canRunHooks(mode) && listPluginHooks({ conversationId }).some((hook) => TOOL_EVENTS.has(hook.spec.event))
-  )
+  return canRunHooks(mode) && listPluginHooks({ conversationId }).some((hook) => TOOL_EVENTS.has(hook.spec.event))
 }
 
 /** Whether a conversation has hooks on one event (and may run them in this mode). */
@@ -267,10 +265,16 @@ export async function runUserPromptSubmit(
   return { context }
 }
 
-/** At a session's start (a new conversation, after clearing, after compacting): hooks add context. */
+/** How a hook session starts, with Claude Code's names (SessionStart matchers match them). */
+export type SessionStartSource = 'startup' | 'resume' | 'clear' | 'compact'
+
+/**
+ * At a session's start (a new conversation, one that goes on where the hooks never ran, after clearing, after
+ * compacting): hooks add context.
+ */
 export async function runSessionStart(
   ctx: HookTurnContext,
-  source: 'startup' | 'clear' | 'compact'
+  source: SessionStartSource
 ): Promise<{ context: string[] }> {
   const answers = await runEvent(ctx, 'SessionStart', { source }, source)
   const context: string[] = []
@@ -329,14 +333,16 @@ export function hookSessionBoundary(messages: readonly ChatMessage[]): string {
 }
 
 /**
- * Which session-start source a turn has, from where SessionStart hooks last ran: never (a new session), before a
- * clear, or before the latest compaction. `null` when the session already started.
+ * Which session-start source a turn has, from where SessionStart hooks last ran: never (a new conversation, or `resume`
+ * for one with history: hooks switched on later, or a conversation moved from another host), before a clear, or
+ * before the latest compaction. `null` when the session already started.
  */
 export function sessionStartSource(
   state: ConvUiPrefs['hookSession'],
-  boundary: string
-): 'startup' | 'clear' | 'compact' | null {
-  if (!state) return 'startup'
+  boundary: string,
+  hasHistory: boolean
+): SessionStartSource | null {
+  if (!state) return hasHistory ? 'resume' : 'startup'
   if ('cleared' in state) return 'clear'
   return state.boundary === boundary ? null : 'compact'
 }

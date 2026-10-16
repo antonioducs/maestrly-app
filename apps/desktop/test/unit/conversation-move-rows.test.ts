@@ -89,7 +89,7 @@ beforeEach(() => {
     branch: 'feat',
     name: 'Feature',
     pinnedAt: 50,
-    uiPrefs: { mainTabOrder: ['notes'] },
+    uiPrefs: { mainTabOrder: ['notes'], hookSession: { boundary: '' } },
   })
   seed()
 })
@@ -106,8 +106,10 @@ describe('conversation move rows and files', () => {
       id: conv.id,
       name: 'Feature',
       pinnedAt: 50,
+      // Where this host's plugin hooks started the session stays here: the destination's hooks start it again.
       uiPrefs: { mainTabOrder: ['notes'] },
     })
+    expect(rows.conversation.uiPrefs).not.toHaveProperty('hookSession')
     expect(rows.tables.chat_messages.map((message) => message.seq)).toEqual([1, 2, 3])
     expect(rows.tables.chat_tool_executions).toHaveLength(1)
     expect(rows.tables.chat_subagent_sessions[0]).toMatchObject({

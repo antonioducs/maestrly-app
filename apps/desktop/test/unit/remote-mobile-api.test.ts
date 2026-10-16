@@ -1,4 +1,4 @@
-import { mobileChatPageSchema } from '@maestrly/bot-fleet-protocol'
+import { type MobileChatSetup, mobileChatPageSchema } from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestrly-mobile-api-test', getVersion: () => '0.0.0' } }))
@@ -511,7 +511,7 @@ describe('mobile API of a workspaces host', () => {
       pluginMcpServers: ['plg_serves'],
       mcpAccounts: [{ serverId: 'plg_serves', serverName: 'plg_serves', accounts: accounts(true) }],
     }
-    expect((await h.invoke('mobile:v1:setup', { conversationId: 'c1' })).mcp).toEqual([
+    expect(((await h.invoke('mobile:v1:setup', { conversationId: 'c1' })) as MobileChatSetup).mcp).toEqual([
       { id: 'linear', name: 'Linear', enabled: true },
       { id: 'plg_serves', name: 'plg_serves', enabled: true },
       { id: 'plg_serves#acc_000000000001', name: 'plg_serves · Personal', enabled: true },
@@ -529,11 +529,11 @@ describe('mobile API of a workspaces host', () => {
     expect(h.state.mcpAccountsDisabled).toEqual(['plg_serves#acc_000000000002'])
     expect(h.state.mcpDisabled).toEqual([])
     // A server switched off hides its accounts.
-    const off = await h.invoke('mobile:v1:setup:set', {
+    const off = (await h.invoke('mobile:v1:setup:set', {
       conversationId: 'c1',
       patch: { mcp: { id: 'plg_serves', enabled: false } },
-    })
-    expect(off.mcp.map((entry: { id: string }) => entry.id)).toEqual(['linear', 'plg_serves'])
+    })) as MobileChatSetup
+    expect(off.mcp.map((entry) => entry.id)).toEqual(['linear', 'plg_serves'])
 
     h.state.send = { ok: false, error: 'blocked-by-hook: no secrets here' }
     await expect(
