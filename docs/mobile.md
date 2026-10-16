@@ -191,9 +191,15 @@ notifications, install a `preview` build from EAS (see [Release](#release)).
   hide what Hermes lacks, such as `Intl.PluralRules`. Use a checkout whose path
   has no spaces. `ios/` and `android/` are generated and never committed.
 - **Icons:** `npm run icons --workspace @maestrly/mobile` renders the app icon,
-  Android's adaptive and monochrome icons, the splash, the notification icon and
-  the favicon from the mark in `src/ui/BrandMark.tsx`. It needs Playwright's
-  Chromium (`npx playwright install chromium`); the images are committed.
+  Android's adaptive and monochrome icons, the notification icon and the favicon
+  from the logo in `src/ui/brand.ts`, which `test/brand.test.ts` keeps identical
+  to the desktop brand assets. It needs Playwright's Chromium
+  (`npx playwright install chromium`); the images are committed.
+- **Intro:** the native splash is only a dark background (its image is
+  transparent). `src/ui/Intro.tsx` then draws the logo over it: the whole
+  animation the first time the app opens, the logo alone afterwards, and a still
+  logo while the system reduces motion. It fades into the app once the app is
+  ready.
 - **React version:** the app uses the React version Expo SDK 57 renders with,
   which differs from the desktop app's. `metro.config.cjs` resolves
   `react` and `react-dom` from the app wherever npm hoisted `react-native`;

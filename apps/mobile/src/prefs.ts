@@ -1,15 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
-/** Small app preferences (theme, language). Never secrets: tokens live in the secure store. */
+/** Small app preferences (theme, language, whether the intro played). Never secrets: tokens are in the secure store. */
+type PrefKey = 'prefs.theme' | 'prefs.locale' | 'prefs.intro'
+
 export const prefs = {
-  async get(key: 'prefs.theme' | 'prefs.locale'): Promise<string | null> {
+  async get(key: PrefKey): Promise<string | null> {
     try {
       return await AsyncStorage.getItem(key)
     } catch {
       return null
     }
   },
-  async set(key: 'prefs.theme' | 'prefs.locale', value: string): Promise<void> {
+  async set(key: PrefKey, value: string): Promise<void> {
     try {
       await AsyncStorage.setItem(key, value)
     } catch {
