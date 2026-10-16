@@ -10,10 +10,9 @@ const projectId = env('MAESTRLY_EAS_PROJECT_ID')
 const owner = env('MAESTRLY_EAS_OWNER')
 const googleServicesFile = env('MAESTRLY_GOOGLE_SERVICES_FILE')
 
-/** The theme's canvas colors (src/theme/tokens.ts) and the tile of the app icon. */
-const CANVAS_LIGHT = '#f6f5f1'
-const CANVAS_DARK = '#141615'
+/** The tile of the app icon, and the background of the intro (src/ui/Intro.tsx), dark in both themes. */
 const TILE = '#131514'
+const INTRO = '#0f1110'
 /** Every plugin that touches the microphone gets the same reason, so none of them overrides it with a generic one. */
 const MICROPHONE = 'Maestrly uses the microphone only while you dictate a message.'
 
@@ -68,13 +67,8 @@ const config: ExpoConfig = {
     'expo-font',
     [
       'expo-splash-screen',
-      {
-        image: './assets/images/splash-icon.png',
-        imageWidth: 120,
-        resizeMode: 'contain',
-        backgroundColor: CANVAS_LIGHT,
-        dark: { image: './assets/images/splash-icon.png', backgroundColor: CANVAS_DARK },
-      },
+      // Only the intro's background: the intro draws the logo once the app starts. The image is transparent.
+      { image: './assets/images/splash-icon.png', imageWidth: 120, resizeMode: 'contain', backgroundColor: INTRO },
     ],
     [
       'expo-speech-recognition',
