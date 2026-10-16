@@ -334,6 +334,10 @@ export function createChatsController(
     deleteOutbox(id: string) {
       return setOutbox(state.outbox.filter((item) => item.id !== id))
     },
+    /** The person's last message, edited while no turn runs: the chat runs again from it, and the host reloads it. */
+    async edit(conversationId: string, itemId: string, text: string) {
+      await invoke('edit', { conversationId, itemId, text })
+    },
     stopTurn(conversationId: string) {
       return invoke('stop', { conversationId })
     },

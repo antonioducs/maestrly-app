@@ -30,17 +30,66 @@ const user = (id: string): FleetTranscriptItem => ({
 })
 const said = (id: string): FleetTranscriptItem => ({ id, at: at(), kind: 'assistant', text: 'ok', streaming: false })
 
+const label = (row: ReturnType<typeof transcriptRows>[number]) =>
+  row.kind === 'item' ? row.item.id : `${row.kind}:${row.id}`
+const thought = (id: string, streaming = false): FleetTranscriptItem => ({
+  id,
+  at: at(),
+  kind: 'reasoning',
+  text: 'hm',
+  truncated: false,
+  streaming,
+})
+
 describe('transcript rows', () => {
-  it('groups consecutive tools under the first one’s id', () => {
-    const rows = transcriptRows([user('u1'), tool('t1', 'bash'), tool('t2', 'read'), said('a1'), tool('t3', 'edit')])
-    expect(rows.map((row) => (row.kind === 'item' ? row.item.id : `${row.kind}:${row.id}`))).toEqual([
-      'u1',
-      'tools:t1',
-      'a1',
-      'tools:t3',
+  it('folds a turn’s tools, reasoning and earlier text into one activity, under its newest text', () => {
+    const rows = transcriptRows([
+      user('u1'),
+      tool('t1', 'bash'),
+      thought('r1'),
+      tool('t2', 'read'),
+      said('a1'),
+      thought('r2'),
+      tool('t3', 'edit'),
+      said('a2'),
+      user('u2'),
+      tool('t4', 'bash'),
     ])
-    const group = rows[1]
-    expect(group.kind === 'tools' && group.tools.map((item) => item.id)).toEqual(['t1', 't2'])
+    expect(rows.map(label)).toEqual(['u1', 'a2', 'activity:t1', 'u2', 'activity:t4'])
+    const group = rows[2]
+    expect(
+      group.kind === 'activity' &&
+        group.steps.map((step) => `${step.kind}:${step.kind === 'tool' ? step.tool.id : step.item.id}`)
+    ).toEqual(['tool:t1', 'reasoning:r1', 'tool:t2', 'narration:a1', 'reasoning:r2', 'tool:t3'])
+  })
+
+  it('keeps what the agent said last in view while it still works', () => {
+    const rows = transcriptRows([user('u1'), said('a1'), tool('t1', 'bash'), said('a2'), tool('t2', 'bash')])
+    expect(rows.map(label)).toEqual(['u1', 'a2', 'activity:a1'])
+    const group = rows[2]
+    expect(group.kind === 'activity' && group.steps.map((step) => step.kind)).toEqual(['narration', 'tool', 'tool'])
+  })
+
+  it('treats only the conversation’s last item as streaming', () => {
+    const rows = transcriptRows([
+      user('u1'),
+      thought('r1', true),
+      tool('t1', 'bash'),
+      { id: 'a1', at: at(), kind: 'assistant', text: 'x', streaming: true },
+      thought('r2', true),
+    ])
+    expect(rows.map(label)).toEqual(['u1', 'a1', 'activity:r1'])
+    const said = rows[1]
+    expect(said.kind === 'item' && said.item.kind === 'assistant' && said.item.streaming).toBe(false)
+    const group = rows[2]
+    expect(group.kind === 'activity' && group.steps.map((step) => step.kind !== 'tool' && step.item.streaming)).toEqual(
+      [false, false, true]
+    )
+  })
+
+  it('leaves a turn without steps as it is, and folds reasoning alone too', () => {
+    expect(transcriptRows([user('u1'), said('a1')]).map(label)).toEqual(['u1', 'a1'])
+    expect(transcriptRows([user('u1'), thought('r0'), said('a1')]).map(label)).toEqual(['u1', 'a1', 'activity:r0'])
   })
 
   it('shows a turn’s plan once, with its latest list, where the plan first appeared', () => {
@@ -55,14 +104,7 @@ describe('transcript rows', () => {
       user('u2'),
       tool('p3', 'todo_write', { todos: first }),
     ])
-    expect(rows.map((row) => (row.kind === 'item' ? row.item.id : `${row.kind}:${row.id}`))).toEqual([
-      'u1',
-      'todos:p1',
-      'tools:t1',
-      'a1',
-      'u2',
-      'todos:p3',
-    ])
+    expect(rows.map(label)).toEqual(['u1', 'todos:p1', 'a1', 'activity:t1', 'u2', 'todos:p3'])
     const plan = rows[1]
     expect(plan.kind === 'todos' && plan.todos).toEqual(last)
   })
@@ -70,7 +112,6 @@ describe('transcript rows', () => {
   it('passes every other item through in order', () => {
     const items: FleetTranscriptItem[] = [
       user('u1'),
-      { id: 'r1', at: at(), kind: 'reasoning', text: 'hm', truncated: false, streaming: false },
       said('a1'),
       {
         id: 'p1',
@@ -97,23 +138,22 @@ describe('transcript rows', () => {
     )
     expect(toolSummary([tool('a', 'edit')], text.plural)).toBe('Edited 1 file')
     expect(toolSummary([tool('a', 'mcp__linear__create')], text.plural)).toBe('Used 1 tool')
+    expect(toolSummary([tool('a', 'mcp__maestrly__bash'), tool('b', 'browser_click')], text.plural)).toBe(
+      'Ran 1 command, opened 1 page'
+    )
     expect(toolHeadline(tool('a', 'bash', { target: 'npm test' }), text.t)).toEqual({
       verb: 'Running',
       target: 'npm test',
     })
   })
 
-  it('shows the files a tool shared as their own row, apart from the tools around it', () => {
+  it('shows the files a tool shared as their own row, apart from the activity', () => {
     const shared = tool('t2', 'share_file', {
       files: [{ id: 'f1', name: 'walkthrough.mp4', mediaType: 'video/mp4', byteSize: 4_000_000 }],
     })
     const rows = transcriptRows([tool('t1', 'bash'), shared, tool('t3', 'read')])
-    expect(rows.map((row) => `${row.kind}:${row.kind === 'item' ? row.item.id : row.id}`)).toEqual([
-      'tools:t1',
-      'files:t2',
-      'tools:t3',
-    ])
-    const files = rows[1]
+    expect(rows.map(label)).toEqual(['files:t2', 'activity:t1'])
+    const files = rows[0]
     expect(files.kind === 'files' && files.files.map((item) => item.name)).toEqual(['walkthrough.mp4'])
   })
 })

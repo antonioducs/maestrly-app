@@ -45,6 +45,7 @@ export function Transcript({ bot }: { bot: FleetBot }) {
       thinking={thinking}
       emptyText={t('conv.empty', { name: bot.name })}
       onLoadOlder={() => void controller.loadOlder(bot.id)}
+      hasOlder={!!transcript?.before}
     />
   )
 }

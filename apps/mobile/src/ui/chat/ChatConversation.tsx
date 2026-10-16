@@ -1,8 +1,13 @@
-import type { FleetInteractionResolution, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import {
+  MobileBridgeError,
+  type FleetInteractionResolution,
+  type FleetTranscriptItem,
+} from '@maestrly/bot-fleet-protocol'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibilityInfo, Pressable, type TextInput, View } from 'react-native'
 import { useChats, useChatsController } from '../../chats/react'
 import { allConversations, type ChatsState } from '../../chats/state'
+import { editableItemId } from '../../fleet/transcript-search'
 import { useI18n } from '../../i18n'
 import { useServers } from '../../servers/ServersProvider'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -82,6 +87,16 @@ export function ChatConversation({ conversationId }: { conversationId: string })
     return () => chats.closeConversation(conversationId)
   }, [chats, conversationId])
 
+  const items = view?.items ?? []
+  // As on a computer: the person's last message, while no turn runs and nothing waits to be sent.
+  const editableId = !busy && outbox.length === 0 ? editableItemId(items, 'chat') : null
+  const [editing, setEditing] = useState<{ itemId: string; text: string } | null>(null)
+  const startEdit = useCallback((itemId: string, text: string) => setEditing({ itemId, text }), [])
+  const edit = useMemo(
+    () => (editableId ? { itemId: editableId, start: startEdit } : undefined),
+    [editableId, startEdit]
+  )
+
   const focusComposer = useCallback(() => input.current?.focus(), [])
   const interactionFor = useCallback(
     (item: FleetTranscriptItem) =>
@@ -138,8 +153,10 @@ export function ChatConversation({ conversationId }: { conversationId: string })
         await chats.send(conversationId, text, [])
       },
       ...(canAllowEverything ? { allowEverything } : {}),
+      ...(edit ? { edit } : {}),
     }),
     [
+      edit,
       conversation?.name,
       online,
       focusComposer,
@@ -182,7 +199,6 @@ export function ChatConversation({ conversationId }: { conversationId: string })
     return rows
   }, [runtime?.plan, outbox, online, busy, chats, conversationId, t])
 
-  const items = view?.items ?? []
   const thinking =
     !!runtime?.streaming &&
     !items.some(
@@ -205,6 +221,7 @@ export function ChatConversation({ conversationId }: { conversationId: string })
           thinking={thinking}
           emptyText={view?.failed ? t('chat.loadFailed') : t('chat.empty')}
           onLoadOlder={() => void chats.loadOlder(conversationId)}
+          hasOlder={!!view?.before}
           top={
             view?.sourceConversationId && !view.before ? (
               <OriginLine conversationId={view.sourceConversationId} />
@@ -229,6 +246,26 @@ export function ChatConversation({ conversationId }: { conversationId: string })
           AccessibilityInfo.announceForAccessibility(online ? t('announce.sent') : t('announce.queuedOffline'))
         }}
         inputRef={input}
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
+        onEdit={async (text) => {
+          if (!editing) return
+          try {
+            await chats.edit(conversationId, editing.itemId, text)
+          } catch (cause) {
+            const code = cause instanceof MobileBridgeError ? cause.code : null
+            throw new Error(
+              code === 'unknown-channel'
+                ? t('edit.error.outdated')
+                : code === 'busy'
+                  ? t('edit.error.busy')
+                  : code === 'not-editable'
+                    ? t('edit.error.notLast')
+                    : t('edit.error.failed')
+            )
+          }
+          setEditing(null)
+        }}
       />
     </ConversationContext.Provider>
   )

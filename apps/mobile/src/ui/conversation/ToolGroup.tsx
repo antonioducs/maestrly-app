@@ -1,6 +1,6 @@
 import { memo, useState } from 'react'
 import { ActivityIndicator, Pressable, View } from 'react-native'
-import { toolHeadline, toolSummary, type ToolItem } from '../../fleet/transcript-rows'
+import { activityTools, toolHeadline, toolSummary, type ActivityStep, type ToolItem } from '../../fleet/transcript-rows'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
@@ -26,17 +26,90 @@ function ToolImages({ tool }: { tool: ToolItem }) {
   )
 }
 
-/** Tools in a row, folded into one line; a running one shows what it does and for how long. */
-export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] }) {
+function ToolStep({ tool }: { tool: ToolItem }) {
+  const { palette } = useTheme()
+  return (
+    <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View style={{ width: 16, paddingTop: 2 }}>
+        {tool.state === 'running' ? (
+          <ActivityIndicator size="small" color={palette.muted} />
+        ) : (
+          <Icon
+            name={tool.state === 'done' ? 'check' : 'x'}
+            size={15}
+            color={tool.state === 'done' ? palette.moss : palette.brick}
+          />
+        )}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <AppText style={{ fontFamily: fonts.mono, fontSize: 12, lineHeight: 18 }} selectable>
+          <AppText style={{ fontFamily: fonts.mono, fontSize: 12, color: palette.faint }}>{tool.name} </AppText>
+          {tool.target ?? ''}
+        </AppText>
+        {tool.output ? (
+          <View
+            style={{
+              marginTop: 4,
+              paddingVertical: 7,
+              paddingHorizontal: 10,
+              borderRadius: 8,
+              backgroundColor: palette.surface,
+            }}
+          >
+            <AppText
+              selectable
+              style={{ fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 17, color: palette.muted }}
+            >
+              {tool.output}
+            </AppText>
+          </View>
+        ) : null}
+        <ToolImages tool={tool} />
+      </View>
+    </View>
+  )
+}
+
+/** Reasoning or something the agent said on its way, in the activity's details. */
+function TextStep({ icon, text }: { icon: 'brain' | 'message'; text: string }) {
+  const { palette } = useTheme()
+  return (
+    <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View style={{ width: 16, paddingTop: 2 }}>
+        <Icon name={icon} size={15} color={palette.faint} />
+      </View>
+      <AppText variant="sub" tone="muted" selectable style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20 }}>
+        {text}
+      </AppText>
+    </View>
+  )
+}
+
+/**
+ * What the agent did in a turn, folded into one line as on the desktop: what it is doing while it works, then what
+ * it did. Opening it lists its tools, reasoning and what it said on the way, in order.
+ */
+export const ToolGroup = memo(function ToolGroup({
+  steps,
+  expanded = false,
+}: {
+  steps: ActivityStep[]
+  /** Opens the details, such as while a search shows a match inside them. */
+  expanded?: boolean
+}) {
   const { palette } = useTheme()
   const { t, plural } = useI18n()
-  const [open, setOpen] = useState(false)
+  const [toggled, setOpen] = useState(false)
+  const open = toggled || expanded
+  const tools = activityTools(steps)
   const running = tools.find((tool) => tool.state === 'running') ?? null
+  const lastStep = steps.at(-1)
+  const reasoning = !running && lastStep?.kind === 'reasoning' && lastStep.item.streaming
   const now = useNow(running !== null)
   const failed = tools.filter((tool) => tool.state === 'error').length
   const stopped = tools.some((tool) => tool.state === 'interrupted')
   const headline = running ? toolHeadline(running, t) : null
-  const summary = toolSummary(tools, plural)
+  const summary = tools.length ? toolSummary(tools, plural) : t('reasoning.collapsed')
   const extras = [failed ? t('tool.failed', { count: failed }) : null, stopped ? t('tool.stopped') : null].filter(
     Boolean
   )
@@ -49,7 +122,11 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
         accessibilityRole="button"
         aria-expanded={open}
         accessibilityLabel={t('tool.toggle', {
-          summary: headline ? `${headline.verb} ${headline.target ?? ''}`.trim() : [summary, ...extras].join(', '),
+          summary: headline
+            ? `${headline.verb} ${headline.target ?? ''}`.trim()
+            : reasoning
+              ? t('reasoning.live')
+              : [summary, ...extras].join(', '),
         })}
         onPress={() => setOpen((value) => !value)}
         hitSlop={{ top: 6, bottom: 6 }}
@@ -73,9 +150,16 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
               {formatElapsed(now - Date.parse(running?.at ?? ''))}
             </AppText>
           </>
+        ) : reasoning ? (
+          <>
+            <ActivityIndicator size="small" color={palette.muted} />
+            <AppText variant="sub" tone="muted" style={{ fontSize: 14 }}>
+              {t('reasoning.live')}
+            </AppText>
+          </>
         ) : (
           <>
-            <Icon name="tools" size={16} color={palette.muted} />
+            <Icon name={tools.length ? 'tools' : 'brain'} size={16} color={palette.muted} />
             <AppText variant="sub" tone="muted" numberOfLines={1} style={{ fontSize: 14, flexShrink: 1 }}>
               {summary}
               {extras.length ? (
@@ -91,7 +175,7 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
       {open ? (
         <View
           style={{
-            gap: 8,
+            gap: 10,
             marginTop: 6,
             marginLeft: 6,
             paddingLeft: 13,
@@ -99,46 +183,17 @@ export const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolItem[] 
             borderLeftColor: palette.line,
           }}
         >
-          {tools.map((tool) => (
-            <View key={tool.id} style={{ flexDirection: 'row', gap: 8 }}>
-              <View style={{ width: 16, paddingTop: 2 }}>
-                {tool.state === 'running' ? (
-                  <ActivityIndicator size="small" color={palette.muted} />
-                ) : (
-                  <Icon
-                    name={tool.state === 'done' ? 'check' : 'x'}
-                    size={15}
-                    color={tool.state === 'done' ? palette.moss : palette.brick}
-                  />
-                )}
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <AppText style={{ fontFamily: fonts.mono, fontSize: 12, lineHeight: 18 }} selectable>
-                  <AppText style={{ fontFamily: fonts.mono, fontSize: 12, color: palette.faint }}>{tool.name} </AppText>
-                  {tool.target ?? ''}
-                </AppText>
-                {tool.output ? (
-                  <View
-                    style={{
-                      marginTop: 4,
-                      paddingVertical: 7,
-                      paddingHorizontal: 10,
-                      borderRadius: 8,
-                      backgroundColor: palette.surface,
-                    }}
-                  >
-                    <AppText
-                      selectable
-                      style={{ fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 17, color: palette.muted }}
-                    >
-                      {tool.output}
-                    </AppText>
-                  </View>
-                ) : null}
-                <ToolImages tool={tool} />
-              </View>
-            </View>
-          ))}
+          {steps.map((step) =>
+            step.kind === 'tool' ? (
+              <ToolStep key={step.tool.id} tool={step.tool} />
+            ) : (
+              <TextStep
+                key={step.item.id}
+                icon={step.kind === 'reasoning' ? 'brain' : 'message'}
+                text={step.kind === 'reasoning' && step.item.truncated ? `${step.item.text}…` : step.item.text}
+              />
+            )
+          )}
         </View>
       ) : (
         shared.map((tool) => <ToolImages key={tool.id} tool={tool} />)

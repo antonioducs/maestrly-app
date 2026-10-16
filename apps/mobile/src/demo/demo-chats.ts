@@ -522,6 +522,28 @@ export function createDemoChatsSource(
     return { status: 'started' }
   }
 
+  /** As a host does: only the last message, while no turn runs; everything from it on is replaced. */
+  function edit(args: MobileArgs<'edit'>): null {
+    const chat = requireChat(args.conversationId)
+    if (chat.streaming || chat.compacting) throw new MobileBridgeError('busy', 'busy')
+    const at = chat.items.findIndex((item) => item.id === args.itemId)
+    let last = chat.items.length - 1
+    while (last >= 0 && chat.items[last].kind !== 'user') last--
+    const item = chat.items[at]
+    if (at < 0 || at !== last || item?.kind !== 'user') throw new MobileBridgeError('not-editable', 'not-editable')
+    chat.items = [...chat.items.slice(0, at), { ...item, text: args.text, at: stamp() }]
+    const workspace = chat.conversation.workspaceName
+    void run(
+      chat,
+      workspace
+        ? workspaceReply(workspace, chat.setup.mode, chat.conversation.experience, args.text)
+        : chatReply(args.text, modelLabel(chat.setup))
+    )
+    // As a host does, once the new turn runs: the phone reloads a chat that is already working.
+    emit('reset', { conversationId: chat.conversation.id })
+    return null
+  }
+
   function resolvePermission(chat: Chat, requestId: string, reply: 'once' | 'always' | 'reject') {
     const pending = chat.pending.get(requestId)
     if (pending?.kind !== 'permission') return
@@ -583,6 +605,8 @@ export function createDemoChatsSource(
         return page(chat(), String(a.before))
       case 'send':
         return send(args as MobileArgs<'send'>)
+      case 'edit':
+        return edit(args as MobileArgs<'edit'>)
       case 'stop': {
         const current = chat()
         if (current.streaming) cancel(current)

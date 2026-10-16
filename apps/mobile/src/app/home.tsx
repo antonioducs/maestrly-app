@@ -1,4 +1,4 @@
-import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { FLEET_MESSAGE_EDIT_FEATURE, type FleetBot, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { Redirect } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, type TextInput, View } from 'react-native'
@@ -10,6 +10,8 @@ import { DEMO_SERVER } from '../demo/demo-source'
 import { useFleet, useFleetController } from '../fleet/react'
 import { isComposerLocked } from '../fleet/selectors'
 import type { FleetState } from '../fleet/state'
+import { editableItemId } from '../fleet/transcript-search'
+import { GatewayError } from '../gateway/client'
 import { useI18n } from '../i18n'
 import { useServers, type Current } from '../servers/ServersProvider'
 import { useTheme } from '../theme/ThemeProvider'
@@ -20,6 +22,7 @@ import { LockedNotice } from '../ui/composer/LockedNotice'
 import { ConnectionBanner } from '../ui/ConnectionBanner'
 import { BotTitle, ChatTitle, ConversationHeader, NewChatTitle } from '../ui/conversation/ConversationHeader'
 import { ConversationContext, type ConversationContextValue } from '../ui/conversation/CueCard'
+import { ConversationSearchContext } from '../ui/conversation/ConversationSearch'
 import { Transcript } from '../ui/conversation/Transcript'
 import { Drawer } from '../ui/drawer/Drawer'
 import { DrawerPanel } from '../ui/drawer/DrawerPanel'
@@ -27,6 +30,7 @@ import { Icon } from '../ui/icons'
 import { AppText } from '../ui/primitives/Text'
 
 const selectOnline = (state: FleetState) => state.connection === 'open'
+const selectEditFeature = (state: FleetState) => state.features.includes(FLEET_MESSAGE_EDIT_FEATURE)
 
 function EmptyState({ chats }: { chats: boolean }) {
   const { palette } = useTheme()
@@ -65,6 +69,23 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   )
   const input = useRef<TextInput>(null)
   const focusComposer = useCallback(() => input.current?.focus(), [])
+  const { t } = useI18n()
+  const serverEdits = useFleet(selectEditFeature)
+  const items = useFleet(useCallback((state: FleetState) => state.transcripts[bot.id]?.items ?? null, [bot.id]))
+  const queued = useFleet(
+    useCallback((state: FleetState) => state.outbox.some((entry) => entry.botId === bot.id), [bot.id])
+  )
+  // As on a computer: the owner's last message, while the bot is idle with nothing waiting to be sent.
+  const editableId =
+    serverEdits && bot.capabilities.includes(FLEET_MESSAGE_EDIT_FEATURE) && bot.status === 'idle' && !queued
+      ? editableItemId(items ?? [], 'bot')
+      : null
+  const [editing, setEditing] = useState<{ itemId: string; text: string } | null>(null)
+  const startEdit = useCallback((itemId: string, text: string) => setEditing({ itemId, text }), [])
+  const edit = useMemo(
+    () => (editableId ? { itemId: editableId, start: startEdit } : undefined),
+    [editableId, startEdit]
+  )
   const context = useMemo<ConversationContextValue>(
     () => ({
       bot,
@@ -85,8 +106,9 @@ function BotConversation({ bot }: { bot: FleetBot }) {
         source: (fileId) => controller.source.fileSource(bot.id, fileId),
         check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
       },
+      ...(edit ? { edit } : {}),
     }),
-    [bot, online, focusComposer, inbox, controller, active?.id]
+    [bot, online, focusComposer, inbox, controller, active?.id, edit]
   )
 
   useEffect(() => {
@@ -97,7 +119,32 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   return (
     <ConversationContext.Provider value={context}>
       <Transcript bot={bot} />
-      {isComposerLocked(bot) ? <LockedNotice bot={bot} /> : <Composer key={bot.id} bot={bot} inputRef={input} />}
+      {isComposerLocked(bot) ? (
+        <LockedNotice bot={bot} />
+      ) : (
+        <Composer
+          key={bot.id}
+          bot={bot}
+          inputRef={input}
+          editing={editing}
+          onCancelEdit={() => setEditing(null)}
+          onEdit={async (text) => {
+            if (!editing) return
+            try {
+              await controller.edit(bot.id, editing.itemId, text)
+            } catch (cause) {
+              throw new Error(
+                cause instanceof GatewayError && cause.code === 'PROTOCOL_INCOMPATIBLE'
+                  ? t('edit.error.outdated')
+                  : cause instanceof GatewayError && cause.status === 409
+                    ? t('edit.error.busy')
+                    : t('edit.error.failed')
+              )
+            }
+            setEditing(null)
+          }}
+        />
+      )}
     </ConversationContext.Provider>
   )
 }
@@ -107,6 +154,11 @@ function HomeScreen() {
   const { t } = useI18n()
   const { active, current, setCurrent } = useServers()
   const [open, setOpen] = useState(!current)
+  const [searching, setSearching] = useState(false)
+  const search = useMemo(() => ({ open: searching, setOpen: setSearching }), [searching])
+  const currentKey = current ? `${current.kind}:${current.kind === 'new' ? current.workspaceId : current.id}` : ''
+  // Each conversation opens without a search.
+  useEffect(() => setSearching(false), [currentKey])
   const hosted = useChats(useCallback((state: ChatsState) => state.hosted, []))
   const waitingBots = useFleet(
     useCallback((state: FleetState) => new Set(state.inbox.map((item) => item.botId)).size, [])
@@ -197,9 +249,12 @@ function HomeScreen() {
           waiting={waitingBots + waitingChatCount}
           onOpenMenu={() => setOpen(true)}
           onNewChat={newChat}
+          onSearch={
+            (current?.kind === 'bot' && bot) || current?.kind === 'chat' ? () => setSearching((value) => !value) : null
+          }
         />
         <ConnectionBanner />
-        {body}
+        <ConversationSearchContext.Provider value={search}>{body}</ConversationSearchContext.Provider>
       </KeyboardAvoidingView>
     </Drawer>
   )

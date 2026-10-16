@@ -5,6 +5,7 @@ export const ICON_PATHS = {
     '<path d="M12 3.5H6a2.5 2.5 0 0 0-2.5 2.5v12A2.5 2.5 0 0 0 6 20.5h12a2.5 2.5 0 0 0 2.5-2.5v-6"/><path d="M18.4 2.8a2 2 0 0 1 2.8 2.8L12.5 14.3l-3.8 1 1-3.8Z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
   'chev-down': '<path d="m6 9 6 6 6-6"/>',
+  'chev-up': '<path d="m6 15 6-6 6 6"/>',
   'chev-right': '<path d="m9 6 6 6-6 6"/>',
   'chev-left': '<path d="m15 6-6 6 6 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',

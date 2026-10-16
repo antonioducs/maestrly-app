@@ -119,12 +119,15 @@ export function ConversationHeader({
   waiting,
   onOpenMenu,
   onNewChat,
+  onSearch = null,
 }: {
   title: ReactNode
   waiting: number
   onOpenMenu: () => void
   /** Null when the server has no chats. */
   onNewChat: (() => void) | null
+  /** Opens or closes the search of the conversation shown; null when none is. */
+  onSearch?: (() => void) | null
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -149,10 +152,13 @@ export function ConversationHeader({
           ) : null
         }
       />
+      {/* Keeps the title centered when the right side holds two buttons. */}
+      {onSearch && onNewChat ? <View style={{ width: 44 }} /> : null}
       <View style={{ flex: 1, alignItems: 'center', minWidth: 0 }}>{title}</View>
+      {onSearch ? <IconButton icon="search" label={t('search.open')} onPress={onSearch} /> : null}
       {onNewChat ? (
         <IconButton icon="compose" label={t('chat.newChat')} onPress={onNewChat} />
-      ) : (
+      ) : onSearch ? null : (
         <View style={{ width: 44 }} />
       )}
     </View>

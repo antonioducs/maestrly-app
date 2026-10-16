@@ -1,7 +1,8 @@
 import type { MobileChatItem } from '@maestrly/bot-fleet-protocol'
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, Pressable, View } from 'react-native'
 import { transcriptRows, type TranscriptRow } from '../../fleet/transcript-rows'
+import { searchRows } from '../../fleet/transcript-search'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { Icon } from '../icons'
@@ -10,6 +11,7 @@ import { useReducedMotion } from '../useReducedMotion'
 import { ArtifactCard } from './ArtifactCard'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { BotFiles } from './BotFiles'
+import { ConversationSearchBar, useConversationSearch } from './ConversationSearch'
 import { DispatchCard } from './DispatchCard'
 import { HelpCard } from './HelpCard'
 import { PermissionCard } from './PermissionCard'
@@ -28,12 +30,12 @@ type Row = TranscriptRow | { kind: 'extra'; row: ExtraRow }
 const rowKey = (row: Row) =>
   row.kind === 'item' ? row.item.id : row.kind === 'extra' ? `extra:${row.row.key}` : `${row.kind}:${row.id}`
 
-function RowView({ row }: { row: Row }) {
+function RowView({ row, found }: { row: Row; found: boolean }) {
   switch (row.kind) {
     case 'extra':
       return <>{row.row.node}</>
-    case 'tools':
-      return <ToolGroup tools={row.tools} />
+    case 'activity':
+      return <ToolGroup steps={row.steps} expanded={found} />
     case 'todos':
       return <TodoCard todos={row.todos} />
     case 'artifact':
@@ -56,7 +58,7 @@ function RowView({ row }: { row: Row }) {
         case 'help':
           return <HelpCard item={item} />
         case 'tool':
-          return <ToolGroup tools={[item]} />
+          return <ToolGroup steps={[{ kind: 'tool', tool: item }]} />
         case 'dispatch':
           return <DispatchCard item={item} />
         default:
@@ -78,6 +80,7 @@ export function ConversationList({
   thinking,
   emptyText,
   onLoadOlder,
+  hasOlder = false,
   top,
 }: {
   items: MobileChatItem[]
@@ -87,6 +90,8 @@ export function ConversationList({
   thinking: boolean
   emptyText: string
   onLoadOlder: () => void
+  /** Older pages wait to be loaded. */
+  hasOlder?: boolean
   top?: ReactNode
 }) {
   const { palette } = useTheme()
@@ -102,15 +107,75 @@ export function ConversationList({
     return rows.reverse()
   }, [items, extras])
 
+  const search = useConversationSearch()
+  const [query, setQuery] = useState('')
+  const [cursor, setCursor] = useState(0)
+  // Set when going past the oldest match loaded: the next page that brings matches moves on to the first of them.
+  const [awaitingOlder, setAwaitingOlder] = useState<number | null>(null)
+  const matches = useMemo(
+    () =>
+      search.open
+        ? searchRows(
+            data.map((row) => (row.kind === 'extra' ? null : row)),
+            query
+          )
+        : [],
+    [search.open, data, query]
+  )
+  const current = matches.length ? (matches[Math.min(cursor, matches.length - 1)] ?? null) : null
+  useEffect(() => {
+    if (!search.open) {
+      setQuery('')
+      setCursor(0)
+      setAwaitingOlder(null)
+    }
+  }, [search.open])
+  useEffect(() => {
+    if (awaitingOlder === null) return
+    if (matches.length > awaitingOlder) {
+      setCursor(awaitingOlder)
+      setAwaitingOlder(null)
+    } else if (!loadingOlder && !hasOlder) setAwaitingOlder(null)
+  }, [awaitingOlder, matches.length, loadingOlder, hasOlder])
+  useEffect(() => {
+    if (current === null) return
+    list.current?.scrollToIndex({ index: current, viewPosition: 0.5, animated: !reduced })
+  }, [current, reduced])
+  const older = () => {
+    if (cursor < matches.length - 1) return setCursor(cursor + 1)
+    if (!hasOlder) return
+    setAwaitingOlder(matches.length)
+    onLoadOlder()
+  }
+  const searchBar = search.open ? (
+    <ConversationSearchBar
+      query={query}
+      onQuery={(value) => {
+        setQuery(value)
+        setCursor(0)
+        setAwaitingOlder(null)
+      }}
+      position={current === null ? null : Math.min(cursor, matches.length - 1)}
+      count={matches.length}
+      more={hasOlder}
+      loading={awaitingOlder !== null && loadingOlder}
+      onOlder={older}
+      onNewer={() => setCursor((value) => Math.max(0, value - 1))}
+      onClose={() => search.setOpen(false)}
+    />
+  ) : null
+
   if (!loaded)
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        {searchBar ? <View style={{ position: 'absolute', top: 0, left: 0, right: 0 }}>{searchBar}</View> : null}
         <ActivityIndicator color={palette.muted} accessibilityLabel={t('common.loading')} />
       </View>
     )
   if (data.length === 0 && !top && !thinking)
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+        {searchBar ? <View style={{ position: 'absolute', top: 0, left: 0, right: 0 }}>{searchBar}</View> : null}
         <AppText tone="muted" style={{ textAlign: 'center' }}>
           {emptyText}
         </AppText>
@@ -118,6 +183,7 @@ export function ConversationList({
     )
   return (
     <View style={{ flex: 1 }}>
+      {searchBar}
       <FlatList
         ref={list}
         inverted
@@ -131,7 +197,32 @@ export function ConversationList({
         }}
         scrollEventThrottle={64}
         keyExtractor={rowKey}
-        renderItem={({ item }) => <RowView row={item} />}
+        extraData={current}
+        renderItem={({ item, index }) =>
+          index === current ? (
+            <View
+              style={{
+                marginHorizontal: -10,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 14,
+                backgroundColor: palette.cueSoft,
+              }}
+            >
+              <RowView row={item} found />
+            </View>
+          ) : (
+            <RowView row={item} found={false} />
+          )
+        }
+        onScrollToIndexFailed={(info) => {
+          // Rows not drawn yet have no height: get near first, then aim again once they are.
+          list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false })
+          setTimeout(
+            () => list.current?.scrollToIndex({ index: info.index, viewPosition: 0.5, animated: !reduced }),
+            120
+          )
+        }}
         ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
         contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 10 }}
         keyboardDismissMode="interactive"

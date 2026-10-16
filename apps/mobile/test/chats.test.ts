@@ -493,6 +493,44 @@ describe('demo chats', () => {
     connection.close()
   })
 
+  it('edits the last message once the turn ends, and reloads the chat from it', async () => {
+    const source = createDemoChatsSource({ stepMs: 1 })
+    const events: MobileEvent[] = []
+    const connection = source.connect({ onEvent: (event) => events.push(event), onState: () => {}, onReady: () => {} })
+    const created = await connection.invoke('create', { workspaceId: null })
+    const send = (body: string, clientId: string) =>
+      connection.invoke('send', { conversationId: created.id, text: body, attachments: [], clientId })
+    await send('First', '550e8400-e29b-41d4-a716-446655440010')
+    await vi.waitFor(async () =>
+      expect((await connection.invoke('open', { conversationId: created.id })).runtime.streaming).toBe(false)
+    )
+    const opened = await connection.invoke('open', { conversationId: created.id })
+    const first = opened.page.items.find((item) => item.kind === 'user')
+    await send('Second', '550e8400-e29b-41d4-a716-446655440011')
+    await expect(
+      connection.invoke('edit', { conversationId: created.id, itemId: first?.id ?? '', text: 'x' })
+    ).rejects.toMatchObject({ code: 'busy' })
+    await vi.waitFor(async () =>
+      expect((await connection.invoke('open', { conversationId: created.id })).runtime.streaming).toBe(false)
+    )
+    await expect(
+      connection.invoke('edit', { conversationId: created.id, itemId: first?.id ?? '', text: 'x' })
+    ).rejects.toMatchObject({ code: 'not-editable' })
+    const page = (await connection.invoke('open', { conversationId: created.id })).page.items
+    const last = page.filter((item) => item.kind === 'user').at(-1)
+    events.length = 0
+    expect(
+      await connection.invoke('edit', { conversationId: created.id, itemId: last?.id ?? '', text: 'Second, edited' })
+    ).toBeNull()
+    expect(events.some((event) => event.key === 'reset')).toBe(true)
+    const after = (await connection.invoke('open', { conversationId: created.id })).page.items
+    expect(after.filter((item) => item.kind === 'user').map((item) => item.kind === 'user' && item.text)).toEqual([
+      'First',
+      'Second, edited',
+    ])
+    connection.close()
+  })
+
   it('plans in Plan mode and builds once approved, asking before it pushes', async () => {
     const source = createDemoChatsSource({ stepMs: 1 })
     const events: MobileEvent[] = []

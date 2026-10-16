@@ -46,9 +46,9 @@ describe('artifacts', () => {
     expect(artifactPublication(tool('artifact_create', { output: bad }))).toBeNull()
   })
 
-  it('shows a publication as its own card between tool groups', () => {
+  it('shows a publication as its own card, outside the activity', () => {
     const rows = transcriptRows([tool('bash'), tool('artifact_create'), tool('read')])
-    expect(rows.map((row) => row.kind)).toEqual(['tools', 'artifact', 'tools'])
+    expect(rows.map((row) => row.kind)).toEqual(['artifact', 'activity'])
   })
 
   it('opens the viewer at the server public HTTPS address, or on loopback in development', () => {

@@ -121,6 +121,7 @@ function setup() {
   handle('plan:get', () => null)
   handle('conversation-dispatch:status', () => ({ sourceConversationId: 'c9' }))
   handle('chat:send', () => state.send)
+  handle('chat:resend', () => state.send)
   handle('chat:stop', () => undefined, 'send')
   handle('chat:permission-respond', () => undefined, 'send')
   handle('chat:question-respond', () => undefined, 'send')
@@ -419,6 +420,24 @@ describe('mobile API of a workspaces host', () => {
     await expect(
       h.invoke('mobile:v1:conversation:send', { ...message, clientId: '550e8400-e29b-41d4-a716-446655440001' })
     ).rejects.toMatchObject({ code: 'busy' })
+    h.api.dispose()
+  })
+
+  it('edits only the last message while no turn runs, then reloads the phone', async () => {
+    const h = setup()
+    await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })
+    const edit = (itemId: string) =>
+      h.invoke('mobile:v1:conversation:edit', { conversationId: 'c1', itemId, text: 'Run lint' })
+    await expect(edit('m2:1')).rejects.toMatchObject({ code: 'not-editable' })
+    h.state.runtime.streaming = true
+    await expect(edit('m1:0')).rejects.toMatchObject({ code: 'busy' })
+    h.state.runtime.streaming = false
+    h.events.length = 0
+    expect(await edit('m1:0')).toBeNull()
+    expect(h.called('chat:resend')[0][1]).toEqual([{ conversationId: 'c1', fromMessageId: 'm1', text: 'Run lint' }])
+    expect(h.events).toContainEqual(['mobile:v1:reset', { conversationId: 'c1' }])
+    h.state.send = { ok: false, error: 'busy' }
+    await expect(edit('m1:0')).rejects.toMatchObject({ code: 'busy' })
     h.api.dispose()
   })
 
