@@ -7,13 +7,20 @@ import {
 } from '../../../shared/conversation-dispatch'
 import { cn } from '@/lib/utils'
 import { useChatSourceFocus } from '@/lib/chat-window-context'
+import { useHostId } from '@/lib/hosts/host-context'
+import { type HostId, hostKey } from '../../../shared/host-key'
 import { ToolCallCard } from './ToolCallCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
-/** Ask the app shell to focus a conversation (handled in use-main-panels). */
-export function openConversationById(conversationId: string): void {
-  window.dispatchEvent(new CustomEvent('maestrly:open-conversation', { detail: { conversationId } }))
+/**
+ * Ask the app shell to focus a conversation (handled in use-main-panels). Tools report the id on the chat's own host,
+ * while the window knows remote conversations by their host key.
+ */
+export function openConversationById(hostId: HostId, conversationId: string): void {
+  window.dispatchEvent(
+    new CustomEvent('maestrly:open-conversation', { detail: { conversationId: hostKey(hostId, conversationId) } })
+  )
 }
 
 function StatusIcon({ status }: { status: ConversationDispatchItemResult['status'] }) {
@@ -34,6 +41,7 @@ export function ConversationDispatchCard({
 }) {
   const { t } = useTranslation('chat')
   const focusSource = useChatSourceFocus()
+  const hostId = useHostId()
   if (
     part.state.status === 'pending' ||
     part.state.status === 'running' ||
@@ -96,7 +104,7 @@ export function ConversationDispatchCard({
               <button
                 type="button"
                 onClick={() => {
-                  openConversationById(item.conversationId!)
+                  openConversationById(hostId, item.conversationId!)
                   focusSource()
                 }}
                 className="flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] text-primary hover:bg-white/[0.06]"

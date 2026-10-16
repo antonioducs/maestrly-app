@@ -19,7 +19,7 @@ import { GenUiContext, type GenUiHost } from '@/genui/context'
 import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
@@ -85,6 +85,7 @@ function CopyButton({ text }: { text: string }) {
 function PeerMessageOrigin({ peer }: { peer: NonNullable<ChatMessage['peer']> }) {
   const { t } = useTranslation('chat')
   const focusSource = useChatSourceFocus()
+  const hostId = useHostId()
   const key = peer.kind === 'report' ? 'link.reportFrom' : peer.kind === 'result' ? 'link.resultFrom' : 'link.messageFrom'
   const label = t(key, { name: peer.fromConversationName })
   return (
@@ -94,7 +95,7 @@ function PeerMessageOrigin({ peer }: { peer: NonNullable<ChatMessage['peer']> })
       aria-label={label}
       title={label}
       onClick={() => {
-        openConversationById(peer.fromConversationId)
+        openConversationById(hostId, peer.fromConversationId)
         focusSource()
       }}
       className="w-fit rounded border border-violet-400/25 bg-violet-400/[0.08] px-2 py-0.5 text-left text-[10px] text-violet-200 hover:bg-violet-400/[0.16]"

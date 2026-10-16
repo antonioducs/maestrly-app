@@ -25,7 +25,8 @@ import {
 
 /** What the window does to a host's conversations and workspaces; every argument and result is in shell form. */
 export interface HostShellActions {
-  refresh: () => Promise<void>
+  /** Lists the host again; resolves with its workspaces as the window now shows them. */
+  refresh: () => Promise<WorkspaceWithConversations[]>
   toggleArchived: () => void
   acknowledgeConversation: (key: string) => void
   newChat: () => Promise<Conversation>
@@ -197,7 +198,7 @@ export function RemoteHostRuntime({
 
   const actions = useMemo<HostShellActions>(
     () => ({
-      refresh: async () => void (await refresh()),
+      refresh: async () => (await refresh()).map((workspace) => shellWorkspace(hostId, workspace)),
       toggleArchived: () => latest.current.setShowArchived((value) => !value),
       acknowledgeConversation: (key) => agents.acknowledgeConversation(rawId(key)),
       newChat: async () => {

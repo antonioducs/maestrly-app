@@ -85,6 +85,11 @@ describe('plan decision failure in the renderer', () => {
     expect(list).toContain("message.source === 'conversation-dispatch'")
     expect(card).toContain('parseConversationDispatchBatchResult')
     expect(card).toContain("new CustomEvent('maestrly:open-conversation'")
+    // A conversation started by a chat of a workspaces host opens by its host key, listing that host when needed.
+    expect(card).toContain('conversationId: hostKey(hostId, conversationId)')
+    expect(card).toContain('openConversationById(hostId, item.conversationId!)')
+    expect(list).toContain('openConversationById(hostId, peer.fromConversationId)')
+    expect(panels).toContain('refreshHostWorkspaces(owner)')
     expect(panels).toContain("window.addEventListener('maestrly:open-conversation', listener)")
     expect(view).toContain('<ConversationDispatchBanner conversationId={conversationId} />')
     expect(banner).toContain("status?.phase !== 'start-failed'")
