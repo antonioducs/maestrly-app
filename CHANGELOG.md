@@ -7,6 +7,17 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
+- Plugins: install Codex, Claude Code and Agent Plugins plugins from Git in
+  **Settings → Maestrly Chat → Plugins**. Their skills, MCP servers, commands,
+  agents and hooks work the same with every model; plugins that depend on one
+  product, such as ChatGPT app connectors, are counted apart with the reason.
+  Plugins belong to the host: this computer, each workspaces environment of a
+  server, and each bot environment, which can bring one from this computer.
+  See [Plugins](docs/plugins.md).
+- MCP servers that use OAuth can keep several signed-in accounts, each with
+  where it applies; the model names the account in each call. Servers that do
+  not register apps automatically, such as Google's, sign in with your own
+  OAuth client. See [Plugins](docs/plugins.md#several-accounts).
 - See the phones and computers paired with your bot server, and remove one you
   lost, in **Settings → Bot server → Paired devices** on a computer and
   **Settings → Paired devices** in the mobile app. Update the bot server to use
