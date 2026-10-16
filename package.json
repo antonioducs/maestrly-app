@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "npm run dev:desktop",
     "dev:desktop": "npm run build:protocol && npm run build:fleet-protocol && npm run build:artifact-host && npm run dev --workspace @maestrly/desktop",
+    "dev:local": "npm run build:protocol && npm run build:fleet-protocol && npm run build:artifact-host && npm run dev:local --workspace @maestrly/desktop",
     "dev:bot-gateway": "npm run build:fleet-protocol && npm run build:artifact-host && npm run dev --workspace @maestrly/bot-gateway",
     "dev:mobile": "npm run build:fleet-protocol && npm run start --workspace @maestrly/mobile",
     "build": "npm run build:desktop",

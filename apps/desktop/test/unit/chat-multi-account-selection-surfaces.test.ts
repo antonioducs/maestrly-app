@@ -20,10 +20,10 @@ describe('multi-account selection surfaces', () => {
     for (const file of ['ChatView.tsx', 'ChatMessageList.tsx']) {
       expect(source(`src/renderer/components/chat/${file}`)).toContain('subscriptionExhaustionMessageKey')
     }
-    const settings = source('src/renderer/components/chat/ApiKeySettings.tsx')
-    expect(settings).toContain('subscriptionFailover.supportedKinds')
-    expect(settings).toContain('showSubscriptionFailover')
-    expect(settings).not.toContain('showCodexFailover')
+    const accounts = source('src/renderer/components/chat/accounts/AccountsSettingsPanel.tsx')
+    expect(accounts).toContain('subscriptionFailover.supportedKinds')
+    expect(accounts).toContain('showSubscriptionFailover')
+    expect(accounts).not.toContain('showCodexFailover')
     expect(source('src/renderer/components/chat/ChatView.tsx')).toContain('labelForSubscriptionProvider')
   })
 
