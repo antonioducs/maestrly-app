@@ -12,7 +12,7 @@ import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import { requestMainNavigation } from './main-navigation'
 import type { SettingsSection } from '@/components/settings/nav'
 import { hostApi } from '@/lib/hosts/host-context'
-import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
+import { type HostId, LOCAL_HOST_ID, parseHostKey } from '../../shared/host-key'
 import { memoryKeyFor, memoryTargetOf, type OpenMemoryRequest, personalMemoryKey } from './memory-target'
 import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
 
@@ -34,6 +34,8 @@ type UseMainPanelsParams = {
   workspaces: WorkspaceWithConversations[]
   setActive: Dispatch<SetStateAction<Conversation | null>>
   refreshWorkspaces: () => Promise<WorkspaceWithConversations[]>
+  /** Lists a host again, in shell form; a link to a conversation another host just created looks for it there. */
+  refreshHostWorkspaces?: (hostId: HostId) => Promise<WorkspaceWithConversations[]>
   hostId?: HostId
 }
 
@@ -42,6 +44,7 @@ export function useMainPanels({
   standaloneConversations,
   setActive,
   refreshWorkspaces,
+  refreshHostWorkspaces,
   hostId = LOCAL_HOST_ID,
 }: UseMainPanelsParams) {
   const api = hostApi(hostId)
@@ -91,11 +94,16 @@ export function useMainPanels({
       if (!conversationId) return
       const find = (items: WorkspaceWithConversations[]) =>
         items.flatMap((item) => item.conversations).find((conversation) => conversation.id === conversationId)
+      const owner = parseHostKey(conversationId).hostId
+      const relist = () =>
+        owner === LOCAL_HOST_ID || !refreshHostWorkspaces ? refreshWorkspaces() : refreshHostWorkspaces(owner)
       const conversation =
         standaloneConversations.find((item) => item.id === conversationId) ??
         find(workspaces) ??
-        find(await refreshWorkspaces())
+        find(await relist())
       if (!conversation) return
+      setFleetView(null)
+      setCreateBot(false)
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
       setSettingsOpen(false)
@@ -106,7 +114,7 @@ export function useMainPanels({
     const listener = (event: Event) => void open(event)
     window.addEventListener('maestrly:open-conversation', listener)
     return () => window.removeEventListener('maestrly:open-conversation', listener)
-  }, [refreshWorkspaces, setActive, workspaces, standaloneConversations])
+  }, [refreshWorkspaces, refreshHostWorkspaces, setActive, workspaces, standaloneConversations])
 
   /** Shows the personal memory of another host in the open memory center. */
   const showPersonalMemoryOf = useCallback((memoryHostId: HostId) => {

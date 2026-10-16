@@ -285,11 +285,17 @@ export function DesktopApp() {
     () => [...standaloneConversations, ...Object.values(remote).flatMap((shell) => shell.standaloneConversations)],
     [standaloneConversations, remote]
   )
+  const refreshHostWorkspaces = useCallback(
+    async (hostId: HostId) =>
+      hostId === LOCAL_HOST_ID ? refreshWorkspaces() : ((await remoteRef.current[hostId]?.actions.refresh()) ?? []),
+    [refreshWorkspaces]
+  )
   const nav = useMainPanels({
     workspaces: everyHostWorkspaces,
     standaloneConversations: everyHostChats,
     setActive,
     refreshWorkspaces,
+    refreshHostWorkspaces,
   })
   const fleet = useFleet()
   const botUpdates = useBotUpdates(fleet)
