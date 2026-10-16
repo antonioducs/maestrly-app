@@ -30,6 +30,9 @@ User-visible changes by version. Downloads are on
   their Back and Done buttons, and the chat setup screen opens at its title.
 - The mobile app offers a button back to the latest message once a conversation
   is scrolled away from it, and sending a message puts the keyboard away.
+- Closing a browser tab or conversation shortly after an agent navigated or
+  reloaded its browser no longer shows an "Object has been destroyed" error
+  dialog.
 
 ## [0.19.0] - 2026-10-15
 
