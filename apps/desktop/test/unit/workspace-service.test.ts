@@ -88,6 +88,10 @@ vi.mock('../../src/main/process-ownership/conversation-processes', () => ({
   stopConversationProcesses: vi.fn(async () => ({ ok: true, terminalsExited: true, survivors: [] })),
 }))
 
+vi.mock('../../src/main/chat/conversation-temp', () => ({
+  removeConversationTempDir: vi.fn(async () => undefined),
+}))
+
 import * as git from '../../src/main/git-service'
 import * as store from '../../src/main/store'
 import * as codexLifecycle from '../../src/main/chat/codex-subscription/lifecycle'
@@ -98,6 +102,7 @@ import * as attachmentArtifacts from '../../src/main/chat/attachment-artifacts'
 import * as memoryIndex from '../../src/main/memory/index'
 import * as aggregator from '../../src/main/aggregator-service'
 import { stopConversationProcesses } from '../../src/main/process-ownership/conversation-processes'
+import { removeConversationTempDir } from '../../src/main/chat/conversation-temp'
 import {
   addWorkspace,
   createConversation,
@@ -429,11 +434,20 @@ describe('workspace-service deleteConversation', () => {
 
   it.each([
     ['an exclusive worktree', { mode: 'worktree', isMulti: 0, cwd: '/worktrees/feature', branch: 'feature' }, {}],
-    ['a borrowed worktree', { mode: 'worktree', isMulti: 0, cwd: '/worktrees/feature', branch: 'f' }, { preserveWorktree: true }],
+    [
+      'a borrowed worktree',
+      { mode: 'worktree', isMulti: 0, cwd: '/worktrees/feature', branch: 'f' },
+      { preserveWorktree: true },
+    ],
     ['a local checkout', { mode: 'local', isMulti: 0, cwd: '/repo', branch: 'main' }, {}],
     ['a multi-repository', { mode: 'worktree', isMulti: 1, repos: [{ path: '/repo' }], cwd: '/agg', branch: 'm' }, {}],
   ])('ends what %s conversation left running before anything of it is removed', async (_kind, conv, options) => {
-    vi.mocked(store.getConversation).mockReturnValue({ id: 'c-proc', scope: 'project', workspaceId: 'ws-1', ...conv } as never)
+    vi.mocked(store.getConversation).mockReturnValue({
+      id: 'c-proc',
+      scope: 'project',
+      workspaceId: 'ws-1',
+      ...conv,
+    } as never)
 
     await deleteConversation('c-proc', options)
 
@@ -447,6 +461,9 @@ describe('workspace-service deleteConversation', () => {
     ]) {
       for (const order of removal.mock.invocationCallOrder) expect(stoppedAt).toBeLessThan(order)
     }
+    // Its temporary directory goes in every case, a borrowed checkout included, once its processes are gone.
+    expect(removeConversationTempDir).toHaveBeenCalledWith('c-proc')
+    expect(stoppedAt).toBeLessThan(vi.mocked(removeConversationTempDir).mock.invocationCallOrder[0])
   })
 
   it('keeps a shared worktree while sibling conversations use the same directory', async () => {
@@ -502,6 +519,7 @@ describe('standalone lifecycle', () => {
     expect(git.removeWorktree).not.toHaveBeenCalled()
     expect(git.deleteBranch).not.toHaveBeenCalled()
     expect(attachmentArtifacts.deleteConversationAttachmentImages).toHaveBeenCalledWith('standalone')
+    expect(removeConversationTempDir).toHaveBeenCalledWith('standalone')
   })
   it('preserves the row and permissions when directory cleanup fails', async () => {
     lifecycle.removeDirectory.mockRejectedValueOnce(new Error('unsafe directory'))
@@ -514,7 +532,8 @@ describe('standalone lifecycle', () => {
     await expect(deleteConversation('standalone')).rejects.toThrow('provider failed')
     expect(lifecycle.removeDirectory).not.toHaveBeenCalled()
     expect(store.deleteConversation).not.toHaveBeenCalled()
-    // Attachments stay while the conversation survives, so a retry still finds them.
+    // Attachments and the temporary directory stay while the conversation survives, so a retry still finds them.
     expect(attachmentArtifacts.deleteConversationAttachmentImages).not.toHaveBeenCalled()
+    expect(removeConversationTempDir).not.toHaveBeenCalled()
   })
 })

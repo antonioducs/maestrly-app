@@ -412,6 +412,20 @@ the background processes of `bash` commands. Commands that Codex
 runs with its own shell, in Agent mode with full access, are not followed
 either, because its runtime is shared by every conversation of the account.
 
+## Temporary files of a conversation
+
+Each conversation's terminals, `bash` commands, Claude queries and Codex
+commands run with `TMPDIR`, `TMP` and `TEMP` set to a directory of that
+conversation, so what its tools and tests write to the temporary folder is
+removed when the conversation is deleted. Archiving keeps it. The directories
+sit in a private folder of the profile under the system's temporary folder
+(`maestrly-<uid>-<id>` on macOS and Linux, `maestrly-<id>` on Windows), or under
+`/tmp` when that path would be too long for the sockets programs create there.
+At startup Maestrly removes the directories of conversations that no longer
+exist. Programs that write to `/tmp` directly, ignoring `TMPDIR`, are not
+covered, and the folder is not used when it is not a private directory of the
+current user.
+
 ## Upgrades and reset
 
 SQLite upgrades are forward-only and transactional. If an upgrade fails, close

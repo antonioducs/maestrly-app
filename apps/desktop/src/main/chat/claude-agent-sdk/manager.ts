@@ -30,7 +30,7 @@ import {
   isClaudeOAuthRefreshContention,
 } from './errors'
 import { claudeSubscriptionRuntimeEnvironment } from './runtime-env'
-import { allowedConversationShellEnv, type ConversationShellEnv } from '../conversation-env'
+import { allowedConversationProcessEnv, type ConversationProcessEnv } from '../conversation-env'
 import {
   claudeModelPickerSnapshot,
   claudeRemoteCatalogSnapshot,
@@ -1042,7 +1042,7 @@ export class ClaudeSubscriptionManager {
 
   createQuery(
     params: { prompt: string | AsyncIterable<SDKUserMessage>; options?: ClaudeQueryOptions },
-    runtimeOptions: { allowUsageTraffic?: boolean; shellEnvironment?: ConversationShellEnv } = {}
+    runtimeOptions: { allowUsageTraffic?: boolean; shellEnvironment?: ConversationProcessEnv } = {}
   ): Query {
     if (this.disposed) {
       throw new ClaudeSubscriptionError('claude-runtime-failed', 'Claude provider has been disposed.')
@@ -1062,9 +1062,10 @@ export class ClaudeSubscriptionManager {
     // `/usage` endpoint as nonessential traffic; allowing only this probe keeps all normal turns
     // under the runtime's restrictive policy.
     if (runtimeOptions.allowUsageTraffic) delete environment.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-    // The manager is shared by every conversation of the account, so a bot's display, session bus and browser
-    // arrive per query. Only those keys pass; they can never replace credentials, the profile or runtime flags.
-    Object.assign(environment, allowedConversationShellEnv(runtimeOptions.shellEnvironment))
+    // The manager is shared by every conversation of the account, so a bot's display, session bus and browser, and
+    // the conversation's temporary directory, arrive per query. Only those keys pass; they can never replace
+    // credentials, the profile or runtime flags.
+    Object.assign(environment, allowedConversationProcessEnv(runtimeOptions.shellEnvironment))
     const modelPicker = claudeModelPickerSnapshot()
     const incomingSettings = params.options?.settings
     // All internal paths use inline settings. External paths stay intact because merging JSON would require

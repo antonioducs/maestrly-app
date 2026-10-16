@@ -34,6 +34,7 @@ import { resolvePreload } from './resolve-preload'
 import { ChatWindowManager, registerChatWindowIpc } from './chat-window-manager'
 import { killAllPtys } from './pty-manager'
 import { stopAllConversationProcesses, stopConversationProcesses } from './process-ownership/conversation-processes'
+import { conversationTempEntryName, initConversationTemp, sweepConversationTempDirs } from './chat/conversation-temp'
 import { initTerminalManager, setTerminalFloatFocuser, setTerminalPopupFocuser } from './terminal-manager'
 import {
   safeWindowSend,
@@ -147,6 +148,7 @@ import { isVSCodeCliReady, hasStagedCliUpdate } from './vscode/vscode-cli-downlo
 import {
   initStore,
   listAllConversations,
+  listAllConversationIds,
   updateConversationStatus,
   markConversationAttention,
   getConversation,
@@ -1069,6 +1071,14 @@ app.whenReady().then(async () => {
 
   // Startup reads the local profile directly; it does not depend on an account or a hosted service.
   initStore()
+  // Each conversation's temporary directory, and the removal of those whose conversation is gone. An E2E run keeps the
+  // system temporary folder: its throwaway profile would leave a root behind on every run.
+  if (!isE2E()) {
+    initConversationTemp(app.getPath('userData'))
+    void sweepConversationTempDirs(
+      () => new Set(listAllConversationIds().flatMap((id) => conversationTempEntryName(id) ?? []))
+    ).catch((error) => console.warn('[conversation-temp] Sweep failed:', (error as Error).message))
+  }
   initArtifacts()
   await migrateAllLegacyMemories()
   initMemoryIndexService()

@@ -25,11 +25,13 @@ vi.mock('../../src/main/performance/owned-processes', () => ({
 }))
 
 import {
+  allowedConversationProcessEnv,
   CONVERSATION_SHELL_ENV_KEYS,
   conversationShellEnv,
   setConversationShellEnv,
   type ConversationShellEnv,
 } from '../../src/main/chat/conversation-env'
+import { __setConversationTempRootForTests } from '../../src/main/chat/conversation-temp'
 import { bashTool } from '../../src/main/chat/tools/bash'
 import type { ToolContext } from '../../src/main/chat/tools/util'
 import { codexShellEnvironmentConfig } from '../../src/main/chat/codex-subscription/host-mcp'
@@ -155,6 +157,68 @@ describe('conversation shell environment', () => {
       TERM: 'xterm-256color',
       PATH: process.env.PATH,
     })
+  })
+
+  describe('temporary directory', () => {
+    const conversation = '0f8fad5b-d9cb-469f-a165-70867728950e'
+    let root = ''
+
+    beforeEach(() => {
+      root = path.join(dir, 'temp-root')
+      __setConversationTempRootForTests(root)
+    })
+    afterEach(() => {
+      __setConversationTempRootForTests(null)
+      setConversationShellEnv(conversation, null)
+    })
+
+    it('gives each conversation its own TMPDIR, computed by the host after the registered keys', () => {
+      const own = path.join(root, '0f8fad5bd9cb469f')
+      setConversationShellEnv(conversation, {
+        DISPLAY: ':5',
+        TMPDIR: '/tmp/synthetic-evil',
+        TEMP: '/tmp/synthetic-evil',
+      } as unknown as ConversationShellEnv)
+
+      expect(conversationShellEnv(conversation)).toEqual({ DISPLAY: ':5', TMPDIR: own, TMP: own, TEMP: own })
+      // Ids that are not conversation UUIDs, and conversations before the profile turned the feature on, keep the
+      // process TMPDIR.
+      expect(conversationShellEnv('conv-a')).toEqual(botA)
+      __setConversationTempRootForTests(null)
+      expect(conversationShellEnv(conversation)).toEqual({ DISPLAY: ':5' })
+    })
+
+    it('lets a runtime pass the temporary directory on but nothing else', () => {
+      expect(
+        allowedConversationProcessEnv({
+          DISPLAY: ':5',
+          TMPDIR: '/tmp/a',
+          TMP: '/tmp/a',
+          TEMP: '/tmp/a',
+          PATH: '/tmp/synthetic-evil/bin',
+          HOME: '/tmp/synthetic-evil',
+          TMPDIR_EXTRA: 'x',
+          GTK_THEME: 'bad\0value',
+        })
+      ).toEqual({ DISPLAY: ':5', TMPDIR: '/tmp/a', TMP: '/tmp/a', TEMP: '/tmp/a' })
+    })
+
+    it.skipIf(process.platform === 'win32')(
+      'runs bash and terminals in the temporary directory of their conversation',
+      async () => {
+        const own = path.join(root, '0f8fad5bd9cb469f')
+        const result = await bashTool.execute(
+          { command: 'printf "%s|%s|%s" "$TMPDIR" "$TMP" "$TEMP"' },
+          context(conversation, dir)
+        )
+        expect(result.output).toBe(`${own}|${own}|${own}`)
+
+        expect(createShellTerminal(conversation, dir).ok).toBe(true)
+        const env = (h.spawn.mock.calls.at(-1)![2] as { env: Record<string, string | undefined> }).env
+        expect(env).toMatchObject({ TMPDIR: own, TMP: own, TEMP: own })
+        disposeShellTerminals(conversation)
+      }
+    )
   })
 
   it('maps the environment to Codex per-thread shell policy entries', () => {

@@ -76,7 +76,7 @@ export async function terminateOwnedProcesses(
       )
         continue
       for (const row of rows) {
-        // The id's own number is a process named after it: our leader was reaped, so a process with that pid is not ours.
+        // The pid equal to the id is the leader: a captured member while it runs, someone else's once it was reaped.
         if (row.zombie || row.pid === collective.id || row.pid === process.pid || !inside(row)) continue
         const identity = identityOf(row)
         group.members.push(identity)

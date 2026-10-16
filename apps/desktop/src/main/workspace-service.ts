@@ -16,6 +16,7 @@ import { collectChatToolImageRefs, releaseUnreferencedChatToolImages } from './c
 import { deleteConversationGeneratedImages } from './chat/generated-images'
 import { deleteConversationAttachmentImages } from './chat/attachment-artifacts'
 import { deleteConversationToolImageMetadata } from './chat/tool-output'
+import { removeConversationTempDir } from './chat/conversation-temp'
 
 import { tMain } from './i18n'
 import { deleteCodexThreadForConversation } from './chat/codex-subscription/lifecycle'
@@ -139,6 +140,8 @@ export async function deleteConversation(
     await deleteConversationGeneratedImages(id)
     // Attached images and PDFs, plus any PDF copy opened in the system viewer.
     await deleteConversationAttachmentImages(id)
+    // Its processes were stopped above; a borrowed or shared checkout still loses only this conversation's directory.
+    await removeConversationTempDir(id)
   }
 
   if (conv.scope === 'standalone') {
