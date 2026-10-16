@@ -16,7 +16,10 @@ import {
   devUserDataDir,
   displayPath,
   generateAutoInstanceId,
+  removeDeadAutoProfiles,
+  removeOwnAutoProfile,
   validateInstanceId,
+  writeLauncherLock,
 } from './instance-shared.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -64,7 +67,10 @@ function resolveInstance(requested) {
     const dir = devUserDataDir(instance)
     const lock = clearStaleLock(dir)
     if (!lock) {
-      return { instance, emphasis, userDataPath: displayPath(dir) }
+      // A generated profile is this run's own: the lock names it as owner from the start.
+      const generated = requested == null
+      if (generated) writeLauncherLock(dir)
+      return { instance, emphasis, userDataPath: displayPath(dir), generated }
     }
     if (requested) {
       const prev = instance
@@ -81,8 +87,11 @@ function resolveInstance(requested) {
   process.exit(1)
 }
 
+// Profiles earlier unnamed runs left behind, once their launcher and app are gone.
+for (const dir of removeDeadAutoProfiles()) console.log(`Removed the unused development profile ${displayPath(dir)}.`)
+
 const requested = requestedInstanceFromArgv()
-const { instance, emphasis, userDataPath } = resolveInstance(requested)
+const { instance, emphasis, userDataPath, generated } = resolveInstance(requested)
 
 setTerminalWindowTitle(instance)
 const tintHex = setTerminalBackground(instance)
@@ -186,3 +195,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 
 process.on('exit', cleanup)
+
+// A generated profile is not meant to be reopened, so it goes with this run; if the app is still running, the next run
+// removes it once the app is gone.
+if (generated) process.on('exit', () => removeOwnAutoProfile(devUserDataDir(instance)))

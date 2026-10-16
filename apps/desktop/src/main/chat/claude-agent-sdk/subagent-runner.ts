@@ -34,7 +34,7 @@ import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import type { ResolvedHarness } from '../harness/types'
 import { chatDiag } from '../diag-log'
 import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
-import { conversationShellEnv, type ConversationShellEnv } from '../conversation-env'
+import { conversationShellEnv, type ConversationProcessEnv } from '../conversation-env'
 
 const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'task',
@@ -122,8 +122,8 @@ async function runClaudeSubagentAttempt(
     target: ClaudeRuntimeTarget
     journal: ClaudeToolJournal
     onQuota: (classification: ReturnType<typeof classifyClaudeQuotaFailure>) => void
-    /** Screen of the parent conversation, the same for every query of the logical child. */
-    shellEnvironment: ConversationShellEnv
+    /** Screen and temporary directory of the parent conversation, the same for every query of the logical child. */
+    shellEnvironment: ConversationProcessEnv
   }
 ): Promise<{
   text: string

@@ -33,12 +33,9 @@ import {
 import { resolvePreload } from './resolve-preload'
 import { ChatWindowManager, registerChatWindowIpc } from './chat-window-manager'
 import { killAllPtys } from './pty-manager'
-import {
-  initTerminalManager,
-  disposeShellTerminals,
-  setTerminalFloatFocuser,
-  setTerminalPopupFocuser,
-} from './terminal-manager'
+import { stopAllConversationProcesses, stopConversationProcesses } from './process-ownership/conversation-processes'
+import { conversationTempEntryName, initConversationTemp, sweepConversationTempDirs } from './chat/conversation-temp'
+import { initTerminalManager, setTerminalFloatFocuser, setTerminalPopupFocuser } from './terminal-manager'
 import {
   safeWindowSend,
   setBroadcastMainWindow,
@@ -151,6 +148,7 @@ import { isVSCodeCliReady, hasStagedCliUpdate } from './vscode/vscode-cli-downlo
 import {
   initStore,
   listAllConversations,
+  listAllConversationIds,
   updateConversationStatus,
   markConversationAttention,
   getConversation,
@@ -298,11 +296,12 @@ const sendToWindow = (channel: string, payload?: unknown): void => {
 async function stopConversationLive(convId: string): Promise<void> {
   clearPlan(convId)
   const stoppingChat = stopChat(convId)
-  disposeShellTerminals(convId)
+  // After the chat: a command it started late would otherwise be missed.
+  const stoppingProcesses = stoppingChat.catch(() => undefined).then(() => stopConversationProcesses(convId))
   floatingManager.disposeConversation(convId)
   popupManager.disposeConversation(convId)
   disposeConversation(convId)
-  await Promise.all([stoppingChat, unwatchNotes(convId)])
+  await Promise.all([stoppingChat, stoppingProcesses, unwatchNotes(convId)])
 }
 
 /**
@@ -1072,6 +1071,14 @@ app.whenReady().then(async () => {
 
   // Startup reads the local profile directly; it does not depend on an account or a hosted service.
   initStore()
+  // Each conversation's temporary directory, and the removal of those whose conversation is gone. An E2E run keeps the
+  // system temporary folder: its throwaway profile would leave a root behind on every run.
+  if (!isE2E()) {
+    initConversationTemp(app.getPath('userData'))
+    void sweepConversationTempDirs(
+      () => new Set(listAllConversationIds().flatMap((id) => conversationTempEntryName(id) ?? []))
+    ).catch((error) => console.warn('[conversation-temp] Sweep failed:', (error as Error).message))
+  }
   initArtifacts()
   await migrateAllLegacyMemories()
   initMemoryIndexService()
@@ -1252,7 +1259,7 @@ app.on('window-all-closed', () => {
   disposeMemory()
   disposeMemoryExtraction()
   disposeMemoryIndexService()
-  killAllPtys()
+  // Terminals are ended by before-quit, which reads what their shells started before hanging them up.
   disposeDrawer()
   stopVSCodeServer()
   stopSelectionBridge()
@@ -1289,6 +1296,8 @@ let shutdownComplete = false
 
 let chatDisposed = false
 let chatDisposing = false
+let conversationProcessesStopped = false
+let conversationProcessesStopping = false
 let backgroundServicesStopped = false
 let backgroundServicesStopping = false
 
@@ -1411,6 +1420,23 @@ app.on('before-quit', (e) => {
         .finally(() => {
           chatDisposed = true
           chatDisposing = false
+          app.quit()
+        })
+    }
+    return
+  }
+
+  // With no runner left to start commands, end what terminals and commands left running (nohup, `server &`). Only
+  // this process knows they belong to a conversation; after a restart they would run unowned for good.
+  if (!conversationProcessesStopped) {
+    e.preventDefault()
+    if (!conversationProcessesStopping) {
+      conversationProcessesStopping = true
+      void stopAllConversationProcesses()
+        .catch((error) => console.warn('[conversation-processes] Stop on quit failed:', (error as Error).message))
+        .finally(() => {
+          conversationProcessesStopped = true
+          conversationProcessesStopping = false
           app.quit()
         })
     }

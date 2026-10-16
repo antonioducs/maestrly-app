@@ -52,6 +52,7 @@ const STORE_VALUE_EXPORTS = [
   'insertConvRepos',
   'insertConversation',
   'insertWorkspace',
+  'listAllConversationIds',
   'listAllConversations',
   'listConvIdsByWorkspaceRepo',
   'listConvRepos',

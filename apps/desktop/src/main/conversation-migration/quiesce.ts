@@ -8,7 +8,7 @@ import { killPtyAndWait } from '../pty-manager'
 import { serverComputers } from '../remote-host/server/computers-registry'
 import { unwatchConversation } from '../selection-bridge'
 import { stopChatAndWait } from '../chat/service'
-import { disposeShellTerminalsAndWait } from '../terminal-manager'
+import { stopConversationProcesses } from '../process-ownership/conversation-processes'
 
 export interface QuiesceResult {
   ok: boolean
@@ -18,11 +18,13 @@ export interface QuiesceResult {
 /** Quiesce this conversation after acquiring cwd exclusivity. */
 export async function quiesceConversation(conversationId: string, sourceCwd: string): Promise<QuiesceResult> {
   clearPlan(conversationId)
-  const [ptyExited, terminalsExited, chatStopped] = await Promise.all([
+  // The chat stops first so no command starts after its processes were read.
+  const [ptyExited, chatStopped, processes] = await Promise.all([
     killPtyAndWait(conversationId),
-    disposeShellTerminalsAndWait(conversationId),
     stopChatAndWait(conversationId),
+    stopConversationProcesses(conversationId),
   ])
+  const terminalsExited = processes.terminalsExited
   // Callbacks/finally release the actual generation. Fallback release is safe only after termination is
   // confirmed; on timeout retain blocking activity to protect a still-live runtime.
   if (ptyExited) setOwnedCwdActivity(`pty:${conversationId}`, sourceCwd, 'pty', false)
@@ -41,6 +43,7 @@ export async function quiesceConversation(conversationId: string, sourceCwd: str
   const failed: string[] = []
   if (!ptyExited) failed.push('pty')
   if (!terminalsExited) failed.push('terminal')
+  if (processes.survivors.length > 0) failed.push('processes')
   if (!chatStopped) failed.push('chat')
   if (!admittedActivitiesDrained) failed.push('runtime-activity')
   return { ok: failed.length === 0, failed }

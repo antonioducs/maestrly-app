@@ -11,7 +11,7 @@ import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../su
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { isSubagentToolAllowed } from '../tools'
-import { allowedConversationShellEnv, type ConversationShellEnv } from '../conversation-env'
+import { allowedConversationProcessEnv, type ConversationProcessEnv } from '../conversation-env'
 import type { CodexAppServerClient } from './client'
 import {
   dynamicToolRegistrations,
@@ -118,9 +118,10 @@ export interface RunCodexSubagentArgs {
   onThreadStarted?: (info: { threadId: string; resumed: boolean }) => void
   /**
    * Shell environment of the parent conversation: a fleet bot's apps display, session bus and browser, so the
-   * programs the child starts open on that bot's screen. Absent or empty keeps the app-server environment.
+   * programs the child starts open on that bot's screen, and the conversation's temporary directory. Absent or empty
+   * keeps the app-server environment.
    */
-  shellEnvironment?: ConversationShellEnv
+  shellEnvironment?: ConversationProcessEnv
 }
 
 export interface CodexSubagentResult {
@@ -459,7 +460,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
         config: {
           // Sent on start AND resume, like the parent thread's. Only the screen keys pass, and they come first so
           // no host policy flag below can be replaced.
-          ...codexShellEnvironmentConfig(allowedConversationShellEnv(args.shellEnvironment)),
+          ...codexShellEnvironmentConfig(allowedConversationProcessEnv(args.shellEnvironment)),
           ...CODEX_NATIVE_INTEGRATIONS_OFF,
           ...(args.conversationScope === 'standalone'
             ? {

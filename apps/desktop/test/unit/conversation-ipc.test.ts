@@ -54,8 +54,8 @@ vi.mock('../../src/main/store', () => ({
   setConversationPinned: vi.fn(),
 }))
 
-vi.mock('../../src/main/terminal-manager', () => ({
-  disposeShellTerminals: vi.fn(),
+vi.mock('../../src/main/process-ownership/conversation-processes', () => ({
+  stopConversationProcesses: vi.fn(async () => ({ ok: true, terminalsExited: true, survivors: [] })),
 }))
 
 const computers = vi.hoisted(() => ({ close: vi.fn(async (_id: string) => undefined) }))
@@ -71,6 +71,8 @@ vi.mock('../../src/main/workspace-service', () => ({
 
 import { registerConversationIpc } from '../../src/main/conversation-ipc'
 import * as floatingManager from '../../src/main/floating-manager'
+import { stopConversationProcesses } from '../../src/main/process-ownership/conversation-processes'
+import { deleteConversation } from '../../src/main/workspace-service'
 import {
   clearConversationAttention,
   listConversationAttention,
@@ -157,6 +159,45 @@ describe('registerConversationIpc', () => {
     await mhandles.get('conversation:archive')!({} as never, 'c1', false)
     await mhandles.get('conversation:delete')!({} as never, 'c2')
     expect(order).toEqual(['computer c1', 'windows c1', 'computer c2', 'windows c2'])
+  })
+
+  it('ends what the conversation left running after its chat and before its computer, windows and files go', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    const order: string[] = []
+    h.stopChat.mockImplementation(async (id: string) => void order.push('chat ' + id))
+    let releaseProcesses = () => {}
+    const waitForRelease = async (id: string) => {
+      order.push('processes ' + id)
+      // Deletion waits for the processes to be gone, not only for the signals to be sent.
+      await new Promise<void>((resolve) => (releaseProcesses = resolve))
+      order.push('processes gone ' + id)
+      return { ok: true, terminalsExited: true, survivors: [] }
+    }
+    vi.mocked(stopConversationProcesses).mockImplementationOnce(waitForRelease).mockImplementationOnce(waitForRelease)
+    computers.close.mockImplementation(async (id: string) => void order.push('computer ' + id))
+    vi.mocked(floatingManager.disposeConversation).mockImplementation((id: string) => void order.push('windows ' + id))
+    vi.mocked(deleteConversation).mockImplementation(async (id: string) => void order.push('delete ' + id))
+    registerConversationIpc(reg, { stopChat: h.stopChat })
+
+    const deleting = mhandles.get('conversation:delete')!({} as never, 'c1')
+    await vi.waitFor(() => expect(order).toContain('processes c1'))
+    expect(order).toEqual(['chat c1', 'processes c1'])
+    releaseProcesses()
+    await deleting
+    expect(order).toEqual(['chat c1', 'processes c1', 'processes gone c1', 'computer c1', 'windows c1', 'delete c1'])
+
+    order.length = 0
+    const archiving = mhandles.get('conversation:archive')!({} as never, 'c2', true)
+    await vi.waitFor(() => expect(order).toContain('processes c2'))
+    releaseProcesses()
+    await archiving
+    expect(order).toEqual(['chat c2', 'processes c2', 'processes gone c2', 'computer c2', 'windows c2'])
+    expect(h.setConversationArchived).toHaveBeenCalledWith('c2', true)
+
+    // Unarchiving starts nothing and stops nothing.
+    vi.mocked(stopConversationProcesses).mockClear()
+    await mhandles.get('conversation:archive')!({} as never, 'c2', false)
+    expect(stopConversationProcesses).not.toHaveBeenCalled()
   })
 
   it('forwards pin state to the store and returns its canonical value', async () => {

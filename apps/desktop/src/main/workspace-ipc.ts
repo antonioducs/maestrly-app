@@ -23,7 +23,7 @@ import {
 } from './store'
 import { tMain } from './i18n'
 import { clearPlan } from './plan-broker'
-import { disposeShellTerminals } from './terminal-manager'
+import { stopConversationProcesses } from './process-ownership/conversation-processes'
 import * as floatingManager from './floating-manager'
 import * as popupManager from './popup-manager'
 import { disposeConversation } from './drawer-manager'
@@ -64,7 +64,7 @@ export function registerWorkspaceIpc(reg: IpcRegistrar, deps: WorkspaceIpcDeps):
     for (const c of conversations) {
       clearPlan(c.id)
       await deps.stopChat(c.id)
-      disposeShellTerminals(c.id)
+      await stopConversationProcesses(c.id)
       floatingManager.disposeConversation(c.id) // close floating windows before destroying views
       popupManager.disposeConversation(c.id) // clear popup state before destroying views (#328)
       disposeConversation(c.id)

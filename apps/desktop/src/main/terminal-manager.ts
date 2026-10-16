@@ -7,10 +7,11 @@ import {
   sendPtyExit,
   getPtyInfo,
   killPty,
-  killPtyAndWait,
+  killPtyTree,
   ptyExists,
   writePty,
 } from './pty-manager'
+import type { ProcessSurvivor } from './process-ownership/terminate'
 import * as windowIpc from './window-ipc'
 import { registerIdleCwdResource, tryAcquireCwdActivity } from './cwd-activity-coordinator'
 import { conversationShellEnv } from './chat/conversation-env'
@@ -253,8 +254,9 @@ export function createShellTerminal(
       cwd,
       cols,
       rows,
-      // Empty unless the conversation belongs to a fleet bot with its own display.
+      // A fleet bot's display, and the conversation's own temporary directory.
       env: conversationShellEnv(convId),
+      owner: convId,
       onData: (data, meta) => sendPtyData(id, data, meta),
       onExit: (code, isCurrent, generation) => {
         if (isCurrent !== false) exitedDuringSpawn = true
@@ -367,26 +369,34 @@ export function isShellOfConv(convId: string, id: string): boolean {
  */
 export function disposeShellTerminals(convId: string): void {
   for (const t of list(convId)) {
-    killPty(t.id)
+    void killPtyTree(t.id)
     forgetTerminalResources(t.id)
   }
   termsByConv.delete(convId)
   activeByConv.delete(convId)
 }
 
-export async function disposeShellTerminalsAndWait(convId: string): Promise<boolean> {
+/**
+ * Ends every terminal of the conversation with what its shells started (killPtyTree) and waits for them. Reports
+ * whether every shell exited and which started processes outlived SIGKILL.
+ */
+export async function stopShellTerminals(convId: string): Promise<{ exited: boolean; survivors: ProcessSurvivor[] }> {
   const terminals = [...list(convId)]
   // Remove the tabs from the authority before awaiting exits. A queued pty:create must not find a
   // shell cwd and respawn a terminal while this conversation is being destroyed.
   termsByConv.delete(convId)
   activeByConv.delete(convId)
   for (const terminal of terminals) releaseTerminalResources(terminal.id)
-  const exits = await Promise.all(
+  const results = await Promise.all(
     terminals.map(async (terminal) => {
-      const exited = await killPtyAndWait(terminal.id)
+      const result = await killPtyTree(terminal.id)
       forgetTerminalResources(terminal.id)
-      return exited
+      return result
     })
   )
-  return exits.every(Boolean)
+  return { exited: results.every((result) => result.exited), survivors: results.flatMap((result) => result.survivors) }
+}
+
+export async function disposeShellTerminalsAndWait(convId: string): Promise<boolean> {
+  return (await stopShellTerminals(convId)).exited
 }

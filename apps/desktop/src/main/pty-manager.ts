@@ -1,15 +1,36 @@
 import os from 'node:os'
+import { setTimeout as delay } from 'node:timers/promises'
 import * as pty from 'node-pty'
 import type { WebContents } from 'electron'
-import { freeTerminalShell } from './platform'
+import { descendantsOf, freeTerminalShell } from './platform'
 import { getFreeTerminalShell } from './store'
 import { incrementPerformanceCounter, recordIpcSend } from './performance/metrics'
 import { registerOwnedProcess, unregisterOwnedProcess } from './performance/owned-processes'
+import { adoptSessionRemnants } from './process-ownership/owned-groups'
+import { identityOf, processTableFor, readProcessSync, type ProcessInfo } from './process-ownership/process-table'
+import {
+  TERMINATE_GRACE_MS,
+  TERMINATE_KILL_MS,
+  terminateOwnedProcesses,
+  type ProcessSurvivor,
+  type TerminateOptions,
+} from './process-ownership/terminate'
 import type { PtyOutputSnapshot, PtyOutputStats, PtyStreamMeta } from '../shared/pty'
 
 interface ShellSession {
   proc: pty.IPty
   generation: number
+  /**
+   * Start time of the shell, read right after spawn and only when it is our direct child (Linux). With it a later read
+   * tells the shell from a process reusing its pid, and its session can be followed after it exits.
+   */
+  startTime: string | null
+}
+
+/** The shell's identity when it is provably our child: node-pty forks it straight from this process. */
+function ownShellStartTime(pid: number): string | null {
+  const row = readProcessSync(pid)
+  return row && !row.zombie && row.ppid === process.pid ? row.startTime : null
 }
 
 interface OutputState {
@@ -29,6 +50,8 @@ const subscribedIdsByWebContents = new Map<WebContents, Set<string>>()
 const subscriberCleanup = new Map<WebContents, () => void>()
 const outputListeners = new Map<string, Set<PtyOutputListener>>()
 const exitListeners = new Map<string, Set<PtyExitListener>>()
+/** Shells whose whole tree is being ended; what they leave is not adopted, it is already being stopped. */
+const treeKills = new WeakSet<pty.IPty>()
 const MAX_OUTPUT = 256 * 1024
 
 /** Receives the output of a PTY in the main process, with the position the snapshot reports for it. */
@@ -43,6 +66,8 @@ export interface CreateShellPtyArgs {
   rows: number
   /** Extra variables over the process environment, e.g. the display of the conversation's bot. */
   env?: Readonly<Record<string, string>>
+  /** Conversation that owns what the shell leaves running when it exits (`nohup`, `disown`), until it is stopped. */
+  owner?: string
   onData: (data: string, meta?: PtyStreamMeta) => void
   onExit: (exitCode: number, isCurrent: boolean, generation?: number) => void
 }
@@ -126,7 +151,8 @@ export function createShellPty(args: CreateShellPtyArgs): void {
     return
   }
 
-  sessions.set(args.id, { proc, generation })
+  const startTime = ownShellStartTime(proc.pid)
+  sessions.set(args.id, { proc, generation, startTime })
   rememberOwnedPty(args.id)
   proc.onData((data) => {
     const current = sessions.get(args.id)
@@ -152,6 +178,8 @@ export function createShellPty(args: CreateShellPtyArgs): void {
     if (isCurrent && !intentional && (exitCode !== 0 || signal != null)) {
       console.error('[pty] Shell exited unexpectedly', { exitCode, signal })
     }
+    // Closing one terminal keeps what was started with nohup or disown; the conversation stops it later.
+    if (args.owner && startTime !== null && !treeKills.has(proc)) adoptSessionRemnants(args.owner, proc.pid)
     args.onExit(exitCode, isCurrent, generation)
     if (isCurrent) notify(exitListeners, args.id, (listener) => listener(exitCode))
   })
@@ -343,4 +371,113 @@ export async function killPtyAndWait(id: string, timeoutMs = 10_000): Promise<bo
 
 export function killAllPtys(): void {
   for (const id of [...sessions.keys()]) killPty(id)
+}
+
+/** Resolves once the given shell process of `id` is gone, or with false after `timeoutMs`. */
+async function waitShellExit(id: string, proc: pty.IPty, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (sessions.get(id)?.proc === proc) {
+    if (Date.now() >= deadline) return false
+    await delay(25)
+  }
+  return true
+}
+
+/**
+ * What the shell started, read while it still runs: its descendants and, on Linux, every process of its session.
+ * Once the shell is gone, `nohup`, `disown` and `(cmd &)` processes are reparented and only the session still ties them
+ * to it. A pid alone proves nothing, so the shell must be our child with the start time read at spawn.
+ */
+function shellTree(
+  session: ShellSession,
+  rows: readonly ProcessInfo[],
+  sessionsReported: boolean
+): { members: ProcessInfo[]; followSession: boolean } {
+  const shellPid = session.proc.pid
+  const row = rows.find((candidate) => candidate.pid === shellPid)
+  const sameShell = !!row && session.startTime !== null && row.startTime === session.startTime
+  const liveShell = !!row && !row.zombie && row.ppid === process.pid && (session.startTime === null || sameShell)
+  // A gone shell's session id stays reserved while one of its processes lives, so it cannot name another session; a
+  // different process holding the pid means the session emptied first.
+  const followSession = sessionsReported && session.startTime !== null && (!row || sameShell)
+  const members = new Map<number, ProcessInfo>()
+  const byPid = new Map(rows.map((candidate) => [candidate.pid, candidate]))
+  if (liveShell) {
+    const parents = new Map(rows.map((candidate) => [candidate.pid, candidate.ppid]))
+    for (const pid of descendantsOf(parents, [shellPid]).get(shellPid) ?? []) {
+      const descendant = byPid.get(pid)
+      if (descendant) members.set(pid, descendant)
+    }
+  }
+  if (followSession) {
+    for (const candidate of rows) if (candidate.sid === shellPid) members.set(candidate.pid, candidate)
+  }
+  members.delete(shellPid)
+  members.delete(process.pid)
+  return { members: [...members.values()].filter((member) => !member.zombie), followSession }
+}
+
+/**
+ * Ends a shell together with what it started, including what `nohup`, `disown` or `trap '' HUP` keep from its hangup:
+ * the tree is read before the shell gets SIGHUP, the rest gets SIGTERM, and SIGKILL follows for what is still there.
+ * Only `setsid` and daemons that double-fork out of the session escape. Windows ends the console as before.
+ */
+export async function killPtyTree(
+  id: string,
+  options: TerminateOptions = {}
+): Promise<{ exited: boolean; survivors: ProcessSurvivor[] }> {
+  const session = sessions.get(id)
+  if (!session) return { exited: true, survivors: [] }
+  const { proc } = session
+  treeKills.add(proc)
+  expectedExits.add(`${id}:${session.generation}`)
+  const table = options.table ?? processTableFor()
+  const rows = process.platform === 'win32' ? null : await table.list()
+  const tree = rows ? shellTree(session, rows, table.sessions) : { members: [], followSession: false }
+  const graceMs = options.graceMs ?? TERMINATE_GRACE_MS
+  const killMs = options.killMs ?? TERMINATE_KILL_MS
+
+  const stopShell = async (): Promise<boolean> => {
+    try {
+      proc.kill()
+    } catch {
+      // Already exited.
+    }
+    if (await waitShellExit(id, proc, graceMs)) return true
+    // Where its start time is known, the pid must still be this shell.
+    const sameShell = session.startTime === null || readProcessSync(proc.pid)?.startTime === session.startTime
+    if (process.platform !== 'win32' && sameShell) {
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        // Already exited.
+      }
+    }
+    return waitShellExit(id, proc, killMs)
+  }
+
+  const [exited, result] = await Promise.all([
+    stopShell(),
+    terminateOwnedProcesses(
+      [
+        {
+          members: tree.members.map(identityOf),
+          ...(tree.followSession ? { collective: { kind: 'sid' as const, id: proc.pid } } : {}),
+        },
+      ],
+      { ...options, table, graceMs, killMs }
+    ),
+  ])
+  return { exited, survivors: result.survivors }
+}
+
+/** killPtyTree for every shell, used when the app quits. */
+export async function killAllPtyTrees(
+  options: TerminateOptions = {}
+): Promise<{ exited: boolean; survivors: ProcessSurvivor[] }> {
+  const results = await Promise.all([...sessions.keys()].map((id) => killPtyTree(id, options)))
+  return {
+    exited: results.every((result) => result.exited),
+    survivors: results.flatMap((result) => result.survivors),
+  }
 }

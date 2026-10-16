@@ -6,7 +6,7 @@ const h = vi.hoisted(() => ({
   clearPtyOutput: vi.fn(),
   forgetPty: vi.fn(),
   killPty: vi.fn(),
-  killPtyAndWait: vi.fn(),
+  killPtyTree: vi.fn(),
   ptyExists: vi.fn(),
   getPtyInfo: vi.fn(),
   writePty: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('../../src/main/pty-manager', () => ({
   clearPtyOutput: h.clearPtyOutput,
   forgetPty: h.forgetPty,
   killPty: h.killPty,
-  killPtyAndWait: h.killPtyAndWait,
+  killPtyTree: h.killPtyTree,
   ptyExists: h.ptyExists,
   getPtyInfo: h.getPtyInfo,
   writePty: h.writePty,
@@ -49,6 +49,7 @@ import {
   getShellTerminalOwnerScopeId,
   listShellTerminalsOwnedByScope,
   MAX_RETAINED_TERMINAL_TABS,
+  stopShellTerminals,
   writeShellTerminal,
   shellTermCwd,
 } from '../../src/main/terminal-manager'
@@ -231,8 +232,10 @@ describe('terminal manager cwd activity', () => {
     const second = createShellTerminal('conv', '/repo')
     if (!first.ok || !second.ok) throw new Error('terminals not created')
 
-    const resolves = new Map<string, (value: boolean) => void>()
-    h.killPtyAndWait.mockImplementation((id: string) => new Promise<boolean>((resolve) => resolves.set(id, resolve)))
+    const resolves = new Map<string, (value: { exited: boolean; survivors: [] }) => void>()
+    h.killPtyTree.mockImplementation(
+      (id: string) => new Promise<{ exited: boolean; survivors: [] }>((resolve) => resolves.set(id, resolve))
+    )
 
     const disposing = disposeShellTerminalsAndWait('conv')
 
@@ -240,7 +243,29 @@ describe('terminal manager cwd activity', () => {
     expect(shellTermCwd(second.id)).toBeNull()
     expect(getTerminalState('conv')).toEqual({ terminals: [], activeId: null })
 
-    for (const resolve of resolves.values()) resolve(true)
+    expect([...resolves.keys()]).toEqual([first.id, second.id])
+    for (const resolve of resolves.values()) resolve({ exited: true, survivors: [] })
     await expect(disposing).resolves.toBe(true)
+  })
+
+  it('names the conversation as owner of what a shell leaves and ends whole trees on dispose', async () => {
+    const first = createShellTerminal('conv', '/repo')
+    const second = createShellTerminal('conv', '/repo')
+    if (!first.ok || !second.ok) throw new Error('terminals not created')
+    expect(h.createShellPty).toHaveBeenCalledWith(expect.objectContaining({ id: first.id, owner: 'conv' }))
+
+    const survivor = { pid: 900, startTime: '1', name: 'stuck' }
+    h.killPtyTree
+      .mockResolvedValueOnce({ exited: true, survivors: [] })
+      .mockResolvedValueOnce({ exited: false, survivors: [survivor] })
+    await expect(stopShellTerminals('conv')).resolves.toEqual({ exited: false, survivors: [survivor] })
+    expect(h.killPtyTree.mock.calls.map(([id]) => id)).toEqual([first.id, second.id])
+    expect(h.killPty).not.toHaveBeenCalled()
+
+    const third = createShellTerminal('conv', '/repo')
+    if (!third.ok) throw new Error('terminal not created')
+    disposeShellTerminals('conv')
+    expect(h.killPtyTree).toHaveBeenLastCalledWith(third.id)
+    expect(getTerminalState('conv')).toEqual({ terminals: [], activeId: null })
   })
 })

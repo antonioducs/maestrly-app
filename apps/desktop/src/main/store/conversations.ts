@@ -193,6 +193,11 @@ export function listAllConversations(): Conversation[] {
     .map((r) => withRepos(rowToConversation(r))!) as Conversation[]
 }
 
+/** Ids of every conversation of the profile, archived and standalone ones included. */
+export function listAllConversationIds(): string[] {
+  return (getDb().prepare('SELECT id FROM conversations').all() as Array<{ id: string }>).map((row) => row.id)
+}
+
 export function updateConversationStatus(id: string, status: ConversationStatus): void {
   getDb().prepare('UPDATE conversations SET status = ?, last_activity_at = ? WHERE id = ?').run(status, Date.now(), id)
 }

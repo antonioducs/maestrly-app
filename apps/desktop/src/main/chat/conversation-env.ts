@@ -1,3 +1,5 @@
+import { CONVERSATION_TEMP_ENV_KEYS, conversationTempEnv, type ConversationTempEnv } from './conversation-temp'
+
 /**
  * Shell environment that belongs to one conversation. A fleet bot sharing an environment with other bots has
  * its own apps display, session bus and browser; every shell it starts (the bash tool, drawer terminals and the
@@ -15,17 +17,35 @@ export const CONVERSATION_SHELL_ENV_KEYS = [
 
 export type ConversationShellEnv = Partial<Record<(typeof CONVERSATION_SHELL_ENV_KEYS)[number], string>>
 
+/**
+ * What a conversation's processes receive: the registered keys above, and its temporary directory, which this
+ * process computes itself (conversation-temp) and no registration can set.
+ */
+export type ConversationProcessEnv = ConversationShellEnv & ConversationTempEnv
+
 const registry = new Map<string, ConversationShellEnv>()
 
-/** Keeps only the allowed keys with string values that an environment variable can hold. */
-export function allowedConversationShellEnv(env: unknown): ConversationShellEnv {
-  const allowed: ConversationShellEnv = {}
+function allowedKeys<K extends string>(env: unknown, keys: readonly K[]): Partial<Record<K, string>> {
+  const allowed: Partial<Record<K, string>> = {}
   if (!env || typeof env !== 'object') return allowed
-  for (const key of CONVERSATION_SHELL_ENV_KEYS) {
+  for (const key of keys) {
     const value = (env as Record<string, unknown>)[key]
     if (typeof value === 'string' && !value.includes('\0')) allowed[key] = value
   }
   return allowed
+}
+
+/** Keeps only the allowed keys with string values that an environment variable can hold. */
+export function allowedConversationShellEnv(env: unknown): ConversationShellEnv {
+  return allowedKeys(env, CONVERSATION_SHELL_ENV_KEYS)
+}
+
+/**
+ * For a runtime that gets a conversation's environment from conversationShellEnv (a Claude query, a Codex thread):
+ * the registered keys and the temporary directory, nothing else.
+ */
+export function allowedConversationProcessEnv(env: unknown): ConversationProcessEnv {
+  return { ...allowedKeys(env, CONVERSATION_SHELL_ENV_KEYS), ...allowedKeys(env, CONVERSATION_TEMP_ENV_KEYS) }
 }
 
 /** Registers (or with `null` removes) the shell environment of one conversation. Unknown keys are dropped. */
@@ -35,8 +55,11 @@ export function setConversationShellEnv(conversationId: string, env: Conversatio
   else registry.set(conversationId, allowed)
 }
 
-/** A copy of the conversation's shell environment; empty when it has none, so the process values apply. */
-export function conversationShellEnv(conversationId: string | undefined): ConversationShellEnv {
+/**
+ * A copy of the conversation's environment: the registered keys, then its temporary directory. Empty when it has
+ * neither, so the process values apply.
+ */
+export function conversationShellEnv(conversationId: string | undefined): ConversationProcessEnv {
   const env = conversationId === undefined ? undefined : registry.get(conversationId)
-  return env ? { ...env } : {}
+  return { ...env, ...conversationTempEnv(conversationId) }
 }
