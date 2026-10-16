@@ -520,7 +520,9 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   const v = new WebContentsView({
     webPreferences: { partition: BROWSER_PARTITION, ...(isHeadlessInstance() ? { disableDialogs: true } : {}) },
   })
-  v.setBackgroundColor('#0A0A0B')
+  // Electron uses this as the page's base canvas colour, not just the slot behind it: pages that leave the body
+  // background unset expect a browser's white default, and a dark one hides their dark text.
+  v.setBackgroundColor('#FFFFFF')
   v.setBounds(OFFSCREEN)
   // A browser subtab created after detachment (or while streamed) must be parented into that window. Bounds alone
   // cannot move it between windows and would paint it over mainWindow at incorrect coordinates.
