@@ -7,7 +7,6 @@ import {
   FLEET_WORKSPACES_HOST_FEATURE,
   type FleetBot,
   type FleetEnvironment,
-  type FleetPeerMessage,
 } from '@maestrly/bot-fleet-protocol'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -22,7 +21,7 @@ import {
   workspacesEnvironments,
 } from '@/lib/fleet/selectors'
 import { environmentBots, formatNames, hasEnvironments } from '@/lib/fleet/environments'
-import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
+import { fleetErrorText } from '@/lib/fleet/errors'
 import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import { ArchivedBots } from './ArchivedBots'
 import { ArchivedEnvironments } from './ArchivedEnvironments'
@@ -258,8 +257,6 @@ export function ServerView({
   // Stable: the dialog refocuses on a new callback, and this view re-renders with every resource sample.
   const cancelConfirm = useCallback(() => setConfirm(null), [])
   const [version, setVersion] = useState(desktopVersion)
-  const [messages, setMessages] = useState<FleetPeerMessage[]>(fleet.state.snapshot.peerMessages)
-  const [error, setError] = useState('')
   // The server's chats and workspaces: environments of their own kind, one per scope of the owner's work, shown apart
   // from the ones bots run in.
   const workspaces = grouped ? workspacesEnvironments(environments) : []
@@ -275,13 +272,6 @@ export function ServerView({
       .getAppInfo()
       .then((info) => setVersion(info.isPackaged ? info.version : desktopVersion))
       .catch(() => {})
-  }, [])
-  useEffect(() => setMessages(fleet.state.snapshot.peerMessages), [fleet.state.snapshot.peerMessages])
-  useEffect(() => {
-    void window.api
-      .fleetGetPeerMessages()
-      .then((result) => setMessages(result.messages))
-      .catch((cause) => setError(fleetErrorMessage(cause)))
   }, [])
   const memory = memorySegments(host, bots, environments)
   const confirmNames = confirm
@@ -485,36 +475,14 @@ export function ServerView({
         {grouped && <ArchivedEnvironments fleet={fleet} />}
         <ArchivedBots fleet={fleet} />
         <section>
-          <h2 className="mb-3 font-semibold">{t('server.peerMessages')}</h2>
-          {messages.length ? (
-            <ul className="space-y-2 text-sm">
-              {messages.map((message) => (
-                <li key={message.id} className="rounded-lg border border-border bg-surface-elevated p-3">
-                  <time className="mr-2 text-xs text-muted-foreground">
-                    {new Date(message.at).toLocaleTimeString(i18n.language, {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </time>
-                  <strong>{bots.find((bot) => bot.id === message.from)?.name ?? message.from}</strong> →{' '}
-                  <strong>{bots.find((bot) => bot.id === message.to)?.name ?? message.to}</strong>
-                  <span className="ml-2">{message.text}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-muted-foreground">{t('server.noPeerMessages')}</p>
-          )}
-        </section>
-        <section>
           <h2 className="mb-2 font-semibold">{t('server.howTitle')}</h2>
           <p className="rounded-lg border border-border bg-surface-elevated p-4 text-sm text-muted-foreground">
             {grouped ? t('server.howDescriptionEnvironments') : t('server.howDescription')}
           </p>
         </section>
-        {(error || fleet.actionError) && (
+        {fleet.actionError && (
           <p role="alert" className="text-xs text-destructive">
-            {error || (fleet.actionError && fleetErrorText(fleet.actionError.message, t))}
+            {fleetErrorText(fleet.actionError.message, t)}
           </p>
         )}
       </div>
