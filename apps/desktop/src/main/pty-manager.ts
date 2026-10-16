@@ -444,7 +444,9 @@ export async function killPtyTree(
       // Already exited.
     }
     if (await waitShellExit(id, proc, graceMs)) return true
-    if (process.platform !== 'win32') {
+    // Where its start time is known, the pid must still be this shell.
+    const sameShell = session.startTime === null || readProcessSync(proc.pid)?.startTime === session.startTime
+    if (process.platform !== 'win32' && sameShell) {
       try {
         proc.kill('SIGKILL')
       } catch {
