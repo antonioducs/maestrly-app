@@ -260,6 +260,15 @@ export const MOBILE_CHANNELS = {
       .strict(),
     result: z.object({ status: z.enum(['started', 'duplicate']) }),
   },
+  /**
+   * The person's last message, edited while no turn runs: the conversation is cut from that message, which keeps its
+   * attachments, and the new text runs as a new turn. A host that predates it answers `unknown-channel`.
+   */
+  edit: {
+    channel: 'mobile:v1:conversation:edit',
+    args: z.object({ conversationId: id, itemId: id, text: z.string().trim().min(1).max(100_000) }).strict(),
+    result: z.null(),
+  },
   stop: { channel: 'mobile:v1:conversation:stop', args: conversationArgs, result: z.null() },
   rename: {
     channel: 'mobile:v1:conversation:rename',

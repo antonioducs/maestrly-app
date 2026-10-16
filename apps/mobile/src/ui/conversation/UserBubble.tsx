@@ -57,7 +57,8 @@ export function FileChip({
 export function UserBubble({ item, note }: { item: UserItem; note?: string | null }) {
   const { palette } = useTheme()
   const { t, plural } = useI18n()
-  const { bot, openChat } = useConversation()
+  const { bot, openChat, edit } = useConversation()
+  const editable = edit?.itemId === item.id ? edit : null
   const from = 'fromConversation' in item ? item.fromConversation : null
   const origin = from
     ? t(`user.from.${from.purpose}`, { name: from.name })
@@ -126,6 +127,28 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
         ) : null}
         {item.text ? <AppText selectable>{item.text}</AppText> : null}
       </View>
+      {editable ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('edit.action')}
+          onPress={() => editable.start(item.id, item.text)}
+          hitSlop={8}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 5,
+            minHeight: 32,
+            paddingHorizontal: 8,
+            borderRadius: 10,
+            backgroundColor: pressed ? palette.surface : 'transparent',
+          })}
+        >
+          <Icon name="pencil" size={14} color={palette.muted} />
+          <AppText variant="small" tone="muted">
+            {t('edit.action')}
+          </AppText>
+        </Pressable>
+      ) : null}
       {queued || note ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <Icon name="clock" size={14} color={palette.muted} />

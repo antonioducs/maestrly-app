@@ -324,6 +324,17 @@ export function createFleetController(
     deleteOutbox(id: string) {
       return setOutbox(state.outbox.filter((item) => item.id !== id))
     },
+    /**
+     * The owner's last message, edited (`message-edit`): the bot's conversation is cut from it and the new text runs
+     * as a new turn. The message keeps its attachments.
+     */
+    async edit(botId: string, itemId: string, text: string) {
+      await source.call('botMessageEdit', {
+        params: { id: botId, inputId: itemId.replace(/^input:/, '') },
+        body: { text, idempotencyKey: uuid() },
+      })
+      await loadLatest(botId)
+    },
     resolve(botId: string, interactionId: string, resolution: FleetInteractionResolution) {
       return source.call('botInteractionResolve', { params: { id: botId, interactionId }, body: resolution })
     },

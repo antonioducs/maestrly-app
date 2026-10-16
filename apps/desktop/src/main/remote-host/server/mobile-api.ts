@@ -228,6 +228,7 @@ export class MobileApi {
       },
       page: (value) => this.page(value.conversationId, value.before),
       send: (value) => this.send(value),
+      edit: (value) => this.edit(value),
       stop: async (value) => {
         await this.call('chat:stop', value.conversationId)
         return null
@@ -451,6 +452,45 @@ export class MobileApi {
     // The message the host admitted is in the latest page; the stream carries the answer.
     if (open) this.refetch(open)
     return { status: 'started' }
+  }
+
+  /** As on a computer: only the person's last message, while no turn runs; the host keeps its attachments. */
+  private async edit(args: MobileArgs<'edit'>): Promise<MobileResult<'edit'>> {
+    const messageId = args.itemId.slice(0, args.itemId.lastIndexOf(':'))
+    const [page, runtime] = await Promise.all([
+      this.call('chat:history:page', args.conversationId, {
+        limit: MOBILE_BRIDGE_LIMITS.pageSize,
+      }) as Promise<ChatHistoryPage>,
+      this.call('chat:runtime', args.conversationId) as Promise<ChatRuntimeState>,
+    ])
+    if (runtime?.streaming || runtime?.compacting) throw new MobileApiError('busy', 'A turn is running')
+    const messages = page?.messages ?? []
+    let last: ChatMessage | undefined
+    for (let index = messages.length - 1; index >= 0 && !last; index--)
+      if (messages[index].role === 'user' && !messages[index].internal) last = messages[index]
+    if (!messageId || last?.id !== messageId)
+      throw new MobileApiError('not-editable', 'Only the last message can be edited')
+    let result: { ok?: boolean; error?: string } | null
+    try {
+      result = (await this.call('chat:resend', {
+        conversationId: args.conversationId,
+        fromMessageId: messageId,
+        text: args.text,
+      })) as { ok?: boolean; error?: string } | null
+    } catch (error) {
+      throw new MobileApiError('edit-failed', error instanceof Error ? error.message : String(error))
+    }
+    if (result?.error?.startsWith(BLOCKED_BY_HOOK))
+      throw new MobileApiError('blocked-by-hook', result.error.slice(BLOCKED_BY_HOOK.length))
+    if (!result?.ok) throw new MobileApiError(result?.error ?? 'edit-failed', result?.error ?? 'The edit failed')
+    // The cut removed whole messages, which updates cannot describe: the phone loads the conversation again.
+    const open = this.open.get(args.conversationId)
+    if (open) {
+      open.sent.clear()
+      this.emit('reset', { conversationId: open.id })
+      this.refetch(open)
+    }
+    return null
   }
 
   private async decidePlan(args: MobileArgs<'plan'>): Promise<MobileResult<'plan'>> {

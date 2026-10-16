@@ -1,6 +1,16 @@
 import { FLEET_FILES_FEATURE, FLEET_MESSAGE_TEXT_MAX, type FleetBot } from '@maestrly/bot-fleet-protocol'
-import { useCallback, useRef, useState, type ReactNode, type Ref } from 'react'
-import { AccessibilityInfo, Alert, Keyboard, Linking, Pressable, TextInput, View } from 'react-native'
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react'
+import {
+  AccessibilityInfo,
+  Alert,
+  Keyboard,
+  Linking,
+  Platform,
+  Pressable,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { appendDictation } from '../../dictation/session'
 import { useDictation } from '../../dictation/useDictation'
@@ -21,7 +31,10 @@ import { SetupPill } from './SetupPill'
 
 /** Unsent text per conversation, kept while the app runs so leaving one and coming back keeps what was being written. */
 const drafts = new Map<string, string>()
-const MAX_HEIGHT = 140
+const MIN_HEIGHT = 44
+/** The field grows with the text up to this share of the screen, then scrolls. */
+const MAX_SHARE = 0.4
+const MAX_HEIGHT_CAP = 360
 const selectFiles = (state: FleetState) => state.features.includes(FLEET_FILES_FEATURE)
 const selectOnline = (state: FleetState) => state.connection === 'open'
 
@@ -43,6 +56,9 @@ export function ComposerShell({
   disabled,
   inputRef,
   initialText,
+  editing = null,
+  onEdit,
+  onCancelEdit,
 }: {
   draftKey: string
   placeholder: string
@@ -55,6 +71,11 @@ export function ComposerShell({
   disabled?: boolean
   inputRef?: Ref<TextInput>
   initialText?: string
+  /** A message being edited: its text fills the field, and sending replaces the message with it. */
+  editing?: { itemId: string; text: string } | null
+  /** Rejects with an error whose message tells the person why the edit did not go through. */
+  onEdit?: (text: string) => Promise<unknown>
+  onCancelEdit?: () => void
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -62,22 +83,52 @@ export function ComposerShell({
   const [text, setTextState] = useState(() => drafts.get(draftKey) ?? initialText ?? '')
   const [attachments, setAttachments] = useState<OutboxAttachment[]>([])
   const [issue, setIssue] = useState<AttachmentIssue | null>(null)
-  const [height, setHeight] = useState(24)
+  const window = useWindowDimensions()
+  const maxHeight = Math.max(MIN_HEIGHT * 3, Math.min(MAX_HEIGHT_CAP, Math.round(window.height * MAX_SHARE)))
+  // Only the web measures the text itself: a native multiline field already grows with it up to `maxHeight`.
+  const [height, setHeight] = useState(MIN_HEIGHT)
   const [picking, setPicking] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | boolean>(false)
 
   const latestText = useRef(text)
   latestText.current = text
+  const field = useRef<TextInput>(null)
+  useImperativeHandle(inputRef, () => field.current as TextInput)
+  const editingId = editing?.itemId ?? null
+  const editingRef = useRef(editingId)
+  editingRef.current = editingId
+  const showText = useCallback((value: string) => {
+    // A web textarea never measures shorter than its height: shrink it, and the next measure grows it back.
+    if (Platform.OS === 'web' && value.length < latestText.current.length) setHeight(MIN_HEIGHT)
+    latestText.current = value
+    setTextState(value)
+  }, [])
   const setText = useCallback(
     (value: string) => {
-      latestText.current = value
-      setTextState(value)
+      showText(value)
+      // An edit is not a draft: the draft waits, as it was, until the edit ends.
+      if (editingRef.current) return
       if (value) drafts.set(draftKey, value)
       else drafts.delete(draftKey)
     },
-    [draftKey]
+    [draftKey, showText]
   )
+  const editingText = editing?.text ?? ''
+  const wasEditing = useRef(false)
+  useEffect(() => {
+    if (editingId) {
+      wasEditing.current = true
+      setError(false)
+      showText(editingText)
+      const timer = setTimeout(() => field.current?.focus(), 50)
+      return () => clearTimeout(timer)
+    }
+    if (!wasEditing.current) return
+    wasEditing.current = false
+    setError(false)
+    showText(drafts.get(draftKey) ?? '')
+  }, [editingId, editingText, draftKey, showText])
   const dictation = useDictation((heard) => setText(appendDictation(latestText.current, heard)))
   const listening = dictation.state.phase !== 'idle'
   const dictationIssue = dictation.state.phase === 'idle' ? dictation.state.issue : null
@@ -87,11 +138,24 @@ export function ComposerShell({
     if (!problem) setAttachments((current) => [...current, ...picked])
   }
   const empty = !text.trim() && attachments.length === 0
-  const stoppable = stopLabel !== null && empty
+  const stoppable = stopLabel !== null && empty && !editingId
 
   async function send() {
     if (empty || busy) return
     const body = text.trim()
+    if (editingId && onEdit) {
+      setBusy(true)
+      setError(false)
+      try {
+        await onEdit(body)
+        Keyboard.dismiss()
+      } catch (cause) {
+        setError(cause instanceof Error && cause.message ? cause.message : true)
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
     const files = attachments
     setBusy(true)
     setError(false)
@@ -128,7 +192,7 @@ export function ComposerShell({
           accessibilityRole="alert"
           style={{ marginHorizontal: 8, marginBottom: 6, fontSize: 13, color: palette.brick }}
         >
-          {issue ? t(`attach.error.${issue}`) : t('composer.failed')}
+          {issue ? t(`attach.error.${issue}`) : typeof error === 'string' ? error : t('composer.failed')}
         </AppText>
       ) : dictationIssue ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, marginBottom: 6 }}>
@@ -151,12 +215,25 @@ export function ComposerShell({
           ) : null}
         </View>
       ) : null}
+      {editingId ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 8, marginBottom: 6 }}>
+          <Icon name="pencil" size={14} color={palette.brass} />
+          <AppText variant="small" style={{ flex: 1, color: palette.brass, fontFamily: fonts.bodySemi }}>
+            {t('edit.editing')}
+          </AppText>
+          <Pressable accessibilityRole="button" hitSlop={12} disabled={busy} onPress={() => onCancelEdit?.()}>
+            <AppText variant="small" tone="muted" style={{ fontFamily: fonts.bodySemi }}>
+              {t('common.cancel')}
+            </AppText>
+          </Pressable>
+        </View>
+      ) : null}
       <View
         style={{
-          paddingVertical: 6,
-          paddingRight: 6,
+          paddingVertical: 8,
+          paddingRight: 8,
           paddingLeft: 8,
-          borderRadius: 24,
+          borderRadius: 26,
           borderWidth: 1,
           borderColor: palette.line,
           backgroundColor: palette.raised,
@@ -176,7 +253,7 @@ export function ComposerShell({
           />
         ) : null}
         <TextInput
-          ref={inputRef}
+          ref={field}
           value={text}
           onChangeText={(value) => {
             setText(value)
@@ -187,19 +264,23 @@ export function ComposerShell({
           placeholder={placeholder}
           placeholderTextColor={palette.faint}
           accessibilityLabel={placeholder}
-          onContentSizeChange={(event) => setHeight(event.nativeEvent.contentSize.height)}
+          onContentSizeChange={
+            Platform.OS === 'web' ? (event) => setHeight(event.nativeEvent.contentSize.height) : undefined
+          }
+          scrollEnabled
           style={{
             display: listening ? 'none' : 'flex',
-            minHeight: 34,
+            minHeight: MIN_HEIGHT,
+            maxHeight,
             // The reported content height already includes the padding; adding to it would grow the field forever.
-            height: Math.min(MAX_HEIGHT, Math.max(34, height)),
-            paddingTop: 6,
-            paddingBottom: 4,
-            paddingHorizontal: 8,
+            ...(Platform.OS === 'web' ? { height: Math.min(maxHeight, Math.max(MIN_HEIGHT, height)) } : null),
+            paddingTop: 10,
+            paddingBottom: 8,
+            paddingHorizontal: 10,
             color: palette.ink,
             fontFamily: fonts.body,
-            fontSize: 16,
-            lineHeight: 22,
+            fontSize: 17,
+            lineHeight: 24,
             textAlignVertical: 'top',
           }}
         />
@@ -216,6 +297,8 @@ export function ComposerShell({
               <IconButton
                 icon="plus"
                 label={t('composer.attach')}
+                // An edit keeps the message's attachments; it changes its text only.
+                disabled={!!editingId}
                 onPress={() => setPicking(true)}
                 style={{ width: 44, height: 44, borderRadius: 22 }}
               />
@@ -259,7 +342,7 @@ export function ComposerShell({
           ) : (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={stoppable ? (stopLabel ?? '') : t('composer.send')}
+              accessibilityLabel={stoppable ? (stopLabel ?? '') : editingId ? t('edit.save') : t('composer.send')}
               aria-disabled={disabled || busy || (empty && !stoppable)}
               disabled={disabled || busy || (empty && !stoppable)}
               onPress={() => void (stoppable ? stop() : send())}
@@ -275,7 +358,12 @@ export function ComposerShell({
                 transform: [{ scale: pressed ? 0.94 : 1 }],
               })}
             >
-              <Icon name={stoppable ? 'stop' : 'arrow-up'} size={18} color={palette.canvas} strokeWidth={2.2} />
+              <Icon
+                name={stoppable ? 'stop' : editingId ? 'check' : 'arrow-up'}
+                size={18}
+                color={palette.canvas}
+                strokeWidth={2.2}
+              />
             </Pressable>
           )}
         </View>
@@ -286,7 +374,19 @@ export function ComposerShell({
 }
 
 /** The composer of a bot's conversation. */
-export function Composer({ bot, inputRef }: { bot: FleetBot; inputRef?: Ref<TextInput> }) {
+export function Composer({
+  bot,
+  inputRef,
+  editing,
+  onEdit,
+  onCancelEdit,
+}: {
+  bot: FleetBot
+  inputRef?: Ref<TextInput>
+  editing?: { itemId: string; text: string } | null
+  onEdit?: (text: string) => Promise<unknown>
+  onCancelEdit?: () => void
+}) {
   const { t } = useI18n()
   const { active } = useServers()
   const controller = useFleetController()
@@ -305,6 +405,9 @@ export function Composer({ bot, inputRef }: { bot: FleetBot; inputRef?: Ref<Text
         AccessibilityInfo.announceForAccessibility(online ? t('announce.sent') : t('announce.queuedOffline'))
       }}
       inputRef={inputRef}
+      editing={editing}
+      onEdit={onEdit}
+      onCancelEdit={onCancelEdit}
     />
   )
 }

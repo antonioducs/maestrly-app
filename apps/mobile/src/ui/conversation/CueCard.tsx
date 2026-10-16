@@ -45,6 +45,8 @@ export type ConversationContextValue = {
   files?: BotFileAccess
   /** Sends a message as the person, as an interactive answer may ask to; absent where the phone cannot send. */
   sendMessage?: (text: string) => Promise<void>
+  /** The message the person may edit now, and how to start editing it; absent where it cannot be edited. */
+  edit?: { itemId: string; start: (itemId: string, text: string) => void }
 }
 export const ConversationContext = createContext<ConversationContextValue | null>(null)
 export function useConversation(): ConversationContextValue {
