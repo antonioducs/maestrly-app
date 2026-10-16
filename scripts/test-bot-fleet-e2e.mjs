@@ -1504,7 +1504,8 @@ async function main() {
 
   // Plugins: the real gateway and bot image serve the environment's own plugin engine. Nothing is installed: sources are
   // Git repositories, and this test reaches no network.
-  assert.ok((await request('GET', '/v1/meta')).features.includes('environment-plugins-v1'))
+  // Past the 20 features installed desktops read: the gateway announces it in moreFeatures.
+  assert.ok((await request('GET', '/v1/meta')).moreFeatures.includes('environment-plugins-v1'))
   assert.ok((await request('GET', environmentRoute)).capabilities.includes('environment-plugins-v1'))
   const pluginState = await request('GET', settingsRoute + '/plugins')
   assert.equal(pluginState.git.available, true, 'The bot image needs Git for plugin sources')
