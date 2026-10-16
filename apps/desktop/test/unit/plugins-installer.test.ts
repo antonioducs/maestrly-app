@@ -154,8 +154,11 @@ describe('plugin installer', () => {
     const result = await copyPluginTree(src, [...tree.entries.values()], dest)
     expect(result.files).toBe(2)
     expect(result.skipped).toEqual([{ path: 'l', reason: 'symlink-skipped' }])
-    expect(statSync(path.join(dest, 'a.sh')).mode & 0o777).toBe(0o755)
-    expect(statSync(path.join(dest, 'b.txt')).mode & 0o777).toBe(0o644)
+    // Windows files carry no executable or group bits; installs take their modes from Git there too.
+    if (process.platform !== 'win32') {
+      expect(statSync(path.join(dest, 'a.sh')).mode & 0o777).toBe(0o755)
+      expect(statSync(path.join(dest, 'b.txt')).mode & 0o777).toBe(0o644)
+    }
     expect(result.digest).toMatch(/^[0-9a-f]{64}$/)
   })
 

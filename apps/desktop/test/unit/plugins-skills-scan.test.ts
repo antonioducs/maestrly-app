@@ -13,7 +13,11 @@ describe('plugin package tree', () => {
     })
     const tree = await fsPackageTree(root)
     expect(tree.entries.get('a.txt')).toEqual({ path: 'a.txt', mode: 'file' })
-    expect(tree.entries.get('bin/tool')).toEqual({ path: 'bin/tool', mode: 'executable' })
+    // A Windows file has no executable bit, so an installed copy lists its scripts as files there.
+    expect(tree.entries.get('bin/tool')).toEqual({
+      path: 'bin/tool',
+      mode: process.platform === 'win32' ? 'file' : 'executable',
+    })
     expect(tree.entries.get('link')).toEqual({ path: 'link', mode: 'symlink' })
     expect(tree.entries.has('.git/config')).toBe(false)
     expect((await tree.read('a.txt', 100))?.toString()).toBe('hello')

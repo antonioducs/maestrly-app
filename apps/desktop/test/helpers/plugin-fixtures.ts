@@ -43,11 +43,23 @@ export function fixtureGit(cwd: string, args: string[]): string {
   ).trim()
 }
 
+/**
+ * Records the executable bit of `files` in the index: Git on Windows (`core.fileMode=false`) never reads it from the
+ * working tree, and the plugin engine takes file modes from Git.
+ */
+function markExecutables(dir: string, files: FixtureFiles): void {
+  const executables = Object.entries(files)
+    .filter(([, file]) => typeof file === 'object' && 'content' in file && ((file.mode ?? 0) & 0o111) !== 0)
+    .map(([rel]) => rel)
+  if (executables.length) fixtureGit(dir, ['update-index', '--chmod=+x', '--', ...executables])
+}
+
 /** Commits `files` (and removes `remove`) in an existing fixture repository; returns the new commit. */
 export async function commitFiles(dir: string, files: FixtureFiles, remove: string[] = []): Promise<string> {
   await writeTree(files, dir)
   for (const rel of remove) rmSync(path.join(dir, rel), { force: true, recursive: true })
   fixtureGit(dir, ['add', '-A'])
+  markExecutables(dir, files)
   fixtureGit(dir, ['commit', '-q', '--allow-empty', '-m', 'update'])
   return fixtureGit(dir, ['rev-parse', 'HEAD'])
 }
@@ -63,6 +75,7 @@ export async function makeGitRepo(
   fixtureGit(dir, ['init', '-q', '-b', 'main'])
   await writeTree(files, dir)
   fixtureGit(dir, ['add', '-A'])
+  markExecutables(dir, files)
   if (opts.submodule) {
     fixtureGit(dir, ['update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},${opts.submodule}`])
   }
