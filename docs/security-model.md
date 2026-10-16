@@ -139,6 +139,10 @@ Application-managed API keys and integration credentials remain in the main
 process. `apps/desktop/src/main/secure-store.ts` stores only `enc:v1:` ciphertext produced by
 Electron `safeStorage`. Reads ignore legacy plaintext, and writes return failure
 when OS encryption is unavailable instead of falling back to plaintext.
+The only exception is E2E mode (`AGENTS_E2E=1`) on Linux: Playwright starts
+Electron with Chromium's basic password store, so test runs use Electron's
+in-memory key (`setUsePlainTextEncryption`). E2E mode always runs in an isolated
+temporary profile and never reads or writes a real one.
 
 Provider CLIs, browser sessions, Git credential helpers, SSH agents, and MCP
 servers retain independent credential stores. Maestrly App cannot guarantee
