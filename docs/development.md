@@ -21,6 +21,16 @@ Postinstall prepares Electron and native dependencies. Development uses an isola
 instances before running `npm run clean:dev`, which removes development profiles
 and build caches. See [Local data](local-data.md) before resetting or moving profiles.
 
+From a terminal inside a Maestrly bot or workspaces environment, `npm run dev`
+inherits the container's bot or server mode and fails because the running
+Maestrly already holds the control port. Use `npm run dev:local` there: it runs
+the development app as a desktop app, without those variables. In a workspaces
+environment, open the conversation's **Computer** tab first and run the command
+in a terminal opened after it, so the window opens on that computer; otherwise it
+opens on the environment's own display, which no one sees. Stopping the command,
+with Ctrl+C or by closing the terminal, also stops the app, even while it asks
+to confirm quitting.
+
 ## Layout
 
 | Path | Purpose |
