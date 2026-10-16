@@ -186,7 +186,7 @@ describe('config and storage', () => {
   it('migrates empty database and reopens it', () => {
     const dir = temp(),
       store = new Store(dir)
-    expect(store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '14' })
+    expect(store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '15' })
     store.close()
     const reopened = new Store(dir)
     expect(reopened.listDevices()).toEqual([])
@@ -200,6 +200,20 @@ describe('config and storage', () => {
     expect(await run(['pair'], (line) => lines.push(line), env)).toBe(0)
     expect(lines[1]).toMatch(/^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/)
     expect(await run(['devices', 'list'], (line) => lines.push(line), env)).toBe(0)
+    // The list says what each device is, when it said so as it paired.
+    const store = new Store(dir)
+    const auth = new Auth(store)
+    auth.pair(auth.createPairing().code, 'iPhone', 'cli', { kind: 'phone', platform: 'ios' })
+    auth.pair(auth.createPairing().code, 'Old Mac', 'cli')
+    store.close()
+    lines.length = 0
+    expect(await run(['devices', 'list'], (line) => lines.push(line), env)).toBe(0)
+    expect(lines.map((line) => line.split('\t').slice(1, 4))).toEqual(
+      expect.arrayContaining([
+        ['iPhone', 'phone (ios)', 'active'],
+        ['Old Mac', 'unknown', 'active'],
+      ])
+    )
   })
 })
 describe('auth', () => {

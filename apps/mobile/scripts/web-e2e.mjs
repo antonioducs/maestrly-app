@@ -101,6 +101,15 @@ try {
         .map((element) => element.outerHTML.slice(0, 160))
     )
   const button = (name) => page.getByRole('button', { name })
+  /** Waits until the element is inside the window, not just in the page. */
+  const inView = async (locator) => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const box = await locator.boundingBox()
+      if (box && box.y >= 0 && box.y + box.height <= 844) return
+      await page.waitForTimeout(100)
+    }
+    throw new Error('Not scrolled into view')
+  }
   const openMenu = () => button(/^Open menu/).click()
   const step = async (name, run) => {
     process.stdout.write(`- ${name}… `)
@@ -129,6 +138,9 @@ try {
     await field.fill('How did spend look this week?')
     await button('Send message').click()
     await page.getByText('How did spend look this week?').waitFor()
+    // Sending puts the keyboard away.
+    if (await field.evaluate((element) => element === document.activeElement))
+      throw new Error('The message field kept the focus after sending')
     await page.getByText(/Atlas accounts for 64%/).waitFor()
   })
 
@@ -149,6 +161,22 @@ try {
     await button('Done').click()
   })
 
+  await step('go back to the latest message', async () => {
+    const latest = page.getByText('Conversation compacted').last()
+    await inView(latest)
+    const list = page.getByText(/Atlas accounts for 64%/).first()
+    const box = await list.boundingBox()
+    await page.mouse.move(195, box ? Math.max(120, box.y) : 400)
+    for (let turn = 0; turn < 8 && !(await button('Go to the latest message').count()); turn++) {
+      await page.mouse.wheel(0, -1200)
+      await page.waitForTimeout(150)
+    }
+    await button('Go to the latest message').click()
+    await inView(latest)
+    await page.waitForTimeout(300)
+    if (await button('Go to the latest message').count()) throw new Error('The button stayed at the end')
+  })
+
   await step('approve a request', async () => {
     await openMenu()
     await page.getByRole('tab', { name: /^Bots/ }).click()
@@ -165,11 +193,29 @@ try {
     await page.getByRole('alert').filter({ hasText: "The demo server doesn't host pages" }).waitFor()
   })
 
+  await step('play a video a bot shared', async () => {
+    await page.getByText('pricing-walkthrough.mp4').waitFor()
+    await page.getByText('4.0 MB').waitFor()
+    await button('Play pricing-walkthrough.mp4').click()
+    await page.getByRole('alert').filter({ hasText: "The demo server doesn't host files" }).waitFor()
+  })
+
   await step('start a chat', async () => {
     await button('New chat').click()
     await page.getByRole('textbox', { name: 'Ask anything' }).fill('Write the release notes for 0.16')
     await button('Send message').click()
     await page.getByText('Maestrly 0.16').waitFor()
+  })
+
+  await step('allow everything in a chat from its request', async () => {
+    await page.getByRole('button', { name: 'New chat', exact: true }).filter({ visible: true }).first().click()
+    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Clean the build cache')
+    await button('Send message').click()
+    page.once('dialog', (dialog) => dialog.accept())
+    await button('Allow everything in this chat').click()
+    await page.getByText('Allowed', { exact: true }).waitFor()
+    await page.getByText('Cleared the build cache.', { exact: false }).waitFor()
+    await button(/^Setup: .*Full access/).waitFor()
   })
 
   await step('change the chat setup', async () => {
@@ -186,9 +232,24 @@ try {
     await button('Done').click()
   })
 
+  await step('remove a paired device', async () => {
+    if (!(await button('Settings').isVisible())) await openMenu()
+    await button('Settings').click()
+    await button('Paired devices').click()
+    await page.getByText('Phone (this phone)').waitFor()
+    await page.getByText('MacBook Pro').waitFor()
+    if (await button('Remove Phone').count()) throw new Error('This phone offered to remove itself')
+    page.once('dialog', (dialog) => dialog.accept())
+    await button('Remove Pixel 9').click()
+    await page.getByText('Pixel 9').waitFor({ state: 'detached' })
+    await button('Done').click()
+    await page.getByText('Notifications aren’t available here').waitFor()
+    await button('Done').click()
+  })
+
   await step('show the dark theme', async () => {
     await page.emulateMedia({ colorScheme: 'dark' })
-    await page.getByText('Maestrly 0.16').waitFor()
+    await page.getByText('Cleared the build cache.', { exact: false }).waitFor()
   })
 
   await step('open a conversation from its report', async () => {
@@ -201,15 +262,41 @@ try {
     await page.getByRole('textbox', { name: /Message|Ask anything/ }).waitFor()
   })
 
-  await step('see an interactive answer as a card', async () => {
+  await step('use an interactive answer', async () => {
     await openMenu()
     await page.getByRole('tab', { name: /^Chats/ }).click()
     await button(/^Pricing tiers for teams/).click()
-    await page.getByText('Interactive answer').waitFor()
+    // The block runs in a sandboxed frame of its own, not as source in the page.
+    const frame = page.frameLocator('iframe[title="Interactive answer"]')
+    await frame.getByText('Starter').waitFor()
     if (await page.getByText('<div class="tiers">').count()) throw new Error('The interface showed as source')
+    // What it asks to send waits for the person to agree.
+    const asked = new Promise((resolve) =>
+      page.once('dialog', (dialog) => {
+        resolve(dialog.message())
+        void dialog.accept()
+      })
+    )
+    await frame.getByRole('button', { name: 'Ask about Team' }).click()
+    if (!String(await asked).includes('Tell me about Team')) throw new Error('The confirmation did not show the message')
+    await page.getByText('Tell me about Team', { exact: true }).waitFor()
     await button('Show code').click()
     await page.getByText(/<div class="tiers">/).waitFor()
     await button('Hide code').click()
+  })
+
+  await step('switch between workspaces environments', async () => {
+    await openMenu()
+    await button(/^Personal, Running\. Choose a workspaces environment/).click()
+    await page.getByRole('radio', { name: /^Company/ }).click()
+    // Each environment has its own chats.
+    await button(/^Read-only role for auditors/).click()
+    await page.getByText(/Auditors need to see accounts, invoices and the audit log/).waitFor()
+    await openMenu()
+    if (await button(/^Pricing tiers for teams/).count()) throw new Error('Company listed a chat of Personal')
+    await button(/^Company, Running\. Choose a workspaces environment/).click()
+    await page.getByRole('radio', { name: /^Personal/ }).click()
+    await button(/^Pricing tiers for teams/).waitFor()
   })
 
   if (problems.length) throw new Error(`The app reported problems:\n${problems.join('\n')}`)

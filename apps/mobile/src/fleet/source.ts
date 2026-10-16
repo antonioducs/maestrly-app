@@ -15,6 +15,8 @@ export interface FleetSource {
   openEvents(handlers: EventHandlers): { close(): void; reconnectNow(): void }
   /** A transcript image, with the headers the server needs to serve it. */
   imageSource(botId: string, imageId: string): { uri: string; headers?: Record<string, string> }
+  /** Where a file a bot shared downloads from, with the headers the server needs. */
+  fileSource(botId: string, fileId: string): { uri: string; headers: Record<string, string> }
   /** The base64 contents of a file chosen on the phone, read only when its message is sent. */
   readAttachment(uri: string): Promise<string>
 }

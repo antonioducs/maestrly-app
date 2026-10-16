@@ -161,6 +161,14 @@ describe('chat lists', () => {
     expect(chatSetupSummary({ ...setup, selection: null, reasoning: 'off' }, null, option, text.t)).toBe(
       'Default · Opus 5.5'
     )
+    // A permission mode other than asking shows, so full access is never out of sight; Maestro has none.
+    expect(chatSetupSummary({ ...setup, permMode: 'full' }, option, null, text.t)).toBe('Opus 5.5 · High · Full access')
+    expect(chatSetupSummary({ ...setup, permMode: 'auto', reasoning: 'off' }, option, null, text.t)).toBe(
+      'Opus 5.5 · Approve for me'
+    )
+    expect(chatSetupSummary({ ...setup, permMode: 'full', experience: 'maestro' }, option, null, text.t)).toBe(
+      'Opus 5.5 · High'
+    )
   })
 })
 
@@ -236,6 +244,7 @@ describe('chat state', () => {
 
 class FakeHost implements ChatsSource {
   readonly serverId = 's1'
+  readonly environmentId = 'w'
   handlers: ChatsHandlers | null = null
   calls: Array<[MobileChannelKey, unknown]> = []
   closed = 0
@@ -313,7 +322,7 @@ describe('chats controller', () => {
     await controller.send('c1', 'first', [])
     await controller.send('c1', 'second', [])
     expect(host.keys()).not.toContain('send')
-    expect(JSON.parse((await kv.get('chat-outbox.s1')) ?? '[]')).toHaveLength(2)
+    expect(JSON.parse((await kv.get('chat-outbox.s1.w')) ?? '[]')).toHaveLength(2)
 
     host.emit({
       key: 'runtime',
@@ -384,7 +393,7 @@ describe('bridge socket', () => {
         : { ticket: 't1', path: '/v1/bridge?ticket=t1', expiresAt: '2026-10-13T12:00:30.000Z' }
     )
     const create = vi.fn(() => ({}) as never)
-    await openBridgeSocket(server, { call } as never, () => ['phones'], create)
+    await openBridgeSocket(server, { call } as never, () => ['phones'], 'w', create)
     expect(call).toHaveBeenLastCalledWith('environmentBridgeTicket', {
       params: { eid: 'w' },
       body: { origin: 'https://bots.example.dev' },
@@ -392,45 +401,49 @@ describe('bridge socket', () => {
     expect(create).toHaveBeenCalledWith('wss://bots.example.dev/v1/bridge?ticket=t1', 'https://bots.example.dev')
   })
 
-  it('opens the first workspaces environment that runs and speaks to phones, of a server with several', async () => {
+  it('opens the environment the phone chose, of a server with several', async () => {
     const tickets: string[] = []
     const call = vi.fn(async (key: string, options?: { params?: { eid?: string } }) => {
       if (key !== 'environmentsList') {
         tickets.push(options?.params?.eid ?? '')
         return { ticket: 't1', path: '/v1/bridge?ticket=t1', expiresAt: '2026-10-13T12:00:30.000Z' }
       }
-      return {
-        environments: [
-          workspaces({ id: 'personal', lifecycle: 'stopped' }),
-          workspaces({ id: 'old', capabilities: [] }),
-          workspaces({ id: 'company' }),
-        ],
-      }
+      return { environments: [workspaces({ id: 'personal' }), workspaces({ id: 'company' })] }
     })
     await openBridgeSocket(
       server,
       { call } as never,
       () => ['phones'],
+      'company',
       vi.fn(() => ({}) as never)
     )
     expect(tickets).toEqual(['company'])
   })
 
-  it('says when it cannot work now: an old server or host, no running host, or a removed phone', async () => {
+  it('says when it cannot work now: an old server or host, a stopped or removed host, or a removed phone', async () => {
     const list = (environments: unknown[]) => ({ call: async () => ({ environments }) }) as never
     const code = (promise: Promise<unknown>) => promise.catch((error: MobileBridgeError) => error.code)
-    expect(await code(openBridgeSocket(server, list([workspaces()]), () => [], vi.fn()))).toBe('UNSUPPORTED')
-    expect(await code(openBridgeSocket(server, list([]), () => ['phones'], vi.fn()))).toBe('UNAVAILABLE')
+    expect(await code(openBridgeSocket(server, list([workspaces()]), () => [], 'w', vi.fn()))).toBe('UNSUPPORTED')
+    expect(await code(openBridgeSocket(server, list([]), () => ['phones'], 'w', vi.fn()))).toBe('UNAVAILABLE')
+    // The chosen host is stopped, even though another one runs: the phone does not switch on its own.
     expect(
-      await code(openBridgeSocket(server, list([workspaces({ lifecycle: 'stopped' })]), () => ['phones'], vi.fn()))
+      await code(
+        openBridgeSocket(
+          server,
+          list([workspaces({ lifecycle: 'stopped' }), workspaces({ id: 'other' })]),
+          () => ['phones'],
+          'w',
+          vi.fn()
+        )
+      )
     ).toBe('UNAVAILABLE')
     expect(
-      await code(openBridgeSocket(server, list([workspaces({ capabilities: [] })]), () => ['phones'], vi.fn()))
+      await code(openBridgeSocket(server, list([workspaces({ capabilities: [] })]), () => ['phones'], 'w', vi.fn()))
     ).toBe('UNSUPPORTED')
     const removed = {
       call: async () => Promise.reject(new GatewayError('UNAUTHORIZED', 401, 'Device token required')),
     } as never
-    expect(await code(openBridgeSocket(server, removed, () => ['phones'], vi.fn()))).toBe('UNAUTHORIZED')
+    expect(await code(openBridgeSocket(server, removed, () => ['phones'], 'w', vi.fn()))).toBe('UNAUTHORIZED')
   })
 })
 

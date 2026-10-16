@@ -137,8 +137,11 @@ How they behave:
   than the answer, text cut off, a layout that grows with its own frame, script
   errors and blocked requests.
 - **Interface source** shows what the agent wrote.
-- The [mobile app](mobile.md) does not run interfaces: it shows each as a card,
-  with its source behind **Show code**. Use it in Maestrly on a computer.
+- The [mobile app](mobile.md) runs interfaces too, in an isolated web view with
+  the same policy, once their block is complete. On the phone, every message an
+  interface asks to send and every page it asks to open first asks you, showing
+  the message or the site, since the phone cannot tell a tap in the interface
+  from the interface's own code. **Show code** shows the source.
 
 Interfaces cannot call tools, read files or fetch data, so they show only what
 the agent put in them. They may load images, video and audio from any web

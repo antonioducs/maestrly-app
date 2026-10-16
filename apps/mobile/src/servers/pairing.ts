@@ -1,9 +1,21 @@
-import { fleetMetaFeatures, isAllowedPhoneServerUrl, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
+import {
+  fleetMetaFeatures,
+  isAllowedPhoneServerUrl,
+  normalizePairingCode,
+  type FleetDeviceClient,
+} from '@maestrly/bot-fleet-protocol'
 import { createGatewayClient, GatewayError, type FetchLike } from '../gateway/client'
 import type { PairedServer } from './registry'
 
 export type PairingFailure = 'address' | 'code' | 'unreachable' | 'incompatible' | 'expired' | 'rate-limited' | 'failed'
-export type PairingInput = { address: string; code: string; deviceName: string; allowLoopback: boolean }
+export type PairingInput = {
+  address: string
+  code: string
+  deviceName: string
+  allowLoopback: boolean
+  /** What this device is, for the server's list of devices. */
+  client?: FleetDeviceClient
+}
 
 export class PairingError extends Error {
   constructor(
@@ -50,7 +62,9 @@ export async function pairWithServer(
   const anonymous = createGatewayClient({ origin: address.origin, token: null, fetch })
   try {
     const meta = await anonymous.call('meta')
-    const paired = await anonymous.call('pair', { body: { code, deviceName: input.deviceName } })
+    const paired = await anonymous.call('pair', {
+      body: { code, deviceName: input.deviceName, ...(input.client ? { client: input.client } : {}) },
+    })
     return {
       token: paired.token,
       server: {

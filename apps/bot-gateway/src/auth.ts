@@ -1,5 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { FLEET_ACTIVE_PAIRINGS_MAX, formatPairingCode, normalizePairingCode } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ACTIVE_PAIRINGS_MAX,
+  formatPairingCode,
+  normalizePairingCode,
+  type FleetDeviceClient,
+} from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 import type { Store, Device } from './store.js'
 
@@ -23,7 +28,12 @@ export class Auth {
     this.store.addPairing(sha256(raw), expiresAt)
     return { code: formatPairingCode(raw), expiresAt }
   }
-  pair(code: string, deviceName: string, remote: string): { deviceId: string; token: string } {
+  pair(
+    code: string,
+    deviceName: string,
+    remote: string,
+    client?: FleetDeviceClient
+  ): { deviceId: string; token: string } {
     const now = Date.now(),
       recent = (this.attempts.get(remote) ?? []).filter((at) => now - at < 60_000)
     if (recent.length >= 5) throw new GatewayError('RATE_LIMITED', 'Too many pairing attempts')
@@ -37,6 +47,8 @@ export class Auth {
     const device: Device = {
       id: deviceId,
       name: deviceName,
+      kind: client?.kind ?? null,
+      platform: client?.platform ?? null,
       createdAt: new Date().toISOString(),
       lastSeenAt: null,
       revokedAt: null,

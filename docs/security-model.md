@@ -88,6 +88,21 @@ as the person and opening an `http(s)` URL require transient user activation in
 the app window, at most once per second. Activation comes from any recent
 interaction with that window, not only from a click inside the frame.
 
+The mobile app runs a complete block in a `react-native-webview` of its own: a
+separate web process with an opaque `about:blank` origin, incognito, with no
+cache, shared or third-party cookies, file access, link previews or new windows.
+The page carries the same policy in a `<meta>` element, without `sandbox`, which
+only a header can set, so the web view, not the policy, keeps it from the app.
+Every navigation but the initial page load is refused; the origin allowlist
+passes every address to that check, so none is handed to the system to open.
+The block reaches the app only through the web view's message channel, whose
+messages are parsed like the desktop frame's. A phone cannot prove that the
+person tapped the interface, so sending a message always asks first, showing
+it, at most once per second, and opening a page asks first, showing its host;
+the app opens only plain `http(s)` addresses without credentials in the
+system's browser view. The web preview of the app uses a frame with
+`sandbox="allow-scripts"` instead.
+
 The `preview_interface` app tool renders a block for the model before it shows
 it. The block runs in the same frame page and policy, framed by a host page in
 an offscreen window of the in-memory `genui-previews` session. That window is
@@ -408,6 +423,15 @@ phone. Paired devices may have at most five unused codes at once; the command
 line is not limited. This adds no authority: every paired device can already
 control the whole gateway, and the new device gets exactly that authority. Each
 code is one-use, expires after ten minutes, and is stored only as a hash.
+
+Any paired device lists the devices paired with the gateway (`GET /v1/devices`:
+name, phone or computer, platform, when it paired and was last active, whether it
+gets notifications) and removes another one (`POST /v1/devices/<id>/revoke`), as the
+gateway's `devices list` and `devices revoke` commands do. This adds no
+authority either: a paired device already controls the whole gateway. A device
+cannot remove itself this way; it unpairs with `DELETE /v1/devices/self`.
+Removing a device revokes its token, deletes its push registration, and closes
+its event streams, bridges and screens.
 
 A phone is a paired device with the same authority. It registers for
 notifications with its own device token (`/v1/devices/self/push`): the gateway

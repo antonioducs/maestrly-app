@@ -348,6 +348,11 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
  * they are one feature, announced in `moreFeatures` of `/v1/meta`.
  */
 export const FLEET_PHONES_FEATURE = 'phones'
+/**
+ * Gateway feature: a paired device lists the devices paired with the server, and removes another one
+ * (`/v1/devices`), as the CLI's `devices list` and `devices revoke` do. Announced in `moreFeatures` of `/v1/meta`.
+ */
+export const FLEET_DEVICES_FEATURE = 'devices'
 /** Unused, unexpired codes paired devices may have at once. The CLI is not limited. */
 export const FLEET_ACTIVE_PAIRINGS_MAX = 5
 /** Workspaces host capability: it speaks the mobile API (`mobile:v1:*` channels) to phones over the bridge. */

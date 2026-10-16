@@ -54,7 +54,7 @@ const toPermission = ({ status, canAskAgain }: { status: string; canAskAgain: bo
  */
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { t, locale } = useI18n()
-  const { servers, ready, active, current, clientFor } = useServers()
+  const { servers, ready, active, current, environmentId, clientFor } = useServers()
   const [kv] = useState(() => (native ? asyncKeyValue() : null))
   const [permission, setPermission] = useState<PushPermission>(native ? 'undetermined' : 'unavailable')
   const [problem, setProblem] = useState<PushTokenProblem | null>(null)
@@ -63,13 +63,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [results, setResults] = useState<Record<string, PushRegistrationResult>>({})
   const [offered, setOffered] = useState(true)
   const [opened, setOpened] = useState<unknown>(null)
-  const onScreen = useRef<{ serverId: string | null; kind: string | null; id: string | null }>({
-    serverId: null,
-    kind: null,
-    id: null,
-  })
+  const onScreen = useRef<{
+    serverId: string | null
+    environmentId: string | null
+    kind: string | null
+    id: string | null
+  }>({ serverId: null, environmentId: null, kind: null, id: null })
   onScreen.current = {
     serverId: active?.id ?? null,
+    environmentId,
     kind: current?.kind ?? null,
     id: current && 'id' in current ? current.id : null,
   }
@@ -83,7 +85,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         const target = pushTarget(notification.request.content.data, serversRef.current)
         const shown = onScreen.current
         const visible =
-          !!target && target.serverId === shown.serverId && target.kind === shown.kind && target.id === shown.id
+          !!target &&
+          target.serverId === shown.serverId &&
+          target.kind === shown.kind &&
+          target.id === shown.id &&
+          (!target.environmentId || target.environmentId === shown.environmentId)
         return { shouldShowBanner: !visible, shouldShowList: true, shouldPlaySound: !visible, shouldSetBadge: false }
       },
     })

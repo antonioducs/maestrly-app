@@ -1,4 +1,4 @@
-import type { FleetTodo, FleetTranscriptItem, MobileChatItem } from '@maestrly/bot-fleet-protocol'
+import type { FleetFileRef, FleetTodo, FleetTranscriptItem, MobileChatItem } from '@maestrly/bot-fleet-protocol'
 import { artifactPublication, type ArtifactPublication } from '../artifacts/artifacts'
 import type { Pluralize, PluralKey, Translate } from '../i18n/translate'
 
@@ -8,6 +8,8 @@ export type TranscriptRow =
   | { kind: 'tools'; id: string; tools: ToolItem[] }
   | { kind: 'todos'; id: string; todos: FleetTodo[] }
   | { kind: 'artifact'; id: string; artifact: ArtifactPublication }
+  /** What a tool shared with the owner: videos to play and files to save, in place of the tool's own row. */
+  | { kind: 'files'; id: string; files: FleetFileRef[] }
 
 const isPlan = (item: MobileChatItem): item is ToolItem & { todos: FleetTodo[] } =>
   item.kind === 'tool' && item.name === 'todo_write' && Array.isArray(item.todos)
@@ -32,6 +34,10 @@ export function transcriptRows(items: MobileChatItem[]): TranscriptRow[] {
     const artifact = artifactPublication(item)
     if (artifact) {
       rows.push({ kind: 'artifact', id: item.id, artifact })
+      continue
+    }
+    if (item.kind === 'tool' && item.files?.length) {
+      rows.push({ kind: 'files', id: item.id, files: item.files })
       continue
     }
     const last = rows.at(-1)

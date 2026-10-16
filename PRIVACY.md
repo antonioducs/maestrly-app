@@ -46,6 +46,7 @@ and sanitize diagnostics before posting them.
 | Embedded editor | Initial VS Code CLI/server setup can contact Microsoft's download service. The editor server binds to loopback with a token. |
 | Local ML | Inference runs locally; runtime/model preparation may download assets from npm, native dependency hosts, and Hugging Face. |
 | Mobile notifications | When you turn them on, the phone gets a push token from Apple or Google through Expo and gives it to each paired server. The server sends notifications through Expo's push service to Apple or Google; each carries the bot's name or the chat's title and a fixed phrase, never message content. |
+| Interactive answers | Interfaces in answers, on a computer or on a phone, may load images, video and audio from any web address, and libraries and fonts from a few public CDNs. Those servers see the device's IP address and the addresses requested. |
 | Mobile dictation | The phone's speech recognition (Apple's, Google's, or the phone maker's) turns your speech into text and may process the audio on its servers. Maestrly and your server receive only the text you send. |
 | Voice dictation | Audio is transcribed locally and never uploaded. The voice model is downloaded from Hugging Face (`huggingface.co` and its `hf.co` CDN) only after you confirm; a sent transcription goes to the provider like any typed message. |
 

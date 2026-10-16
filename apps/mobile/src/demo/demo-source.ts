@@ -1,5 +1,6 @@
 import {
   compareFleetTranscriptItems,
+  FLEET_DEVICES_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_FILES_FEATURE,
@@ -7,6 +8,7 @@ import {
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   summarizeText,
   type FleetBot,
+  type FleetDevice,
   type FleetGatewayEvent,
   type FleetInboxItem,
   type FleetInteractionResolution,
@@ -24,6 +26,7 @@ export const DEMO_FEATURES = [
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   FLEET_PHONES_FEATURE,
+  FLEET_DEVICES_FEATURE,
 ]
 
 /** The demo server as a paired server: it never leaves the phone. */
@@ -50,6 +53,39 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
   const scale = (options.stepMs ?? 1000) / 1000
   const world = demoWorld(Date.now())
   const order = world.bots.map((bot) => bot.id)
+  // Made-up devices paired with the demo server; this phone is the one it knows as `DEMO_SERVER.id`.
+  let devices: FleetDevice[] = [
+    {
+      id: 'demo-mac',
+      name: 'MacBook Pro',
+      kind: 'computer',
+      platform: 'macos',
+      pairedAt: '2026-09-02T14:10:00.000Z',
+      lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+      current: false,
+      notifications: false,
+    },
+    {
+      id: DEMO_SERVER.id,
+      name: 'Phone',
+      kind: 'phone',
+      platform: 'ios',
+      pairedAt: '2026-10-12T12:00:00.000Z',
+      lastSeenAt: new Date().toISOString(),
+      current: true,
+      notifications: true,
+    },
+    {
+      id: 'demo-pixel',
+      name: 'Pixel 9',
+      kind: 'phone',
+      platform: 'android',
+      pairedAt: '2026-09-20T09:30:00.000Z',
+      lastSeenAt: '2026-10-01T18:45:00.000Z',
+      current: false,
+      notifications: true,
+    },
+  ]
   const bots = new Map(world.bots.map((bot) => [bot.id, bot]))
   const transcripts = world.transcripts
   const routines = world.routines
@@ -517,6 +553,17 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       }
       case 'devicesSelfDelete':
         return undefined
+      case 'devicesList':
+        return { devices }
+      case 'deviceRevoke': {
+        const deviceId = String(o.params?.deviceId ?? '')
+        if (deviceId === DEMO_SERVER.id)
+          throw new GatewayError('INVALID_REQUEST', 400, 'A device removes itself with DELETE /v1/devices/self')
+        if (!devices.some((device) => device.id === deviceId))
+          throw new GatewayError('NOT_FOUND', 404, 'Device not found')
+        devices = devices.filter((device) => device.id !== deviceId)
+        return undefined
+      }
       default:
         throw new GatewayError('NOT_FOUND', 404, 'The demo server does not offer this')
     }
@@ -548,6 +595,8 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       }
     },
     imageSource: () => ({ uri: PLACEHOLDER_IMAGE }),
+    // The demo keeps no files: the phone says so before asking for one.
+    fileSource: () => ({ uri: '', headers: {} }),
     // The demo keeps nothing it is sent: any file reads as the placeholder image, which every kind accepts.
     readAttachment: async () => PLACEHOLDER_IMAGE.slice(PLACEHOLDER_IMAGE.indexOf(',') + 1),
   }

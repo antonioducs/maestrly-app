@@ -28,13 +28,15 @@ function bridgeError(error: unknown): unknown {
 }
 
 /**
- * Opens a bridge socket to the server's workspaces host: a one-use ticket from the gateway, then the WebSocket. React
- * Native always sends an Origin header, so the phone names it in the ticket request and sends it explicitly.
+ * Opens a bridge socket to one of the server's workspaces hosts: a one-use ticket from the gateway, then the
+ * WebSocket. React Native always sends an Origin header, so the phone names it in the ticket request and sends it
+ * explicitly. A stopped host waits to be started: the phone never switches to another one on its own.
  */
 export async function openBridgeSocket(
   server: PairedServer,
   client: Pick<GatewayClient, 'call'>,
   features: () => string[],
+  environmentId: string,
   createSocket: (url: string, origin: string) => MobileBridgeSocket
 ): Promise<MobileBridgeSocket> {
   if (!features().includes(FLEET_PHONES_FEATURE))
@@ -43,14 +45,8 @@ export async function openBridgeSocket(
   if (!origin) throw new MobileBridgeError('UNSUPPORTED', 'The server address cannot carry a bridge')
   try {
     const { environments } = await client.call('environmentsList')
-    const hosts = environments.filter((environment) => environment.kind === 'workspaces')
-    // A server may host one workspaces environment per scope of the owner's work; the phone shows one of them, the
-    // first that runs and speaks to phones.
-    const host =
-      hosts.find((item) => item.lifecycle === 'running' && item.capabilities.includes(FLEET_MOBILE_HOST_FEATURE)) ??
-      hosts.find((item) => item.lifecycle === 'running') ??
-      hosts[0]
-    if (host?.lifecycle !== 'running') throw new MobileBridgeError('UNAVAILABLE', 'No running workspaces host')
+    const host = environments.find((item) => item.id === environmentId && item.kind === 'workspaces')
+    if (host?.lifecycle !== 'running') throw new MobileBridgeError('UNAVAILABLE', 'The workspaces host is not running')
     if (!host.capabilities.includes(FLEET_MOBILE_HOST_FEATURE))
       throw new MobileBridgeError('UNSUPPORTED', 'The workspaces host predates phones')
     const ticket = await client.call('environmentBridgeTicket', { params: { eid: host.id }, body: { origin } })
@@ -65,19 +61,21 @@ type NativeWebSocket = new (url: string, protocols: undefined, options: { header
 const nativeSocket = (url: string, origin: string): MobileBridgeSocket =>
   new (WebSocket as unknown as NativeWebSocket)(url, undefined, { headers: { Origin: origin } }) as MobileBridgeSocket
 
-/** A paired server's chats, through its workspaces host. */
+/** A paired server's chats, through one of its workspaces hosts. */
 export function createBridgeChatsSource(
   server: PairedServer,
   client: Pick<GatewayClient, 'call'>,
   features: () => string[],
+  environmentId: string,
   info: BridgeClientInfo,
   readFile: (uri: string) => Promise<string>
 ): ChatsSource {
   return {
     serverId: server.id,
+    environmentId,
     connect(handlers) {
       const bridge = new MobileBridgeClient({
-        connect: () => openBridgeSocket(server, client, features, nativeSocket),
+        connect: () => openBridgeSocket(server, client, features, environmentId, nativeSocket),
         appVersion: info.appVersion,
         client: { deviceName: info.deviceName.slice(0, 128), os: info.os, locale: info.locale.slice(0, 16) },
         onEvent: handlers.onEvent,

@@ -20,7 +20,13 @@ function gateway(routes: Record<string, () => { status: number; json?: unknown }
   return { fetch, calls }
 }
 
-const input = { address: 'https://bots.example.dev', code: 'k7q2-m9xd', deviceName: 'iPhone', allowLoopback: false }
+const input = {
+  address: 'https://bots.example.dev',
+  code: 'k7q2-m9xd',
+  deviceName: 'iPhone',
+  allowLoopback: false,
+  client: { kind: 'phone' as const, platform: 'ios' as const },
+}
 
 describe('pairing with a bot server', () => {
   it('reads the server’s features, then pairs with the normalized code', async () => {
@@ -34,7 +40,12 @@ describe('pairing with a bot server', () => {
       'POST /v1/pair',
     ])
     expect(g.calls[0].headers.Authorization).toBeUndefined()
-    expect(JSON.parse(g.calls[1].body ?? '')).toEqual({ code: 'K7Q2M9XD', deviceName: 'iPhone' })
+    // The phone says what it is, so the server's list of devices can tell it from a computer.
+    expect(JSON.parse(g.calls[1].body ?? '')).toEqual({
+      code: 'K7Q2M9XD',
+      deviceName: 'iPhone',
+      client: { kind: 'phone', platform: 'ios' },
+    })
     expect(result.token).toBe('tok')
     expect(result.server).toMatchObject({
       id: 'dev-1',

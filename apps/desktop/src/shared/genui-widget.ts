@@ -2,6 +2,7 @@
 // process serves the frame's page (genui-widget-frame.ts). The frame has its own opaque origin and policy, so the
 // model's HTML never runs in the app's page.
 
+import { GENUI_WIDGET_MAX_CHARS } from '@maestrly/bot-fleet-protocol'
 import type { MessagePart } from './chat'
 
 export const GENUI_WIDGET_SCHEME = 'maestrly-widget'
@@ -10,94 +11,22 @@ export const GENUI_WIDGET_FRAME_URL = `${GENUI_WIDGET_SCHEME}://frame/`
 /** Language of the fence whose content renders as inline HTML. */
 export const GENUI_WIDGET_FENCE = 'inline-html'
 
-/** Longest block the frame renders; a longer one shows its source only. */
-export const GENUI_WIDGET_MAX_CHARS = 200_000
-export const GENUI_WIDGET_MAX_HEIGHT = 2400
-export const GENUI_WIDGET_MAX_SEND_CHARS = 4000
-
-/** Theme variables the frame exposes to the block as `var(--ui-<key>)`. */
-export const GENUI_WIDGET_THEME_KEYS = [
-  'text',
-  'muted',
-  'card',
-  'border',
-  'accent',
-  'accent-text',
-  'success',
-  'warning',
-  'danger',
-  'font',
-  'mono',
-  'radius',
-] as const
-
-export type GenUiWidgetTheme = Partial<Record<(typeof GENUI_WIDGET_THEME_KEYS)[number], string>>
-
-/**
- * Problems the frame finds in a block: an image that did not load (replaced by a placeholder), content wider than
- * the answer, text cut off by its box, a layout sized by the frame's own height, a script error, or something the
- * frame's policy blocked.
- */
-export const GENUI_WIDGET_ISSUE_KINDS = ['image', 'overflow', 'clipped', 'viewport', 'script', 'blocked'] as const
-export type GenUiWidgetIssueKind = (typeof GENUI_WIDGET_ISSUE_KINDS)[number]
-
-/** What the frame may ask its host; anything else is ignored. */
-export type GenUiWidgetMessage =
-  | { type: 'ready' }
-  /** The block's page and everything it loads (images, scripts, styles) finished loading. */
-  | { type: 'loaded' }
-  | { type: 'size'; height: number }
-  | { type: 'send'; text: string }
-  | { type: 'open'; url: string }
-  | { type: 'issue'; kind: GenUiWidgetIssueKind; detail: string }
+// Limits, theme keys and the messages a frame may send are shared with the mobile app's web view.
+export {
+  GENUI_WIDGET_ISSUE_KINDS,
+  GENUI_WIDGET_MAX_CHARS,
+  GENUI_WIDGET_MAX_HEIGHT,
+  GENUI_WIDGET_MAX_SEND_CHARS,
+  GENUI_WIDGET_THEME_KEYS,
+  parseGenUiWidgetMessage,
+  safeWebUrl,
+  type GenUiWidgetIssueKind,
+  type GenUiWidgetMessage,
+  type GenUiWidgetTheme,
+} from '@maestrly/bot-fleet-protocol'
 
 export function isGenUiWidgetUrl(url: string): boolean {
   return url.startsWith(`${GENUI_WIDGET_SCHEME}:`)
-}
-
-/** An http(s) URL without credentials, normalized; null for anything else. */
-export function safeWebUrl(value: string): string | null {
-  try {
-    const url = new URL(value)
-    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) return null
-    return url.href
-  } catch {
-    return null
-  }
-}
-
-/** A message from a frame, checked field by field: the frame runs model-written code. */
-export function parseGenUiWidgetMessage(data: unknown): GenUiWidgetMessage | null {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return null
-  const message = data as Record<string, unknown>
-  if (message.source !== 'maestrly-widget') return null
-  switch (message.type) {
-    case 'ready':
-      return { type: 'ready' }
-    case 'loaded':
-      return { type: 'loaded' }
-    case 'size': {
-      const height = message.height
-      if (typeof height !== 'number' || !Number.isFinite(height) || height < 0) return null
-      return { type: 'size', height: Math.min(Math.ceil(height), GENUI_WIDGET_MAX_HEIGHT) }
-    }
-    case 'send': {
-      if (typeof message.text !== 'string') return null
-      const text = message.text.trim()
-      return text && text.length <= GENUI_WIDGET_MAX_SEND_CHARS ? { type: 'send', text } : null
-    }
-    case 'open': {
-      const url = typeof message.url === 'string' ? safeWebUrl(message.url) : null
-      return url ? { type: 'open', url } : null
-    }
-    case 'issue': {
-      const kind = GENUI_WIDGET_ISSUE_KINDS.find((known) => known === message.kind)
-      if (!kind || typeof message.detail !== 'string') return null
-      return { type: 'issue', kind, detail: message.detail.slice(0, 300) }
-    }
-    default:
-      return null
-  }
 }
 
 /** FNV-1a of a block: tells blocks apart, and names a preview, without storing them. */

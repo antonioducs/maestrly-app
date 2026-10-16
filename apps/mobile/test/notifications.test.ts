@@ -34,6 +34,10 @@ describe('notifications', () => {
     const target = pushTarget({ v: 1, device: 'd2', kind: 'chat', id: 'c 1', category: 'waiting' }, servers)
     expect(target).toEqual({ serverId: 'd2', kind: 'chat', id: 'c 1' })
     expect(pushLink(target!)).toBe('/chat/c%201?server=d2')
+    // A chat names its workspaces environment, which the phone opens first.
+    const chat = pushTarget({ v: 1, device: 'd2', kind: 'chat', id: 'c 1', category: 'waiting', env: 'zello' }, servers)
+    expect(chat).toEqual({ serverId: 'd2', kind: 'chat', id: 'c 1', environmentId: 'zello' })
+    expect(pushLink(chat!)).toBe('/chat/c%201?server=d2&env=zello')
     expect(pushTarget({ v: 1, device: 'unknown', kind: 'bot', id: 'atlas', category: null }, servers)).toBeNull()
     expect(pushTarget({ v: 1, device: 'd1', kind: 'test', id: null, category: null }, servers)).toBeNull()
     expect(pushTarget({ text: 'hello' }, servers)).toBeNull()

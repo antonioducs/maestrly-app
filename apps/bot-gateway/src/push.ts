@@ -183,10 +183,15 @@ export class PushNotifier {
     else if (kind === 'bot_failed') void this.bot(botId, 'errors', 'botFailed', String(event.entry.seq))
   }
 
-  /** A chat of the workspaces host needs the owner. */
-  chat(conversationId: string, name: string, kind: FleetChatAttentionKind): Promise<void> {
+  /** A chat of a workspaces host needs the owner; the phone opens it on that host. */
+  chat(environmentId: string, conversationId: string, name: string, kind: FleetChatAttentionKind): Promise<void> {
     const { category, phrase: key } = CHAT_PHRASES[kind]
-    return this.send({ kind: 'chat', id: conversationId, name }, category, key, `${kind}:${conversationId}`)
+    return this.send(
+      { kind: 'chat', id: conversationId, name, environmentId },
+      category,
+      key,
+      `${kind}:${environmentId}:${conversationId}`
+    )
   }
 
   /** Sends one phone a test notification; throws when it has not registered. */
@@ -213,7 +218,7 @@ export class PushNotifier {
   }
 
   private async send(
-    target: { kind: 'bot' | 'chat'; id: string; name: string },
+    target: { kind: 'bot' | 'chat'; id: string; name: string; environmentId?: string },
     category: FleetPushCategory,
     key: Phrase,
     event: string
@@ -224,7 +229,7 @@ export class PushNotifier {
     const recipients = this.deps.store.activePushRegistrations().filter(({ deviceId, registration }) => {
       if (!registration.preferences[category]) return false
       // A burst of the same news, such as a request seen again after a reconnect, notifies once.
-      const seen = `${deviceId}\0${target.kind}\0${target.id}\0${key}\0${event}`
+      const seen = `${deviceId}\0${target.kind}\0${target.environmentId ?? ''}\0${target.id}\0${key}\0${event}`
       if (this.recent.has(seen)) return false
       this.recent.set(seen, now)
       return true
@@ -234,7 +239,14 @@ export class PushNotifier {
       to: registration.token,
       title: target.name.slice(0, 100) || 'Maestrly',
       body: phrase(registration.locale, key, this.deps.serverName()),
-      data: { v: 1 as const, device: deviceId, kind: target.kind, id: target.id, category },
+      data: {
+        v: 1 as const,
+        device: deviceId,
+        kind: target.kind,
+        id: target.id,
+        category,
+        ...(target.environmentId ? { env: target.environmentId } : {}),
+      },
     }))
     let outcomes: PushOutcome[]
     try {

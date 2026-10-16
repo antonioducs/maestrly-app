@@ -20,7 +20,10 @@ import type { ChatsHandlers, ChatsSource } from '../chats/source'
 import {
   chatReply,
   DEMO_CHATS,
+  DEMO_COMPANY_CHATS,
+  DEMO_COMPANY_WORKSPACES,
   DEMO_DEFAULTS,
+  DEMO_ENVIRONMENTS,
   DEMO_MCP,
   DEMO_MODEL_INFO,
   DEMO_SKILLS,
@@ -69,14 +72,16 @@ const firstWords = (text: string) => {
  * the mobile API as a real host does over the bridge, so the chat screens work in the web preview and in the demo.
  */
 export function createDemoChatsSource(
-  options: { stepMs?: number; readFile?: (uri: string) => Promise<string> } = {}
+  options: { stepMs?: number; readFile?: (uri: string) => Promise<string>; environmentId?: string } = {}
 ): ChatsSource {
+  const environmentId = options.environmentId ?? DEMO_ENVIRONMENTS.personal
+  const company = environmentId === DEMO_ENVIRONMENTS.company
   const scale = (options.stepMs ?? 1000) / 1000
   const start = Date.now()
   const listeners = new Set<ChatsHandlers>()
   const chats = new Map<string, Chat>()
   const images = new Map<string, { mediaType: string; dataBase64: string }>()
-  const workspaces = DEMO_WORKSPACES
+  const workspaces = company ? DEMO_COMPANY_WORKSPACES : DEMO_WORKSPACES
   let defaults = { ...DEMO_DEFAULTS }
   let seq = 0
   let clock = start
@@ -91,7 +96,7 @@ export function createDemoChatsSource(
     for (const listener of listeners) listener.onEvent({ key, payload } as MobileEvent)
   }
 
-  for (const fixture of DEMO_CHATS) {
+  for (const fixture of company ? DEMO_COMPANY_CHATS : DEMO_CHATS) {
     const workspace = workspaces.find((item) => item.id === fixture.workspaceId)
     const base = start - fixture.minutesAgo * 60_000
     chats.set(fixture.id, {
@@ -711,6 +716,7 @@ export function createDemoChatsSource(
 
   return {
     serverId: DEMO_SERVER.id,
+    environmentId,
     connect(handlers) {
       listeners.add(handlers)
       setTimeout(() => {

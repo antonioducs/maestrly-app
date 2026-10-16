@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats } from '../chats/react'
 import { waitingChats } from '../chats/selectors'
 import { allConversations, type ChatsState } from '../chats/state'
+import { DEMO_SERVER } from '../demo/demo-source'
 import { useFleet, useFleetController } from '../fleet/react'
 import { isComposerLocked } from '../fleet/selectors'
 import type { FleetState } from '../fleet/state'
@@ -57,6 +58,7 @@ function EmptyState({ chats }: { chats: boolean }) {
 
 function BotConversation({ bot }: { bot: FleetBot }) {
   const controller = useFleetController()
+  const { active } = useServers()
   const online = useFleet(selectOnline)
   const inbox = useFleet(
     useCallback((state: FleetState) => state.inbox.filter((item) => item.botId === bot.id), [bot.id])
@@ -73,8 +75,18 @@ function BotConversation({ bot }: { bot: FleetBot }) {
         inbox.find((entry) => entry.interaction.itemId === item.id)?.interaction.id ?? null,
       resolve: (interactionId, resolution) => controller.resolve(bot.id, interactionId, resolution),
       imageSource: (imageId) => controller.source.imageSource(bot.id, imageId),
+      sendMessage: async (text: string) => {
+        await controller.send(bot.id, text, [])
+      },
+      files: {
+        serverId: controller.source.serverId,
+        botId: bot.id,
+        demo: active?.id === DEMO_SERVER.id,
+        source: (fileId) => controller.source.fileSource(bot.id, fileId),
+        check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
+      },
     }),
-    [bot, online, focusComposer, inbox, controller]
+    [bot, online, focusComposer, inbox, controller, active?.id]
   )
 
   useEffect(() => {

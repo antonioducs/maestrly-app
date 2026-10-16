@@ -1,6 +1,6 @@
 /**
- * Replies may hold interactive interfaces: ```inline-html blocks of HTML, CSS and JavaScript that Maestrly on a
- * computer renders live in an isolated frame. The phone shows each as a card instead of its source.
+ * Replies may hold interactive interfaces: ```inline-html blocks of HTML, CSS and JavaScript that Maestrly renders
+ * live in an isolated frame, on the phone in a web view of their own, instead of showing their source.
  */
 export const INTERFACE_FENCE = 'inline-html'
 

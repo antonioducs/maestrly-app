@@ -123,7 +123,8 @@ export function createGatewayServers(ctx: GatewayContext) {
     })
   const observePush = (event: FleetGatewayEvent) => push.observe(event)
   ctx.events.observers.add(observePush)
-  ctx.lifecycle.onChatAttention = (conversationId, name, kind) => void push.chat(conversationId, name, kind)
+  ctx.lifecycle.onChatAttention = (environmentId, conversationId, name, kind) =>
+    void push.chat(environmentId, conversationId, name, kind)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()

@@ -6,6 +6,7 @@ import { allConversations, type ChatsState } from '../../chats/state'
 import { useI18n } from '../../i18n'
 import { useServers } from '../../servers/ServersProvider'
 import { useTheme } from '../../theme/ThemeProvider'
+import { confirm } from '../confirm'
 import { ComposerShell } from '../composer/Composer'
 import { OutboxRow } from '../composer/OutboxRow'
 import { ConversationList, type ExtraRow } from '../conversation/ConversationList'
@@ -70,6 +71,7 @@ export function ChatConversation({ conversationId }: { conversationId: string })
       [conversationId]
     )
   )
+  const setup = useChats(useCallback((state: ChatsState) => state.setups[conversationId] ?? null, [conversationId]))
   const input = useRef<TextInput>(null)
   const conversation = view?.conversation ?? listed
   const runtime = view?.runtime ?? null
@@ -108,6 +110,20 @@ export function ChatConversation({ conversationId }: { conversationId: string })
     [chats, conversationId]
   )
   const openChat = useCallback((id: string) => setCurrent({ kind: 'chat', id }), [setCurrent])
+  // From a permission request, as from the chat's setup: the same warning, then full access for the whole chat.
+  const canAllowEverything = !!setup && setup.experience !== 'maestro' && setup.permMode !== 'full'
+  const allowEverything = useCallback(async () => {
+    const sure = await confirm({
+      title: t('chat.setup.fullTitle'),
+      message: t('setup.fullBody'),
+      confirmLabel: t('setup.fullConfirm'),
+      cancelLabel: t('common.cancel'),
+      destructive: true,
+    })
+    if (!sure) return false
+    await chats.patchSetup(conversationId, { permMode: 'full' })
+    return true
+  }, [chats, conversationId, t])
   const context = useMemo<ConversationContextValue>(
     () => ({
       bot: null,
@@ -118,8 +134,24 @@ export function ChatConversation({ conversationId }: { conversationId: string })
       resolve,
       imageSource,
       openChat,
+      sendMessage: async (text: string) => {
+        await chats.send(conversationId, text, [])
+      },
+      ...(canAllowEverything ? { allowEverything } : {}),
     }),
-    [conversation?.name, online, focusComposer, interactionFor, resolve, imageSource, openChat]
+    [
+      conversation?.name,
+      online,
+      focusComposer,
+      interactionFor,
+      resolve,
+      imageSource,
+      openChat,
+      canAllowEverything,
+      allowEverything,
+      chats,
+      conversationId,
+    ]
   )
 
   const extras = useMemo<ExtraRow[]>(() => {

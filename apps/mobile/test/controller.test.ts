@@ -33,6 +33,7 @@ function fakeSource(features: string[] = ['environments']) {
       return { close: closed, reconnectNow: reconnect }
     },
     imageSource: () => ({ uri: 'data:,' }),
+    fileSource: () => ({ uri: 'https://g.example/file', headers: {} }),
     readAttachment: async () => 'aGk=',
   }
   const open = () => {

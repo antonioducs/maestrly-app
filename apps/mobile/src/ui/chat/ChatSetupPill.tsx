@@ -49,9 +49,8 @@ export function ChatSetupPill({ conversationId }: { conversationId: string }) {
 
   const full = setup?.permMode === 'full' && setup.experience !== 'maestro'
   const mode = setup ? (setup.experience === 'maestro' ? t('chat.mode.maestro') : t(`chat.mode.${setup.mode}`)) : null
-  const spoken = [mode, summary, setup?.fastMode ? t('setup.fast') : null, full ? t('composer.fullAccess') : null]
-    .filter(Boolean)
-    .join(', ')
+  // The summary already names the permission mode.
+  const spoken = [mode, summary, setup?.fastMode ? t('setup.fast') : null].filter(Boolean).join(', ')
   return (
     <Pressable
       accessibilityRole="button"

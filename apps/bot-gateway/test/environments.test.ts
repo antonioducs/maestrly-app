@@ -1895,8 +1895,9 @@ describe('chats of a workspaces host', () => {
     const f = fixture()
     // The fake Docker has no addresses to find the gateway's container by.
     f.lifecycle.locateGateway = async () => 'maestrly-bot-gateway'
-    const heard: Array<[string, string, string]> = []
-    f.lifecycle.onChatAttention = (conversationId, name, kind) => heard.push([conversationId, name, kind])
+    const heard: Array<[string, string, string, string]> = []
+    f.lifecycle.onChatAttention = (environmentId, conversationId, name, kind) =>
+      heard.push([environmentId, conversationId, name, kind])
     const host = await f.instance('workspaces')
     host.capabilities.push('workspaces-host')
     const created = f.lifecycle.createEnvironment({ name: 'Workspaces', memoryLimitBytes: null, kind: 'workspaces' })
@@ -1912,7 +1913,7 @@ describe('chats of a workspaces host', () => {
       kind: 'question',
     })
     await until(() => heard.length === 1)
-    expect(heard).toEqual([['c1', 'Fix the flaky test', 'question']])
+    expect(heard).toEqual([['workspaces', 'c1', 'Fix the flaky test', 'question']])
 
     // A bots environment has no chats: an event that claims one is dropped.
     const work = await f.instance('work')
@@ -1922,6 +1923,6 @@ describe('chats of a workspaces host', () => {
     work.emit({ type: 'chat.attention', botId: null, conversationId: 'c2', name: 'Not a chat', kind: 'waiting' })
     host.emit({ type: 'chat.attention', botId: null, conversationId: 'c3', name: 'Changelog', kind: 'finished' })
     await until(() => heard.length === 2)
-    expect(heard.map(([id]) => id)).toEqual(['c1', 'c3'])
+    expect(heard.map(([, id]) => id)).toEqual(['c1', 'c3'])
   })
 })

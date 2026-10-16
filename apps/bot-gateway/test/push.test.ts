@@ -1,4 +1,4 @@
-import type { FleetGatewayEvent, FleetPushRegistration } from '@maestrly/bot-fleet-protocol'
+import { fleetPushDataSchema, type FleetGatewayEvent, type FleetPushRegistration } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { GatewayError } from '../src/errors.js'
 import { ExpoPushSender, PushNotifier, type PushMessage, type PushOutcome, type PushStore } from '../src/push.js'
@@ -135,19 +135,25 @@ describe('push notifications', () => {
 
   it('tells about the chats of the workspaces host', async () => {
     const h = setup({ d1: registration() })
-    await h.notifier.chat('c1', 'Fix the flaky test', 'plan')
-    await h.notifier.chat('c1', 'Fix the flaky test', 'plan')
-    await h.notifier.chat('c2', 'Changelog', 'finished')
-    await h.notifier.chat('c3', 'Pricing', 'failed')
-    expect(h.sent.flat().map((message) => [message.title, message.body, message.data.kind, message.data.id])).toEqual([
-      ['Fix the flaky test', 'Has a plan for you', 'chat', 'c1'],
-      ['Changelog', 'Finished its turn', 'chat', 'c2'],
-      ['Pricing', 'Stopped with an error', 'chat', 'c3'],
+    await h.notifier.chat('workspaces', 'c1', 'Fix the flaky test', 'plan')
+    await h.notifier.chat('workspaces', 'c1', 'Fix the flaky test', 'plan')
+    await h.notifier.chat('workspaces', 'c2', 'Changelog', 'finished')
+    await h.notifier.chat('zello', 'c3', 'Pricing', 'failed')
+    // The same chat id on another workspaces host is another chat.
+    await h.notifier.chat('zello', 'c1', 'Invoices', 'plan')
+    expect(
+      h.sent.flat().map((message) => [message.title, message.body, message.data.kind, message.data.id, message.data.env])
+    ).toEqual([
+      ['Fix the flaky test', 'Has a plan for you', 'chat', 'c1', 'workspaces'],
+      ['Changelog', 'Finished its turn', 'chat', 'c2', 'workspaces'],
+      ['Pricing', 'Stopped with an error', 'chat', 'c3', 'zello'],
+      ['Invoices', 'Has a plan for you', 'chat', 'c1', 'zello'],
     ])
+    for (const message of h.sent.flat()) expect(fleetPushDataSchema.parse(message.data)).toEqual(message.data)
     // After the window, the same news notifies again.
     h.advance(25_000)
-    await h.notifier.chat('c1', 'Fix the flaky test', 'plan')
-    expect(h.sent).toHaveLength(4)
+    await h.notifier.chat('workspaces', 'c1', 'Fix the flaky test', 'plan')
+    expect(h.sent).toHaveLength(5)
   })
 
   it('forgets a phone the push service no longer knows', async () => {

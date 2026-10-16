@@ -231,7 +231,7 @@ function seedSchema5(db: DatabaseSync) {
 describe('schema 6 migration', () => {
   it('creates the current schema with environments, their kinds and desktop links in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -339,8 +339,12 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
-    expect(snapshot(store.db)).toEqual(before)
+    expect(version(store.db)).toBe('15')
+    // Schema 15 only adds what kind of device each one is, unknown for these.
+    expect(snapshot(store.db)).toEqual({
+      ...before,
+      devices: before.devices.map((row) => ({ ...row, kind: null, platform: null })),
+    })
     expect(meta(store.db)).toEqual(metaBefore)
 
     expect(store.listEnvironments()).toEqual([
@@ -455,7 +459,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('14')
+    expect(version(reopened.db)).toBe('15')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -531,7 +535,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -539,14 +543,14 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='15' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='16' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('15')
+    expect(version(after)).toBe('16')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
@@ -665,7 +669,7 @@ describe('schema 7 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     checked(store.db)
     expect(untouched(store.db)).toEqual(before)
     expect(
@@ -699,7 +703,7 @@ describe('schema 7 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('14')
+    expect(version(reopened.db)).toBe('15')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -726,7 +730,7 @@ describe('schema 7 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
   })
 
@@ -792,7 +796,7 @@ describe('schema 8 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     checked(store.db)
     expect(store.db.prepare('SELECT * FROM environments ORDER BY id').all()).toEqual(
       // The later schema 11 step adds the kind; every environment from before it runs bots.
@@ -822,7 +826,7 @@ describe('schema 8 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('14')
+    expect(version(reopened.db)).toBe('15')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -832,7 +836,7 @@ describe('schema 8 migration', () => {
     const dir = temp()
     createSchema6Database(dir).close()
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     checked(store.db)
     store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
@@ -864,7 +868,7 @@ describe('schema 11 migration', () => {
     old.db.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
   })
 
@@ -882,7 +886,7 @@ describe('schema 11 migration', () => {
     stores.splice(stores.indexOf(store), 1)
 
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('14')
+    expect(version(reopened.db)).toBe('15')
     expect(reopened.getEnvironment('host')?.kind).toBe('workspaces')
     expect(reopened.listEnvironments().map((environment) => [environment.id, environment.kind])).toEqual([
       ['work', 'bots'],
@@ -920,7 +924,7 @@ describe('schema 12 migration', () => {
     old.db.prepare("UPDATE meta SET value='11' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     // Schema 13 then keeps it on the whole server folder, as it was created.
     expect(store.getEnvironment('host')).toEqual(
       environmentRecord('host', { kind: 'workspaces', hostFolder: 'shared' })
@@ -971,7 +975,7 @@ describe('schema 14 migration', () => {
     old.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     expect(store.getEnvironment('host')).toEqual(environmentRecord('host', { kind: 'workspaces' }))
     const saved = store.savePushRegistration('phone', {
       provider: 'expo',
@@ -981,6 +985,31 @@ describe('schema 14 migration', () => {
       preferences: { waiting: true, replies: true, routines: true, errors: true },
     })
     expect(store.pushRegistration('phone')).toEqual(saved)
+    expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
+})
+
+describe('schema 15 migration', () => {
+  it('adds what kind of device each one is to a schema 14 database, keeping its devices unknown', () => {
+    const dir = temp()
+    const old = new Store(dir)
+    old.db
+      .prepare('INSERT INTO devices(id,name,token_sha256,created_at,last_seen_at,revoked_at) VALUES(?,?,?,?,?,NULL)')
+      .run('mac', 'Mac', hash('mac-token'), at(1), at(2))
+    // A schema 14 database: its devices table has no kind or platform.
+    old.db.exec(`
+      CREATE TABLE devices_14 (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
+      INSERT INTO devices_14 SELECT id,name,token_sha256,created_at,last_seen_at,revoked_at FROM devices;
+    `)
+    old.db.exec('PRAGMA foreign_keys=OFF')
+    old.db.exec('DROP TABLE devices; ALTER TABLE devices_14 RENAME TO devices')
+    old.db.prepare("UPDATE meta SET value='14' WHERE key='schema_version'").run()
+    old.close()
+    const store = open(dir)
+    expect(version(store.db)).toBe('15')
+    expect(store.listDevices()).toEqual([
+      { id: 'mac', name: 'Mac', kind: null, platform: null, createdAt: at(1), lastSeenAt: at(2), revokedAt: null },
+    ])
     expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
 })
@@ -1385,7 +1414,15 @@ describe('schema 9 migration', () => {
 })
 
 describe('schema 10 migration', () => {
-  const device = (id: string) => ({ id, name: 'Mac ' + id, createdAt: at(1), lastSeenAt: null, revokedAt: null })
+  const device = (id: string) => ({
+    id,
+    name: 'Mac ' + id,
+    kind: 'computer' as const,
+    platform: 'macos' as const,
+    createdAt: at(1),
+    lastSeenAt: null,
+    revokedAt: null,
+  })
   function pair(store: Store, id: string) {
     store.addPairing(hash('code-' + id), new Date(Date.now() + 600_000).toISOString())
     store.consumePairing(hash('code-' + id), device(id), hash('token-' + id))
@@ -1399,7 +1436,7 @@ describe('schema 10 migration', () => {
     old.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     expect(store.getBot('legacy')?.name).toBe('Bot legacy')
     expect(store.desktopLinks('legacy')).toEqual([])
   })
@@ -1458,7 +1495,7 @@ describe('schema 13 migration', () => {
     old.db.prepare("UPDATE meta SET value='12' WHERE key='schema_version'").run()
     old.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('14')
+    expect(version(store.db)).toBe('15')
     expect(store.getEnvironment('host')).toEqual(
       environmentRecord('host', { kind: 'workspaces', hostFolder: 'shared' })
     )

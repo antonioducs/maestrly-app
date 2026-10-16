@@ -1,4 +1,5 @@
 import type {
+  FleetDevicesResponse,
   FleetLoginAttempt,
   FleetLoginStartRequest,
   FleetPairingCodeResponse,
@@ -227,6 +228,10 @@ export const fleetApi = {
   fleetDisconnect: (): Promise<void> => ipcRenderer.invoke('fleet:disconnect'),
   /** A one-use code that pairs another device (a phone) with this computer's bot server. */
   fleetCreatePairing: (): Promise<FleetPairingCodeResponse> => ipcRenderer.invoke('fleet:createPairing'),
+  /** The phones and computers paired with the bot server. */
+  fleetDevices: (): Promise<FleetDevicesResponse> => ipcRenderer.invoke('fleet:devices'),
+  /** Removes another paired device; it can no longer reach the bot server. */
+  fleetRevokeDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('fleet:revokeDevice', deviceId),
   fleetGetSnapshot: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:getSnapshot'),
   fleetRefresh: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:refresh'),
   fleetGetHost: (): Promise<FleetHostInfo> => ipcRenderer.invoke('fleet:getHost'),

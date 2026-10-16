@@ -2,11 +2,18 @@ import Constants from 'expo-constants'
 import * as Crypto from 'expo-crypto'
 import * as Device from 'expo-device'
 import { File } from 'expo-file-system'
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AppState, Platform } from 'react-native'
 import { createBridgeChatsSource } from '../chats/bridge-source'
-import { chatOutboxKey, createChatsController, type ChatsController } from '../chats/controller'
+import { createChatsController, type ChatsController } from '../chats/controller'
+import {
+  chooseEnvironment,
+  environmentChoiceKey,
+  forgetServerChats,
+  prepareEnvironmentOutbox,
+} from '../chats/environments'
 import { ChatsProvider } from '../chats/react'
+import { noChatsSource } from '../chats/source'
 import { createDemoChatsSource } from '../demo/demo-chats'
 import { createDemoSource, DEMO_SERVER } from '../demo/demo-source'
 import { createFleetController, type FleetController } from '../fleet/controller'
@@ -34,6 +41,10 @@ type Servers = {
   active: PairedServer | null
   controller: FleetController | null
   chats: ChatsController | null
+  /** The workspaces environment whose chats the phone shows; null while the server is known to host none. */
+  environmentId: string | null
+  /** Shows the chats of another of the server's workspaces environments, and remembers the choice. */
+  setEnvironment(id: string): void
   deviceName: string
   activate(id: string): Promise<void>
   pair(input: { address: string; code: string }): Promise<PairedServer>
@@ -65,8 +76,12 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
   const [servers, setServers] = useState<PairedServer[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [controller, setController] = useState<FleetController | null>(null)
+  const [session, setSession] = useState<{ fleet: FleetController; token: string } | null>(null)
+  const controller = session?.fleet ?? null
   const [chats, setChats] = useState<ChatsController | null>(null)
+  const [environmentId, setEnvironmentId] = useState<string | null>(null)
+  /** The environment the person chose on the active server, read from storage when the server becomes active. */
+  const chosen = useRef<string | null>(null)
   const [current, setCurrent] = useState<Current | null>(null)
   const deviceName = Device.deviceName ?? Device.modelName ?? t('pair.defaultDeviceName')
 
@@ -85,17 +100,17 @@ export function ServersProvider({ children }: { children: ReactNode }) {
 
   const active = servers.find((server) => server.id === activeId) ?? null
 
-  // One pair of controllers for the active server, its bots and its chats, replaced when another server is active.
+  // The active server's fleet controller, replaced when another server is active.
   useEffect(() => {
     setCurrent(null)
+    setEnvironmentId(null)
+    chosen.current = null
     if (!active) {
-      setController(null)
-      setChats(null)
+      setSession(null)
       return
     }
     let cancelled = false
     let created: FleetController | null = null
-    let createdChats: ChatsController | null = null
     let unsubscribe: (() => void) | null = null
     void (async () => {
       const demo = active.id === DEMO_SERVER.id
@@ -116,44 +131,92 @@ export function ServersProvider({ children }: { children: ReactNode }) {
         onFeatures: (features) => void registry.updateFeatures(active.id, features),
       })
       created = fleet
-      const chatSource = demo
-        ? createDemoChatsSource({ readFile })
-        : createBridgeChatsSource(
-            active,
-            gatewayClientFor(active, token),
-            () => fleet.store.getState().features,
-            {
-              appVersion: Constants.expoConfig?.version ?? '0.0.0',
-              deviceName,
-              os: Platform.OS === 'android' ? 'android' : 'ios',
-              locale,
-            },
-            readFile
-          )
-      createdChats = createChatsController(chatSource, kv, { uuid: Crypto.randomUUID })
-      await Promise.all([fleet.start(), createdChats.start()])
+      const [saved] = await Promise.all([kv.get(environmentChoiceKey(active.id)).catch(() => null), fleet.start()])
       if (cancelled) {
         fleet.stop()
-        createdChats.stop()
         return
       }
-      // Chats run on the server's workspaces host: the bridge opens once the fleet lists one.
-      const sync = () => createdChats?.setHosted(hostsChats(fleet))
+      chosen.current = saved
+      // Until the fleet lists its environments, the phone keeps to the one chosen before.
+      const sync = () => {
+        const state = fleet.store.getState()
+        setEnvironmentId(state.loaded ? chooseEnvironment(state.environments, chosen.current) : chosen.current)
+      }
       unsubscribe = fleet.store.subscribe(sync)
       sync()
-      setController(fleet)
-      setChats(createdChats)
+      setSession({ fleet, token })
     })()
     return () => {
       cancelled = true
       unsubscribe?.()
       created?.stop()
-      createdChats?.stop()
-      setController(null)
-      setChats(null)
+      setSession(null)
     }
-    // The controllers follow the server's identity; a features update must not restart them.
+    // The controller follows the server's identity; a features update must not restart it.
   }, [active?.id, registry, kv])
+
+  // The chats of the chosen workspaces environment, through its host; replaced when the person picks another. A server
+  // that hosts none still gets a controller, which never connects, so the screens read a server without chats.
+  useEffect(() => {
+    if (!session || !active) {
+      setChats(null)
+      return
+    }
+    const { fleet, token } = session
+    let cancelled = false
+    let created: ChatsController | null = null
+    let unsubscribe: (() => void) | null = null
+    void (async () => {
+      const source = !environmentId
+        ? noChatsSource(active.id)
+        : active.id === DEMO_SERVER.id
+          ? createDemoChatsSource({ readFile, environmentId })
+          : createBridgeChatsSource(
+              active,
+              gatewayClientFor(active, token),
+              () => fleet.store.getState().features,
+              environmentId,
+              {
+                appVersion: Constants.expoConfig?.version ?? '0.0.0',
+                deviceName,
+                os: Platform.OS === 'android' ? 'android' : 'ios',
+                locale,
+              },
+              readFile
+            )
+      if (environmentId) await prepareEnvironmentOutbox(kv, active.id, environmentId).catch(() => {})
+      if (cancelled) return
+      const next = createChatsController(source, kv, { uuid: Crypto.randomUUID })
+      created = next
+      await next.start()
+      if (cancelled) return
+      // The bridge runs while the server lists a workspaces environment.
+      const sync = () => next.setHosted(!!environmentId && hostsChats(fleet))
+      unsubscribe = fleet.store.subscribe(sync)
+      sync()
+      setChats(next)
+    })()
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+      created?.stop()
+    }
+    // A new language or device name reaches the host on the next connection, not by restarting the chats.
+  }, [session, environmentId, kv])
+
+  const setEnvironment = useCallback(
+    (id: string) => {
+      if (!active || !controller) return
+      chosen.current = id
+      void kv.set(environmentChoiceKey(active.id), id).catch(() => {})
+      const state = controller.store.getState()
+      const next = state.loaded ? chooseEnvironment(state.environments, id) : id
+      // What is on screen belongs to the other environment's chats.
+      if (next !== environmentId) setCurrent(null)
+      setEnvironmentId(next)
+    },
+    [active, controller, environmentId, kv]
+  )
 
   useEffect(() => {
     if (!controller) return
@@ -179,7 +242,14 @@ export function ServersProvider({ children }: { children: ReactNode }) {
 
   const pair = useCallback(
     async (input: { address: string; code: string }) => {
-      const { server, token } = await pairWithServer({ ...input, deviceName, allowLoopback: __DEV__ }, nativeFetch)
+      const client =
+        Platform.OS === 'ios' || Platform.OS === 'android'
+          ? { kind: 'phone' as const, platform: Platform.OS }
+          : undefined
+      const { server, token } = await pairWithServer(
+        { ...input, deviceName, allowLoopback: __DEV__, client },
+        nativeFetch
+      )
       await registry.add(server, token)
       await reload()
       return server
@@ -207,7 +277,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       }
       await registry.remove(id)
       await kv.delete(`outbox.${id}`).catch(() => {})
-      await kv.delete(chatOutboxKey(id)).catch(() => {})
+      await forgetServerChats(kv, id)
       await reload()
     },
     [kv, registry, reload, servers]
@@ -229,6 +299,8 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       active,
       controller,
       chats,
+      environmentId,
+      setEnvironment,
       deviceName,
       activate,
       pair,
@@ -238,7 +310,22 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       setCurrent,
       clientFor,
     }),
-    [ready, servers, active, controller, chats, deviceName, activate, pair, exploreDemo, forget, current, clientFor]
+    [
+      ready,
+      servers,
+      active,
+      controller,
+      chats,
+      environmentId,
+      setEnvironment,
+      deviceName,
+      activate,
+      pair,
+      exploreDemo,
+      forget,
+      current,
+      clientFor,
+    ]
   )
   return (
     <ServersContext.Provider value={value}>

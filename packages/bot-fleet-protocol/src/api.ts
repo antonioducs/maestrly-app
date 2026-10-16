@@ -253,11 +253,35 @@ export function fleetMetaFeatures(meta: { features?: string[]; moreFeatures?: st
   return [...new Set([...(meta.features ?? []), ...(meta.moreFeatures ?? [])])]
 }
 
+/** What a device says it is when it pairs, so the list of devices can tell a phone from a computer. */
+export const fleetDeviceClientSchema = z.object({
+  kind: z.enum(['computer', 'phone']),
+  platform: z.enum(['macos', 'windows', 'linux', 'ios', 'android']),
+})
+export type FleetDeviceClient = z.infer<typeof fleetDeviceClientSchema>
 export const fleetPairRequestSchema = z.object({
   code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{8}$/),
   deviceName: z.string().min(1),
+  // Absent from devices that predate it; gateways that predate it drop it.
+  client: fleetDeviceClientSchema.optional(),
 })
 export type FleetPairRequest = z.infer<typeof fleetPairRequestSchema>
+/** A device paired with the server. Kind and platform are null for devices paired before they were recorded. */
+export const fleetDeviceSchema = z.object({
+  id: fleetIdSchema,
+  name: z.string(),
+  kind: fleetDeviceClientSchema.shape.kind.nullable(),
+  platform: fleetDeviceClientSchema.shape.platform.nullable(),
+  pairedAt: fleetTimestampSchema,
+  lastSeenAt: fleetTimestampSchema.nullable(),
+  /** The device that asked for the list. */
+  current: z.boolean(),
+  /** Whether the device registered for push notifications. */
+  notifications: z.boolean(),
+})
+export type FleetDevice = z.infer<typeof fleetDeviceSchema>
+export const fleetDevicesResponseSchema = z.object({ devices: z.array(fleetDeviceSchema) })
+export type FleetDevicesResponse = z.infer<typeof fleetDevicesResponseSchema>
 export const fleetPairResponseSchema = z.object({ deviceId: fleetIdSchema, token: fleetIdSchema })
 export type FleetPairResponse = z.infer<typeof fleetPairResponseSchema>
 export const fleetPairingCodeResponseSchema = z.object({
@@ -1206,6 +1230,10 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetPairingCodeResponseSchema,
   },
   devicesSelfDelete: { method: 'DELETE', path: '/v1/devices/self', body: null, response: null },
+  /** The devices still paired, oldest first (`devices` feature). */
+  devicesList: { method: 'GET', path: '/v1/devices', body: null, response: fleetDevicesResponseSchema },
+  /** Removes another paired device, as the CLI's `devices revoke`; a device unpairs itself with `devicesSelfDelete`. */
+  deviceRevoke: { method: 'POST', path: '/v1/devices/:deviceId/revoke', body: null, response: null },
   host: { method: 'GET', path: '/v1/host', body: null, response: fleetHostInfoSchema },
   botsList: { method: 'GET', path: '/v1/bots', body: null, response: fleetBotsResponseSchema },
   botsCreate: { method: 'POST', path: '/v1/bots', body: fleetCreateBotRequestSchema, response: fleetBotSchema },

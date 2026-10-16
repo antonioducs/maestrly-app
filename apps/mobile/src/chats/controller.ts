@@ -23,7 +23,9 @@ export type ChatsControllerOptions = {
 }
 
 const IMAGES_KEPT = 60
-export const chatOutboxKey = (serverId: string) => `chat-outbox.${serverId}`
+export const chatOutboxKey = (serverId: string, environmentId: string) => `chat-outbox.${serverId}.${environmentId}`
+/** Where the outbox was kept before the phone told a server's workspaces environments apart. */
+export const legacyChatOutboxKey = (serverId: string) => `chat-outbox.${serverId}`
 
 /**
  * Keeps one server's chats live on the phone: the bridge to its workspaces host while the app is on screen, the lists,
@@ -37,7 +39,8 @@ export function createChatsController(
   const now = options.now ?? Date.now
   const retryMs = options.retryMs ?? 4_000
   const listsMs = options.listsMs ?? 250
-  const outboxKey = chatOutboxKey(source.serverId)
+  // A server without a workspaces environment keeps no outbox: it has no chats to write to.
+  const outboxKey = source.environmentId === null ? null : chatOutboxKey(source.serverId, source.environmentId)
   let state: ChatsState = initialChatsState
   const listeners = new Set<() => void>()
   let connection: ChatsConnection | null = null
@@ -55,8 +58,10 @@ export function createChatsController(
   }
 
   const persist = () => {
+    if (outboxKey === null) return saving
+    const key = outboxKey
     const snapshot = JSON.stringify(state.outbox)
-    saving = saving.then(() => persistence.set(outboxKey, snapshot)).catch(() => {})
+    saving = saving.then(() => persistence.set(key, snapshot)).catch(() => {})
     return saving
   }
   const setOutbox = (entries: ChatOutboxEntry[]) => {
@@ -67,6 +72,7 @@ export function createChatsController(
     setOutbox(state.outbox.map((item) => (item.id === entry.id ? entry : item)))
 
   async function loadOutbox() {
+    if (outboxKey === null) return
     const raw = await persistence.get(outboxKey).catch(() => null)
     if (!raw) return
     try {

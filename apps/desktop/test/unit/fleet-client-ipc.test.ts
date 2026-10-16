@@ -431,6 +431,27 @@ describe('fleet IPC validation', () => {
     mocks.hasFeature.mockReturnValue(false)
   })
 
+  it('lists and removes paired devices only on a gateway that offers it', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const list = handlers.get('fleet:devices')!
+    const revoke = handlers.get('fleet:revokeDevice')!
+    mocks.call.mockClear()
+    mocks.hasFeature.mockReturnValue(false)
+    await expect(async () => list({})).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
+    await expect(async () => revoke({}, 'device-2')).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
+    expect(mocks.call).not.toHaveBeenCalled()
+    mocks.hasFeature.mockReturnValue(true)
+    await list({})
+    await revoke({}, 'device-2')
+    expect(mocks.call.mock.calls).toEqual([['devicesList'], ['deviceRevoke', { params: { deviceId: 'device-2' } }]])
+    await expect(async () => revoke({}, '')).rejects.toThrow()
+    mocks.hasFeature.mockReturnValue(false)
+  })
+
   it('refuses screens on gateways without video screens', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {

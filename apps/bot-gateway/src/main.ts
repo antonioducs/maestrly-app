@@ -44,7 +44,13 @@ export async function run(
     if (argv[1] === 'list') {
       for (const device of store.listDevices())
         write(
-          [device.id, device.name, device.revokedAt ? 'revoked' : 'active', device.lastSeenAt ?? 'never'].join('\t')
+          [
+            device.id,
+            device.name,
+            device.kind ? `${device.kind} (${device.platform ?? 'unknown'})` : 'unknown',
+            device.revokedAt ? 'revoked' : 'active',
+            device.lastSeenAt ?? 'never',
+          ].join('\t')
         )
       store.close()
       return 0

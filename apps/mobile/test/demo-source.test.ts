@@ -24,7 +24,8 @@ describe('demo server', () => {
     expect(environments.map((environment) => [environment.name, environment.kind])).toEqual([
       ['studio', 'bots'],
       ['research', 'bots'],
-      ['Workspaces', 'workspaces'],
+      ['Personal', 'workspaces'],
+      ['Company', 'workspaces'],
     ])
     expect(bots.find((bot) => bot.id === 'scout')?.status).toBe('offline')
     expect(bots.find((bot) => bot.id === 'atlas')?.status).toBe('waiting')
@@ -119,5 +120,20 @@ describe('demo server', () => {
     const source = createDemoSource({ stepMs: 0, autoplay: false })
     await expect(source.call('botSkillsList', { params: { id: 'juno' } })).rejects.toBeInstanceOf(GatewayError)
     await expect(source.call('botSkillsList', { params: { id: 'juno' } })).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  it('lists made-up devices, and removes one that is not this phone', async () => {
+    const source = createDemoSource({ stepMs: 0, autoplay: false })
+    const { devices } = await source.call('devicesList')
+    expect(devices.map((device) => [device.name, device.kind, device.current])).toEqual([
+      ['MacBook Pro', 'computer', false],
+      ['Phone', 'phone', true],
+      ['Pixel 9', 'phone', false],
+    ])
+    await source.call('deviceRevoke', { params: { deviceId: devices[2].id } })
+    expect((await source.call('devicesList')).devices).toHaveLength(2)
+    await expect(source.call('deviceRevoke', { params: { deviceId: devices[1].id } })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
   })
 })

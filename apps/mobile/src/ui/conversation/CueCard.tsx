@@ -8,6 +8,16 @@ import { Icon, type IconName } from '../icons'
 import { AppText } from '../primitives/Text'
 
 export type ImageSourceValue = { uri: string; headers?: Record<string, string> }
+/** How a conversation reaches the files its bot shared. */
+export type BotFileAccess = {
+  serverId: string
+  botId: string
+  /** The demo server keeps no files. */
+  demo: boolean
+  source(fileId: string): { uri: string; headers: Record<string, string> }
+  /** Resolves while the bot still has the file; rejects with the gateway's NOT_FOUND once it is gone. */
+  check(fileId: string): Promise<unknown>
+}
 
 /**
  * What every row of a conversation needs, with a bot or in a chat: who asks, whether the server is reachable, how to
@@ -26,6 +36,15 @@ export type ConversationContextValue = {
   imageSource: (imageId: string) => ImageSourceValue | Promise<ImageSourceValue>
   /** Opens another chat of the server, such as one an agent started from here. */
   openChat?: (conversationId: string) => void
+  /**
+   * Gives the chat full access after asking the person, as its setup does; resolves with whether they agreed. Absent
+   * in a bot's conversation, in Maestro chats, and once the chat already has full access.
+   */
+  allowEverything?: () => Promise<boolean>
+  /** The files a bot shared, in a bot's conversation; a chat's are out of the phone's reach. */
+  files?: BotFileAccess
+  /** Sends a message as the person, as an interactive answer may ask to; absent where the phone cannot send. */
+  sendMessage?: (text: string) => Promise<void>
 }
 export const ConversationContext = createContext<ConversationContextValue | null>(null)
 export function useConversation(): ConversationContextValue {
@@ -104,11 +123,13 @@ export function useResolver(item: FleetTranscriptItem) {
   const interactionId = interactionFor(item)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const run = async (resolution: FleetInteractionResolution, announcement: string) => {
+  /** `before` runs first, such as a confirmation; the request is answered only when it resolves with true. */
+  const run = async (resolution: FleetInteractionResolution, announcement: string, before?: () => Promise<boolean>) => {
     if (!interactionId) return
     setBusy(true)
     setError(null)
     try {
+      if (before && !(await before())) return
       await resolve(interactionId, resolution)
       AccessibilityInfo.announceForAccessibility(announcement)
       focusComposer()

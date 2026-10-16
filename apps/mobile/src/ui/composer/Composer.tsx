@@ -1,6 +1,6 @@
 import { FLEET_FILES_FEATURE, FLEET_MESSAGE_TEXT_MAX, type FleetBot } from '@maestrly/bot-fleet-protocol'
 import { useCallback, useRef, useState, type ReactNode, type Ref } from 'react'
-import { AccessibilityInfo, Linking, Pressable, TextInput, View } from 'react-native'
+import { AccessibilityInfo, Alert, Keyboard, Linking, Pressable, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { appendDictation } from '../../dictation/session'
 import { useDictation } from '../../dictation/useDictation'
@@ -100,6 +100,8 @@ export function ComposerShell({
       setText('')
       setAttachments([])
       setIssue(null)
+      // Sent, or waiting on the phone until the server is reachable: the keyboard makes way for the conversation.
+      Keyboard.dismiss()
     } catch {
       // What was written stays in the field, to send again.
       setError(true)
@@ -221,12 +223,13 @@ export function ComposerShell({
             </>
           )}
           <View style={{ flex: 1 }} />
-          {dictation.available && !listening ? (
+          {(dictation.available || dictation.needsBuild) && !listening ? (
             <IconButton
               icon="mic"
               label={t('dictation.start')}
               disabled={disabled}
               onPress={() => {
+                if (dictation.needsBuild) return Alert.alert(t('dictation.start'), t('dictation.needsBuild'))
                 setError(false)
                 dictation.start()
               }}

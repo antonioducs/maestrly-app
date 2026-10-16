@@ -5,6 +5,7 @@ import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   FLEET_PHONES_FEATURE,
+  FLEET_DEVICES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
@@ -44,7 +45,12 @@ import { FLEET_ATTENDED_FILES_MAX } from '../../../shared/fleet-downloads'
 import { FleetClientError } from './api'
 import { setAttendedFleetFiles } from './download-notices'
 import { fleetClientService as fleet } from './service'
-import { FLEET_EDIT_CONFLICT, FLEET_EDIT_UNSUPPORTED, FLEET_SCOPES_UNSUPPORTED } from '../../../shared/fleet-targets'
+import {
+  FLEET_DEVICES_UNSUPPORTED,
+  FLEET_EDIT_CONFLICT,
+  FLEET_EDIT_UNSUPPORTED,
+  FLEET_SCOPES_UNSUPPORTED,
+} from '../../../shared/fleet-targets'
 import {
   provisioningRoute,
   requireEnvironmentUpdates,
@@ -56,6 +62,7 @@ import {
 } from './targets'
 
 const id = fleetBotIdSchema
+const deviceIdSchema = z.string().min(1).max(128)
 const environmentId = fleetEnvironmentIdSchema
 /** A new workspaces environment, as the renderer asks for it; omitted settings take the server's defaults. */
 const createWorkspacesInput = z
@@ -134,6 +141,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     if (!fleet.hasFeature(FLEET_PHONES_FEATURE))
       throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Update the bot server to pair a phone')
     return fleet.call('pairingsCreate', { body: {} })
+  })
+  // The devices paired with the server, phones and computers; older gateways list them only in their CLI.
+  reg.handle('fleet:devices', () => {
+    if (!fleet.hasFeature(FLEET_DEVICES_FEATURE)) throw new Error(FLEET_DEVICES_UNSUPPORTED)
+    return fleet.call('devicesList')
+  })
+  reg.mhandle('fleet:revokeDevice', (_event, deviceId: unknown) => {
+    if (!fleet.hasFeature(FLEET_DEVICES_FEATURE)) throw new Error(FLEET_DEVICES_UNSUPPORTED)
+    return fleet.call('deviceRevoke', { params: { deviceId: deviceIdSchema.parse(deviceId) } })
   })
   reg.handle('fleet:getSnapshot', () => fleet.getSnapshot())
   reg.mhandle('fleet:refresh', () => fleet.refresh())

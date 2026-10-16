@@ -78,6 +78,9 @@ export const DEMO_MODEL_INFO: Record<string, { window: number; ultra: 'native' |
 }
 export const DEMO_DEFAULTS = { providerId: 'claude', modelId: 'claude-opus-5-5', reasoning: 'high', fastMode: false }
 
+/** The demo server hosts two workspaces environments, one per scope of the owner's work, each with its own chats. */
+export const DEMO_ENVIRONMENTS = { personal: 'personal', company: 'company' } as const
+
 export const DEMO_WORKSPACES: DemoWorkspace[] = [
   { id: 'maestrly', name: 'maestrly', defaultBranch: 'main' },
   { id: 'landing', name: 'landing-site', defaultBranch: 'redesign' },
@@ -256,7 +259,7 @@ export const DEMO_CHATS: DemoChat[] = [
     9 * DAY,
     sonnetAsk,
     'Suggest pricing tiers for a team plan.',
-    '- **Starter:** 3 seats, community support\n- **Team:** 10 seats, shared environments, email support\n- **Business:** unlimited seats, SSO and an uptime commitment\n\nCompare them side by side:\n\n```inline-html\n<style>.tiers{display:flex;gap:12px}.tier{flex:1;padding:12px;border:1px solid var(--ui-border);border-radius:var(--ui-radius)}</style>\n<div class="tiers"><div class="tier"><b>Starter</b><p>3 seats</p></div><div class="tier"><b>Team</b><p>10 seats</p></div><div class="tier"><b>Business</b><p>Unlimited</p></div></div>\n```'
+    '- **Starter:** 3 seats, community support\n- **Team:** 10 seats, shared environments, email support\n- **Business:** unlimited seats, SSO and an uptime commitment\n\nCompare them side by side:\n\n```inline-html\n<style>.tiers{display:flex;gap:12px}.tier{flex:1;padding:12px;border:1px solid var(--ui-border);border-radius:var(--ui-radius)}</style>\n<div class="tiers"><div class="tier"><b>Starter</b><p>3 seats</p></div><div class="tier"><b>Team</b><p>10 seats</p><button onclick="maestrly.send(\'Tell me about Team\')">Ask about Team</button></div><div class="tier"><b>Business</b><p>Unlimited</p></div></div>\n```'
   ),
   quick(
     'c-docker',
@@ -401,6 +404,31 @@ export const DEMO_CHATS: DemoChat[] = [
     ),
     experience: 'maestro',
   },
+]
+
+export const DEMO_COMPANY_WORKSPACES: DemoWorkspace[] = [
+  { id: 'billing', name: 'billing-api', defaultBranch: 'main' },
+  { id: 'console', name: 'admin-console', defaultBranch: 'main' },
+]
+
+export const DEMO_COMPANY_CHATS: DemoChat[] = [
+  quick(
+    'k-invoices',
+    'Invoice export timeouts',
+    2 * HOUR,
+    codexAgent,
+    'The monthly invoice export times out for our largest customers. Find out why.',
+    'The export loads every line item into memory before writing the CSV. For the largest accounts that is over 2 million rows. Streaming the rows straight to the file keeps memory flat; the change is on `chat/stream-invoices`.',
+    { id: 'billing', branch: 'chat/stream-invoices' }
+  ),
+  quick(
+    'k-roles',
+    'Read-only role for auditors',
+    DAY,
+    sonnetAsk,
+    'What would a read-only role for auditors need in the admin console?',
+    'Auditors need to see accounts, invoices and the audit log, and nothing else. The console checks permissions per page, so the role is one new entry in `roles.ts` plus a test per page.'
+  ),
 ]
 
 /** Standalone chats open with a few things to start with, as the prototype's new chat does. */
@@ -560,6 +588,22 @@ export function workspaceReply(
 /** A standalone chat's reply: the suggestions answer in full, a request to send work starts a workspace chat. */
 export function chatReply(text: string, modelLabel: string): ChatStep[] {
   const lower = text.toLowerCase()
+  if (/\bcache\b/.test(lower))
+    return [
+      { think: 500 },
+      {
+        permission: {
+          title: 'Run a command',
+          target: 'rm -rf node_modules/.cache',
+          detail: 'Clears the build cache of this project',
+          allow: [
+            { tool: { name: 'bash', target: 'rm -rf node_modules/.cache', output: '' }, ms: 600 },
+            { say: 'Cleared the build cache. The next build starts from scratch.' },
+          ],
+          deny: [{ say: 'Okay, the cache stays as it is.' }],
+        },
+      },
+    ]
   const workspace = /\b(maestrly|landing-site|docs-site)\b/.exec(lower)?.[1]
   if (workspace && /\bsend\b|\bstart\b/.test(lower)) {
     const push = /push/.test(lower)
