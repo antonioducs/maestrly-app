@@ -79,13 +79,22 @@ test('bot fleet workflow builds the server images and runs real containers witho
     assert.ok(triggerBlock.includes(`- ${glob}`), glob)
 })
 
-test('mobile iOS workflow publishes the phone app only on request, through its environment', () => {
+test('mobile iOS workflow uploads tagged versions of main and submits only on request, through its environment', () => {
   const source = read('.github/workflows/mobile-ios.yml')
   const mobile = JSON.parse(read('apps/mobile/package.json'))
   const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
   const triggers = [...triggerBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1])
 
-  assert.deepEqual(triggers, ['workflow_dispatch'])
+  assert.deepEqual(triggers, ['push', 'workflow_dispatch'])
+  assert.match(triggerBlock, /^ {2}push:\n {4}tags:\n {6}- "mobile-v\*"\n {2}workflow_dispatch:/m)
+  assert.doesNotMatch(triggerBlock, /branches|pull_request/)
+  // A tag uploads only the version it names, and only from main.
+  const tagStep = /- name: Check the tag\n\s+if: github\.event_name == 'push'\n[\s\S]*?(?=\n {6}- name: )/
+  const tagCheck = tagStep.exec(source)?.[0]
+  assert.ok(tagCheck, 'tag runs check their tag')
+  assert.match(tagCheck, /"\$GITHUB_REF_NAME" != "mobile-v\$version"/)
+  assert.match(tagCheck, /git merge-base --is-ancestor HEAD origin\/main/)
+  assert.ok(source.indexOf('- name: Check the tag') < source.indexOf('- name: Install dependencies'))
   assert.match(source, /^permissions:\n {2}contents: read$/m)
   assert.match(source, /^concurrency:\n {2}group: mobile-ios\n {2}cancel-in-progress: false$/m)
   assert.match(source, /^ {4}environment: mobile-ios$/m)
@@ -104,9 +113,15 @@ test('mobile iOS workflow publishes the phone app only on request, through its e
     source,
     /eas-cli@[\d.]+ build --platform ios --profile production --non-interactive --wait --auto-submit/
   )
-  assert.match(source, /- name: Build on EAS and upload to TestFlight\n\s+if: inputs\.action != 'submit'\n/)
-  for (const step of ['Push the store listing', 'Submit to App Review'])
-    assert.match(source, new RegExp(`- name: ${step}\\n\\s+if: inputs\\.action != 'upload'\\n`))
+  assert.match(
+    source,
+    /- name: Build on EAS and upload to TestFlight\n\s+if: github\.event_name == 'push' \|\| inputs\.action != 'submit'\n/
+  )
+  // A push has no inputs: App Review steps must name the manual run, or a tag would submit.
+  const manualOnly = "if: github\\.event_name == 'workflow_dispatch' && inputs\\.action != 'upload'"
+  for (const step of ['Push the store listing', 'Submit to App Review']) {
+    assert.match(source, new RegExp(`- name: ${step}\\n\\s+${manualOnly}\\n`))
+  }
   assert.match(source, /run: node scripts\/submit-for-review\.mjs/)
   assert.ok(mobile.scripts['eas-build-post-install'], 'EAS builds the fleet protocol before bundling')
 })

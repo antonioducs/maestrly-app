@@ -8,6 +8,21 @@ const { version } = require('./package.json')
 const SCREENSHOTS = 'store/screenshots/iphone-6.9'
 const env = (name) => process.env[name]?.trim() || undefined
 
+/** The version the App Store got first, which has no What's New. */
+const FIRST_VERSION = '0.1.0'
+/**
+ * What's New of each later version, in every language of the listing. Without them, `eas metadata:push` would show
+ * "Bug fixes and improved stability" in every language, so the listing refuses to load instead.
+ */
+const RELEASE_NOTES = {
+  // '0.1.1': { 'en-US': '…', 'pt-BR': '…' },
+}
+const notes = RELEASE_NOTES[version]
+if (version !== FIRST_VERSION && !(notes?.['en-US']?.trim() && notes?.['pt-BR']?.trim())) {
+  throw new Error(`Write the What's New of ${version} in English and Portuguese in RELEASE_NOTES of store.config.cjs.`)
+}
+const releaseNotes = (locale) => (notes ? { releaseNotes: notes[locale].trim() } : {})
+
 /** The 6.9-inch iPhone screenshots `npm run screenshots` renders, in file name order. */
 const screenshots = readdirSync(path.join(__dirname, SCREENSHOTS))
   .filter((file) => file.endsWith('.png'))
@@ -92,6 +107,7 @@ Want to look around first? Choose "Explore a demo server" on the first screen.
 Maestrly is open source under the MIT License.`,
         keywords: ['ai', 'agents', 'bots', 'assistant', 'developer', 'coding', 'automation', 'approvals', 'self-hosted', 'remote', 'chat', 'devtools'],
         ...urls,
+        ...releaseNotes('en-US'),
         screenshots: { APP_IPHONE_67: screenshots },
       },
       'pt-BR': {
@@ -116,6 +132,7 @@ O Maestrly é código aberto, sob a licença MIT.`,
         keywords: ['ia', 'agentes', 'bots', 'assistente', 'desenvolvedor', 'programação', 'automação', 'aprovações', 'self-hosted', 'remoto', 'chat'],
         // Without screenshots of its own, the store shows the English ones.
         ...urls,
+        ...releaseNotes('pt-BR'),
       },
     },
     ...(Object.values(contact).every(Boolean) ? { review: { ...contact, demoRequired: false, notes: REVIEW_NOTES } } : {}),
