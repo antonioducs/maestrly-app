@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-16
+
 ### Added
 
 - Plugins: install Codex, Claude Code and Agent Plugins plugins from Git in
@@ -34,6 +36,21 @@ User-visible changes by version. Downloads are on
 - **Allow everything in this chat** on a chat's permission request in the
   mobile app gives the chat full access after the same warning as its setup,
   and the setup pill shows when a chat has full access or approves for you.
+- Free what a conversation leaves behind. Deleting or archiving it ends the
+  processes its terminals and `bash` commands left running, such as a server
+  started in the background, and deleting it removes the temporary files its
+  tools wrote. Only what Maestrly can show the conversation started is touched;
+  tools and caches shared by the machine never are. See
+  [processes a conversation leaves running](docs/local-data.md#processes-a-conversation-leaves-running)
+  and [temporary files](docs/local-data.md#temporary-files-of-a-conversation).
+- Edit your last message in the mobile app while no turn runs and nothing waits
+  to be sent. The edit keeps the message's attachments and removes the reply
+  and everything after it, as on the desktop. Editing a chat's message needs
+  Maestrly updated on the computer or server that hosts it. See
+  [Mobile app](docs/mobile.md).
+- Search a conversation in the mobile app from its header: matches ignore case
+  and accents, are highlighted and stepped through, and older messages load
+  when the ones on screen run out.
 
 ### Changed
 
@@ -46,6 +63,24 @@ User-visible changes by version. Downloads are on
 - The ChatGPT Web Companion is no longer marked experimental. Its settings show
   the active sessions first, each with its own **End session**, followed by
   the setup steps.
+- Open the mobile app with the Maestrly intro. The first open plays the whole
+  animation, later opens show the logo briefly, and Reduce Motion shows it
+  still. The app icon, splash and in-app logo now match the official logo,
+  which they drew without the two inner feet of the M.
+- The mobile message field grows with the text up to 40% of the screen, then
+  scrolls, and shrinks again when you delete text. A turn's tools, reasoning
+  and earlier text fold into one collapsible block, as on the desktop, instead
+  of a list that keeps stretching.
+- Settings fill the window beside the icon rail, with the sidebar panel out of
+  the way. Choose a tab on the rail, or the sidebar toggle, to leave Settings
+  and show that panel again.
+- **Settings › Maestrly Chat › Models & agents** is grouped by purpose:
+  Conversation, Background tasks, Memory and Subagents. Every model shows as a
+  chip with its provider, effort and Fast, and picking one saves it at once, so
+  the tab has no Save buttons left. An **In use** summary lists the models the
+  settings run, and subagent fallbacks read as a chain.
+- Remove the list of messages between bots from the Server page. Messages
+  between bots still appear in each bot's conversation.
 
 ### Fixed
 
@@ -56,6 +91,9 @@ User-visible changes by version. Downloads are on
 - Closing a browser tab or conversation shortly after an agent navigated or
   reloaded its browser no longer shows an "Object has been destroyed" error
   dialog.
+- Make **Open** on a started-conversation card, and the origin link of a message
+  from another conversation, open the conversation in a chat of a remote
+  workspaces host. They did nothing before.
 
 ## [0.19.0] - 2026-10-15
 
