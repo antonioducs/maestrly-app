@@ -206,6 +206,8 @@ test('Cursor: discover a model, stream tools, cancel and restore the conversatio
   await page.reload()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const card = page.locator('[data-subscription-provider="cursor-subscription"][data-subscription-account="default"]')
+  // A provider that was never connected waits under "Available to connect".
+  await page.locator('[data-account-chip="cursor-subscription"]').click()
   await card.getByRole('button', { name: 'Sign in with Cursor', exact: true }).click()
   await expect(card.getByText('cursor@example.test', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
