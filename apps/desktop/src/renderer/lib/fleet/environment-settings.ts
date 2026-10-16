@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   FleetEnvironmentSettingsApi,
-  FleetEnvironmentSettingsService,
+  FleetEnvironmentSettingsClient,
   FleetSettingsOutput,
 } from '@maestrly/bot-fleet-protocol'
 
@@ -10,7 +10,7 @@ export function createEnvironmentSettingsSource(
   environmentId: string,
   api: FleetEnvironmentSettingsApi,
   isCurrent: () => boolean = () => true
-): FleetEnvironmentSettingsService {
+): FleetEnvironmentSettingsClient {
   return Object.fromEntries(
     Object.entries(api).map(([key, method]) => [
       key,
@@ -21,7 +21,7 @@ export function createEnvironmentSettingsSource(
         return result
       },
     ])
-  ) as FleetEnvironmentSettingsService
+  ) as FleetEnvironmentSettingsClient
 }
 export function useEnvironmentSettingsSource(environmentId: string) {
   const lifetime = useMemo(() => ({ active: true }), [environmentId])

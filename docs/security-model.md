@@ -139,6 +139,10 @@ Application-managed API keys and integration credentials remain in the main
 process. `apps/desktop/src/main/secure-store.ts` stores only `enc:v1:` ciphertext produced by
 Electron `safeStorage`. Reads ignore legacy plaintext, and writes return failure
 when OS encryption is unavailable instead of falling back to plaintext.
+The only exception is E2E mode (`AGENTS_E2E=1`) on Linux: Playwright starts
+Electron with Chromium's basic password store, so test runs use Electron's
+in-memory key (`setUsePlainTextEncryption`). E2E mode always runs in an isolated
+temporary profile and never reads or writes a real one.
 
 Provider CLIs, browser sessions, Git credential helpers, SSH agents, and MCP
 servers retain independent credential stores. Maestrly App cannot guarantee
@@ -692,6 +696,122 @@ Maestrly App discovers catalogs lazily, validates tool schemas, and applies its
 permission model to host-mediated calls. It cannot constrain independent side
 effects performed internally by an MCP executable or remote service after the
 connection is authorized.
+
+### MCP OAuth sign-in
+
+A remote MCP server (Streamable HTTP or legacy SSE) can require an OAuth sign-in.
+Signing in always starts from Settings, and its interactive part runs on your
+computer, whichever host runs the server:
+
+- Your computer's main process asks the server's host for a descriptor: the
+  server's name, URL, any scopes or resource indicator a plugin declares, and
+  the person's own OAuth client when one is set. The descriptor never carries
+  headers, tokens, or commands, and no window can ask for it: on this computer
+  and remote hosts it has no preload method, and for a bot environment it is a
+  main-process-only operation.
+- It discovers the authorization server (RFC 9728 and RFC 8414) before anything
+  else. Without dynamic client registration and without an own client, it stops
+  before the browser opens and asks for an own client.
+- It listens for the authorization response on `127.0.0.1` with a random port and
+  accepts only the request that carries the expected `state`. It registers a
+  public client dynamically, or uses the own client, and uses PKCE (S256). The
+  consent page opens in your browser, and only when its URL is HTTPS, or HTTP on
+  this computer's loopback: an authorization endpoint with any other scheme or
+  host is refused. It may add the standard `prompt=select_account` (another
+  account) and `login_hint` (signing an account in again) parameters, and asks
+  for `openid email` when the provider lists them, to name the account.
+- It exchanges the code for tokens and hands the client registration, tokens,
+  discovery results and the account's e-mail to the host, which encrypts them
+  through the secure store. Your computer keeps no copy of a remote host's or a
+  bot environment's sign-in. The e-mail comes from the unverified `id_token`
+  payload and only labels the account; it never grants access.
+
+The host refreshes tokens itself. Chat turns never open a browser and never
+register a client: when an account needs a new sign-in, its tools fail with a
+message that names the account and says to connect it in Settings; the other
+accounts keep working. A server's accounts and own client are bound to its URL,
+and are deleted on sign-out, when the server is removed, and when a plugin
+update removes the server.
+
+**Accounts.** A server can keep several accounts, each scoped to all
+conversations or to selected projects. A conversation reaches only the accounts
+in its scope and not switched off in it; a server whose accounts all fall
+outside is left out of the conversation rather than reached with another
+account. With several accounts, every call names one; a call without a valid
+name fails.
+
+**Own OAuth client.** Its secret travels only from the window where the person
+types it to the host that runs the server, and from that host to this
+computer's main process during a sign-in. No channel, settings answer or status
+returns it; summaries carry only the client ID.
+
+### Plugins
+
+A plugin is code from its publisher. Before installing, Maestrly shows the
+manifest summary, publisher, source URL and commit, license (or that none is
+declared), declared capabilities, every external endpoint, every stdio command
+line, scripts and executables, and every component with its support status.
+
+- **Consent.** Each stdio MCP server needs explicit consent to its exact launch
+  line, and a plugin with executable files or `scripts/` needs an
+  acknowledgement that agents may run them through the normal `bash`
+  permission gate. An update that changes a launch line or an MCP endpoint, or
+  adds executables, asks again. A stdio server whose launch line no longer
+  matches its consent stays off.
+- **Hooks.** Hook commands run without asking at their events, on the host,
+  with the user's permissions, so they need an explicit approval of the exact
+  list of hooks (event, matcher, command and timeout). Maestrly keeps a digest
+  of that list and runs only hooks whose digest matches; an update that changes
+  them asks again. Hooks run only in Agent and Design conversations, never in
+  Ask, Plan or Maestro, nor for the reviewers of code and plan reviews, which
+  run in Ask. Each runs with a time limit (60 seconds by default, at most 10
+  minutes) and an output limit of 1 MiB, and its whole process group is ended
+  on timeout or Stop. A hook can deny a tool call or block a prompt, from any
+  sender (the person, a bot, a phone or another conversation's agent), but its
+  `allow` or `ask` answer never skips Maestrly's permission gate. The
+  transcript a hook can read is an owner-only temporary file deleted when the
+  turn ends. Hook messages are shown above the composer and never stored. With
+  tool hooks, Codex threads get no native shell, patch or web search tools, so
+  every call goes through them, the host `web_search` included. Hooks run on
+  the host of the conversation with its shell environment, so on a server they
+  see the conversation's own computer. A moved conversation does not carry
+  where hooks last started its session: the destination's hooks run again.
+- **Never run.** Hooks on events Maestrly does not control, hooks that are not
+  commands, monitors, LSP servers, `bin/` executables, MCP bundles,
+  OpenAI app connectors and `command` plugin sources never run. Each one is
+  listed with its reason; nothing is dropped silently. Native Codex apps,
+  plugins, and tool suggestions are disabled on every Codex thread, so a
+  conversation never gains a capability that exists for only one model.
+- **Third-party sources.** Any source can be added, as in Codex and Claude
+  Code. Maestrly does not review the plugins of a source other than the two
+  suggested ones and marks them as third party. A skill is instructions, so a
+  malicious one can steer the agent; its actions still go through the
+  permission gate, which does not ask in Full mode.
+- **Downloads.** Only HTTPS Git URLs without credentials are accepted. Every
+  `git` invocation ignores user and system configuration, hooks, credential
+  helpers, submodules and every protocol but HTTPS, and never prompts. Symbolic
+  links and submodules are never installed.
+- **Package checks.** Paths must stay inside the plugin root, checked both
+  lexically and with `realpath`. Files are copied with fixed modes. Packages are
+  limited to 4,000 files, 64 MiB in total, 16 MiB per file, paths of 400
+  characters and a depth of 24.
+- **Secrets.** Values the user enters for a plugin (tokens, keys, options) are
+  stored only through secure storage and never returned to the renderer;
+  without secure storage they are refused. Publisher-embedded OAuth clients are
+  never reused: plugin servers sign in like any other server (see
+  [MCP OAuth sign-in](#mcp-oauth-sign-in)).
+- **Hosts.** A plugin's stdio servers run on the host that installed it: this
+  computer, a remote workspaces host, or a bot environment.
+- **Bot environments.** An environment fetches, checks, and installs plugins
+  itself; plugin files are never copied from this computer. Bringing a plugin
+  from this computer sends its source, its exact commit, the approvals given here,
+  and the values entered here. This computer's main process builds that request,
+  so the values never reach a window; they travel to the environment through the
+  bot server and are encrypted there. The environment installs only the same
+  version: approvals that do not match its own inspection are refused. OAuth
+  tokens of an environment's servers take the same path (see
+  [MCP OAuth sign-in](#mcp-oauth-sign-in)); no environment-settings response
+  returns plugin values or tokens.
 
 Desktop project memory and notes stay in the local profile. Search indexes and
 embeddings are reproducible caches, not authoritative copies. Promoting local memory into a repository is an

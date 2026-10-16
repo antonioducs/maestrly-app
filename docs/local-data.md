@@ -119,6 +119,60 @@ details cannot be read remains listed as needing reconfiguration and never
 connects. Removing a server also removes its secure-store entry. Bot provisioning
 requires secure storage before accepting MCP imports.
 
+The OAuth sign-in of a remote MCP server is stored apart from its connection
+details, encrypted under `chat.mcpOAuth.<id>` on the host that runs the server,
+so that a token refresh never rewrites the details. The record (version 2) holds
+the server URL it was made for, the person's own OAuth client (client ID and
+secret, when set), and each signed-in account: its id, name, e-mail, scope,
+client registration, tokens, and discovery results. A version 1 record (one
+sign-in) is read as a single account named **Account 1** for all conversations
+and rewritten. It is written only through secure storage, is left out of data
+exports, and is removed on sign-out (one account, or all of them) and when the
+server is removed. Accounts switched off in a conversation are listed in that
+conversation's preferences as `<serverId>#<accountId>`; no token is.
+
+## Plugins
+
+Plugin records live in `app_settings`:
+
+- `plugins.marketplaces.v1`: the marketplace sources (URL, ref, sparse paths,
+  last fetched commit and error). The two OpenAI sources are listed once by
+  default (`plugins.presetsSeeded.v1`) and fetched only when opened or refreshed.
+- `plugins.installed.v1`: each installed plugin, with its source, commit,
+  enablement, scope, consent, MCP server ids (`plg_…`), and the normalized MCP
+  configuration and input declarations of the installed version. It never holds
+  input values.
+- `plugins.secrets.<plugin>`: the values entered for a plugin, encrypted through
+  the secure store. A record that cannot be decrypted leaves the plugin's
+  servers that need those values unavailable.
+
+Files live under `<userData>/plugins`:
+
+| Directory | Contents |
+| --- | --- |
+| `sources/<marketplace>/` | Partial Git clone of a marketplace source |
+| `sources/ext/<hash>/` | Partial Git clone of a plugin hosted in another repository |
+| `packages/<plugin>/<version>/` | Installed files of one version, never modified after install |
+| `data/<plugin>/` | `PLUGIN_DATA` of a plugin's MCP servers; kept across updates, deleted only on request |
+| `.staging/` | Temporary copies, removed after 30 minutes |
+
+Startup finishes interrupted removals, rolls back interrupted installs and
+updates, and deletes directories no record references. Uninstalling removes the
+plugin's servers, cached tool catalogs, skill settings, stored values and
+installed files.
+
+Plugin hooks keep little state. A conversation's `hookSession` preference
+records where its `SessionStart` hooks last ran on this host; a conversation
+move leaves it behind. While a turn runs hooks, the
+conversation's text is copied to an owner-only file under the system temporary
+folder (`maestrly-hook-transcripts/`) for hooks that read `transcript_path`;
+the file is deleted when the turn ends. Hook messages are never stored.
+
+A remote workspaces host and a bot environment keep the same records and files in
+their own profile, in the environment's persistent home volume. A plugin brought
+from a computer is downloaded there from its source; the computer keeps its own
+copy, and later changes on either side do not affect the other.
+
 ## Configuration brought to an environment
 
 Global skills sent from a computer are installed atomically in

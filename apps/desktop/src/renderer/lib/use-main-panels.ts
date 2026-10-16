@@ -11,6 +11,7 @@ import {
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import { requestMainNavigation } from './main-navigation'
 import type { SettingsSection } from '@/components/settings/nav'
+import type { OpenSettingsOptions, SettingsRequest } from './use-settings'
 import { hostApi } from '@/lib/hosts/host-context'
 import { type HostId, LOCAL_HOST_ID, parseHostKey } from '../../shared/host-key'
 import { memoryKeyFor, memoryTargetOf, type OpenMemoryRequest, personalMemoryKey } from './memory-target'
@@ -62,6 +63,9 @@ export function useMainPanels({
   // The environment a new bot joins when created from its environment view; null offers a new environment.
   const [createBotEnvironmentId, setCreateBotEnvironmentId] = useState<string | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('chat')
+  // Bumped on every request for a chat tab, so asking again for the same tab still shows it.
+  const [settingsRequest, setSettingsRequest] = useState<SettingsRequest | null>(null)
+  const settingsRequestSeq = useRef(0)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingChecked, setOnboardingChecked] = useState(false)
   const onboardingOpenRef = useRef(false)
@@ -168,19 +172,33 @@ export function useMainPanels({
     [refreshWorkspaces, setActive]
   )
 
-  const openSettings = useCallback((sectionOrEvent: SettingsSection | SyntheticEvent = 'chat') => {
-    const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
-    requestMainNavigation(() => {
-      setFleetView(null)
-      setCreateBot(false)
-      setSettingsSection(section)
-      setProjectNotesWs(null)
-      setProjectMemoryWs(null)
-      setOnboardingOpen(false)
-      setArtifactsOpen(false)
-      setSettingsOpen(true)
-    })
-  }, [])
+  const openSettings = useCallback(
+    (sectionOrEvent: SettingsSection | SyntheticEvent = 'chat', options?: OpenSettingsOptions) => {
+      const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
+      requestMainNavigation(() => {
+        setFleetView(null)
+        setCreateBot(false)
+        setSettingsSection(section)
+        // A plain request clears the last one, so Settings opened again later starts where it is asked to.
+        setSettingsRequest(
+          options?.chatTab || options?.hostId
+            ? {
+                section,
+                ...(options.chatTab ? { chatTab: options.chatTab } : {}),
+                ...(options.hostId ? { hostId: options.hostId } : {}),
+                seq: ++settingsRequestSeq.current,
+              }
+            : null
+        )
+        setProjectNotesWs(null)
+        setProjectMemoryWs(null)
+        setOnboardingOpen(false)
+        setArtifactsOpen(false)
+        setSettingsOpen(true)
+      })
+    },
+    []
+  )
 
   const openArtifacts = useCallback(() => {
     requestMainNavigation(() => {
@@ -288,6 +306,7 @@ export function useMainPanels({
     setArtifactsOpen,
     openArtifacts,
     settingsSection,
+    settingsRequest,
     onboardingOpen,
     setOnboardingOpen,
     onboardingChecked,

@@ -9,6 +9,7 @@ import {
   type LazyMcpDiagnostic,
 } from '../../src/main/chat/mcp-lazy-runtime'
 import type { McpConnection, McpRequestOptions, McpServer } from '../../src/main/chat/mcp-types'
+import { McpNeedsAuthError } from '../../src/main/chat/mcp-auth-errors'
 
 function server(overrides: Partial<McpServer> = {}): McpServer {
   return {
@@ -194,6 +195,48 @@ describe('LazyMcpRuntime', () => {
     await expect(runtime.listTools(server())).resolves.toHaveLength(1)
     expect(connect).toHaveBeenCalledOnce()
     expect(connected.close).not.toHaveBeenCalled()
+  })
+
+  it('does not open the circuit when a server needs sign-in, so a new sign-in works at once', async () => {
+    const connected = connection()
+    const remote = server({ transport: 'http', url: 'https://mcp.example.invalid/mcp', command: undefined })
+    const connect = vi
+      .fn()
+      .mockRejectedValueOnce(new McpNeedsAuthError(remote.id, remote.name))
+      .mockResolvedValue(connected)
+    const runtime = createRuntime(connect)
+
+    await expect(runtime.listTools(remote)).rejects.toThrow(/Sign-in required/)
+    await expect(runtime.listTools(remote)).resolves.toHaveLength(1)
+    expect(connect).toHaveBeenCalledTimes(2)
+    expect(diagnostic).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'mcp-lazy-circuit-open' }))
+  })
+
+  it('keeps one connection per signed-in account, invalidates them together, and isolates their circuits', async () => {
+    const opened: Array<{ account: string | undefined; connection: ReturnType<typeof connection> }> = []
+    const connect = vi.fn(async (target: McpServer) => {
+      if (target.oauthAccountId === 'acc_bbbbbbbbbbbb' && opened.some((item) => item.account === 'acc_bbbbbbbbbbbb'))
+        throw new Error('offline')
+      const connected = connection()
+      opened.push({ account: target.oauthAccountId, connection: connected })
+      return connected
+    })
+    const runtime = createRuntime(connect)
+    const a = server({ oauthAccountId: 'acc_aaaaaaaaaaaa' })
+    const b = server({ oauthAccountId: 'acc_bbbbbbbbbbbb' })
+    await runtime.listTools(a)
+    await runtime.listTools(b)
+    await runtime.listTools(a)
+    expect(opened.map((item) => item.account)).toEqual(['acc_aaaaaaaaaaaa', 'acc_bbbbbbbbbbbb'])
+
+    runtime.invalidate(server().id)
+    await Promise.resolve()
+    expect(opened.every((item) => item.connection.close.mock.calls.length === 1)).toBe(true)
+
+    // Account B's outage opens only its own circuit; account A keeps working.
+    await expect(runtime.listTools(b)).rejects.toThrow('offline')
+    await expect(runtime.listTools(b)).rejects.toThrow(/temporarily unavailable/i)
+    await expect(runtime.listTools(a)).resolves.toHaveLength(1)
   })
 
   it('dispose closes every pooled connection and cancels idle timers', async () => {

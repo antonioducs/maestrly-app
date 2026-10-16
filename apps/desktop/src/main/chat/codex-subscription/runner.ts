@@ -175,6 +175,7 @@ import {
   type DynamicToolFunctionSpec,
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
+import { CODEX_NATIVE_INTEGRATIONS_OFF } from './app-server-contract'
 import {
   CODEX_HOST_MCP_SERVER_NAME,
   CODEX_HOST_MCP_TOOL_NAMES,
@@ -221,6 +222,7 @@ import {
   runCodexSubagent,
   type CodexSubagentCheckpoint,
 } from './subagent-runner'
+import { hasToolHooks, runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 export type DynamicToolSpec = DynamicToolFunctionSpec
 export { dynamicToolRegistrations } from './dynamic-tools'
@@ -1784,7 +1786,9 @@ function codexNativeWebSearchEnabled(
     !remoteChatPolicy(args.conversationId) &&
     args.mode !== 'ask' &&
     args.mode !== 'maestro' &&
-    args.permMode !== 'ask'
+    args.permMode !== 'ask' &&
+    // Plugin tool hooks must see every search: the host web_search runs through them instead.
+    !hasToolHooks(args.conversationId, args.mode)
   )
 }
 
@@ -1837,6 +1841,7 @@ async function buildDynamicTools(
   const mcp =
     capabilityMode === 'agent' || args.mode === 'maestro'
       ? await buildMcpTools({
+          conversationId: args.conversationId,
           signal: args.signal,
           mode: args.mode,
           gate,
@@ -1895,6 +1900,10 @@ async function buildDynamicTools(
           : new Set<string>()
     if (hasReadOnlySubagent) {
       for (const name of ['read', 'grep', 'glob', 'webfetch']) bridgeNames.add(name)
+    }
+    // Plugin tool hooks see only Maestrly's tools: native shell and apply_patch are off, so Maestrly's take their place.
+    if (capabilityMode === 'agent' && hasToolHooks(args.conversationId, args.mode)) {
+      for (const name of ['bash', 'read', 'write', 'edit', 'grep', 'glob']) bridgeNames.add(name)
     }
     // Not part of the subagent readers above: bridgeNames become the parent thread's dynamic tools too.
     if (!codexNativeWebSearchEnabled(args) && webSearchToolEnabled()) {
@@ -1980,7 +1989,7 @@ async function buildDynamicTools(
       : {}
     const rawTools: ToolSet = { ...hostTools.tools, ...skillTools }
     const adaptedHostTools = adaptToolSetForModel({
-      tools: rawTools,
+      tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
       supportsImages: !args.dropImages,
       describeImage: (image) =>
         describeEphemeralToolImage({ image, conversationId: args.conversationId, cwd: args.cwd, signal: args.signal }),
@@ -2233,6 +2242,8 @@ export async function runCodexSubscriptionChat(
   args: RunCodexSubscriptionChatArgs
 ): Promise<RunCodexSubscriptionChatResult> {
   const capabilityMode = capabilityBehaviorFor(args.mode)
+  // With plugin tool hooks, every tool call goes through Maestrly's tools (no native shell or file patches).
+  const pluginToolHooks = hasToolHooks(args.conversationId, args.mode)
   const settleInitialLeaseAsOther = (): void => {
     if (!args.availabilityLease) return
     getSubscriptionFailoverRouter().confirmAttemptOther(
@@ -2719,6 +2730,8 @@ export async function runCodexSubscriptionChat(
           projectContext,
           nativeCompactionFirst: runtimeProfile.nativeCompactionFirst,
           experimentalContext: runtimeProfile.experimentalContextEnabled,
+          // Switching tool hooks on or off changes which tools exist: a fresh thread with portable continuation.
+          ...(pluginToolHooks ? { pluginToolHooks: true } : {}),
         })
       )
       .digest('hex')
@@ -2767,11 +2780,9 @@ export async function runCodexSubscriptionChat(
     // Default modes used by Agent/Ask without duplicating it as a dynamic tool.
     config: {
       ...DEFAULT_MODE_REQUEST_USER_INPUT_CONFIG,
+      ...CODEX_NATIVE_INTEGRATIONS_OFF,
       ...(remoteChatPolicy(args.conversationId)
         ? {
-            'features.apps': false,
-            'features.plugins': false,
-            'features.tool_suggest': false,
             'features.shell_tool': false,
             web_search: 'disabled',
           }
@@ -2779,9 +2790,6 @@ export async function runCodexSubscriptionChat(
       ...(autonomousPolicy(args.conversationId)
         ? {
             'features.default_mode_request_user_input': false,
-            'features.apps': false,
-            'features.plugins': false,
-            'features.tool_suggest': false,
           }
         : {}),
       ...(runtimeProfile.nativeCompactionFirst ? {} : ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG),
@@ -2803,9 +2811,12 @@ export async function runCodexSubscriptionChat(
       ...nativeSubagentSuppressionConfig(),
       // Plan receives Maestrly readers; controlled Ask/Agent receive no native shell. This avoids
       // the internal `UnlessTrusted` safelist, which would execute `cat`/`rg` without consulting Maestrly's broker.
-      ...(capabilityMode !== 'agent' || args.permMode !== 'full' ? { 'features.shell_tool': false } : {}),
-      // Native web search never requests approval. Where it would bypass the permission gate (or the user turned
-      // web search off), disable it; the gated host web_search is bridged instead (buildDynamicTools).
+      ...(capabilityMode !== 'agent' || args.permMode !== 'full' || pluginToolHooks
+        ? { 'features.shell_tool': false }
+        : {}),
+      // Native web search never requests approval. Where it would bypass the permission gate or plugin tool hooks
+      // (or the user turned web search off), disable it; the gated host web_search is bridged instead
+      // (buildDynamicTools).
       ...(!codexNativeWebSearchEnabled(args) ? { web_search: 'disabled' } : {}),
       // The skills catalog ALWAYS belongs to Maestrly (use_skill + global/per-conversation state). Disable
       // native Codex discovery in all modes; otherwise a UI-disabled skill would remain
@@ -2813,13 +2824,6 @@ export async function runCodexSubscriptionChat(
       'features.skill_search': false,
       'features.skill_mcp_dependency_install': false,
       'skills.include_instructions': false,
-      ...(args.mode === 'ask' || args.mode === 'maestro'
-        ? {
-            'features.apps': false,
-            'features.plugins': false,
-            'features.tool_suggest': false,
-          }
-        : {}),
       // Native imagegen stays disabled to avoid a second contract without `outputPath`. In Agent, the host-managed
       // dynamic `generate_image` tool uses an ephemeral Codex thread with exactly the same behavior as other
       // providers. The explicit flag also protects Plan/Ask against runtime defaults.
@@ -3068,7 +3072,7 @@ export async function runCodexSubscriptionChat(
           ...threadOptions,
           // Empty is the official contract to disable environment access: removes shell/apply_patch/view_image.
           // Plan and Ask continue investigating only through the gated dynamic readers above.
-          ...(capabilityMode === 'agent' ? {} : { environments: [] }),
+          ...(capabilityMode === 'agent' && !pluginToolHooks ? {} : { environments: [] }),
           ephemeral: Boolean(args.ephemeralSession),
           dynamicTools: registrations,
         } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -3598,10 +3602,14 @@ export async function runCodexSubscriptionChat(
                 ([name]) => name !== 'executor_report' && (args.mode !== 'maestro' || name !== 'use_skill')
               )
             ) as ToolSet
-            const childTools: ToolSet = sessionRecorder.instrumentTools({
-              ...inheritedChildTools,
-              ...(maestroWorkerRuntime?.tools ?? {}),
-            })
+            // A child's tool calls run the conversation's plugin hooks too.
+            const childTools: ToolSet = wrapToolSetWithHooks(
+              sessionRecorder.instrumentTools({
+                ...inheritedChildTools,
+                ...(maestroWorkerRuntime?.tools ?? {}),
+              }),
+              runnerHookContext(args)
+            )
             const namespacedChildTools = namespaceSubagentToolSet(childTools, toolCallId)
             const childDeferredToolNames = new Set([
               ...dynamic.deferredToolNames,
@@ -3822,6 +3830,7 @@ export async function runCodexSubscriptionChat(
                         })
                       }
                       const attempt = await runCodexSubagent({
+                        pluginToolHooks: hasToolHooks(args.conversationId, args.mode),
                         conversationScope: args.projectId === null ? 'standalone' : 'project',
                         client: target.client,
                         cwd: args.cwd,
@@ -5380,7 +5389,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(capabilityMode === 'agent' ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' && !pluginToolHooks ? {} : { environments: [] }),
             ephemeral: false,
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -5780,7 +5789,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(capabilityMode === 'agent' ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' && !pluginToolHooks ? {} : { environments: [] }),
             ephemeral: Boolean(args.ephemeralSession),
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {

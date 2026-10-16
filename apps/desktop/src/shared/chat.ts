@@ -7,6 +7,7 @@ import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 import type { AppToolGroupState } from './app-tool-groups'
+import type { PluginScope } from './plugins'
 import type { WebSearchConfig } from './web-search'
 
 export type ChatRole = 'user' | 'assistant'
@@ -23,6 +24,12 @@ export interface ChatConvTools {
   mcpDisabled: string[]
 
   imageGen: boolean
+  /** Ids of the plugin MCP servers that serve this conversation (its plugins' scope). Absent where unknown (bots). */
+  pluginMcpServers?: string[]
+  /** Servers with several signed-in accounts that serve this conversation, each account on or off in it. */
+  mcpAccounts?: { serverId: string; serverName: string; accounts: { id: string; label: string; enabled: boolean }[] }[]
+  /** Accounts turned off in this conversation, as `<serverId>#<accountId>` (also those not listed right now). */
+  mcpAccountsDisabled?: string[]
 }
 
 /** Partial update of a conversation's tool overrides; `appGroups` merges per group. */
@@ -30,6 +37,8 @@ export interface ChatConvToolsPatch {
   app?: boolean
   appGroups?: Partial<AppToolGroupState>
   mcpDisabled?: string[]
+  /** Accounts turned off in this conversation, as `<serverId>#<accountId>`. */
+  mcpAccountsDisabled?: string[]
   imageGen?: boolean
 }
 
@@ -824,10 +833,29 @@ export interface ChatSlashCommand {
   argumentHint?: string
 }
 
+/**
+ * Canonical skill name: like a slash-command name (lowercase `[\w-]`), but keeps the FIRST `:` when it separates two
+ * non-empty parts, which namespaces plugin skills as `<plugin>:<skill>`. Later colons are dropped.
+ */
+export function normalizeSkillName(s: string): string {
+  const clean = (part: string) =>
+    part
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^\w-]/g, '')
+      .toLowerCase()
+  const text = (s ?? '').trim().replace(/^\/+/, '')
+  const index = text.indexOf(':')
+  if (index < 0) return clean(text)
+  const namespace = clean(text.slice(0, index))
+  const rest = clean(text.slice(index + 1))
+  return namespace && rest ? `${namespace}:${rest}` : namespace || rest
+}
+
 export function parseSlashInvocation(text: string): { name: string; args: string } | null {
   const m = /^\s*\/([A-Za-z0-9_:-]+)(?:[ \t\r\n]+([\s\S]*))?$/.exec(text ?? '')
   if (!m) return null
-  const name = m[1].replace(/[^\w-]/g, '').toLowerCase()
+  const name = normalizeSkillName(m[1])
   return name ? { name, args: (m[2] ?? '').trim() } : null
 }
 
@@ -848,7 +876,9 @@ export interface ChatSkillInfo {
   source: string
 
   dir: string
-  scope: 'project' | 'global'
+  scope: 'project' | 'global' | 'plugin'
+  /** Set for skills and commands an installed plugin provides (managed in Settings → Plugins). */
+  plugin?: { key: string; displayName: string; kind: 'skill' | 'command' }
   argumentHint?: string
   license?: string
   modelInvocable: boolean
@@ -1157,6 +1187,8 @@ export type ChatStreamEvent =
       usage?: ChatUsage
     }
   | { kind: 'finish'; messageId: string; finishReason: string; usage?: ChatUsage; responseDurationMs: number }
+  /** A plugin hook's message, or its failure: shown above the composer, never stored. */
+  | { kind: 'hook-notice'; plugin: string; event: string; text: string; level: 'info' | 'error' }
   | { kind: 'aborted'; messageId?: string; usage?: ChatUsage; responseDurationMs?: number }
   | {
       kind: 'error'
@@ -1629,10 +1661,60 @@ export interface McpServerInfo {
   unavailable?: boolean
   id: string
   name: string
-  transport: 'http' | 'stdio'
+  transport: 'http' | 'stdio' | 'sse'
   enabled: boolean
   url?: string
   command?: string
+  /** Set for servers an installed plugin provides; they are managed in Settings → Plugins. */
+  plugin?: { key: string; displayName: string }
+  /** OAuth sign-in of a remote server: absent when none is known to be needed. */
+  oauth?: McpOAuthSummaryDto
+}
+
+/** One signed-in account of a remote MCP server. */
+export interface McpOAuthAccountDto {
+  id: string
+  /** Unique per server; the model names the account by it. */
+  label: string
+  email: string | null
+  /** Conversations the account serves: all of them, or those of selected projects. */
+  scope: PluginScope
+  status: 'connected' | 'needs-auth'
+}
+
+/** OAuth sign-in of a remote MCP server: its accounts and the person's own client, never a token or a secret. */
+export interface McpOAuthSummaryDto {
+  /** The server asked for a sign-in that no account answers yet. */
+  needsAuth: boolean
+  accounts: McpOAuthAccountDto[]
+  client: { clientId: string } | null
+}
+
+/** Outcome of signing in to a remote MCP server from this computer. */
+export type McpOAuthConnectResult =
+  | { ok: true; accountId: string }
+  | {
+      ok: false
+      error:
+        | 'cancelled'
+        | 'timeout'
+        | 'denied'
+        | 'registration-unsupported'
+        | 'discovery-failed'
+        | 'unavailable'
+        | 'server-changed'
+        | 'storage'
+        | 'failed'
+        | 'label-taken'
+      /** With `registration-unsupported`: the authorization server, where the person registers their own client. */
+      issuer?: string
+    }
+
+/** A new account (optionally labelled and scoped), or with `accountId` an account signed in again. */
+export interface McpOAuthConnectOptions {
+  accountId?: string
+  label?: string
+  scope?: PluginScope
 }
 
 export interface ChatConfig {
@@ -1780,6 +1862,7 @@ function lastPart<T extends MessagePart['type']>(
 export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): ChatMessage[] {
   switch (ev.kind) {
     case 'runtime-capabilities':
+    case 'hook-notice':
       return messages
     case 'steering-accepted':
       return messages.some((message) => message.id === ev.message.id)

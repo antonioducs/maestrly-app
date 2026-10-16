@@ -18,6 +18,7 @@ import type {
   ChatSkillsState,
 } from '../../shared/chat'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs, setAppSetting } from '../store'
+import { listPluginSkills } from '../plugins/runtime'
 import { countSkillResources, listSkills, normalizedSkillName, type ChatSkill, type SkillOverride } from './skills'
 import { listInstalledSkillSources } from './skills-registry'
 
@@ -254,7 +255,7 @@ export function setConversationSkillOverride(
 export function conversationCwd(conversationId?: string): string {
   if (!conversationId) return ''
   const conversation = getConversation(conversationId)
-  return conversation?.scope === 'standalone' ? '' : conversation?.cwd ?? ''
+  return conversation?.scope === 'standalone' ? '' : (conversation?.cwd ?? '')
 }
 
 export function skillBaseIsEnabled(
@@ -283,6 +284,33 @@ export function skillIsEnabledForSelection(
   return skillBaseIsEnabled(name, disabled, selection, groups)
 }
 
+/**
+ * Every skill a conversation can see: skills on disk (project, then global) and the skills and commands of the plugins
+ * active for it. `conversationId` undefined = Settings (every enabled plugin); null = no conversation (global plugins).
+ * Disk skills win a name clash; plugin names are always namespaced, so a clash needs a plugin skill at a bare name.
+ */
+export async function listConversationSkills(
+  cwd: string,
+  conversationId: string | null | undefined,
+  home: string = os.homedir()
+): Promise<ChatSkill[]> {
+  const [disk, plugins] = await Promise.all([listSkills(cwd, home), listPluginSkills({ conversationId })])
+  const names = new Set(disk.map((skill) => skill.name))
+  return [...disk, ...plugins.filter((skill) => !names.has(skill.name))]
+}
+
+/** Removes uninstalled skill names from the global disable list and from every group. */
+export function forgetSkillNames(names: readonly string[]): void {
+  const gone = new Set(names.map((name) => normalizedSkillName(name)).filter(Boolean))
+  if (!gone.size) return
+  const disabled = listGloballyDisabledSkills()
+  if (disabled.some((name) => gone.has(name)))
+    setAppSetting(DISABLED_KEY, JSON.stringify(disabled.filter((name) => !gone.has(name))))
+  const groups = listSkillGroups()
+  if (groups.some((group) => group.skills.some((name) => gone.has(name))))
+    saveSkillGroups(groups.map((group) => ({ ...group, skills: group.skills.filter((name) => !gone.has(name)) })))
+}
+
 /** ENABLED skills (global + set + conversation override). */
 export async function effectiveSkills(
   cwd: string,
@@ -294,7 +322,7 @@ export async function effectiveSkills(
   const selection = conversationSkillSelection(conversationId)
   const groups = listSkillGroups()
   const discoveryCwd = conversationId && getConversation(conversationId)?.scope === 'standalone' ? '' : cwd
-  const all = await listSkills(discoveryCwd, home)
+  const all = await listConversationSkills(discoveryCwd, conversationId ?? null, home)
   return all.filter((skill) => skillIsEnabledForSelection(skill.name, disabled, selection, groups, overrides))
 }
 
@@ -338,6 +366,7 @@ function toInfo(
     groupIds,
     inSelectedGroup: selection.kind === 'group' && groupIds.includes(selection.groupId),
     ...(installed[skill.name] ? { installedFrom: installed[skill.name] } : {}),
+    ...(skill.plugin ? { plugin: skill.plugin } : {}),
   }
 }
 
@@ -349,7 +378,7 @@ export async function listSkillsState(conversationId?: string, home: string = os
   const selection = conversationSkillSelection(conversationId)
   const groups = listSkillGroups()
   const installed = listInstalledSkillSources()
-  const skills = await listSkills(cwd, home)
+  const skills = await listConversationSkills(cwd, conversationId, home)
   const infos = skills.map((skill) => toInfo(skill, disabled, overrides, selection, groups, installed))
   return {
     skills: infos,
@@ -374,7 +403,7 @@ export async function readSkillDetail(
   const cwd = conversationCwd(conversationId)
   const norm = normalizedSkillName(name)
   if (!norm) return null
-  const skill = (await listSkills(cwd, home)).find((item) => item.name === norm)
+  const skill = (await listConversationSkills(cwd, conversationId, home)).find((item) => item.name === norm)
   if (!skill) return null
   const disabled = new Set(listGloballyDisabledSkills())
   const overrides = conversationId ? conversationSkillOverrides(conversationId) : {}

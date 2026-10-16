@@ -122,6 +122,33 @@ describe('Codex subagent quota classification', () => {
     )
   })
 
+  it('gives a child of a conversation with plugin tool hooks no native shell, patches or web search', async () => {
+    const { client, args } = harness()
+    await runCodexSubagent({ ...args, pluginToolHooks: true }).catch(() => undefined)
+    expect(client.startThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environments: [],
+        config: expect.objectContaining({ 'features.shell_tool': false, web_search: 'disabled' }),
+      }),
+      expect.anything()
+    )
+  })
+
+  it('never enables Codex-only apps, plugins or tool suggestions for a worker child', async () => {
+    const { client, args } = harness()
+    await runCodexSubagent(args).catch(() => undefined)
+    expect(client.startThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          'features.apps': false,
+          'features.plugins': false,
+          'features.tool_suggest': false,
+        }),
+      }),
+      expect.anything()
+    )
+  })
+
   it('never offers native search together with the inherited host web_search tool', async () => {
     const native = harness()
     await runCodexSubagent(native.args).catch(() => undefined)

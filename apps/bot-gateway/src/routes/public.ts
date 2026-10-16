@@ -1,5 +1,9 @@
 import { environmentSettingsRoute } from './environment-settings.js'
-import { FLEET_ACCOUNT_FAILOVER_FEATURE, FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_ENVIRONMENT_PLUGINS_FEATURE,
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+} from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
@@ -148,7 +152,7 @@ function recordConfiguration(
   environmentId: string,
   res: ServerResponse,
   counts: Partial<
-    Record<'accounts' | 'skills' | 'mcpServers' | 'removed' | 'models' | 'runtimes' | 'preferences', number>
+    Record<'accounts' | 'skills' | 'mcpServers' | 'removed' | 'models' | 'runtimes' | 'preferences' | 'plugins', number>
   >
 ) {
   if (!Object.values(counts).some((count) => count > 0)) return
@@ -255,6 +259,13 @@ export async function publicRoute(
         'settingsTestMcpServer',
         'settingsRuntimes',
         'settingsPreferences',
+        'settingsPlugins',
+        'settingsPluginCatalog',
+        'settingsPluginInspect',
+        'settingsPluginLogo',
+        'settingsPluginSkills',
+        'settingsMcpOAuthStatuses',
+        'settingsMcpOAuthDescriptor',
         'settingsFailover',
       ].includes(key)
     )
@@ -265,6 +276,8 @@ export async function publicRoute(
         models: key.includes('Model') ? 1 : 0,
         runtimes: key.includes('Runtime') ? 1 : 0,
         preferences: key === 'settingsSetPreferences' ? 1 : 0,
+        // Switching a plugin's skill is a skill setting; the plugin itself is unchanged.
+        plugins: key.includes('Plugin') && !key.includes('PluginSkill') ? 1 : 0,
       })
     return result
   }
@@ -350,7 +363,7 @@ export async function publicRoute(
           ],
           // Past the 20 features installed desktops read (`FLEET_META_FEATURES_LEGACY_MAX`). `phones` is announced
           // also when push is off: a phone then hears from the push routes that this server sends none.
-          moreFeatures: [FLEET_PHONES_FEATURE, FLEET_DEVICES_FEATURE],
+          moreFeatures: [FLEET_PHONES_FEATURE, FLEET_DEVICES_FEATURE, FLEET_ENVIRONMENT_PLUGINS_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },

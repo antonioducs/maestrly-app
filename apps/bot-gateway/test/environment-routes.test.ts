@@ -92,6 +92,8 @@ describe('environment routes', () => {
       'message-edit',
       'video-screens',
     ])
+    // Past the 20 features installed desktops read.
+    expect((await json(await h.request('GET', '/v1/meta'))).moreFeatures).toContain('environment-plugins-v1')
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)
     expect(created.status).toBe(201)

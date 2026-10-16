@@ -14,7 +14,9 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   [workspaces environment](remote-workspaces.md#on-a-phone), in the menu's
   **Chats** and **Workspaces** tabs. Open a chat, start a new one on its own or
   in a workspace, and change its mode, model, effort, skills, MCP servers and
-  context limit. A card shows the conversations an agent started from a chat,
+  context limit. A [plugin](plugins.md)'s skills and servers are listed where
+  the plugin applies, and each account of a server with several signed-in
+  accounts has a switch of its own. A card shows the conversations an agent started from a chat,
   each with a way to open it, and a message, report or result another
   conversation sent names that conversation, which opens from its name.
 - **Interactive answers:** an

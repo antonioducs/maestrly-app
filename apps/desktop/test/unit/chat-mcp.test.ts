@@ -381,7 +381,12 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
   it('builds cold catalogs without processes and discovers tools on demand', async () => {
     const server = registerFixtureServer()
     const gate = vi.fn(async () => {})
-    const built = await buildMcpTools({ mode: 'agent', gate, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate,
+      signal: new AbortController().signal,
+    })
     try {
       expect(Object.keys(built.tools).sort()).toEqual(['mcp_call', 'mcp_search'])
       expect(existsSync(fixtureStartedFile)).toBe(false)
@@ -402,42 +407,52 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
     }
   })
 
-  it.each([
-    'plan',
-    'ask',
-  ] as const)('%s filters discovery and revalidates policy before generic dispatch', async (mode) => {
-    const server = registerFixtureServer()
-    const gate = vi.fn(async () => {})
-    const built = await buildMcpTools({ mode, gate, signal: new AbortController().signal })
-    try {
-      expect(Object.keys(built.tools).sort()).toEqual(['mcp_call', 'mcp_search'])
-      expect(built.tools.mcp_search.metadata).toEqual({ readOnly: true, parallelSafe: false })
-      expect(built.tools.mcp_call.metadata).toEqual({ readOnly: true, parallelSafe: false })
-      const search = built.tools.mcp_search as unknown as Executable
-      const searchOutput = await search.execute({ server: server.id }, { toolCallId: 'search-2' })
-      expect(searchOutput).toContain('lookup')
-      expect(searchOutput).not.toContain('mutate')
-      expect(searchOutput).not.toContain('declared_false')
-      expect(searchOutput).not.toContain('contradictory')
+  it.each(['plan', 'ask'] as const)(
+    '%s filters discovery and revalidates policy before generic dispatch',
+    async (mode) => {
+      const server = registerFixtureServer()
+      const gate = vi.fn(async () => {})
+      const built = await buildMcpTools({ conversationId: null, mode, gate, signal: new AbortController().signal })
+      try {
+        expect(Object.keys(built.tools).sort()).toEqual(['mcp_call', 'mcp_search'])
+        expect(built.tools.mcp_search.metadata).toEqual({ readOnly: true, parallelSafe: false })
+        expect(built.tools.mcp_call.metadata).toEqual({ readOnly: true, parallelSafe: false })
+        const search = built.tools.mcp_search as unknown as Executable
+        const searchOutput = await search.execute({ server: server.id }, { toolCallId: 'search-2' })
+        expect(searchOutput).toContain('lookup')
+        expect(searchOutput).not.toContain('mutate')
+        expect(searchOutput).not.toContain('declared_false')
+        expect(searchOutput).not.toContain('contradictory')
 
-      const call = built.tools.mcp_call as unknown as Executable
-      await expect(
-        call.execute({ server: server.id, tool: 'mutate', arguments: {} }, { toolCallId: 'call-denied' })
-      ).rejects.toThrow(/not available/i)
-      expect(gate).not.toHaveBeenCalled()
-    } finally {
-      await built.close()
+        const call = built.tools.mcp_call as unknown as Executable
+        await expect(
+          call.execute({ server: server.id, tool: 'mutate', arguments: {} }, { toolCallId: 'call-denied' })
+        ).rejects.toThrow(/not available/i)
+        expect(gate).not.toHaveBeenCalled()
+      } finally {
+        await built.close()
+      }
     }
-  })
+  )
 
   it('reopens warm catalogs without IO and exposes typed wrappers', async () => {
     const server = registerFixtureServer()
-    const cold = await buildMcpTools({ mode: 'agent', gate: async () => {}, signal: new AbortController().signal })
+    const cold = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
     const search = cold.tools.mcp_search as unknown as Executable
     await search.execute({ server: server.id }, { toolCallId: 'seed' })
 
     const gate = vi.fn(async () => {})
-    const built = await buildMcpTools({ mode: 'agent', gate, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate,
+      signal: new AbortController().signal,
+    })
     try {
       expect(Object.keys(built.tools).sort()).toEqual([
         'fixture__contradictory',
@@ -460,11 +475,21 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
 
   it('gives Design the warm mutable catalog and metadata behavior of Agent', async () => {
     const server = registerFixtureServer()
-    const cold = await buildMcpTools({ mode: 'design', gate: async () => {}, signal: new AbortController().signal })
+    const cold = await buildMcpTools({
+      conversationId: null,
+      mode: 'design',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
     await (cold.tools.mcp_search as unknown as Executable).execute({ server: server.id }, { toolCallId: 'seed-design' })
 
     const gate = vi.fn(async () => {})
-    const built = await buildMcpTools({ mode: 'design', gate, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'design',
+      gate,
+      signal: new AbortController().signal,
+    })
     try {
       expect(built.tools).toHaveProperty('fixture__mutate')
       expect(built.tools.fixture__mutate.metadata).toBeUndefined()
@@ -479,10 +504,20 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
 
   it('exposes only read-only wrappers in restricted warm catalogs', async () => {
     const server = registerFixtureServer()
-    const cold = await buildMcpTools({ mode: 'agent', gate: async () => {}, signal: new AbortController().signal })
+    const cold = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
     await (cold.tools.mcp_search as unknown as Executable).execute({ server: server.id }, { toolCallId: 'seed-plan' })
 
-    const built = await buildMcpTools({ mode: 'plan', gate: async () => {}, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'plan',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
     expect(Object.keys(built.tools).sort()).toEqual([
       'fixture__echo',
       'fixture__lookup',
@@ -496,7 +531,12 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
   it('validates live schemas before permission and dispatch', async () => {
     const server = registerFixtureServer()
     const gate = vi.fn(async () => {})
-    const built = await buildMcpTools({ mode: 'agent', gate, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate,
+      signal: new AbortController().signal,
+    })
     const call = built.tools.mcp_call as unknown as Executable
 
     await expect(
@@ -513,7 +553,12 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
     const server = registerFixtureServer()
     writeMcpCatalog(server, [{ name: 'mutate', annotations: { readOnlyHint: true } }])
     const gate = vi.fn(async () => {})
-    const built = await buildMcpTools({ mode: 'plan', gate, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'plan',
+      gate,
+      signal: new AbortController().signal,
+    })
     expect(built.tools).toHaveProperty('fixture__mutate')
 
     const stale = built.tools.fixture__mutate as unknown as Executable
@@ -523,7 +568,12 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
 
   it('preserves images and structured content in generic dispatch', async () => {
     const server = registerFixtureServer()
-    const built = await buildMcpTools({ mode: 'agent', gate: async () => {}, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
     const call = built.tools.mcp_call as unknown as Executable
 
     const output = modelOutputToChatToolOutput(
@@ -545,7 +595,12 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
       args: [FIXTURE],
       env: { MCP_FIXTURE_STARTED_FILE: path.join(fixtureDir, 'second-started') },
     })
-    const built = await buildMcpTools({ mode: 'agent', gate: async () => {}, signal: new AbortController().signal })
+    const built = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
     const search = built.tools.mcp_search as unknown as Executable
 
     await expect(search.execute({ server: 'fixture' }, { toolCallId: 'ambiguous' })).rejects.toThrow(/ambiguous/i)
@@ -556,6 +611,7 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
   it('disables conversation-selected servers in every mode', async () => {
     const server = registerFixtureServer()
     const built = await buildMcpTools({
+      conversationId: null,
       mode: 'agent',
       gate: async () => {},
       signal: new AbortController().signal,

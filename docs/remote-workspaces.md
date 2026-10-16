@@ -19,7 +19,7 @@ you sign in to for one company never reaches the others. See [Several scopes on 
 | --- | --- |
 | Conversations, their messages, and the agent's turns, including Maestro, subagents, plans, and reviews | The window: sidebar, chat view, drawer, and settings |
 | Workspaces, their Git repositories and worktrees, and terminals | Sound, keyboard shortcuts, window layout, and updates of this app |
-| Model accounts, skills, MCP servers, prompts, and memory of the host's profile | This computer's own chats, workspaces, accounts, and settings, unchanged |
+| Model accounts, skills, [plugins](plugins.md), MCP servers, prompts, and memory of the host's profile | This computer's own chats, workspaces, accounts, and settings, unchanged |
 | The agent's browser, with its cookies and site logins | The microphone and voice transcription |
 | VS Code (the **Code** tab), with its extensions and debug sessions | The editor's settings, applied to the server's editor |
 
@@ -36,8 +36,8 @@ When you come back, the conversation shows what happened meanwhile.
    your work.
 3. On the environment's page, add the model accounts the host will use: an API key, a subscription sign-in, or accounts
    brought from this computer, as for a [bot environment](bot-fleet.md#bring-from-your-computer). The host has its own
-   accounts, skills, and MCP servers; nothing is copied from this computer, or from another environment, unless you
-   ask.
+   accounts, skills, plugins, and MCP servers; nothing is copied from this computer, or from another environment,
+   unless you ask.
 
 Once an environment runs, the **Chats** and **Workspaces** tabs get a machine switcher above the search. It shows the
 machine whose chats and workspaces are listed, **This computer** or the environment's name in its color, with what is
@@ -70,7 +70,7 @@ the server hosts one environment and predates several: **Update bots** too.
   conversation leaves the server's list.
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
-  accounts, models, skills, and defaults. The other sections are this computer's and have no selector.
+  accounts, models, skills, plugins, and defaults. The other sections are this computer's and have no selector.
 - **Artifacts.** Agents in chats on the server publish [artifacts](artifacts.md) on the server itself, with nothing to
   set up: the gateway gives the workspaces environment a token of its own for them. Artifact hosting must be on in
   **Settings → Artifacts**. The server's browser cannot reach the artifact viewer, so **Open** on an artifact's card

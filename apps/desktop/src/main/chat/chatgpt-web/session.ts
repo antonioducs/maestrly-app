@@ -43,6 +43,7 @@ export interface SessionOptions {
     | 'fileScope'
     | 'gitReadEnabled'
     | 'browserCapability'
+    | 'toolHooks'
   >
 }
 

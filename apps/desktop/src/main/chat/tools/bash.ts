@@ -178,6 +178,11 @@ export function commandSegments(command: string): string[] {
   return segs
 }
 
+/** The shell commands run in: `/bin/sh`, or `COMSPEC` (cmd.exe) on Windows. Plugin hooks use the same one. */
+export function commandShell(): string {
+  return process.platform === 'win32' ? (process.env.COMSPEC ?? 'cmd.exe') : '/bin/sh'
+}
+
 async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<BashResult> {
   const { abs: cwd, external } = resolveInside(ctx.cwd, args.workdir ?? '.')
   const stat = await fs.stat(cwd).catch(() => null)
@@ -189,7 +194,7 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Bash
   await ctx.ask('bash', resources, [...new Set(resources.map(bashPermissionSavePattern))])
 
   const isWin = process.platform === 'win32'
-  const shell = isWin ? (process.env.COMSPEC ?? 'cmd.exe') : '/bin/sh'
+  const shell = commandShell()
   const timeout = args.timeout ?? DEFAULT_TIMEOUT_MS
 
   return await new Promise<BashResult>((resolve, reject) => {

@@ -17,6 +17,7 @@ import { normalizeSubagentProfileKey, type SubagentProfileRulesV1 } from '../../
 import type { ChatMode } from '../../shared/chat'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import { BUILTIN_AGENTS, listAgents, type ChatAgent } from './agents'
+import { listPluginAgents } from '../plugins/runtime'
 import { getConversationSubagentProfileRules, getGlobalSubagentProfileRules } from './subagent-profile-config'
 
 export const VIRTUAL_AGENT_CATEGORY = 'custom'
@@ -105,7 +106,11 @@ export async function listEffectiveAgents(input: ListEffectiveAgentsInput): Prom
   const conversation = getConversationSubagentProfileRules(input.conversationId)
   if (!conversation.subagentsEnabled) return []
   const cwd = getConversation(input.conversationId)?.scope === 'standalone' ? '' : input.cwd
-  const physical = await listAgents(cwd, input.home)
+  // Agent files of the project and the home win over a plugin agent with the same name.
+  const disk = await listAgents(cwd, input.home)
+  const names = new Set(disk.map((agent) => agent.name))
+  const fromPlugins = await listPluginAgents({ conversationId: input.conversationId })
+  const physical = [...disk, ...fromPlugins.filter((agent) => !names.has(agent.name))]
   if (input.mode !== undefined && capabilityBehaviorFor(input.mode) !== 'agent') return physical
   if (!conversation.enabled) return physical
   const global = getGlobalSubagentProfileRules()

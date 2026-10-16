@@ -1,4 +1,4 @@
-import type { FleetEnvironmentSettingsService, FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
+import type { FleetEnvironmentSettingsClient, FleetSettingsOutput } from '@maestrly/bot-fleet-protocol'
 import type { ChatSkillDetail, ChatSkillInfo } from '../../../shared/chat'
 import type { HostApi } from '../../../preload'
 type Api = HostApi
@@ -54,8 +54,16 @@ export type EnvironmentSkillDetail = ChatSkillDetail & {
   editable: boolean
   editableReason: string | null
 }
-export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsService): SkillsSettingsSource {
+/**
+ * The skills of a bot environment, through its settings operations. With `plugins` (the environment supports
+ * `environment-plugins-v1`), its plugins' skills are listed too, under their plugin, and switched on and off there.
+ */
+export function createEnvironmentSkillsSource(
+  api: FleetEnvironmentSettingsClient,
+  options: { plugins?: boolean } = {}
+): SkillsSettingsSource {
   let skills: FleetSettingsOutput<'skills'>['skills'] = []
+  let pluginSkills: FleetSettingsOutput<'pluginSkills'>['skills'] = []
   let groups: FleetSettingsOutput<'skillGroups'> | null = null
   let hits: FleetSettingsOutput<'searchSkills'>['results'] = []
   const listeners = new Set<() => void>()
@@ -75,6 +83,23 @@ export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsServi
     groupIds: groups?.groups.filter((group) => group.skills.includes(skill.name)).map((group) => group.id) ?? [],
     inSelectedGroup: true,
   })
+  const pluginInfo = (skill: FleetSettingsOutput<'pluginSkills'>['skills'][number]): ChatSkillInfo => ({
+    name: skill.name,
+    description: skill.description,
+    source: skill.plugin.displayName,
+    dir: '',
+    scope: 'plugin',
+    plugin: { ...skill.plugin, kind: skill.kind },
+    modelInvocable: skill.modelInvocable,
+    userInvocable: skill.userInvocable,
+    resources: skill.resources,
+    enabled: skill.enabled,
+    baseEnabled: skill.enabled,
+    enabledGlobally: skill.enabled,
+    groupIds: groups?.groups.filter((group) => group.skills.includes(skill.name)).map((group) => group.id) ?? [],
+    inSelectedGroup: true,
+  })
+  const isPluginSkill = (name: string) => pluginSkills.some((skill) => skill.name === name)
   const revision = (name: string) => {
     const skill = skills.find((s) => s.name === name)
     if (!skill) throw new Error('not-found')
@@ -97,13 +122,18 @@ export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsServi
     },
     async chatSkillsState() {
       const request = ++refreshRequest
-      const [nextSkills, nextGroups] = await Promise.all([api.skills({}), api.skillGroups({})])
+      const [nextSkills, nextGroups, nextPluginSkills] = await Promise.all([
+        api.skills({}),
+        api.skillGroups({}),
+        options.plugins ? api.pluginSkills({}) : Promise.resolve({ skills: [] }),
+      ])
       if (request === refreshRequest) {
         skills = nextSkills.skills
         groups = nextGroups
+        pluginSkills = nextPluginSkills.skills
       }
       return {
-        skills: skills.map(info),
+        skills: [...skills.map(info), ...pluginSkills.map(pluginInfo)],
         groups: groups?.groups ?? [],
         selection: { kind: 'all' },
         selectedGroupMissing: false,
@@ -111,6 +141,8 @@ export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsServi
       }
     },
     async chatSkillRead(name) {
+      // A plugin's skill is read with its plugin, in the plugin center; it has no editable document here.
+      if (isPluginSkill(name)) throw new Error('not-found')
       const document = await api.skill({ name })
       return {
         ...info(document),
@@ -122,6 +154,11 @@ export function createEnvironmentSkillsSource(api: FleetEnvironmentSettingsServi
       } as EnvironmentSkillDetail
     },
     async chatSkillSetEnabled(name, enabled) {
+      if (isPluginSkill(name)) {
+        const result = await api.setPluginSkillEnabled({ name, enabled })
+        if (!result.ok) throw new Error(result.error)
+        return { ok: true }
+      }
       await api.setSkillEnabled({ name, enabled, expectedRevision: revision(name) })
       return { ok: true }
     },

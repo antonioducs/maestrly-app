@@ -1,5 +1,7 @@
 import { ipcRenderer } from 'electron'
 import type { FleetEnvironmentSettingsApi } from '@maestrly/bot-fleet-protocol'
+import type { McpOAuthConnectResult } from '../shared/chat'
+import type { InstalledPluginDto, PluginOpResult } from '../shared/plugins'
 
 export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
   accounts: (environmentId, input) => ipcRenderer.invoke('fleet:settings:accounts', environmentId, input),
@@ -38,7 +40,46 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
     ipcRenderer.invoke('fleet:settings:setRuntimeAutomatic', environmentId, input),
   preferences: (environmentId, input) => ipcRenderer.invoke('fleet:settings:preferences', environmentId, input),
   setPreferences: (environmentId, input) => ipcRenderer.invoke('fleet:settings:setPreferences', environmentId, input),
+  plugins: (environmentId, input) => ipcRenderer.invoke('fleet:settings:plugins', environmentId, input),
+  pluginCatalog: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginCatalog', environmentId, input),
+  pluginInspect: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginInspect', environmentId, input),
+  pluginLogo: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginLogo', environmentId, input),
+  addPluginSource: (environmentId, input) => ipcRenderer.invoke('fleet:settings:addPluginSource', environmentId, input),
+  refreshPluginSource: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:refreshPluginSource', environmentId, input),
+  removePluginSource: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removePluginSource', environmentId, input),
+  installPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:installPlugin', environmentId, input),
+  updatePlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:updatePlugin', environmentId, input),
+  patchPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:patchPlugin', environmentId, input),
+  uninstallPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:uninstallPlugin', environmentId, input),
+  pluginSkills: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginSkills', environmentId, input),
+  setPluginSkillEnabled: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setPluginSkillEnabled', environmentId, input),
+  mcpOAuthStatuses: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:mcpOAuthStatuses', environmentId, input),
+  removeMcpOAuth: (environmentId, input) => ipcRenderer.invoke('fleet:settings:removeMcpOAuth', environmentId, input),
+  patchMcpOAuthAccount: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:patchMcpOAuthAccount', environmentId, input),
+  setMcpOAuthClient: (environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setMcpOAuthClient', environmentId, input),
   failover: (environmentId, input) => ipcRenderer.invoke('fleet:settings:failover', environmentId, input),
   setFailoverRoute: (environmentId, input) =>
     ipcRenderer.invoke('fleet:settings:setFailoverRoute', environmentId, input),
+}
+
+/**
+ * Plugin actions on an environment that this computer's main process carries out: bringing one of this computer's
+ * plugins (with the values entered here) and signing in to an MCP server of the environment in this computer's browser.
+ */
+export const fleetEnvironmentPlugins = {
+  bring: (environmentId: string, key: string): Promise<PluginOpResult<InstalledPluginDto>> =>
+    ipcRenderer.invoke('fleet:plugins:bring', environmentId, key),
+  mcpOAuthConnect: (
+    environmentId: string,
+    serverId: string,
+    options?: { accountId?: string; label?: string }
+  ): Promise<McpOAuthConnectResult> => ipcRenderer.invoke('fleet:mcp-oauth:connect', environmentId, serverId, options),
+  mcpOAuthCancel: (environmentId: string, serverId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:mcp-oauth:cancel', environmentId, serverId),
 }

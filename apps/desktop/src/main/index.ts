@@ -51,7 +51,7 @@ import {
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
-import { hostRegistry, onHostEvent, registerHostsIpc } from './remote-host/client/ipc'
+import { hostRegistry, onHostEvent, originRole, registerHostsIpc } from './remote-host/client/ipc'
 import { RemoteEditors } from './remote-host/client/editor'
 import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
 import { setRemoteVSCodeHandlers } from './drawer/vscode'
@@ -165,6 +165,7 @@ import {
   type FloatTab,
 } from './store'
 import {
+  invalidateMcpConfiguration,
   projectEnvironmentLockFor,
   resolvePlanReview as resolveChatGptWebPlanReview,
   restoreCompanionWindow as restoreChatGptWebCompanionWindow,
@@ -189,6 +190,16 @@ import type { IpcRegistrar } from './ipc-registrar'
 import { registerSettingsIpc, reloadShortcuts } from './settings-ipc'
 import { registerWorkspaceIpc } from './workspace-ipc'
 import { registerProjectSetupIpc } from './project-setup/ipc'
+import { registerPluginIpc } from './plugins/ipc'
+import { allRuntimeMcpServerIds } from './chat/mcp'
+import {
+  type McpOAuthBundle,
+  type McpOAuthDescriptor,
+  type McpOAuthTarget,
+  sweepOrphanMcpOAuth,
+} from './chat/mcp-oauth'
+import { type McpOAuthStoreResult, registerMcpOAuthIpc } from './chat/mcp-oauth-ipc'
+import { onPluginMcpSurfaceChanged, reconcilePluginsOnStartup } from './plugins/service'
 
 import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
@@ -859,6 +870,34 @@ function registerIpc(): void {
       sendToWindow('chat:chatgpt-web:turn-completed', { conversationId })
     },
   })
+  registerPluginIpc(reg)
+  // ChatGPT web sessions froze their MCP servers when they started: a plugin change ends them, as an MCP edit does.
+  onPluginMcpSurfaceChanged(() => {
+    void invalidateMcpConfiguration().catch(() => undefined)
+  })
+  registerMcpOAuthIpc(reg, {
+    // Sign-in for a remote host's server: this computer runs the browser part and the host keeps the result.
+    remoteHostCalls: (sender, hostId) => {
+      const registry = hostRegistry()
+      if (!registry || !registry.list().some((host) => host.id === hostId)) return null
+      const connection = registry.use(hostId, sender.id, () => originRole(sender))
+      return {
+        descriptor: async (id, accountId) =>
+          (await connection.invoke(sender.id, 'chat:mcp-oauth:descriptor', [
+            id,
+            accountId,
+          ])) as McpOAuthDescriptor | null,
+        store: async (id: string, bundle: McpOAuthBundle, target: McpOAuthTarget) =>
+          (await connection.invoke(sender.id, 'chat:mcp-oauth:store', [id, bundle, target])) as McpOAuthStoreResult,
+      }
+    },
+  })
+  // Finish or roll back plugin installs, updates and removals a previous run left in flight.
+  // Then drop MCP sign-ins whose server is gone (a removal interrupted before its cleanup).
+  void reconcilePluginsOnStartup()
+    .catch(() => undefined)
+    .then(() => sweepOrphanMcpOAuth(new Set(allRuntimeMcpServerIds())))
+    .catch(() => undefined)
   // Nothing in flight survives a restart: settle dispatches left mid-allocation/start from durable state.
   void getConversationDispatchService()
     .then((service) => service.reconcile())

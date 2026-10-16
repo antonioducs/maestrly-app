@@ -15,6 +15,16 @@ export const CODEX_SUBSCRIPTION_APP_SERVER_ARGS = [
   'multi_agent_v2',
 ] as const
 
+/**
+ * ChatGPT apps, native plugins and tool suggestions exist only in Codex: Maestrly never enables them, so switching
+ * models never changes what a conversation can do. Sent on every thread Maestrly starts or resumes.
+ */
+export const CODEX_NATIVE_INTEGRATIONS_OFF = {
+  'features.apps': false,
+  'features.plugins': false,
+  'features.tool_suggest': false,
+} as const
+
 /** This provider is exclusively first-party ChatGPT; host-injected credentials/endpoints are not accepted. */
 export const CODEX_SUBSCRIPTION_UNSET_ENV = [
   'OPENAI_API_KEY',

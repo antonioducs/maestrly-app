@@ -2,7 +2,7 @@ import type { BotSelection } from '@maestrly/protocol'
 import { createHash } from 'node:crypto'
 import { patchConvUiPrefs, getConversation, getConvUiPrefs } from '../store'
 import { observeChatHost } from '../chat/host-events'
-import { listMcpServers } from '../chat/mcp'
+import { allRuntimeMcpServerIds } from '../chat/mcp'
 import { registerRemoteChatPolicy, withRemoteChatPolicy, type RemoteChatPolicy } from '../chat/remote-policy'
 import type { BotNativeHost } from './worker'
 import type { BotModelCatalog } from './catalog'
@@ -40,7 +40,7 @@ export class NativeBotChatHost implements BotNativeHost {
         mode: selection.mode ?? 'agent',
         // Never the bot's own word: the catalog already capped it at the ceiling the person chose.
         permMode: model.permissionMode,
-        tools: { app: true, mcpDisabled: listMcpServers().map((server) => server.id), imageGen: false },
+        tools: { app: true, mcpDisabled: allRuntimeMcpServerIds(), imageGen: false },
       },
     })
     // The person may be watching this conversation: the composer has to show what the bot just set.

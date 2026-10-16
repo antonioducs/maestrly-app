@@ -476,7 +476,7 @@ The environment view is laid out like a bot's: its overview and, beside it, its 
 
 - The overview shows an update the server offers at the top, then its bots as up to eight bays, each lit in the bot's color with its status and what it is doing; select a bay to open the bot. The next bay is **New bot in this environment**, or says why no bot can join yet. **Shared by its bots** sums up the environment's accounts, models, skills, MCP servers, default compaction model, and site logins; each opens its tab of the settings, and site logins open the screen. **Resources** shows the memory in use against the environment's limit, CPU, uptime, and version, with **Memory limit**. Environments on an older image or server keep their existing account, skill, MCP, compaction, and runtime controls under **Shared by its bots**.
 - The screen shows the environment screen, with **Maximize screen** and **Close screen**. **Take control** operates it without holding or pausing any bot; **Stop controlling**, or closing the screen, returns to watching.
-- **Environment settings** opens on **Accounts** and has one tab per section: **Accounts**, **Models**, **Skills**, **Tools**, **Components**, **Preferences**, and **Archive**, with the same controls as desktop settings. Its heading names the bots sharing these settings. Changes to models, skills, tools, and preferences wait, across tabs, in one bar until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; a dot marks each tab with unsaved changes. Editors that open in a dialog of their own, such as an account or an MCP server, save from that dialog. Closing the panel, an editor, or the view with unsaved changes asks first.
+- **Environment settings** opens on **Accounts** and has one tab per section: **Accounts**, **Models**, **Skills**, **Tools**, **Plugins**, **Components**, **Preferences**, and **Archive**, with the same controls as desktop settings. Its heading names the bots sharing these settings. Changes to models, skills, tools, and preferences wait, across tabs, in one bar until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; a dot marks each tab with unsaved changes. Editors that open in a dialog of their own, such as an account or an MCP server, save from that dialog. Closing the panel, an editor, or the view with unsaved changes asks first.
 
 A bot's view shows its **Conversation** and, beside it, its **Computer**. **Bot settings**, the gear in the conversation header, opens the bot's settings in a panel over both; the screen keeps streaming behind it. The settings keep what belongs to the bot, one section per tab: **Identity** (name, role, and what it does), **Autonomy**, **Model** (its **Main model** and **Compaction**), **Conversations**, **Routines**, **Memory**, **Environment**, and **Archive**. The panel opens on **Identity**, or on **Model** when the bot waits for a compaction model; use the arrow keys, Home, and End to move between tabs. **Autonomy** shows, for each ceiling, what the bot does on its own and what it asks you about. Changes to the identity, autonomy, models, and peers wait, across tabs, in a bar that names each changed field until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; a dot marks each tab with unsaved changes, and a field in the bar opens its tab. Closing the panel (**Close settings**, Esc, or the dark area) with unsaved changes asks first. Routines and bot memory are saved as you change them. The **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
 
@@ -533,7 +533,9 @@ tab remains available for application interaction and browser sign-ins.
   remove them. Editing replaces only `SKILL.md` and preserves bundled files and
   frontmatter. Skills outside the managed directory or behind unsafe symlinks
   are read-only. Replacing an installed library skill requires confirmation
-  against its current revision.
+  against its current revision. With `environment-plugins-v1`, the skills of
+  the environment's plugins are listed under their plugin: switch them on and
+  off or add them to groups here, and remove them with their plugin.
 - **Tools:** create or edit HTTP and stdio MCP servers, switch transports,
   enable/disable, remove, and test connections inside the environment. Existing
   URL, command, arguments, headers and environment values are protected;
@@ -541,7 +543,24 @@ tab remains available for application interaction and browser sign-ins.
   removal controls. A test lists tools without invoking them and closes its
   separate connection. Tests are bounded and shared when the same server is
   tested concurrently. Configuration changes let active tool calls finish
-  before retiring their old connection.
+  before retiring their old connection. A remote server that needs an OAuth
+  sign-in shows **Needs sign-in**: **Sign in** opens the consent page in this
+  computer's browser, and the environment keeps the sign-in and renews it. A
+  server can keep several accounts (**Add account**, **Rename**, **Sign in
+  again**, **Remove**), all serving every conversation of the environment, and
+  an own OAuth client for servers that do not register apps; its secret is
+  never shown again. This needs `environment-plugins-v1`.
+- **Plugins:** the same plugin center as this computer's, for the environment:
+  add Git sources, browse their plugins with compatibility, install with
+  approval, switch plugins and their servers on and off, update, edit settings,
+  and uninstall. The environment downloads and runs plugins itself; its plugins
+  serve all of its conversations. **Bring from this computer** lists this
+  computer's plugins: the environment downloads each one from its source at the
+  same commit, checks it against the approvals given on this computer, and
+  stores the settings entered here, encrypted. If it cannot match the approval,
+  install the plugin from the environment's sources instead. Plugins need the
+  server and the environment to support `environment-plugins-v1`. See
+  [Plugins](plugins.md).
 - **Components:** see Claude Code, Codex, and Google Antigravity ACP even in an
   environment without bots. Check/install/update a runtime, set its automatic
   update preference, cancel a cancellable operation, or roll back when a previous

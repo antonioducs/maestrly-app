@@ -37,6 +37,11 @@ vi.mock('../../src/main/chat/subscription-failover/config', async (importOrigina
   freezeFailoverChain: h.chain,
 }))
 vi.mock('../../src/main/chat/harness/flags', () => ({ captureHarnessFlags: () => ({}) }))
+// No plugin hooks: the child's tools reach its runner unchanged.
+vi.mock('../../src/main/plugins/runtime', async (original) => ({
+  ...(await original<typeof import('../../src/main/plugins/runtime')>()),
+  listPluginHooks: () => [],
+}))
 vi.mock('../../src/main/chat/catalog', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/chat/catalog')>()),
   getProvider: () => undefined,

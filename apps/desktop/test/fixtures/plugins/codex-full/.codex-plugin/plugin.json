@@ -1,0 +1,25 @@
+{
+  "name": "codex-full",
+  "version": "2.0.0",
+  "description": "Synthetic Codex fixture",
+  "author": {
+    "name": "Fixture Author",
+    "url": "https://example.com"
+  },
+  "homepage": "https://example.com/codex-full",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Full",
+    "shortDescription": "Codex fixture with every component",
+    "developerName": "Fixture Labs",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://example.com",
+    "privacyPolicyURL": "https://example.com/privacy",
+    "logo": "./assets/logo.png"
+  }
+}

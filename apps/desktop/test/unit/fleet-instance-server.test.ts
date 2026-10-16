@@ -446,6 +446,7 @@ describe('instance control HTTP', () => {
     expect(INSTANCE_CAPABILITIES).toEqual([
       'files',
       'environment-settings-v1',
+      'environment-plugins-v1',
       'account-failover',
       'provisioning',
       'environments',

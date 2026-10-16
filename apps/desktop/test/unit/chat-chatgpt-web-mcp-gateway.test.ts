@@ -225,4 +225,41 @@ describe('ChatGPT Web MCP session gateway', () => {
 
     expect(serialized.length).toBeLessThanOrEqual(CHATGPT_WEB_MCP_RESULT_MAX_CHARS + 100)
   })
+
+  it('routes a call to the account it names when a server has several, and requires one', async () => {
+    const accounts: string[] = []
+    const connect = vi.fn(async (server: McpServer): Promise<McpConnection> => {
+      accounts.push(server.oauthAccountId ?? 'none')
+      return {
+        listTools: vi.fn(async () => [{ name: 'lookup', annotations: { readOnlyHint: true } }]),
+        callTool: vi.fn(async () => ({ content: [{ type: 'text', text: `as:${server.oauthAccountId}` }] })),
+        close: vi.fn(async () => {}),
+      }
+    })
+    const gateway = createChatGptWebMcpGateway({
+      servers,
+      scopes: { 'read-server': 'read', 'write-server': 'write' },
+      accounts: {
+        'read-server': [
+          { id: 'acc_aaaaaaaaaaaa', label: 'Personal' },
+          { id: 'acc_bbbbbbbbbbbb', label: 'Work' },
+        ],
+        'write-server': [{ id: 'acc_cccccccccccc', label: 'Only' }],
+      },
+      connect,
+    })
+    const work = await gateway.callReadTool({ serverId: 'read-server', toolName: 'lookup', account: 'Work' })
+    expect(JSON.stringify(work)).toContain('as:acc_bbbbbbbbbbbb')
+    const personal = await gateway.callReadTool({ serverId: 'read-server', toolName: 'lookup', account: 'personal' })
+    expect(JSON.stringify(personal)).toContain('as:acc_aaaaaaaaaaaa')
+    await expect(gateway.callReadTool({ serverId: 'read-server', toolName: 'lookup' })).rejects.toThrow(
+      'Choose an account of "Read server": Personal, Work.'
+    )
+    // A server with one account uses it without asking.
+    const only = await gateway.callReadTool({ serverId: 'write-server', toolName: 'lookup' })
+    expect(JSON.stringify(only)).toContain('as:acc_cccccccccccc')
+    // Each account keeps its own connection.
+    expect(new Set(accounts)).toEqual(new Set(['acc_aaaaaaaaaaaa', 'acc_bbbbbbbbbbbb', 'acc_cccccccccccc']))
+    await gateway.close()
+  })
 })

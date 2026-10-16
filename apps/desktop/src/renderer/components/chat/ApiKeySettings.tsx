@@ -7,6 +7,9 @@ import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatUserPrompt, McpServerInfo } from '../../../shared/chat'
 import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
 import { SkillsSettings } from './SkillsSettings'
+import { McpAccounts } from './McpAccounts'
+import { PluginsSettings } from '../plugins/PluginsSettings'
+import { PLUGINS_CHANGED_EVENT } from '../plugins/plugins-source'
 import { CHAT_SETTINGS_TABS, type ChatSettingsOptions, type ChatSettingsTab } from './chat-settings-tabs'
 import { MaestroSettings } from './MaestroSettings'
 import { ModelsAgentsSettings } from './model-settings/ModelsAgentsSettings'
@@ -34,6 +37,10 @@ export function ApiKeySettings({
   const modelFilterChanged = () => setModelFilterRevision((revision) => revision + 1)
   useEffect(() => {
     refresh()
+    // Installing, switching or removing a plugin changes the MCP servers listed under Tools.
+    const onPluginsChanged = () => void refresh()
+    window.addEventListener(PLUGINS_CHANGED_EVENT, onPluginsChanged)
+    return () => window.removeEventListener(PLUGINS_CHANGED_EVENT, onPluginsChanged)
   }, [])
   // A requested tab left out of `tabs` is ignored rather than showing a hidden panel.
   const requestedTabId = requestedTab && (!tabs || tabs.includes(requestedTab.tab)) ? requestedTab.tab : null
@@ -164,7 +171,11 @@ export function ApiKeySettings({
             setEnabled={api.chatSetBashFilters}
             onChanged={refresh}
           />
-          <McpSettings servers={config.mcpServers} onChanged={refresh} />
+          <McpSettings
+            servers={config.mcpServers}
+            onChanged={refresh}
+            onManagePlugins={shown('plugins') ? () => setActiveTab('plugins') : undefined}
+          />
         </div>
       )}
       {shown('skills') && (
@@ -174,7 +185,18 @@ export function ApiKeySettings({
           aria-labelledby="chat-settings-tab-skills"
           hidden={activeTab !== 'skills'}
         >
-          <SkillsSettings />
+          <SkillsSettings onManagePlugins={shown('plugins') ? () => setActiveTab('plugins') : undefined} />
+        </div>
+      )}
+      {shown('plugins') && (
+        <div
+          id="chat-settings-panel-plugins"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-plugins"
+          hidden={activeTab !== 'plugins'}
+        >
+          {/* Mounted only while shown: the center fetches catalogs and logos. */}
+          {activeTab === 'plugins' && <PluginsSettings />}
         </div>
       )}
       {shown('prompts') && (
@@ -617,8 +639,17 @@ function McpAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
   )
 }
 
-function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChanged: () => void }) {
+function McpSettings({
+  servers,
+  onChanged,
+  onManagePlugins,
+}: {
+  servers: McpServerInfo[]
+  onChanged: () => void
+  onManagePlugins?: () => void
+}) {
   const { t } = useTranslation('chat')
+  const { t: tp } = useTranslation('plugins')
   const api = useHostApi()
   const [adding, setAdding] = useState(false)
   return (
@@ -630,39 +661,72 @@ function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChang
       {servers.map((s) => (
         <div
           key={s.id}
-          className="flex items-center gap-2 rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-[13px]"
+          className="flex flex-col gap-2 rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-[13px]"
         >
-          <button
-            type="button"
-            onClick={() => api.chatMcpUpdate(s.id, { enabled: !s.enabled }).then(onChanged)}
-            className={cn(
-              'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
-              s.enabled ? 'bg-emerald-500/70' : 'bg-white/10'
+          <div className="flex items-center gap-2">
+            {s.plugin ? (
+              // A plugin's servers switch on and off with the plugin, in Settings → Plugins.
+              <span
+                className={cn('h-2 w-2 shrink-0 rounded-full', s.enabled ? 'bg-emerald-500/70' : 'bg-white/20')}
+                title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => api.chatMcpUpdate(s.id, { enabled: !s.enabled }).then(onChanged)}
+                className={cn(
+                  'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
+                  s.enabled ? 'bg-emerald-500/70' : 'bg-white/10'
+                )}
+                title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
+              >
+                <span
+                  className={cn(
+                    'block h-3 w-3 rounded-full bg-white transition-transform',
+                    s.enabled && 'translate-x-3'
+                  )}
+                />
+              </button>
             )}
-            title={s.enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
-          >
-            <span
-              className={cn('block h-3 w-3 rounded-full bg-white transition-transform', s.enabled && 'translate-x-3')}
-            />
-          </button>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-foreground">{s.name}</div>
-            <div className="truncate text-[11px] text-muted-foreground">
-              {s.transport === 'http' ? s.url : s.command}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-foreground">{s.name}</span>
+                {s.plugin && (
+                  <span className="shrink-0 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-200">
+                    {tp('managedBy', { name: s.plugin.displayName })}
+                  </span>
+                )}
+              </div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                {s.transport === 'stdio' ? s.command : s.url}
+              </div>
+              {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
             </div>
-            {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
+            <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {s.transport}
+            </span>
+            {s.plugin ? (
+              onManagePlugins && (
+                <button
+                  type="button"
+                  onClick={onManagePlugins}
+                  className="shrink-0 text-[11px] text-muted-foreground underline decoration-white/20 underline-offset-2 hover:text-foreground"
+                >
+                  {tp('managePlugins')}
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                onClick={() => api.chatMcpRemove(s.id).then(onChanged)}
+                className="shrink-0 text-muted-foreground hover:text-destructive"
+                title={t('settings.remove')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-          <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {s.transport}
-          </span>
-          <button
-            type="button"
-            onClick={() => api.chatMcpRemove(s.id).then(onChanged)}
-            className="shrink-0 text-muted-foreground hover:text-destructive"
-            title={t('settings.remove')}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {s.oauth && !s.unavailable && <McpAccounts serverId={s.id} oauth={s.oauth} onChanged={onChanged} />}
         </div>
       ))}
       {adding ? (

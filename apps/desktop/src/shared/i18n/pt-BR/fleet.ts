@@ -52,6 +52,7 @@ export default {
       models: 'Modelos',
       skills: 'Skills',
       tools: 'Ferramentas',
+      plugins: 'Plugins',
       components: 'Componentes',
       preferences: 'Preferências',
       archive: 'Arquivar',

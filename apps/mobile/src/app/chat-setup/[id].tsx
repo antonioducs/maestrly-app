@@ -403,7 +403,8 @@ function Setup({ chat, setup, initialPage }: { chat: MobileConversation; setup: 
           ? t('chat.setup.compactSmall')
           : t('chat.setup.compactSub')
   const skillsOn = setup.skills.filter((skill) => skill.enabled).length
-  const mcpOn = setup.mcp.filter((server) => server.enabled).length
+  // Accounts of a server (`<serverId>#<accountId>`) are listed with it but are not servers.
+  const mcpOn = setup.mcp.filter((server) => server.enabled && !server.id.includes('#')).length
 
   return (
     <SheetScreen title={t('chat.setup.title')} onDone={() => router.back()}>

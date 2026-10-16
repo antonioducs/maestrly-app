@@ -146,6 +146,7 @@ import {
   type ResolveClaudeTargetResult,
 } from '../subscription-failover/claude-adapter'
 import type { MarkExhaustedInfo } from '../subscription-failover/types'
+import { runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 const MAX_IN_TURN_COMPACTIONS = 2
 const PORTABLE_CONTINUE_PROMPT =
@@ -588,6 +589,7 @@ async function prepareRuntime(
   const appToolsEnabled = appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp = await buildMcpTools({
+    conversationId: args.conversationId,
     mode: args.mode,
     signal: args.signal,
     gate,
@@ -712,8 +714,10 @@ async function prepareRuntime(
           signal: args.signal,
         })
       : {}
-    const tools: ToolSet = { ...hostTools, ...taskTools, ...supervisionTools }
-    governAutonomousTools(tools, args.conversationId)
+    const governed: ToolSet = { ...hostTools, ...taskTools, ...supervisionTools }
+    governAutonomousTools(governed, args.conversationId)
+    // Hooks run inside each tool's execute, under the bridge: the call it matches keeps its original input.
+    const tools = wrapToolSetWithHooks(governed, runnerHookContext(args))
     const bridge = await buildClaudeToolBridge(
       tools,
       args.signal,

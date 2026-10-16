@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { OutboxAttachment } from '../fleet/attachments'
 import { MissingFileError } from '../fleet/outbox'
 
-export type ChatOutboxErrorKey = 'invalid' | 'chatGone' | 'noModel' | 'missingFile' | 'generic'
+export type ChatOutboxErrorKey = 'invalid' | 'chatGone' | 'noModel' | 'blockedByHook' | 'missingFile' | 'generic'
 
 /** A message written on the phone for a chat that the host has not admitted yet. Its id is the host's send key. */
 export type ChatOutboxEntry = {
@@ -83,5 +83,7 @@ export function afterChatSendFailure(entry: ChatOutboxEntry, error: unknown): Ch
     return failed(entry, 'invalid')
   if (error.code === 'not-found' || error.code === 'invalid-conversation') return failed(entry, 'chatGone')
   if (error.code === 'no-provider' || error.code === 'no-model') return failed(entry, 'noModel')
+  // A plugin hook on the server refused the message: sending it again would be refused too.
+  if (error.code === 'blocked-by-hook') return failed(entry, 'blockedByHook')
   return failed(entry, 'generic')
 }

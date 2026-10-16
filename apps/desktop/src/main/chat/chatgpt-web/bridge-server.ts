@@ -151,11 +151,19 @@ interface InvestigationDisclosure {
   assumptions: string[]
 }
 
+/** Plugin tool hooks around the companion's tools: a hook can block a call or add text to its result. */
+export interface BridgeToolHooks {
+  before(name: string, args: Record<string, unknown>): Promise<{ block?: string; args: Record<string, unknown> }>
+  after(name: string, args: Record<string, unknown>, result: BridgeToolResult, failed: boolean): Promise<string[]>
+}
+
 export interface BridgeOptions {
   conversationScope?: 'project' | 'standalone'
   fileScope?: ConversationFileScope
   /** Repository root exposed to tools (jail). */
   cwd: string
+  /** Plugin tool hooks of the conversation; absent when none apply. */
+  toolHooks?: BridgeToolHooks
   /** Diff base (`git diff <base>...HEAD`). */
   gitBase?: string
   onEvent?: (event: BridgeEvent) => void
@@ -1748,7 +1756,10 @@ export function createChatGptWebBridge(options: BridgeOptions) {
         if (!server || typeof server !== 'object' || Array.isArray(server)) return []
         const item = server as Record<string, unknown>
         if (item.scope !== 'read' && item.scope !== 'write') return []
-        return [{ serverId: item.serverId, name: item.name, scope: item.scope }]
+        const accounts = Array.isArray(item.accounts)
+          ? item.accounts.filter((label): label is string => typeof label === 'string').slice(0, 50)
+          : []
+        return [{ serverId: item.serverId, name: item.name, scope: item.scope, ...(accounts.length ? { accounts } : {}) }]
       }),
     }
   }
@@ -2114,6 +2125,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
             description: 'Exact toolName returned by search_mcp_tools',
           },
           arguments: { type: 'object', additionalProperties: true },
+          account: {
+            type: 'string',
+            minLength: 1,
+            description:
+              'Signed-in account to use when list_external_capabilities.mcpServers[].accounts lists several; ask the person when it is unclear.',
+          },
         },
         required: ['server_id', 'tool_name', 'arguments'],
         additionalProperties: false,
@@ -2139,6 +2156,12 @@ export function createChatGptWebBridge(options: BridgeOptions) {
             description: 'Exact toolName returned by search_mcp_tools',
           },
           arguments: { type: 'object', additionalProperties: true },
+          account: {
+            type: 'string',
+            minLength: 1,
+            description:
+              'Signed-in account to use when list_external_capabilities.mcpServers[].accounts lists several; ask the person when it is unclear.',
+          },
         },
         required: ['server_id', 'tool_name', 'arguments'],
         additionalProperties: false,
@@ -2768,11 +2791,15 @@ export function createChatGptWebBridge(options: BridgeOptions) {
         onLifecycleAbort = () => reject(new Error(SESSION_ENDED_MESSAGE))
         lifecycleController.signal.addEventListener('abort', onLifecycleAbort, { once: true })
       })
-      const result = await Promise.race([tool.run(args), lifecycleAbort])
+      const pre = options.toolHooks ? await options.toolHooks.before(name, args) : { args }
+      if (pre.block) return ERR(`Blocked by plugin hook: ${pre.block}`)
+      let result = await Promise.race([tool.run(pre.args), lifecycleAbort])
       // A tool may have crossed the lifecycle boundary while awaiting git, I/O, a worker or delivery. Its
       // completed value is no longer valid for the revoked session, even if the operation itself succeeded.
       if (ended) return ERR(SESSION_ENDED_MESSAGE)
       const ok = !(result as { isError?: boolean }).isError
+      const added = options.toolHooks ? await options.toolHooks.after(name, pre.args, result, !ok) : []
+      if (added.length) result = { ...result, content: [...result.content, { type: 'text', text: added.join('\n\n') }] }
       if (ok && ['call_mcp_read_tool', 'browser_read_text', 'browser_snapshot', 'browser_screenshot'].includes(name)) {
         externalEvidence.add([name, args.server_id, args.tool_name].filter(value => typeof value === 'string').join(': '))
       }

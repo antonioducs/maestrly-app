@@ -130,6 +130,7 @@ vi.mock('../../src/main/chat/provider', () => ({
 
 vi.mock('../../src/main/chat/mcp', () => ({
   listMcpServers: vi.fn(() => []),
+  listRuntimeMcpServers: vi.fn(() => []),
 }))
 
 import { registerChatIpc, runApprovedPlan, runPlanRevision, type ChatIpcDeps } from '../../src/main/chat/service'

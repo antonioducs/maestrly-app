@@ -171,7 +171,7 @@ describe('Maestro renderer contract', () => {
     const maestroSettings = readFileSync('src/renderer/components/chat/MaestroSettings.tsx', 'utf8')
     const settingsView = readFileSync('src/renderer/components/SettingsView.tsx', 'utf8')
     const settingsTabs = readFileSync('src/renderer/components/chat/chat-settings-tabs.ts', 'utf8')
-    expect(settingsTabs).toContain("'models' | 'maestro' | 'tools'")
+    expect(settingsTabs).toMatch(/'models'\s*\|\s*'maestro'\s*\|\s*'tools'/)
     expect(settingsTabs).toContain("{ id: 'maestro', labelKey: 'settings.tabMaestro' }")
     expect(settings).toContain("from './chat-settings-tabs'")
     expect(settings).toContain('id="chat-settings-panel-maestro"')

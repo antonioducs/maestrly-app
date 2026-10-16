@@ -1390,3 +1390,25 @@ describe('standalone bridge', () => {
     expect(prompt).not.toContain('git_diff +')
   })
 })
+
+describe('plugin tool hooks around companion tools', () => {
+  it('blocks a call before it runs and appends what hooks report after it', async () => {
+    const before = vi.fn(async (name: string, args: Record<string, unknown>) =>
+      name === 'glob' ? { block: 'no globbing here', args } : { args: { ...args, path: 'src/beta.txt' } }
+    )
+    const after = vi.fn(async () => ['checked by a hook'])
+    const { bridge } = makeBridge({ toolHooks: { before, after } })
+
+    const blocked = await call(bridge, 'glob', { pattern: 'src/**' })
+    expect(blocked.result.isError).toBe(true)
+    expect(blocked.result.content[0].text).toContain('Blocked by plugin hook: no globbing here')
+    expect(after).not.toHaveBeenCalled()
+
+    const read = await call(bridge, 'read_file', { path: 'src/alpha.ts' })
+    const text = read.result.content.map((item) => item.text).join('\n')
+    expect(text).toContain('beta')
+    expect(text).not.toContain('alpha')
+    expect(read.result.content.at(-1)?.text).toBe('checked by a hook')
+    expect(after).toHaveBeenCalledWith('read_file', { path: 'src/beta.txt' }, expect.anything(), false)
+  })
+})

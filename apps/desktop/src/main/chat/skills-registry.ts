@@ -18,7 +18,8 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { getAppSetting, setAppSetting } from '../store'
-import { normalizedSkillName, skillInstallRoot, type ChatSkillScope } from './skills'
+import { normalizeCommandName } from './commands'
+import { skillInstallRoot, type ChatSkillScope } from './skills'
 import type { ChatSkillSearchHit } from '../../shared/chat'
 
 const SEARCH_URL = 'https://skills.sh/api/search'
@@ -101,7 +102,7 @@ export function parseSearchResponse(payload: unknown, installedNames: ReadonlySe
       installs: typeof item.installs === 'number' ? item.installs : 0,
       slug: hitSlug(item.id, item.source, item.name),
       url: `https://skills.sh/${item.id}`,
-      installed: installedNames.has(normalizedSkillName(item.name)),
+      installed: installedNames.has(normalizeCommandName(item.name)),
     })
   }
   return out
@@ -243,13 +244,13 @@ export function locateSkill(entries: readonly TarEntry[], wanted?: string): Loca
     const declared = frontmatterName(entry.data.toString('utf8'))
     // A `name:` normalizing to empty (e.g. `!!!`) falls back to the folder — an empty name would make
     // destination == installation root (overwriting would delete ALL skills).
-    candidates.push({ root, folder, name: normalizedSkillName(declared || folder) || normalizedSkillName(folder) })
+    candidates.push({ root, folder, name: normalizeCommandName(declared || folder) || normalizeCommandName(folder) })
   }
   if (!candidates.length) return null
   const available = candidates.map((c) => c.name)
-  const target = normalizedSkillName(wanted ?? '')
+  const target = normalizeCommandName(wanted ?? '')
   const match =
-    (target && candidates.find((c) => c.name === target || normalizedSkillName(c.folder) === target)) ||
+    (target && candidates.find((c) => c.name === target || normalizeCommandName(c.folder) === target)) ||
     (candidates.length === 1 ? candidates[0] : null)
   if (!match) return { root: '', name: '', available }
   return { root: match.root, name: match.name, available }

@@ -16,12 +16,16 @@ import fsp from 'node:fs/promises'
 import { assertSafeSkillPath, withSkillMutation } from './skill-document'
 import os from 'node:os'
 import path from 'node:path'
+import { normalizeSkillName } from '../../shared/chat'
 import { normalizeCommandName } from './commands'
 
-export type ChatSkillScope = 'project' | 'global'
+export type ChatSkillScope = 'project' | 'global' | 'plugin'
 
-/** Canonical skill-name normalization (same rules as slash commands). */
-export const normalizedSkillName = normalizeCommandName
+/**
+ * Canonical skill-name normalization (slash-command rules, plus one `:` for plugin skills). Folders on disk keep
+ * `normalizeCommandName`, which drops `:`, so a local skill can never claim a plugin's namespace.
+ */
+export const normalizedSkillName = normalizeSkillName
 
 export interface ChatSkill {
   name: string
@@ -43,6 +47,8 @@ export interface ChatSkill {
   resources: string[]
   /** Body truncated at safety cap. */
   truncated?: boolean
+  /** Set for skills and commands provided by an installed plugin. */
+  plugin?: { key: string; displayName: string; kind: 'skill' | 'command' }
 }
 
 /** Body safety cap. Spec recommends <5k words; this only guards against huge files. */
@@ -82,6 +88,10 @@ type Frontmatter = { fields: Record<string, string>; body: string }
 
 /** SIMPLE YAML frontmatter: top-level scalars + block scalars (`|`/`>`, common for long descriptions).
  * Nested maps (e.g. `metadata:`) remain ignored. */
+export function parseSkillFrontmatter(text: string): Frontmatter {
+  return parseFrontmatter(text)
+}
+
 function parseFrontmatter(text: string): Frontmatter {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text)
   if (!m) return { fields: {}, body: text }
@@ -109,6 +119,10 @@ function parseFrontmatter(text: string): Frontmatter {
     fields[key] = value.replace(/^["']|["']$/g, '')
   }
   return { fields, body: text.slice(m[0].length) }
+}
+
+export function skillBoolField(value: string | undefined, fallback: boolean): boolean {
+  return boolField(value, fallback)
 }
 
 function boolField(value: string | undefined, fallback: boolean): boolean {
@@ -173,6 +187,21 @@ async function readSkillFileCapped(file: string): Promise<{ text: string; clippe
   } finally {
     await handle.close().catch(() => undefined)
   }
+}
+
+/** Capped `SKILL.md`-style read, shared with plugin skills and commands. */
+export const readCappedSkillText = readSkillFileCapped
+/** Bundled-file inventory of a skill folder, shared with plugin skills. */
+export const listSkillResources = listResources
+
+/** One skill folder (`<dir>/<folder>/SKILL.md`), or null when unreadable or empty. */
+export function readSkillDirectory(
+  dir: string,
+  folder: string,
+  label: string,
+  scope: ChatSkillScope
+): Promise<ChatSkill | null> {
+  return readSkillFolder(dir, folder, label, scope)
 }
 
 async function readSkillFolder(

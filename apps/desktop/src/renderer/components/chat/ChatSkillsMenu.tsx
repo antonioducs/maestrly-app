@@ -1,10 +1,12 @@
 import { useChatDocument } from '@/lib/chat-window-context'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight, Layers3, RotateCcw, Settings2, Sparkles } from 'lucide-react'
+import { ChevronDown, ChevronRight, Layers3, Puzzle, RotateCcw, Settings2, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useSettings } from '@/lib/use-settings'
+import { groupSkillsByPlugin } from '../plugins/plugin-skill-groups'
 import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 import type {
   ChatSkillGroup,
@@ -82,9 +84,12 @@ export function ChatSkillsMenu({
   emptySkillsLabel?: string
 }) {
   const api = useHostApi()
+  const hostId = useHostId()
+  const { openSettings } = useSettings()
   const ownerDocument = useChatDocument()
   const source = providedSource ?? localChatComposerSource(api, conversationId)
   const { t } = useTranslation('chat')
+  const { t: tp } = useTranslation('plugins')
   const [open, setOpen] = useState(false)
   const [state, setState] = useState<ChatSkillsState>(EMPTY_STATE)
   const [mainOpen, setMainOpen] = useState(true)
@@ -174,6 +179,21 @@ export function ChatSkillsMenu({
   const botWithoutSkills = Boolean(source.bot) && state.skills.length === 0
   // Locally, skills are installed from Settings; a bot's menu stays visible so its settings stay reachable.
   if (state.skills.length === 0 && state.groups.length === 0 && !source.bot) return null
+
+  // Plugin skills sit under their plugin's name, after the person's own skills.
+  const skillRows = (skills: ChatSkillInfo[]) =>
+    groupSkillsByPlugin(skills).map((section) => (
+      <Fragment key={section.plugin?.key ?? ''}>
+        {section.plugin && (
+          <div className="truncate px-2.5 pt-1.5 text-[10px] font-medium text-muted-foreground">
+            {section.plugin.displayName}
+          </div>
+        )}
+        {section.skills.map((skill) => (
+          <SkillRow key={skill.name} skill={skill} onSetOverride={setOverride} />
+        ))}
+      </Fragment>
+    ))
 
   const toggleGroupSkill = (group: ChatSkillGroup, skillName: string): void => {
     if (groupMutations.current.has(group.id)) return
@@ -293,8 +313,7 @@ export function ChatSkillsMenu({
                 {state.selection.kind === 'group' ? t('skillsMenu.groupSkills') : t('skillsMenu.selectedSkills')} ·{' '}
                 {mainSkills.length}
               </button>
-              {mainOpen &&
-                mainSkills.map((skill) => <SkillRow key={skill.name} skill={skill} onSetOverride={setOverride} />)}
+              {mainOpen && skillRows(mainSkills)}
               {mainOpen && mainSkills.length === 0 && (
                 <p className="px-2.5 py-2 text-[11px] text-muted-foreground">{t('skillsMenu.emptySelection')}</p>
               )}
@@ -309,8 +328,7 @@ export function ChatSkillsMenu({
                     {othersOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                     {t('skillsMenu.otherSkills')} · {otherSkills.length}
                   </button>
-                  {othersOpen &&
-                    otherSkills.map((skill) => <SkillRow key={skill.name} skill={skill} onSetOverride={setOverride} />)}
+                  {othersOpen && skillRows(otherSkills)}
                 </>
               )}
             </>
@@ -356,9 +374,11 @@ export function ChatSkillsMenu({
                           <span className="font-mono text-foreground">/{skill.name}</span>
                           <span className="min-w-0 flex-1 truncate text-muted-foreground">{skill.description}</span>
                           <span className="text-[10px] text-muted-foreground/70">
-                            {skill.scope === 'project'
-                              ? t('settings.skillScopeProject')
-                              : t('settings.skillScopeGlobal')}
+                            {skill.plugin
+                              ? skill.plugin.displayName
+                              : skill.scope === 'project'
+                                ? t('settings.skillScopeProject')
+                                : t('settings.skillScopeGlobal')}
                           </span>
                         </label>
                       ))}
@@ -366,6 +386,18 @@ export function ChatSkillsMenu({
                 </>
               )}
             </div>
+          )}
+          {!source.bot && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                openSettings('chat', { chatTab: 'plugins', hostId })
+              }}
+              className="mt-1 flex w-full items-center gap-1.5 border-t border-white/[0.06] px-2.5 pt-1.5 pb-0.5 text-left text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              <Puzzle className="h-3.5 w-3.5" /> {tp('browsePlugins')}
+            </button>
           )}
         </div>
       )}

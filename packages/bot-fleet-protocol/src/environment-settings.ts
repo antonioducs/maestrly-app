@@ -1,4 +1,35 @@
 import { z } from 'zod'
+import {
+  fleetInstalledPluginSchema,
+  fleetMcpOAuthAccountIdSchema,
+  fleetMcpOAuthAccountLabelSchema,
+  fleetMcpOAuthBundleSchema,
+  fleetMcpOAuthClientResultSchema,
+  fleetMcpOAuthClientSchema,
+  fleetMcpOAuthDescriptorSchema,
+  fleetMcpOAuthPatchResultSchema,
+  fleetMcpOAuthStatusesSchema,
+  fleetMcpOAuthStoreResultSchema,
+  fleetMcpOAuthTargetSchema,
+  fleetMcpServerIdSchema,
+  fleetPluginBringInputSchema,
+  fleetPluginCatalogEntrySchema,
+  fleetPluginConsentSchema,
+  fleetPluginEmptyResultSchema,
+  fleetPluginInspectionSchema,
+  fleetPluginInstallInputSchema,
+  fleetPluginKeySchema,
+  fleetPluginLogoSchema,
+  fleetPluginMarketplaceIdSchema,
+  fleetPluginMarketplaceSchema,
+  fleetPluginNameSchema,
+  fleetPluginPatchSchema,
+  fleetPluginResultSchema,
+  fleetPluginSkillNameSchema,
+  fleetPluginSkillsSchema,
+  fleetPluginSourceInputSchema,
+  fleetPluginsStateSchema,
+} from './plugins.js'
 
 /** Independent of a bot: even empty environments expose these owner-only settings. */
 export { FLEET_ENVIRONMENT_SETTINGS_FEATURE } from './constants.js'
@@ -6,6 +37,11 @@ export const fleetSettingsRevisionSchema = z.uuid()
 const id = z.string().min(1).max(200)
 const name = z.string().trim().min(1).max(100)
 const skillName = z.string().regex(/^[a-z0-9_][a-z0-9_-]{0,99}$/)
+/**
+ * A member of a skill group: a skill of the environment, or a plugin's skill. Only a computer and an environment that
+ * both support `environment-plugins-v1` ever send a plugin's skill.
+ */
+const groupMember = z.union([skillName, fleetPluginSkillNameSchema])
 const revision = fleetSettingsRevisionSchema
 const expected = { expectedRevision: revision }
 const empty = z.object({}).strict()
@@ -109,7 +145,13 @@ export const fleetSettingsSkillDocumentSchema = fleetSettingsSkillSchema.extend(
 })
 export const fleetSettingsSkillsSchema = z.object({ skills: z.array(fleetSettingsSkillSchema).max(2000) }).strict()
 export const fleetSettingsSkillGroupSchema = z
-  .object({ id, name, description: z.string().max(1000).optional(), skills: z.array(name).max(2000) })
+  .object({
+    id,
+    name,
+    description: z.string().max(1000).optional(),
+    // A stored member is listed as it is; a plugin's skill name may be longer than a group name.
+    skills: z.array(z.union([name, fleetPluginSkillNameSchema])).max(2000),
+  })
   .strict()
 export const fleetSettingsSkillGroupsSchema = z
   .object({ revision, groups: z.array(fleetSettingsSkillGroupSchema).max(200) })
@@ -310,7 +352,12 @@ export const FLEET_SETTINGS_OPERATIONS = {
     'POST',
     '/skill-groups',
     z
-      .object({ ...expected, name, description: z.string().max(1000).optional(), skills: z.array(skillName).max(2000) })
+      .object({
+        ...expected,
+        name,
+        description: z.string().max(1000).optional(),
+        skills: z.array(groupMember).max(2000),
+      })
       .strict(),
     fleetSettingsSkillGroupsSchema
   ),
@@ -323,7 +370,7 @@ export const FLEET_SETTINGS_OPERATIONS = {
         ...expected,
         name,
         description: z.string().max(1000).optional(),
-        skills: z.array(skillName).max(2000),
+        skills: z.array(groupMember).max(2000),
       })
       .strict(),
     fleetSettingsSkillGroupsSchema
@@ -362,6 +409,120 @@ export const FLEET_SETTINGS_OPERATIONS = {
       .strict(),
     fleetSettingsPreferencesSchema
   ),
+  // Plugins and MCP sign-in: only for environments with `FLEET_ENVIRONMENT_PLUGINS_FEATURE`.
+  plugins: operation('GET', '/plugins', empty, fleetPluginsStateSchema),
+  pluginCatalog: operation(
+    'GET',
+    '/plugin-sources/:marketplaceId/plugins',
+    z.object({ marketplaceId: fleetPluginMarketplaceIdSchema }).strict(),
+    fleetPluginResultSchema(z.array(fleetPluginCatalogEntrySchema).max(2000))
+  ),
+  pluginInspect: operation(
+    'GET',
+    '/plugin-sources/:marketplaceId/plugins/:name',
+    z.object({ marketplaceId: fleetPluginMarketplaceIdSchema, name: fleetPluginNameSchema }).strict(),
+    fleetPluginResultSchema(fleetPluginInspectionSchema)
+  ),
+  pluginLogo: operation(
+    'GET',
+    '/plugin-sources/:marketplaceId/plugins/:name/logo',
+    z.object({ marketplaceId: fleetPluginMarketplaceIdSchema, name: fleetPluginNameSchema }).strict(),
+    fleetPluginLogoSchema
+  ),
+  addPluginSource: operation(
+    'POST',
+    '/plugin-sources',
+    fleetPluginSourceInputSchema,
+    fleetPluginResultSchema(fleetPluginMarketplaceSchema)
+  ),
+  refreshPluginSource: operation(
+    'POST',
+    '/plugin-sources/:marketplaceId/refresh',
+    z.object({ marketplaceId: fleetPluginMarketplaceIdSchema }).strict(),
+    fleetPluginResultSchema(fleetPluginMarketplaceSchema)
+  ),
+  removePluginSource: operation(
+    'DELETE',
+    '/plugin-sources/:marketplaceId',
+    z.object({ marketplaceId: fleetPluginMarketplaceIdSchema, uninstall: z.boolean() }).strict(),
+    fleetPluginEmptyResultSchema
+  ),
+  installPlugin: operation(
+    'POST',
+    '/plugins',
+    fleetPluginInstallInputSchema,
+    fleetPluginResultSchema(fleetInstalledPluginSchema)
+  ),
+  bringPlugin: operation(
+    'POST',
+    '/plugins/bring',
+    fleetPluginBringInputSchema,
+    fleetPluginResultSchema(fleetInstalledPluginSchema)
+  ),
+  updatePlugin: operation(
+    'POST',
+    '/plugins/:key/update',
+    z
+      .object({
+        key: fleetPluginKeySchema,
+        consent: fleetPluginConsentSchema.optional(),
+      })
+      .strict(),
+    fleetPluginResultSchema(fleetInstalledPluginSchema)
+  ),
+  patchPlugin: operation('PATCH', '/plugins/:key', fleetPluginPatchSchema, fleetPluginEmptyResultSchema),
+  uninstallPlugin: operation(
+    'DELETE',
+    '/plugins/:key',
+    z.object({ key: fleetPluginKeySchema, deleteData: z.boolean() }).strict(),
+    fleetPluginEmptyResultSchema
+  ),
+  pluginSkills: operation('GET', '/plugin-skills', empty, fleetPluginSkillsSchema),
+  setPluginSkillEnabled: operation(
+    'PATCH',
+    '/plugin-skills/:name',
+    z.object({ name: fleetPluginSkillNameSchema, enabled: z.boolean() }).strict(),
+    fleetPluginEmptyResultSchema
+  ),
+  mcpOAuthStatuses: operation('GET', '/mcp-oauth', empty, fleetMcpOAuthStatusesSchema),
+  mcpOAuthDescriptor: operation(
+    'POST',
+    '/mcp-oauth/:id/descriptor',
+    z.object({ id: fleetMcpServerIdSchema, accountId: fleetMcpOAuthAccountIdSchema.optional() }).strict(),
+    z.object({ descriptor: fleetMcpOAuthDescriptorSchema.nullable() }).strict()
+  ),
+  setMcpOAuth: operation(
+    'PUT',
+    '/mcp-oauth/:id',
+    z
+      .object({ id: fleetMcpServerIdSchema, bundle: fleetMcpOAuthBundleSchema, target: fleetMcpOAuthTargetSchema })
+      .strict(),
+    fleetMcpOAuthStoreResultSchema
+  ),
+  removeMcpOAuth: operation(
+    'DELETE',
+    '/mcp-oauth/:id',
+    z.object({ id: fleetMcpServerIdSchema, accountId: fleetMcpOAuthAccountIdSchema.optional() }).strict(),
+    removed
+  ),
+  patchMcpOAuthAccount: operation(
+    'PATCH',
+    '/mcp-oauth/:id/accounts/:accountId',
+    z
+      .object({
+        id: fleetMcpServerIdSchema,
+        accountId: fleetMcpOAuthAccountIdSchema,
+        label: fleetMcpOAuthAccountLabelSchema,
+      })
+      .strict(),
+    fleetMcpOAuthPatchResultSchema
+  ),
+  setMcpOAuthClient: operation(
+    'PUT',
+    '/mcp-oauth/:id/client',
+    z.object({ id: fleetMcpServerIdSchema, client: fleetMcpOAuthClientSchema.nullable() }).strict(),
+    fleetMcpOAuthClientResultSchema
+  ),
   /** Needs `FLEET_ACCOUNT_FAILOVER_FEATURE` from both the gateway and the environment. */
   failover: operation('GET', '/failover', empty, fleetSettingsFailoverSchema),
   setFailoverRoute: operation(
@@ -378,6 +539,49 @@ export const FLEET_SETTINGS_OPERATIONS = {
   ),
 } as const
 export type FleetSettingsOperation = keyof typeof FLEET_SETTINGS_OPERATIONS
+/** Operations an environment serves only with `FLEET_ENVIRONMENT_PLUGINS_FEATURE`. */
+export const FLEET_PLUGIN_SETTINGS_OPERATIONS = [
+  'plugins',
+  'pluginCatalog',
+  'pluginInspect',
+  'pluginLogo',
+  'addPluginSource',
+  'refreshPluginSource',
+  'removePluginSource',
+  'installPlugin',
+  'bringPlugin',
+  'updatePlugin',
+  'patchPlugin',
+  'uninstallPlugin',
+  'pluginSkills',
+  'setPluginSkillEnabled',
+  'mcpOAuthStatuses',
+  'mcpOAuthDescriptor',
+  'setMcpOAuth',
+  'removeMcpOAuth',
+  'patchMcpOAuthAccount',
+  'setMcpOAuthClient',
+] as const satisfies readonly FleetSettingsOperation[]
+export type FleetPluginSettingsOperation = (typeof FLEET_PLUGIN_SETTINGS_OPERATIONS)[number]
+export const isFleetPluginSettingsOperation = (value: string): value is FleetPluginSettingsOperation =>
+  (FLEET_PLUGIN_SETTINGS_OPERATIONS as readonly string[]).includes(value)
+/** The route key of a settings operation, e.g. `settingsInstallPlugin`. */
+export const fleetSettingsRouteKey = <K extends FleetSettingsOperation>(operation: K): `settings${Capitalize<K>}` =>
+  `settings${operation[0].toUpperCase()}${operation.slice(1)}` as `settings${Capitalize<K>}`
+/** Plugin operations that reach Git: they fetch, check out and copy, each step bounded by the engine's Git timeout. */
+const PLUGIN_GIT_OPERATIONS: ReadonlySet<FleetPluginSettingsOperation> = new Set([
+  'pluginCatalog',
+  'pluginInspect',
+  'addPluginSource',
+  'refreshPluginSource',
+  'removePluginSource',
+  'installPlugin',
+  'bringPlugin',
+  'updatePlugin',
+])
+/** How long the gateway waits for the environment; a computer waits a little longer for the gateway. */
+export const fleetPluginSettingsTimeoutMs = (operation: FleetPluginSettingsOperation): number =>
+  PLUGIN_GIT_OPERATIONS.has(operation) ? 300_000 : 30_000
 export type FleetSettingsInput<K extends FleetSettingsOperation> = z.infer<
   (typeof FLEET_SETTINGS_OPERATIONS)[K]['input']
 >
@@ -388,9 +592,17 @@ export type FleetSettingsOutput<K extends FleetSettingsOperation> = z.infer<
 export type FleetEnvironmentSettingsService = {
   [K in FleetSettingsOperation]: (input: FleetSettingsInput<K>) => Promise<FleetSettingsOutput<K>>
 }
+/**
+ * Operations only the owner's computer's main process calls: their inputs carry a plugin's saved values or OAuth tokens,
+ * and the sign-in descriptor carries the own OAuth client's secret; none of them passes through a renderer.
+ */
+export type FleetSettingsMainOnlyOperation = 'bringPlugin' | 'setMcpOAuth' | 'mcpOAuthDescriptor'
+export type FleetSettingsRendererOperation = Exclude<FleetSettingsOperation, FleetSettingsMainOnlyOperation>
+/** What a renderer reaches of one environment's settings. */
+export type FleetEnvironmentSettingsClient = Pick<FleetEnvironmentSettingsService, FleetSettingsRendererOperation>
 /** Every renderer call explicitly identifies its target environment. */
 export type FleetEnvironmentSettingsApi = {
-  [K in FleetSettingsOperation]: (
+  [K in FleetSettingsRendererOperation]: (
     environmentId: string,
     input: FleetSettingsInput<K>
   ) => Promise<FleetSettingsOutput<K>>

@@ -76,6 +76,7 @@ import {
 import { ALL_TOOL_NAMES, buildTools, selectSubagentToolNames } from './tools'
 import { buildMaestroWorkerTools, isMaestroWorkerOperationalToolName } from './maestro-worker-tools'
 import { conversationShellEnv } from './conversation-env'
+import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
 
 export type SubagentExecutionResult = Awaited<ReturnType<typeof runSubagent>> & {
   runtimeEstimatedCostUsd?: number
@@ -246,10 +247,12 @@ export async function executeSubagent(args: {
           askQuestion: async () => [],
         }),
       })
-  const tools: ToolSet = recorder?.instrumentTools({ ...builtinTools, ...providedTools }) ?? {
-    ...builtinTools,
-    ...providedTools,
-  }
+  // A subagent's tool calls run the conversation's plugin hooks too (tools already wrapped by the parent are not
+  // wrapped twice).
+  const tools: ToolSet = wrapToolSetWithHooks(
+    recorder?.instrumentTools({ ...builtinTools, ...providedTools }) ?? { ...builtinTools, ...providedTools },
+    runnerHookContext({ conversationId: args.conversationId, cwd: args.cwd, mode: args.mode, signal: args.signal })
+  )
   const deferred = new Set([...(args.deferredToolNames ?? []), ...(maestroRuntime?.deferredToolNames ?? [])])
   // Maestro continuity: the parent requested continuation of this agent's previous turn. The host decides per
   // provider whether the native thread can reopen; otherwise recreate the worker with the previous

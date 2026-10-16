@@ -24,7 +24,7 @@ import {
 } from '../../store'
 import { broadcast } from '../../window-ipc'
 import { clearApiKey, getApiKey, hasApiKey, setApiKey } from '../credentials'
-import { listMcpServers } from '../mcp'
+import { conversationMcpAccounts, listRuntimeMcpServers, mcpServerReachable } from '../mcp'
 import { CHATGPT_WEB_PROVIDER_ID, isChatGptWebEnabled } from '../catalog'
 import {
   buildCompanionPrompt,
@@ -75,6 +75,9 @@ import { getLocalMemory, markLocalMemoriesUsed } from '../../memory/local-memory
 import { getMemoryIndexStatus, reconcileMemoryIndex } from '../../memory/index'
 import { retrieveHybridMemory } from '../../memory/retrieval'
 import { discoverSharedKnowledge } from '../../memory/shared-knowledge'
+import { companionHooksRefusal, runnerHookContext, runPostToolUse, runPreToolUse } from '../plugin-hooks'
+import type { McpServer } from '../mcp-types'
+import type { BridgeToolHooks } from './bridge-server'
 
 const TUNNEL_ID_KEY = 'chat.chatgptWeb.tunnelId'
 const APP_NAME_KEY = 'chat.chatgptWeb.appName'
@@ -610,7 +613,7 @@ export function capabilitiesForConversation(conversationId: string): ChatGptWebC
   const stored = prefs.chatGptWebCapabilities
   const info = chatGptWebCapabilitiesInfo(
     stored && !personalAllowed ? { ...stored, personalMemory: 'off' } : stored,
-    listMcpServers(),
+    listRuntimeMcpServers({ conversationId }),
     sessionForConversation(conversationId) === null,
     conversation?.scope ?? 'project'
   )
@@ -623,7 +626,7 @@ export function setCapabilitiesForConversation(
   input: ChatGptWebCapabilities
 ): ChatGptWebCapabilitiesInfo {
   if (sessionForConversation(conversationId)) throw new Error('companion-session-active')
-  const servers = listMcpServers()
+  const servers = listRuntimeMcpServers({ conversationId })
   const sanitized = resolveChatGptWebCapabilities(input, servers, getConversation(conversationId)?.scope ?? 'project')
   patchConvUiPrefs(conversationId, { chatGptWebCapabilities: sanitized })
   emitChange()
@@ -690,6 +693,13 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       return { ok: true }
     }
 
+    // Refused before any transport starts: plugin hooks a companion cannot run (see companionHooksRefusal).
+    const hooksRefusal = companionHooksRefusal(
+      input.conversationId,
+      getConvUiPrefs(input.conversationId).chat?.mode ?? 'agent'
+    )
+    if (hooksRefusal) return { ok: false, error: hooksRefusal }
+
     await ensureTransport()
     // Clear/end/disable may occur while the daemon starts. The epoch prevents the asynchronous
     // continuation from resurrecting a session that has already crossed this lifecycle boundary.
@@ -705,7 +715,10 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       }
       return { ok: true }
     }
-    const mcpServers = listMcpServers()
+    // A server whose every account is out of this conversation's reach is not offered to the session.
+    const mcpServers = listRuntimeMcpServers({ conversationId: input.conversationId }).filter((server) =>
+      mcpServerReachable(server, conversationMcpAccounts(server, input.conversationId))
+    )
     const conversation = getConversation(input.conversationId)
     if (!conversation) throw new Error('invalid-conversation')
     const repositoryScope = await createRepositoryScope(conversation)
@@ -729,9 +742,16 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       return match ? match.linkName || SINGLE_REPOSITORY_SELECTOR : undefined
     }
     const sessionKey = sessionKeyForConversation(input.conversationId, capabilityInfo.fingerprint)
+    const mcpAccounts = Object.fromEntries(
+      mcpServers.map((server) => [
+        server.id,
+        conversationMcpAccounts(server, input.conversationId).map(({ id, label }) => ({ id, label })),
+      ])
+    )
     const mcpGateway = createChatGptWebMcpGateway({
       servers: mcpServers,
       scopes: capabilityInfo.capabilities.mcp,
+      accounts: mcpAccounts,
     })
     const planReviewController = planReviewControllerFor(input.conversationId)
     const browserSession = createDrawerBrowserSession({ conversationId: input.conversationId })
@@ -955,6 +975,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         },
         listChecks: () => listChecks(input.cwd),
         runCheck: (name, signal) => runCheck(input.cwd, name, signal),
+        toolHooks: companionToolHooks(input.conversationId, input.cwd, mcpServers),
         browserSession,
         projectEnvironment,
         browserCapability: capabilityInfo.capabilities.browser,
@@ -973,7 +994,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
             conversation: capabilityInfo.capabilities.conversation,
             memory: capabilityInfo.capabilities.memory,
             personalMemory: capabilitiesForConversation(input.conversationId).capabilities.personalMemory ?? 'off',
-            mcpServers: remoteMcpServerCapabilities(capabilityInfo.capabilities, mcpServers),
+            mcpServers: remoteMcpServerCapabilities(capabilityInfo.capabilities, mcpServers, mcpAccounts),
           }),
           searchMcpTools: (args, signal) =>
             mcpGateway.searchTools(
@@ -993,6 +1014,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
                   args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
                     ? (args.arguments as Record<string, unknown>)
                     : {},
+                ...(typeof args.account === 'string' ? { account: args.account } : {}),
               },
               signal
             ),
@@ -1005,6 +1027,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
                   args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments)
                     ? (args.arguments as Record<string, unknown>)
                     : {},
+                ...(typeof args.account === 'string' ? { account: args.account } : {}),
               },
               signal
             ),
@@ -1255,4 +1278,59 @@ export async function disposeChatGptWeb(): Promise<void> {
   await releaseTransport()
   router = null
   listeners.clear()
+}
+
+/** A companion tool as the Maestrly tool hooks know it: the same tool, its Maestrly name and input. */
+function companionHookTool(
+  name: string,
+  args: Record<string, unknown>,
+  cwd: string,
+  servers: readonly McpServer[]
+): { tool: string; input: Record<string, unknown> } {
+  if (name === 'read_file') return { tool: 'read', input: args }
+  if (name === 'grep' || name === 'glob') return { tool: name, input: args }
+  if (name === 'run_check') {
+    const check = listChecks(cwd).find((item) => item.name === args.name)
+    return { tool: 'bash', input: { command: check ? check.command.join(' ') : String(args.name ?? '') } }
+  }
+  if (name === 'call_mcp_read_tool' || name === 'call_mcp_write_tool') {
+    const server = servers.find((item) => item.id === args.server_id)
+    return {
+      tool: 'mcp_call',
+      input: {
+        server: server?.name ?? String(args.server_id ?? ''),
+        tool: args.tool_name,
+        arguments: args.arguments ?? {},
+      },
+    }
+  }
+  return { tool: name, input: args }
+}
+
+/** Plugin tool hooks around the companion's tools, evaluated on each call (they apply only in Agent mode). */
+function companionToolHooks(conversationId: string, cwd: string, servers: readonly McpServer[]): BridgeToolHooks {
+  const context = () =>
+    runnerHookContext({
+      conversationId,
+      cwd,
+      mode: getConvUiPrefs(conversationId).chat?.mode ?? 'agent',
+      signal: new AbortController().signal,
+    })
+  return {
+    before: async (name, args) => {
+      const { tool, input } = companionHookTool(name, args, cwd, servers)
+      const pre = await runPreToolUse(context(), tool, input)
+      if (pre.block) return { block: pre.block, args }
+      if (pre.input === input) return { args }
+      if (tool === 'mcp_call')
+        return { args: { ...args, arguments: (pre.input as { arguments?: unknown }).arguments ?? {} } }
+      // A rewritten command cannot change which allowlisted check runs.
+      return { args: tool === 'bash' ? args : (pre.input as Record<string, unknown>) }
+    },
+    after: async (name, args, result, failed) => {
+      const { tool, input } = companionHookTool(name, args, cwd, servers)
+      const text = result.content.flatMap((item) => (typeof item.text === 'string' ? [item.text] : [])).join('\n')
+      return (await runPostToolUse(context(), tool, input, text, failed)).append
+    },
+  }
 }

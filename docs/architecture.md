@@ -104,10 +104,90 @@ local process; an HTTP server is an external network service. Tool schemas are
 validated, calls remain permission-gated, and transports are disposed on
 conversation/provider lifecycle changes.
 
+Remote servers that require OAuth use the SDK's `authProvider` on their
+transports (`chat/mcp-oauth.ts`). The host that runs a server keeps its sign-in
+and refreshes it; the interactive sign-in (`chat/mcp-oauth-connect.ts`) runs on the
+person's computer and hands the result to that host through
+`chat:mcp-oauth:store`. Background turns never start a sign-in: a server without
+one fails with a "connect it in Settings" error and shows **Needs sign-in**. See
+[MCP OAuth sign-in](security-model.md#mcp-oauth-sign-in).
+
+A server can keep several signed-in accounts. `buildMcpTools` resolves the
+accounts that serve the conversation (scope and per-conversation toggles); with
+several, each cached wrapper gets a required `mcp_account` parameter and
+`mcp_call` an `account`, and the call runs on a per-account connection
+(`McpServer.oauthAccountId`, pooled by `mcpConnectionKey`). The ChatGPT-web
+gateway routes `account` the same way, so the choice works with every model.
+
 Skills are local packages installed from an explicit source. Project memory and
 notes are local data, with indexes treated as reproducible caches. Promotion to
 shared repository knowledge is an explicit filesystem write rather than an
 automatic upload.
+
+### Plugins
+
+A plugin bundles skills and MCP servers, and sometimes runtime-specific parts
+such as hooks, commands, agents or app connectors. The main process
+(`main/plugins/`) reads three formats: Agent Plugins 1.0 (`plugin.json`),
+Codex (`.codex-plugin/plugin.json`) and Claude Code
+(`.claude-plugin/plugin.json`, or a marketplace entry acting as the manifest).
+All three are normalized into one model of skills, agents, MCP servers, inputs
+and a component inventory. Each component carries a support status
+(`supported`, `adapted`, `not-run`, `unavailable` or `invalid`), and the plugin
+is either portable (it works the same with every model) or not compatible, with
+explicit reasons; only portable plugins are offered.
+
+Sources are Git repositories. The system `git` downloads them as depth-one,
+blob-less partial clones with sparse checkouts, so only the files Maestrly
+reads are materialized. Installed versions are immutable copies under
+`<userData>/plugins/packages`. A plugin is installed once per host and enabled
+globally or for selected projects.
+
+No provider-native plugin feature is used. Plugin skills (`<plugin>:<skill>`)
+join the skill catalog and `use_skill`, plugin commands become
+user-invocable skills, and plugin agents join the subagent catalog
+(`listPluginAgents`, merged in `listEffectiveAgents`) as `<plugin>-<agent>`
+with Claude tool names mapped to Maestrly's and no model of their own. Plugin MCP servers join the proxied MCP surface through
+`listRuntimeMcpServers`, so every provider (API keys, Claude, Codex, GitHub
+Copilot, Cursor, Google AI and ChatGPT web) receives them through the mechanism
+it already uses for skills and MCP. Contexts that switch MCP off by id cover
+plugin servers too. On a remote workspaces host, the `chat:plugins:*` channels
+run on the host, so a remote conversation uses the host's plugins.
+
+Plugin hooks run in the main process, never in a provider runtime, with
+Claude Code's stdin/stdout contract (`chat/plugin-hooks.ts`,
+`plugins/hook-command.ts`). `listPluginHooks` returns only the hooks whose
+digest the person approved. Tool hooks wrap each runtime's Maestrly `ToolSet`
+(`wrapToolSetWithHooks`) before it is adapted to the model, for the API-key,
+Claude, Codex, Cursor, GitHub Copilot and Google AI runtimes and for
+subagents; tool names and inputs are translated to Claude Code's
+(`chat/plugin-hook-tools.ts`). A Codex thread with tool hooks starts without
+environments, shell or native web search and receives Maestrly's shell, file
+and `web_search` tools instead, under its own thread key. Code and plan
+reviewers run as Ask subagents, so no hook runs for them. `startSend` runs
+`SessionStart` and
+`UserPromptSubmit` before the prompt is stored, as hidden parts of the
+message (outside the cached project context), records the session's
+compaction boundary in the conversation's preferences (`hookSession`, which a
+conversation move leaves behind), and turns a `Stop`
+hook's reason into an internal continuation turn, like the Maestro
+reconciliation guard. The ChatGPT Web bridge takes `toolHooks` around its
+tools; the manager refuses a companion when turn hooks apply. Hook notices are
+a stream event (`hook-notice`) that is never persisted. The mobile API of a
+host (`remote-host/server/mobile-api.ts`) lists plugin servers by the
+conversation's scope, offers each account of a server with several as an
+entry `<serverId>#<accountId>`, and reports a blocked prompt as
+`blocked-by-hook`.
+
+A bot environment serves the same engine through environment-settings
+operations behind the `environment-plugins-v1` feature (gateway, announced in
+`moreFeatures` of `/v1/meta`, past the 20 features older desktops read) and
+capability (instance). The protocol lists the plugin operations explicitly
+(`FLEET_PLUGIN_SETTINGS_OPERATIONS`) with strict schemas; the gateway checks the
+capability and forwards them. `bringPlugin`, `setMcpOAuth` and
+`mcpOAuthDescriptor` carry plugin values, OAuth tokens and the own OAuth client's
+secret, so they have no renderer channel: this computer's main process calls them
+(`fleet:plugins:bring`, `fleet:mcp-oauth:connect`).
 
 ## Browser and loopback services
 

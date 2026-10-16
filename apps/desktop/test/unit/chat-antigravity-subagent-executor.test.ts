@@ -18,6 +18,11 @@ vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
   getAntigravitySubscriptionManager: h.getManager,
 }))
 vi.mock('../../src/main/chat/subagent-runner', () => ({ runSubagent: h.runByok }))
+// No plugin hooks: the child's tools reach its runner unchanged.
+vi.mock('../../src/main/plugins/runtime', async (original) => ({
+  ...(await original<typeof import('../../src/main/plugins/runtime')>()),
+  listPluginHooks: () => [],
+}))
 vi.mock('../../src/main/chat/tools', () => ({
   ALL_TOOL_NAMES: [],
   buildTools: () => ({}),

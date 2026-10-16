@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import i18next from 'i18next'
 import {
   type ChatGptWebCompanionLifecycleApi,
+  companionHookPlugins,
+  companionStartError,
   openChatGptWebAppSettings,
   startChatGptWebCompanion,
 } from '../../src/renderer/lib/chatgpt-web'
+import { addHookNotice, type HookNoticeItem } from '../../src/renderer/components/chat/HookNotices'
+import { resources } from '../../src/shared/i18n/resources'
 import {
   applyNormalAttention,
   applyChatGptTurnCompleted,
@@ -206,5 +211,25 @@ describe('companion sidebar attention', () => {
     expect(next.normalAttention).toEqual(new Set())
     expect(next.companionAttention).toEqual(new Set(['conv-a']))
     expect(clearNormalAttention(next, 'conv-a')).toBe(next)
+  })
+})
+
+describe('plugin hooks and the companion', () => {
+  it('names the plugins whose turn hooks keep the companion from starting', async () => {
+    expect(companionHookPlugins('companion-hooks-unsupported: notes, guard')).toEqual(['notes', 'guard'])
+    expect(companionHookPlugins('session-not-found')).toBeNull()
+
+    const i18n = i18next.createInstance()
+    await i18n.init({ lng: 'en', resources, interpolation: { escapeValue: false } })
+    const t = i18n.getFixedT('en', 'ui')
+    expect(companionStartError('companion-hooks-unsupported: notes', t)).toMatch(/^notes runs hooks/)
+    expect(companionStartError('companion-hooks-unsupported: notes, guard', t)).toMatch(/^notes, guard run hooks/)
+    expect(companionStartError('session-not-found', t)).toBe('session-not-found')
+  })
+
+  it('keeps only the latest hook notices above the composer', () => {
+    const notice = (id: number): HookNoticeItem => ({ id, plugin: 'p', event: 'Stop', text: `n${id}`, level: 'info' })
+    const shown = [1, 2, 3, 4].reduce<HookNoticeItem[]>((current, id) => addHookNotice(current, notice(id)), [])
+    expect(shown.map((item) => item.id)).toEqual([2, 3, 4])
   })
 })

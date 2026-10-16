@@ -4,6 +4,7 @@ export const ENVIRONMENT_SETTINGS_SECTIONS = [
   'models',
   'skills',
   'tools',
+  'plugins',
   'components',
   'preferences',
 ] as const

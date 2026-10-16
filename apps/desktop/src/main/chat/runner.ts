@@ -163,6 +163,7 @@ import {
   OPENAI_LOCAL_SHELL_TOOL_NAME,
   openAINativeOutputText,
 } from './openai/native-tools'
+import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -765,6 +766,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // MCP servers follow enabled + conversation override. Wrapper retains everything in Agent, filters
   // defensively by annotations in Plan/Ask; all calls remain gated under action 'mcp'.
   const mcp = await buildMcpTools({
+    conversationId,
     mode,
     signal,
     gate: mcpGate,
@@ -1227,6 +1229,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       nativeApplyPatch: capabilityMode === 'agent' && resolvedModel.capabilities.nativeApplyPatch,
     })
   }
+  // Plugin hooks run around every tool, the same way for every provider.
+  allTools = wrapToolSetWithHooks(
+    allTools,
+    runnerHookContext({ conversationId, cwd, mode, signal, emit })
+  )
   allTools = adaptToolSetForModel({
     tools: allTools,
     supportsImages: !dropImages,

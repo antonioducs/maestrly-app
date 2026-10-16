@@ -198,6 +198,10 @@ describe('chat outbox', () => {
     })
     expect(afterChatSendFailure(waiting, new MobileBridgeError('not-found', 'x'))).toMatchObject({ error: 'chatGone' })
     expect(afterChatSendFailure(waiting, new MobileBridgeError('no-provider', 'x'))).toMatchObject({ error: 'noModel' })
+    expect(afterChatSendFailure(waiting, new MobileBridgeError('blocked-by-hook', 'no secrets'))).toMatchObject({
+      state: 'failed',
+      error: 'blockedByHook',
+    })
     expect(afterChatSendFailure(waiting, new Error('x'))).toMatchObject({ error: 'generic' })
   })
 })

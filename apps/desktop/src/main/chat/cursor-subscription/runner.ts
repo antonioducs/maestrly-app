@@ -90,6 +90,7 @@ import type {
   CursorSubscriptionAccountIdentity,
   CursorSubscriptionManager,
 } from './manager'
+import { runnerHookContext, wrapToolSetWithHooks } from '../plugin-hooks'
 
 export interface RunCursorSubscriptionChatArgs {
   conversationId: string
@@ -479,6 +480,7 @@ async function runCursorSubscriptionChatInScope(
     const appToolsEnabled = appAccess.enabled
     const disabledIds = new Set(prefs?.mcpDisabled ?? [])
     const mcp = await buildMcpTools({
+      conversationId: args.conversationId,
       mode: args.mode,
       signal: args.signal,
       gate,
@@ -623,7 +625,7 @@ async function runCursorSubscriptionChatInScope(
         ...supervisionTools,
       }
       const tools: ToolSet = adaptToolSetForModel({
-        tools: rawTools,
+        tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
         supportsImages: !dropImages,
         describeImage: (image) =>
           describeEphemeralToolImage({

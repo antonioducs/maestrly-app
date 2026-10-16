@@ -14,17 +14,19 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { ToolResultOutput } from '@ai-sdk/provider-utils'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { tool, jsonSchema, type Tool, type ToolSet } from 'ai'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation'
-import { getAppSetting, setAppSetting } from '../store'
+import { getAppSetting, getConvUiPrefs, setAppSetting } from '../store'
 import { transaction } from '../store/db'
 import { writeSettingsRevision } from '../store/app-settings'
 import { isSecureStorageAvailable, secureGet, secureSet, secureRemove } from '../secure-store'
 import { gateInstanceAppTool } from '../fleet/instance/gate'
-import type { ChatToolImage, ToolOutput } from '../../shared/chat'
+import type { ChatToolImage, McpOAuthAccountDto, ToolOutput } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import { toolOutputImages } from '../../shared/chat'
@@ -52,7 +54,24 @@ import {
   writeMcpCatalog,
 } from './mcp-catalog'
 import { LazyMcpRuntime, type LazyMcpDiagnostic } from './mcp-lazy-runtime'
-import type { ListedMcpTool, McpCallToolResult, McpConnection, McpRequestOptions, McpServer } from './mcp-types'
+import { isMcpNeedsAuthError, McpNeedsAuthError } from './mcp-auth-errors'
+import {
+  activeMcpOAuthAccounts,
+  forgetMcpOAuth,
+  hostMcpOAuthProvider,
+  markMcpNeedsAuth,
+  mcpOAuthSummary,
+} from './mcp-oauth'
+import { listPluginMcpServers } from '../plugins/runtime'
+import {
+  type ListedMcpTool,
+  type McpCallToolResult,
+  type McpConnection,
+  type McpRequestOptions,
+  type McpServer,
+  mcpConnectionKey,
+  type UserMcpServer,
+} from './mcp-types'
 export type {
   ListedMcpTool,
   McpCallToolResult,
@@ -60,6 +79,7 @@ export type {
   McpRequestOptions,
   McpServer,
   McpTransport,
+  UserMcpServer,
 } from './mcp-types'
 // Import the registry dynamically so native tools load only when app tools are built.
 
@@ -118,22 +138,23 @@ function migrateInlineDetails(): McpServer[] {
   })
 }
 
-export function listMcpServers(): McpServer[] {
-  return migrateInlineDetails().map((server) => {
-    if (hasInlineDetails(server)) return server
+export function listMcpServers(): UserMcpServer[] {
+  // Stored servers are user servers; `chat:mcp-add` only accepts the `http` and `stdio` transports.
+  return migrateInlineDetails().map((server): UserMcpServer => {
+    if (hasInlineDetails(server)) return server as UserMcpServer
     const raw = secureGet(DETAILS_PREFIX + server.id)
     if (raw) {
       try {
         const details = JSON.parse(raw)
         if (details && typeof details === 'object' && !Array.isArray(details)) {
-          return { ...storedOnly(server), ...detailsOnly(details) }
+          return { ...storedOnly(server), ...detailsOnly(details) } as UserMcpServer
         }
       } catch {
         // Keep the configured identity visible when its keyring entry cannot be read.
       }
     }
     invalidateMcpRuntime(server.id)
-    return { ...storedOnly(server), unavailable: true }
+    return { ...storedOnly(server), unavailable: true } as UserMcpServer
   })
 }
 
@@ -157,9 +178,9 @@ function saveMcpServers(list: McpServer[], changedId: string, options: McpSaveOp
 }
 
 export function addMcpServer(
-  input: Omit<McpServer, 'id' | 'enabled'> & { enabled?: boolean },
+  input: Omit<UserMcpServer, 'id' | 'enabled'> & { enabled?: boolean },
   options: McpSaveOptions = {}
-): McpServer {
+): UserMcpServer {
   return atomicMcpWrite(() => {
     const name = input.name?.trim()
     if (!name) throw new Error('Enter an MCP server name.')
@@ -170,7 +191,7 @@ export function addMcpServer(
     } else {
       throw new Error('Invalid MCP transport.')
     }
-    const server: McpServer = {
+    const server: UserMcpServer = {
       id: 'mcp_' + randomUUID(),
       name,
       transport: input.transport,
@@ -186,14 +207,20 @@ export function addMcpServer(
   })
 }
 
-export function updateMcpServer(id: string, patch: Partial<McpServer>, options: McpSaveOptions = {}): void {
+/** Plugin servers (`plg_…`) live in the plugin's install record; only Settings → Plugins changes them. */
+function refusePluginServer(id: string): void {
+  if (id.startsWith('plg_')) throw new Error('managed-by-plugin')
+}
+
+export function updateMcpServer(id: string, patch: Partial<UserMcpServer>, options: McpSaveOptions = {}): void {
+  refusePluginServer(id)
   return atomicMcpWrite(() => {
     const list = listMcpServers()
     const idx = list.findIndex((s) => s.id === id)
     if (idx < 0) return
     const previous = list[idx]
     const next = { ...previous, ...patch, id: previous.id, unavailable: previous.unavailable }
-    if (hasInlineDetails(patch) && (next.transport === 'http' ? next.url : next.command)) {
+    if (hasInlineDetails(patch) && (next.transport === 'stdio' ? next.command : next.url)) {
       delete next.unavailable
     }
     list[idx] = next
@@ -207,7 +234,7 @@ export function updateMcpServer(id: string, patch: Partial<McpServer>, options: 
 }
 
 export function upsertMcpServerByName(
-  input: Omit<McpServer, 'id' | 'unavailable'>,
+  input: Omit<UserMcpServer, 'id' | 'unavailable'>,
   options: McpSaveOptions = {}
 ): {
   server: McpServer
@@ -224,7 +251,7 @@ export function upsertMcpServerByName(
     } else throw new Error('Invalid MCP transport.')
     const previous = listMcpServers().find((server) => server.name.toLowerCase() === name.toLowerCase())
     if (!previous) return { server: addMcpServer(input, options), outcome: 'added' }
-    const next: McpServer = {
+    const next: UserMcpServer = {
       id: previous.id,
       name: previous.name,
       transport: input.transport,
@@ -243,12 +270,14 @@ export function upsertMcpServerByName(
 }
 
 export function removeMcpServer(id: string): void {
+  refusePluginServer(id)
   return atomicMcpWrite(() => {
     saveMcpServers(
       listMcpServers().filter((s) => s.id !== id),
       id
     )
     if (!secureRemove(DETAILS_PREFIX + id)) throw new Error('Secure credential storage is unavailable.')
+    forgetMcpOAuth(id)
     invalidateMcpRuntime(id)
     removeMcpCatalog(id)
   })
@@ -321,6 +350,13 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
     if (server.transport === 'http') {
       const transport = new StreamableHTTPClientTransport(new URL(server.url!), {
         requestInit: server.headers ? { headers: server.headers } : undefined,
+        authProvider: hostMcpOAuthProvider(server),
+      })
+      await client.connect(transport, options)
+    } else if (server.transport === 'sse') {
+      const transport = new SSEClientTransport(new URL(server.url!), {
+        requestInit: server.headers ? { headers: server.headers } : undefined,
+        authProvider: hostMcpOAuthProvider(server),
       })
       await client.connect(transport, options)
     } else {
@@ -328,6 +364,7 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
         command: server.command!,
         args: server.args ?? [],
         env: server.env,
+        ...(server.cwd ? { cwd: server.cwd } : {}),
         stderr: 'ignore',
       })
       await client.connect(transport, options)
@@ -335,6 +372,13 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
     return connectionFromClient(client)
   } catch (error) {
     await client.close().catch(() => {})
+    // A 401 the stored sign-in cannot answer: the person signs in from Settings; turns never open a browser.
+    if (server.transport !== 'stdio' && (error instanceof UnauthorizedError || isMcpNeedsAuthError(error))) {
+      // The provider already marked the account it stopped for; a bare 401 marks this connection.
+      if (isMcpNeedsAuthError(error)) throw error
+      markMcpNeedsAuth(mcpConnectionKey(server))
+      throw new McpNeedsAuthError(server.id, server.name)
+    }
     throw error
   }
 }
@@ -361,7 +405,28 @@ export async function disposeMcpRuntime(): Promise<void> {
   await runtime?.dispose()
 }
 
+/**
+ * The user's MCP servers plus the servers of installed plugins. `conversationId` undefined = every enabled plugin
+ * (Settings); null = no conversation (global plugins only). Inactive plugin servers are listed disabled on request,
+ * so callers that switch MCP off by id also cover them.
+ */
+export function listRuntimeMcpServers(
+  opts: { conversationId?: string | null; includeInactivePlugins?: boolean } = {}
+): McpServer[] {
+  return [
+    ...listMcpServers(),
+    ...listPluginMcpServers({ conversationId: opts.conversationId }, { includeInactive: opts.includeInactivePlugins }),
+  ]
+}
+
+/** Every server id a context that forbids MCP must switch off, plugin servers included. */
+export function allRuntimeMcpServerIds(): string[] {
+  return listRuntimeMcpServers({ conversationId: undefined, includeInactivePlugins: true }).map((server) => server.id)
+}
+
 export interface BuildMcpToolsArgs {
+  /** Conversation whose plugins apply (null = none: only global plugins). */
+  conversationId: string | null
   mode: ChatBehavior
   /** Per-call permission gate (resolves on allow, throws on deny). */
   gate: (toolName: string, toolCallId: string, signal?: AbortSignal) => Promise<void>
@@ -496,6 +561,14 @@ interface ExternalMcpBuildContext {
 
 const mcpInputValidator = new AjvJsonSchemaValidator()
 
+/** A plugin's `enabled_tools` / `disabled_tools` filter. */
+function mcpToolPermitted(server: McpServer, toolName: string): boolean {
+  const filter = server.toolFilter
+  if (!filter) return true
+  if (filter.allow && !filter.allow.includes(toolName)) return false
+  return !filter.deny?.includes(toolName)
+}
+
 function externalMcpToolName(context: ExternalMcpBuildContext, server: McpServer, toolName: string): string {
   return context.codexSafeNames
     ? sanitizeMcpToolName(server.id, server.name, toolName)
@@ -560,46 +633,142 @@ async function executeExternalMcpTool(args: {
   toolCallId: string
   signal?: AbortSignal
   context: ExternalMcpBuildContext
+  /** Advertised name of a cached wrapper (it differs from the default when two tools collide). */
+  advertised?: string
 }): Promise<ToolOutput> {
   const declarations = await liveMcpDeclarations(args.server, args.signal)
   const declaration = declarations.find((entry) => entry.name === args.listedName)
-  if (!declaration) {
+  if (!declaration || !mcpToolPermitted(args.server, declaration.name)) {
     throw new Error(`External MCP tool "${args.listedName}" is not available on server "${args.server.name}".`)
   }
   if (!externalMcpToolAllowed(args.context.mode, declaration.annotations)) {
     throw new Error(`External MCP tool "${args.listedName}" is not available in ${args.context.mode} mode.`)
   }
   const input = await validateMcpInput(declaration, args.input)
-  const advertised = externalMcpToolName(args.context, args.server, declaration.name)
+  const advertised = args.advertised ?? externalMcpToolName(args.context, args.server, declaration.name)
   if (args.signal) await args.context.gate(advertised, args.toolCallId, args.signal)
   else await args.context.gate(advertised, args.toolCallId)
-  const result = await getMcpRuntime().callTool(
-    args.server,
-    declaration.name,
-    input,
-    args.signal ? { signal: args.signal } : undefined
-  )
+  const requestOptions =
+    args.signal || args.server.toolTimeoutMs
+      ? {
+          ...(args.signal ? { signal: args.signal } : {}),
+          ...(args.server.toolTimeoutMs ? { timeout: args.server.toolTimeoutMs } : {}),
+        }
+      : undefined
+  const result = await getMcpRuntime().callTool(args.server, declaration.name, input, requestOptions)
   return externalMcpOutput(result, args.context.outputOptions)
 }
 
-function cachedExternalMcpTool(server: McpServer, declaration: ListedMcpTool, context: ExternalMcpBuildContext): Tool {
+/** Signed-in accounts of a server that serve a conversation, without those turned off in it. */
+export function conversationMcpAccounts(
+  server: McpServer,
+  conversationId: string | null | undefined
+): McpOAuthAccountDto[] {
+  if (server.transport === 'stdio' || server.unavailable) return []
+  const disabled = new Set(
+    typeof conversationId === 'string' ? (getConvUiPrefs(conversationId).chat?.tools?.mcpAccountsDisabled ?? []) : []
+  )
+  return activeMcpOAuthAccounts(server, conversationId).filter((account) => !disabled.has(`${server.id}#${account.id}`))
+}
+
+/**
+ * Whether a conversation can reach a server: always, unless the server has signed-in accounts and none of them serves
+ * the conversation (out of its scope, or turned off in it). Such a server is left out rather than reached with an
+ * account the conversation may not use.
+ */
+export function mcpServerReachable(server: McpServer, accounts: readonly McpOAuthAccountDto[]): boolean {
+  return accounts.length > 0 || server.transport === 'stdio' || mcpOAuthSummary(server).accounts.length === 0
+}
+
+/** The parameter a call names its account with, when the server has several. */
+export const MCP_ACCOUNT_PARAMETER = 'mcp_account'
+
+const accountChoices = (accounts: readonly McpOAuthAccountDto[]) => accounts.map((account) => account.label).join(', ')
+
+/**
+ * The connection a call uses: the server itself without accounts, its only account, or the account the call names
+ * (exactly, or ignoring case). Several accounts and no valid name is an error the model can act on.
+ */
+function accountConnection(server: McpServer, accounts: readonly McpOAuthAccountDto[], label: unknown): McpServer {
+  if (!accounts.length) return server
+  if (accounts.length === 1) return { ...server, oauthAccountId: accounts[0].id }
+  const name = typeof label === 'string' ? label.trim() : ''
+  const chosen =
+    accounts.find((account) => account.label === name) ??
+    accounts.find((account) => account.label.toLowerCase() === name.toLowerCase())
+  if (!name || !chosen) throw new Error(`Choose an account of "${server.name}": ${accountChoices(accounts)}.`)
+  return { ...server, oauthAccountId: chosen.id }
+}
+
+/** The input schema of a tool whose server has several accounts: its own, plus the required account parameter. */
+function withAccountParameter(schema: unknown, server: McpServer, accounts: readonly McpOAuthAccountDto[]): object {
+  const base = (schema && typeof schema === 'object' ? schema : { type: 'object' }) as Record<string, unknown>
+  const properties = (base.properties && typeof base.properties === 'object' ? base.properties : {}) as Record<
+    string,
+    unknown
+  >
+  const required = Array.isArray(base.required) ? base.required : []
+  const described = accounts
+    .map((account) =>
+      account.email && account.email !== account.label ? `${account.label} (${account.email})` : account.label
+    )
+    .join(', ')
+  return {
+    ...base,
+    type: 'object',
+    properties: {
+      ...properties,
+      [MCP_ACCOUNT_PARAMETER]: {
+        type: 'string',
+        enum: accounts.map((account) => account.label),
+        description: `Signed-in account of ${server.name} to use: ${described}. Ask the person when it is unclear.`,
+      },
+    },
+    required: [...required, MCP_ACCOUNT_PARAMETER],
+  }
+}
+
+/** True when a remote tool already has a parameter named like the account one; such a tool is reached by `mcp_call`. */
+function declaresAccountParameter(declaration: ListedMcpTool): boolean {
+  const properties = (declaration.inputSchema as { properties?: unknown } | undefined)?.properties
+  return !!properties && typeof properties === 'object' && MCP_ACCOUNT_PARAMETER in properties
+}
+
+function cachedExternalMcpTool(
+  server: McpServer,
+  declaration: ListedMcpTool,
+  context: ExternalMcpBuildContext,
+  advertised: string,
+  accounts: readonly McpOAuthAccountDto[] = []
+): Tool {
   const metadata =
     capabilityBehaviorFor(context.mode) !== 'agent' || externalMcpToolReadOnly(declaration.annotations)
       ? EXTERNAL_MCP_RESTRICTED_METADATA
       : undefined
+  const choose = accounts.length > 1
+  const schema = (declaration.inputSchema as object) ?? { type: 'object', properties: {} }
   return tool({
     description: declaration.description ?? `MCP tool "${declaration.name}" from server ${server.name}.`,
     ...(metadata ? { metadata } : {}),
-    inputSchema: jsonSchema((declaration.inputSchema as object) ?? { type: 'object', properties: {} }),
-    execute: (input: unknown, options: { toolCallId: string; abortSignal?: AbortSignal }) =>
-      executeExternalMcpTool({
-        server,
+    inputSchema: jsonSchema(choose ? withAccountParameter(schema, server, accounts) : schema),
+    execute: async (input: unknown, options: { toolCallId: string; abortSignal?: AbortSignal }) => {
+      let args = input
+      let label: unknown
+      if (choose && input && typeof input === 'object' && !Array.isArray(input)) {
+        const { [MCP_ACCOUNT_PARAMETER]: named, ...rest } = input as Record<string, unknown>
+        args = rest
+        label = named
+      }
+      return executeExternalMcpTool({
+        server: accountConnection(server, accounts, label),
         listedName: declaration.name,
-        input,
+        input: args,
         toolCallId: options.toolCallId,
         signal: options.abortSignal,
         context,
-      }),
+        advertised,
+      })
+    },
     toModelOutput: ({ output }: { output: unknown }) => externalMcpModelOutput(output, context.outputOptions),
   })
 }
@@ -619,9 +788,13 @@ function searchableMcpDeclaration(declaration: ListedMcpTool): Record<string, un
  * Cached declarations provide typed wrappers; mcp_search/mcp_call cover a cold catalog in the same turn.
  */
 export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-  const servers = listMcpServers().filter(
-    (server) => server.enabled && !server.unavailable && !args.disabledIds?.has(server.id)
-  )
+  const accountsOf = new Map<string, McpOAuthAccountDto[]>()
+  const servers = listRuntimeMcpServers({ conversationId: args.conversationId }).filter((server) => {
+    if (!server.enabled || server.unavailable || args.disabledIds?.has(server.id)) return false
+    const accounts = conversationMcpAccounts(server, args.conversationId)
+    accountsOf.set(server.id, accounts)
+    return mcpServerReachable(server, accounts)
+  })
   if (!servers.length) return { tools: {}, close: async () => {} }
 
   const context: ExternalMcpBuildContext = {
@@ -632,8 +805,10 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
   }
   const tools: ToolSet = {}
   let cachedCount = 0
+  const accountsFor = (server: McpServer) => accountsOf.get(server.id) ?? []
   for (const server of servers) {
     const declarations = readMcpCatalog(server)
+    const accounts = accountsFor(server)
     chatDiag({
       kind: declarations.length ? 'mcp-lazy-catalog-hit' : 'mcp-lazy-catalog-miss',
       serverId: server.id,
@@ -642,8 +817,16 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
     })
     for (const declaration of declarations) {
       if (!externalMcpToolAllowed(args.mode, declaration.annotations)) continue
-      const advertised = externalMcpToolName(context, server, declaration.name)
-      tools[advertised] = cachedExternalMcpTool(server, declaration, context)
+      if (!mcpToolPermitted(server, declaration.name)) continue
+      if (accounts.length > 1 && declaresAccountParameter(declaration)) continue
+      let advertised = externalMcpToolName(context, server, declaration.name)
+      if (tools[advertised]) {
+        // Legacy names are not unique (two servers with the same name, or truncation): never overwrite a tool.
+        advertised = sanitizeMcpToolName(server.id, server.name, declaration.name)
+        chatDiag({ kind: 'mcp-tool-name-collision', serverId: server.id, transport: server.transport })
+        if (tools[advertised]) continue
+      }
+      tools[advertised] = cachedExternalMcpTool(server, declaration, context, advertised, accounts)
       cachedCount += 1
     }
   }
@@ -668,11 +851,17 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
       options: { toolCallId: string; abortSignal?: AbortSignal }
     ) => {
       const server = resolveMcpServer(servers, input.server)
-      const liveDeclarations = await liveMcpDeclarations(server, options.abortSignal)
+      // Any account lists the same tools: use the first.
+      const [first] = accountsFor(server)
+      const liveDeclarations = await liveMcpDeclarations(
+        first ? { ...server, oauthAccountId: first.id } : server,
+        options.abortSignal
+      )
       const query = input.query?.trim().toLowerCase() ?? ''
       const declarations = sanitizeMcpCatalogTools(liveDeclarations).filter(
         (declaration) =>
           externalMcpToolAllowed(args.mode, declaration.annotations) &&
+          mcpToolPermitted(server, declaration.name) &&
           (!query ||
             `${declaration.name}\n${declaration.title ?? ''}\n${declaration.description ?? ''}`
               .toLowerCase()
@@ -684,27 +873,37 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
       })
     },
   })
+  const withAccounts = servers.filter((server) => accountsFor(server).length > 1)
   tools[MCP_CALL_TOOL_NAME] = tool({
     description:
-      'Calls one tool on an enabled external MCP server. Use mcp_search first when the remote tool name or schema is unknown.',
+      'Calls one tool on an enabled external MCP server. Use mcp_search first when the remote tool name or schema is unknown.' +
+      (withAccounts.length
+        ? ` These servers have several signed-in accounts; name one in "account" (ask the person when it is unclear): ${withAccounts
+            .map((server) => `${server.name}: ${accountChoices(accountsFor(server))}`)
+            .join('; ')}.`
+        : ''),
     ...(capabilityBehaviorFor(args.mode) !== 'agent' ? { metadata: EXTERNAL_MCP_RESTRICTED_METADATA } : {}),
-    inputSchema: jsonSchema<{ server: string; tool: string; arguments?: Record<string, unknown> }>({
+    inputSchema: jsonSchema<{ server: string; tool: string; arguments?: Record<string, unknown>; account?: string }>({
       type: 'object',
       properties: {
         server: { type: 'string', description: 'Exact server ID or unique configured display name.' },
         tool: { type: 'string', description: 'Exact remote tool name returned by mcp_search.' },
         arguments: { type: 'object', additionalProperties: true },
+        account: {
+          type: 'string',
+          description: 'Signed-in account to use, for a server with several. Its label, as listed in this description.',
+        },
       },
       required: ['server', 'tool'],
       additionalProperties: false,
     }),
-    execute: (
-      input: { server: string; tool: string; arguments?: Record<string, unknown> },
+    execute: async (
+      input: { server: string; tool: string; arguments?: Record<string, unknown>; account?: string },
       options: { toolCallId: string; abortSignal?: AbortSignal }
     ) => {
       const server = resolveMcpServer(servers, input.server)
       return executeExternalMcpTool({
-        server,
+        server: accountConnection(server, accountsFor(server), input.account),
         listedName: input.tool,
         input: input.arguments ?? {},
         toolCallId: options.toolCallId,

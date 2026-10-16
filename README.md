@@ -53,6 +53,8 @@ and tools together as you plan, build, and review.
   [voice dictation](docs/chat-context.md#voice-dictation).
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
+- **Plugins:** install Codex, Claude Code, and Agent Plugins plugins from Git;
+  their skills, MCP tools, agents, and hooks work with every model. See [Plugins](docs/plugins.md).
 - **Mobile app:** follow and direct your bots, and the chats and workspaces of
   your bot server, from iOS or Android, with notifications when they need you.
   See [mobile app](docs/mobile.md).
@@ -115,6 +117,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Local data and recovery](docs/local-data.md)
 - [Artifacts](docs/artifacts.md)
 - [Context usage and compaction](docs/chat-context.md)
+- [Plugins](docs/plugins.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
 - [Mobile app](docs/mobile.md)

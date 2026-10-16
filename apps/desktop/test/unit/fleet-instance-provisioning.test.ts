@@ -266,6 +266,7 @@ it('advertises provisioning, environments, environment compaction and transcript
   expect((await runtime.status()).capabilities).toEqual([
     'files',
     'environment-settings-v1',
+    'environment-plugins-v1',
     'account-failover',
     'provisioning',
     'environments',

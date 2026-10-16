@@ -8,6 +8,7 @@ import { getConversation } from '../../store'
  * (message/conversation deletion/wipe) paths.
  */
 import { randomUUID } from 'node:crypto'
+import { CODEX_NATIVE_INTEGRATIONS_OFF } from './app-server-contract'
 import type { CodexAppServerClient } from './client'
 import { codexTextInput } from './protocol'
 import type { CodexSubscriptionManager, CodexSubscriptionModel } from './manager'
@@ -182,9 +183,7 @@ export async function generateImageWithCodexRuntime(args: {
           'features.multi_agent': false,
           'features.multi_agent_v2': false,
           'features.shell_tool': false,
-          'features.apps': false,
-          'features.plugins': false,
-          'features.tool_suggest': false,
+          ...CODEX_NATIVE_INTEGRATIONS_OFF,
           'features.image_generation': true,
           web_search: 'disabled',
         },

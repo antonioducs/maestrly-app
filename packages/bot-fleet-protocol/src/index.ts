@@ -7,6 +7,7 @@ export * from './host-editor.js'
 export * from './screen-stream.js'
 
 export * from './environment-settings.js'
+export * from './plugins.js'
 export * from './mobile-bridge.js'
 export * from './mobile-bridge-client.js'
 export * from './push.js'

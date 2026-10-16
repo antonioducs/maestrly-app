@@ -10,7 +10,58 @@ export default {
     open: 'Abrir',
     openFailed: 'Não foi possível abrir o artefato.',
   },
-  mcp: { unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.' },
+  mcp: {
+    unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.',
+    accounts: {
+      signIn: 'Entrar',
+      addAccount: 'Adicionar conta',
+      signInAgain: 'Entrar de novo',
+      signedIn: 'Conectado',
+      needsSignIn: 'Precisa entrar',
+      waiting: 'Termine de entrar no navegador…',
+      cancel: 'Cancelar',
+      rename: 'Renomear',
+      save: 'Salvar',
+      change: 'Alterar',
+      remove: 'Remover',
+      label: 'Nome da conta',
+      labelInvalid: 'Use de 1 a 40 letras, números, espaços ou . _ @ + -',
+      labelTaken: 'Outra conta deste servidor já tem esse nome.',
+      scopeGlobal: 'Todas as conversas',
+      scopeProjects_one: '{{count}} projeto',
+      scopeProjects_other: '{{count}} projetos',
+      accountActions: 'Conta {{label}}',
+      ownClient: {
+        current: 'Cliente OAuth próprio: {{clientId}}',
+        heading: 'Seu próprio cliente OAuth',
+        help: 'Este servidor não registra apps automaticamente. Crie um cliente OAuth no provedor dele, do tipo app desktop ou nativo, com redirecionamento loopback, e informe aqui.',
+        clientId: 'Client ID',
+        clientSecret: 'Client secret (opcional)',
+        secretKept: 'O secret fica criptografado no host que roda o servidor e nunca é mostrado de novo.',
+        googleTitle: 'Com o Google',
+        google1:
+          'Google Cloud Console → APIs e serviços → Credenciais → Criar ID do cliente OAuth → App para computador.',
+        google2: 'Ative a API do serviço no mesmo projeto (por exemplo, a Gmail MCP API).',
+        google3:
+          'Na tela de consentimento OAuth, adicione suas contas como usuários de teste. No modo Testing, o login expira a cada 7 dias.',
+        save: 'Salvar e entrar',
+        remove: 'Remover',
+        removeFailed: 'Não foi possível salvar o cliente.',
+      },
+      error: {
+        timeout: 'O login expirou. Tente de novo.',
+        denied: 'O login foi recusado no navegador.',
+        'registration-unsupported':
+          'Este servidor não registra apps automaticamente. Informe seu próprio cliente OAuth.',
+        'discovery-failed': 'O servidor não informou como fazer login.',
+        unavailable: 'Não é possível entrar neste servidor agora.',
+        'server-changed': 'O servidor mudou durante o login. Tente de novo.',
+        storage: 'O armazenamento seguro não está disponível, então o login não pôde ser salvo.',
+        failed: 'O login falhou. Tente de novo.',
+        'label-taken': 'Outra conta deste servidor já tem esse nome.',
+      },
+    },
+  },
   personalMemorySettings: {
     dialogTitle: 'Configurações da memória pessoal',
     enabledHint: 'Use memórias pessoais nos chats deste perfil.',
@@ -132,6 +183,10 @@ export default {
     },
   },
   chatgptWeb: {
+    hooksUnsupported_one:
+      '{{plugins}} executa hooks no início da sessão, a cada prompt ou no fim do turno, e o companion não consegue executá-los. Desative o plugin nesta conversa ou use um modelo na Maestrly.',
+    hooksUnsupported_other:
+      '{{plugins}} executam hooks no início da sessão, a cada prompt ou no fim do turno, e o companion não consegue executá-los. Desative esses plugins nesta conversa ou use um modelo na Maestrly.',
     notConfigured: 'O ChatGPT Web ainda não está configurado. Conclua em Configurações › Maestrly Chat.',
     starting: 'Subindo o túnel…',
     waiting: 'Companion pronto. Habilite o Maestrly Bridge no ChatGPT e cole o prompt copiado.',
@@ -584,6 +639,7 @@ export default {
     artifacts: { label: 'Artefatos', desc: 'publica e atualiza páginas web' },
   },
   plusMenu: {
+    mcpAccountLabel: 'Conta {{label}} de {{server}}',
     add: 'Adicionar',
     imageFile: 'Imagem / arquivo',
     chatgptCompanion: 'Conversar no ChatGPT',
@@ -653,6 +709,7 @@ export default {
     modelFailed: 'O download falhou.',
   },
   view: {
+    errBlockedByHook: 'Um hook de plugin bloqueou esta mensagem: {{reason}}',
     errBusy: 'Já há um turno em andamento.',
     errNoModel: 'Escolha um modelo no seletor abaixo.',
     errNoProvider: 'Nenhum provedor conectado. Entre ou configure um em Configurações › Maestrly Chat.',
@@ -676,6 +733,9 @@ export default {
     queueEdit: 'Editar (volta ao campo)',
     queueRemove: 'Remover da fila',
     maestroLiveWaiting: 'aguardando Maestro',
+  },
+  hookNotice: {
+    source: 'Hook de {{plugin}} ({{event}})',
   },
   backgroundCompaction: {
     errors: {
@@ -1194,6 +1254,7 @@ export default {
     tabMaestro: 'Maestro',
     tabTools: 'Ferramentas',
     tabSkills: 'Skills',
+    tabPlugins: 'Plugins',
     tabPrompts: 'Prompts',
     tabComponents: 'Componentes',
     componentsDescription: 'Runtimes gerenciados e armazenamento',

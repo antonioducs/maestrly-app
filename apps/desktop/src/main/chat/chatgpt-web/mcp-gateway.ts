@@ -31,6 +31,14 @@ export interface ChatGptWebMcpCall {
   serverId: string
   toolName: string
   arguments?: Record<string, unknown>
+  /** Label of the signed-in account to use, for a server with several. */
+  account?: string
+}
+
+/** A signed-in account of a server that serves the session. */
+export interface ChatGptWebMcpAccount {
+  id: string
+  label: string
 }
 
 export interface ChatGptWebMcpGateway {
@@ -45,7 +53,14 @@ export interface ChatGptWebMcpGateway {
 
 export class ChatGptWebMcpGatewayError extends Error {
   constructor(
-    readonly code: 'aborted' | 'closed' | 'server_not_allowed' | 'tool_not_found' | 'scope_denied' | 'unavailable',
+    readonly code:
+      | 'aborted'
+      | 'closed'
+      | 'server_not_allowed'
+      | 'tool_not_found'
+      | 'scope_denied'
+      | 'unavailable'
+      | 'account_required',
     message: string
   ) {
     super(message)
@@ -56,6 +71,8 @@ export class ChatGptWebMcpGatewayError extends Error {
 export interface CreateChatGptWebMcpGatewayOptions {
   servers: readonly McpServer[]
   scopes: Readonly<Record<string, ChatGptWebCapabilityScope>>
+  /** Signed-in accounts of each server that serve the conversation; a call names one when there are several. */
+  accounts?: Readonly<Record<string, readonly ChatGptWebMcpAccount[]>>
   signal?: AbortSignal
   /** Test seam; production always uses the credential-hiding low-level connector. */
   connect?: (server: McpServer) => Promise<McpConnection>
@@ -260,6 +277,22 @@ export function createChatGptWebMcpGateway(options: CreateChatGptWebMcpGatewayOp
   const connections = new Map<string, Promise<McpConnection>>()
   let closed = false
 
+  /** The account a call uses: none, the only one, or the one it names (exactly, or ignoring case). */
+  const accountFor = (server: McpServer, label?: string): ChatGptWebMcpAccount | undefined => {
+    const accounts = options.accounts?.[server.id] ?? []
+    if (accounts.length <= 1) return accounts[0]
+    const name = typeof label === 'string' ? label.trim() : ''
+    const chosen =
+      accounts.find((account) => account.label === name) ??
+      accounts.find((account) => account.label.toLowerCase() === name.toLowerCase())
+    if (!name || !chosen)
+      throw new ChatGptWebMcpGatewayError(
+        'account_required',
+        `Choose an account of "${server.name}": ${accounts.map((account) => account.label).join(', ')}.`
+      )
+    return chosen
+  }
+
   const serverNotAllowedError = (): ChatGptWebMcpGatewayError => {
     const authorizedServerIds = options.servers
       .filter(
@@ -302,13 +335,14 @@ export function createChatGptWebMcpGateway(options: CreateChatGptWebMcpGatewayOp
     return { server, scope }
   }
 
-  const connectionFor = async (serverId: string): Promise<McpConnection> => {
+  const connectionFor = async (serverId: string, accountId?: string): Promise<McpConnection> => {
     const { server } = allowedServer(serverId)
-    let pending = connections.get(serverId)
+    const key = accountId ? `${serverId}#${accountId}` : serverId
+    let pending = connections.get(key)
     if (!pending) {
-      pending = connect(server)
-      connections.set(serverId, pending)
-      pending.catch(() => connections.delete(serverId))
+      pending = connect(accountId ? { ...server, oauthAccountId: accountId } : server)
+      connections.set(key, pending)
+      pending.catch(() => connections.delete(key))
     }
     try {
       const connection = await pending
@@ -323,8 +357,9 @@ export function createChatGptWebMcpGateway(options: CreateChatGptWebMcpGatewayOp
     }
   }
 
-  const catalog = async (serverId: string, signal?: AbortSignal): Promise<ListedMcpTool[]> => {
-    const connection = await connectionFor(serverId)
+  const catalog = async (serverId: string, signal?: AbortSignal, accountId?: string): Promise<ListedMcpTool[]> => {
+    // Any account lists the same tools: without one named, use the first.
+    const connection = await connectionFor(serverId, accountId ?? options.accounts?.[serverId]?.[0]?.id)
     try {
       return await withSignals(options.signal, signal, (merged) => connection.listTools({ signal: merged }))
     } catch (error) {
@@ -341,16 +376,17 @@ export function createChatGptWebMcpGateway(options: CreateChatGptWebMcpGatewayOp
   ): Promise<McpCallToolResult> => {
     if (!input || typeof input.serverId !== 'string') throw serverNotAllowedError()
     if (typeof input.toolName !== 'string') throw toolNotFoundError()
-    const { scope } = allowedServer(input.serverId)
+    const { server, scope } = allowedServer(input.serverId)
     if (expected === 'write' && scope !== 'write')
       throw new ChatGptWebMcpGatewayError('scope_denied', 'MCP write access is not enabled for this server.')
-    const tools = await catalog(input.serverId, signal)
+    const account = accountFor(server, input.account)
+    const tools = await catalog(input.serverId, signal, account?.id)
     const tool = tools.find((candidate) => candidate.name === input.toolName)
     if (!tool) throw toolNotFoundError()
     const actual = externalMcpToolReadOnly(tool.annotations) ? 'read' : 'write'
     if (actual !== expected)
       throw new ChatGptWebMcpGatewayError('scope_denied', `MCP tool is not classified as ${expected}.`)
-    const connection = await connectionFor(input.serverId)
+    const connection = await connectionFor(input.serverId, account?.id)
     try {
       const result = await withSignals(options.signal, signal, (merged) =>
         connection.callTool(input.toolName, input.arguments ?? {}, { signal: merged })

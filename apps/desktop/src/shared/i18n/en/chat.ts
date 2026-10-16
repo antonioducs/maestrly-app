@@ -6,7 +6,56 @@ export default {
     open: 'Open',
     openFailed: 'Could not open the artifact.',
   },
-  mcp: { unavailable: 'Its connection details could not be read on this computer. Configure it again.' },
+  mcp: {
+    unavailable: 'Its connection details could not be read on this computer. Configure it again.',
+    accounts: {
+      signIn: 'Sign in',
+      addAccount: 'Add account',
+      signInAgain: 'Sign in again',
+      signedIn: 'Signed in',
+      needsSignIn: 'Needs sign-in',
+      waiting: 'Finish signing in in your browser…',
+      cancel: 'Cancel',
+      rename: 'Rename',
+      save: 'Save',
+      change: 'Change',
+      remove: 'Remove',
+      label: 'Account name',
+      labelInvalid: 'Use 1 to 40 letters, numbers, spaces or . _ @ + -',
+      labelTaken: 'Another account of this server already has this name.',
+      scopeGlobal: 'All conversations',
+      scopeProjects_one: '{{count}} project',
+      scopeProjects_other: '{{count}} projects',
+      accountActions: 'Account {{label}}',
+      ownClient: {
+        current: 'Own OAuth client: {{clientId}}',
+        heading: 'Your own OAuth client',
+        help: 'This server does not register apps automatically. Create an OAuth client with its provider, of the desktop or native-app type, with a loopback redirect, then enter it here.',
+        clientId: 'Client ID',
+        clientSecret: 'Client secret (optional)',
+        secretKept: 'The secret is kept encrypted on the host that runs the server and is never shown again.',
+        googleTitle: 'With Google',
+        google1: 'Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID → Desktop app.',
+        google2: 'Enable the service’s API in the same project (for example, the Gmail MCP API).',
+        google3:
+          'On the OAuth consent screen, add your accounts as test users. In Testing mode, the sign-in expires every 7 days.',
+        save: 'Save and sign in',
+        remove: 'Remove',
+        removeFailed: 'The client could not be saved.',
+      },
+      error: {
+        timeout: 'Sign-in timed out. Try again.',
+        denied: 'Sign-in was declined in the browser.',
+        'registration-unsupported': 'This server does not register apps automatically. Enter your own OAuth client.',
+        'discovery-failed': 'The server did not describe how to sign in.',
+        unavailable: 'This server cannot be signed in to right now.',
+        'server-changed': 'The server changed during sign-in. Try again.',
+        storage: 'Secure storage is unavailable, so the sign-in could not be saved.',
+        failed: 'Sign-in failed. Try again.',
+        'label-taken': 'Another account of this server already has this name.',
+      },
+    },
+  },
   personalMemorySettings: {
     dialogTitle: 'Personal memory settings',
     enabledHint: 'Use personal memories across chats in this profile.',
@@ -128,6 +177,10 @@ export default {
     },
   },
   chatgptWeb: {
+    hooksUnsupported_one:
+      '{{plugins}} runs hooks when a session starts, on each prompt or when a turn ends, and the companion cannot run them. Turn the plugin off for this conversation or use a model in Maestrly.',
+    hooksUnsupported_other:
+      '{{plugins}} run hooks when a session starts, on each prompt or when a turn ends, and the companion cannot run them. Turn these plugins off for this conversation or use a model in Maestrly.',
     notConfigured: "ChatGPT Web isn't set up yet. Finish it in Settings › Maestrly Chat.",
     starting: 'Starting the tunnel…',
     waiting: 'Companion ready. Enable Maestrly Bridge in ChatGPT and paste the copied prompt.',
@@ -578,6 +631,7 @@ export default {
     artifacts: { label: 'Artifacts', desc: 'publish and update web pages' },
   },
   plusMenu: {
+    mcpAccountLabel: '{{server}} account {{label}}',
     add: 'Add',
     imageFile: 'Image / file',
     chatgptCompanion: 'Converse in ChatGPT',
@@ -647,6 +701,7 @@ export default {
     modelFailed: 'Download failed.',
   },
   view: {
+    errBlockedByHook: 'A plugin hook blocked this message: {{reason}}',
     errBusy: "There's already a turn in progress.",
     errNoModel: 'Choose a model in the selector below.',
     errNoProvider: 'No connected provider. Sign in or configure one in Settings › Maestrly Chat.',
@@ -670,6 +725,9 @@ export default {
     queueEdit: 'Edit (back to the field)',
     queueRemove: 'Remove from queue',
     maestroLiveWaiting: 'waiting for Maestro',
+  },
+  hookNotice: {
+    source: '{{plugin}} hook ({{event}})',
   },
   backgroundCompaction: {
     errors: {
@@ -1185,6 +1243,7 @@ export default {
     tabMaestro: 'Maestro',
     tabTools: 'Tools',
     tabSkills: 'Skills',
+    tabPlugins: 'Plugins',
     tabPrompts: 'Prompts',
     tabComponents: 'Components',
     componentsDescription: 'Managed runtimes and storage',

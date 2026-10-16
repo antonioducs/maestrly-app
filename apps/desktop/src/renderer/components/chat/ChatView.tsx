@@ -115,6 +115,7 @@ import { contextMeterReading, sameContextModel, selectContextObservation } from 
 import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
+import { addHookNotice, BLOCKED_BY_HOOK, HOOK_NOTICE_INFO_MS, type HookNoticeItem, HookNotices } from './HookNotices'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { ReviewRoom } from './review/ReviewRoom'
 import type { ReviewReceiptActions } from './review/ReviewReceiptCard'
@@ -278,6 +279,8 @@ export function ChatView({
   const [companionStarting, setCompanionStarting] = useState(false)
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
+  const [hookNotices, setHookNotices] = useState<HookNoticeItem[]>([])
+  const hookNoticeIdRef = useRef(0)
   const { review, apply: applyReview } = useConversationReview(api, conversationId)
   // The review room: opened at its first stage for a target, or showing the review that holds the conversation.
   const [reviewRoomTarget, setReviewRoomTarget] = useState<ReviewTarget | null>(null)
@@ -777,7 +780,9 @@ export function ChatView({
                     ? t('view.errInvalidAttachment')
                     : error === 'pdf-unreadable'
                       ? t('view.errPdfUnreadable')
-                      : t('view.errSendFailed')
+                      : error?.startsWith(BLOCKED_BY_HOOK)
+                        ? t('view.errBlockedByHook', { reason: error.slice(BLOCKED_BY_HOOK.length) })
+                        : t('view.errSendFailed')
 
   const pushAssistantError = useCallback(
     (text: string) => {
@@ -1099,6 +1104,11 @@ export function ChatView({
       applyBackgroundCompactionState(conversationId, event.state)
       return
     }
+    if (event.kind === 'hook-notice') {
+      const notice = { id: ++hookNoticeIdRef.current, ...event }
+      setHookNotices((current) => addHookNotice(current, notice))
+      return
+    }
 
     // Hidden standalone views do not render tokens, but must retain the active response before
     // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
@@ -1374,6 +1384,20 @@ export function ChatView({
   }, [failoverNotice])
 
   useEffect(() => {
+    setHookNotices([])
+  }, [conversationId])
+
+  useEffect(() => {
+    const info = hookNotices.find((notice) => notice.level === 'info')
+    if (!info) return
+    const timer = window.setTimeout(
+      () => setHookNotices((current) => current.filter((notice) => notice.id !== info.id)),
+      HOOK_NOTICE_INFO_MS
+    )
+    return () => window.clearTimeout(timer)
+  }, [hookNotices])
+
+  useEffect(() => {
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
       api.onChatSubscriptionStatus(provider, () => setModelRefresh((n) => n + 1))
     )
@@ -1647,9 +1671,10 @@ export function ChatView({
         if (isMaestro) setMaestroSendTarget('current')
         return
       }
-      // A refused send must not cost what was written: a busy chat gives the draft back to be sent again.
+      // A refused send must not cost what was written: a busy chat, or a prompt a plugin hook blocked, gives the
+      // draft back to be sent again.
       void doSend(text, atts, agentMentions).then((result) => {
-        if (result?.error !== 'busy') return
+        if (result?.error !== 'busy' && !result?.error?.startsWith(BLOCKED_BY_HOOK)) return
         setDraft((current) => current || text)
         setDraftMentions((current) => (current.length ? current : agentMentions))
         setAttachments((current) => (current.length ? current : atts))
@@ -2368,6 +2393,11 @@ export function ChatView({
                   </div>
                 </div>
               )}
+
+              <HookNotices
+                notices={hookNotices}
+                onDismiss={(id) => setHookNotices((current) => current.filter((notice) => notice.id !== id))}
+              />
 
               {failoverNotice && (
                 <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">

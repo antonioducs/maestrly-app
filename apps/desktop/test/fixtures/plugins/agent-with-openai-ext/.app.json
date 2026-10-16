@@ -1,0 +1,7 @@
+{
+  "apps": {
+    "example": {
+      "id": "connector_fixture"
+    }
+  }
+}

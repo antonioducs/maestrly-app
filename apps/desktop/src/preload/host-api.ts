@@ -8,6 +8,7 @@ import { localDataApi, makeLocalDataApi } from './api-local-data'
 import { makeMemoryApi, memoryApi } from './api-memory'
 import { makeNotesApi, notesApi } from './api-notes'
 import { makePlanApi, planApi } from './api-plan'
+import { makePluginsApi, pluginsApi } from './api-plugins'
 import { makeProjectSetupApi, projectSetupApi } from './api-project-setup'
 import { makePtyApi, ptyApi } from './api-pty'
 import { makeReviewApi, reviewApi } from './api-review'
@@ -33,6 +34,7 @@ export function makeHostApi(ipcRenderer: IpcTransport) {
     ...makeSettingsHostApi(ipcRenderer),
     ...makeRuntimeAssetsApi(ipcRenderer),
     ...makeChatApi(ipcRenderer),
+    ...makePluginsApi(ipcRenderer),
     ...makeBotApi(ipcRenderer),
     ...makeHostFsApi(ipcRenderer),
   }
@@ -55,6 +57,7 @@ export const localHostApi: HostApi = {
   ...settingsHostApi,
   ...runtimeAssetsApi,
   ...chatApi,
+  ...pluginsApi,
   ...botApi,
   ...hostFsApi,
 }

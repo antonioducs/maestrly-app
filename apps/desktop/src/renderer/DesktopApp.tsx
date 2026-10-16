@@ -330,6 +330,7 @@ export function DesktopApp() {
     artifactsOpen,
     setArtifactsOpen,
     settingsSection,
+    settingsRequest,
     onboardingOpen,
     setOnboardingOpen,
     onboardingChecked,
@@ -1010,7 +1011,12 @@ export function DesktopApp() {
                 </HostProvider>
               )}
               {settingsOpen && (
-                <SettingsView fleet={fleet} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />
+                <SettingsView
+                  fleet={fleet}
+                  initialSection={settingsSection}
+                  request={settingsRequest}
+                  onClose={() => setSettingsOpen(false)}
+                />
               )}
               {artifactsOpen && (
                 <ArtifactsCenter

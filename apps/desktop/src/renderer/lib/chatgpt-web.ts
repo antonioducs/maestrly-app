@@ -28,6 +28,24 @@ export async function openChatGptWebAppSettings(
   await api.openExternalUrl(url)
 }
 
+/**
+ * The plugins whose hooks keep a companion from starting (hooks on a session's start, prompts or turn ends need a turn
+ * Maestrly runs), read from the start error; null for any other error.
+ */
+export function companionHookPlugins(error: string): string[] | null {
+  const match = /^companion-hooks-unsupported: (.+)$/.exec(error)
+  return match ? match[1].split(', ').filter(Boolean) : null
+}
+
+/** A companion start error as the person reads it. */
+export function companionStartError(
+  error: string,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const plugins = companionHookPlugins(error)
+  return plugins ? t('chat:chatgptWeb.hooksUnsupported', { count: plugins.length, plugins: plugins.join(', ') }) : error
+}
+
 export interface ChatGptWebStartOutcome {
   pairingRequired: boolean
   promptCopied: boolean

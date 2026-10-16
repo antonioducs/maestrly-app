@@ -18,6 +18,7 @@ import { ptyApi } from '../../src/preload/api-pty'
 import { performanceApi } from '../../src/preload/api-performance'
 import { projectSetupApi } from '../../src/preload/api-project-setup'
 import { runtimeAssetsApi } from '../../src/preload/api-runtime-assets'
+import { pluginsApi } from '../../src/preload/api-plugins'
 import { reviewApi } from '../../src/preload/api-review'
 import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
@@ -25,7 +26,7 @@ import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
-import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
@@ -71,9 +72,11 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['chatApi', chatApi],
   ['chatLocalApi', chatLocalApi],
   ['chatWindowApi', chatWindowApi],
+  ['pluginsApi', pluginsApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
+  ['fleetEnvironmentPlugins', { fleetEnvironmentPlugins }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['hostsApi', hostsApi],
   ['hostFsApi', hostFsApi],
@@ -149,6 +152,10 @@ const KNOWN_MAIN_ONLY: string[] = [
   'editor:restart',
   'editor:navigate',
   'editor:snapshot',
+  // MCP OAuth: this computer's main process asks the server's host for a descriptor and hands it the finished
+  // sign-in (mcp-oauth:connect), directly or over the host bridge; no renderer calls them.
+  'chat:mcp-oauth:descriptor',
+  'chat:mcp-oauth:store',
   // A host's conversation move endpoint: this computer's main process (the move coordinator) invokes it over the host
   // bridge (conversation-move/remote-endpoint), never a renderer through the preload.
   'conversation-move-endpoint:inspect-source',
@@ -335,7 +342,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(587)
+    expect(keys).toHaveLength(608)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -394,7 +401,14 @@ describe('preload API — exposure', () => {
   })
 
   it('exposes a fixed, environment-addressed method for every settings operation', () => {
-    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(Object.keys(FLEET_SETTINGS_OPERATIONS).sort())
+    // Plugin values, sign-in tokens and the own OAuth client's secret never pass through a renderer: those operations
+    // have no renderer method.
+    const mainOnly = ['bringPlugin', 'setMcpOAuth', 'mcpOAuthDescriptor']
+    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(
+      Object.keys(FLEET_SETTINGS_OPERATIONS)
+        .filter((name) => !mainOnly.includes(name))
+        .sort()
+    )
     expect(api.fleetEnvironmentSettings).toBe(fleetEnvironmentSettings)
     const input = { expectedRevision: 'synthetic-revision' }
     for (const [name, method] of Object.entries(fleetEnvironmentSettings)) {
@@ -402,6 +416,20 @@ describe('preload API — exposure', () => {
       method('synthetic-environment', input as never)
       expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, 'synthetic-environment', input)
     }
+  })
+
+  it('brings plugins and signs in to environment servers through main-process channels', () => {
+    expect(api.fleetEnvironmentPlugins).toBe(fleetEnvironmentPlugins)
+    fleetEnvironmentPlugins.bring('env-1', 'demo@market')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:plugins:bring', 'env-1', 'demo@market')
+    fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1', undefined)
+    fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1', { accountId: 'acc_000000000001' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1', {
+      accountId: 'acc_000000000001',
+    })
+    fleetEnvironmentPlugins.mcpOAuthCancel('env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', 'env-1', 'mcp_1')
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {
@@ -1483,6 +1511,57 @@ describe('preload API — chat pagination (#559)', () => {
   it('chatSearchMessages(convId,query) -> chat:search (invoke) [#559]', () => {
     api.chatSearchMessages('c1', 'term')
     expect(invokeSpy).toHaveBeenCalledWith('chat:search', 'c1', 'term')
+  })
+
+  it('MCP sign-in wrappers name the host and the server', () => {
+    api.chatMcpOAuthConnect('direct/host', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:connect', 'direct/host', 'mcp_1', undefined)
+    api.chatMcpOAuthConnect('local', 'mcp_1', { accountId: 'acc_000000000001', label: 'Work' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:connect', 'local', 'mcp_1', {
+      accountId: 'acc_000000000001',
+      label: 'Work',
+    })
+    api.chatMcpOAuthCancel('local', 'plg_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('mcp-oauth:cancel', 'local', 'plg_1')
+    api.chatMcpOAuthForget('mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:forget', 'mcp_1', undefined)
+    api.chatMcpOAuthForget('mcp_1', 'acc_000000000001')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:forget', 'mcp_1', 'acc_000000000001')
+    api.chatMcpOAuthPatchAccount('mcp_1', 'acc_000000000001', { label: 'Work' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:patch-account', 'mcp_1', 'acc_000000000001', {
+      label: 'Work',
+    })
+    // The own client goes to the host; nothing returns the secret.
+    api.chatMcpOAuthSetClient('mcp_1', { clientId: 'own', clientSecret: 'synthetic' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:set-client', 'mcp_1', {
+      clientId: 'own',
+      clientSecret: 'synthetic',
+    })
+    api.chatMcpOAuthSetClient('mcp_1', null)
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:mcp-oauth:set-client', 'mcp_1', null)
+  })
+
+  it('plugin wrappers preserve channels and pass a single payload', () => {
+    const plugin = { marketplaceId: 'm1', name: 'p1' }
+    const cases: Array<[string, unknown, string]> = [
+      ['pluginsCatalog', 'm1', 'chat:plugins:catalog'],
+      ['pluginsInspect', plugin, 'chat:plugins:inspect'],
+      ['pluginsLogo', plugin, 'chat:plugins:logo'],
+      ['pluginsMarketplaceAdd', { url: 'https://example.invalid/m.git' }, 'chat:plugins:marketplace-add'],
+      ['pluginsMarketplaceRefresh', 'm1', 'chat:plugins:marketplace-refresh'],
+      ['pluginsMarketplaceRemove', { id: 'm1', uninstall: false }, 'chat:plugins:marketplace-remove'],
+      ['pluginsUpdate', { key: 'p1@m1' }, 'chat:plugins:update'],
+      ['pluginsSetEnabled', { key: 'p1@m1', enabled: true }, 'chat:plugins:set-enabled'],
+      ['pluginsSetInputs', { key: 'p1@m1', values: { TOKEN: null } }, 'chat:plugins:set-inputs'],
+      ['pluginsSetHooks', { key: 'p1@m1', enabled: true, consent: true }, 'chat:plugins:set-hooks'],
+      ['pluginsUninstall', { key: 'p1@m1', deleteData: true }, 'chat:plugins:uninstall'],
+    ]
+    for (const [method, payload, channel] of cases) {
+      api[method](payload)
+      expect(invokeSpy).toHaveBeenLastCalledWith(channel, payload)
+    }
+    api.pluginsState()
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:plugins:state')
   })
 
   it('skill groups and selections preserve channels and argument order', () => {

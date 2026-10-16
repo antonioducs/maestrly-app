@@ -95,11 +95,13 @@ import { limitConversationContextWindow } from './conversation-context-limit'
 import {
   addMcpServer,
   disposeMcpRuntime,
-  listMcpServers,
+  listRuntimeMcpServers,
   removeMcpServer,
   updateMcpServer,
   type McpServer,
+  type UserMcpServer,
 } from './mcp'
+import { activeMcpOAuthAccounts, mcpOAuthField } from './mcp-oauth'
 import {
   invalidateProvider,
   resolveLanguageModel,
@@ -417,6 +419,7 @@ import type {
   FrozenFailoverAccount,
   InternalTurnHandle,
   InternalTurnOutcome,
+  McpServerInfo,
   MessagePart,
   SubagentSessionSummary,
 } from '../../shared/chat'
@@ -498,6 +501,21 @@ import {
   parseBackgroundCompactionConfig,
 } from './background-compaction'
 import type { BackgroundCompactionAttemptHandle, BackgroundCompactionCandidate } from './background-compaction/types'
+import {
+  hasHookEvent,
+  hookContextPart,
+  hookSessionBoundary,
+  hooksActive,
+  MAX_STOP_HOOK_CONTINUATIONS,
+  removeHookTranscript,
+  runnerHookContext,
+  runSessionStart,
+  runStop,
+  runUserPromptSubmit,
+  sessionStartSource,
+  shouldContinueAfterStop,
+  stopHookPrompt,
+} from './plugin-hooks'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -2030,11 +2048,20 @@ export function fleetChatGetConvTools(conversationId: string): ChatConvTools {
 export function fleetChatSetConvTools(conversationId: string, patch: ChatConvToolsPatch): { ok: boolean } {
   if (typeof conversationId === 'string') {
     const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
-    const { appGroups, ...rest } = patch ?? {}
+    const { appGroups, mcpAccountsDisabled, ...rest } = patch ?? {}
+    const accountsOff = Array.isArray(mcpAccountsDisabled)
+      ? {
+          mcpAccountsDisabled: [
+            ...new Set(mcpAccountsDisabled.filter((key) => typeof key === 'string' && MCP_ACCOUNT_KEY.test(key))),
+          ].slice(0, 500),
+        }
+      : {}
     // Group overrides merge per group, so pinning one group keeps the others inheriting the global setting.
     const groups =
       appGroups === undefined ? cur.appGroups : { ...cur.appGroups, ...sanitizeAppToolGroupPatch(appGroups) }
-    patchConvChat(conversationId, { tools: { ...cur, ...rest, ...(groups ? { appGroups: groups } : {}) } })
+    patchConvChat(conversationId, {
+      tools: { ...cur, ...rest, ...accountsOff, ...(groups ? { appGroups: groups } : {}) },
+    })
   }
   return { ok: true }
 }
@@ -2046,6 +2073,22 @@ export function fleetChatConfig(): Pick<ChatConfig, 'mcpServers' | 'appToolsEnab
     appToolsEnabled: config.appToolsEnabled,
     imageGenEnabled: config.imageGenEnabled,
   }
+}
+
+/** Scheme and host of a URL, without path, query or credentials. */
+function safeUrlHost(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.protocol}//${parsed.host}`
+  } catch {
+    return ''
+  }
+}
+
+/** The sign-in Settings shows for a remote server; nothing for local or unreadable ones. */
+function mcpAuthField(server: McpServer): Pick<McpServerInfo, 'oauth'> {
+  const oauth = mcpOAuthField(server)
+  return oauth ? { oauth } : {}
 }
 
 function buildConfig(): ChatConfig {
@@ -2098,14 +2141,17 @@ function buildConfig(): ChatConfig {
       ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
     })),
     presets: PROVIDER_PRESETS,
-    mcpServers: listMcpServers().map((s) => ({
+    mcpServers: listRuntimeMcpServers({ includeInactivePlugins: true }).map((s) => ({
       id: s.id,
       name: s.name,
       transport: s.transport,
       enabled: s.enabled,
       unavailable: s.unavailable === true,
-      url: s.url,
-      command: s.command,
+      // Plugin servers expand local paths and user inputs: show where they go, not their launch details.
+      url: s.origin ? (s.url ? safeUrlHost(s.url) : undefined) : s.url,
+      command: s.origin ? (s.command ? path.basename(s.command) : undefined) : s.command,
+      ...(s.origin ? { plugin: { key: s.origin.pluginKey, displayName: s.origin.pluginName } } : {}),
+      ...mcpAuthField(s),
     })),
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),
@@ -2672,8 +2718,36 @@ function convToolsFor(conversationId: string): ChatConvTools {
     appGroups: appAccess.groups,
     mcpDisabled: t?.mcpDisabled ?? [],
     imageGen: imageGenEnabledFor(conversationId),
+    pluginMcpServers: listRuntimeMcpServers({ conversationId })
+      .filter((server) => server.origin)
+      .map((server) => server.id),
+    mcpAccounts: conversationAccountChoices(conversationId, t?.mcpAccountsDisabled ?? []),
+    mcpAccountsDisabled: t?.mcpAccountsDisabled ?? [],
   }
 }
+
+/** Servers with several accounts in a conversation's scope, for turning accounts on or off in it. */
+function conversationAccountChoices(conversationId: string, disabled: readonly string[]): ChatConvTools['mcpAccounts'] {
+  const off = new Set(disabled)
+  return listRuntimeMcpServers({ conversationId }).flatMap((server) => {
+    if (!server.enabled || server.unavailable || server.transport === 'stdio') return []
+    const accounts = activeMcpOAuthAccounts(server, conversationId)
+    if (accounts.length < 2) return []
+    return [
+      {
+        serverId: server.id,
+        serverName: server.name,
+        accounts: accounts.map((account) => ({
+          id: account.id,
+          label: account.label,
+          enabled: !off.has(`${server.id}#${account.id}`),
+        })),
+      },
+    ]
+  })
+}
+
+const MCP_ACCOUNT_KEY = /^(mcp_[0-9a-f-]{36}|plg_[0-9a-f]{20})#acc_[0-9a-f]{12}$/
 
 function getBroker(): PermissionBroker {
   if (!broker) {
@@ -3620,6 +3694,8 @@ interface StartSendOpts {
   }
   /** Structured outcome of this admitted turn, on every terminal path. Not called when admission fails. */
   onOutcome?: (outcome: InternalTurnOutcome) => void
+  /** How many turns in a row plugin Stop hooks already kept going (this turn is one of them when above zero). */
+  stopHookContinuations?: number
 }
 
 async function startSend(
@@ -4160,6 +4236,48 @@ async function startSend(
           })
     if (turnMemory) for (const p of turnMemory.hiddenParts) parts.push(p)
 
+    // Plugin hooks on the session's start and on each prompt, run by Maestrly for every model before the prompt is
+    // stored: their context reaches the model as hidden parts of this message (never the cached project context).
+    const hookSend = makeSafeSend(wc)
+    const hookContext = (signal: AbortSignal) =>
+      runnerHookContext({
+        conversationId,
+        cwd: conv.cwd,
+        mode: turnBehavior,
+        signal,
+        emit: (event) => hookSend(`chat:delta:${conversationId}`, event),
+      })
+    const hookTurn = !internalLoop && hooksActive({ conversationId, mode: turnBehavior })
+    let hookSessionToRecord: string | null = null
+    if (hookTurn) {
+      const ctx = hookContext(operation.controller.signal)
+      const history = listConversationContextMessages(conversationId)
+      const source = sessionStartSource(
+        getConvUiPrefs(conversationId).hookSession,
+        hookSessionBoundary(history),
+        history.length > 0
+      )
+      if (source) {
+        const started = await runSessionStart(ctx, source)
+        if (started.context.length) parts.push(hookContextPart('SessionStart', started.context))
+        hookSessionToRecord = hookSessionBoundary(history)
+      }
+      if (!opts?.internal) {
+        const prompt = await runUserPromptSubmit(ctx, text)
+        if (prompt.block) {
+          releaseCwdActivityOnce()
+          removeHookTranscript(conversationId)
+          return { ok: false, error: `blocked-by-hook: ${prompt.block}` }
+        }
+        if (prompt.context.length) parts.push(hookContextPart('UserPromptSubmit', prompt.context))
+      }
+      if (operation.controller.signal.aborted) {
+        releaseCwdActivityOnce()
+        removeHookTranscript(conversationId)
+        return { ok: false, error: 'cancelled' }
+      }
+    }
+
     if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
 
@@ -4654,6 +4772,9 @@ async function startSend(
     turnMemory?.commit()
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
+    // The session's start hooks ran for this boundary only once their context is part of a stored message.
+    if (hookSessionToRecord !== null)
+      patchConvUiPrefs(conversationId, { hookSession: { boundary: hookSessionToRecord } })
     operation.pendingMessage = undefined
     markReviewReportsDelivered(conversationId, reviewDeliveries)
     // Provenance is decided here, at admission, from how the turn entered — never from transcript roles.
@@ -4880,6 +5001,7 @@ async function startSend(
       : {}
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
+    let stopHookContinuation: { prompt: string; count: number } | null = null
     // A routed loop round takes the admitted-target branch below, which reproduces the frozen axes on each account.
     if (useCodexSubscription && isolated && !loopRouted) {
       const selectedModelId = selection!.modelId
@@ -5647,6 +5769,31 @@ async function startSend(
             }
           }
         }
+        // A plugin Stop hook may keep the agent going: its reason becomes an internal prompt, at most
+        // MAX_STOP_HOOK_CONTINUATIONS turns in a row.
+        if (hookTurn && !planSubmitted && !controller.signal.aborted && !hadError && !wasInterrupted) {
+          const continuations = opts?.stopHookContinuations ?? 0
+          const stop = await runStop(hookContext(controller.signal), continuations > 0)
+          if (stop.continueWith && stop.plugin && !controller.signal.aborted) {
+            const keepGoing = shouldContinueAfterStop(continuations)
+            send(`chat:delta:${conversationId}`, {
+              kind: 'hook-notice',
+              plugin: stop.plugin,
+              event: 'Stop',
+              text: keepGoing
+                ? stop.continueWith
+                : `Stop hooks kept the agent going ${MAX_STOP_HOOK_CONTINUATIONS} times in a row, so the turn ends here.`,
+              level: keepGoing ? 'info' : 'error',
+            } satisfies ChatStreamEvent)
+            if (keepGoing) {
+              stopHookContinuation = {
+                prompt: stopHookPrompt(stop.plugin, stop.continueWith),
+                count: continuations + 1,
+              }
+              return
+            }
+          }
+        }
         // Pure, tested decision (turn-status): abort→'idle'; error OR mid-stream cut→'error' (red);
         // otherwise→'ready'. `review_plan` retains ready behavior, but
         // emits it silently because the broker already played the dedicated plan alert.
@@ -5765,9 +5912,26 @@ async function startSend(
           scheduleMemoryExtraction(conversationId)
         }
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
+        if (hookTurn) removeHookTranscript(conversationId)
+        // Host continuations (Maestro's reconciliation guard, a Stop hook asking for more) run as an internal turn
+        // that settles this one when it ends; a Stop continuation keeps the authority this turn was admitted with.
         const guard = maestroGuardContinuation
+          ? { prompt: maestroGuardContinuation.prompt, failure: 'maestro-guard', opts: {} }
+          : stopHookContinuation
+            ? {
+                prompt: stopHookContinuation.prompt,
+                failure: 'stop-hook',
+                opts: {
+                  stopHookContinuations: stopHookContinuation.count,
+                  ...(opts?.botAdmission ? { botAdmission: opts.botAdmission } : {}),
+                  ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
+                  ...(opts?.runnerSignal ? { runnerSignal: opts.runnerSignal } : {}),
+                },
+              }
+            : null
         if (guard) {
           const continuation = await startSend(deps, wc, conversationId, guard.prompt, undefined, {
+            ...guard.opts,
             internal: true,
             onComplete: (result) => {
               try {
@@ -5780,7 +5944,7 @@ async function startSend(
               } else if (result.outcome === 'cancelled') {
                 run.settleOutcome({ status: 'cancelled', assistantMessageId: null })
               } else {
-                run.settleOutcome({ status: 'error', error: 'maestro-guard-failed', assistantMessageId: null })
+                run.settleOutcome({ status: 'error', error: `${guard.failure}-failed`, assistantMessageId: null })
               }
             },
           })
@@ -5794,7 +5958,7 @@ async function startSend(
             deps.emitStatus(conversationId, 'error')
             run.settleOutcome({
               status: 'error',
-              error: continuation.error ?? 'maestro-guard-admission-failed',
+              error: continuation.error ?? `${guard.failure}-admission-failed`,
               assistantMessageId: null,
             })
             send(`chat:delta:${conversationId}`, { kind: 'done' })
@@ -9779,6 +9943,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (!run || !control || !run.midTurnSteering) {
         return { ok: false as const, error: 'target-unavailable' as const }
       }
+      // Prompt hooks run on every prompt: a steered message would skip them, so it waits for a turn of its own.
+      if (hasHookEvent(conversationId, behaviorFor(conversationId), 'UserPromptSubmit')) {
+        return { ok: false as const, error: 'target-unavailable' as const }
+      }
       const existing = getChatMessage(conversationId, clientUserMessageId)
       if (existing?.steering?.status === 'queued') return { ok: true as const, accepted: true as const }
       if (existing) return { ok: false as const, error: 'duplicate-id' as const }
@@ -10330,6 +10498,9 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // Await artifact rm INSIDE the reservation: releasing early would let an in-flight rm delete an image
       // just written by the next turn.
       await clearChatMessages(conversationId)
+      // The next turn starts a new plugin hook session from a clear.
+      if (getConvUiPrefs(conversationId).hookSession)
+        patchConvUiPrefs(conversationId, { hookSession: { cleared: true } })
       publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
       clearMaestroLiveRunsForConversation(conversationId)
       return { ok: true }
@@ -10784,7 +10955,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   )
 
   // MCP servers (their tools enter chat).
-  deps.mhandle('chat:mcp-add', (_e, input: Omit<McpServer, 'id' | 'enabled'> & { enabled?: boolean }) => {
+  deps.mhandle('chat:mcp-add', (_e, input: Omit<UserMcpServer, 'id' | 'enabled'> & { enabled?: boolean }) => {
     try {
       const s = addMcpServer(input)
       return { ok: true, id: s.id }
@@ -10792,13 +10963,21 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
   })
-  deps.mhandle('chat:mcp-update', async (_e, id: string, patch: Partial<McpServer>) => {
-    if (typeof id === 'string') updateMcpServer(id, patch ?? {})
+  deps.mhandle('chat:mcp-update', async (_e, id: string, patch: Partial<UserMcpServer>) => {
+    try {
+      if (typeof id === 'string') updateMcpServer(id, patch ?? {})
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
     await chatGptWeb.invalidateMcpConfiguration()
     return { ok: true }
   })
   deps.mhandle('chat:mcp-remove', async (_e, id: string) => {
-    if (typeof id === 'string') removeMcpServer(id)
+    try {
+      if (typeof id === 'string') removeMcpServer(id)
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
     await chatGptWeb.invalidateMcpConfiguration()
     return { ok: true }
   })

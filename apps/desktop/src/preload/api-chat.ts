@@ -5,7 +5,10 @@ import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import { ARTIFACT_OPEN_REQUEST_CHANNEL, type ArtifactOpenRequest, parseArtifactOpenRequest } from '../shared/artifacts'
 import type { IpcTransport } from './ipc-transport'
+import type { PluginScope } from '../shared/plugins'
 import type {
+  McpOAuthConnectOptions,
+  McpOAuthConnectResult,
   ChatConfig,
   ChatConvTools,
   ChatConvToolsPatch,
@@ -160,6 +163,14 @@ export const chatLocalApi = {
     ),
   chatAsrWarm: (): Promise<boolean> => ipcRenderer.invoke('chat:asr-warm'),
   chatAsrSupport: (): Promise<AsrSupport> => ipcRenderer.invoke('chat:asr-support'),
+  /** Signs in to a remote MCP server of `hostId` in this computer's browser; the host keeps the sign-in. */
+  chatMcpOAuthConnect: (
+    hostId: string,
+    serverId: string,
+    options?: McpOAuthConnectOptions
+  ): Promise<McpOAuthConnectResult> => ipcRenderer.invoke('mcp-oauth:connect', hostId, serverId, options),
+  chatMcpOAuthCancel: (hostId: string, serverId: string): Promise<void> =>
+    ipcRenderer.invoke('mcp-oauth:cancel', hostId, serverId),
 }
 
 /**
@@ -490,6 +501,21 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:mcp-update', id, patch),
 
     chatMcpRemove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:mcp-remove', id),
+    /** Signs out of one account of a remote MCP server of this host, or (without `accountId`) of all of them. */
+    chatMcpOAuthForget: (id: string, accountId?: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:mcp-oauth:forget', id, accountId),
+    /** Renames an account of a remote MCP server of this host, or changes the conversations it serves. */
+    chatMcpOAuthPatchAccount: (
+      id: string,
+      accountId: string,
+      patch: { label?: string; scope?: PluginScope }
+    ): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('chat:mcp-oauth:patch-account', id, accountId, patch),
+    /** Sets or removes the person's own OAuth client of a remote MCP server of this host; the secret never comes back. */
+    chatMcpOAuthSetClient: (
+      id: string,
+      client: { clientId: string; clientSecret?: string } | null
+    ): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:mcp-oauth:set-client', id, client),
 
     chatSetAppTools: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-app-tools', enabled),
 

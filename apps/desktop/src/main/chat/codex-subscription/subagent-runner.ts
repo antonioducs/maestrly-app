@@ -18,6 +18,7 @@ import {
   type DynamicToolFunctionSpec,
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
+import { CODEX_NATIVE_INTEGRATIONS_OFF } from './app-server-contract'
 import { codexShellEnvironmentConfig } from './host-mcp'
 import { nativeSubagentSuppressionConfig } from './model-catalog-override'
 import {
@@ -93,6 +94,8 @@ export interface RunCodexSubagentArgs {
   agentName: string
   task: string
   readOnly: boolean
+  /** The conversation has plugin tool hooks: the child uses Maestrly's tools, never the native shell. */
+  pluginToolHooks?: boolean
   /** Concrete transport tier resolved for this child model on the physical account used by the attempt. */
   serviceTier: string
   approvalPolicy: CodexApprovalPolicy
@@ -457,6 +460,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
           // Sent on start AND resume, like the parent thread's. Only the screen keys pass, and they come first so
           // no host policy flag below can be replaced.
           ...codexShellEnvironmentConfig(allowedConversationShellEnv(args.shellEnvironment)),
+          ...CODEX_NATIVE_INTEGRATIONS_OFF,
           ...(args.conversationScope === 'standalone'
             ? {
                 project_doc_max_bytes: 0,
@@ -478,13 +482,12 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
                 'features.shell_tool': false,
                 web_search: 'disabled',
                 'features.default_mode_request_user_input': false,
-                'features.apps': false,
-                'features.plugins': false,
                 'skills.include_instructions': false,
                 'features.skill_mcp_dependency_install': false,
               }
             : {}),
           ...(args.readOnly ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
+          ...(args.pluginToolHooks ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
           // Turned off by the user, or the gated host web_search is inherited: it shares the native tool's name.
           ...(getWebSearchProvider() === 'off' || providedDynamicToolNames.has(WEB_SEARCH_TOOL_NAME)
             ? { web_search: 'disabled' }
@@ -535,7 +538,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
                 isSubagentToolAllowed(spec.name, args.readOnly, providedDynamicToolNames)
               )
             ),
-            ...(args.readOnly ? { environments: [] } : {}),
+            ...(args.readOnly || args.pluginToolHooks ? { environments: [] } : {}),
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
             dynamicTools: DynamicToolRegistrationSpec[]
             environments?: []

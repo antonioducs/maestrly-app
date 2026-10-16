@@ -1501,6 +1501,25 @@ async function main() {
     'remote environment settings',
     'sanitized accounts/MCP; preserved key, models, skill bundle and echo transport; revision conflicts; preferences restored; three runtime snapshots'
   )
+
+  // Plugins: the real gateway and bot image serve the environment's own plugin engine. Nothing is installed: sources are
+  // Git repositories, and this test reaches no network.
+  // Past the 20 features installed desktops read: the gateway announces it in moreFeatures.
+  assert.ok((await request('GET', '/v1/meta')).moreFeatures.includes('environment-plugins-v1'))
+  assert.ok((await request('GET', environmentRoute)).capabilities.includes('environment-plugins-v1'))
+  const pluginState = await request('GET', settingsRoute + '/plugins')
+  assert.equal(pluginState.git.available, true, 'The bot image needs Git for plugin sources')
+  assert.equal(pluginState.secureStorage, true)
+  assert.deepEqual(pluginState.installed, [])
+  assert.deepEqual(await request('GET', settingsRoute + '/mcp-oauth'), { servers: [] })
+  assert.deepEqual(await request('POST', settingsRoute + '/plugin-sources', { url: 'http://example.invalid/r.git' }), {
+    ok: false,
+    error: 'invalid-url',
+  })
+  pass(
+    'environment plugins',
+    `advertised by gateway and environment; Git ${pluginState.git.version} and secure storage in the image; plain HTTP sources refused`
+  )
   await request('DELETE', provisioningRoute + '/mcp-servers/' + server.id, undefined, { status: 204 })
   await request('DELETE', provisioningRoute + '/skills/' + skill.name, undefined, { status: 204 })
   assert.ok(!(await request('GET', provisioningRoute + '/mcp-servers')).servers.some((item) => item.id === server.id))

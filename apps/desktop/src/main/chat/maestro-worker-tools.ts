@@ -122,6 +122,7 @@ export async function buildMaestroWorkerTools(args: {
       describeImage,
     })
     mcp = await buildMcpTools({
+      conversationId: args.conversationId,
       mode: 'agent',
       signal: args.signal,
       gate,

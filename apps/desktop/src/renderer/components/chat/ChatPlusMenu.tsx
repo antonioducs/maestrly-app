@@ -11,14 +11,16 @@ import {
   Shield,
   SlidersHorizontal,
   ChevronRight,
+  Puzzle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ChatConfig, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
+import type { ChatConfig, ChatConvTools, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
 import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../../../shared/app-tool-groups'
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
-import { startChatGptWebCompanion } from '@/lib/chatgpt-web'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { companionStartError, startChatGptWebCompanion } from '@/lib/chatgpt-web'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useSettings } from '@/lib/use-settings'
 import { ChatGptWebAccessEditor } from './ChatGptWebAccessEditor'
 import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 
@@ -75,7 +77,10 @@ export function ChatPlusMenu({
 }) {
   const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
+  const { t: tp } = useTranslation('plugins')
   const api = useHostApi()
+  const hostId = useHostId()
+  const { openSettings } = useSettings()
   const source = providedSource ?? localChatComposerSource(api, conversationId)
   const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | 'companion' | null>(null)
   const [config, setConfig] = useState<Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> | null>(
@@ -87,6 +92,9 @@ export function ChatPlusMenu({
   const appGroupsId = useId()
   const [imageGen, setImageGen] = useState(true)
   const [mcpDisabled, setMcpDisabled] = useState<string[]>([])
+  const [pluginMcpServers, setPluginMcpServers] = useState<string[] | null>(null)
+  const [mcpAccounts, setMcpAccounts] = useState<NonNullable<ChatConvTools['mcpAccounts']>>([])
+  const [mcpAccountsDisabled, setMcpAccountsDisabled] = useState<string[]>([])
   const [subagentProfilesEnabled, setSubagentProfilesEnabled] = useState(true)
   const [subagentsEnabled, setSubagentsEnabled] = useState(true)
   const [companionBusy, setCompanionBusy] = useState(false)
@@ -110,6 +118,9 @@ export function ChatPlusMenu({
       setAppGroups(t.appGroups ?? null)
       setImageGen(t.imageGen)
       setMcpDisabled(t.mcpDisabled)
+      setPluginMcpServers(t.pluginMcpServers ?? null)
+      setMcpAccounts(t.mcpAccounts ?? [])
+      setMcpAccountsDisabled(t.mcpAccountsDisabled ?? [])
     })
     if (!source.bot)
       api.chatGptWebCapabilities(targetConversationId).then((value) => {
@@ -199,6 +210,15 @@ export function ChatPlusMenu({
     setMcpDisabled(next)
     source.chatSetConvTools({ mcpDisabled: next })
   }
+  // A bot's accounts serve all of its conversations; only a host's conversations turn accounts on and off.
+  const toggleAccount = (serverId: string, accountId: string) => {
+    const key = `${serverId}#${accountId}`
+    const next = mcpAccountsDisabled.includes(key)
+      ? mcpAccountsDisabled.filter((item) => item !== key)
+      : [...mcpAccountsDisabled, key]
+    setMcpAccountsDisabled(next)
+    void api.chatSetConvTools(conversationId, { mcpAccountsDisabled: next })
+  }
   const toggleSubagentProfiles = () => {
     const targetConversationId = conversationId
     const profilesRevision = ++subagentProfilesRevisionRef.current
@@ -241,7 +261,7 @@ export function ChatPlusMenu({
       await startChatGptWebCompanion(conversationId, api)
       setActivePanel(null)
     } catch (cause) {
-      setCompanionError(cause instanceof Error ? cause.message : String(cause))
+      setCompanionError(companionStartError(cause instanceof Error ? cause.message : String(cause), t))
     } finally {
       setCompanionBusy(false)
       onCompanionStarting?.(false)
@@ -261,7 +281,10 @@ export function ChatPlusMenu({
     }
   }
 
-  const servers = config?.mcpServers ?? []
+  // A plugin's servers appear only in the conversations the plugin serves (its scope).
+  const servers = (config?.mcpServers ?? []).filter(
+    (server) => !server.plugin || !pluginMcpServers || pluginMcpServers.includes(server.id)
+  )
 
   return (
     <div className="relative" ref={ref}>
@@ -482,12 +505,42 @@ export function ChatPlusMenu({
               <div key={s.id} className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
                 <div className="min-w-0">
                   <div className="truncate text-[13px] text-foreground">{s.name}</div>
+                  {s.plugin && (
+                    <div className="truncate text-[11px] text-muted-foreground">
+                      {tp('managedBy', { name: s.plugin.displayName })}
+                    </div>
+                  )}
                   {!s.enabled && <div className="text-[11px] text-amber-400/80">{t('plusMenu.disabledGlobally')}</div>}
                 </div>
                 <Toggle on={on} onClick={() => s.enabled && toggleMcp(s.id)} label={s.name} />
               </div>
             )
           })}
+          {!source.bot &&
+            mcpAccounts
+              .filter((entry) => servers.some((server) => server.id === entry.serverId))
+              .map((entry) => (
+                <div key={entry.serverId} className="flex flex-col" data-mcp-accounts={entry.serverId}>
+                  {entry.accounts.map((account) => {
+                    const on = !mcpAccountsDisabled.includes(`${entry.serverId}#${account.id}`)
+                    return (
+                      <div
+                        key={account.id}
+                        className="flex items-center justify-between gap-2 rounded-md py-1 pl-6 pr-2.5"
+                      >
+                        <div className="min-w-0 truncate text-[12px] text-muted-foreground">
+                          {entry.serverName} · <span className="text-foreground">{account.label}</span>
+                        </div>
+                        <Toggle
+                          on={on}
+                          onClick={() => toggleAccount(entry.serverId, account.id)}
+                          label={t('plusMenu.mcpAccountLabel', { server: entry.serverName, label: account.label })}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
           {source.bot ? (
             <button
               type="button"
@@ -497,8 +550,19 @@ export function ChatPlusMenu({
               {manageMcpLabel ?? t('plusMenu.settingsHint')}
             </button>
           ) : (
-            <div className="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
-              {t('plusMenu.settingsHint')}
+            <div className="mt-1 flex items-center gap-2 border-t border-white/[0.06] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+              <span className="min-w-0 flex-1">{t('plusMenu.settingsHint')}</span>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setActivePanel(null)
+                  openSettings('chat', { chatTab: 'plugins', hostId })
+                }}
+                className="inline-flex shrink-0 items-center gap-1 hover:text-foreground"
+              >
+                <Puzzle className="h-3.5 w-3.5" /> {tp('browsePlugins')}
+              </button>
             </div>
           )}
         </div>

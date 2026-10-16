@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { insertWorkspace, insertConversation, type Workspace } from '../../src/main/store'
-import type { ProjectConversation } from '../../src/shared/conversation'
+import type { ProjectConversation, StandaloneConversation } from '../../src/shared/conversation'
 
 /** Factories persist through production helpers and require an open test database. */
 
@@ -22,7 +22,10 @@ export function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 /** Insert a conversation with deterministic defaults for tests. */
-export function makeConversation(workspaceId: string, overrides: Partial<ProjectConversation> = {}): ProjectConversation {
+export function makeConversation(
+  workspaceId: string,
+  overrides: Partial<ProjectConversation> = {}
+): ProjectConversation {
   cwdSeq += 1
   const conv: ProjectConversation = {
     scope: 'project',
@@ -39,6 +42,30 @@ export function makeConversation(workspaceId: string, overrides: Partial<Project
     pinnedAt: overrides.pinnedAt ?? null,
     lastActivityAt: overrides.lastActivityAt ?? Date.now(),
     isMulti: overrides.isMulti ?? 0,
+    uiPrefs: overrides.uiPrefs,
+  }
+  insertConversation(conv)
+  return conv
+}
+
+/** Insert a standalone chat (no workspace). */
+export function makeStandaloneConversation(overrides: Partial<StandaloneConversation> = {}): StandaloneConversation {
+  cwdSeq += 1
+  const conv: StandaloneConversation = {
+    scope: 'standalone',
+    id: overrides.id ?? randomUUID(),
+    workspaceId: null,
+    name: overrides.name ?? `chat-${cwdSeq}`,
+    branch: null,
+    mode: null,
+    experience: 'standard',
+    cwd: overrides.cwd ?? `/tmp/chat-${cwdSeq}-${randomUUID().slice(0, 8)}`,
+    status: overrides.status ?? 'idle',
+    createdAt: overrides.createdAt ?? Date.now(),
+    archived: overrides.archived ?? 0,
+    pinnedAt: overrides.pinnedAt ?? null,
+    lastActivityAt: overrides.lastActivityAt ?? Date.now(),
+    isMulti: 0,
     uiPrefs: overrides.uiPrefs,
   }
   insertConversation(conv)
