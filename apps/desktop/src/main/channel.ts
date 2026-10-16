@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { app } from 'electron'
-import { applyE2EUserData } from './test-mode'
+import { applyE2EUserData, isE2E } from './test-mode'
 
 export type Channel = 'prod' | 'beta' | 'dev'
 
@@ -98,9 +98,12 @@ export function applyChannelIdentity(): void {
     userDataDirName = `${userDataDirName}-${instanceId}`
   }
   app.setName(info.productName)
+  // An E2E run has its own userData; the channel profile would only leave an empty folder behind for every run.
+  if (isE2E()) {
+    applyE2EUserData()
+    return
+  }
   const dir = path.join(app.getPath('appData'), userDataDirName)
   mkdirSync(dir, { recursive: true })
   app.setPath('userData', dir)
-
-  applyE2EUserData()
 }
