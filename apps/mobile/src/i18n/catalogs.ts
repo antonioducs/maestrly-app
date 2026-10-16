@@ -497,6 +497,7 @@ export const en = {
   'plan.announce.discard': 'Plan discarded',
   'outbox.error.chatGone': 'the chat no longer exists',
   'outbox.error.noModel': 'the server has no model to use',
+  'outbox.error.blockedByHook': 'a plugin hook on the server blocked it',
   'settings.newChats': 'New chats',
   'settings.newChatsFoot': 'Every new chat on {server} starts with this setup. You can still change it in each chat.',
   'target.title': 'Start a chat',
@@ -1171,6 +1172,7 @@ export const ptBR: Record<keyof typeof en, string> = {
   'plan.announce.discard': 'Plano descartado',
   'outbox.error.chatGone': 'o chat não existe mais',
   'outbox.error.noModel': 'o servidor não tem modelo para usar',
+  'outbox.error.blockedByHook': 'um hook de plugin no servidor a bloqueou',
   'settings.newChats': 'Novos chats',
   'settings.newChatsFoot':
     'Todo chat novo em {server} começa com esta configuração. Você ainda pode mudá-la em cada chat.',

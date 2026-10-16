@@ -62,6 +62,10 @@ function setup() {
     send: { ok: true } as { ok: boolean; error?: string },
     mode: 'agent',
     mcpDisabled: [] as string[],
+    /** Plugin servers and signed-in accounts of the conversation, as `chat:get-conv-tools` reports them. */
+    convTools: {} as Record<string, unknown>,
+    mcpAccountsDisabled: [] as string[],
+    extraServers: [] as unknown[],
     limit: null as number | null,
     subagents: true,
     defaults: null as Record<string, unknown> | null,
@@ -133,10 +137,17 @@ function setup() {
   handle('chat:set-reasoning', () => undefined)
   handle('chat:get-fast-mode', () => true)
   handle('chat:set-fast-mode', () => undefined)
-  handle('chat:get-conv-tools', () => ({ app: true, mcpDisabled: state.mcpDisabled, imageGen: true }))
+  handle('chat:get-conv-tools', () => ({
+    app: true,
+    mcpDisabled: state.mcpDisabled,
+    imageGen: true,
+    ...state.convTools,
+    mcpAccountsDisabled: state.mcpAccountsDisabled,
+  }))
   handle('chat:set-conv-tools', (_id, patch) => {
-    const value = patch as { mcpDisabled?: string[] }
+    const value = patch as { mcpDisabled?: string[]; mcpAccountsDisabled?: string[] }
     if (value.mcpDisabled) state.mcpDisabled = value.mcpDisabled
+    if (value.mcpAccountsDisabled) state.mcpAccountsDisabled = value.mcpAccountsDisabled
     return undefined
   })
   handle('chat:skills:state', () => ({
@@ -152,6 +163,7 @@ function setup() {
     mcpServers: [
       { id: 'linear', name: 'Linear', transport: 'http', enabled: true },
       { id: 'off', name: 'Off', transport: 'http', enabled: false },
+      ...state.extraServers,
     ],
     defaultSelection: { providerId: 'claude', modelId: 'opus' },
   }))
@@ -484,6 +496,54 @@ describe('mobile API of a workspaces host', () => {
       ],
       defaultSelection: { providerId: 'claude', modelId: 'opus' },
     })
+    h.api.dispose()
+  })
+
+  it('lists plugin servers only where they serve, each account of a server, and names a prompt a hook blocked', async () => {
+    const h = setup()
+    const plugin = (id: string) => ({ id, name: id, transport: 'http', enabled: true, plugin: { key: 'p@m' } })
+    h.state.extraServers = [plugin('plg_serves'), plugin('plg_elsewhere')]
+    const accounts = (enabled: boolean) => [
+      { id: 'acc_000000000001', label: 'Personal', enabled: true },
+      { id: 'acc_000000000002', label: 'Work', enabled },
+    ]
+    h.state.convTools = {
+      pluginMcpServers: ['plg_serves'],
+      mcpAccounts: [{ serverId: 'plg_serves', serverName: 'plg_serves', accounts: accounts(true) }],
+    }
+    expect((await h.invoke('mobile:v1:setup', { conversationId: 'c1' })).mcp).toEqual([
+      { id: 'linear', name: 'Linear', enabled: true },
+      { id: 'plg_serves', name: 'plg_serves', enabled: true },
+      { id: 'plg_serves#acc_000000000001', name: 'plg_serves · Personal', enabled: true },
+      { id: 'plg_serves#acc_000000000002', name: 'plg_serves · Work', enabled: true },
+    ])
+    // An account switches on and off on its own, never as a server.
+    h.state.convTools = {
+      pluginMcpServers: ['plg_serves'],
+      mcpAccounts: [{ serverId: 'plg_serves', serverName: 'plg_serves', accounts: accounts(false) }],
+    }
+    await h.invoke('mobile:v1:setup:set', {
+      conversationId: 'c1',
+      patch: { mcp: { id: 'plg_serves#acc_000000000002', enabled: false } },
+    })
+    expect(h.state.mcpAccountsDisabled).toEqual(['plg_serves#acc_000000000002'])
+    expect(h.state.mcpDisabled).toEqual([])
+    // A server switched off hides its accounts.
+    const off = await h.invoke('mobile:v1:setup:set', {
+      conversationId: 'c1',
+      patch: { mcp: { id: 'plg_serves', enabled: false } },
+    })
+    expect(off.mcp.map((entry: { id: string }) => entry.id)).toEqual(['linear', 'plg_serves'])
+
+    h.state.send = { ok: false, error: 'blocked-by-hook: no secrets here' }
+    await expect(
+      h.invoke('mobile:v1:conversation:send', {
+        conversationId: 'c1',
+        text: 'my password is hunter2',
+        clientId: '550e8400-e29b-41d4-a716-446655440009',
+        attachments: [],
+      })
+    ).rejects.toMatchObject({ code: 'blocked-by-hook', message: 'no secrets here' })
     h.api.dispose()
   })
 

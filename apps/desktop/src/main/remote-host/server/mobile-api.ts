@@ -442,6 +442,9 @@ export class MobileApi {
         error instanceof Error ? error.message : String(error)
       )
     }
+    // A plugin hook refused the message: the phone learns why, under a code of its own.
+    if (result?.error?.startsWith(BLOCKED_BY_HOOK))
+      throw new MobileApiError('blocked-by-hook', result.error.slice(BLOCKED_BY_HOOK.length))
     if (!result?.ok)
       throw new MobileApiError(result?.error ?? 'send-failed', result?.error ?? 'The message was not sent')
     noteSent(args.conversationId, args.clientId)
@@ -514,9 +517,7 @@ export class MobileApi {
             editable: meta?.contextLimitEditable !== false,
           }
         : null,
-      mcp: (config?.mcpServers ?? [])
-        .filter((server) => server.enabled && !server.unavailable)
-        .map((server) => ({ id: server.id, name: server.name, enabled: !disabled.has(server.id) })),
+      mcp: mobileMcpList(config?.mcpServers ?? [], tools, disabled),
       skills: (skills?.skills ?? []).map((skill) => ({
         name: skill.name,
         description: skill.description.slice(0, 2000),
@@ -539,10 +540,18 @@ export class MobileApi {
     if (patch.permMode) answer(await this.call('chat:set-perm-mode', id, patch.permMode))
     if (patch.mcp) {
       const tools = (await this.call('chat:get-conv-tools', id)) as ChatConvTools | null
-      const disabled = new Set(tools?.mcpDisabled ?? [])
+      // An account of a server with several (`<serverId>#<accountId>`) switches on and off on its own.
+      const account = patch.mcp.id.includes('#')
+      const disabled = new Set((account ? tools?.mcpAccountsDisabled : tools?.mcpDisabled) ?? [])
       if (patch.mcp.enabled) disabled.delete(patch.mcp.id)
       else disabled.add(patch.mcp.id)
-      answer(await this.call('chat:set-conv-tools', id, { mcpDisabled: [...disabled] }))
+      answer(
+        await this.call(
+          'chat:set-conv-tools',
+          id,
+          account ? { mcpAccountsDisabled: [...disabled] } : { mcpDisabled: [...disabled] }
+        )
+      )
     }
     if (patch.skill) answer(await this.call('chat:skills:set-override', id, patch.skill.name, patch.skill.state))
     if (patch.skillsReset) answer(await this.call('chat:skills:reset-overrides', id))
@@ -952,6 +961,35 @@ export class MobileApi {
       this.emit('runtime', { conversationId: open.id, runtime })
     }
   }
+}
+
+/** Start of the send error for a message a plugin's UserPromptSubmit hook blocked; the reason follows. */
+const BLOCKED_BY_HOOK = 'blocked-by-hook: '
+
+/**
+ * The MCP servers a phone can switch in one conversation: a plugin's only where the plugin serves it, and each account
+ * of a server with several signed-in accounts as an entry of its own (`<serverId>#<accountId>`) while the server is on.
+ */
+export function mobileMcpList(
+  servers: NonNullable<ChatConfig['mcpServers']>,
+  tools: ChatConvTools | null,
+  disabled: ReadonlySet<string>
+): MobileChatSetup['mcp'] {
+  const serving = tools?.pluginMcpServers ? new Set(tools.pluginMcpServers) : null
+  return servers
+    .filter((server) => server.enabled && !server.unavailable && (!server.plugin || !serving || serving.has(server.id)))
+    .flatMap((server) => {
+      const enabled = !disabled.has(server.id)
+      const accounts = enabled ? tools?.mcpAccounts?.find((item) => item.serverId === server.id)?.accounts : undefined
+      return [
+        { id: server.id, name: server.name, enabled },
+        ...(accounts ?? []).map((account) => ({
+          id: `${server.id}#${account.id}`,
+          name: `${server.name} · ${account.label}`,
+          enabled: account.enabled,
+        })),
+      ]
+    })
 }
 
 /** A phone's attachment as `chat:send` admits it: text inline, images and PDFs as bytes. */
