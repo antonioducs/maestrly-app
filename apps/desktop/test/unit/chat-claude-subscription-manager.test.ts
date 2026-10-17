@@ -130,8 +130,6 @@ describe('Claude subscription manager', () => {
         ANTHROPIC_BASE_URL: 'https://billing.example',
         CLAUDE_CODE_OAUTH_TOKEN: 'private-oauth',
         AWS_ACCESS_KEY_ID: 'private-aws',
-        DISPLAY: ':0',
-        BROWSER: 'google-chrome',
       })
     ).toEqual({
       PATH: '/safe/bin',
@@ -413,44 +411,6 @@ describe('Claude subscription manager', () => {
 
     expect(result).toMatchObject({ ok: false, error: 'Claude login was cancelled.' })
     expect(processCalls).not.toContainEqual(['auth', 'login', '--claudeai'])
-  })
-
-  it('signs in through the desktop session browser without widening the runtime environment', async () => {
-    const desktop = {
-      DISPLAY: ':0',
-      WAYLAND_DISPLAY: 'wayland-0',
-      XAUTHORITY: '/run/user/1000/.mutter-Xwaylandauth',
-      XDG_RUNTIME_DIR: '/run/user/1000',
-      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
-      XDG_SESSION_TYPE: 'wayland',
-      XDG_CURRENT_DESKTOP: 'ubuntu:GNOME',
-      XDG_DATA_DIRS: '/usr/share:/var/lib/snapd/desktop',
-      BROWSER: 'google-chrome',
-    }
-    const { manager, dependencies } = fixture({
-      getProcessEnvironment: () => ({
-        PATH: '/safe/bin',
-        HOME: '/home/test',
-        ANTHROPIC_API_KEY: 'must-not-reach-claude',
-        ...desktop,
-      }),
-    })
-
-    await expect(manager.login()).resolves.toMatchObject({ ok: true, status: { authenticated: true } })
-
-    const calls = vi.mocked(dependencies.runProcess).mock.calls
-    const login = calls.find(([, args]) => args.join(' ') === 'auth login --claudeai')
-    expect(login?.[2].env).toMatchObject({
-      ...desktop,
-      PATH: '/safe/bin',
-      CLAUDE_CONFIG_DIR: path.join('/tmp/maestrly', 'claude-agent-sdk'),
-    })
-    const probes = calls.filter(([, args]) => args.join(' ') !== 'auth login --claudeai')
-    expect(probes.length).toBeGreaterThan(0)
-    for (const [, , options] of probes) {
-      for (const name of Object.keys(desktop)) expect(options.env).not.toHaveProperty(name)
-    }
-    expect(manager.runtimeEnvironment()).not.toHaveProperty('DISPLAY')
   })
 
   it('gives up a sign-in whose browser callback never arrives and frees the profile', async () => {

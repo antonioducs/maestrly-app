@@ -29,7 +29,7 @@ import {
   isClaudeAuthenticationRequired,
   isClaudeOAuthRefreshContention,
 } from './errors'
-import { claudeSubscriptionLoginEnvironment, claudeSubscriptionRuntimeEnvironment } from './runtime-env'
+import { claudeSubscriptionRuntimeEnvironment } from './runtime-env'
 import { allowedConversationProcessEnv, type ConversationProcessEnv } from '../conversation-env'
 import {
   claudeModelPickerSnapshot,
@@ -821,10 +821,7 @@ export class ClaudeSubscriptionManager {
       const result = await this.dependencies.runProcess(
         this.dependencies.resolveExecutable(),
         ['auth', 'login', '--claudeai'],
-        {
-          env: claudeSubscriptionLoginEnvironment(this.configDirectory, this.dependencies.getProcessEnvironment()),
-          signal: AbortSignal.any([controller.signal, expired]),
-        }
+        { env: this.runtimeEnvironment(), signal: AbortSignal.any([controller.signal, expired]) }
       )
       this.cachedStatus = null
       const status = await this.statusUnlocked({ refresh: true, allowAuthenticationRequired: true })

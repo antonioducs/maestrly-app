@@ -6718,6 +6718,8 @@ function runClaudeDesktopLogin(
   })
   const transition = (async () => {
     await prepare()
+    // Quitting cancels the sign-ins already started and then awaits this transition: none may start after it.
+    if (chatDisposePromise) throw new Error('Chat service is shutting down')
     const login = await startClaudeDesktopLogin(manager)
     claudeDesktopLogins.set(providerId, login)
     announce(login)

@@ -194,7 +194,7 @@ vi.mock('../../src/main/chat/portable-summarizer', () => ({
   summarizeWithGitHubCopilotRuntime: vi.fn(),
 }))
 
-import { CLAUDE_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
+import { addSubscriptionAccount, CLAUDE_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
 import {
   compactReserved,
   disposeChat,
@@ -910,8 +910,9 @@ describe('Claude subscription service integration', () => {
   })
 
   // Disposal is once per process: keep this test last.
-  it('cancels a sign-in still waiting for its browser before shutdown awaits it', async () => {
+  it('cancels sign-ins waiting for the browser on quit and starts none after it', async () => {
     const { handlers } = register()
+    const account = addSubscriptionAccount('claude-subscription', 'Work')
     let finishLogin: ((result: any) => void) | undefined
     h.manager.login.mockImplementationOnce(
       () =>
@@ -933,7 +934,22 @@ describe('Claude subscription service integration', () => {
     })
     await vi.waitFor(() => expect(h.manager.login).toHaveBeenCalledOnce())
 
-    await expect(disposeChat()).resolves.toBeUndefined()
+    // A second slot is still clearing its sessions when the app quits, so it has no sign-in to cancel yet.
+    let finishReset: (() => void) | undefined
+    h.deleteAll.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishReset = resolve
+        })
+    )
+    const accountLogin = handlers.get('chat:claude-subscription:login')?.({}, { accountId: account.id })
+    await vi.waitFor(() => expect(finishReset).toBeDefined())
+
+    const disposed = disposeChat()
+    finishReset?.()
+    await expect(disposed).resolves.toBeUndefined()
+    await expect(accountLogin).resolves.toMatchObject({ ok: false })
+    expect(h.startDesktopLogin).toHaveBeenCalledOnce()
     expect(h.manager.cancelLogin).toHaveBeenCalled()
     expect(h.manager.dispose).toHaveBeenCalled()
   })
