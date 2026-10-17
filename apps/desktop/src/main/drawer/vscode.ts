@@ -21,6 +21,7 @@ import {
   type ConvDrawer,
 } from './state'
 import { applyLayout } from './layout'
+import { startLoad } from '../web-contents-load'
 import {
   registerThrottleTarget,
   resourceNeedsFullSpeed,
@@ -412,7 +413,7 @@ export function showVSCodeLoading(convId: string, targetUrl: string, phase: VSCo
   const d = getDrawer(convId)
   const v = ensureVSCodeView(d, convId)
   d.vscodePendingUrl = targetUrl
-  v.webContents.loadURL(vscodeLoadingDataUrl(phase))
+  startLoad('vscode-status', v.webContents.loadURL(vscodeLoadingDataUrl(phase)))
   applyLayout()
 }
 
@@ -427,7 +428,7 @@ export function showVSCodeLoadingAll(
   const u = vscodeLoadingDataUrl(phase)
   for (const [convId, d] of drawers) {
     if (!d.vscodeView || !which(convId)) continue
-    d.vscodeView.webContents.loadURL(u)
+    startLoad('vscode-status', d.vscodeView.webContents.loadURL(u))
   }
 }
 
@@ -440,7 +441,7 @@ export function showVSCodeError(convId: string, phase: VSCodeLoadPhase = 'error'
   const v = ensureVSCodeView(d, convId)
   d.vscodePendingUrl = null
   d.vscodeRequestedUrl = '' // clear loaded URL so the next editor request retries
-  v.webContents.loadURL(vscodeLoadingDataUrl(phase))
+  startLoad('vscode-status', v.webContents.loadURL(vscodeLoadingDataUrl(phase)))
   applyLayout()
 }
 
@@ -468,7 +469,7 @@ export function loadVSCode(convId: string, url: string, settingsJson?: string): 
   // Compare requested URL because VS Code rewrites its URL while loading.
   if (url !== d.vscodeRequestedUrl) {
     d.vscodeRequestedUrl = url
-    v.webContents.loadURL(url)
+    startLoad('vscode', v.webContents.loadURL(url))
   }
   applyLayout()
 }
@@ -495,6 +496,6 @@ export function reloadAllVSCode(
     const url = buildUrl(folder)
     d.vscodeRequestedUrl = url
     d.vscodePendingUrl = null
-    d.vscodeView.webContents.loadURL(url)
+    startLoad('vscode', d.vscodeView.webContents.loadURL(url))
   }
 }

@@ -75,6 +75,20 @@ afterPack: ../../scripts/after-pack.mjs
 deb:
   packageName: maestrly-app
   artifactName: maestrly-app_${version}_${arch}.${ext}
+  # electron-builder's defaults, plus the libraries the Electron binary links that a minimal desktop install lacks.
+  # Ubuntu 24.04 renamed ALSA's library package to libasound2t64; Debian 12 and Ubuntu 22.04 still ship libasound2.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2t64 | libasound2
+    - libgbm1
 
 linux:
   executableName: maestrly-app

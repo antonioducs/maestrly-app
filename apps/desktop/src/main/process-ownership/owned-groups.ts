@@ -127,6 +127,11 @@ export function hasOwnedGroups(owner: string): boolean {
   return [...groups].some((group) => group.owner === owner)
 }
 
+/** Whether any conversation still has a command or what it left running in the background (`server &`, `nohup`). */
+export function hasAnyOwnedGroups(): boolean {
+  return groups.size > 0
+}
+
 /** Test seam. */
 export function __setOwnedGroupsTableForTests(next: ProcessTable | null): void {
   table = next ?? processTableFor()

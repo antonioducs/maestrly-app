@@ -28,6 +28,7 @@ import {
   Tray,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   screen,
   session,
   shell,
@@ -40,7 +41,16 @@ import { ChatWindowManager, registerChatWindowIpc } from './chat-window-manager'
 import { killAllPtys } from './pty-manager'
 import { stopAllConversationProcesses, stopConversationProcesses } from './process-ownership/conversation-processes'
 import { conversationTempEntryName, initConversationTemp, sweepConversationTempDirs } from './chat/conversation-temp'
-import { initTerminalManager, setTerminalFloatFocuser, setTerminalPopupFocuser } from './terminal-manager'
+import {
+  hasRunningTerminalCommand,
+  initTerminalManager,
+  setTerminalFloatFocuser,
+  setTerminalPopupFocuser,
+} from './terminal-manager'
+import { hasAnyOwnedGroups } from './process-ownership/owned-groups'
+import { activeMaestroDelegationCount } from './chat/maestro-delegation-registry'
+import { installSystemQuitHandlers } from './system-quit'
+import { settleLoad } from './web-contents-load'
 import {
   safeWindowSend,
   setBroadcastMainWindow,
@@ -754,6 +764,8 @@ async function createWindow(): Promise<void> {
   })
   initTerminalManager(mainWindow)
 
+  // Windows ends the session by closing the windows; nobody is left to answer a confirmation.
+  mainWindow.on('session-end', quitForSystem)
   mainWindow.on('close', (e) => {
     if (isHeadlessInstance() && !backgroundQuit) {
       e.preventDefault()
@@ -768,11 +780,12 @@ async function createWindow(): Promise<void> {
     popupManager.disposeAll()
   })
 
+  // A window closed or a quit started before the page finished loading rejects the load; startup goes on without it.
   if (process.env.ELECTRON_RENDERER_URL) {
-    await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-    if (!isHeadlessInstance()) wc.openDevTools({ mode: 'detach' })
+    const loaded = await settleLoad('main-window', mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL))
+    if (loaded && !isHeadlessInstance() && !wc.isDestroyed()) wc.openDevTools({ mode: 'detach' })
   } else {
-    await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+    await settleLoad('main-window', mainWindow.loadFile(path.join(__dirname, '../renderer/index.html')))
   }
 }
 
@@ -1036,6 +1049,7 @@ app.on('child-process-gone', (_e, details) => {
 })
 
 app.whenReady().then(async () => {
+  installSystemQuitHandlers({ platform: process.platform, signals: process, powerMonitor, quit: quitForSystem })
   // Before any session exists, so that every session of a headless instance saves its downloads without a dialog.
   if (isHeadlessInstance()) saveHeadlessDownloads()
   fixPathForGuiApp()
@@ -1286,9 +1300,16 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
+/** Agents, terminal commands and what they left in the background: what quitting ends and the prompt warns about. */
+function quitInterruptsWork(): boolean {
+  return (
+    activeChatRunCount() > 0 || activeMaestroDelegationCount() > 0 || hasRunningTerminalCommand() || hasAnyOwnedGroups()
+  )
+}
+
 async function confirmQuit(): Promise<boolean> {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-  if (!win) return true
+  if (!win || !quitInterruptsWork()) return true
   try {
     const { response } = await dialog.showMessageBox(win, {
       type: 'question',
@@ -1324,6 +1345,13 @@ let appTray: Tray | null = null
 let backgroundQuit = false
 let quitConfirmed = false
 let quitDialogOpen = false
+let systemQuit = false
+
+/** The system ends the app (shutdown, logout, a termination signal): quit with the usual cleanup and without asking. */
+function quitForSystem(): void {
+  systemQuit = true
+  app.quit()
+}
 
 function shutdownConversationMigration(): void {
   const disposeIpc = disposeConversationMigrationIpc
@@ -1374,7 +1402,7 @@ function registerConversationMove(reg: IpcRegistrar): void {
 /** Share one quit confirmation between window close and application quit; cancellation keeps all work alive. */
 function confirmQuitOnce(preventDefault: () => void): boolean {
   // Installing an update is already an explicit user decision, so it never reopens the quit prompt.
-  if (quitConfirmed || isE2E() || isInstalling()) return true
+  if (quitConfirmed || systemQuit || isE2E() || isInstalling()) return true
   preventDefault()
   if (quitDialogOpen) return false
   quitDialogOpen = true

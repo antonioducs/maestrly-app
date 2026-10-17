@@ -4,6 +4,7 @@ import { BrowserWindow, screen } from 'electron'
 import { convAccentColor } from '../shared/conv-color'
 import { FLOAT_TABS } from '../shared/tool-tabs'
 import { resolvePreload } from './resolve-preload'
+import { startLoad } from './web-contents-load'
 import { broadcast, registerPanelTarget } from './window-ipc'
 import {
   getConversation,
@@ -99,7 +100,10 @@ function stripHtml(convId: string, tab: FloatTab, pinned: boolean): string {
 }
 
 function loadStrip(win: BrowserWindow, convId: string, tab: FloatTab, pinned: boolean): void {
-  void win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(stripHtml(convId, tab, pinned))}`)
+  startLoad(
+    `floating-strip:${tab}`,
+    win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(stripHtml(convId, tab, pinned))}`)
+  )
 }
 
 /**

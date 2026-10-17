@@ -167,6 +167,22 @@ function processIsIdleShell(processName: string): boolean {
   return ['bash', 'zsh', 'fish', 'sh', 'dash', 'cmd', 'powershell', 'pwsh'].includes(processName)
 }
 
+/**
+ * Whether a terminal runs a command now, which quitting would end. An idle shell does not count. Windows reports only
+ * the shell, never the command in front of it, so there every open terminal counts.
+ */
+export function hasRunningTerminalCommand(): boolean {
+  for (const tabs of termsByConv.values()) {
+    for (const tab of tabs) {
+      if (!ptyExists(tab.id)) continue
+      if (process.platform === 'win32') return true
+      const processName = shellProcess(tab.id)
+      if (processName && !processIsIdleShell(processName)) return true
+    }
+  }
+  return false
+}
+
 function holdTerminalActivityUntilIdle(id: string, cwd: string): boolean {
   if (terminalActivityReleases.has(id)) return true
   const release = tryAcquireCwdActivity(cwd, 'terminal')

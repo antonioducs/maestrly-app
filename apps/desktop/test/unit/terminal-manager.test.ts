@@ -47,6 +47,7 @@ import {
   disposeShellTerminalsAndWait,
   getTerminalState,
   getShellTerminalOwnerScopeId,
+  hasRunningTerminalCommand,
   listShellTerminalsOwnedByScope,
   MAX_RETAINED_TERMINAL_TABS,
   stopShellTerminals,
@@ -267,5 +268,33 @@ describe('terminal manager cwd activity', () => {
     disposeShellTerminals('conv')
     expect(h.killPtyTree).toHaveBeenLastCalledWith(third.id)
     expect(getTerminalState('conv')).toEqual({ terminals: [], activeId: null })
+  })
+})
+
+describe('terminal commands that quitting would end', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  afterEach(() => Object.defineProperty(process, 'platform', platform))
+  const pretend = (value: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value, configurable: true })
+
+  it('counts a foreground command, not an idle shell or a terminal whose shell exited', () => {
+    pretend('linux')
+    expect(hasRunningTerminalCommand()).toBe(false)
+    const result = createShellTerminal('conv', '/repo')
+    if (!result.ok) throw new Error('terminal not created')
+    expect(hasRunningTerminalCommand()).toBe(false)
+
+    h.getPtyInfo.mockReturnValue({ pid: 1, process: '/usr/bin/node' })
+    expect(hasRunningTerminalCommand()).toBe(true)
+
+    h.ptyExists.mockReturnValue(false)
+    expect(hasRunningTerminalCommand()).toBe(false)
+  })
+
+  it('counts every open terminal on Windows, which reports only the shell', () => {
+    pretend('win32')
+    h.getPtyInfo.mockReturnValue({ pid: 1, process: 'powershell.exe' })
+    const result = createShellTerminal('conv', 'C:\\repo')
+    if (!result.ok) throw new Error('terminal not created')
+    expect(hasRunningTerminalCommand()).toBe(true)
   })
 })
