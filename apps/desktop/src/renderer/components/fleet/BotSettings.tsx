@@ -52,6 +52,7 @@ import { cn } from '@/lib/utils'
 import { BotAutonomyTable } from './BotAutonomyTable'
 import { BotMemorySection } from './BotMemorySection'
 import { BotDesktopAccessSection } from './BotDesktopAccessSection'
+import { BotEnvironmentAccessSection } from './BotEnvironmentAccessSection'
 import { BotPeerPicker } from './BotPeerPicker'
 import { BotRoutinesSection } from './BotRoutinesSection'
 import { BotSaveBar, LeaveSettingsDialog } from './BotSaveBar'
@@ -788,6 +789,12 @@ export function BotSettings({
           </SettingsTabPanel>
           <SettingsTabPanel tab="desktops" current={current}>
             <BotDesktopAccessSection key={`desktops-${bot.id}`} id={domId('desktops')} bot={bot} />
+            <BotEnvironmentAccessSection
+              key={`environments-${bot.id}`}
+              id={`${domId('desktops')}-environments`}
+              bot={bot}
+              fleet={fleet}
+            />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={shared ? 'environment' : 'where'} current={current}>

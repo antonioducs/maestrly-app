@@ -90,6 +90,7 @@ import {
   fleetDesktopLinkViewSchema,
   fleetDesktopNameSchema,
   fleetDesktopOpSchema,
+  fleetDesktopCallSchema,
 } from './domain.js'
 
 export const fleetOwnerMemoryCreateRequestSchema = z.object({
@@ -805,6 +806,18 @@ export const fleetDesktopLinkRequestSchema = z.object({ name: fleetDesktopNameSc
 export type FleetDesktopLinkRequest = z.infer<typeof fleetDesktopLinkRequestSchema>
 export const fleetDesktopLinksResponseSchema = z.object({ links: z.array(fleetDesktopLinkViewSchema) })
 export type FleetDesktopLinksResponse = z.infer<typeof fleetDesktopLinksResponseSchema>
+/** A workspaces host's own link to one bot, as its host token reads it (`hostDesktopLinks`). */
+export const fleetHostDesktopLinkSchema = fleetDesktopLinkViewSchema.extend({ botId: fleetBotIdSchema })
+export type FleetHostDesktopLink = z.infer<typeof fleetHostDesktopLinkSchema>
+/** Every link of the workspaces host asking, one per bot it gave access to; never another computer's. */
+export const fleetHostDesktopLinksResponseSchema = z.object({ links: z.array(fleetHostDesktopLinkSchema) })
+export type FleetHostDesktopLinksResponse = z.infer<typeof fleetHostDesktopLinksResponseSchema>
+/** One bot's call, posted by the gateway to the workspaces host its link names (`hostDesktopCall`). */
+export const fleetHostDesktopCallRequestSchema = fleetDesktopCallSchema.strict()
+export type FleetHostDesktopCallRequest = z.infer<typeof fleetHostDesktopCallRequestSchema>
+/** The gateway changed a bot's link to a workspaces host without it (removed from a computer, or the bot deleted). */
+export const fleetHostDesktopLinksChangedSchema = z.object({ botId: fleetBotIdSchema }).strict()
+export type FleetHostDesktopLinksChanged = z.infer<typeof fleetHostDesktopLinksChangedSchema>
 
 export const fleetInputSourceSchema = z.enum(['owner', 'routine', 'peer', 'continuation'])
 export type FleetInputSource = z.infer<typeof fleetInputSourceSchema>
@@ -1859,6 +1872,26 @@ export const FLEET_INTERNAL_ROUTES = {
     body: fleetInternalDesktopCallRequestSchema,
     response: fleetDesktopCallResultSchema,
   },
+  // Gateways with `host-desktop-calls`, for a workspaces host's own token only: the host lists the bots it linked,
+  // and links or unlinks itself for one bot, as a Mac does with its device token.
+  hostDesktopLinks: {
+    method: 'GET',
+    path: '/internal/v1/host/desktop-links',
+    body: null,
+    response: fleetHostDesktopLinksResponseSchema,
+  },
+  hostDesktopLinkPut: {
+    method: 'PUT',
+    path: '/internal/v1/host/bots/:id/desktop-link',
+    body: fleetDesktopLinkRequestSchema,
+    response: fleetHostDesktopLinkSchema,
+  },
+  hostDesktopLinkDelete: {
+    method: 'DELETE',
+    path: '/internal/v1/host/bots/:id/desktop-link',
+    body: null,
+    response: null,
+  },
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INSTANCE_ROUTES = {
@@ -2435,6 +2468,20 @@ export const FLEET_INSTANCE_ROUTES = {
     method: 'DELETE',
     path: '/v1/host-files/archives/:archiveId',
     body: null,
+    response: null,
+  },
+  // A workspaces host with `host-desktop-calls`: the gateway posts it a bot's call and waits for its answer, and tells
+  // it when the link of one of its bots changed without it, so it checks its own side.
+  hostDesktopCall: {
+    method: 'POST',
+    path: '/v1/host/desktop-calls',
+    body: fleetHostDesktopCallRequestSchema,
+    response: fleetDesktopCallResultSchema,
+  },
+  hostDesktopLinksChanged: {
+    method: 'POST',
+    path: '/v1/host/desktop-links/changed',
+    body: fleetHostDesktopLinksChangedSchema,
     response: null,
   },
 } as const satisfies Record<string, FleetRoute>

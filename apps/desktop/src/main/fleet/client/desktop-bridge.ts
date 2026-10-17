@@ -1,6 +1,7 @@
 import {
   FLEET_DESKTOP_BRIDGE_LIMITS,
   fleetJsonBytes,
+  type FleetDesktopCall,
   type FleetDesktopCallEvent,
   type FleetDesktopCallResult,
   type FleetDesktopErrorCode,
@@ -66,6 +67,16 @@ export interface DesktopBridgeHost {
 export const fleetClientPrefix = (deviceId: string, botId: string) => `fleet:${deviceId}:${botId}:`
 const botOfClientId = (clientId: string) => clientId.split(':')[2] ?? ''
 
+/** What a bot reads when a call cannot run where it was sent. */
+export interface DesktopBridgePlace {
+  notLinked: string
+  unavailable: string
+}
+const COMPUTER_PLACE: DesktopBridgePlace = {
+  notLinked: 'This computer no longer gives you access.',
+  unavailable: 'This computer could not run the call. Tell your owner.',
+}
+
 const failure = (code: FleetDesktopErrorCode, message: string): FleetDesktopCallResult => ({
   ok: false,
   error: { code, message: message.slice(0, 1_000) },
@@ -91,7 +102,9 @@ export class FleetDesktopBridge {
     private readonly gateway: DesktopBridgeGateway,
     private readonly host: DesktopBridgeHost,
     private readonly notify: (botId: string) => void = () => {},
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    /** How a bot is told what failed here: on a computer, or on a workspaces host. */
+    private readonly place: DesktopBridgePlace = COMPUTER_PLACE
   ) {}
 
   /** The connection this computer holds for a bot through its current pairing, if any. */
@@ -128,23 +141,31 @@ export class FleetDesktopBridge {
     return false
   }
 
+  /** A call that arrived on this computer's event stream: run, then answered through the server. */
   async call(event: FleetDesktopCallEvent): Promise<void> {
-    if (this.seen.has(event.callId)) return
+    const result = await this.run(event)
+    if (result) await this.gateway.answer(event.callId, result).catch(() => undefined)
+  }
+
+  /**
+   * Runs one call and returns its answer, or null when it is not this place's to answer: seen already, given up on by
+   * the server, or addressed to another link. A workspaces host answers the gateway's request with it directly.
+   */
+  async run(event: FleetDesktopCall): Promise<FleetDesktopCallResult | null> {
+    if (this.seen.has(event.callId)) return null
     this.seen.add(event.callId)
     if (this.seen.size > 1_000) this.seen.delete(this.seen.values().next().value as string)
     const remaining = Date.parse(event.expiresAt) - this.now()
     // The server stopped waiting: running it now would change something nobody hears about.
-    if (!(remaining > 0)) return
-    const answer = (result: FleetDesktopCallResult) => this.gateway.answer(event.callId, result).catch(() => undefined)
+    if (!(remaining > 0)) return null
     const connection = this.active(event.botId)
     if (!connection) {
-      await answer(failure('desktop_not_linked', 'This computer no longer gives you access.'))
       void this.reconcile(event.botId)
-      return
+      return failure('desktop_not_linked', this.place.notLinked)
     }
     const self = await this.selfLink(event.botId)
     // Not addressed to this computer: it is never answered from here.
-    if (!self || self.desktopId !== event.desktopId) return
+    if (!self || self.desktopId !== event.desktopId) return null
     const tool = DESKTOP_OP_TOOLS[event.op]
     const signal = AbortSignal.any([AbortSignal.timeout(remaining), this.abort.signal])
     let result: FleetDesktopCallResult
@@ -159,7 +180,7 @@ export class FleetDesktopBridge {
     } catch (error) {
       result = this.failed(error)
     }
-    await answer(result)
+    return result
   }
 
   /** A failure as the bot may read it: the computer's own refusals word for word, anything else without detail. */
@@ -171,7 +192,7 @@ export class FleetDesktopBridge {
           error.issues.map((issue) => `${issue.path.join('.') || 'input'} ${issue.message}`).join('; ')
       )
     if (error instanceof Error && error.name === 'BotLocalError') return failure('desktop_refused', error.message)
-    return failure('desktop_unavailable', 'This computer could not run the call. Tell your owner.')
+    return failure('desktop_unavailable', this.place.unavailable)
   }
 
   /** What a bot reads names this computer by the id and name it knows it by, never by this computer's own id. */

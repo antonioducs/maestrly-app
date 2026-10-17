@@ -339,6 +339,13 @@ export const FLEET_DESKTOP_BRIDGE_FEATURE = 'desktop-bridge'
 /** The query parameter a device's event stream sets to `1` to receive desktop calls: it is then online for its bots. */
 export const FLEET_DESKTOP_BRIDGE_QUERY = 'desktopBridge'
 /**
+ * Gateway feature (`moreFeatures` of `/v1/meta`) and workspaces host capability: a bot reaches the workspaces of a
+ * workspaces environment of its server as it reaches a computer's, through the desktop_* tools. The host links the bot
+ * itself, with its host token, once the owner gives the bot access there; the gateway sends each call to the host's
+ * control server. Grants, conversations and worktrees stay on the host.
+ */
+export const FLEET_HOST_DESKTOP_CALLS_FEATURE = 'host-desktop-calls'
+/**
  * How long the gateway waits for a Mac to answer one call (a wait for conversation events takes up to 20 s on the
  * Mac), how many calls of one bot may wait at once, how many Macs may link one bot, and the size of what crosses.
  */

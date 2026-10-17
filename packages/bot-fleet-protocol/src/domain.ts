@@ -843,17 +843,33 @@ export const fleetDesktopIdSchema = z.string().regex(/^dsk_[A-Za-z0-9_-]{16,64}$
 export type FleetDesktopId = z.infer<typeof fleetDesktopIdSchema>
 /** The name a Mac shows to the bots it links, chosen on that Mac (its pairing name by default). */
 export const fleetDesktopNameSchema = z.string().trim().min(1).max(FLEET_DESKTOP_BRIDGE_LIMITS.nameMax)
-/** A Mac that gave a bot access to its workspaces. `online`: its Maestrly is connected to this server right now. */
+/**
+ * What gave a bot access: one of the owner's computers, or a workspaces environment of the server (`host-desktop-calls`),
+ * which is there whether or not any computer is on. A link without it, from an older gateway, is a computer.
+ */
+export const fleetDesktopKindSchema = z.enum(['computer', 'environment'])
+export type FleetDesktopKind = z.infer<typeof fleetDesktopKindSchema>
+/**
+ * A Mac (or a workspaces environment, `kind`) that gave a bot access to its workspaces. `online`: its Maestrly is
+ * connected to this server right now; for an environment, it runs and takes calls.
+ */
 export const fleetDesktopLinkSchema = z.object({
   desktopId: fleetDesktopIdSchema,
   name: fleetDesktopNameSchema,
+  kind: fleetDesktopKindSchema.optional(),
   online: z.boolean(),
   lastSeenAt: fleetTimestampSchema.nullable(),
   linkedAt: fleetTimestampSchema,
 })
 export type FleetDesktopLink = z.infer<typeof fleetDesktopLinkSchema>
-/** The same link as the owner's Macs see it: `self` marks the link of the Mac asking. */
-export const fleetDesktopLinkViewSchema = fleetDesktopLinkSchema.extend({ self: z.boolean() })
+/**
+ * The same link as the owner's Macs see it: `self` marks the link of the Mac asking, and the link of a workspaces
+ * environment names it (`environmentId`), which a bot never reads.
+ */
+export const fleetDesktopLinkViewSchema = fleetDesktopLinkSchema.extend({
+  self: z.boolean(),
+  environmentId: fleetEnvironmentIdSchema.optional(),
+})
 export type FleetDesktopLinkView = z.infer<typeof fleetDesktopLinkViewSchema>
 /**
  * What a bot may ask a Mac, by its own name: each one is a conversation tool of that Mac's Maestrly, run under the
@@ -902,6 +918,9 @@ export const fleetDesktopCallEventSchema = z.object({
   expiresAt: fleetTimestampSchema,
 })
 export type FleetDesktopCallEvent = z.infer<typeof fleetDesktopCallEventSchema>
+/** One call as whoever runs it reads it: from a Mac's event stream, or posted to a workspaces host's control server. */
+export const fleetDesktopCallSchema = fleetDesktopCallEventSchema.omit({ type: true, at: true })
+export type FleetDesktopCall = z.infer<typeof fleetDesktopCallSchema>
 
 export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('artifact.changed'), at: fleetTimestampSchema, artifactId: fleetArtifactIdSchema }),

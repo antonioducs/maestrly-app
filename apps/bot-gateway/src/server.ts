@@ -15,6 +15,7 @@ import {
   FLEET_DESKTOP_BRIDGE_LIMITS,
   parseFleetGatewayEditorPath,
   type FleetInternalDesktopCallRequest,
+  type FleetDesktopLinkRequest,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
   type FleetRoute,
@@ -33,7 +34,7 @@ import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
 import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
-import { DesktopBridge } from './desktop-bridge.js'
+import { DesktopBridge, lifecycleDesktopHosts } from './desktop-bridge.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -96,9 +97,11 @@ export function createGatewayServers(ctx: GatewayContext) {
   const network =
     ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network, () => ctx.lifecycle.isolatedNetworks())
   ctx.lifecycle.onNetworksChanged = () => void network.refresh().catch(() => {})
-  const desktops = ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events)
+  const desktops =
+    ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events, { hosts: lifecycleDesktopHosts(ctx.lifecycle) })
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
   ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
+  ctx.lifecycle.onEnvironmentChanged = (id, formerlyLinked) => desktops.environmentChanged(id, formerlyLinked)
   const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
   const hostFiles = ctx.hostFiles ?? new HostFilesProxy(lifecycleHostFilesDeps(ctx.lifecycle))
   const hostEditor = ctx.hostEditor ?? new HostEditorProxy(lifecycleHostEditorDeps(ctx.lifecycle))
@@ -107,8 +110,9 @@ export function createGatewayServers(ctx: GatewayContext) {
     hostFiles.closeEnvironment(id)
     hostEditor.closeEnvironment(id)
   }
-  // A workspaces environment that a device uses through any of these is not idle.
-  ctx.lifecycle.hostConnections = (id) => bridge.count(id) + hostFiles.count(id) + hostEditor.count(id)
+  // A workspaces environment that a device uses through any of these, or that runs a bot's call, is not idle.
+  ctx.lifecycle.hostConnections = (id) =>
+    bridge.count(id) + hostFiles.count(id) + hostEditor.count(id) + desktops.environmentCalls(id)
   // Phones hear of what waits on the owner even while no app streams events.
   const push =
     ctx.push ??
@@ -207,9 +211,13 @@ export function createGatewayServers(ctx: GatewayContext) {
       )
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
       const internalCaller = internal ? ctx.auth.internalCaller(req.headers.authorization) : null
-      // A workspaces environment's token publishes its chats' artifacts and reaches nothing else of the internal API.
-      if (internalCaller && 'environmentId' in internalCaller && !match.key.startsWith('artifact'))
-        throw new GatewayError('FORBIDDEN', 'Host token is limited to artifacts')
+      const hostLinkRoute = internal && match.key.startsWith('hostDesktopLink')
+      // A workspaces environment's token publishes its chats' artifacts and links the environment itself to bots; it
+      // reaches nothing else of the internal API. Only that token links an environment: a bot's never does.
+      if (internalCaller && 'environmentId' in internalCaller && !match.key.startsWith('artifact') && !hostLinkRoute)
+        throw new GatewayError('FORBIDDEN', 'Host token is limited to artifacts and its own bot links')
+      if (internalCaller && 'botId' in internalCaller && hostLinkRoute)
+        throw new GatewayError('FORBIDDEN', 'Only a workspaces host links itself to a bot')
       const caller = internalCaller && 'botId' in internalCaller ? internalCaller.botId : null
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
       // Host-file bodies are streamed to the workspaces host as they arrive; the gateway never buffers or parses them.
@@ -244,6 +252,20 @@ export function createGatewayServers(ctx: GatewayContext) {
         return send(res, 200, match.route.response?.parse(result) ?? result)
       }
       if (internal) {
+        if (hostLinkRoute) {
+          // The environment is the one its token names, never anything in the request.
+          const environmentId = (internalCaller as { environmentId: string }).environmentId
+          if (match.key === 'hostDesktopLinks')
+            return send(res, 200, match.route.response!.parse({ links: desktops.hostLinks(environmentId) }))
+          if (match.key === 'hostDesktopLinkDelete') {
+            desktops.unlinkEnvironment(match.params.id, environmentId)
+            return send(res, 204)
+          }
+          const bot = ctx.store.getBot(match.params.id)
+          if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          const linked = desktops.linkEnvironment(bot.id, environmentId, (body as FleetDesktopLinkRequest).name)
+          return send(res, 200, match.route.response!.parse(linked))
+        }
         if (match.key.startsWith('routine')) {
           const bot = ctx.store.getBot(caller!)
           if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')

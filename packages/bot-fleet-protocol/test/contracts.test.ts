@@ -1790,6 +1790,84 @@ describe('desktop bridge contracts', () => {
       provisioning.fleetDesktopCallResultSchema
     )
   })
+
+  it('names a workspaces environment among the links, and only the owner reads which one', () => {
+    expect(provisioning.FLEET_HOST_DESKTOP_CALLS_FEATURE).toBe('host-desktop-calls')
+    const environment = { ...link, kind: 'environment' }
+    expect(provisioning.fleetDesktopLinkSchema.parse(environment)).toEqual(environment)
+    // A link from an older gateway names no kind: it is a computer.
+    expect(provisioning.fleetDesktopLinkSchema.parse(link).kind).toBeUndefined()
+    expect(provisioning.fleetDesktopLinkSchema.safeParse({ ...link, kind: 'phone' }).success).toBe(false)
+    // What a bot reads never carries the environment's id.
+    expect(provisioning.fleetDesktopLinkSchema.parse({ ...environment, environmentId: 'work' })).toEqual(environment)
+    const view = { ...environment, self: false, environmentId: 'work' }
+    expect(provisioning.fleetDesktopLinkViewSchema.parse(view)).toEqual(view)
+    expect(provisioning.fleetDesktopLinkViewSchema.safeParse({ ...view, environmentId: 'Not An Id' }).success).toBe(
+      false
+    )
+    // A desktop from before environments reads the view it knows.
+    const legacy = provisioning.fleetDesktopLinkSchema.omit({ kind: true }).extend({ self: z.boolean() })
+    expect(legacy.parse(view)).toEqual({ ...link, self: false })
+    expect(provisioning.fleetHostDesktopLinksResponseSchema.parse({ links: [{ ...view, botId: 'scout' }] })).toEqual({
+      links: [{ ...view, botId: 'scout' }],
+    })
+  })
+
+  it('posts a call to a workspaces host as a Mac reads it, and tells the host its links changed', () => {
+    const call = {
+      callId: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      botId: 'scout',
+      desktopId: link.desktopId,
+      op: 'createChat',
+      input: { workspaceId: 'w-1' },
+      expiresAt: at,
+    }
+    expect(provisioning.fleetHostDesktopCallRequestSchema.parse(call)).toEqual(call)
+    expect(provisioning.fleetHostDesktopCallRequestSchema.safeParse({ ...call, op: 'approvePlan' }).success).toBe(false)
+    expect(provisioning.fleetHostDesktopCallRequestSchema.safeParse({ ...call, environmentId: 'work' }).success).toBe(
+      false
+    )
+    expect(provisioning.fleetHostDesktopLinksChangedSchema.parse({ botId: 'scout' })).toEqual({ botId: 'scout' })
+    expect(provisioning.fleetHostDesktopLinksChangedSchema.safeParse({ botId: 'scout', x: 1 }).success).toBe(false)
+  })
+
+  it('declares the routes a workspaces host links itself by, and those the gateway reaches it by', () => {
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.hostDesktopLinks,
+      'GET',
+      '/internal/v1/host/desktop-links',
+      null,
+      provisioning.fleetHostDesktopLinksResponseSchema
+    )
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.hostDesktopLinkPut,
+      'PUT',
+      '/internal/v1/host/bots/:id/desktop-link',
+      provisioning.fleetDesktopLinkRequestSchema,
+      provisioning.fleetHostDesktopLinkSchema
+    )
+    expectRoute(
+      FLEET_INTERNAL_ROUTES.hostDesktopLinkDelete,
+      'DELETE',
+      '/internal/v1/host/bots/:id/desktop-link',
+      null,
+      null
+    )
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.hostDesktopCall,
+      'POST',
+      '/v1/host/desktop-calls',
+      provisioning.fleetHostDesktopCallRequestSchema,
+      provisioning.fleetDesktopCallResultSchema
+    )
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.hostDesktopLinksChanged,
+      'POST',
+      '/v1/host/desktop-links/changed',
+      provisioning.fleetHostDesktopLinksChangedSchema,
+      null
+    )
+  })
 })
 
 it('supports Google browser sign-in without accepting Google credential imports', () => {

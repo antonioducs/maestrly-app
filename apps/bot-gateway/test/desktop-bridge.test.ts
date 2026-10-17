@@ -6,10 +6,11 @@ import {
   FLEET_PROTOCOL_HEADER,
   fleetGatewayEventSchema,
   type FleetDesktopCallEvent,
+  type FleetDesktopCallResult,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
-import { DesktopBridge } from '../src/desktop-bridge.js'
+import { DesktopBridge, type DesktopBridgeHosts } from '../src/desktop-bridge.js'
 import { EventHub } from '../src/events.js'
 import { Store } from '../src/store.js'
 import { harness } from './harness.js'
@@ -293,6 +294,243 @@ describe('desktop bridge', () => {
   })
 })
 
+/** A gateway with a running workspaces environment whose Maestrly takes bots' calls, and that environment's token. */
+async function hosted(options: { calls?: boolean } = {}) {
+  const h = await harness(Date.now, { environments: true })
+  h.instance.provisioning.capabilities.push(
+    'workspaces-host',
+    ...(options.calls === false ? [] : ['host-desktop-calls'])
+  )
+  const environment = h.lifecycle.createEnvironment({ name: 'Personal', memoryLimitBytes: null, kind: 'workspaces' })
+  await settled(h, environment.id, 'running')
+  const token = h.store.hostGatewaySecrets(environment.id)!.gatewayToken
+  const headers = { [FLEET_PROTOCOL_HEADER]: '1', Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  const host = (method: string, route: string, body?: unknown) => h.request(method, route, body, true, headers)
+  return { h, environmentId: environment.id, token, host }
+}
+async function settled(h: Harness, id: string, lifecycle: string) {
+  for (let i = 0; i < 300 && h.lifecycle.environment(id)?.lifecycle !== lifecycle; i++)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(h.lifecycle.environment(id)?.lifecycle).toBe(lifecycle)
+}
+const hostLink = async (host: (method: string, route: string, body?: unknown) => Promise<Response>, botId: string) => {
+  const response = await host('PUT', `/internal/v1/host/bots/${botId}/desktop-link`, { name: 'Personal' })
+  expect(response.status).toBe(200)
+  return (await response.json()) as { desktopId: string; kind: string; self: boolean; environmentId: string }
+}
+
+describe('desktop bridge to workspaces environments', () => {
+  it('lets a workspaces host link itself and sends the bot’s calls to its control server', async () => {
+    const { h, environmentId, host } = await hosted()
+    expect((await (await h.request('GET', '/v1/meta')).json()).moreFeatures).toContain('host-desktop-calls')
+    const macbook = await mac(h, 'MacBook')
+    await macbook.connect()
+    const linked = await hostLink(host, h.bot.id)
+    expect(linked).toMatchObject({ name: 'Personal', kind: 'environment', self: true, environmentId, online: true })
+    expect(linked).toMatchObject({ botId: h.bot.id })
+    expect(linked.desktopId).toMatch(/^dsk_/)
+    // The owner's computers hear of it and read which environment it is; the bot never does.
+    const seen = await macbook.next<Extract<FleetGatewayEvent, { type: 'desktop_link.updated' }>>(
+      (event) => event.type === 'desktop_link.updated' && event.links.length === 1
+    )
+    expect(seen.links[0]).toMatchObject({
+      desktopId: linked.desktopId,
+      kind: 'environment',
+      self: false,
+      environmentId,
+    })
+    const listed = await desktops(h)
+    expect(listed).toEqual([
+      {
+        desktopId: linked.desktopId,
+        name: 'Personal',
+        kind: 'environment',
+        online: true,
+        lastSeenAt: null,
+        linkedAt: expect.any(String),
+      },
+    ])
+    const owner = await (await h.request('GET', `/v1/bots/${h.bot.id}/desktop-links`)).json()
+    expect(owner.links).toEqual([expect.objectContaining({ desktopId: linked.desktopId, environmentId, self: false })])
+
+    const answered = await call(h, linked.desktopId, 'createChat', { workspaceId: 'w-1' })
+    expect(answered).toEqual({ ok: true, value: { op: 'createChat', desktop: { id: 'local', name: 'host' } } })
+    expect(h.instance.hostDesktop.calls).toEqual([
+      {
+        callId: expect.any(String),
+        botId: h.bot.id,
+        desktopId: linked.desktopId,
+        op: 'createChat',
+        input: { workspaceId: 'w-1' },
+        expiresAt: expect.any(String),
+      },
+    ])
+    // No computer heard of the call: it went to the environment alone.
+    expect(macbook.calls()).toEqual([])
+    // A failure the host reports reaches the bot as it is.
+    const failure = { ok: false, error: { code: 'desktop_refused', message: 'The workspace is not authorized.' } }
+    h.instance.hostDesktop.answer = () => failure
+    expect(await call(h, linked.desktopId)).toEqual(failure)
+    // An answer larger than a bot may receive does not reach it.
+    h.instance.hostDesktop.answer = () => ({ ok: true, value: 'x'.repeat(2 * 1024 * 1024 + 1) })
+    expect(await call(h, linked.desktopId)).toMatchObject({ ok: false, error: { code: 'desktop_unavailable' } })
+
+    const own = await (await host('GET', '/internal/v1/host/desktop-links')).json()
+    expect(own.links).toEqual([expect.objectContaining({ desktopId: linked.desktopId, botId: h.bot.id, self: true })])
+    // Linking again renames the link and keeps the id the bot holds.
+    const renamed = await host('PUT', `/internal/v1/host/bots/${h.bot.id}/desktop-link`, { name: 'Home' })
+    expect(await renamed.json()).toMatchObject({ desktopId: linked.desktopId, name: 'Home' })
+  })
+
+  it('keeps a host token to its own links, and a bot’s token away from them', async () => {
+    const { h, environmentId, host } = await hosted()
+    const linked = await hostLink(host, h.bot.id)
+    // A host token never acts as a bot.
+    expect((await host('GET', '/internal/v1/desktops')).status).toBe(403)
+    expect(
+      (await host('POST', '/internal/v1/desktop/calls', { desktopId: linked.desktopId, op: 'listChats' })).status
+    ).toBe(403)
+    expect((await host('GET', '/internal/v1/peers')).status).toBe(403)
+    // A bot's token never links an environment, nor reads its links.
+    expect((await h.request('GET', '/internal/v1/host/desktop-links', undefined, true)).status).toBe(403)
+    expect(
+      (await h.request('PUT', `/internal/v1/host/bots/${h.bot.id}/desktop-link`, { name: 'Forged' }, true)).status
+    ).toBe(403)
+    expect((await h.request('DELETE', `/internal/v1/host/bots/${h.bot.id}/desktop-link`, undefined, true)).status).toBe(
+      403
+    )
+    // A computer's token does not reach the internal API at all.
+    const macbook = await mac(h, 'MacBook')
+    expect((await h.request('GET', '/internal/v1/host/desktop-links', undefined, true, macbook.headers)).status).toBe(
+      401
+    )
+    // The environment comes from the token, never from the request.
+    const forged = await host('PUT', `/internal/v1/host/bots/${h.bot.id}/desktop-link`, {
+      name: 'Forged',
+      environmentId: 'other',
+    })
+    expect(forged.status).toBe(400)
+    expect((await host('PUT', '/internal/v1/host/bots/missing/desktop-link', { name: 'Personal' })).status).toBe(404)
+
+    // Another workspaces environment sees and removes only its own links.
+    const other = h.lifecycle.createEnvironment({ name: 'Company', memoryLimitBytes: null, kind: 'workspaces' })
+    await settled(h, other.id, 'running')
+    const otherToken = h.store.hostGatewaySecrets(other.id)!.gatewayToken
+    const otherHeaders = { ...macbook.headers, Authorization: 'Bearer ' + otherToken }
+    const otherHost = (method: string, route: string) => h.request(method, route, undefined, true, otherHeaders)
+    expect((await (await otherHost('GET', '/internal/v1/host/desktop-links')).json()).links).toEqual([])
+    expect((await otherHost('DELETE', `/internal/v1/host/bots/${h.bot.id}/desktop-link`)).status).toBe(204)
+    expect(h.store.desktopLinksOfEnvironment(environmentId)).toHaveLength(1)
+    // An archived environment's token is refused.
+    await h.lifecycle.archiveEnvironment(other.id)
+    expect((await otherHost('GET', '/internal/v1/host/desktop-links')).status).toBe(401)
+  })
+
+  it('answers at once for an environment that does not take calls, and starts one that was stopped', async () => {
+    const { h, environmentId, host } = await hosted()
+    const linked = await hostLink(host, h.bot.id)
+    await h.lifecycle.stopEnvironment(environmentId)
+    expect((await desktops(h)).map((item) => item.online)).toEqual([false])
+    const stopped = await call(h, linked.desktopId)
+    expect(stopped).toMatchObject({
+      ok: false,
+      error: { code: 'desktop_offline', message: expect.stringContaining('it is starting now') },
+    })
+    await settled(h, environmentId, 'running')
+    expect((await call(h, linked.desktopId)).ok).toBe(true)
+    // An environment whose Maestrly cannot take calls is never sent one.
+    const before = h.instance.hostDesktop.calls.length
+    h.instance.provisioning.capabilities.splice(h.instance.provisioning.capabilities.indexOf('host-desktop-calls'), 1)
+    await h.lifecycle.restartEnvironment(environmentId)
+    await settled(h, environmentId, 'running')
+    expect(await call(h, linked.desktopId)).toMatchObject({
+      ok: false,
+      error: { code: 'desktop_unavailable', message: expect.stringContaining('cannot take your calls yet') },
+    })
+    expect(h.instance.hostDesktop.calls).toHaveLength(before)
+    // An archived environment is not started for a bot.
+    await h.lifecycle.archiveEnvironment(environmentId)
+    expect(await call(h, linked.desktopId)).toMatchObject({
+      ok: false,
+      error: { code: 'desktop_offline', message: expect.stringContaining('not available on this server') },
+    })
+    expect(h.store.getEnvironment(environmentId)?.archivedAt).not.toBeNull()
+  })
+
+  it('keeps an environment in use while it runs a call, and fails the call once it stops', async () => {
+    const { h, environmentId, host } = await hosted()
+    const linked = await hostLink(host, h.bot.id)
+    h.instance.hostDesktop.hold = true
+    const pending = call(h, linked.desktopId, 'waitEvents', { conversationId: 'c-1', cursor: 0 })
+    await expect.poll(() => h.instance.hostDesktop.calls.length).toBe(1)
+    expect(h.lifecycle.hostConnections(environmentId)).toBe(1)
+    await h.lifecycle.stopEnvironment(environmentId)
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { code: 'desktop_offline', message: expect.stringContaining('stopped before it answered') },
+    })
+    expect(h.lifecycle.hostConnections(environmentId)).toBe(0)
+    for (const release of h.instance.hostDesktop.released.splice(0)) release()
+  })
+
+  it('removes an environment’s link from a computer, by the host itself, or with the bot or the environment', async () => {
+    const { h, environmentId, host } = await hosted()
+    const macbook = await mac(h, 'MacBook')
+    await macbook.connect()
+    const linked = await hostLink(host, h.bot.id)
+    // From one of the owner's computers: the environment is told to check its own side.
+    expect((await macbook.request('DELETE', `/v1/bots/${h.bot.id}/desktop-links/${linked.desktopId}`)).status).toBe(204)
+    await expect.poll(() => h.instance.hostDesktop.linksChanged).toEqual([h.bot.id])
+    expect(await call(h, linked.desktopId)).toMatchObject({ ok: false, error: { code: 'desktop_not_linked' } })
+    expect(await desktops(h)).toEqual([])
+
+    // By the host itself.
+    const again = await hostLink(host, h.bot.id)
+    expect(again.desktopId).not.toBe(linked.desktopId)
+    expect((await host('DELETE', `/internal/v1/host/bots/${h.bot.id}/desktop-link`)).status).toBe(204)
+    expect(await desktops(h)).toEqual([])
+
+    // With the bot: every environment that runs is told.
+    await hostLink(host, h.bot.id)
+    h.instance.hostDesktop.linksChanged.length = 0
+    await h.lifecycle.archiveEnvironment(h.bot.environmentId!)
+    expect((await h.request('DELETE', `/v1/archived-bots/${h.bot.id}`)).status).toBe(204)
+    expect(h.store.desktopLinksOfEnvironment(environmentId)).toEqual([])
+    await expect.poll(() => h.instance.hostDesktop.linksChanged).toEqual([h.bot.id])
+  })
+
+  it('takes the links of a deleted environment, and tells the computers', async () => {
+    const { h, environmentId, host } = await hosted()
+    const macbook = await mac(h, 'MacBook')
+    await macbook.connect()
+    await hostLink(host, h.bot.id)
+    await h.lifecycle.archiveEnvironment(environmentId)
+    // An archived environment keeps its links: restoring it brings its access back.
+    expect(h.store.desktopLinksOfEnvironment(environmentId)).toHaveLength(1)
+    expect((await desktops(h)).map((item) => item.online)).toEqual([false])
+    const from = macbook.events.length
+    await h.lifecycle.purgeEnvironment(environmentId)
+    expect(h.store.desktopLinksOfEnvironment(environmentId)).toEqual([])
+    const cleared = await macbook.next<Extract<FleetGatewayEvent, { type: 'desktop_link.updated' }>>(
+      (event) => event.type === 'desktop_link.updated' && event.links.length === 0,
+      from
+    )
+    expect(cleared.botId).toBe(h.bot.id)
+  })
+
+  it('counts computers and environments together toward the links of a bot', async () => {
+    const { h, host } = await hosted()
+    const auth = new Auth(h.store)
+    for (let index = 0; index < 20; index++) {
+      const { deviceId } = auth.pair(auth.createPairing().code, 'Mac ' + index, 'remote-' + index)
+      h.store.saveDesktopLink(h.bot.id, deviceId, 'Mac ' + index, 'dsk_limit' + String(index).padStart(16, '0'))
+    }
+    const refused = await host('PUT', `/internal/v1/host/bots/${h.bot.id}/desktop-link`, { name: 'Personal' })
+    expect(refused.status).toBe(409)
+    expect((await refused.json()).message).toContain('computers and environments')
+  })
+})
+
 describe('desktop bridge timeouts', () => {
   it('gives up on a Mac that does not answer, with what to do next', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'desktop-bridge-'))
@@ -346,6 +584,66 @@ describe('desktop bridge timeouts', () => {
       })
       busy.close()
       expect((await Promise.all(calls)).every((item) => !item.ok)).toBe(true)
+    } finally {
+      store.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('gives up on a workspaces environment that does not answer, and stops waiting for it', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'desktop-bridge-'))
+    const store = new Store(dir)
+    try {
+      const signals: AbortSignal[] = []
+      let answer: (signal: AbortSignal) => Promise<FleetDesktopCallResult> = (signal) =>
+        new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))))
+      const hosts: DesktopBridgeHosts = {
+        state: () => 'online',
+        wake: () => {},
+        call: (_environmentId, _call, signal) => {
+          signals.push(signal)
+          return answer(signal)
+        },
+        linksChanged: () => {},
+        online: () => ['host'],
+      }
+      const bridge = new DesktopBridge(store, new EventHub(async () => {}), { timeoutMs: 30, hosts })
+      for (const [id, kind] of [
+        ['e', 'bots'],
+        ['host', 'workspaces'],
+      ])
+        store.db
+          .prepare(
+            "INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,created_at,updated_at,kind) VALUES(?,?,'running','{}',?,?,'2026-10-01T00:00:00.000Z','2026-10-01T00:00:00.000Z',?)"
+          )
+          .run(id, id, 'c-' + id, 'v-' + id, kind)
+      store.db
+        .prepare(
+          "INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at,environment_id,slot) VALUES('b','B','','','#000000','ask','null','[]',0,'running','{}','2026-10-01T00:00:00.000Z','2026-10-01T00:00:00.000Z','e',1)"
+        )
+        .run()
+      const link = store.saveEnvironmentDesktopLink('b', 'host', 'Personal', 'dsk_hosthosthosthosthost')
+      const request = { desktopId: link.desktopId, op: 'sendMessage' as const, input: {} }
+      expect(await bridge.call('b', request)).toMatchObject({
+        ok: false,
+        error: { code: 'desktop_timeout', message: expect.stringContaining('same idempotencyKey') },
+      })
+      // The request to the environment was given up along with the call.
+      expect(signals.at(-1)?.aborted).toBe(true)
+      expect(bridge.environmentCalls('host')).toBe(0)
+      // An environment that cannot be reached fails the call with no detail of why.
+      answer = async () => {
+        throw new Error('connect ECONNREFUSED 10.0.0.2:7680')
+      }
+      const failed = await bridge.call('b', request)
+      expect(failed).toMatchObject({ ok: false, error: { code: 'desktop_unavailable' } })
+      expect(JSON.stringify(failed)).not.toContain('ECONNREFUSED')
+      // A server shutting down ends the calls still waiting for an environment.
+      answer = () => new Promise(() => {})
+      void bridge.call('b', request)
+      expect(bridge.environmentCalls('host')).toBe(1)
+      bridge.close()
+      expect(bridge.environmentCalls('host')).toBe(0)
     } finally {
       store.close()
       rmSync(dir, { recursive: true, force: true })

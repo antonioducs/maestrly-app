@@ -36,6 +36,16 @@ export type HostGatewayAccess = { gateway: GatewayConfig; environmentId: string 
  * Takes a workspaces host's gateway access out of the environment, so the shells and agents it starts do not inherit
  * the token. Null outside server mode, and from a gateway that predates host tokens.
  */
+let taken: { access: HostGatewayAccess | null } | null = null
+/**
+ * This process's gateway access as a workspaces host: taken out of the environment the first time it is asked for,
+ * then the same for artifacts and for the bots this host gives access to.
+ */
+export function hostGatewayAccess(): HostGatewayAccess | null {
+  taken ??= { access: takeHostGatewayAccess() }
+  return taken.access
+}
+
 export function takeHostGatewayAccess(env: NodeJS.ProcessEnv = process.env): HostGatewayAccess | null {
   const token = tokenSchema.safeParse(env[FLEET_BOT_ENV.hostGatewayToken])
   delete env[FLEET_BOT_ENV.hostGatewayToken]

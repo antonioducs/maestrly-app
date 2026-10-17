@@ -10,6 +10,7 @@ import {
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_HOST_FILES_FEATURE,
   FLEET_HOST_FILES_FOLDERS_FEATURE,
+  FLEET_HOST_DESKTOP_CALLS_FEATURE,
   FLEET_MOBILE_HOST_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
   type ScreenMode,
@@ -42,7 +43,9 @@ export class HostEnvironment implements InstanceEnvironment {
     private readonly runtime: EnvironmentRuntime,
     /** Whether chat turns are running: a scheduled update of the host waits for them. */
     private readonly busy: () => boolean,
-    private readonly computers: HostComputers | null = null
+    private readonly computers: HostComputers | null = null,
+    /** Whether it takes the calls of the bots it gives access to (`host-desktop-calls`): it has a host token. */
+    private readonly desktopCalls = false
   ) {
     this.events = runtime.events
     this.settings = runtime.settings
@@ -64,6 +67,7 @@ export class HostEnvironment implements InstanceEnvironment {
       FLEET_HOST_EDITOR_FEATURE,
       FLEET_MOBILE_HOST_FEATURE,
       ...(this.computers ? [FLEET_CONVERSATION_COMPUTERS_FEATURE] : []),
+      ...(this.desktopCalls ? [FLEET_HOST_DESKTOP_CALLS_FEATURE] : []),
     ]
   }
   selections() {

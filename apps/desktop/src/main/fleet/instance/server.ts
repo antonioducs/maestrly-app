@@ -12,6 +12,9 @@ import {
   type FleetHostFileStatRequest,
   type FleetHostFileUploadBegin,
   type FleetHostFileUploadCommit,
+  type FleetDesktopCallResult,
+  type FleetHostDesktopCallRequest,
+  type FleetHostDesktopLinksChanged,
 } from '@maestrly/bot-fleet-protocol'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
@@ -464,14 +467,32 @@ export interface EditorRoutes {
   upgrade(request: IncomingMessage, socket: Duplex, head: Buffer, editorPath: string): void
 }
 
+/**
+ * Runs the calls the gateway posts a workspaces host for the bots it gave access to (`host-desktop-calls`), and checks
+ * a bot's link again when the gateway says it changed; only such a host passes it.
+ */
+export interface DesktopCallRoutes {
+  call(request: FleetHostDesktopCallRequest): Promise<FleetDesktopCallResult>
+  linksChanged(botId: string): Promise<void>
+}
+
 export function createInstanceControlServer(
   config: BotInstanceConfig,
   environment: InstanceEnvironment,
-  options: { bridge?: BridgeUpgrade; hostFiles?: HostFilesRoutes; editor?: EditorRoutes } = {}
+  options: {
+    bridge?: BridgeUpgrade
+    hostFiles?: HostFilesRoutes
+    editor?: EditorRoutes
+    desktopCalls?: DesktopCallRoutes
+  } = {}
 ): http.Server {
   const hostFiles = (): HostFilesRoutes => {
     if (!options.hostFiles) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
     return options.hostFiles
+  }
+  const desktopCalls = (): DesktopCallRoutes => {
+    if (!options.desktopCalls) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+    return options.desktopCalls
   }
   function settings(): FleetEnvironmentSettingsService {
     if (!environment.settings)
@@ -663,6 +684,10 @@ export function createInstanceControlServer(
     hostFileArchiveBegin: ({ input }) => hostFiles().beginArchive(input as FleetHostFileArchiveRequest),
     hostFileArchiveStatus: ({ params }) => hostFiles().archiveStatus(params.archiveId),
     hostFileArchiveRelease: ({ params }) => hostFiles().releaseArchive(params.archiveId),
+    hostDesktopCall: ({ input }) => desktopCalls().call(input as FleetHostDesktopCallRequest),
+    hostDesktopLinksChanged: async ({ input }) => {
+      await desktopCalls().linksChanged((input as FleetHostDesktopLinksChanged).botId)
+    },
   }
 
   const server = http.createServer(async (request, response) => {
@@ -681,8 +706,10 @@ export function createInstanceControlServer(
       if (!match) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
       if (SCREEN_ROUTES.has(match.key)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       if (match.key === 'events') return streamEvents(request, response, url, environment.events)
-      // An environment without host files refuses their routes before reading a body, as it does unknown routes.
+      // An environment without host files refuses their routes before reading a body, as it does unknown routes; the
+      // same for bots' calls on an environment that takes none.
       if (match.key.startsWith('hostFile')) hostFiles()
+      if (match.key.startsWith('hostDesktop')) desktopCalls()
       // Content and chunks stream their bodies: they never go through the JSON body reader below.
       if (match.key === 'hostFileContent') return await hostFiles().content(request, response, url)
       if (match.key === 'hostFileUploadChunk')

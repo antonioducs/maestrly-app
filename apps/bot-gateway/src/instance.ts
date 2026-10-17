@@ -37,6 +37,8 @@ import {
   type FleetSkillInstallRequest,
   type FleetSkillInstallResponse,
   type FleetMcpImportRequest,
+  type FleetDesktopCallResult,
+  type FleetHostDesktopCallRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -434,6 +436,21 @@ export class InstanceClient {
   /** The model options of the environment's accounts, for its default compaction model (`environment-compaction`). */
   environmentSelections() {
     return this.call('environmentSelections')
+  }
+  /**
+   * One bot's call, run by a workspaces host (`host-desktop-calls`): waits for its answer until `timeoutMs`, or until
+   * `signal` gives up first.
+   */
+  hostDesktopCall(
+    body: FleetHostDesktopCallRequest,
+    timeoutMs: number,
+    signal?: AbortSignal
+  ): Promise<FleetDesktopCallResult> {
+    return this.call('hostDesktopCall', {}, undefined, body, timeoutMs, signal)
+  }
+  /** Tells a workspaces host that the gateway changed one of its bots' links, so it checks its own side. */
+  hostDesktopLinksChanged(botId: string): Promise<void> {
+    return this.call('hostDesktopLinksChanged', {}, undefined, { botId })
   }
   /** Installs a bot in the environment, or updates it: its profile, display slot and gateway token. */
   botInstall(botId: string, body: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {

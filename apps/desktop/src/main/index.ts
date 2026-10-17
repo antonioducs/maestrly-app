@@ -5,7 +5,12 @@ import { validateStandaloneConversationDirectory } from './standalone-conversati
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
-import { isHeadlessInstance, isServerMode, takeHostGatewayAccess } from './remote-host/server/config'
+import { hostGatewayAccess, isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import {
+  ENVIRONMENT_BOT_ACCESS_CHANGED,
+  HostBotAccess,
+  registerEnvironmentBotAccessIpc,
+} from './remote-host/server/bot-access'
 import { createHostSources } from './remote-host/server/host-artifacts'
 import { ARTIFACT_OPEN_REQUEST_CHANNEL } from '../shared/artifacts'
 import { saveHeadlessDownloads } from './headless-downloads'
@@ -313,6 +318,16 @@ function placeEnvironmentScreen(window: BrowserWindow): void {
   window.setBounds(environmentScreenBounds(screen.getPrimaryDisplay().bounds))
 }
 
+/** On a workspaces host, what it gives the bots of its server: created the first time it is asked for. */
+let hostBots: HostBotAccess | null = null
+function hostBotAccess(): HostBotAccess | null {
+  if (!isServerMode()) return null
+  hostBots ??= new HostBotAccess(hostGatewayAccess(), botHost, (botId) =>
+    broadcast(ENVIRONMENT_BOT_ACCESS_CHANGED, { botId })
+  )
+  return hostBots
+}
+
 // The artifact host on this computer, opened only for what earlier versions published here; created with the store.
 let artifactHost: ArtifactHostProcess | null = null
 let legacyArtifacts: LegacyArtifacts | null = null
@@ -337,7 +352,7 @@ function initArtifacts(): void {
     })
   }
   // A workspaces host is not paired with the server it runs on: it publishes there with the token the gateway gave it.
-  const hostAccess = takeHostGatewayAccess()
+  const hostAccess = hostGatewayAccess()
   const sources = isBotMode()
     ? createBotSources((id) => {
         const bot = botRuntimeForConversation(id)
@@ -944,6 +959,8 @@ function registerIpc(): void {
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(reg, fleetClientService)
+  // On a workspaces host, the owner's computers give the bots of its server access to its projects.
+  registerEnvironmentBotAccessIpc(reg, hostBotAccess)
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
   registerArtifactsIpc(reg, { service: getArtifactsService })
@@ -1209,6 +1226,7 @@ app.whenReady().then(async () => {
       await startServerHostMode(mainWindow, {
         hub,
         busy: () => activeChatRunCount() > 0,
+        bots: hostBotAccess()!,
         closeConversation: (id) => stopConversationLive(id),
         purgeConversation: (id) => deleteConversation(id),
         watchStatuses: (listener) => {

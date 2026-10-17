@@ -72,6 +72,20 @@ async function fake(
   const edits: Array<{ inputId: string; body: import('@maestrly/bot-fleet-protocol').FleetEditMessageRequest }> = []
   const receipts = new Map<string, { inputId: string; itemId: string; queued: boolean }>()
   const conversationCalls: unknown[] = []
+  /**
+   * What a workspaces host of the harness does with bots' calls: the calls it received and the bots whose links it was
+   * told changed. `answer` is what it answers; `hold` keeps a call unanswered until released.
+   */
+  const hostDesktop = {
+    calls: [] as import('@maestrly/bot-fleet-protocol').FleetHostDesktopCallRequest[],
+    linksChanged: [] as string[],
+    answer: (call: import('@maestrly/bot-fleet-protocol').FleetHostDesktopCallRequest): unknown => ({
+      ok: true,
+      value: { op: call.op, desktop: { id: 'local', name: 'host' } },
+    }),
+    hold: false,
+    released: [] as Array<() => void>,
+  }
   const memoryRequests: unknown[] = []
   const provisioningRequests: Array<{ method: string; path: string; body: unknown }> = []
   /**
@@ -369,6 +383,18 @@ async function fake(
         res.writeHead(204)
         return res.end()
       }
+      if (req.url === '/v1/host/desktop-calls' && req.method === 'POST') {
+        const call = FLEET_INSTANCE_ROUTES.hostDesktopCall.body.parse(body)
+        hostDesktop.calls.push(call)
+        if (hostDesktop.hold) await new Promise<void>((resolve) => hostDesktop.released.push(resolve))
+        if (res.destroyed) return
+        return send(200, hostDesktop.answer(call))
+      }
+      if (req.url === '/v1/host/desktop-links/changed' && req.method === 'POST') {
+        hostDesktop.linksChanged.push(FLEET_INSTANCE_ROUTES.hostDesktopLinksChanged.body.parse(body).botId)
+        res.writeHead(204)
+        return res.end()
+      }
       if (req.url === '/v1/conversation/call' && req.method === 'POST') {
         const call = fleetConversationCallRequestSchema.parse(body)
         if (call.op === 'chatGetConvTools' && call.args.length !== 0) throw new Error('Invalid arguments')
@@ -412,6 +438,7 @@ async function fake(
     inputs,
     edits,
     conversationCalls,
+    hostDesktop,
     receipts,
     memories,
     memoryRequests,

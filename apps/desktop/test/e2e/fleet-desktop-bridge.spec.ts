@@ -109,7 +109,7 @@ test('a fleet bot starts conversations in the projects this computer gave it, an
     await page.getByRole('button', { name: /Scout/ }).first().click()
     await page.getByRole('button', { name: 'Ajustes do bot', exact: true }).click()
     const settings = page.getByRole('dialog', { name: 'Ajustes do Scout' })
-    await settingsTab(settings, 'Este computador').click()
+    await settingsTab(settings, 'Projetos').click()
     const section = settings.getByTestId('fleet-desktop-access')
     await expect(settings.getByRole('heading', { name: 'Workspaces deste computador', level: 2 })).toBeVisible()
     // Another computer already gave Scout access; it is offline, and listed with what may be done from here.
@@ -216,7 +216,7 @@ test('a fleet bot starts conversations in the projects this computer gave it, an
     await page.getByRole('tab', { name: /^Bots/ }).click()
     await page.getByRole('button', { name: /Scout/ }).first().click()
     await page.getByRole('button', { name: 'Ajustes do bot', exact: true }).click()
-    await settingsTab(settings, 'Este computador').click()
+    await settingsTab(settings, 'Projetos').click()
     await expect(section.getByRole('switch', { name: 'Dar a este bot acesso a este computador' })).toHaveAttribute(
       'aria-checked',
       'false'
