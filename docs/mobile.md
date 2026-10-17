@@ -311,7 +311,14 @@ the `MAESTRLY_APP_REVIEW_*` variables of the contact, and
 For App Review and the stores:
 
 - The app needs no account, but it needs a bot server. The review notes point
-  reviewers to **Explore a demo server** on the first screen.
+  reviewers to **Explore a demo server** on the first screen. They also answer
+  what App Review asks new developer accounts under Guideline 2.1: the app's
+  purpose and audience, setup and access, external services, regional
+  differences and regulated material. Edit them in `store.config.cjs`, not in
+  App Store Connect, because each `submit` overwrites them.
+- App Review can also ask for a screen recording on a physical device, from
+  launch through the typical flow, including pairing and **Unpair**. Attach it
+  to the reply in App Store Connect.
 - The app declares no tracking and no data collected by the developer, so
   **App Privacy** is **Data Not Collected**; its iOS privacy manifest lists the
   reasons for the system APIs React Native and Expo use. Everything the app

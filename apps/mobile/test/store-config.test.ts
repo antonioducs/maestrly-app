@@ -91,6 +91,21 @@ describe('the App Store listing', () => {
       phone: '+1 555 0100',
     })
     expect(review.demoRequired).toBe(false)
-    expect(review.notes).toContain(en['welcome.demo'])
+  })
+
+  it('answers what App Review asks about the app, within the notes limit', () => {
+    const notes: string = listing(CONTACT).review.notes
+    expect(notes.length).toBeLessThanOrEqual(4000)
+    for (const label of ['welcome.demo', 'welcome.scan', 'welcome.manual'] as const) expect(notes).toContain(en[label])
+    expect(notes).toContain(en['settings.unpair'].replace('{server}', '<server>'))
+    for (const section of [
+      'PURPOSE AND AUDIENCE',
+      'SETUP AND ACCESS',
+      'EXTERNAL SERVICES',
+      'REGIONAL DIFFERENCES',
+      'REGULATED INDUSTRY OR THIRD-PARTY MATERIAL',
+    ]) {
+      expect(notes).toContain(section)
+    }
   })
 })

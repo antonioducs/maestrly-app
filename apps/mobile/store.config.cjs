@@ -42,11 +42,31 @@ const contact = {
   phone: env('MAESTRLY_APP_REVIEW_PHONE'),
 }
 
-const REVIEW_NOTES = `Maestrly is the phone client of the Maestrly bot server, which people run on their own computer or server (open source: https://github.com/antonioducs/maestrly-app). The app has no accounts and no sign-in: it pairs with a server by scanning a QR code that the Maestrly desktop app shows.
+/** Answers what App Review asks new developer accounts under Guideline 2.1, so later submissions keep the answers. */
+const REVIEW_NOTES = `Maestrly is an open-source developer tool (MIT License, https://github.com/antonioducs/maestrly-app). People run AI coding and automation agents ("bots") on their own computer or server with the Maestrly desktop app and bot server. This iOS app is the phone client of that server.
 
-To review the app without a server, tap "Explore a demo server" on the first screen. It opens an in-memory server with sample bots, chats and workspaces, and nothing leaves the device. From there you can read a bot's conversation, send a message, approve a command, start a chat, change its setup and open Settings.
+PURPOSE AND AUDIENCE
+The app is for developers and technical users who run their own Maestrly bot server. Long-running agents often stop and wait for their owner; with the app, the owner follows them and answers from anywhere instead of staying at the computer. It shows what each bot is doing, streams its conversations, sends messages, photos and files, approves or denies commands, answers questions, reviews plans, starts chats in the server's workspaces and notifies the owner when a bot needs them.
 
-Push notifications need a paired server; the demo server shows every other screen.`
+SETUP AND ACCESS
+The app has no accounts and no sign-in, so no credentials are needed. It has no account registration, no content shared between people and no paid content.
+- To review the app without a server, tap "Explore a demo server" on the first screen. It opens an in-memory server with sample bots, chats and workspaces, and nothing leaves the device. From there you can read a bot's conversation, send a message, approve a command, start a chat, change its setup and open Settings.
+- For real use, run the Maestrly desktop app and bot server on a computer. Then tap "Scan pairing code" and scan the QR code the desktop app shows, or tap "Enter code manually" and enter the server's HTTPS address and a single-use 8-character code.
+- Settings > "Unpair from <server>" revokes the phone on the server and deletes that server's data from the phone.
+Push notifications, bot pages and file downloads need a paired server; the demo server shows every other screen.
+
+EXTERNAL SERVICES
+- The person's own Maestrly bot server, self-hosted and open source, provides every core feature over HTTPS.
+- AI model providers (for example OpenAI, Anthropic, Google and xAI) are set up on that server with the person's own accounts or API keys. The app never contacts them and never handles their keys.
+- Expo Push Service and Apple Push Notification service deliver the server's notifications, which carry only a bot or chat name and a short fixed phrase, never message content.
+- Apple's speech recognition, for optional dictation.
+The app uses no authentication service, payment processor, analytics, advertising or tracking.
+
+REGIONAL DIFFERENCES
+The app works the same in every region where it is offered, in English and Brazilian Portuguese. It is not offered in mainland China.
+
+REGULATED INDUSTRY OR THIRD-PARTY MATERIAL
+Not applicable: the app does not operate in a regulated industry and contains no protected third-party material.`
 
 module.exports = {
   configVersion: 0,
