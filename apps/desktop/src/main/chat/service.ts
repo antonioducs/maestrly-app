@@ -1526,6 +1526,7 @@ function sameSubscriptionAuthStatus(a: ChatSubscriptionAuthStatus, b: ChatSubscr
     a.username === b.username &&
     a.planType === b.planType &&
     a.enterpriseUrl === b.enterpriseUrl &&
+    a.authUrl === b.authUrl &&
     a.error === b.error &&
     a.errorCode === b.errorCode
   )
@@ -1815,6 +1816,7 @@ const antigravityAuth = new AntigravityServiceAuth({
   reset: resetAntigravityAccountSessions,
   ensureRuntime: ensureAntigravityRuntimeAsset,
   broadcast: broadcastAntigravityAuth,
+  openBrowser: (url) => void shell.openExternal(url).catch(() => undefined),
 })
 
 function broadcastAntigravityAuth(status: ChatSubscriptionAuthStatus): void {
@@ -1840,7 +1842,8 @@ async function validateAntigravityModelSelection(
   try {
     if (!manager.getStatus().authenticated) return { ok: false, error: 'no-key' }
     const identity = manager.getAccountIdentity()
-    const models = await manager.listModels(true)
+    // The picker listed this catalog; forcing a refresh would only open another server session.
+    const models = await manager.listModels()
     if (antigravityAuth.busy(accountId)) return { ok: false, error: 'busy' }
     manager.assertAccountIdentity(identity)
     return models.some((candidate) => candidate.id === modelId) ? { ok: true } : { ok: false, error: 'no-model' }

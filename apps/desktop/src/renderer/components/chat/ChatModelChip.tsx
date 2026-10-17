@@ -104,6 +104,8 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (rowsCache.get(hostId) ?? [])))
   const [loading, setLoading] = useState(false)
   const [hiddenModels, setHiddenModels] = useState<Record<string, string[]> | null>(null)
+  const [choosingKey, setChoosingKey] = useState<string | null>(null)
+  const choosingRef = useRef(false)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>()
   const rootRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -283,6 +285,10 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
       onChange?.(next)
       return
     }
+    // Validation can wait for the provider's runtime; further clicks or Enter must not queue more validations.
+    if (choosingRef.current) return
+    choosingRef.current = true
+    setChoosingKey(`${providerId}::${modelId}`)
     try {
       const result = await api.chatSetSelection(conversationId, next)
       if (!result.ok) {
@@ -294,6 +300,9 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
       onChange?.(next)
     } catch {
       setConversationSel(await api.chatGetSelection(conversationId).catch(() => sel))
+    } finally {
+      choosingRef.current = false
+      setChoosingKey(null)
     }
   }
 
@@ -363,7 +372,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
               className="w-full bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
             />
           </div>
-          <div className="max-h-[40vh] overflow-auto py-1">
+          <div className="max-h-[40vh] overflow-auto py-1" aria-busy={choosingKey !== null}>
             {connectedProviders.length === 0 && !source?.bot && (
               <div className="px-3 py-3 text-center text-[12px] text-muted-foreground">
                 {t('modelChip.noProviders')}
@@ -391,6 +400,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
               filtered.map((r, index) => {
                 const active = sel?.providerId === r.providerId && sel?.modelId === r.modelId
                 const highlighted = index === activeIndex
+                const choosing = choosingKey === `${r.providerId}::${r.modelId}`
                 return (
                   <button
                     ref={(node) => {
@@ -406,7 +416,11 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                       highlighted && 'bg-white/[0.06]'
                     )}
                   >
-                    <Check className={cn('h-3.5 w-3.5 shrink-0', active ? 'opacity-100' : 'opacity-0')} />
+                    {choosing ? (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Check className={cn('h-3.5 w-3.5 shrink-0', active ? 'opacity-100' : 'opacity-0')} />
+                    )}
                     <span className="flex-1 truncate text-[13px] text-foreground">{r.modelId}</span>
                     <span className="shrink-0 text-[11px] text-muted-foreground">{r.providerName}</span>
                   </button>

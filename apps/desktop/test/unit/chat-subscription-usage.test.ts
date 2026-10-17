@@ -197,6 +197,47 @@ describe('subscription usage adapters', () => {
     expect(deps.claudeAccounts).toEqual([])
   })
 
+  it('reads Google AI quota windows only for a signed-in account whose runtime reports them', async () => {
+    const deps = dependencies()
+    const window = {
+      id: 'gemini-models-weekly-limit',
+      kind: 'weekly-model' as const,
+      usedPercent: 9,
+      resetsAt: null,
+      durationMins: 10_080,
+      label: 'Gemini Models',
+    }
+    const readUsage = vi.fn(async () => [window])
+    const state = { authenticated: true }
+    deps.getAntigravityManager = () => ({ getStatus: () => state, readUsage })
+
+    await expect(
+      readSubscriptionUsage({ providerKind: 'antigravity-subscription', accountId: 'acc_g', force: true }, deps)
+    ).resolves.toEqual({
+      state: 'ready',
+      providerKind: 'antigravity-subscription',
+      accountId: 'acc_g',
+      fetchedAt: 1_800_000_000_000,
+      windows: [window],
+    })
+    expect(readUsage).toHaveBeenCalledWith(true)
+
+    readUsage.mockResolvedValueOnce(null as never)
+    await expect(readSubscriptionUsage({ providerKind: 'antigravity-subscription' }, deps)).resolves.toEqual({
+      state: 'unsupported',
+      providerKind: 'antigravity-subscription',
+      accountId: null,
+      reason: 'unavailable',
+    })
+
+    state.authenticated = false
+    await expect(readSubscriptionUsage({ providerKind: 'antigravity-subscription' }, deps)).resolves.toMatchObject({
+      state: 'unsupported',
+      reason: 'unavailable',
+    })
+    expect(readUsage).toHaveBeenCalledTimes(2)
+  })
+
   it('contains provider failures in an error result for the originating account', async () => {
     const deps = dependencies()
     deps.getClaudeManager = () => ({

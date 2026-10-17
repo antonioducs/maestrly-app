@@ -1226,6 +1226,10 @@ export default {
     subscriptionNotConfigured:
       'This build of Maestrly cannot sign in to {{provider}}: it was built without the OAuth Client ID that sign-in requires. Install a Maestrly release that includes it.',
     subscriptionNotConfiguredShort: 'Not configured in this build',
+    subscriptionLoginLinkHint: 'If no browser opened, open this link in your browser to finish signing in:',
+    subscriptionLoginLinkCopy: 'Copy link',
+    subscriptionLoginLinkCopied: 'Copied',
+    subscriptionLoginLinkOpen: 'Open in browser',
     cursorSubscriptionHeading: 'Cursor with subscription',
     cursorSubscriptionDescription:
       'Use your Cursor plan in Maestrly Chat via the official Cursor Agent SDK. Sign in with your Cursor account in the browser.',

@@ -8,6 +8,7 @@ import type {
 import type { CodexAccountRateLimits } from './codex-subscription'
 import { getCodexSubscriptionManager } from './codex-subscription'
 import { getClaudeSubscriptionManager } from './claude-agent-sdk'
+import { getAntigravitySubscriptionManager } from './antigravity-subscription/manager'
 
 const FIVE_HOUR_MINS = 5 * 60
 const WEEK_MINS = 7 * 24 * 60
@@ -169,15 +170,22 @@ interface ClaudeUsageManager {
   getUsage(force?: boolean): Promise<SDKControlGetUsageResponse>
 }
 
+interface AntigravityUsageManager {
+  getStatus(): { authenticated: boolean }
+  readUsage(force?: boolean): Promise<ChatSubscriptionUsageWindow[] | null>
+}
+
 export interface SubscriptionUsageDependencies {
   getCodexManager: (accountId: string | null) => CodexUsageManager
   getClaudeManager: (accountId: string | null) => ClaudeUsageManager
+  getAntigravityManager?: (accountId: string | null) => AntigravityUsageManager
   now: () => number
 }
 
 const DEFAULT_DEPENDENCIES: SubscriptionUsageDependencies = {
   getCodexManager: getCodexSubscriptionManager,
   getClaudeManager: getClaudeSubscriptionManager,
+  getAntigravityManager: getAntigravitySubscriptionManager,
   now: Date.now,
 }
 
@@ -232,6 +240,20 @@ export async function readSubscriptionUsage(
         accountId,
         fetchedAt: dependencies.now(),
         windows: normalizeClaudeSubscriptionUsage(usage),
+      }
+    }
+
+    if (input.providerKind === 'antigravity-subscription' && dependencies.getAntigravityManager) {
+      const manager = dependencies.getAntigravityManager(accountId)
+      if (!manager.getStatus().authenticated) return unsupported(input.providerKind, accountId, 'unavailable')
+      const windows = await manager.readUsage(force)
+      if (!windows) return unsupported(input.providerKind, accountId, 'unavailable')
+      return {
+        state: 'ready',
+        providerKind: input.providerKind,
+        accountId,
+        fetchedAt: dependencies.now(),
+        windows,
       }
     }
 

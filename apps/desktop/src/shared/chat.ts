@@ -1544,6 +1544,8 @@ export interface ChatSubscriptionAuthStatus {
   planType?: string | null
 
   enterpriseUrl?: string | null
+  /** While `signing-in`: the provider's sign-in page, offered for copying when no browser opened. */
+  authUrl?: string
   error?: string
   errorCode?: ChatErrorCode
 }

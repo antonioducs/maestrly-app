@@ -3,7 +3,11 @@ import type { ChatSubscriptionProviderKind, ChatSubscriptionUsageWindow } from '
 export type SubscriptionUsageTone = 'normal' | 'high' | 'critical'
 
 export function supportsSubscriptionUsage(providerKind: ChatSubscriptionProviderKind): boolean {
-  return providerKind === 'codex-subscription' || providerKind === 'claude-subscription'
+  return (
+    providerKind === 'codex-subscription' ||
+    providerKind === 'claude-subscription' ||
+    providerKind === 'antigravity-subscription'
+  )
 }
 
 export function subscriptionUsageTone(usedPercent: number): SubscriptionUsageTone {

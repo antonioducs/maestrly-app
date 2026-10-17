@@ -43,6 +43,7 @@ export interface AcpInitializeResult {
 export interface AcpSessionSetupResult {
   sessionId?: string
   configOptions?: AcpConfigOption[]
+  _meta?: Record<string, unknown>
 }
 
 export type AcpStopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled'

@@ -5,11 +5,19 @@
  * accounts never share credentials, conversations, or the user's own `~/.gemini`. One shared process serves all
  * chat sessions of an account; sign-in uses a dedicated process because `authenticate` blocks until the browser
  * flow finishes.
+ *
+ * The server cannot close or delete a session (it implements neither `session/close` nor `session/delete`), and every
+ * session keeps a `localharness` process alive until the server exits. The model catalog, the subscription tier,
+ * and the `/usage` report therefore share one probe session per server process instead of opening one per request.
  */
 import { mkdir, rm, chmod } from 'node:fs/promises'
 import path from 'node:path'
 import { app } from 'electron'
-import type { ChatSubscriptionAuthStatus, ChatSubscriptionLoginResult } from '../../../shared/chat'
+import type {
+  ChatSubscriptionAuthStatus,
+  ChatSubscriptionLoginResult,
+  ChatSubscriptionUsageWindow,
+} from '../../../shared/chat'
 import { AcpClient, AcpRpcError } from '../acp/client'
 import {
   ACP_AUTH_REQUIRED_CODE,
@@ -17,6 +25,15 @@ import {
   type AcpSessionSetupResult,
   type AcpSessionUpdate,
 } from '../acp/protocol'
+import {
+  ANTIGRAVITY_USAGE_COMMAND,
+  type AntigravityTier,
+  parseAntigravityTier,
+  parseAntigravityUsageReport,
+  readAntigravityAccountTier,
+  sameAntigravityTier,
+  writeAntigravityAccountTier,
+} from './account-info'
 import {
   AntigravityAccountChangedError,
   AntigravityAuthRequiredError,
@@ -44,7 +61,17 @@ export const ANTIGRAVITY_SESSION_META = Object.freeze({ agy: Object.freeze({ ena
 
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_IDLE_CLOSE_MS = 10 * 60_000
+/**
+ * Catalog lifetime once its server process is gone, and for forced refreshes. While that process runs, a regular
+ * request keeps its probe's catalog; each forced refresh costs another session process until the server exits.
+ */
 const MODEL_CACHE_MS = 10 * 60_000
+const USAGE_CACHE_MS = 60_000
+const USAGE_TIMEOUT_MS = 30_000
+/** The server advertises slash commands right after `session/new` answers. */
+const COMMANDS_WAIT_MS = 3_000
+/** Sessions whose advertised commands each connection remembers. */
+const COMMANDS_MEMORY = 64
 const CLIENT_INFO = { name: 'maestrly', version: app.getVersion?.() || '0.0.0' }
 
 export interface AntigravityAccountIdentity {
@@ -56,6 +83,15 @@ export interface AntigravityConnection {
   readonly client: AcpClient
   readonly generation: number
   subscribe(sessionId: string, listener: (update: AcpSessionUpdate) => void): () => void
+  /** Slash commands the server advertised for a session; empty when none arrived within `timeoutMs`. */
+  availableCommands(sessionId: string, timeoutMs: number): Promise<readonly string[]>
+}
+
+interface AntigravityProbe {
+  sessionId: string | null
+  generation: number
+  epoch: number
+  entries: readonly AntigravityModelEntry[]
 }
 
 export interface AntigravityLiveSession {
@@ -73,6 +109,7 @@ export interface AntigravityManagerOptions {
   resolveRuntime?: () => Promise<AntigravityRuntimeCommand>
   processEnv?: (root: string) => NodeJS.ProcessEnv
   idleCloseMs?: number
+  now?: () => number
 }
 
 interface ConnectionState {
@@ -80,7 +117,16 @@ interface ConnectionState {
   readonly generation: number
   readonly runtime: AntigravityRuntimeCommand
   readonly subscribers: Map<string, Set<(update: AcpSessionUpdate) => void>>
+  readonly commands: Map<string, readonly string[]>
   readonly handle: AntigravityConnection
+}
+
+function commandNames(update: AcpSessionUpdate): readonly string[] {
+  const commands = (update as { availableCommands?: unknown }).availableCommands
+  if (!Array.isArray(commands)) return []
+  return commands
+    .map((command) => (command && typeof command === 'object' ? (command as { name?: unknown }).name : undefined))
+    .filter((name): name is string => typeof name === 'string')
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {
@@ -123,9 +169,12 @@ export class AntigravitySubscriptionManager {
   private readonly resolveRuntime: () => Promise<AntigravityRuntimeCommand>
   private readonly processEnv: (root: string) => NodeJS.ProcessEnv
   private readonly idleCloseMs: number
+  private readonly now: () => number
   private readonly authListeners = new Set<() => void>()
   private readonly liveSessions = new Map<string, AntigravityLiveSession>()
   private projectId: string | null | undefined
+  /** Undefined until read from the account home. */
+  private tier: AntigravityTier | null | undefined
   private authenticationRequired = false
   private epoch = 0
   private generation = 0
@@ -136,7 +185,16 @@ export class AntigravitySubscriptionManager {
   private loginController: AbortController | null = null
   private uses = 0
   private idleTimer: NodeJS.Timeout | null = null
-  private models: { at: number; epoch: number; entries: readonly AntigravityModelEntry[] } | null = null
+  private models: {
+    at: number
+    epoch: number
+    generation: number
+    entries: readonly AntigravityModelEntry[]
+  } | null = null
+  private probe: AntigravityProbe | null = null
+  private probing: { generation: number; promise: Promise<AntigravityProbe> } | null = null
+  private usage: { at: number; epoch: number; windows: ChatSubscriptionUsageWindow[] | null } | null = null
+  private usageLoading: { epoch: number; promise: Promise<ChatSubscriptionUsageWindow[] | null> } | null = null
   private disposed = false
 
   constructor(options: AntigravityManagerOptions) {
@@ -146,6 +204,7 @@ export class AntigravitySubscriptionManager {
     this.resolveRuntime = options.resolveRuntime ?? resolveAntigravityRuntime
     this.processEnv = options.processEnv ?? ((root) => buildAntigravityProcessEnv(root))
     this.idleCloseMs = options.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS
+    this.now = options.now ?? Date.now
   }
 
   get workDir(): string {
@@ -177,8 +236,7 @@ export class AntigravitySubscriptionManager {
 
   getStatus(): ChatSubscriptionAuthStatus {
     if (this.loginController) return { state: 'signing-in', authenticated: false }
-    if (!this.authenticationRequired && this.currentProjectId()) return { state: 'signed-in', authenticated: true }
-    return { state: 'signed-out', authenticated: false }
+    return this.statusAfterLogin()
   }
 
   getAccountIdentity(): AntigravityAccountIdentity {
@@ -204,6 +262,7 @@ export class AntigravitySubscriptionManager {
     if (this.authenticationRequired) return
     this.authenticationRequired = true
     this.models = null
+    this.usage = null
     this.emitAuthChanged()
   }
 
@@ -231,12 +290,20 @@ export class AntigravitySubscriptionManager {
       const options = this.startOptions(runtime)
       client = (await AcpClient.start({ ...options, env: { ...options.env, ...browser?.env } }, controller.signal))
         .client
-      await client.request('authenticate', { methodId: 'oauth-personal' }, { signal: controller.signal })
+      const authenticated = await client.request<{ _meta?: unknown } | null>(
+        'authenticate',
+        { methodId: 'oauth-personal' },
+        { signal: controller.signal }
+      )
       this.projectId = readAntigravityProjectId(this.root)
       if (!this.projectId) throw new Error('Google sign-in finished without an Antigravity account.')
+      // Replaces the previous account's tier even when this runtime reports none.
+      this.tier = parseAntigravityTier(authenticated?._meta)
+      await writeAntigravityAccountTier(this.root, this.tier).catch(() => undefined)
       this.authenticationRequired = false
       this.epoch++
       this.models = null
+      this.usage = null
       // The shared process authenticated with the previous state; the next request starts a fresh one.
       await this.closeConnection()
       return { ok: true, status: this.statusAfterLogin() }
@@ -269,8 +336,10 @@ export class AntigravitySubscriptionManager {
       await rm(this.root, { recursive: true, force: true })
     }
     this.projectId = null
+    this.tier = null
     this.authenticationRequired = false
     this.models = null
+    this.usage = null
     this.epoch++
     this.emitAuthChanged()
   }
@@ -304,30 +373,133 @@ export class AntigravitySubscriptionManager {
     }
   }
 
+  /**
+   * The account's model catalog. Concurrent callers share one probe, and a server process answers from its probe
+   * for as long as it runs; `force` only skips a catalog older than {@link MODEL_CACHE_MS}.
+   */
   async listModels(force = false): Promise<readonly AntigravityModelEntry[]> {
     const cached = this.models
-    if (!force && cached && cached.epoch === this.epoch && Date.now() - cached.at < MODEL_CACHE_MS) {
+    if (
+      cached &&
+      cached.epoch === this.epoch &&
+      this.now() - cached.at < this.catalogMaxAge(cached.generation, force)
+    ) {
       return cached.entries
     }
-    const epoch = this.epoch
     const release = this.retain()
     try {
-      const { client } = await this.connection()
-      const session = await client.request<AcpSessionSetupResult>('session/new', {
+      const connection = await this.connection()
+      const fresh = this.models
+      // Another caller may have probed this process while this one waited for it.
+      if (fresh && fresh !== cached && fresh.epoch === this.epoch && fresh.generation === connection.generation) {
+        return fresh.entries
+      }
+      return (await this.openProbe(connection, false)).entries
+    } catch (error) {
+      throw this.translateError(error)
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * Quota windows from the server's `/usage` report, which it answers without a model turn. Null when this runtime
+   * does not advertise the command, so an older server never receives it as a prompt.
+   */
+  async readUsage(force = false): Promise<ChatSubscriptionUsageWindow[] | null> {
+    const cached = this.usage
+    if (!force && cached && cached.epoch === this.epoch && this.now() - cached.at < USAGE_CACHE_MS) {
+      return cached.windows
+    }
+    const loading = this.usageLoading
+    if (loading?.epoch === this.epoch) return loading.promise
+    const epoch = this.epoch
+    const promise: Promise<ChatSubscriptionUsageWindow[] | null> = this.fetchUsage(epoch).finally(() => {
+      if (this.usageLoading?.promise === promise) this.usageLoading = null
+    })
+    this.usageLoading = { epoch, promise }
+    return promise
+  }
+
+  private catalogMaxAge(generation: number, force: boolean): number {
+    const live = !force && this.conn?.client.alive && this.conn.generation === generation
+    return live ? Number.POSITIVE_INFINITY : MODEL_CACHE_MS
+  }
+
+  /**
+   * The probe session of `connection`: the current one when `reuse` allows, otherwise a new one. Concurrent callers
+   * on the same process share a single `session/new`.
+   */
+  private openProbe(connection: AntigravityConnection, reuse: boolean): Promise<AntigravityProbe> {
+    const current = this.probe
+    if (reuse && current && current.generation === connection.generation && current.epoch === this.epoch) {
+      return Promise.resolve(current)
+    }
+    const pending = this.probing
+    if (pending?.generation === connection.generation) return pending.promise
+    const epoch = this.epoch
+    const promise: Promise<AntigravityProbe> = (async () => {
+      const session = await connection.client.request<AcpSessionSetupResult>('session/new', {
         cwd: this.workDir,
         mcpServers: [],
         _meta: ANTIGRAVITY_SESSION_META,
       })
-      if (session.sessionId) {
-        void client.request('session/delete', { sessionId: session.sessionId }).catch(() => undefined)
-      }
       const option = session.configOptions?.find((candidate) => candidate.id === 'model')
-      const entries = parseAntigravityModelOptions(option?.options ?? [])
-      if (epoch === this.epoch) this.models = { at: Date.now(), epoch, entries }
-      return entries
+      const probe: AntigravityProbe = {
+        sessionId: session.sessionId ?? null,
+        generation: connection.generation,
+        epoch,
+        entries: parseAntigravityModelOptions(option?.options ?? []),
+      }
+      if (epoch !== this.epoch) return probe
+      this.models = { at: this.now(), epoch, generation: connection.generation, entries: probe.entries }
+      this.recordTier(session._meta)
+      if (probe.sessionId) {
+        const previous = this.probe
+        this.probe = probe
+        if (previous?.sessionId && previous.generation === connection.generation) {
+          this.removeSessionFilesAfterExit(connection.client, previous.sessionId)
+        }
+      }
+      return probe
+    })().finally(() => {
+      if (this.probing?.promise === promise) this.probing = null
+    })
+    this.probing = { generation: connection.generation, promise }
+    return promise
+  }
+
+  private async fetchUsage(epoch: number): Promise<ChatSubscriptionUsageWindow[] | null> {
+    const release = this.retain()
+    let unsubscribe: (() => void) | null = null
+    const remember = (windows: ChatSubscriptionUsageWindow[] | null) => {
+      if (epoch === this.epoch) this.usage = { at: this.now(), epoch, windows }
+      return windows
+    }
+    try {
+      const connection = await this.connection()
+      const { sessionId } = await this.openProbe(connection, true)
+      if (!sessionId) return remember(null)
+      const commands = await connection.availableCommands(sessionId, COMMANDS_WAIT_MS)
+      if (!commands.includes(ANTIGRAVITY_USAGE_COMMAND)) return remember(null)
+      let report = ''
+      unsubscribe = connection.subscribe(sessionId, (update) => {
+        if (update.sessionUpdate !== 'agent_message_chunk') return
+        const content = (update as { content?: { type?: string; text?: unknown } }).content
+        if (content?.type === 'text' && typeof content.text === 'string') report += content.text
+      })
+      await connection.client.request(
+        'session/prompt',
+        { sessionId, prompt: [{ type: 'text', text: `/${ANTIGRAVITY_USAGE_COMMAND}` }] },
+        { timeoutMs: USAGE_TIMEOUT_MS }
+      )
+      const parsed = parseAntigravityUsageReport(report)
+      if (parsed.error) throw new Error(parsed.error)
+      return remember(parsed.windows)
     } catch (error) {
       throw this.translateError(error)
     } finally {
+      unsubscribe?.()
       release()
     }
   }
@@ -379,6 +551,14 @@ export class AntigravitySubscriptionManager {
     if (this.conn?.client.alive) {
       await this.conn.client.request('session/delete', { sessionId }, { timeoutMs: 10_000 }).catch(() => undefined)
     }
+    await this.removeSessionFiles(sessionId)
+  }
+
+  private removeSessionFilesAfterExit(client: AcpClient, sessionId: string): void {
+    void client.exited.then(() => this.removeSessionFiles(sessionId))
+  }
+
+  private async removeSessionFiles(sessionId: string): Promise<void> {
     if (!SESSION_ID_PATTERN.test(sessionId)) return
     const acpHome = antigravityAcpHome(this.root)
     const conversations = path.join(acpHome, 'conversations')
@@ -411,10 +591,24 @@ export class AntigravitySubscriptionManager {
     return this.projectId
   }
 
+  private currentTier(): AntigravityTier | null {
+    if (this.tier === undefined) this.tier = readAntigravityAccountTier(this.root)
+    return this.tier
+  }
+
+  /** Keeps the tier a session setup reported; a runtime that reports none leaves the known one in place. */
+  private recordTier(meta: unknown): void {
+    const tier = parseAntigravityTier(meta)
+    if (!tier || sameAntigravityTier(tier, this.currentTier())) return
+    this.tier = tier
+    void writeAntigravityAccountTier(this.root, tier).catch(() => undefined)
+    this.emitAuthChanged()
+  }
+
   private statusAfterLogin(): ChatSubscriptionAuthStatus {
-    return !this.authenticationRequired && this.currentProjectId()
-      ? { state: 'signed-in', authenticated: true }
-      : { state: 'signed-out', authenticated: false }
+    if (this.authenticationRequired || !this.currentProjectId()) return { state: 'signed-out', authenticated: false }
+    const plan = this.currentTier()?.name
+    return { state: 'signed-in', authenticated: true, ...(plan ? { planType: plan } : {}) }
   }
 
   private startOptions(runtime: AntigravityRuntimeCommand) {
@@ -439,10 +633,17 @@ export class AntigravitySubscriptionManager {
       throw error
     }
     const subscribers = new Map<string, Set<(update: AcpSessionUpdate) => void>>()
+    // Recorded here because the advertisement can arrive before the caller that created the session resumes.
+    const commands = new Map<string, readonly string[]>()
     client.onNotification((method, params) => {
       if (method !== 'session/update') return
       const notification = params as AcpSessionNotification | null
       if (!notification?.update) return
+      if (notification.update.sessionUpdate === 'available_commands_update') {
+        commands.delete(notification.sessionId)
+        commands.set(notification.sessionId, commandNames(notification.update))
+        if (commands.size > COMMANDS_MEMORY) commands.delete(commands.keys().next().value as string)
+      }
       for (const listener of subscribers.get(notification.sessionId) ?? []) listener(notification.update)
     })
     client.setRequestHandler('session/request_permission', async (params) => decideAntigravityPermission(params))
@@ -462,8 +663,27 @@ export class AntigravitySubscriptionManager {
           if (listeners.size === 0 && subscribers.get(sessionId) === listeners) subscribers.delete(sessionId)
         }
       },
+      availableCommands(sessionId, timeoutMs) {
+        const known = commands.get(sessionId)
+        if (known) return Promise.resolve(known)
+        return new Promise((resolve) => {
+          let done = false
+          const finish = () => {
+            if (done) return
+            done = true
+            clearTimeout(timer)
+            unsubscribe()
+            resolve(commands.get(sessionId) ?? [])
+          }
+          const unsubscribe = handle.subscribe(sessionId, (update) => {
+            if (update.sessionUpdate === 'available_commands_update') finish()
+          })
+          const timer = setTimeout(finish, timeoutMs)
+          void client.exited.then(finish)
+        })
+      },
     }
-    const state: ConnectionState = { client, generation, runtime, subscribers, handle }
+    const state: ConnectionState = { client, generation, runtime, subscribers, commands, handle }
     this.conn = state
     void client.exited.then(() => {
       if (this.conn === state) this.discardConnection(state)
@@ -477,7 +697,15 @@ export class AntigravitySubscriptionManager {
     for (const [conversationId, live] of [...this.liveSessions]) {
       if (live.generation === state.generation) this.dropLiveSession(conversationId)
     }
+    // The catalog outlives its process by MODEL_CACHE_MS, so an idle close does not respawn the server for metadata.
+    if (this.models?.generation === state.generation) this.models = { ...this.models, at: this.now() }
+    const probe = this.probe
+    if (probe?.generation === state.generation) {
+      this.probe = null
+      if (probe.sessionId) this.removeSessionFilesAfterExit(state.client, probe.sessionId)
+    }
     state.subscribers.clear()
+    state.commands.clear()
   }
 
   private discardConnection(state: ConnectionState): void {

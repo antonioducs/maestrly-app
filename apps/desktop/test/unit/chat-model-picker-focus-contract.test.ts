@@ -56,6 +56,17 @@ describe('model shortcuts and composer focus contract', () => {
     expect(modelChipSource).toContain('optionRefs.current[index] = node')
   })
 
+  it('validates one chosen model at a time while the provider runtime answers', () => {
+    expect(modelChipSource).toContain('if (choosingRef.current) return')
+    expect(modelChipSource).toContain('choosingRef.current = true')
+    expect(modelChipSource).toMatch(/finally \{\s*choosingRef\.current = false\s*setChoosingKey\(null\)/)
+    expect(modelChipSource).toContain('aria-busy={choosingKey !== null}')
+    // The guard precedes the IPC call so a second click or Enter never reaches it.
+    expect(modelChipSource.indexOf('if (choosingRef.current) return')).toBeLessThan(
+      modelChipSource.indexOf('await api.chatSetSelection(conversationId, next)')
+    )
+  })
+
   it('escapes overflow and reapplies the hidden-model filter to the cache', () => {
     expect(modelChipSource).toContain('avoidOverflow = false')
     // Fixed placement goes through the helper that also corrects for transformed ancestors such as dialogs.

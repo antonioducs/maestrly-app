@@ -6,6 +6,8 @@
 // Any other text is echoed back as `ok:<text>` after the MCP server has been initialized.
 // Environment: FAKE_ACP_SCENARIO (auth-cancel), FAKE_ACP_PROJECT, FAKE_ACP_LOG (NDJSON of received messages),
 // FAKE_ACP_CHILD_PID_FILE (spawn a helper and write its pid), FAKE_ACP_STDERR_BYTES (stderr noise at startup).
+// Runtime 1.4.0 behavior: FAKE_ACP_TIER (tier name reported in `_meta.antigravity.tier`), FAKE_ACP_USAGE=1 (advertise
+// and answer the `/usage` command without a model turn).
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -68,6 +70,30 @@ const requestClient = (method, params) =>
 const sessions = new Map()
 const metaPath = (id) => path.join(conversationsDir, `${id}.meta`)
 const authenticated = () => existsSync(tokenPath)
+const tierMeta = () =>
+  process.env.FAKE_ACP_TIER
+    ? { _meta: { antigravity: { tier: { name: process.env.FAKE_ACP_TIER, id: 'g1-pro-tier', upgradeUri: '' } } } }
+    : {}
+const usageEnabled = () => process.env.FAKE_ACP_USAGE === '1'
+const USAGE_REPORT = [
+  '### Session Usage',
+  '- **Session total:** data not available yet',
+  '',
+  '### Quota Limits',
+  '- **Gemini Models**',
+  '  - **Weekly Limit Remaining:** 91% remaining (resets Oct 02, 2026, 08:22 UTC)',
+  '- **Claude and GPT models**',
+  '  - **Weekly Limit Remaining:** 100% remaining',
+].join('\n')
+const isUsagePrompt = (prompt) =>
+  usageEnabled() &&
+  /^\/usage(\s|$)/i.test(
+    (prompt ?? [])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+      .trim()
+  )
 const configOptions = (model) => [
   { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model, options: MODEL_OPTIONS },
   {
@@ -261,14 +287,22 @@ async function handle(message) {
           project_id: `fake-project-${process.env.FAKE_ACP_PROJECT ?? '1'}`,
         })
       )
-      return reply(id, {})
+      return reply(id, { ...tierMeta() })
     case 'logout':
       rmSync(tokenPath, { force: true })
       return reply(id, {})
     case 'session/new': {
       if (!authenticated()) return fail(id, -32000, 'Authentication required')
       const session = openSession(randomUUID(), params)
-      return reply(id, { sessionId: session.id, configOptions: configOptions(session.model) })
+      reply(id, { sessionId: session.id, configOptions: configOptions(session.model), ...tierMeta() })
+      // Like the real server, advertised right after the response, often in the same stdout chunk.
+      if (usageEnabled()) {
+        notifyUpdate(session.id, {
+          sessionUpdate: 'available_commands_update',
+          availableCommands: [{ name: 'usage', description: 'Show model token usage and quota limits.' }],
+        })
+      }
+      return undefined
     }
     case 'session/resume':
     case 'session/load': {
@@ -298,6 +332,13 @@ async function handle(message) {
     case 'session/prompt': {
       const session = sessions.get(params.sessionId)
       if (!session) return fail(id, -32002, 'Session not found')
+      if (isUsagePrompt(params.prompt)) {
+        const half = Math.ceil(USAGE_REPORT.length / 2)
+        for (const text of [USAGE_REPORT.slice(0, half), USAGE_REPORT.slice(half)]) {
+          notifyUpdate(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
+        }
+        return reply(id, { stopReason: 'end_turn' })
+      }
       try {
         return reply(id, await runPrompt(session, params.prompt))
       } catch (error) {
