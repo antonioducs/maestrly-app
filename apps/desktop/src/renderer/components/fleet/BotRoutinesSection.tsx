@@ -27,6 +27,7 @@ import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import {
   nextRadioIndex,
+  ROUTINE_ACTIVITY_KINDS,
   routineFormFrom,
   routineSchedule,
   routineScheduleSummary,
@@ -53,7 +54,6 @@ const emptyRoutine = (): RoutineForm => ({
   timezone: localZone,
   enabled: true,
 })
-const routineActivity = ['routine_created', 'routine_updated', 'routine_deleted', 'routine_ran', 'routine_skipped']
 
 /** A bot's routines: each change is saved at once, apart from the settings that wait for the save button. */
 export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: FleetController; id: string }) {
@@ -69,7 +69,7 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
   const routineRadios = useRef<Array<HTMLButtonElement | null>>([])
   const latestBotActivitySeq = fleet.state.activity.findLast((entry) => entry.botId === bot.id)?.seq ?? 0
   const latestRoutineActivity = fleet.state.activity.findLast(
-    (entry) => entry.botId === bot.id && routineActivity.includes(entry.kind)
+    (entry) => entry.botId === bot.id && ROUTINE_ACTIVITY_KINDS.includes(entry.kind)
   )
   const lastRoutineActivitySeq = useRef(fleet.state.activity.at(-1)?.seq ?? 0)
   const dayLabels = [1, 2, 3, 4, 5, 6, 7].map((day) => t(`routine.day.${day}`))

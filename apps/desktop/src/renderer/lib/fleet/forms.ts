@@ -23,6 +23,27 @@ export function editableMessageId(items: FleetTranscriptItem[]): string | null {
   return last?.source === 'owner' && last.id.startsWith('input:') && !last.attachmentError ? last.id : null
 }
 
+/** The routine runs whose instructions are the same as the previous run of that routine shown before them. */
+export function repeatedRoutineRunIds(items: readonly FleetTranscriptItem[]): Set<string> {
+  const lastText = new Map<string, string>()
+  const repeated = new Set<string>()
+  for (const item of items) {
+    if (item.kind !== 'user' || item.source !== 'routine' || !item.routine) continue
+    if (lastText.get(item.routine.id) === item.text) repeated.add(item.id)
+    lastText.set(item.routine.id, item.text)
+  }
+  return repeated
+}
+
+/** Activity kinds after which a bot's routines may have changed. */
+export const ROUTINE_ACTIVITY_KINDS: readonly string[] = [
+  'routine_created',
+  'routine_updated',
+  'routine_deleted',
+  'routine_ran',
+  'routine_skipped',
+]
+
 /** Like desktop chats, a bot conversation shows only its latest to-do list, where it was last written. */
 export function latestTodoItemId(items: FleetTranscriptItem[]): string | null {
   for (let index = items.length - 1; index >= 0; index--) {

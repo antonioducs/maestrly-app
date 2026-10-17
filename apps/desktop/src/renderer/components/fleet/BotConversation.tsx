@@ -1,14 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, Loader2, Pencil, Wrench, X } from 'lucide-react'
-import { FLEET_MESSAGE_EDIT_FEATURE, type FleetBot, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_MESSAGE_EDIT_FEATURE,
+  type FleetBot,
+  type FleetRoutine,
+  type FleetTranscriptItem,
+} from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
 import { accountsExhaustedNotice, isComputerTool } from '@/lib/fleet/format'
-import { editableMessageId, latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
+import {
+  editableMessageId,
+  latestTodoItemId,
+  repeatedRoutineRunIds,
+  ROUTINE_ACTIVITY_KINDS,
+  routineScheduleSummary,
+  visibleTranscriptItems,
+} from '@/lib/fleet/forms'
 import { Button } from '@/components/ui/button'
 import { TodoList } from '@/components/chat/TodoCard'
 import { InteractionCard } from './InteractionCard'
@@ -17,6 +29,8 @@ import { fleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 import { BotTranscriptFiles } from './BotTranscriptFiles'
+import { BotPeerMessage } from './BotPeerMessage'
+import { BotRoutineMessage } from './BotRoutineMessage'
 import { AgentActivity } from '@/components/chat/AgentActivity'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
@@ -28,6 +42,9 @@ import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { searchTranscriptSegments, transcriptSegmentKey } from '@/lib/fleet/transcript-search'
 import { cn } from '@/lib/utils'
+
+/** A bot this server no longer lists, or one in an environment this device cannot see. */
+const UNKNOWN_BOT_TINT = '#777'
 
 /** A bot's answer: each generated interface renders once its block is complete, and sends through the bot. */
 function BotAnswer({
@@ -172,6 +189,9 @@ function TranscriptRow({
   currentSearchMatch,
   edit,
   onInterfaceSend,
+  routineSchedule,
+  repeatedRoutine,
+  onExpand,
 }: {
   bot: FleetBot
   imageCache: FleetImageCache
@@ -185,6 +205,12 @@ function TranscriptRow({
   edit?: RowEdit
   /** Sends what a generated interface asks to send as the owner; absent while the bot cannot take messages. */
   onInterfaceSend?: (text: string) => void
+  /** A routine run: how its routine runs, when known. */
+  routineSchedule: string | null
+  /** A routine run with the same instructions as the previous one. */
+  repeatedRoutine: boolean
+  /** A folded row unfolds: the transcript keeps the owner's reading position. */
+  onExpand: () => void
 }) {
   const { t, i18n } = useTranslation('fleet')
   const at = new Date(item.at).toLocaleTimeString(i18n.language, {
@@ -203,33 +229,48 @@ function TranscriptRow({
       time ? t('transcript.accountsExhausted.until', { time }) : t('transcript.accountsExhausted.queued')
     }`
   }
+  const removeQueued = () =>
+    void window.api
+      .fleetRemoveQueuedMessage(bot.id, item.id.replace(/^input:/, ''))
+      .then(() => fleet.loadTranscript(bot.id))
+      .catch(() => {})
+  const fleetBot = (id: string | undefined) => fleet.state.snapshot.bots.find((peer) => peer.id === id)
   if (item.kind === 'user') {
-    if (item.source === 'peer')
+    if (item.source === 'peer') {
+      const peer = fleetBot(item.peer?.botId)
       return (
-        <div className="rounded-lg border border-dashed border-border p-3 text-sm">
-          <div className="mb-1 text-xs text-muted-foreground">
-            {t('transcript.peerWrote', {
-              name: item.peer?.name ?? '',
-              bot: bot.name,
-            })}{' '}
-            · {at}
-          </div>
-          <SearchText text={item.text} query={searchQuery} current={currentSearchMatch} />
-          {item.memories.length > 0 && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t('conversation.recalled', { titles: item.memories.map((memory) => memory.title).join(', ') })}
-            </p>
-          )}
-          {item.peer && fleet.state.snapshot.bots.some((peer) => peer.id === item.peer?.botId) && (
-            <button
-              type="button"
-              className="ml-2 text-primary hover:underline"
-              onClick={() => onOpenBot(item.peer!.botId)}
-            >
-              {t('transcript.openPeer')}
-            </button>
-          )}
-        </div>
+        <BotPeerMessage
+          from={{ name: item.peer?.name ?? peer?.name ?? '', tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+          to={bot}
+          at={at}
+          text={item.text}
+          meta={item.queued ? t('transcript.queued') : undefined}
+          footer={
+            item.memories.length > 0 &&
+            t('conversation.recalled', { titles: item.memories.map((memory) => memory.title).join(', ') })
+          }
+          onOpenPeer={peer ? () => onOpenBot(peer.id) : undefined}
+          onExpand={onExpand}
+          searchQuery={searchQuery}
+          currentSearchMatch={currentSearchMatch}
+        />
+      )
+    }
+    if (item.source === 'routine')
+      return (
+        <BotRoutineMessage
+          title={item.routine?.title || t('transcript.routine.label')}
+          schedule={routineSchedule}
+          at={at}
+          text={item.text}
+          repeated={repeatedRoutine}
+          memories={item.memories}
+          queued={item.queued}
+          onRemoveQueued={removeQueued}
+          onExpand={onExpand}
+          searchQuery={searchQuery}
+          currentSearchMatch={currentSearchMatch}
+        />
       )
     if (edit?.draft != null)
       return (
@@ -247,14 +288,6 @@ function TranscriptRow({
       )
     return (
       <div className="group/message ml-auto max-w-[85%] rounded-xl border border-border-strong bg-surface-elevated px-4 py-3 text-sm">
-        {item.source === 'routine' && (
-          <span className="mb-2 block text-xs text-primary">
-            {t('transcript.routine', {
-              title: item.routine?.title ?? '',
-              time: at,
-            })}
-          </span>
-        )}
         <p className="whitespace-pre-wrap">
           <SearchText text={item.text} query={searchQuery} current={currentSearchMatch} />
         </p>
@@ -290,12 +323,7 @@ function TranscriptRow({
                 type="button"
                 aria-label={t('transcript.removeQueued')}
                 className="rounded p-0.5 hover:text-destructive"
-                onClick={() =>
-                  void window.api
-                    .fleetRemoveQueuedMessage(bot.id, item.id.replace(/^input:/, ''))
-                    .then(() => fleet.loadTranscript(bot.id))
-                    .catch(() => {})
-                }
+                onClick={removeQueued}
               >
                 <X className="size-3" />
               </button>
@@ -396,20 +424,22 @@ function TranscriptRow({
     )
   if (item.kind === 'permission' || item.kind === 'question' || item.kind === 'help')
     return <InteractionCard botId={bot.id} item={item} fleet={fleet} onOpenScreen={onOpenScreen} />
-  if (item.kind === 'peer_out')
+  if (item.kind === 'peer_out') {
+    const peer = fleetBot(item.to.botId)
     return (
-      <div className="rounded-lg border border-dashed border-border p-3 text-sm">
-        <div className="text-xs text-muted-foreground">
-          {t('transcript.wroteTo', { bot: item.to.name })} · {at}
-        </div>
-        <p className="mt-1">
-          <SearchText text={item.text} query={searchQuery} current={currentSearchMatch} />
-        </p>
-        <span className="text-xs text-muted-foreground">
-          {t(item.delivered ? 'transcript.delivered' : 'transcript.notDelivered')}
-        </span>
-      </div>
+      <BotPeerMessage
+        from={bot}
+        to={{ name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+        at={at}
+        text={item.text}
+        footer={t(item.delivered ? 'transcript.delivered' : 'transcript.notDelivered')}
+        onOpenPeer={peer ? () => onOpenBot(peer.id) : undefined}
+        onExpand={onExpand}
+        searchQuery={searchQuery}
+        currentSearchMatch={currentSearchMatch}
+      />
     )
+  }
   return (
     <div className="text-center text-xs text-muted-foreground">
       {t(`transcript.system.${item.code}`, {
@@ -618,6 +648,41 @@ export function BotConversation({
   const latestTodoId = latestTodoItemId(shownItems)
   const working = bot.status === 'working' || bot.status === 'waiting'
 
+  // --- Routine runs say how their routine runs, which the transcript does not carry. ---
+  const hasRoutineRuns = useMemo(
+    () => shownItems.some((item) => item.kind === 'user' && item.source === 'routine'),
+    [shownItems]
+  )
+  const routineActivitySeq =
+    fleet.state.activity.findLast((entry) => entry.botId === bot.id && ROUTINE_ACTIVITY_KINDS.includes(entry.kind))
+      ?.seq ?? 0
+  const [routines, setRoutines] = useState<{ botId: string; list: FleetRoutine[] } | null>(null)
+  useEffect(() => {
+    if (!hasRoutineRuns) return
+    let alive = true
+    void window.api
+      .fleetListRoutines(bot.id)
+      .then((result) => {
+        if (alive) setRoutines({ botId: bot.id, list: result.routines })
+      })
+      // Without the list, a run shows without its schedule.
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [bot.id, hasRoutineRuns, routineActivitySeq])
+  const routineSchedules = useMemo(() => {
+    const schedules = new Map<string, string>()
+    if (routines?.botId !== bot.id) return schedules
+    const dayLabels = [1, 2, 3, 4, 5, 6, 7].map((day) => t(`routine.day.${day}`))
+    for (const routine of routines.list) {
+      const summary = routineScheduleSummary(routine.schedule, dayLabels, t('routine.schedule.everyDay'))
+      schedules.set(routine.id, t(summary.key, summary.values))
+    }
+    return schedules
+  }, [bot.id, routines, t])
+  const repeatedRoutines = useMemo(() => repeatedRoutineRunIds(shownItems), [shownItems])
+
   // A generated interface sends as the owner, like the composer; the instance queues it while the bot works.
   const sendFromInterface = useCallback(
     (text: string) => {
@@ -642,6 +707,16 @@ export function BotConversation({
 
   // --- Search (Cmd/Ctrl+F), like a chat's. ---
   const ownerWindow = useChatOwnerWindow()
+  // An unfolding row grows under the owner's eyes: following the end would scroll what they opened away.
+  const holdReadingPosition = useCallback(() => {
+    atBottomRef.current = false
+    ownerWindow.requestAnimationFrame(() => {
+      const node = scrollRef.current
+      if (!node) return
+      atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
+      setAtBottom(atBottomRef.current)
+    })
+  }, [ownerWindow])
   const { loadTranscript } = fleet
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -827,6 +902,13 @@ export function BotConversation({
                         currentSearchMatch={current}
                         edit={rowEdit(segment.item)}
                         onInterfaceSend={interfaceSend}
+                        routineSchedule={
+                          segment.item.kind === 'user' && segment.item.routine
+                            ? (routineSchedules.get(segment.item.routine.id) ?? null)
+                            : null
+                        }
+                        repeatedRoutine={repeatedRoutines.has(segment.item.id)}
+                        onExpand={holdReadingPosition}
                       />
                     )}
                   </div>

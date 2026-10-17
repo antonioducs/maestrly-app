@@ -728,9 +728,19 @@ export default {
     videoLoadFailed: 'Não foi possível carregar o vídeo',
     videoUnsupported: 'Este vídeo não pode ser reproduzido aqui. Baixe-o para assistir.',
     videoRetry: 'Tentar de novo',
-    peerWrote: '{{name}} escreveu para {{bot}}',
     openPeer: 'Abrir bot',
-    routine: 'Rotina diária · {{title}} · {{time}}',
+    peer: {
+      label: 'Mensagem de {{from}} para {{to}}',
+      sections: 'Seções',
+      showAll: 'Mostrar tudo',
+      showLess: 'Mostrar menos',
+    },
+    routine: {
+      label: 'Rotina',
+      scheduled: 'Rotina · {{schedule}}',
+      instructions: 'Instruções',
+      repeated: 'Mesmas instruções da execução anterior',
+    },
     queued: 'Na fila',
     removeQueued: 'Remover mensagem da fila',
     edit: {
@@ -747,7 +757,6 @@ export default {
     retry: 'Tentar novamente',
     working: 'Trabalhando…',
     noOutput: 'Sem saída',
-    wroteTo: 'Escreveu para {{bot}}',
     delivered: 'Entregue',
     notDelivered: 'Aguardando entrega',
     tool: {

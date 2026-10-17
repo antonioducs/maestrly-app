@@ -150,7 +150,7 @@ export function registerBotInstanceTools(
     'bot_peers_send',
     {
       description:
-        'Send a concise message to another bot by bot ID. Use only when coordination is useful; do not keep retrying rate limits.',
+        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. Use only when coordination is useful; do not keep retrying rate limits.',
       inputSchema: { to: fleetBotIdSchema, text: fleetPeerTextSchema },
       annotations: { readOnlyHint: false },
     },
