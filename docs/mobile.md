@@ -46,7 +46,11 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   chosen in **Settings → Language** or, with **System**, in the phone's. When
   the phone's region has no recognizer for that language, it listens in the
   language's main one: an iPhone in English set to Brazil dictates in US
-  English. See [Data on the phone](#data-on-the-phone).
+  English. On iOS 26 and later, it uses Apple's newer on-device transcriber
+  for the languages it covers, which punctuates and handles long messages
+  much better. The first time you dictate in such a language, iOS downloads
+  the language's model in the background, and that dictation uses the
+  previous recognizer. See [Data on the phone](#data-on-the-phone).
 - **Artifacts:** a page an agent publishes shows as a card in the conversation;
   **Open** shows the version it published. See [Artifacts](#artifacts).
 - **Offline:** messages you send without a connection wait on the phone and go
@@ -162,9 +166,10 @@ phone also removes its push registration from the server.
   token. It sends no telemetry.
 - Dictation uses the phone's speech recognition: Apple's on iOS, Google's (or
   the phone maker's) on Android. They may process the audio on their servers,
-  under their own privacy policies. Maestrly and your server never receive the
-  audio, only the text you then send. The microphone is on only while the
-  listening indicator shows.
+  under their own privacy policies. On iOS 26 and later, the newer transcriber
+  keeps the audio on the phone for the languages it covers. Maestrly and your
+  server never receive the audio, only the text you then send. The microphone
+  is on only while the listening indicator shows.
 
 ## Develop
 

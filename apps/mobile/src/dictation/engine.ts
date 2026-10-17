@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from 'expo'
 import { Platform } from 'react-native'
-import type { SpeechEngine, SpeechError, SpeechResult } from './session'
+import { preferTranscriber, type SpeechEngine, type SpeechError, type SpeechResult } from './session'
+import { transcriberEngine } from './transcriber'
 
 type Listeners = {
   result: Set<(value: SpeechResult) => void>
@@ -93,3 +94,11 @@ export const speechEngine: SpeechEngine = {
   onError: (listener) => subscribe('error', listener),
   onEnd: (listener) => subscribe('end', listener),
 }
+
+/**
+ * What dictation listens with: on iOS 26 and later, Apple's newer on-device transcriber, which punctuates far better,
+ * wherever it has the language's model; the recognizer above everywhere else.
+ */
+export const dictationEngine: SpeechEngine = transcriberEngine
+  ? preferTranscriber(transcriberEngine, speechEngine)
+  : speechEngine

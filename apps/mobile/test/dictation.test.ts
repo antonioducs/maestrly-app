@@ -4,10 +4,12 @@ import {
   createDictation,
   DICTATION_STOP_GRACE_MS,
   dictationLanguages,
+  preferTranscriber,
   recognizerLanguage,
   type SpeechEngine,
   type SpeechError,
   type SpeechResult,
+  type TranscriberEngine,
 } from '../src/dictation/session'
 
 /** Part of the tags Apple's recognizer takes (SFSpeechRecognizer.supportedLocales), in the order it lists them. */
@@ -82,6 +84,37 @@ function fakeEngine({ granted = true, available = true, supported = [] as readon
     listeners: () => results.size + errors.size + ends.size,
   }
   return engine satisfies SpeechEngine & Record<string, unknown>
+}
+
+/** Apple's SpeechTranscriber: `models` are the languages whose model is on the phone. */
+function fakeTranscriber({
+  available = true,
+  supported = ['en-US', 'pt-BR', 'fr-FR'] as readonly string[],
+  models = ['en-US', 'pt-BR'] as readonly string[],
+} = {}) {
+  const base = fakeEngine({ available, supported })
+  const record = base.start
+  let release: () => void = () => {}
+  const transcriber = Object.assign(base, {
+    prepared: [] as string[],
+    failStart: false,
+    holdStart: false,
+    prepare: (lang: string) => {
+      transcriber.prepared.push(lang)
+      return Promise.resolve(models.includes(lang))
+    },
+    start: (lang: string) => {
+      if (transcriber.failStart) return Promise.reject(new Error('no microphone'))
+      record(lang)
+      return transcriber.holdStart
+        ? new Promise<void>((resolve) => {
+            release = resolve
+          })
+        : Promise.resolve()
+    },
+    release: () => release(),
+  })
+  return transcriber satisfies TranscriberEngine & Record<string, unknown>
 }
 
 afterEach(() => {
@@ -266,5 +299,144 @@ describe('dictation', () => {
     expect(engine.aborts).toBe(1)
     expect(engine.listeners()).toBe(0)
     expect(heard).toEqual([])
+  })
+
+  it('turns off a recognizer that finishes starting after the dictation was stopped', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber()
+    transcriber.holdStart = true
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), () => {})
+    const starting = dictation.start('pt-BR')
+    await vi.waitFor(() => expect(transcriber.started).toEqual(['pt-BR']))
+    dictation.stop()
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
+    transcriber.release()
+    await starting
+    expect(transcriber.aborts).toBe(1)
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
+  })
+
+  it('says it cannot listen when the recognizer fails to start', async () => {
+    const engine = fakeEngine()
+    engine.start = () => {
+      throw new Error('Speech recognition is not in this build')
+    }
+    const dictation = createDictation(engine, () => {})
+    await dictation.start('en-US')
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: 'unavailable' })
+  })
+})
+
+describe('dictation with the transcriber', () => {
+  it('listens with the transcriber when it has the model of the language', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber()
+    const heard: string[] = []
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), (text) => heard.push(text))
+    // An iPhone in English set to Brazil: the recognizer's choice, en-US, is what the transcriber is asked for.
+    await dictation.start('en-BR', 'pt-BR')
+    expect(transcriber.started).toEqual(['en-US'])
+    expect(recognizer.started).toEqual([])
+    expect(dictation.state()).toEqual({ phase: 'listening', text: '' })
+
+    transcriber.hear('Abra o pull')
+    transcriber.hear('Abra o pull request.', true)
+    transcriber.hear('Pode ser agora?', true)
+    dictation.stop()
+    expect(transcriber.stops).toBe(1)
+    expect(recognizer.stops).toBe(0)
+    transcriber.end()
+    expect(heard).toEqual(['Abra o pull request. Pode ser agora?'])
+  })
+
+  it('listens with the recognizer while the model downloads, and asks for it again next time', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber({ models: [] })
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), () => {})
+    await dictation.start('pt-BR')
+    expect(transcriber.prepared).toEqual(['pt-BR'])
+    expect(transcriber.started).toEqual([])
+    expect(recognizer.started).toEqual(['pt-BR'])
+    dictation.cancel()
+    await dictation.start('pt-BR')
+    expect(transcriber.prepared).toEqual(['pt-BR', 'pt-BR'])
+  })
+
+  it('never swaps the variant of a language for one the transcriber has', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber({ supported: ['pt-BR'], models: ['pt-BR'] })
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), () => {})
+    await dictation.start('pt-PT')
+    expect(transcriber.prepared).toEqual([])
+    expect(recognizer.started).toEqual(['pt-PT'])
+  })
+
+  it("takes the transcriber's own spelling of a tag", async () => {
+    const recognizer = fakeEngine({ supported: ['zh-TW'] })
+    const transcriber = fakeTranscriber({ supported: ['zh-Hant_TW'], models: ['zh-Hant_TW'] })
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), () => {})
+    await dictation.start('zh-Hant-TW')
+    expect(transcriber.started).toEqual(['zh-Hant_TW'])
+  })
+
+  it('listens with the recognizer on phones without the transcriber', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber({ available: false })
+    const engine = preferTranscriber(transcriber, recognizer)
+    expect(engine.available()).toBe(true)
+    const dictation = createDictation(engine, () => {})
+    await dictation.start('pt-BR')
+    expect(transcriber.prepared).toEqual([])
+    expect(recognizer.started).toEqual(['pt-BR'])
+  })
+
+  it('falls back to the recognizer when the transcriber fails to start', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber()
+    transcriber.failStart = true
+    const heard: string[] = []
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), (text) => heard.push(text))
+    await dictation.start('pt-BR')
+    expect(recognizer.started).toEqual(['pt-BR'])
+    expect(dictation.state()).toEqual({ phase: 'listening', text: '' })
+    recognizer.hear('Rode os testes', true)
+    recognizer.end()
+    expect(heard).toEqual(['Rode os testes'])
+  })
+
+  it('hears only the engine listening', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber()
+    const heard: string[] = []
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), (text) => heard.push(text))
+    await dictation.start('pt-BR')
+    recognizer.hear('stray words', true)
+    recognizer.fail('network')
+    recognizer.end()
+    expect(dictation.state()).toEqual({ phase: 'listening', text: '' })
+    transcriber.hear('Tudo certo.', true)
+    transcriber.end()
+    expect(heard).toEqual(['Tudo certo.'])
+    dictation.dispose()
+    expect(transcriber.listeners() + recognizer.listeners()).toBe(0)
+  })
+
+  it('asks the transcriber for its languages again after it gave none', async () => {
+    const recognizer = fakeEngine({ supported: APPLE })
+    const transcriber = fakeTranscriber()
+    let calls = 0
+    transcriber.languages = () => {
+      calls += 1
+      return calls === 1 ? Promise.reject(new Error('not ready')) : Promise.resolve(['pt-BR'])
+    }
+    const dictation = createDictation(preferTranscriber(transcriber, recognizer), () => {})
+    await dictation.start('pt-BR')
+    expect(recognizer.started).toEqual(['pt-BR'])
+    dictation.cancel()
+    await dictation.start('pt-BR')
+    expect(transcriber.started).toEqual(['pt-BR'])
+    dictation.cancel()
+    await dictation.start('pt-BR')
+    expect(calls).toBe(2)
   })
 })
