@@ -33,7 +33,8 @@ export interface SpeechEngine {
   requestPermission(): Promise<boolean>
   /** The language tags the recognizer takes, exactly as it names them; empty when it takes any tag. */
   languages(): Promise<readonly string[]>
-  start(lang: string): void
+  /** Starts listening, by the time it returns or resolves; throws or rejects when it cannot. */
+  start(lang: string): void | Promise<void>
   stop(): void
   abort(): void
   onResult(listener: (result: SpeechResult) => void): () => void
@@ -98,6 +99,14 @@ export function dictationLanguages(systemTags: readonly string[], preference: Lo
 /** A language's main region, where it is not the language's own code (as French's is `fr-FR`). */
 const MAIN_REGION: Record<string, string> = { en: 'us', pt: 'br' }
 
+const tagKey = (tag: string) => tag.replace(/_/g, '-').toLowerCase()
+
+/** A tag's language and region, without its script: `zh-Hant-TW` is `zh-tw`. */
+function variant(tag: string): { language: string; region: string | undefined } {
+  const [language = '', ...rest] = tagKey(tag).split('-')
+  return { language, region: rest.find((part) => /^([a-z]{2}|\d{3})$/.test(part)) }
+}
+
 /**
  * The first wanted language the recognizer takes, as it names it. Apple's takes only the tags of its own list, while
  * phones name a language with the phone's region (an iPhone in English set to Brazil says `en-BR`), so a language
@@ -107,20 +116,97 @@ const MAIN_REGION: Record<string, string> = { en: 'us', pt: 'br' }
 export function recognizerLanguage(wanted: readonly string[], supported: readonly string[]): string {
   const first = wanted[0] ?? 'en-US'
   if (!supported.length) return first
-  const key = (tag: string) => tag.replace(/_/g, '-').toLowerCase()
-  const named = new Map(supported.map((tag) => [key(tag), tag]))
+  const named = new Map(supported.map((tag) => [tagKey(tag), tag]))
   for (const tag of wanted) {
-    const [language, ...rest] = key(tag).split('-')
-    // Without its script: `zh-Hant-TW` is `zh-TW`.
-    const region = rest.find((part) => /^([a-z]{2}|\d{3})$/.test(part))
+    const { language, region } = variant(tag)
     const match =
-      named.get(key(tag)) ??
+      named.get(tagKey(tag)) ??
       (region ? named.get(`${language}-${region}`) : undefined) ??
       named.get(`${language}-${MAIN_REGION[language] ?? language}`) ??
-      supported.find((each) => key(each).split('-')[0] === language)
+      supported.find((each) => variant(each).language === language)
     if (match) return match
   }
   return first
+}
+
+/** Apple's SpeechTranscriber (iOS 26 and later), which needs a language's model on the phone to listen in it. */
+export interface TranscriberEngine
+  extends Pick<SpeechEngine, 'available' | 'languages' | 'stop' | 'abort' | 'onResult' | 'onError' | 'onEnd'> {
+  /** Whether the language's model is on the phone; when it is not, the phone starts downloading it. */
+  prepare(lang: string): Promise<boolean>
+  start(lang: string): Promise<void>
+}
+
+/**
+ * Listens with the transcriber where it has the model for the recognizer's language, in the same variant (never
+ * `pt-PT` for `pt-BR`), and with the recognizer otherwise: on older phones, in languages the transcriber lacks, while
+ * the model downloads, and when the transcriber fails to start. Only the engine listening is heard.
+ */
+export function preferTranscriber(transcriber: TranscriberEngine, recognizer: SpeechEngine): SpeechEngine {
+  let active: SpeechEngine | TranscriberEngine | null = null
+  let known: Promise<readonly string[]> | undefined
+  const transcriberLanguages = () => {
+    known ??= transcriber.languages().then(
+      (tags) => {
+        if (!tags.length) known = undefined
+        return tags
+      },
+      () => {
+        known = undefined
+        return []
+      }
+    )
+    return known
+  }
+  const sameVariant = (a: string, b: string) => {
+    const one = variant(a)
+    const other = variant(b)
+    return one.language === other.language && one.region === other.region
+  }
+  const readyTag = async (lang: string) => {
+    if (!transcriber.available()) return undefined
+    const tag = (await transcriberLanguages()).find((each) => sameVariant(each, lang))
+    if (!tag) return undefined
+    return (await transcriber.prepare(tag).catch(() => false)) ? tag : undefined
+  }
+  const forward =
+    <T extends unknown[]>(from: SpeechEngine | TranscriberEngine, listener: (...args: T) => void) =>
+    (...args: T) => {
+      if (active === from) listener(...args)
+    }
+  const both = (one: () => void, other: () => void) => () => {
+    one()
+    other()
+  }
+
+  return {
+    available: () => transcriber.available() || recognizer.available(),
+    requestPermission: () => recognizer.requestPermission(),
+    languages: () => recognizer.languages(),
+    async start(lang) {
+      active = null
+      const tag = await readyTag(lang)
+      if (tag) {
+        try {
+          await transcriber.start(tag)
+          active = transcriber
+          return
+        } catch {
+          // The recognizer listens instead.
+        }
+      }
+      active = recognizer
+      await recognizer.start(lang)
+    },
+    stop: () => active?.stop(),
+    abort: () => active?.abort(),
+    onResult: (listener) =>
+      both(transcriber.onResult(forward(transcriber, listener)), recognizer.onResult(forward(recognizer, listener))),
+    onError: (listener) =>
+      both(transcriber.onError(forward(transcriber, listener)), recognizer.onError(forward(recognizer, listener))),
+    onEnd: (listener) =>
+      both(transcriber.onEnd(forward(transcriber, listener)), recognizer.onEnd(forward(recognizer, listener))),
+  }
 }
 
 /**
@@ -135,6 +221,8 @@ export function createDictation(engine: SpeechEngine, onText: (text: string) => 
   let session = 0
   const listeners = new Set<(state: DictationState) => void>()
   const heard = () => [fixed, guess].filter(Boolean).join(' ')
+  // Read through a call: the state changes while `start` awaits, which narrowing would not see.
+  const phase = () => current.phase
   const set = (next: DictationState) => {
     current = next
     for (const listener of listeners) listener(next)
@@ -198,12 +286,18 @@ export function createDictation(engine: SpeechEngine, onText: (text: string) => 
       }
       if (mine !== session) return
       try {
-        engine.start(recognizerLanguage(wanted, supported))
-        if (mine === session) set({ phase: 'listening', text: '' })
+        await engine.start(recognizerLanguage(wanted, supported))
       } catch {
+        if (mine !== session) return
         session += 1
-        set({ phase: 'idle', issue: 'unavailable' })
+        return set({ phase: 'idle', issue: 'unavailable' })
       }
+      if (mine === session) {
+        if (phase() === 'starting') set({ phase: 'listening', text: '' })
+        return
+      }
+      // Stopped, cancelled or gone while the recognizer was starting. A newer dictation already listening keeps it.
+      if (phase() !== 'listening') engine.abort()
     },
     stop() {
       if (current.phase === 'starting') {

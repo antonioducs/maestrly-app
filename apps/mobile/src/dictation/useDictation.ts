@@ -2,7 +2,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants'
 import { getLocales } from 'expo-localization'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n'
-import { speechEngine } from './engine'
+import { dictationEngine } from './engine'
 import { createDictation, dictationLanguages, type Dictation, type DictationState } from './session'
 
 const IDLE: DictationState = { phase: 'idle', issue: null }
@@ -16,11 +16,11 @@ export function useDictation(onText: (text: string) => void) {
   latest.current = onText
   const dictation = useRef<Dictation | null>(null)
   const [state, setState] = useState<DictationState>(IDLE)
-  const [available] = useState(() => speechEngine.available())
+  const [available] = useState(() => dictationEngine.available())
   const [needsBuild] = useState(() => !available && inExpoGo())
 
   useEffect(() => {
-    const created = createDictation(speechEngine, (text) => latest.current(text))
+    const created = createDictation(dictationEngine, (text) => latest.current(text))
     dictation.current = created
     const unsubscribe = created.subscribe(setState)
     return () => {
