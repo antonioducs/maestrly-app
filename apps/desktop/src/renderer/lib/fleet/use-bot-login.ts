@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FleetLoginAttempt, FleetLoginKind, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
+import type { ChatSubscriptionProviderKind } from '../../../shared/chat'
+import type { HostView } from '../../../shared/hosts'
 import { closeBotLogin, createLoginOwnership } from './provisioning'
 import { fleetErrorMessage } from './errors'
 import { targetFromParts, targetParts, type ProvisioningSubject } from './environments'
@@ -155,6 +157,30 @@ export function useBotLogin({
   }
 }
 export type BotLogin = ReturnType<typeof useBotLogin>
+
+/** The subscriptions a workspaces host signs in through its environment, by their kind on the server. */
+const ENVIRONMENT_LOGIN_KINDS: Partial<Record<ChatSubscriptionProviderKind, FleetLoginKind>> = {
+  'codex-subscription': 'codex',
+  'claude-subscription': 'claude',
+  'grok-subscription': 'grok',
+  'antigravity-subscription': 'antigravity',
+}
+
+/**
+ * How a subscription of a workspaces host signs in from this computer: through the host's environment on the server,
+ * which opens the provider's page here and relays its callback to the host. Run on the host itself, the sign-in would
+ * open the page on the server, or call back to a port of this computer that nothing listens on. Null on this computer,
+ * on a host reached without a server, and for providers whose page calls nothing back (GitHub Copilot, Cursor): the
+ * host signs those in itself.
+ */
+export function environmentSubscriptionLogin(
+  providerKind: ChatSubscriptionProviderKind,
+  host: Pick<HostView, 'remote' | 'environment'>
+): { kind: FleetLoginKind; environmentId: string } | null {
+  const kind = ENVIRONMENT_LOGIN_KINDS[providerKind]
+  const environmentId = host.remote ? host.environment?.id : undefined
+  return kind && environmentId ? { kind, environmentId } : null
+}
 
 /** The host of a sign-in page, for naming it; empty when the URL cannot be read. */
 export function loginHost(url: string): string {

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, Loader2, LogIn, LogOut, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { environmentSubscriptionLogin } from '@/lib/fleet/use-bot-login'
+import { BotLoginDialog } from '@/components/fleet/BotLoginDialog'
 import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type {
@@ -89,8 +92,11 @@ export function SubscriptionAccount({
 }) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
+  const host = useHostInfo()
   const titleFor = useSubscriptionAccountTitle()
   const { providerKind, provider, accountId, accountLabel } = entry
+  const environmentLogin = environmentSubscriptionLogin(providerKind, host)
+  const [environmentLoginOpen, setEnvironmentLoginOpen] = useState(false)
   const [status, setStatus] = useState<ChatSubscriptionAuthStatus | null>(null)
   const [loginInstructions, setLoginInstructions] = useState<ChatSubscriptionLoginResult | null>(null)
   const [busy, setBusy] = useState<'refresh' | 'login' | 'logout' | null>(null)
@@ -244,6 +250,11 @@ export function SubscriptionAccount({
         if (recovered?.state !== 'signed-out') {
           throw new Error(recovered?.error || t(copyKey('LoginFailed')))
         }
+      }
+      // A workspaces host would open the provider's page on the server: its environment relays it to this computer.
+      if (environmentLogin) {
+        setEnvironmentLoginOpen(true)
+        return
       }
       const result = await api.chatSubscriptionLogin(providerKind, accountId)
       if (!result.ok) {
@@ -572,6 +583,18 @@ export function SubscriptionAccount({
         />
       )}
       {provider && signedIn && <ProviderModelFilter providerId={provider.id} onFilterChanged={onModelFilterChanged} />}
+      {environmentLogin && environmentLoginOpen && (
+        <BotLoginDialog
+          subject={{ target: { environmentId: environmentLogin.environmentId }, name: host.label, running: true }}
+          kind={environmentLogin.kind}
+          slot={accountId ?? 'default'}
+          open
+          onClose={() => {
+            setEnvironmentLoginOpen(false)
+            void refreshStatus(true)
+          }}
+        />
+      )}
     </div>
   )
 }
