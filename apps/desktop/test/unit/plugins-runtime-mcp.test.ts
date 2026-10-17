@@ -18,6 +18,7 @@ import {
 import { writeMcpCatalog } from '../../src/main/chat/mcp-catalog'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
 import { type PluginLayout, pluginKeyHash, pluginLayout } from '../../src/main/plugins/layout'
+import { installedDto, reconcilePluginsOnStartup } from '../../src/main/plugins/service'
 import { listInstalled, writeInstalled, writePluginSecrets } from '../../src/main/plugins/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeStandaloneConversation, makeWorkspace } from '../helpers/factories'
@@ -175,6 +176,42 @@ describe('plugin MCP servers at runtime', () => {
     const [server] = listRuntimeMcpServers({ conversationId: conversation.id })
     expect(server.unavailable).toBeUndefined()
     expect(server.headers).toEqual({ Authorization: 'Bearer synthetic' })
+  })
+
+  it("sends the person's access token to a server whose plugin names its publisher's OAuth client", async () => {
+    const conversation = makeStandaloneConversation()
+    const files = codexDemoPlugin(
+      'chat',
+      {},
+      { chat: { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { client_id: '1234.5678' } } }
+    )
+    await installFixturePlugin(layout, { name: 'chat', files })
+    expect(listRuntimeMcpServers({ conversationId: conversation.id })[0]).toMatchObject({ unavailable: true })
+    expect((await installedDto(listInstalled()['chat@fixtures'])).setup.missingInputs).toEqual(['token:chat'])
+
+    writePluginSecrets('chat@fixtures', { 'token:chat': 'synthetic' })
+    const [server] = listRuntimeMcpServers({ conversationId: conversation.id })
+    expect(server.unavailable).toBeUndefined()
+    expect(server.oauth).toBeUndefined()
+    expect(server.headers).toEqual({ Authorization: 'Bearer synthetic' })
+  })
+
+  it('asks plugins installed by an earlier version for the settings this version needs, at startup', async () => {
+    const files = codexDemoPlugin(
+      'chat',
+      {},
+      { chat: { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { client_id: '1234.5678' } } }
+    )
+    await installFixturePlugin(layout, { name: 'chat', files })
+    writeInstalled((all) => {
+      all['chat@fixtures'].inputs = []
+    })
+    expect(listRuntimeMcpServers({ conversationId: undefined })[0].unavailable).toBeUndefined()
+
+    await reconcilePluginsOnStartup()
+    expect(listInstalled()['chat@fixtures'].inputs?.map((input) => input.id)).toEqual(['token:chat'])
+    expect(listInstalled()['chat@fixtures'].blocked).toBeUndefined()
+    expect(listRuntimeMcpServers({ conversationId: undefined })[0]).toMatchObject({ unavailable: true })
   })
 
   it('exposes cached plugin tools to providers and avoids name collisions', async () => {

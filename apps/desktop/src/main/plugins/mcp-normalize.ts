@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { pluginTokenInputId } from '../../shared/plugins'
 import { PLUGIN_LIMITS } from './limits'
 import { parsePluginRelativePath } from './paths'
 
@@ -12,6 +13,7 @@ import { parsePluginRelativePath } from './paths'
 /**
  * `placeholderClient`: the plugin names an OAuth client only its publisher fills in (`<GMAIL_PUBLIC_CLIENT_ID>`). The
  * server still signs in like any other: by dynamic registration when it offers it, otherwise with the person's own client.
+ * `manual`: the plugin names its publisher's real client, which is never used; the server takes the person's access token.
  */
 export type PluginMcpAuth =
   | { kind: 'none' }
@@ -336,6 +338,26 @@ function codexAuth(raw: Record<string, unknown>): PluginMcpAuth {
   return { kind: 'none' }
 }
 
+/**
+ * A server whose plugin signs in only with its publisher's client takes the person's token instead, as a bearer
+ * `Authorization` header, unless its configuration already sets that header or asks for it.
+ */
+function addTokenInput(inputs: InputCollector, key: string, headers: Record<string, string>): void {
+  const isAuthorization = (name: string) => name.toLowerCase() === 'authorization'
+  if (Object.keys(headers).some(isAuthorization)) return
+  for (const input of inputs.inputs.values())
+    if (input.target.kind === 'header' && input.target.serverKey === key && isAuthorization(input.target.name)) return
+  inputs.add({
+    id: pluginTokenInputId(key),
+    label: `${key} access token`,
+    description: null,
+    sensitive: true,
+    required: true,
+    defaultValue: null,
+    target: { kind: 'header', serverKey: key, name: 'Authorization', prefix: 'Bearer ' },
+  })
+}
+
 function codexCommon(key: string, raw: Record<string, unknown>): Common {
   const startup =
     capTimeout(raw.startup_timeout_sec, 'sec', PLUGIN_LIMITS.startupTimeoutMaxMs) ??
@@ -406,12 +428,14 @@ export function normalizeCodexMcp(json: unknown): NormalizedMcp {
               target: { kind: 'header', serverKey: key, name: 'Authorization', prefix: 'Bearer ' },
             })
           }
+          const auth = codexAuth(raw)
+          if (auth.kind === 'manual') addTokenInput(inputs, key, headers)
           return {
             ...common,
             transport: type === 'sse' ? 'sse' : 'http',
             url: checkMcpUrl(raw.url),
             headers,
-            auth: codexAuth(raw),
+            auth,
           }
         }
         if (raw.command === undefined) return invalid('a server needs a url or a command')

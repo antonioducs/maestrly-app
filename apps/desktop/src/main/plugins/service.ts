@@ -48,6 +48,7 @@ import {
   updatePrepared,
 } from './installer'
 import { PLUGIN_LIMITS } from './limits'
+import type { PluginInputSpec } from './mcp-normalize'
 import type { MarketplaceEntry, ParsedMarketplace } from './marketplace'
 import { readMarketplace } from './marketplace'
 import { type PackageTree, type TreeEntry, gitPackageTree } from './package-tree'
@@ -949,7 +950,7 @@ export async function reconcilePluginsOnStartup(): Promise<void> {
   try {
     await withPluginMutation(async () => {
       await reconcilePlugins(installerDeps())
-      await reclassifyInstalled()
+      await refreshInstalled()
     })
   } catch (error) {
     console.warn('[plugins] startup reconciliation failed:', error instanceof Error ? error.message : error)
@@ -957,11 +958,14 @@ export async function reconcilePluginsOnStartup(): Promise<void> {
 }
 
 /**
- * Checks every installed plugin against the current compatibility rules: one that no longer works the same with every
- * model is marked `blocked` and stops applying anywhere; one that does again is unmarked. Callers hold the lock.
+ * Checks every installed plugin against the current rules. One that no longer works the same with every model is
+ * marked `blocked` and stops applying anywhere; one that does again is unmarked. The settings each plugin asks for are
+ * read again, so a plugin installed before a version that asks for more (an access token where the publisher's own
+ * OAuth client is never used) asks for it too. Settings only feed values the person enters; nothing new runs. Callers
+ * hold the lock.
  */
-async function reclassifyInstalled(): Promise<void> {
-  const changes = new Map<string, PluginReason[] | undefined>()
+async function refreshInstalled(): Promise<void> {
+  const changes = new Map<string, { blocked: PluginReason[] | undefined; inputs: PluginInputSpec[] }>()
   for (const record of Object.values(listInstalled())) {
     if (record.status !== 'ready') continue
     const pkg = await loadInstalledPackage(record)
@@ -971,14 +975,20 @@ async function reclassifyInstalled(): Promise<void> {
       { sourceSupported: true, installation: record.policy?.installation }
     )
     const blocked = level === 'unavailable' ? reasons : undefined
-    if (JSON.stringify(blocked) !== JSON.stringify(record.blocked)) changes.set(record.key, blocked)
+    if (
+      JSON.stringify(blocked) !== JSON.stringify(record.blocked) ||
+      JSON.stringify(pkg.inputs) !== JSON.stringify(record.inputs ?? [])
+    )
+      changes.set(record.key, { blocked, inputs: pkg.inputs })
   }
   if (!changes.size) return
   writeInstalled((all) => {
-    for (const [key, blocked] of changes) {
-      if (!all[key]) continue
-      if (blocked) all[key].blocked = blocked
-      else delete all[key].blocked
+    for (const [key, { blocked, inputs }] of changes) {
+      const record = all[key]
+      if (!record) continue
+      if (blocked) record.blocked = blocked
+      else delete record.blocked
+      record.inputs = inputs
     }
   })
   invalidatePluginRuntimeCache()

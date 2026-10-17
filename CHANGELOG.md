@@ -61,6 +61,15 @@ User-visible changes by version. Downloads are on
   sign-in is waiting for the browser or a pasted code: quitting cancels it.
 - A Claude sign-in left unfinished on Windows now gives up after 15 minutes, as
   it already did on macOS and Linux, instead of waiting indefinitely.
+- A plugin MCP server that signs in only with its publisher's own app, such as
+  Slack in OpenAI's catalog, now asks for your access token under **Edit
+  settings** and sends it as `Authorization: Bearer`. It used to show no sign-in
+  and fail with "Sign-in required". Plugins installed before ask for it after
+  the update. See [Plugins](docs/plugins.md#mcp-servers-and-sign-in).
+- A bot told to sign in to an MCP server now points to its environment's
+  settings in the app instead of **Settings → Maestrly Chat → Tools** on this
+  computer, names **Plugins** for a plugin's server, and asks for a new token
+  when the server rejected the one it has.
 
 ## [0.20.0] - 2026-10-16
 

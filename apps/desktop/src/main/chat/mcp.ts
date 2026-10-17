@@ -377,7 +377,7 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
       // The provider already marked the account it stopped for; a bare 401 marks this connection.
       if (isMcpNeedsAuthError(error)) throw error
       markMcpNeedsAuth(mcpConnectionKey(server))
-      throw new McpNeedsAuthError(server.id, server.name)
+      throw new McpNeedsAuthError(server)
     }
     throw error
   }

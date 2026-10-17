@@ -183,6 +183,9 @@ export default {
     required: 'Required',
     optional: 'Optional',
     keepValue: 'Leave empty to keep the saved value',
+    accessToken: '{{server}} access token',
+    accessTokenHint:
+      'Sent to the server as "Authorization: Bearer". The publisher\'s sign-in only works in its own products.',
     install: 'Install',
     installing: 'Installing…',
     sourceChanged: 'The source changed since you opened it. Review the plugin again before installing.',
