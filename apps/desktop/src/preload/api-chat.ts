@@ -47,6 +47,7 @@ import type {
   ChatSubscriptionAuthStatus,
   ChatSubscriptionFailoverEvent,
   ChatSubscriptionFailoverRoute,
+  ChatSubscriptionCodeResult,
   ChatSubscriptionLoginResult,
   ChatSubscriptionLogoutResult,
   ChatSubscriptionProviderKind,
@@ -243,6 +244,9 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatSubscriptionLogin: subscriptionLogin,
     chatSubscriptionLogout: subscriptionLogout,
     onChatSubscriptionStatus: onSubscriptionStatus,
+    /** Completes a pending Claude sign-in with the code its manual page shows. */
+    chatClaudeSubscriptionSubmitCode: (code: string, accountId?: string | null): Promise<ChatSubscriptionCodeResult> =>
+      ipcRenderer.invoke('chat:claude-subscription:submit-code', { code, ...(accountId ? { accountId } : {}) }),
 
     chatCodexSubscriptionStatus: (refresh?: boolean): Promise<CodexSubscriptionAuthStatus> =>
       subscriptionStatus('codex-subscription', refresh),

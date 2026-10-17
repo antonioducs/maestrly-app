@@ -93,6 +93,7 @@ API keys and subscription integrations use your own provider account. Local ML
 requires separately prepared runtime and model assets.
 
 See [Cursor setup and platform support](docs/cursor.md) to connect a Cursor account,
+[Claude subscription](docs/claude.md) to install Claude Code and sign in with a Claude plan,
 and [Google AI subscription](docs/antigravity.md) to use a Google AI Pro or Ultra plan.
 
 Provider calls, browser navigation, Git operations, MCP services, and optional

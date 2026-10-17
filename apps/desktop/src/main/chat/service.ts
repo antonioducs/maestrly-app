@@ -234,6 +234,7 @@ import { activeChatContext, renderTranscript } from './message'
 import { createContextProgressPublisher } from './context-progress'
 import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
+import { startClaudeDesktopLogin, type ClaudeDesktopLogin } from './claude-agent-sdk/desktop-login'
 import { redactTokens } from '../pii-scrub'
 import {
   getCompanionConversationContext,
@@ -917,6 +918,8 @@ let githubCopilotConfigRefreshPromise: Promise<void> | null = null
 let githubCopilotAuthUpdatedUnsubscribe: (() => void) | null = null
 let githubCopilotIdentityTransitionPromise: Promise<void> | null = null
 const claudeSlotTransitions = new Set<string>()
+/** Sign-ins waiting for the browser or a pasted code, by provider id (one per account slot). */
+const claudeDesktopLogins = new Map<string, ClaudeDesktopLogin>()
 let claudeLoginPending = false
 let claudeAuthGeneration = 0
 let claudeConfigRefreshPromise: Promise<void> | null = null
@@ -1595,6 +1598,7 @@ function toClaudeAuthStatus(
       state: 'unavailable',
       authenticated: false,
       ...(status.error ? { error: status.error } : {}),
+      ...(status.errorCode ? { errorCode: status.errorCode } : {}),
     }
   }
   return { state: 'signed-out', authenticated: false }
@@ -6658,28 +6662,31 @@ function broadcastClaudeAccountAuth(accountId: string, status: ChatSubscriptionA
 
 async function loginClaudeSubscriptionAccount(
   accountId: string
-): Promise<{ ok: boolean; status?: ChatSubscriptionAuthStatus; error?: string }> {
+): Promise<{ ok: boolean; status?: ChatSubscriptionAuthStatus; authUrl?: string; manualUrl?: string; error?: string }> {
   if (!getSubscriptionAccount(accountId)) return { ok: false, error: 'unknown-account' }
   const providerId = subscriptionProviderIdFor('claude-subscription', accountId)
   if (claudeSlotTransitions.has(providerId)) return { ok: false, error: 'busy' }
   claudeSlotTransitions.add(providerId)
   const signingIn: ChatSubscriptionAuthStatus = { state: 'signing-in', authenticated: false, accountId }
   broadcastClaudeAccountAuth(accountId, signingIn)
-  const manager = getClaudeSubscriptionManager(accountId)
-  void (async () => {
-    await resetSubscriptionAccountState(providerId, accountId)
-    const completion = await manager.login()
-    if (!completion.ok || !completion.status.authenticated) {
-      broadcastClaudeAccountAuth(accountId, {
-        state: completion.status.available ? 'error' : 'unavailable',
-        authenticated: false,
-        error: completion.error ?? completion.status.error ?? 'Claude login did not complete.',
-      })
-      return
+  const { started, transition } = runClaudeDesktopLogin(
+    providerId,
+    getClaudeSubscriptionManager(accountId),
+    () => resetSubscriptionAccountState(providerId, accountId),
+    async (completion) => {
+      if (!completion.ok || !completion.status.authenticated) {
+        broadcastClaudeAccountAuth(accountId, {
+          state: completion.status.available ? 'error' : 'unavailable',
+          authenticated: false,
+          error: completion.error ?? completion.status.error ?? 'Claude login did not complete.',
+        })
+        return
+      }
+      await deleteAllManagedClaudeSessions(undefined, { accountId })
+      broadcastClaudeAccountAuth(accountId, toClaudeAuthStatus(completion.status, accountId))
     }
-    await deleteAllManagedClaudeSessions(undefined, { accountId })
-    broadcastClaudeAccountAuth(accountId, toClaudeAuthStatus(completion.status, accountId))
-  })()
+  )
+  void transition
     .catch((error) => {
       broadcastClaudeAccountAuth(accountId, {
         state: 'error',
@@ -6688,7 +6695,60 @@ async function loginClaudeSubscriptionAccount(
       })
     })
     .finally(() => claudeSlotTransitions.delete(providerId))
-  return { ok: true, status: signingIn }
+  const start = await started
+  return start.ok ? claudeLoginStartResult(start.login, signingIn) : { ok: false, error: start.error }
+}
+
+type ClaudeLoginStart = { ok: true; login: ClaudeDesktopLogin } | { ok: false; error: string }
+
+/**
+ * One Claude sign-in of an account slot: `prepare` runs at its identity boundary, then the sign-in starts and `finish`
+ * handles its outcome. `started` settles once the sign-in pages are known or the start failed; `transition` lasts
+ * until the sign-in ends. While it waits, the sign-in accepts a pasted code through the submit-code channel.
+ */
+function runClaudeDesktopLogin(
+  providerId: string,
+  manager: Parameters<typeof startClaudeDesktopLogin>[0],
+  prepare: () => Promise<void>,
+  finish: (completion: Awaited<ClaudeDesktopLogin['done']>) => Promise<void>
+): { started: Promise<ClaudeLoginStart>; transition: Promise<void> } {
+  let announce!: (login: ClaudeDesktopLogin) => void
+  const announced = new Promise<ClaudeDesktopLogin>((resolve) => {
+    announce = resolve
+  })
+  const transition = (async () => {
+    await prepare()
+    const login = await startClaudeDesktopLogin(manager)
+    claudeDesktopLogins.set(providerId, login)
+    announce(login)
+    let completion: Awaited<ClaudeDesktopLogin['done']>
+    try {
+      completion = await login.done
+    } finally {
+      if (claudeDesktopLogins.get(providerId) === login) claudeDesktopLogins.delete(providerId)
+    }
+    await finish(completion)
+  })()
+  const started = Promise.race([
+    announced.then((login): ClaudeLoginStart => ({ ok: true, login })),
+    transition.then(
+      (): ClaudeLoginStart => ({ ok: false, error: 'Claude login did not complete.' }),
+      (error: unknown): ClaudeLoginStart => ({ ok: false, error: claudeSubscriptionErrorMessage(error) })
+    ),
+  ])
+  return { started, transition }
+}
+
+function claudeLoginStartResult(
+  login: ClaudeDesktopLogin,
+  status: ChatSubscriptionAuthStatus
+): { ok: true; status: ChatSubscriptionAuthStatus; authUrl?: string; manualUrl?: string } {
+  return {
+    ok: true,
+    status,
+    ...(login.authUrl ? { authUrl: login.authUrl } : {}),
+    ...(login.manualUrl ? { manualUrl: login.manualUrl } : {}),
+  }
 }
 
 async function logoutClaudeSubscriptionAccount(
@@ -9698,27 +9758,29 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     claudeLoginPending = true
     const signingIn: ChatSubscriptionAuthStatus = { state: 'signing-in', authenticated: false }
     broadcastClaudeAuth(signingIn)
-    const manager = getClaudeSubscriptionManager()
-    const transition = (async () => {
-      await resetClaudeAccountSessions()
-      const completion = await manager.login()
-      if (generation !== claudeAuthGeneration) return
-      if (!completion.ok || !completion.status.authenticated) {
-        claudeLoginPending = false
-        const failed: ChatSubscriptionAuthStatus = {
-          state: completion.status.available ? 'error' : 'unavailable',
-          authenticated: false,
-          error: completion.error ?? completion.status.error ?? 'Claude login did not complete.',
+    const { started, transition } = runClaudeDesktopLogin(
+      subscriptionProviderIdFor('claude-subscription', null),
+      getClaudeSubscriptionManager(),
+      () => resetClaudeAccountSessions(),
+      async (completion) => {
+        if (generation !== claudeAuthGeneration) return
+        if (!completion.ok || !completion.status.authenticated) {
+          claudeLoginPending = false
+          const failed: ChatSubscriptionAuthStatus = {
+            state: completion.status.available ? 'error' : 'unavailable',
+            authenticated: false,
+            error: completion.error ?? completion.status.error ?? 'Claude login did not complete.',
+          }
+          broadcastClaudeAuth(failed)
+          return
         }
-        broadcastClaudeAuth(failed)
-        return
+        // Scope = default account: its login must not delete additional slots' sessions.
+        await deleteAllManagedClaudeSessions(undefined, { accountId: null })
+        lastClaudeAccountFingerprint = completion.status.accountFingerprint
+        claudeLoginPending = false
+        broadcastClaudeAuth(toClaudeAuthStatus(completion.status))
       }
-      // Scope = default account: its login must not delete additional slots' sessions.
-      await deleteAllManagedClaudeSessions(undefined, { accountId: null })
-      lastClaudeAccountFingerprint = completion.status.accountFingerprint
-      claudeLoginPending = false
-      broadcastClaudeAuth(toClaudeAuthStatus(completion.status))
-    })()
+    )
     claudeIdentityTransitionPromise = transition
     void transition
       .catch((error) => {
@@ -9733,8 +9795,23 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       .finally(() => {
         if (claudeIdentityTransitionPromise === transition) claudeIdentityTransitionPromise = null
       })
-    return { ok: true, status: signingIn }
+    const start = await started
+    return start.ok ? claudeLoginStartResult(start.login, signingIn) : { ok: false, error: start.error }
   })
+  deps.mhandle(
+    'chat:claude-subscription:submit-code',
+    async (_event, payload?: { accountId?: string | null; code?: unknown }) => {
+      const accountId = normalizeAccountId(payload?.accountId)
+      if (accountId && !validSubscriptionAccountId('claude-subscription', accountId)) {
+        return { ok: false, error: 'unknown-account' }
+      }
+      const login = claudeDesktopLogins.get(subscriptionProviderIdFor('claude-subscription', accountId))
+      if (!login) return { ok: false, error: 'not-waiting' }
+      return login.submitCode(typeof payload?.code === 'string' ? payload.code : '')
+        ? { ok: true }
+        : { ok: false, error: 'invalid-code' }
+    }
+  )
   deps.mhandle('chat:claude-subscription:logout', async (_event, payload?: { accountId?: string | null }) => {
     const accountId = normalizeAccountId(payload?.accountId)
     if (accountId && !validSubscriptionAccountId('claude-subscription', accountId)) {

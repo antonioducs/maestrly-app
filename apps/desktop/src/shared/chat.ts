@@ -1121,6 +1121,8 @@ export function mergePendingChatQuestions(
 
 export type ChatErrorCode =
   | 'claude-authentication-required'
+  | 'claude-code-not-installed'
+  | 'claude-code-incompatible'
   | 'codex-accounts-exhausted'
   | 'claude-accounts-exhausted'
   | 'review-loop-process-interrupted'
@@ -1591,11 +1593,21 @@ export interface ChatSubscriptionLoginResult {
   ok: boolean
 
   authUrl?: string
+  /** A page that shows a code to paste back, for when the browser does not open or cannot reach the app (Claude). */
+  manualUrl?: string
 
   verificationUrl?: string
   userCode?: string
   status?: ChatSubscriptionAuthStatus
   error?: string
+}
+
+/** Longest sign-in code a Claude manual page shows that Maestrly forwards. */
+export const CLAUDE_LOGIN_CODE_MAX_LENGTH = 2048
+
+export interface ChatSubscriptionCodeResult {
+  ok: boolean
+  error?: 'unknown-account' | 'not-waiting' | 'invalid-code'
 }
 
 export interface ChatSubscriptionLogoutResult {

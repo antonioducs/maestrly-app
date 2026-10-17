@@ -74,7 +74,7 @@ export interface ClaudeSubscriptionStatus {
   cliVersion: string | null
   sdkVersion: string
   error: string | null
-  errorCode?: 'claude-authentication-required'
+  errorCode?: 'claude-authentication-required' | 'claude-code-not-installed' | 'claude-code-incompatible'
 }
 
 export interface ClaudeSubscriptionAccountIdentity {
@@ -560,7 +560,11 @@ export class ClaudeSubscriptionManager {
     this.profileMutationRequests = Math.max(0, this.profileMutationRequests - 1)
   }
 
-  private unavailable(error: string, cliVersion: string | null = null): ClaudeSubscriptionStatus {
+  private unavailable(
+    error: string,
+    cliVersion: string | null = null,
+    errorCode?: 'claude-code-not-installed' | 'claude-code-incompatible'
+  ): ClaudeSubscriptionStatus {
     this.updateIdentity(null)
     return {
       state: 'unavailable',
@@ -572,6 +576,7 @@ export class ClaudeSubscriptionManager {
       cliVersion,
       sdkVersion: CLAUDE_AGENT_SDK_VERSION,
       error,
+      ...(errorCode ? { errorCode } : {}),
     }
   }
 
@@ -685,13 +690,18 @@ export class ClaudeSubscriptionManager {
       })
       const cliVersion = parseVersion(versionResult.stdout || versionResult.stderr)
       if (!cliVersion) {
-        this.cachedStatus = this.unavailable('Claude Code is not installed or its version could not be read.')
+        this.cachedStatus = this.unavailable(
+          'Claude Code is not installed or its version could not be read.',
+          null,
+          'claude-code-not-installed'
+        )
         return this.cachedStatus
       }
       if (!isCompatibleClaudeCodeVersion(cliVersion)) {
         this.cachedStatus = this.unavailable(
           `Claude Code ${cliVersion} is incompatible. Version ${CLAUDE_CODE_COMPATIBLE_VERSION} or newer in the same major release is required.`,
-          cliVersion
+          cliVersion,
+          'claude-code-incompatible'
         )
         return this.cachedStatus
       }
@@ -727,10 +737,8 @@ export class ClaudeSubscriptionManager {
       return this.cachedStatus
     } catch (error) {
       this.updateIdentity(null)
-      const message =
-        (error as NodeJS.ErrnoException)?.code === 'ENOENT'
-          ? 'Claude Code is not installed.'
-          : claudeSubscriptionErrorMessage(error)
+      const missing = (error as NodeJS.ErrnoException)?.code === 'ENOENT'
+      const message = missing ? 'Claude Code is not installed.' : claudeSubscriptionErrorMessage(error)
       this.cachedStatus = verifiedCliVersion
         ? {
             state: 'error',
@@ -743,7 +751,7 @@ export class ClaudeSubscriptionManager {
             sdkVersion: CLAUDE_AGENT_SDK_VERSION,
             error: message,
           }
-        : this.unavailable(message)
+        : this.unavailable(message, null, missing ? 'claude-code-not-installed' : undefined)
       return this.cachedStatus
     }
   }

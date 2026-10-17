@@ -1483,6 +1483,33 @@ export default {
     claudeSubscriptionLogoutFailed: 'Não foi possível sair do Claude.',
     claudeSubscriptionProviderPending:
       'A conta está conectada, mas o provider Claude ainda não apareceu no catálogo do chat.',
+    claudeSubscriptionManualTitle: 'O navegador não abriu ou o login não termina?',
+    claudeSubscriptionManualHint:
+      'Abra este link em qualquer navegador, autorize e cole o código que o Claude mostrar.',
+    claudeSubscriptionManualCopy: 'Copiar link',
+    claudeSubscriptionManualOpen: 'Abrir link',
+    claudeSubscriptionCodeLabel: 'Código de autorização',
+    claudeSubscriptionCodePlaceholder: 'Cole o código aqui',
+    claudeSubscriptionCodeSubmit: 'Continuar',
+    claudeSubscriptionCodeSent: 'Código enviado. Concluindo o login…',
+    claudeSubscriptionCodeInvalid: 'Isso não parece um código do Claude. Copie de novo na página do Claude.',
+    claudeSubscriptionCodeExpired: 'Este login não está mais esperando um código. Comece de novo.',
+    claudeSubscriptionCodeFailed: 'Não foi possível enviar o código ao Claude.',
+    claudeCodeInstallTitle: 'Instale o Claude Code para conectar',
+    claudeCodeUpdateTitle: 'Atualize o Claude Code para conectar',
+    claudeCodeInstallHint:
+      'O Maestrly entra pelo Claude Code instalado neste computador. Rode o instalador oficial em um terminal e verifique de novo.',
+    claudeCodeInstallHintRemote:
+      'O Maestrly entra pelo Claude Code instalado em {{host}}. Rode o instalador oficial em um terminal de lá e verifique de novo.',
+    claudeCodeUpdateHint:
+      'Esta versão do Claude Code não é suportada. Atualize e verifique de novo. Se você instalou pelo Homebrew, WinGet ou por um gerenciador de pacotes do Linux, atualize por lá.',
+    claudeCodeInstallShell_mac: 'macOS · Terminal',
+    claudeCodeInstallShell_linux: 'Linux · Terminal',
+    claudeCodeInstallShell_win: 'Windows · PowerShell',
+    claudeCodeCopyCommand: 'Copiar',
+    claudeCodeCopied: 'Copiado',
+    claudeCodeInstallDocs: 'Guia de instalação',
+    claudeCodeCheckAgain: 'Verificar de novo',
     grokSubscriptionHeading: 'Grok com assinatura xAI',
     grokSubscriptionDescription:
       'Use seu plano Grok / SuperGrok elegível no Maestrly Chat via OAuth da xAI. Não precisa de chave de API.',

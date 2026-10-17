@@ -1,4 +1,4 @@
-const CLAUDE_RUNTIME_ENV_ALLOWLIST = [
+export const CLAUDE_RUNTIME_ENV_ALLOWLIST = [
   'PATH',
   'HOME',
   'USER',
@@ -26,6 +26,21 @@ const CLAUDE_RUNTIME_ENV_ALLOWLIST = [
   'TZ',
   'TERM',
   'COLORTERM',
+  // The desktop session, so Claude Code can open the browser on Linux (xdg-open needs the display and the bus).
+  // These locate the user's own session and preferences; none of them selects a backend or carries an API key.
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'XAUTHORITY',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'XDG_RUNTIME_DIR',
+  'XDG_SESSION_TYPE',
+  'XDG_CURRENT_DESKTOP',
+  'DESKTOP_SESSION',
+  'XDG_DATA_HOME',
+  'XDG_DATA_DIRS',
+  'XDG_CONFIG_HOME',
+  'XDG_CONFIG_DIRS',
+  'BROWSER',
   'HTTP_PROXY',
   'HTTPS_PROXY',
   'ALL_PROXY',

@@ -342,7 +342,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(613)
+    expect(keys).toHaveLength(614)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1197,6 +1197,13 @@ describe('preload API — chat pagination (#559)', () => {
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:claude-subscription:login')
     api.chatSubscriptionLogout('claude-subscription')
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:claude-subscription:logout')
+    api.chatClaudeSubscriptionSubmitCode('code#state')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:claude-subscription:submit-code', { code: 'code#state' })
+    api.chatClaudeSubscriptionSubmitCode('code#state', 'work')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:claude-subscription:submit-code', {
+      code: 'code#state',
+      accountId: 'work',
+    })
   })
 
   it('preserves provider, force, and accountId in official subscription usage snapshots', () => {
