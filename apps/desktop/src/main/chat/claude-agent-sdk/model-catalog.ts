@@ -211,6 +211,30 @@ export function claudeModelPickerSnapshot(): NonNullable<Settings['modelPicker']
   }
 }
 
+const DATED_SNAPSHOT = /-\d{8}$/
+
+/**
+ * The picker's Claude list, one row per model. The runtime advertises aliases (`haiku`) that resolve to a model the
+ * public catalog also lists under its own id and a dated snapshot (`claude-haiku-4-5`, `claude-haiku-4-5-20251001`).
+ * The alias row stays, because the account reported it together with its effort and Fast capabilities. Catalog rows
+ * naming the model an alias resolves to, and dated snapshots of a listed id, are left out. Admission still accepts
+ * every id, so conversations and dispatches that name one directly keep working.
+ */
+export function collapseClaudeModelAliases<T extends { value: string; resolvedModel?: string }>(
+  models: readonly T[]
+): T[] {
+  const undated = (id: string) => id.replace(DATED_SNAPSHOT, '')
+  const isAlias = (model: T) => !!model.resolvedModel && model.resolvedModel !== model.value
+  const resolvedByAlias = new Set(models.filter(isAlias).map((model) => undated(model.resolvedModel!)))
+  const values = new Set(models.map((model) => model.value))
+  return models.filter((model) => {
+    if (isAlias(model)) return true
+    const base = undated(model.value)
+    if (resolvedByAlias.has(base)) return false
+    return base === model.value || !values.has(base)
+  })
+}
+
 export function claudeRemoteCatalogSnapshot(): ClaudeRemoteCatalogModel[] {
   seedFromDisk()
   return (cache?.models ?? []).map((model) => ({ ...model, capabilities: [...model.capabilities] }))

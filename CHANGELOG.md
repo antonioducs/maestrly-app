@@ -20,9 +20,24 @@ User-visible changes by version. Downloads are on
 - The mobile app's **Workspaces** tab lists every chat of each workspace, with
   the chats that share a branch in a folder named after it, as in the desktop
   sidebar.
+- **Add account** offers a **Gemini** API key preset, which uses Google's
+  OpenAI-compatible endpoint.
+- A new chat outside a workspace starts in the mode you last chose in one, not
+  always in **Ask**; permissions still start at **Ask for approval**. Without a
+  default model in **Settings → Maestrly Chat → Models & agents**, any new chat
+  starts on the last model you picked and keeps it once it has answered.
 
 ### Fixed
 
+- The model picker opens at once on the last lists and shows each account's
+  models as soon as they arrive, instead of waiting for every account.
+- The model picker lists a Claude model once, not also under its catalog id and
+  dated snapshot (`haiku`, `claude-haiku-4-5`, `claude-haiku-4-5-20251001`).
+- Searching the model picker matches each word in the model or account name and
+  lists the model's own company first: "gemini" shows Google AI before other
+  services that offer Gemini.
+- Gemini through its OpenAI-compatible endpoint shows model names without the
+  `models/` prefix and leaves out image, speech, Live and embedding models.
 - **Choose photos** and **Choose a file** in the mobile app open the picker on
   iPhone again instead of doing nothing.
 - The mobile app no longer shows **Back online** each time it returns to the

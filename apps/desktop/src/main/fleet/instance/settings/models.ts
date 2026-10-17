@@ -21,7 +21,10 @@ export function createModelsSettingsService(
   const models: FleetEnvironmentSettingsService['models'] = async () => ({
     providers: await Promise.all(
       listAvailableChatProviders().map(async (provider) => {
-        const ids = await listChatProviderModels(provider.id, { includeHidden: true }).catch(() => [] as string[])
+        // Every id, so a bot that uses an alias still shows next to the model it runs.
+        const ids = await listChatProviderModels(provider.id, { includeHidden: true, includeAliases: true }).catch(
+          () => [] as string[]
+        )
         return {
           providerId: provider.id,
           name: provider.name,

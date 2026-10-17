@@ -364,6 +364,11 @@ export const PROVIDER_PRESETS: ChatProviderPreset[] = [
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     kind: 'anthropic',
   },
+  {
+    name: 'Gemini',
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    apiKeyUrl: 'https://aistudio.google.com/apikey',
+  },
   { name: 'Together', baseURL: 'https://api.together.xyz/v1', apiKeyUrl: 'https://api.together.xyz/settings/api-keys' },
   { name: 'Mistral', baseURL: 'https://api.mistral.ai/v1', apiKeyUrl: 'https://console.mistral.ai/api-keys' },
 ]

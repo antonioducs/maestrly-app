@@ -182,6 +182,8 @@ vi.mock('../../src/main/chat/portable-summarizer', () => ({
 import { CLAUDE_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
 import {
   compactReserved,
+  describeChatModelForDispatch,
+  listChatProviderModels,
   registerChatIpc,
   revalidateFrozenChatSelection,
   resolveFrozenChatSelection,
@@ -273,6 +275,87 @@ describe('Claude subscription service integration', () => {
           apiKeyPresent: false,
         }),
       ]),
+    })
+  })
+
+  it('lists one row per Claude model while every id stays selectable and dispatchable', async () => {
+    const catalogRow = (value: string) => ({ value, resolvedModel: value, displayName: value, description: '' })
+    h.state.models = [
+      ...h.state.models,
+      { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku', description: 'Fast' },
+      catalogRow('claude-haiku-4-5'),
+      catalogRow('claude-haiku-4-5-20251001'),
+      catalogRow('claude-opus-4-6'),
+    ] as any[]
+    const { handlers } = register()
+
+    await expect(handlers.get('chat:models')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, true)).resolves.toEqual([
+      'sonnet',
+      'haiku',
+      'claude-opus-4-6',
+    ])
+    await expect(handlers.get('chat:models')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, false, true)).resolves.toEqual([
+      'sonnet',
+      'haiku',
+      'claude-opus-4-6',
+    ])
+    await expect(listChatProviderModels(CLAUDE_SUBSCRIPTION_PROVIDER_ID, { includeAliases: true })).resolves.toEqual([
+      'sonnet',
+      'haiku',
+      'claude-haiku-4-5',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-6',
+    ])
+    await expect(
+      describeChatModelForDispatch(CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'claude-haiku-4-5')
+    ).resolves.toMatchObject({ available: true })
+    const conversation = makeConversation(makeWorkspace().id)
+    await expect(
+      handlers.get('chat:set-selection')?.({}, conversation.id, {
+        providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        modelId: 'claude-haiku-4-5-20251001',
+      })
+    ).resolves.toEqual({ ok: true })
+  })
+
+  it('starts conversations on the last model picked and keeps it once a turn ran on it', async () => {
+    h.state.models = [
+      ...h.state.models,
+      { value: 'haiku', resolvedModel: 'claude-haiku-4-5', displayName: 'Haiku', description: 'Fast' },
+    ] as any[]
+    const workspace = makeWorkspace()
+    const picker = makeConversation(workspace.id, { cwd: '/repo' })
+    const fresh = makeConversation(workspace.id, { cwd: '/repo' })
+    const { handlers } = register()
+    const pick = (modelId: string) =>
+      handlers.get('chat:set-selection')?.({}, picker.id, { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId })
+    const selectionOf = (conversationId: string) => handlers.get('chat:get-selection')?.({}, conversationId)
+
+    await expect(pick('haiku')).resolves.toEqual({ ok: true })
+    expect(selectionOf(fresh.id)).toEqual({ providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'haiku' })
+    await expect(
+      handlers.get('chat:send')?.({ sender: h.webContents }, { conversationId: fresh.id, text: 'Hello.' })
+    ).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+    expect(getConvUiPrefs(fresh.id).chat).toMatchObject({
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      modelId: 'haiku',
+    })
+
+    await expect(pick('sonnet')).resolves.toEqual({ ok: true })
+    expect(selectionOf(fresh.id)).toEqual({ providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'haiku' })
+    expect(selectionOf(makeConversation(workspace.id).id)).toEqual({
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      modelId: 'sonnet',
+    })
+
+    // A default model chosen in Settings still wins over the last pick.
+    await expect(
+      handlers.get('chat:set-default')?.({}, { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'haiku' })
+    ).resolves.toEqual({ ok: true })
+    expect(selectionOf(makeConversation(workspace.id).id)).toEqual({
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      modelId: 'haiku',
     })
   })
 

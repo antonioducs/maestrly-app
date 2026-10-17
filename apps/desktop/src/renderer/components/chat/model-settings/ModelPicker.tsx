@@ -12,6 +12,7 @@ import {
   useHighlightedModel,
   type ModelSelection,
 } from './model-selection'
+import { modelDisplayName } from '../model-search'
 
 const PANEL_WIDTH = 360
 
@@ -40,7 +41,7 @@ export function ModelChipContent({
   return (
     <>
       <span className={cn('size-2 shrink-0 rounded-full', providerTone(provider))} />
-      <span className="min-w-0 shrink truncate font-medium text-foreground">{value.modelId}</span>
+      <span className="min-w-0 shrink truncate font-medium text-foreground">{modelDisplayName(value.modelId)}</span>
       {ambiguous && (
         <span className="min-w-0 shrink-[2] truncate text-[11px] text-muted-foreground">
           {provider?.name ?? value.providerId}

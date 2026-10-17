@@ -7,6 +7,7 @@ import { createStandaloneConversationSchema } from '../shared/standalone-convers
 import { standaloneConversationRelPath } from './app-paths'
 import { insertConversation } from './store'
 import { getMainLocale } from './i18n'
+import { initialStandaloneChatMode } from './chat/new-chat-defaults'
 
 async function assertDirectory(directory: string): Promise<void> {
   const info = await fs.lstat(directory)
@@ -50,7 +51,8 @@ export async function createStandaloneConversation(payload: unknown): Promise<St
     lastActivityAt: now,
     archived: 0,
     pinnedAt: null,
-    uiPrefs: { autoName: args.name === undefined, chat: { mode: 'ask', permMode: 'ask' } },
+    // Permissions always start at Ask; only the behavior mode follows the person's last choice.
+    uiPrefs: { autoName: args.name === undefined, chat: { mode: initialStandaloneChatMode(), permMode: 'ask' } },
   }
   try {
     await assertDirectory(cwd)

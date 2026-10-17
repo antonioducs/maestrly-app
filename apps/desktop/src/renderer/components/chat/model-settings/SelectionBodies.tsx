@@ -16,6 +16,7 @@ import type { SubagentProfileCandidate } from '../../../../shared/subagent-profi
 import { CandidateFields } from '../subagent-profiles/CandidateFields'
 import { PickerField, SaveNote, SegmentedChoice } from './controls'
 import { effortShortLabel, sameModelSelection, type ModelSelection } from './model-selection'
+import { modelDisplayName } from '../model-search'
 
 /** Error text to show, or null once saved. */
 export type CommitSelection = (selection: ModelSelection | null) => Promise<string | null>
@@ -287,8 +288,10 @@ export function ChatSelectionBody({
           value={draft.modelId || undefined}
           avoidOverflow
           options={[
-            ...(draft.modelId && !models.includes(draft.modelId) ? [{ id: draft.modelId, label: draft.modelId }] : []),
-            ...models.map((model) => ({ id: model, label: model })),
+            ...(draft.modelId && !models.includes(draft.modelId)
+              ? [{ id: draft.modelId, label: modelDisplayName(draft.modelId) }]
+              : []),
+            ...models.map((model) => ({ id: model, label: modelDisplayName(model) })),
           ]}
           placeholder={loading ? t('settings.loadingModels') : t('settings.chooseModel')}
           ariaLabel={t('subagentProfiles.model')}

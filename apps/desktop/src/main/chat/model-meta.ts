@@ -368,10 +368,15 @@ export function composeEffectiveMeta(
 // catalog does not know. Existing models.dev metadata is authoritative.
 const NON_CHAT_NAME =
   /(^|[-_/])(tts|asr|stt|ocr|image|video|embed(ding)?s?|rerank(er)?|whisper|voice(clone|design)?)([-_./]|$)/i
+// Media generation, speech and realtime models. The catalog lists several of them with text in and text out
+// (Gemini's image, native-audio and Live models), yet they cannot hold a text/code chat, so their names win.
+const MEDIA_MODEL_NAME =
+  /(^|[-_/])(tts|audio|live|realtime|transcribe|image|imagen|veo|lyria|embed(ding)?s?)([-_./]|$)/i
 
 function filterChatModelIds(ids: string[], map?: Map<string, ChatModelMeta>): string[] {
   const metaOf = (id: string): ChatModelMeta | undefined => map?.get(id) ?? map?.get(id.split('/').pop() ?? '')
   return ids.filter((id) => {
+    if (MEDIA_MODEL_NAME.test(id)) return false
     const cap = metaOf(id)?.chatCapable
     if (cap === false) return false
     if (cap === true) return true
