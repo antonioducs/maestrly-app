@@ -538,7 +538,9 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   conversation tool under its own grants, never approves a permission or a
   plan for it, and never returns a local path or its own id. Whoever controls
   the gateway or a bot of that environment can make calls as that bot, so give
-  a bot only the projects you would let it work in. See
+  a bot only the projects you would let it work in. **Full access** is the
+  ceiling selected when access is first given, so those calls run commands on
+  that computer without asking unless you choose a stricter one. See
   [Work in the projects of your computers](bot-fleet.md#work-in-the-projects-of-your-computers).
 
 ## Remote workspaces

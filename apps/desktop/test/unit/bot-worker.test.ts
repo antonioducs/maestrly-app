@@ -122,6 +122,32 @@ it('executes a native conversation once and reports a saved receipt on a repeate
   await worker.stop()
 })
 
+it('runs every claimed conversation at once, with no cap on how many turns a bot runs', async () => {
+  const f = fixture()
+  const count = 12
+  f.queue.length = 0
+  for (let i = 0; i < count; i++) {
+    const conversationId = randomUUID()
+    f.queue.push({
+      ...f.claim,
+      conversation: { ...f.claim.conversation, id: conversationId },
+      command: { ...f.claim.command, id: randomUUID(), conversationId, leaseToken: randomUUID() },
+    })
+  }
+  const finishers: Array<() => void> = []
+  f.options.native.start = vi.fn(async () => ({
+    done: new Promise<{ status: string }>((resolve) => finishers.push(() => resolve({ status: 'success' }))),
+    cancel: vi.fn(),
+  }))
+  const worker = new BotConversationWorker(f.options)
+  for (let i = 0; i < count; i++) expect(await worker.pollOnce()).toBe(true)
+  await vi.waitFor(() => expect(f.options.native.start).toHaveBeenCalledTimes(count))
+  for (const finish of finishers) finish()
+  await worker.idle()
+  expect(f.options.client.complete).toHaveBeenCalledTimes(count)
+  await worker.stop()
+})
+
 it('does not replay a native prompt after a crash at the admission boundary', async () => {
   const f = fixture()
   const journal = new BotCommandJournal('instance')

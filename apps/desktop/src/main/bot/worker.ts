@@ -112,7 +112,7 @@ export class BotConversationWorker {
   }
 
   async pollOnce(): Promise<boolean> {
-    if (this.stopSignal.signal.aborted || this.running.size >= 8) return false
+    if (this.stopSignal.signal.aborted) return false
     const claim = await this.options.client.claim(this.stopSignal.signal)
     if (!claim) return false
     this.validateClaim(claim)
