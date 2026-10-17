@@ -283,4 +283,18 @@ describe('mobile bridge client', () => {
     expect(new Set(channels).size).toBe(channels.length)
     expect(channels.every((channel) => channel.startsWith('mobile:v1:'))).toBe(true)
   })
+
+  it('creates a workspace chat on a new or an existing branch', () => {
+    const args = MOBILE_CHANNELS.create.args
+    expect(args.safeParse({ workspaceId: 'w', branch: { kind: 'new', name: 'feat/x', base: 'main' } }).success).toBe(
+      true
+    )
+    expect(args.safeParse({ workspaceId: 'w', branch: { kind: 'new', base: 'release' } }).success).toBe(true)
+    expect(args.safeParse({ workspaceId: 'w', branch: { kind: 'existing', name: 'release' } }).success).toBe(true)
+    expect(args.safeParse({ workspaceId: 'w', branch: { kind: 'existing' } }).success).toBe(false)
+    expect(
+      args.safeParse({ workspaceId: 'w', branch: { kind: 'existing', name: 'release', base: 'main' } }).success
+    ).toBe(false)
+    expect(args.safeParse({ workspaceId: 'w', branch: { kind: 'new', name: '  ' } }).success).toBe(false)
+  })
 })

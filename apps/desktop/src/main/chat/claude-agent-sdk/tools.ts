@@ -336,7 +336,11 @@ export async function buildClaudeToolBridge(
   }
   const names = signatureRows.map((row) => row.name)
   const allowedTools = names.map((name) => `${CLAUDE_MCP_TOOL_PREFIX}${name}`)
-  const toolAliases: Record<string, string> = {}
+  // The unqualified names too: the transcript a new session is seeded with names tools as Maestrly does (`bash`), and
+  // the model calls them that way, which the SDK refuses as unknown before it retries with the qualified name.
+  const toolAliases: Record<string, string> = Object.fromEntries(
+    names.map((name) => [name, `${CLAUDE_MCP_TOOL_PREFIX}${name}`])
+  )
   for (const [nativeName, maestrlyName] of Object.entries(NATIVE_ALIAS_CANDIDATES)) {
     if (names.includes(maestrlyName)) toolAliases[nativeName] = `${CLAUDE_MCP_TOOL_PREFIX}${maestrlyName}`
   }

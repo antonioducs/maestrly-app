@@ -10,9 +10,25 @@ User-visible changes by version. Downloads are on
 - The mobile app's dictation listens in the language chosen in **Settings →
   Language**; with **System**, it follows the phone. See
   [Mobile app](docs/mobile.md#what-it-does).
+- The mobile app pastes a copied image into a message with **Paste image**,
+  above the message field and in its **+** menu.
+- A new chat in a workspace, started from the mobile app, asks for its branch as
+  the desktop does: a new branch, named by you or after the chat, from the
+  branch you choose, or an existing local or remote branch. It needs a
+  workspaces environment on this version; older ones keep giving each chat a new
+  branch of its own.
+- The mobile app's **Workspaces** tab lists every chat of each workspace, with
+  the chats that share a branch in a folder named after it, as in the desktop
+  sidebar.
 
 ### Fixed
 
+- **Choose photos** and **Choose a file** in the mobile app open the picker on
+  iPhone again instead of doing nothing.
+- The mobile app no longer shows **Back online** each time it returns to the
+  screen, and shows a reconnection only when it takes more than a moment.
+- A Claude conversation whose history was carried into a new session no longer
+  fails its first tool call with "No such tool available" before retrying it.
 - Dictation on an iPhone whose language and region have no recognizer of their
   own, such as English with the region set to Brazil, no longer says the phone
   can't take dictation in its language: it listens in that language's main

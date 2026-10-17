@@ -98,6 +98,9 @@ describe('Claude in-process MCP bridge', () => {
       Read: 'mcp__maestrly__read',
       Skill: 'mcp__maestrly__use_skill',
       WebSearch: 'mcp__maestrly__web_search',
+      // Seeded transcripts name tools unqualified, and the model repeats those names.
+      read: 'mcp__maestrly__read',
+      external_search: 'mcp__maestrly__external_search',
     })
     // The alias only routes the name; Claude's own search stays disallowed.
     expect(CLAUDE_DISALLOWED_NATIVE_TOOLS).toContain('WebSearch')

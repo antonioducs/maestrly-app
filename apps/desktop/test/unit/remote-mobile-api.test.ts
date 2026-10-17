@@ -100,7 +100,17 @@ function setup() {
   handle('conversation:create-standalone', (args) =>
     conversation('new', { name: (args as { name?: string }).name ?? 'New chat' })
   )
-  handle('workspace:branches', () => ({ defaultBranch: 'main', current: 'main', local: ['main'] }))
+  handle('workspace:branches', () => ({
+    defaultBranch: 'main',
+    current: 'main',
+    local: ['main', 'release'],
+    remote: ['origin/main', 'origin/HEAD', 'origin/feat/x'],
+    remoteRefs: [
+      { remote: 'origin', name: 'main', ref: 'refs/remotes/origin/main' },
+      { remote: 'origin', name: 'HEAD', ref: 'refs/remotes/origin/HEAD' },
+      { remote: 'origin', name: 'feat/x', ref: 'refs/remotes/origin/feat/x' },
+    ],
+  }))
   handle('conversation:create', (args) =>
     conversation('wnew', {
       scope: 'project',
@@ -283,6 +293,30 @@ describe('mobile API of a workspaces host', () => {
     await expect(h.invoke('mobile:v1:conversation:create', { workspaceId: 1 })).rejects.toMatchObject({
       code: 'invalid',
     })
+    h.api.dispose()
+  })
+
+  it('lists a workspace’s branches, and creates a chat on a chosen new or existing branch', async () => {
+    const h = setup()
+    expect(await h.invoke('mobile:v1:workspace:branches', { workspaceId: 'w1' })).toEqual({
+      defaultBranch: 'main',
+      local: ['main', 'release'],
+      remote: [{ name: 'feat/x', remote: 'origin' }],
+    })
+    await expect(h.invoke('mobile:v1:workspace:branches', { workspaceId: 'nope' })).rejects.toMatchObject({
+      code: 'not-found',
+    })
+    await h.invoke('mobile:v1:conversation:create', {
+      workspaceId: 'w1',
+      branch: { kind: 'new', name: 'feat/login', base: 'release' },
+    })
+    await h.invoke('mobile:v1:conversation:create', { workspaceId: 'w1', branch: { kind: 'new', name: 'feat/y' } })
+    await h.invoke('mobile:v1:conversation:create', { workspaceId: 'w1', branch: { kind: 'existing', name: 'feat/x' } })
+    const calls = h.called('conversation:create').map(([, args]) => (args as [Record<string, unknown>])[0])
+    expect(calls[0]).toMatchObject({ branch: 'feat/login', isNewBranch: true, base: 'release', mode: 'worktree' })
+    expect(calls[1]).toMatchObject({ branch: 'feat/y', isNewBranch: true, base: 'main' })
+    expect(calls[2]).toMatchObject({ branch: 'feat/x', isNewBranch: false })
+    expect(calls[2]).not.toHaveProperty('base')
     h.api.dispose()
   })
 

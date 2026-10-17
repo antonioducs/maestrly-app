@@ -28,6 +28,7 @@ import { AttachmentChips } from './AttachmentChips'
 import { AttachSheet } from './AttachSheet'
 import { Listening } from './Listening'
 import { SetupPill } from './SetupPill'
+import { useClipboardImage } from './useClipboardImage'
 
 /** Unsent text per conversation, kept while the app runs so leaving one and coming back keeps what was being written. */
 const drafts = new Map<string, string>()
@@ -37,6 +38,9 @@ const MAX_SHARE = 0.4
 const MAX_HEIGHT_CAP = 360
 const selectFiles = (state: FleetState) => state.features.includes(FLEET_FILES_FEATURE)
 const selectOnline = (state: FleetState) => state.connection === 'open'
+
+/** A failed send whose message is for the person, shown instead of the generic one. */
+export class ShownError extends Error {}
 
 /** Drops the draft of a conversation, such as the new chat's once it is sent. */
 export const clearDraft = (key: string) => drafts.delete(key)
@@ -88,6 +92,7 @@ export function ComposerShell({
   // Only the web measures the text itself: a native multiline field already grows with it up to `maxHeight`.
   const [height, setHeight] = useState(MIN_HEIGHT)
   const [picking, setPicking] = useState(false)
+  const [focused, setFocused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | boolean>(false)
 
@@ -137,6 +142,15 @@ export function ComposerShell({
     setIssue(problem)
     if (!problem) setAttachments((current) => [...current, ...picked])
   }
+  const clipboard = useClipboardImage(!editingId)
+  async function pasteImage() {
+    try {
+      const pasted = await clipboard.paste()
+      if (pasted) add([pasted])
+    } catch {
+      setError(t('attach.pasteFailed'))
+    }
+  }
   const empty = !text.trim() && attachments.length === 0
   const stoppable = stopLabel !== null && empty && !editingId
 
@@ -166,9 +180,9 @@ export function ComposerShell({
       setIssue(null)
       // Sent, or waiting on the phone until the server is reachable: the keyboard makes way for the conversation.
       Keyboard.dismiss()
-    } catch {
+    } catch (cause) {
       // What was written stays in the field, to send again.
-      setError(true)
+      setError(cause instanceof ShownError && cause.message ? cause.message : true)
     } finally {
       setBusy(false)
     }
@@ -252,9 +266,38 @@ export function ComposerShell({
             text={dictation.state.phase === 'listening' ? dictation.state.text : ''}
           />
         ) : null}
+        {clipboard.available && focused && !listening ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void pasteImage()}
+            hitSlop={6}
+            style={({ pressed }) => ({
+              alignSelf: 'flex-start',
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              marginLeft: 4,
+              marginBottom: 2,
+              paddingVertical: 6,
+              paddingHorizontal: 11,
+              borderRadius: 15,
+              backgroundColor: pressed ? palette.line : palette.surface,
+            })}
+          >
+            <Icon name="clipboard" size={14} color={palette.ink} />
+            <AppText style={{ fontFamily: fonts.bodyMedium, fontSize: 13.5, lineHeight: 18 }}>
+              {t('attach.pasteImage')}
+            </AppText>
+          </Pressable>
+        ) : null}
         <TextInput
           ref={field}
           value={text}
+          onFocus={() => {
+            setFocused(true)
+            clipboard.check()
+          }}
+          onBlur={() => setFocused(false)}
           onChangeText={(value) => {
             setText(value)
             if (dictationIssue) dictation.dismiss()
@@ -299,7 +342,10 @@ export function ComposerShell({
                 label={t('composer.attach')}
                 // An edit keeps the message's attachments; it changes its text only.
                 disabled={!!editingId}
-                onPress={() => setPicking(true)}
+                onPress={() => {
+                  clipboard.check()
+                  setPicking(true)
+                }}
                 style={{ width: 44, height: 44, borderRadius: 22 }}
               />
               {setup}
@@ -368,7 +414,13 @@ export function ComposerShell({
           )}
         </View>
       </View>
-      <AttachSheet open={picking} onClose={() => setPicking(false)} filesEnabled={filesEnabled} onPicked={add} />
+      <AttachSheet
+        open={picking}
+        onClose={() => setPicking(false)}
+        filesEnabled={filesEnabled}
+        onPicked={add}
+        onPaste={clipboard.available ? pasteImage : undefined}
+      />
     </View>
   )
 }

@@ -62,6 +62,31 @@ export const mobileWorkspaceSchema = z.object({
 })
 export type MobileWorkspace = z.infer<typeof mobileWorkspaceSchema>
 
+/**
+ * The branches a new chat of a workspace can work on: local ones, and remote ones not checked out locally. A host that
+ * predates it answers `unknown-channel`, and its chats start on a branch of their own from the default branch.
+ */
+export const mobileBranchesSchema = z.object({
+  defaultBranch: z.string().max(300).nullable(),
+  local: z.array(z.string().max(300)).max(2000),
+  remote: z.array(z.object({ name: z.string().max(300), remote: z.string().max(200) })).max(2000),
+})
+export type MobileBranches = z.infer<typeof mobileBranchesSchema>
+
+/** Where a new chat of a workspace works: a new branch (from `base`, else the default branch), or an existing one. */
+export const mobileNewChatBranchSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('new'),
+      /** Omitted: the host names it after the chat. */
+      name: z.string().trim().min(1).max(300).optional(),
+      base: z.string().trim().min(1).max(300).optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('existing'), name: z.string().trim().min(1).max(300) }).strict(),
+])
+export type MobileNewChatBranch = z.infer<typeof mobileNewChatBranchSchema>
+
 export const mobileListsSchema = z.object({
   workspaces: z.array(mobileWorkspaceSchema),
   chats: z.array(mobileConversationSchema),
@@ -226,9 +251,19 @@ export const MOBILE_CHANNELS = {
         workspaceId: id.nullable(),
         name: z.string().trim().min(1).max(200).optional(),
         experience: mobileExperienceSchema.optional(),
+        /**
+         * Workspaces only; omitted, the chat works on a new branch of its own. Only sent to hosts that answered
+         * `branches`: older ones refuse arguments they do not know.
+         */
+        branch: mobileNewChatBranchSchema.optional(),
       })
       .strict(),
     result: mobileConversationSchema,
+  },
+  branches: {
+    channel: 'mobile:v1:workspace:branches',
+    args: z.object({ workspaceId: id }).strict(),
+    result: mobileBranchesSchema,
   },
   open: {
     channel: 'mobile:v1:conversation:open',

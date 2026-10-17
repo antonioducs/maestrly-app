@@ -13,6 +13,7 @@ import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { AppText } from '../primitives/Text'
 import { environmentState } from '../drawer/EnvironmentSwitcher'
+import { useHeldFor } from '../useHeldFor'
 
 const selectBridge = (state: ChatsState) => ({
   bridge: state.bridge,
@@ -42,6 +43,8 @@ export function ChatHostBanner({ quiet = false }: { quiet?: boolean }) {
   const [now, setNow] = useState(Date.now())
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  // Coming back to the app reconnects at once: only a connection that takes a while is worth a notice.
+  const slowConnect = useHeldFor(bridge === 'connecting', 2500)
 
   // A host that starts is reached at once, not at the next retry.
   useEffect(() => {
@@ -74,7 +77,7 @@ export function ChatHostBanner({ quiet = false }: { quiet?: boolean }) {
   let detail: string | null = null
   let retry = false
   if (bridge === 'connecting') {
-    if (quiet && !loaded) return null
+    if ((quiet && !loaded) || (loaded && !slowConnect)) return null
     title = t('chatHost.connecting')
   } else if (bridge === 'retrying') {
     title = t('chatHost.retrying')

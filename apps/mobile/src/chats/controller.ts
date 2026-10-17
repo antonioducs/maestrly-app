@@ -309,6 +309,8 @@ export function createChatsController(
       dispatch({ type: 'conversation', conversation })
       return conversation
     },
+    /** The branches a new chat of a workspace can work on; rejects with `unknown-channel` on hosts that predate it. */
+    branches: (workspaceId: string) => invoke('branches', { workspaceId }),
     async send(conversationId: string, text: string, attachments: OutboxAttachment[]): Promise<ChatOutboxEntry> {
       const entry: ChatOutboxEntry = {
         id: options.uuid(),

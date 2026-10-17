@@ -23,7 +23,7 @@ import { EnvironmentSwitcher } from './EnvironmentSwitcher'
 import { ServerRow } from './ServerRow'
 import { TabBar } from './TabBar'
 import { WaitingStrip, type WaitingEntry } from './WaitingStrip'
-import { WorkspaceList, WorkspacePage } from './WorkspaceList'
+import { WorkspaceList } from './WorkspaceList'
 
 type TabId = 'chats' | 'workspaces' | 'bots'
 
@@ -77,7 +77,6 @@ export function DrawerPanel({
   const chatState = useChats(selectChats)
   const hosted = chatState.hosted
   const [tab, setTab] = useState<TabId>(() => tabOf(current, hosted))
-  const [workspacePage, setWorkspacePage] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now())
   const scroll = useRef<ScrollView>(null)
   const groupY = useRef(new Map<string, number>())
@@ -158,7 +157,6 @@ export function DrawerPanel({
   const newChat = useCallback((workspaceId: string | null) => onOpen({ kind: 'new', workspaceId }), [onOpen])
   const choose = (id: TabId) => {
     setTab(id)
-    setWorkspacePage(null)
     scroll.current?.scrollTo({ y: 0, animated: false })
   }
 
@@ -241,27 +239,13 @@ export function DrawerPanel({
       </View>
     )
   } else {
-    const page = workspacePage
-      ? workspaceGroups(chatState.lists, q).find((group) => group.workspace.id === workspacePage)
-      : null
-    list = page ? (
-      <WorkspacePage
-        group={page}
-        query={q}
-        currentId={currentChatId}
-        now={now}
-        onBack={() => setWorkspacePage(null)}
-        onOpen={openChat}
-        onNew={() => newChat(page.workspace.id)}
-      />
-    ) : workspaceResults.length ? (
+    list = workspaceResults.length ? (
       <WorkspaceList
         groups={workspaceResults}
         searching={q !== ''}
         currentId={currentChatId}
         onOpen={openChat}
         onNew={(id) => newChat(id)}
-        onShowAll={setWorkspacePage}
       />
     ) : q ? (
       muted(

@@ -73,6 +73,35 @@ export function workspaceGroups(lists: MobileLists | null, query: string): Works
     .filter((group) => !q || group.chats.length > 0 || matches(q, group.workspace.name))
 }
 
+export type WorkspaceNode =
+  | { kind: 'chat'; chat: MobileConversation }
+  | { kind: 'branch'; branch: string; chats: MobileConversation[] }
+
+/**
+ * A workspace's chats as the desktop sidebar shows them: chats that share a branch go in a folder named after it, in
+ * the place of its latest chat; a chat alone on its branch stays a row. Order is kept within folders too.
+ */
+export function workspaceNodes(chats: MobileConversation[]): WorkspaceNode[] {
+  const byBranch = new Map<string, MobileConversation[]>()
+  for (const chat of chats) {
+    if (!chat.branch) continue
+    const list = byBranch.get(chat.branch)
+    if (list) list.push(chat)
+    else byBranch.set(chat.branch, [chat])
+  }
+  const nodes: WorkspaceNode[] = []
+  const placed = new Set<string>()
+  for (const chat of chats) {
+    const shared = chat.branch ? byBranch.get(chat.branch) : undefined
+    if (!chat.branch || !shared || shared.length < 2) nodes.push({ kind: 'chat', chat })
+    else if (!placed.has(chat.branch)) {
+      placed.add(chat.branch)
+      nodes.push({ kind: 'branch', branch: chat.branch, chats: shared })
+    }
+  }
+  return nodes
+}
+
 /** How many results a search has in the Workspaces tab: each workspace counts at least once. */
 export const workspaceResultCount = (groups: WorkspaceGroup[]) =>
   groups.reduce((count, group) => count + Math.max(1, group.chats.length), 0)

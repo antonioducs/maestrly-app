@@ -7,6 +7,7 @@ import {
   type MobileResult,
 } from '@maestrly/bot-fleet-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { branchChoice, EMPTY_BRANCH_DRAFT, validBranchName } from '../src/chats/branch'
 import { openBridgeSocket } from '../src/chats/bridge-source'
 import { createChatsController } from '../src/chats/controller'
 import { afterChatSendFailure, nextChatsToSend, type ChatOutboxEntry } from '../src/chats/outbox'
@@ -17,6 +18,7 @@ import {
   groupByDay,
   waitingChats,
   workspaceGroups,
+  workspaceNodes,
   workspaceResultCount,
 } from '../src/chats/selectors'
 import type { ChatsHandlers, ChatsSource } from '../src/chats/source'
@@ -169,6 +171,45 @@ describe('chat lists', () => {
     expect(chatSetupSummary({ ...setup, permMode: 'full', experience: 'maestro' }, option, null, text.t)).toBe(
       'Opus 5.5 · High'
     )
+  })
+})
+
+describe('workspace chats', () => {
+  it('puts chats that share a branch in a folder where its latest chat is, as the desktop does', () => {
+    const nodes = workspaceNodes([
+      chat('a', { branch: 'feat/x' }),
+      chat('b', { branch: 'main' }),
+      chat('c', { branch: 'feat/x' }),
+      chat('d', { branch: null }),
+      chat('e', { branch: 'feat/x' }),
+    ])
+    expect(
+      nodes.map((node) => (node.kind === 'chat' ? node.chat.id : [node.branch, node.chats.map((c) => c.id)]))
+    ).toEqual([['feat/x', ['a', 'c', 'e']], 'b', 'd'])
+  })
+})
+
+describe('new chat branch', () => {
+  it('accepts the branch names git accepts', () => {
+    for (const name of ['main', 'feat/login', 'release-1.2', 'chat/x_y']) expect(validBranchName(name)).toBe(true)
+    for (const name of ['a b', 'a..b', '-a', 'a/', '/a', 'a.lock', 'a/.b', 'a~1', 'a:b', 'a@{1}', 'a.'])
+      expect(validBranchName(name)).toBe(false)
+  })
+
+  it('asks for a new branch, an existing one, or lets the host choose', () => {
+    expect(branchChoice(EMPTY_BRANCH_DRAFT)).toBeUndefined()
+    expect(branchChoice({ ...EMPTY_BRANCH_DRAFT, name: ' feat/x ', base: 'release' })).toEqual({
+      kind: 'new',
+      name: 'feat/x',
+      base: 'release',
+    })
+    expect(branchChoice({ ...EMPTY_BRANCH_DRAFT, base: 'release' })).toEqual({ kind: 'new', base: 'release' })
+    expect(branchChoice({ ...EMPTY_BRANCH_DRAFT, name: 'bad name' })).toBeNull()
+    expect(branchChoice({ ...EMPTY_BRANCH_DRAFT, mode: 'existing' })).toBeNull()
+    expect(branchChoice({ ...EMPTY_BRANCH_DRAFT, mode: 'existing', existing: 'main' })).toEqual({
+      kind: 'existing',
+      name: 'main',
+    })
   })
 })
 
