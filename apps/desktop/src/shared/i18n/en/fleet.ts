@@ -725,9 +725,19 @@ export default {
     videoLoadFailed: "Couldn't load the video",
     videoUnsupported: "This video can't be played here. Download it to watch.",
     videoRetry: 'Try again',
-    peerWrote: '{{name}} wrote to {{bot}}',
     openPeer: 'Open bot',
-    routine: 'Daily routine · {{title}} · {{time}}',
+    peer: {
+      label: 'Message from {{from}} to {{to}}',
+      sections: 'Sections',
+      showAll: 'Show all',
+      showLess: 'Show less',
+    },
+    routine: {
+      label: 'Routine',
+      scheduled: 'Routine · {{schedule}}',
+      instructions: 'Instructions',
+      repeated: 'Same instructions as the last run',
+    },
     queued: 'Queued',
     removeQueued: 'Remove queued message',
     edit: {
@@ -743,7 +753,6 @@ export default {
     retry: 'Retry',
     working: 'Working…',
     noOutput: 'No output',
-    wroteTo: 'Wrote to {{bot}}',
     delivered: 'Delivered',
     notDelivered: 'Waiting to deliver',
     tool: {

@@ -365,6 +365,39 @@ async function runFleetScenario(workspaceOnly: boolean) {
       title: 'Scout check',
     })
   )
+  // Two runs of the same routine, then a long message from another bot and Scout's reply.
+  for (const id of ['routine-run-1', 'routine-run-2'])
+    transcript.push({
+      id,
+      at: now(),
+      kind: 'user',
+      text: 'E2E-ROUTINE first line\nsecond line with **bold**',
+      source: 'routine',
+      routine: { id: 'scout-routine', title: 'Scout check' },
+      queued: false,
+    })
+  transcript.push({
+    id: 'peer-in',
+    at: now(),
+    kind: 'user',
+    text: [
+      '## E2E-PEER Videos',
+      ...Array.from({ length: 24 }, (_, index) => `- video-${index + 1}.mp4`),
+      '## E2E-PEER Next step',
+      'Cut a 60–90 s video.',
+    ].join('\n'),
+    source: 'peer',
+    peer: { botId: 'helper', name: 'Helper' },
+    queued: false,
+  })
+  transcript.push({
+    id: 'peer-out',
+    at: now(),
+    kind: 'peer_out',
+    to: { botId: 'helper', name: 'Helper' },
+    text: 'E2E-PEER-REPLY **thanks**',
+    delivered: true,
+  })
   transcript.push({
     id: 'recalled-user',
     at: now(),
@@ -1785,6 +1818,32 @@ async function runFleetScenario(workspaceOnly: boolean) {
     await expect(gone).toBeVisible()
     expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
     await expect(page.getByText('Lembrou: Portal login')).toBeVisible()
+    // A routine run is one line with its schedule; its instructions unfold as Markdown that keeps the typed lines.
+    const routineRows = page.getByRole('button', { name: /^Scout check/ })
+    await expect(routineRows).toHaveCount(2)
+    await expect(routineRows.first()).toContainText('Rotina · A cada 1 h 30 min')
+    await expect(routineRows.first()).not.toContainText('Mesmas instruções da execução anterior')
+    await expect(routineRows.last()).toContainText('Mesmas instruções da execução anterior')
+    await expect(page.getByText('E2E-ROUTINE first line')).toHaveCount(0)
+    await routineRows.last().click()
+    await expect(routineRows.last()).toHaveAttribute('aria-expanded', 'true')
+    const instructions = page.locator('p', { hasText: 'E2E-ROUTINE first line' })
+    await expect(instructions.locator('br')).toHaveCount(1)
+    await expect(instructions.locator('strong')).toHaveText('bold')
+    // A long message between bots names both ends, folds, and links its sections.
+    const peerMessage = page.getByRole('article', { name: 'Mensagem de Helper para Scout' })
+    await expect(peerMessage.getByRole('heading', { name: 'E2E-PEER Videos' })).toBeVisible()
+    await expect(peerMessage.getByRole('navigation', { name: 'Seções' }).getByRole('button')).toHaveText([
+      'E2E-PEER Videos',
+      'E2E-PEER Next step',
+    ])
+    await peerMessage.getByRole('button', { name: 'Mostrar tudo' }).click()
+    await expect(peerMessage.getByRole('button', { name: 'Mostrar menos' })).toHaveAttribute('aria-expanded', 'true')
+    await expect(peerMessage.getByText('Cut a 60–90 s video.')).toBeVisible()
+    const peerReply = page.getByRole('article', { name: 'Mensagem de Scout para Helper' })
+    await expect(peerReply.locator('strong')).toHaveText('thanks')
+    await expect(peerReply).toContainText('Entregue')
+    await expect(peerReply.getByRole('button', { name: 'Mostrar tudo' })).toHaveCount(0)
     const scoutSettings = await openBotSettings(page, 'Scout', 'Rotinas')
     await page.getByRole('button', { name: 'Mais ações para Scout check', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Histórico', exact: true }).click()

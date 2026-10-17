@@ -10,6 +10,7 @@ import { useGenUiHost } from '@/genui/context'
 import { isFenceClosed, isPendingFence, isWidgetFence } from '@/genui/fences'
 import { HtmlWidgetBlock, PendingFence } from '@/genui/HtmlWidgetBlock'
 import { i18n } from '@/lib/i18n'
+import { remarkSoftBreaks } from '@/lib/markdown-breaks'
 import { rehypeChatMentions, rehypeMarkdownSearchHighlight } from '@/lib/markdown-search-highlight'
 import { cn } from '@/lib/utils'
 import { parseLocalFileReference } from '../../shared/file-reference'
@@ -32,6 +33,9 @@ function markdownUrlTransform(value: string, key: string): string {
   return key === 'href' && parseLocalFileReference(value) ? value : defaultUrlTransform(value)
 }
 
+const remarkPlugins: NonNullable<Options['remarkPlugins']> = [remarkGfm]
+const remarkPluginsWithBreaks: NonNullable<Options['remarkPlugins']> = [remarkGfm, remarkSoftBreaks]
+
 interface Props {
   markdown: string
   onOpenFile?: OpenFileReference
@@ -43,6 +47,9 @@ interface Props {
   searchQuery?: string
 
   currentSearchMatch?: boolean
+
+  /** Text a person typed: each line break shows, as it did where they wrote it. */
+  breaks?: boolean
 }
 
 export const MarkdownViewer = memo(function MarkdownViewer({
@@ -52,6 +59,7 @@ export const MarkdownViewer = memo(function MarkdownViewer({
   ctx,
   searchQuery,
   currentSearchMatch,
+  breaks,
 }: Props) {
   // An answer shows an interface it previewed by naming the preview; the message holds its HTML.
   const { previews } = useGenUiHost()
@@ -74,7 +82,7 @@ export const MarkdownViewer = memo(function MarkdownViewer({
   return (
     <div className="dark-glass-prose">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={breaks ? remarkPluginsWithBreaks : remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={markdownUrlTransform}

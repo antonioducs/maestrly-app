@@ -7,6 +7,7 @@ import {
   visibleTranscriptItems,
   formatTimer,
   nextRadioIndex,
+  repeatedRoutineRunIds,
   routineSchedule,
   routineFormFrom,
   routineScheduleSummary,
@@ -177,6 +178,32 @@ describe('fleet forms', () => {
     expect(latestTodoItemId([tool('a', 'todo_write', list), tool('b', 'todo_write', []), tool('c', 'bash')])).toBe('b')
     expect(latestTodoItemId([tool('a', 'todo_write', list), tool('legacy', 'todo_write')])).toBe('a')
     expect(latestTodoItemId([tool('legacy', 'todo_write'), tool('c', 'bash', list)])).toBeNull()
+  })
+  it('marks a routine run whose instructions repeat the previous run of the same routine', () => {
+    const run = (id: string, routineId: string, text: string): Extract<FleetTranscriptItem, { kind: 'user' }> => ({
+      kind: 'user',
+      id,
+      at: '2026-10-17T09:00:00Z',
+      text,
+      source: 'routine',
+      routine: { id: routineId, title: routineId },
+      queued: false,
+      memories: [],
+      images: [],
+    })
+    const owner: FleetTranscriptItem = { ...run('owner', 'r1', 'Check orders'), source: 'owner', routine: undefined }
+    expect(
+      repeatedRoutineRunIds([
+        run('a1', 'r1', 'Check orders'),
+        run('b1', 'r2', 'Check stock'),
+        owner,
+        run('a2', 'r1', 'Check orders'),
+        run('b2', 'r2', 'Check stock and prices'),
+        run('a3', 'r1', 'Check orders'),
+        run('b3', 'r2', 'Check stock'),
+      ])
+    ).toEqual(new Set(['a2', 'a3']))
+    expect(repeatedRoutineRunIds([owner, run('a1', 'r1', 'Check orders')])).toEqual(new Set())
   })
   it('wraps ceiling radio keyboard navigation', () => {
     expect(nextRadioIndex(2, 'ArrowRight', 3)).toBe(0)
