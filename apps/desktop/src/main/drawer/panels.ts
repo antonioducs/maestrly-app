@@ -28,6 +28,7 @@ import {
 } from '../performance/resource-governor'
 import { registerReclaimable, scheduleMemoryReclaim, unregisterReclaimable } from '../performance/memory-reclaimer'
 import { MEMORY_RECLAIM_RETRY_MS, PANEL_COLD_TTL_MS } from '../performance/policy'
+import { startLoad } from '../web-contents-load'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -44,9 +45,9 @@ function panelReclaimKey(convId: string, tab: PanelTab): string {
 function loadPanel(view: WebContentsView, tab: string, convId: string): void {
   const search = panelSearch(tab, convId)
   if (process.env.ELECTRON_RENDERER_URL) {
-    void view.webContents.loadURL(`${process.env.ELECTRON_RENDERER_URL}/panel.html${search}`)
+    startLoad(`panel:${tab}`, view.webContents.loadURL(`${process.env.ELECTRON_RENDERER_URL}/panel.html${search}`))
   } else {
-    void view.webContents.loadFile(path.join(__dirname, '../renderer/panel.html'), { search })
+    startLoad(`panel:${tab}`, view.webContents.loadFile(path.join(__dirname, '../renderer/panel.html'), { search }))
   }
 }
 

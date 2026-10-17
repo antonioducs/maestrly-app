@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -414,4 +415,26 @@ test('leaves Linux and Windows updater metadata without a macOS floor', async (t
     await readFile(path.join(windows.outputDir, 'latest.yml'), 'utf8'),
     `version: 0.8.0\npath: Maestrly-App-0.8.0-windows-x64.exe\nsha512: ${DMG_SHA512}\nminimumSystemVersion: 10.0.0`
   )
+})
+
+// A minimal Ubuntu 24.04 desktop installs the .deb, but the Electron binary then fails to load libasound.so.2 and
+// libgbm.so.1: electron-builder's default Depends do not cover them. Overriding the list drops those defaults, so
+// they are compared with the installed electron-builder's own.
+test('declares every library the Linux binary needs as a .deb dependency', () => {
+  const builder = yaml.load(readFileSync(path.join(desktop, 'electron-builder.yml'), 'utf8'))
+  const FpmTarget = desktopRequire('app-builder-lib/out/targets/FpmTarget').default
+  const defaults = FpmTarget.prototype.getDefaultDepends.call(null, 'deb')
+  const depends = builder.deb?.depends ?? []
+
+  assert.ok(defaults.length > 0)
+  for (const dependency of defaults) assert.ok(depends.includes(dependency), `${dependency} must stay declared`)
+  // Ubuntu 24.04 ships libasound2t64; Debian 12 and Ubuntu 22.04 ship libasound2.
+  assert.ok(depends.includes('libasound2t64 | libasound2'))
+  assert.ok(depends.includes('libgbm1'))
+  assert.equal(new Set(depends).size, depends.length)
+
+  for (const file of readdirSync(desktop).filter((name) => /^electron-builder\..+\.yml$/.test(name))) {
+    const derived = yaml.load(readFileSync(path.join(desktop, file), 'utf8'))
+    assert.equal(derived.deb?.depends, undefined, `${file} must inherit the .deb dependencies`)
+  }
 })
