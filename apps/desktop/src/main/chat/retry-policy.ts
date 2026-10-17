@@ -22,12 +22,20 @@ type ErrorLike = {
   retryAfter?: unknown
 }
 
+/**
+ * APICallError carries the whole request: its prompt and tool descriptions mention words like "timeout",
+ * as does a `Keep-Alive: timeout=5` header. Matching them made every failure, a fatal 401 or 402 included,
+ * look transient and get retried. Headers are read field by field (Retry-After) instead.
+ */
+const NOT_THE_FAILURE = new Set(['requestBodyValues', 'url', 'responseHeaders'])
+const omitRequest = (key: string, value: unknown): unknown => (NOT_THE_FAILURE.has(key) ? undefined : value)
+
 function errorText(error: unknown): string {
   const any = error as ErrorLike
   const parts = [any?.name, any?.code, any?.type, any?.message, any?.responseBody, any?.data]
   if (error instanceof Error) parts.push(error.message)
   try {
-    parts.push(JSON.stringify(error))
+    parts.push(JSON.stringify(error, omitRequest))
   } catch {
     /* best effort */
   }

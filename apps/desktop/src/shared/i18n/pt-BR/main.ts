@@ -121,4 +121,10 @@ export default {
     chatgptRestoringTitle: 'Restaurando ChatGPT…',
     chatgptRestoringSub: 'Recarregando a última conversa. Login e sessão permanecem intactos.',
   },
+  chatProviderError: {
+    http: '{{provider}} retornou HTTP {{status}}: {{detail}}',
+    httpWithoutDetail: '{{provider}} retornou HTTP {{status}} sem mensagem de erro.',
+    withoutDetail: '{{provider}} falhou sem mensagem de erro.',
+    unnamedProvider: 'O provedor',
+  },
 } as const

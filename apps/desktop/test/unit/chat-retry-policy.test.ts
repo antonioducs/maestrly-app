@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { APICallError } from '@ai-sdk/provider'
 import {
   AI_SDK_MAX_RETRIES,
   classifyStreamRetry,
@@ -23,6 +24,33 @@ describe('chat retry policy', () => {
       retryable: false,
       reason: 'quota',
       delayMs: 0,
+    })
+  })
+
+  it('classifies a provider failure by its response, never by the prompt it was sent', () => {
+    const failure = (statusCode: number, responseBody: string) =>
+      new APICallError({
+        message: '',
+        url: 'https://provider.test/v1/chat/completions',
+        requestBodyValues: {
+          messages: [
+            { role: 'system', content: 'The bash tool has a timeout; on a network error or rate limit, wait.' },
+          ],
+        },
+        statusCode,
+        responseHeaders: { connection: 'keep-alive', 'keep-alive': 'timeout=5' },
+        responseBody,
+      })
+    expect(
+      classifyStreamRetry(failure(402, '[{"error":{"message":"Your prepayment credits are depleted."}}]'))
+    ).toEqual({ retryable: false, reason: 'fatal', delayMs: 0 })
+    expect(classifyStreamRetry(failure(401, '{"error":{"message":"Incorrect API key provided"}}'))).toEqual({
+      retryable: false,
+      reason: 'fatal',
+      delayMs: 0,
+    })
+    expect(classifyStreamRetry(failure(400, '{"error":{"message":"upstream timeout"}}'))).toMatchObject({
+      retryable: true,
     })
   })
 

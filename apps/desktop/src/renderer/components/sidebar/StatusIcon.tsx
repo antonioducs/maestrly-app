@@ -1,8 +1,10 @@
+import { useTranslation } from 'react-i18next'
 import { Circle, CircleDot, HelpCircle, Loader2 } from 'lucide-react'
 
 export type AgentStatus = 'idle' | 'working' | 'ready' | 'waiting' | 'asking' | 'error'
 
 export function StatusIcon({ status }: { status: AgentStatus }) {
+  const { t } = useTranslation('ui')
   switch (status) {
     case 'working':
       return (
@@ -17,7 +19,16 @@ export function StatusIcon({ status }: { status: AgentStatus }) {
     case 'asking':
       return <HelpCircle className="size-3.5 shrink-0 text-status-waiting" />
     case 'error':
-      return <CircleDot className="size-3.5 shrink-0 text-status-error" />
+      return (
+        <span
+          role="img"
+          aria-label={t('sidebar.statusError')}
+          title={t('sidebar.statusError')}
+          className="inline-flex shrink-0 text-status-error"
+        >
+          <CircleDot className="size-3.5" />
+        </span>
+      )
     default:
       return <Circle className="size-3.5 shrink-0 text-muted-foreground" />
   }
