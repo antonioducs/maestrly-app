@@ -5,7 +5,11 @@ official Antigravity ACP server (version 1.2.1 or a newer validated release). In
 **Settings › Maestrly Chat › Accounts**, choose **Add account**, pick
 **Google AI**, and choose **Sign in with Google**. The first sign-in downloads
 the server; then complete Google's sign-in in your browser and choose a Gemini
-model in the conversation model picker. To add another Google account with its
+model in the conversation model picker. On macOS and Linux, Maestrly opens
+Google's page in your default browser and also shows the link with **Copy link**
+and **Open in browser** while it waits, in case no browser opened. Google rejects
+this sign-in in embedded browsers, so finish it in a regular browser on the same
+computer. To add another Google account with its
 own label, choose **Add account** again, or **Connect another Google AI account**
 in an account's **⋯** menu. An eligible Google AI plan and an internet connection
 are required.
@@ -13,9 +17,17 @@ are required.
 Google AI is available for chat, Maestro, subagent profiles, and the desktop
 executor's provider selection, and bot environments. The model list comes from the
 Antigravity server, which offers Gemini models only; variants that differ only by
-thinking level appear as one model with Low, Medium, or High effort. The server
-does not report token usage, remaining quota, or reasoning text, so Maestrly shows
-none of them for this provider.
+thinking level appear as one model with Low, Medium, or High effort. When the
+server reports them (version 1.4.0 does), the account shows its plan name and
+the remaining weekly quota of each model group, read through the server's
+`/usage` command without a model turn; older versions show neither. The server
+does not report per-turn token usage or reasoning text, so Maestrly shows
+neither for this provider.
+
+The server cannot close a session, and each open session keeps a helper process
+running until the server stops. Maestrly therefore reads the model list, plan,
+and quota through a single session per server process, and validates a chosen
+model against that list instead of opening another session.
 
 ## Runtime
 
@@ -90,7 +102,9 @@ Each Google account gets its own app-owned home directory in the profile, create
 with owner-only permissions. The Antigravity server keeps its Google sign-in in a
 file in that directory, not in the OS secure store. Maestrly reads only the
 `project_id` field of that file to tell accounts apart; it never reads, logs, or
-copies the tokens. Do not copy these files into project files or commit them.
+copies the tokens. The plan name the server reports is kept in
+`maestrly-account.json` in the same directory. Do not copy these files into
+project files or commit them.
 
 Signing out deletes the account's home, including its sign-in and the server's
 session files, while keeping Maestrly's chat history. Deleting a conversation

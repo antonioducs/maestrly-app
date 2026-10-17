@@ -1,4 +1,5 @@
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   AntigravityAccountChangedError,
@@ -38,7 +39,7 @@ describe('AntigravitySubscriptionManager', () => {
     expect(fake.requests('authenticate')).toEqual([expect.objectContaining({ params: { methodId: 'oauth-personal' } })])
   })
 
-  it('lists grouped models with all built-in tools disabled and deletes the probe session', async () => {
+  it('lists grouped models from one probe session with all built-in tools disabled', async () => {
     const manager = fake.manager()
     await manager.login()
     const models = await manager.listModels()
@@ -51,8 +52,122 @@ describe('AntigravitySubscriptionManager', () => {
     const created = fake.requests('session/new')[0]?.params as { cwd: string } | undefined
     expect(created).toMatchObject({ mcpServers: [], _meta: { agy: { enabledTools: [] } } })
     expect(created?.cwd).toMatch(/[\\/]work$/)
-    await expect.poll(() => fake.requests('session/delete').length).toBe(1)
     await manager.listModels()
+    await manager.listModels(true)
+    expect(fake.requests('session/new')).toHaveLength(1)
+  })
+
+  it('shares one probe session between concurrent catalog requests', async () => {
+    const manager = fake.manager()
+    await manager.login()
+    const signInStarts = fake.runtimeStarts
+    const results = await Promise.all(Array.from({ length: 30 }, (_, index) => manager.listModels(index % 3 === 0)))
+    expect(new Set(results.map((entries) => entries.map((entry) => entry.id).join(','))).size).toBe(1)
+    expect(fake.requests('session/new')).toHaveLength(1)
+    expect(fake.runtimeStarts - signInStarts).toBe(1)
+  })
+
+  it('keeps a running process catalog and lets only an older forced refresh probe again', async () => {
+    let now = 1_000_000
+    const manager = fake.manager({ now: () => now })
+    await manager.login()
+    await manager.listModels()
+    now += 30 * 60_000
+    await manager.listModels()
+    expect(fake.requests('session/new')).toHaveLength(1)
+    await Promise.all([manager.listModels(true), manager.listModels(true), manager.listModels()])
+    expect(fake.requests('session/new')).toHaveLength(2)
+    now += 9 * 60_000
+    await manager.listModels(true)
+    expect(fake.requests('session/new')).toHaveLength(2)
+  })
+
+  it('answers from the catalog without restarting a closed process, then removes the probe files', async () => {
+    let now = 1_000_000
+    const manager = fake.manager({ now: () => now })
+    await manager.login()
+    const signInStarts = fake.runtimeStarts
+    await manager.listModels()
+    const conversations = path.join(manager.root, '.gemini', 'antigravity-acp', 'conversations')
+    expect(readdirSync(conversations).filter((name) => name.endsWith('.meta'))).toHaveLength(1)
+    await manager.closeSessions()
+    await expect.poll(() => readdirSync(conversations).filter((name) => name.endsWith('.meta'))).toHaveLength(0)
+    await manager.listModels()
+    expect(fake.runtimeStarts - signInStarts).toBe(1)
+    now += 11 * 60_000
+    await manager.listModels()
+    expect(fake.runtimeStarts - signInStarts).toBe(2)
+    expect(fake.requests('session/new')).toHaveLength(2)
+  })
+
+  it('reports the subscription tier from sign-in and keeps it for the next start', async () => {
+    fake.env.FAKE_ACP_TIER = 'Google AI Pro'
+    const manager = fake.manager()
+    await manager.login()
+    expect(manager.getStatus()).toEqual({ state: 'signed-in', authenticated: true, planType: 'Google AI Pro' })
+    const restarted = fake.manager()
+    expect(restarted.getStatus()).toMatchObject({ planType: 'Google AI Pro' })
+    expect(fake.runtimeStarts).toBe(1)
+    await manager.logout()
+    expect(manager.getStatus()).toEqual({ state: 'signed-out', authenticated: false })
+  })
+
+  it('learns the tier from the probe session and notifies the account card', async () => {
+    const manager = fake.manager()
+    await manager.login()
+    expect(manager.getStatus()).not.toHaveProperty('planType')
+    const events: Array<string | null | undefined> = []
+    manager.onAuthChanged(() => events.push(manager.getStatus().planType))
+    fake.env.FAKE_ACP_TIER = 'Google AI Ultra'
+    await manager.listModels()
+    expect(manager.getStatus()).toMatchObject({ planType: 'Google AI Ultra' })
+    expect(events).toEqual(['Google AI Ultra'])
+  })
+
+  it('reads quota windows through /usage on the probe session', async () => {
+    fake.env.FAKE_ACP_USAGE = '1'
+    let now = 1_000_000
+    const manager = fake.manager({ now: () => now })
+    await manager.login()
+    await manager.listModels()
+    const [windows, again] = await Promise.all([manager.readUsage(), manager.readUsage()])
+    expect(windows).toEqual([
+      {
+        id: 'gemini-models-weekly-limit',
+        kind: 'weekly-model',
+        usedPercent: 9,
+        resetsAt: Date.UTC(2026, 9, 2, 8, 22),
+        durationMins: 10_080,
+        label: 'Gemini Models',
+      },
+      {
+        id: 'claude-and-gpt-models-weekly-limit',
+        kind: 'weekly-model',
+        usedPercent: 0,
+        resetsAt: null,
+        durationMins: 10_080,
+        label: 'Claude and GPT models',
+      },
+    ])
+    expect(again).toBe(windows)
+    const prompts = fake.requests('session/prompt')
+    expect(prompts).toHaveLength(1)
+    const probe = fake.requests('session/new')
+    expect(probe).toHaveLength(1)
+    expect(prompts[0]?.params).toMatchObject({ prompt: [{ type: 'text', text: '/usage' }] })
+    await manager.readUsage()
+    now += 2 * 60_000
+    await manager.readUsage()
+    await manager.readUsage(true)
+    expect(fake.requests('session/prompt')).toHaveLength(3)
+    expect(fake.requests('session/new')).toHaveLength(1)
+  })
+
+  it('never sends /usage to a runtime that does not advertise it', async () => {
+    const manager = fake.manager()
+    await manager.login()
+    await expect(manager.readUsage()).resolves.toBeNull()
+    expect(fake.requests('session/prompt')).toHaveLength(0)
     expect(fake.requests('session/new')).toHaveLength(1)
   })
 

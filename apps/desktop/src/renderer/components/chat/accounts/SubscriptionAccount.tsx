@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Loader2, LogIn, LogOut, MoreHorizontal, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+  LogIn,
+  LogOut,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { environmentSubscriptionLogin } from '@/lib/fleet/use-bot-login'
@@ -114,6 +126,7 @@ export function SubscriptionAccount({
   const [usage, setUsage] = useState<ChatSubscriptionUsage | null>(null)
   const [usageBusy, setUsageBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [loginLinkCopied, setLoginLinkCopied] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const runtimeId = PROVIDER_RUNTIME_ASSET[providerKind]
   const [runtime, setRuntime] = useState<RuntimeAssetInfo | null>(null)
@@ -283,7 +296,12 @@ export function SubscriptionAccount({
         throw new Error(statusErrorText(result.status) || result.error || t(copyKey('LoginFailed')))
       }
       setLoginInstructions(result)
-      setStatus(result.status ?? { state: 'signing-in', authenticated: false })
+      // The sign-in page can be broadcast before this reply arrives; keep it.
+      setStatus((current) =>
+        current?.state === 'signing-in' && current.authUrl
+          ? current
+          : (result.status ?? { state: 'signing-in', authenticated: false })
+      )
       const loginUrl = result.authUrl ?? result.verificationUrl
       if (loginUrl) window.api.openExternalUrl(loginUrl)
       onChanged()
@@ -351,10 +369,26 @@ export function SubscriptionAccount({
 
   const signedIn = status?.state === 'signed-in'
   const signingIn = status?.state === 'signing-in'
+  const pendingLoginUrl = signingIn ? status?.authUrl : undefined
   const unavailable = status?.state === 'unavailable'
   // Installing the runtime cannot fix a build without the provider's OAuth configuration, so it is not offered.
   const notConfigured = status?.errorCode === 'subscription-provider-not-configured'
   const claudeSetup = providerKind === 'claude-subscription' ? claudeCodeSetupNeed(status) : null
+
+  useEffect(() => {
+    if (!loginLinkCopied) return
+    const timer = setTimeout(() => setLoginLinkCopied(false), 2_000)
+    return () => clearTimeout(timer)
+  }, [loginLinkCopied])
+
+  const copyLoginLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setLoginLinkCopied(true)
+    } catch {
+      // The URL stays selectable for a manual copy.
+    }
+  }
   const runtimeActive =
     runtime !== null && ['downloading', 'verifying', 'installing', 'removing'].includes(runtime.status.state)
   const runtimeReady = !runtimeId || runtime?.status.state === 'ready' || runtime?.provided?.active === true
@@ -603,6 +637,31 @@ export function SubscriptionAccount({
           manualUrl={loginInstructions.manualUrl}
           submitCode={(code) => api.chatClaudeSubscriptionSubmitCode(code, accountId)}
         />
+      )}
+      {pendingLoginUrl && (
+        <div
+          className="mt-3 rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5"
+          data-subscription-login-link
+        >
+          <p className="text-[12px] text-amber-100">{t('settings.subscriptionLoginLinkHint')}</p>
+          <code className="mt-1.5 block max-h-20 select-all overflow-y-auto break-all font-mono text-[11px] text-foreground/90">
+            {pendingLoginUrl}
+          </code>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button type="button" className={secondaryButtonCls} onClick={() => void copyLoginLink(pendingLoginUrl)}>
+              {loginLinkCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {loginLinkCopied ? t('settings.subscriptionLoginLinkCopied') : t('settings.subscriptionLoginLinkCopy')}
+            </button>
+            <button
+              type="button"
+              className={secondaryButtonCls}
+              onClick={() => window.api.openExternalUrl(pendingLoginUrl)}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              {t('settings.subscriptionLoginLinkOpen')}
+            </button>
+          </div>
+        </div>
       )}
       {signingIn && loginInstructions?.userCode && (
         <div className="mt-3 rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">

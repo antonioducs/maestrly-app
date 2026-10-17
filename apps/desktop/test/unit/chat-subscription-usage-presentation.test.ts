@@ -8,9 +8,10 @@ import {
 } from '../../src/renderer/components/chat/subscription-usage-presentation'
 
 describe('subscription usage presentation', () => {
-  it('enables graphs only for the two providers with official snapshots', () => {
+  it('enables graphs only for the providers with official snapshots', () => {
     expect(supportsSubscriptionUsage('codex-subscription')).toBe(true)
     expect(supportsSubscriptionUsage('claude-subscription')).toBe(true)
+    expect(supportsSubscriptionUsage('antigravity-subscription')).toBe(true)
     expect(supportsSubscriptionUsage('github-copilot-subscription')).toBe(false)
     expect(supportsSubscriptionUsage('grok-subscription')).toBe(false)
   })

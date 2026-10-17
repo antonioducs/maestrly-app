@@ -42,6 +42,18 @@ const h = vi.hoisted(() => {
       })),
       assertAccountIdentity: vi.fn(),
       listModels: vi.fn(async () => MODELS),
+      readUsage: vi.fn(
+        async (): Promise<Array<Record<string, unknown>> | null> => [
+          {
+            id: 'gemini-models-weekly-limit',
+            kind: 'weekly-model',
+            usedPercent: 9,
+            resetsAt: null,
+            durationMins: 10_080,
+            label: 'Gemini Models',
+          },
+        ]
+      ),
       login: vi.fn(async () => {
         calls.push(`login:${accountId}`)
         state.authenticated = true
@@ -269,11 +281,39 @@ describe('Google AI subscription service', () => {
     expect(h.run).not.toHaveBeenCalled()
   })
 
-  it('reports quota usage as unsupported', async () => {
+  it('reports the quota the runtime publishes, and unsupported when it publishes none', async () => {
     const handlers = register()
+    await expect(
+      handlers.get('chat:subscription-usage')!({}, { providerKind: 'antigravity-subscription', force: true })
+    ).resolves.toMatchObject({
+      state: 'ready',
+      providerKind: 'antigravity-subscription',
+      accountId: null,
+      windows: [{ id: 'gemini-models-weekly-limit', usedPercent: 9 }],
+    })
+    expect(h.managerFor(null).readUsage).toHaveBeenCalledWith(true)
+    h.managerFor(null).readUsage.mockResolvedValueOnce(null)
     await expect(
       handlers.get('chat:subscription-usage')!({}, { providerKind: 'antigravity-subscription' })
     ).resolves.toMatchObject({ state: 'unsupported', providerKind: 'antigravity-subscription' })
+  })
+
+  it('validates a picked model against the cached catalog instead of forcing a new server session', async () => {
+    const handlers = register()
+    const conv = makeConversation(makeWorkspace().id)
+    const manager = h.managerFor(null)
+    const selection = { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro' }
+    await expect(
+      Promise.all([
+        handlers.get('chat:set-selection')!({}, conv.id, selection),
+        handlers.get('chat:set-default')!({}, selection),
+      ])
+    ).resolves.toEqual([{ ok: true }, { ok: true }])
+    expect(manager.listModels).toHaveBeenCalledTimes(2)
+    for (const call of manager.listModels.mock.calls as unknown[][]) expect(call[0]).toBeFalsy()
+    await expect(
+      handlers.get('chat:set-selection')!({}, conv.id, { ...selection, modelId: 'gemini-unknown' })
+    ).resolves.toEqual({ ok: false, error: 'no-model' })
   })
 
   it('lists the account models for the picker, and none while signed out', async () => {

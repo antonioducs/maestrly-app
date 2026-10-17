@@ -1235,6 +1235,10 @@ export default {
     subscriptionNotConfigured:
       'Esta versão do Maestrly não consegue entrar no {{provider}}: ela foi gerada sem o Client ID OAuth que o login exige. Instale uma versão do Maestrly que o inclua.',
     subscriptionNotConfiguredShort: 'Não configurado nesta versão',
+    subscriptionLoginLinkHint: 'Se nenhum navegador abriu, abra este link no seu navegador para concluir o login:',
+    subscriptionLoginLinkCopy: 'Copiar link',
+    subscriptionLoginLinkCopied: 'Copiado',
+    subscriptionLoginLinkOpen: 'Abrir no navegador',
     cursorSubscriptionHeading: 'Cursor com assinatura',
     cursorSubscriptionDescription:
       'Use seu plano Cursor no Maestrly Chat via o Agent SDK oficial. Entre com a conta Cursor no navegador.',

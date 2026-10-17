@@ -14,6 +14,8 @@ const LOGIN_TIMEOUT_MS = 10 * 60_000
 interface AccountState {
   generation: number
   transition: Promise<void> | null
+  /** Google's sign-in page for the pending transition, shown so it can be copied when no browser opened. */
+  authUrl?: string
   unsubscribe?: () => void
 }
 
@@ -23,7 +25,13 @@ export interface AntigravityServiceAuthHooks {
   /** Installs the managed ACP server when needed (explicit sign-in is the only install trigger). */
   ensureRuntime(signal: AbortSignal): Promise<void>
   broadcast(status: ChatSubscriptionAuthStatus): void
+  /**
+   * Opens the captured sign-in page in the user's browser. The server runs with a private `HOME`, so on Linux its
+   * own `xdg-open` would miss the user's browser settings; Google also refuses embedded browsers.
+   */
+  openBrowser?(url: string): void
   manager?: (accountId: AccountId) => AntigravitySubscriptionManager
+  platform?: NodeJS.Platform
 }
 
 /**
@@ -41,7 +49,7 @@ export class AntigravityServiceAuth {
   }
 
   status(accountId: AccountId = null): ChatSubscriptionAuthStatus {
-    if (this.busy(accountId)) return { state: 'signing-in', authenticated: false }
+    if (this.busy(accountId)) return this.signingIn(this.accounts.get(accountId))
     return this.manager(accountId).getStatus()
   }
 
@@ -54,15 +62,27 @@ export class AntigravityServiceAuth {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(new Error('Google sign-in timed out.')), LOGIN_TIMEOUT_MS)
     timer.unref?.()
-    const signingIn: ChatSubscriptionAuthStatus = { state: 'signing-in', authenticated: false }
+    state.authUrl = undefined
+    const signingIn = this.signingIn(state)
     this.publish(accountId, signingIn)
+    // The capture shim is a POSIX shell script; on Windows the server opens the default browser itself.
+    const openBrowser = this.hooks.openBrowser
+    const onBrowserUrl =
+      openBrowser && (this.hooks.platform ?? process.platform) !== 'win32'
+        ? (url: string) => {
+            if (generation !== state.generation) return
+            state.authUrl = url
+            openBrowser(url)
+            this.publish(accountId, this.signingIn(state))
+          }
+        : undefined
     // Assigned before the first await inside, so `finish` always sees the right promise.
     let transition!: Promise<void>
     transition = (async () => {
       try {
         await this.hooks.reset(accountId)
         await this.hooks.ensureRuntime(controller.signal)
-        const result = await manager.login(controller.signal)
+        const result = await manager.login(controller.signal, onBrowserUrl)
         if (generation !== state.generation) return
         // Release the busy flag first so the broadcast status is the account's real state.
         this.finish(accountId, transition)
@@ -125,7 +145,14 @@ export class AntigravityServiceAuth {
 
   private finish(accountId: AccountId, transition: Promise<void>): void {
     const state = this.accounts.get(accountId)
-    if (state && (state.transition === transition || state.transition === null)) state.transition = null
+    if (state && (state.transition === transition || state.transition === null)) {
+      state.transition = null
+      state.authUrl = undefined
+    }
+  }
+
+  private signingIn(state: AccountState | undefined): ChatSubscriptionAuthStatus {
+    return { state: 'signing-in', authenticated: false, ...(state?.authUrl ? { authUrl: state.authUrl } : {}) }
   }
 
   private manager(accountId: AccountId): AntigravitySubscriptionManager {
