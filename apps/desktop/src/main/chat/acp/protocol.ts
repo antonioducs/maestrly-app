@@ -70,9 +70,20 @@ export type AcpToolCallUpdate = {
   _meta?: AcpToolCallMeta
 }
 
+/**
+ * Context-window occupancy after the latest model call (`used` tokens of a `size`-token window). Antigravity sends it
+ * from server 1.3.0 on; older servers send no usage at all.
+ */
+export type AcpUsageUpdate = {
+  sessionUpdate: 'usage_update'
+  used: number
+  size: number
+}
+
 export type AcpSessionUpdate =
   | AcpMessageChunkUpdate
   | AcpToolCallUpdate
+  | AcpUsageUpdate
   | { sessionUpdate: string; [key: string]: unknown }
 
 export interface AcpSessionNotification {

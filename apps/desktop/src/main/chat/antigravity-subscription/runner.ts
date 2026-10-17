@@ -33,6 +33,7 @@ import { AcpRpcError } from '../acp/client'
 import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, type AcpSessionSetupResult } from '../acp/protocol'
 import { createBackgroundCompactionPrefixNotifier } from '../background-compaction/runner'
 import { runnerContextHistory, upsertChatMessage } from '../chat-store'
+import { createContextProgressPublisher } from '../context-progress'
 import { createDeltaCoalescer } from '../delta-coalescer'
 import { chatDiag } from '../diag-log'
 import type { ResolvedHarness } from '../harness/types'
@@ -77,7 +78,7 @@ import {
   putAntigravitySessionBinding,
   retireAntigravitySessionBinding,
 } from './session-store'
-import { createAntigravityStreamMapper } from './stream-map'
+import { createAntigravityStreamMapper, readAntigravityContextUsage } from './stream-map'
 import { renderAntigravityToolCatalog } from './tool-catalog'
 import { createAntigravityTaskRuntime } from './task-runtime'
 import { SubagentCoordinator } from '../subagent-coordinator'
@@ -125,6 +126,8 @@ export interface RunAntigravitySubscriptionChatArgs {
   emit: (event: ChatStreamEvent) => void
   signal: AbortSignal
   responseStartedAt?: number
+  /** Effective window of this turn (catalog window after any manual limit); caps the server-reported one. */
+  contextWindow?: number
   canPersistSession?: () => boolean
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /** Host-managed subagent executor; built per turn when absent (see task-runtime.ts). */
@@ -210,11 +213,24 @@ export async function runAntigravitySubscriptionChat(
   })
   const coalescer = createDeltaCoalescer(args.emit)
   const apply = (event: ChatStreamEvent, force = false): void => {
+    if (event.kind === 'finish' || event.kind === 'error' || event.kind === 'aborted') contextProgress.dispose()
     if (event.kind === 'text-start' || event.kind === 'reasoning-start') backgroundPrefix.open(event.partId)
     messages = applyChatEvent(messages, event)
     coalescer.push(event)
     if (force || Date.now() - lastPersistAt > 300) persist()
   }
+  const contextProgress = createContextProgressPublisher({
+    messageId: assistantId,
+    model: args.selection,
+    apply,
+    sanitizeError: (error) => redactAntigravityCredentials(error instanceof Error ? error.message : String(error)),
+    onCompactionError: () => {},
+  })
+  const turnContextWindow = Math.floor(Number(args.contextWindow) || 0)
+  const contextWindowFor = (reported: number | undefined): number | undefined =>
+    reported && turnContextWindow > 0
+      ? Math.min(reported, turnContextWindow)
+      : (reported ?? (turnContextWindow > 0 ? turnContextWindow : undefined))
   upsertChatMessage(messages[0])
   coalescer.push({
     kind: 'message-start',
@@ -604,7 +620,17 @@ export async function runAntigravitySubscriptionChat(
         backgroundPrefix.notifyAfterPersist()
       },
     })
+    // Occupancy is the session's (instructions, tools and history), measured by the server after each model call.
+    const observeContext = contextProgress.observeAttempt()
     unsubscribe = connection.subscribe(session.sessionId, (update) => {
+      const reported = readAntigravityContextUsage(update)
+      if (reported) {
+        observeContext({
+          usedTokens: reported.used,
+          modelContextWindow: contextWindowFor(reported.size),
+          quality: 'measured',
+        })
+      }
       for (const event of mapper.push(update)) apply(event)
     })
     const prompt = buildAntigravityPromptBlocks({
@@ -754,6 +780,7 @@ export async function runAntigravitySubscriptionChat(
     await mcpClose?.().catch(() => undefined)
     await appClose?.().catch(() => undefined)
     releaseProcess()
+    contextProgress.dispose()
     try {
       persist()
     } catch {

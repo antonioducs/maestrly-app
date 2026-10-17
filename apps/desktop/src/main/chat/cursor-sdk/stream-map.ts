@@ -118,6 +118,10 @@ function toolOutputText(result: unknown): string {
   }
 }
 
+/**
+ * The SDK `usage` message is the turn's billed tokens, summed over all of its model calls. It is no context occupancy,
+ * so the mapped usage deliberately carries no `contextInput`.
+ */
 function mapUsage(usage: unknown): ChatUsage | null {
   if (!isRecord(usage)) return null
   const input =

@@ -16,7 +16,7 @@ vi.mock('../../src/main/chat/mcp', async (importOriginal) => {
 })
 
 import { insertConversation, patchConvUiPrefs } from '../../src/main/store'
-import { upsertChatMessage } from '../../src/main/chat/chat-store'
+import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import { closeAntigravityHostMcpServer } from '../../src/main/chat/antigravity-subscription/host-mcp'
 import type { AntigravitySubscriptionManager } from '../../src/main/chat/antigravity-subscription/manager'
 import { antigravityTokenPath } from '../../src/main/chat/antigravity-subscription/paths'
@@ -186,6 +186,36 @@ describe('Antigravity chat runner', () => {
       sessionId: result.sessionId,
       modelValue: 'gemini-3.8-flash-high',
     })
+  })
+
+  it('publishes the context occupancy the server measures after each model call', async () => {
+    const { events } = await turn('USAGE 18000:1048576 24310:1048576', { contextWindow: 200_000 })
+    const samples = events.flatMap((event) => (event.kind === 'context-usage' ? [event.snapshot] : []))
+    expect(samples.map((sample) => sample.usedTokens)).toEqual([18_000, 24_310])
+    expect(samples.at(-1)).toMatchObject({
+      modelContextWindow: 200_000,
+      quality: 'measured',
+      model: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.8-flash' },
+    })
+    expect(kinds(events).lastIndexOf('context-usage')).toBeLessThan(kinds(events).lastIndexOf('finish'))
+    const assistant = listChatMessages(conversationId).find((message) => message.role === 'assistant')
+    expect(assistant?.contextSnapshot).toMatchObject({
+      usedTokens: 24_310,
+      modelContextWindow: 200_000,
+      quality: 'measured',
+    })
+    // Occupancy is no bill: the turn still reports no token usage of its own.
+    expect(assistant?.usage).toBeUndefined()
+  })
+
+  it('keeps the server window without a manual limit and publishes no occupancy the server did not send', async () => {
+    const measured = await turn('USAGE 24310:1048576')
+    expect(measured.events.find((event) => event.kind === 'context-usage')).toMatchObject({
+      snapshot: { usedTokens: 24_310, modelContextWindow: 1_048_576 },
+    })
+    const unmeasured = await turn('ECHO oi')
+    expect(textOf(unmeasured.events)).toBe('oi')
+    expect(kinds(unmeasured.events)).not.toContain('context-usage')
   })
 
   it('runs Maestrly tools through the host server with one tool call id', async () => {

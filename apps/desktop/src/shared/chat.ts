@@ -1816,6 +1816,12 @@ export interface ChatContextProjection {
   quality: 'measured' | 'estimated'
   /** Runtime-reported effective window when it belongs to this exact target. */
   modelContextWindow?: number
+  /**
+   * The target's runtime has not measured its occupancy (it reports none, or none for this session). `usedTokens`
+   * then counts only Maestrly's transcript, without the runtime's own instructions and tools, so it is no reading of
+   * the context size: it remains the floor admission checks use.
+   */
+  occupancyUnknown?: true
 }
 
 export interface ChatHistoryStats {
