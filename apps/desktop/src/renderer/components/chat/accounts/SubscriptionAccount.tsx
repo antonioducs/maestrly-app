@@ -39,6 +39,8 @@ import {
 } from './account-ui'
 import { FailoverRouteEditor } from './FailoverRouteEditor'
 import { ProviderModelFilter } from './ProviderModelFilter'
+import { ClaudeCodeSetupNotice, ClaudeManualSignIn } from './ClaudeSubscriptionHelp'
+import { claudeCodeSetupNeed } from './claude-code-setup'
 
 export const PROVIDER_RUNTIME_ASSET: Partial<Record<ChatSubscriptionProviderKind, RuntimeAssetId>> = {
   'codex-subscription': 'codex-runtime',
@@ -119,6 +121,8 @@ export function SubscriptionAccount({
   const runtimeInstallInProgressRef = useRef(false)
   const runtimeStatusRefreshInProgressRef = useRef(false)
   const usageRequestRef = useRef(0)
+  /** Bumped by sign-out: the answer of a sign-in it cancelled is not an error to show. */
+  const loginAttemptRef = useRef(0)
   const renameRequestedRef = useRef(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const copy = subscriptionProviderCopy[providerKind]
@@ -238,6 +242,7 @@ export function SubscriptionAccount({
   }, [runtimeId, api])
 
   const login = async () => {
+    const attempt = ++loginAttemptRef.current
     setBusy('login')
     setActionError(null)
     try {
@@ -272,6 +277,7 @@ export function SubscriptionAccount({
         return
       }
       const result = await api.chatSubscriptionLogin(providerKind, accountId)
+      if (attempt !== loginAttemptRef.current) return
       if (!result.ok) {
         if (result.status) setStatus(result.status)
         throw new Error(statusErrorText(result.status) || result.error || t(copyKey('LoginFailed')))
@@ -282,13 +288,14 @@ export function SubscriptionAccount({
       if (loginUrl) window.api.openExternalUrl(loginUrl)
       onChanged()
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error))
+      if (attempt === loginAttemptRef.current) setActionError(error instanceof Error ? error.message : String(error))
     } finally {
-      setBusy(null)
+      setBusy((current) => (current === 'login' ? null : current))
     }
   }
 
   const logout = async () => {
+    loginAttemptRef.current += 1
     setBusy('logout')
     setActionError(null)
     try {
@@ -347,6 +354,7 @@ export function SubscriptionAccount({
   const unavailable = status?.state === 'unavailable'
   // Installing the runtime cannot fix a build without the provider's OAuth configuration, so it is not offered.
   const notConfigured = status?.errorCode === 'subscription-provider-not-configured'
+  const claudeSetup = providerKind === 'claude-subscription' ? claudeCodeSetupNeed(status) : null
   const runtimeActive =
     runtime !== null && ['downloading', 'verifying', 'installing', 'removing'].includes(runtime.status.state)
   const runtimeReady = !runtimeId || runtime?.status.state === 'ready' || runtime?.provided?.active === true
@@ -582,6 +590,20 @@ export function SubscriptionAccount({
       {signedIn && status.storageMode === 'memory' ? (
         <p className="mt-2 text-[12px] text-amber-300">{t('settings.subscriptionMemoryOnly')}</p>
       ) : null}
+      {claudeSetup && (
+        <ClaudeCodeSetupNotice
+          need={claudeSetup}
+          host={host}
+          checking={busy === 'refresh'}
+          onCheckAgain={() => void refreshAll()}
+        />
+      )}
+      {signingIn && providerKind === 'claude-subscription' && loginInstructions?.manualUrl && (
+        <ClaudeManualSignIn
+          manualUrl={loginInstructions.manualUrl}
+          submitCode={(code) => api.chatClaudeSubscriptionSubmitCode(code, accountId)}
+        />
+      )}
       {signingIn && loginInstructions?.userCode && (
         <div className="mt-3 rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
           <p className="text-[12px] text-amber-100">{t(copyKey('DeviceCodeHint'))}</p>
@@ -590,7 +612,7 @@ export function SubscriptionAccount({
           </code>
         </div>
       )}
-      {(actionError || status?.error) && (
+      {(actionError || (status?.error && !claudeSetup)) && (
         <p className="mt-2 text-[12px] text-destructive">{actionError || statusErrorText(status)}</p>
       )}
       {!provider && signedIn && <p className="mt-2 text-[12px] text-amber-300">{t(copyKey('ProviderPending'))}</p>}

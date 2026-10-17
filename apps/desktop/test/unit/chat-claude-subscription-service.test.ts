@@ -89,10 +89,19 @@ const h = vi.hoisted(() => {
     isDestroyed: vi.fn(() => false),
     send: vi.fn(),
   }
+  const desktopLogin = {
+    authUrl:
+      'https://claude.com/cai/oauth/authorize?code=true&redirect_uri=http%3A%2F%2Flocalhost%3A45678%2Fcallback&state=s',
+    manualUrl:
+      'https://claude.com/cai/oauth/authorize?code=true&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=s',
+    submitCode: vi.fn((_code: string) => true),
+  }
   return {
     state,
     manager,
     webContents,
+    desktopLogin,
+    startDesktopLogin: vi.fn(async (target: typeof manager) => ({ ...desktopLogin, done: target.login() })),
     getMainWebContents: vi.fn(() => webContents),
     runClaude: vi.fn(async () => ({ planSubmitted: false, sessionId: 'claude-session-1' })),
     compactSession: vi.fn(),
@@ -123,6 +132,9 @@ vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   putClaudeSessionBinding: vi.fn(),
   retryManagedClaudeSessionCleanup: h.retryCleanup,
   runClaudeChat: h.runClaude,
+}))
+vi.mock('../../src/main/chat/claude-agent-sdk/desktop-login', () => ({
+  startClaudeDesktopLogin: h.startDesktopLogin,
 }))
 vi.mock('../../src/main/chat/claude-agent-sdk/manager', () => ({
   getClaudeSubscriptionManager: () => h.manager,
@@ -783,6 +795,8 @@ describe('Claude subscription service integration', () => {
     await expect(handlers.get('chat:claude-subscription:login')?.({})).resolves.toMatchObject({
       ok: true,
       status: { state: 'signing-in', authenticated: false },
+      authUrl: h.desktopLogin.authUrl,
+      manualUrl: h.desktopLogin.manualUrl,
     })
     await vi.waitFor(() => expect(h.manager.login).toHaveBeenCalledOnce())
     expect(h.deleteAll).toHaveBeenCalled()
@@ -794,6 +808,71 @@ describe('Claude subscription service integration', () => {
     expect(h.webContents.send).toHaveBeenCalledWith(
       'chat:claude-subscription:auth-changed',
       expect.objectContaining({ authenticated: false })
+    )
+  })
+
+  it('completes a pending sign-in with a pasted code and refuses codes when none is pending', async () => {
+    const { handlers } = register()
+    const signedOut = { ...h.state.status, state: 'signed-out', authenticated: false, account: null }
+    const signedIn = { ...h.state.status, accountFingerprint: 'sha256:pasted-code-account' }
+    h.state.status = signedOut
+    let finishLogin!: (result: unknown) => void
+    h.manager.login.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishLogin = resolve
+        }) as never
+    )
+    h.desktopLogin.submitCode.mockImplementation((code: string) => {
+      if (code !== 'good#state') return false
+      h.state.status = signedIn
+      finishLogin({ ok: true, status: signedIn })
+      return true
+    })
+    const submit = handlers.get('chat:claude-subscription:submit-code')!
+
+    await expect(submit({}, { code: 'good#state' })).resolves.toEqual({ ok: false, error: 'not-waiting' })
+    await expect(handlers.get('chat:claude-subscription:login')!({})).resolves.toMatchObject({
+      ok: true,
+      manualUrl: h.desktopLogin.manualUrl,
+    })
+    await expect(submit({}, { code: 'bad' })).resolves.toEqual({ ok: false, error: 'invalid-code' })
+    await expect(submit({}, { code: 42 })).resolves.toEqual({ ok: false, error: 'invalid-code' })
+    await expect(submit({}, { code: 'good#state', accountId: 'acct_unknown' })).resolves.toEqual({
+      ok: false,
+      error: 'unknown-account',
+    })
+    await expect(submit({}, { code: 'good#state' })).resolves.toEqual({ ok: true })
+    await vi.waitFor(() =>
+      expect(h.webContents.send).toHaveBeenCalledWith(
+        'chat:claude-subscription:auth-changed',
+        expect.objectContaining({ state: 'signed-in', email: 'dev@example.com' })
+      )
+    )
+    await expect(submit({}, { code: 'good#state' })).resolves.toEqual({ ok: false, error: 'not-waiting' })
+    h.desktopLogin.submitCode.mockReset().mockReturnValue(true)
+  })
+
+  it('reports a sign-in that cannot start and lets the next one run', async () => {
+    const { handlers } = register()
+    h.state.status = { ...h.state.status, state: 'signed-out', authenticated: false, account: null }
+    h.startDesktopLogin.mockRejectedValueOnce(new Error('Claude did not start the sign-in (no URL was printed).'))
+
+    await expect(handlers.get('chat:claude-subscription:login')!({})).resolves.toEqual({
+      ok: false,
+      error: 'Claude did not start the sign-in (no URL was printed).',
+    })
+    expect(h.webContents.send).toHaveBeenCalledWith(
+      'chat:claude-subscription:auth-changed',
+      expect.objectContaining({ state: 'error', error: 'Claude did not start the sign-in (no URL was printed).' })
+    )
+    await expect(handlers.get('chat:claude-subscription:login')!({})).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(h.manager.login).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(h.webContents.send).toHaveBeenLastCalledWith(
+        'chat:claude-subscription:auth-changed',
+        expect.objectContaining({ state: 'error', error: 'Claude login did not complete.' })
+      )
     )
   })
 

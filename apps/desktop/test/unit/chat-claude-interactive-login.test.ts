@@ -13,12 +13,14 @@ vi.mock('../../src/main/chat/claude-agent-sdk/model-catalog', () => ({
   onClaudeRemoteCatalogChanged: () => () => {},
 }))
 import { ClaudeSubscriptionManager } from '../../src/main/chat/claude-agent-sdk/manager'
+import { startClaudeDesktopLogin } from '../../src/main/chat/claude-agent-sdk/desktop-login'
 
 let root: string
 let manager: ClaudeSubscriptionManager
 let silent = false
 let capture: string
-const environment = vi.fn(() => ({ PATH: process.env.PATH, HOME: root }))
+let loginEnvironment: Record<string, string> = {}
+const environment = vi.fn((): NodeJS.ProcessEnv => ({ PATH: process.env.PATH, HOME: root }))
 const children: ChildProcess[] = []
 const exits: Promise<unknown>[] = []
 beforeEach(async () => {
@@ -27,6 +29,7 @@ beforeEach(async () => {
   await copyFile(path.resolve('test/fixtures/fake-claude-login.mjs'), executable)
   await chmod(executable, 0o755)
   silent = false
+  environment.mockImplementation(() => ({ PATH: process.env.PATH, HOME: root }))
   manager = new ClaudeSubscriptionManager({
     resolveExecutable: () => executable,
     getUserDataPath: () => root,
@@ -34,6 +37,7 @@ beforeEach(async () => {
     getProcessEnvironment: environment,
     spawnLogin: (command, args, options) => {
       capture = path.dirname(options.env.MAESTRLY_LOGIN_URL_FILE)
+      loginEnvironment = options.env
       const child = spawn(command, args, {
         env: { ...options.env, FAKE_CLAUDE_SILENT: silent ? '1' : '0' },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -85,6 +89,33 @@ loginIt('captures both URLs and accepts a relayed callback', async () => {
   expect(result.ok).toBe(true)
   expect(result.status.authenticated).toBe(true)
   expect(result.status.account?.email).toBe('owner@example.com')
+})
+loginIt('signs the desktop in through the captured pages, keeping the session but not the browser', async () => {
+  environment.mockImplementation(() => ({
+    PATH: process.env.PATH,
+    HOME: root,
+    DISPLAY: ':0',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+    XDG_RUNTIME_DIR: '/run/user/1000',
+    BROWSER: 'firefox',
+    ANTHROPIC_API_KEY: 'must-not-reach-claude',
+  }))
+  const login = await startClaudeDesktopLogin(manager, 'linux')
+  expect(new URL(login.authUrl!).origin).toBe('https://claude.com')
+  expect(new URL(login.manualUrl!).searchParams.get('redirect_uri')).toBe(
+    'https://platform.claude.com/oauth/code/callback'
+  )
+  expect(loginEnvironment).toMatchObject({
+    DISPLAY: ':0',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+    XDG_RUNTIME_DIR: '/run/user/1000',
+  })
+  // Maestrly opens the pages itself: Claude Code only hands them to the capture script.
+  expect(loginEnvironment.BROWSER).toBe(path.join(capture, 'browser.sh'))
+  expect(loginEnvironment).not.toHaveProperty('ANTHROPIC_API_KEY')
+  expect(login.submitCode('good#fake-state\nsecond line')).toBe(false)
+  expect(login.submitCode(' good#fake-state ')).toBe(true)
+  await expect(login.done).resolves.toMatchObject({ ok: true, status: { authenticated: true } })
 })
 loginIt('accepts a pasted code', async () => {
   const login = await manager.startInteractiveLogin()

@@ -209,7 +209,38 @@ describe('Claude subscription manager', () => {
       authenticated: false,
       cliVersion: '2.1.100',
       error: expect.stringContaining('2.1.263'),
+      errorCode: 'claude-code-incompatible',
     })
+  })
+
+  it('tells a missing Claude Code apart from other unavailable states', async () => {
+    const missing = fixture({
+      runProcess: vi.fn(async () => {
+        throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' })
+      }),
+    })
+    await expect(missing.manager.status({ refresh: true })).resolves.toMatchObject({
+      state: 'unavailable',
+      error: 'Claude Code is not installed.',
+      errorCode: 'claude-code-not-installed',
+    })
+
+    const unreadable = fixture({
+      runProcess: vi.fn(async () => ({ exitCode: 127, stdout: '', stderr: 'claude: command not found' })),
+    })
+    await expect(unreadable.manager.status({ refresh: true })).resolves.toMatchObject({
+      state: 'unavailable',
+      errorCode: 'claude-code-not-installed',
+    })
+
+    const failing = fixture({
+      runProcess: vi.fn(async () => {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+      }),
+    })
+    const status = await failing.manager.status({ refresh: true })
+    expect(status.state).toBe('unavailable')
+    expect(status.errorCode).toBeUndefined()
   })
 
   it('fails closed for API/cloud backends and runtime API-key sources', () => {
