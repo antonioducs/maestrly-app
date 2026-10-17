@@ -11394,6 +11394,8 @@ export function disposeChat(): Promise<void> {
     abortAllCodexEphemeralAttempts()
     const claudeAttempts = listClaudeAttempts()
     for (const attempt of claudeAttempts) attempt.abort(new Error('Chat service is shutting down'))
+    // A sign-in ends only when its CLI exits; the identity transition awaited below waits for it.
+    for (const manager of listClaudeSubscriptionManagers()) manager.cancelLogin()
     for (const entry of internalTurns.values()) entry.cancel()
     const snapshot = [...active.entries()]
     const ids = new Set(snapshot.map(([id]) => id))

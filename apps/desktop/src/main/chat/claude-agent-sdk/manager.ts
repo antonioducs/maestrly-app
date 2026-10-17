@@ -29,7 +29,7 @@ import {
   isClaudeAuthenticationRequired,
   isClaudeOAuthRefreshContention,
 } from './errors'
-import { claudeSubscriptionRuntimeEnvironment } from './runtime-env'
+import { claudeSubscriptionLoginEnvironment, claudeSubscriptionRuntimeEnvironment } from './runtime-env'
 import { allowedConversationProcessEnv, type ConversationProcessEnv } from '../conversation-env'
 import {
   claudeModelPickerSnapshot,
@@ -48,6 +48,8 @@ export { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion }
 const CLAUDE_PROFILE_DIRECTORY = 'claude-agent-sdk'
 const CLAUDE_SIGNED_OUT_MARKER = '.maestrly-signed-out'
 const CLAUDE_USAGE_CACHE_TTL_MS = 60_000
+/** `claude auth login` waits for its browser callback with no deadline of its own. */
+const CLAUDE_LOGIN_TIMEOUT_MS = 15 * 60_000
 
 /**
  * Alias probes complement the account-aware picker — see `listModels`. Concrete/versioned models come from
@@ -760,7 +762,7 @@ export class ClaudeSubscriptionManager {
     return this.runProfileOperation(() => this.statusUnlocked(options))
   }
 
-  async login(signal?: AbortSignal): Promise<ClaudeSubscriptionLoginResult> {
+  async login(signal?: AbortSignal, options: { totalTimeoutMs?: number } = {}): Promise<ClaudeSubscriptionLoginResult> {
     if (this.loginController || this.loginRequestController) {
       const status = this.cachedStatus ?? {
         state: 'signing-in' as const,
@@ -782,7 +784,9 @@ export class ClaudeSubscriptionManager {
     signal?.addEventListener('abort', abortQueued, { once: true })
     if (signal?.aborted) abortQueued()
     try {
-      return await this.runProfileOperation(() => this.loginUnlocked(requestController.signal))
+      return await this.runProfileOperation(() =>
+        this.loginUnlocked(requestController.signal, options.totalTimeoutMs ?? CLAUDE_LOGIN_TIMEOUT_MS)
+      )
     } finally {
       signal?.removeEventListener('abort', abortQueued)
       if (this.loginRequestController === requestController) this.loginRequestController = null
@@ -790,7 +794,7 @@ export class ClaudeSubscriptionManager {
     }
   }
 
-  private async loginUnlocked(signal?: AbortSignal): Promise<ClaudeSubscriptionLoginResult> {
+  private async loginUnlocked(signal: AbortSignal, totalTimeoutMs: number): Promise<ClaudeSubscriptionLoginResult> {
     if (signal?.aborted) {
       return {
         ok: false,
@@ -810,12 +814,17 @@ export class ClaudeSubscriptionManager {
     this.loginController = controller
     const abort = () => controller.abort()
     signal?.addEventListener('abort', abort, { once: true })
+    // An abandoned sign-in must not hold the profile queue, and with it shutdown, forever.
+    const expired = AbortSignal.timeout(totalTimeoutMs)
     this.cachedStatus = null
     try {
       const result = await this.dependencies.runProcess(
         this.dependencies.resolveExecutable(),
         ['auth', 'login', '--claudeai'],
-        { env: this.runtimeEnvironment(), signal: controller.signal }
+        {
+          env: claudeSubscriptionLoginEnvironment(this.configDirectory, this.dependencies.getProcessEnvironment()),
+          signal: AbortSignal.any([controller.signal, expired]),
+        }
       )
       this.cachedStatus = null
       const status = await this.statusUnlocked({ refresh: true, allowAuthenticationRequired: true })
@@ -838,7 +847,11 @@ export class ClaudeSubscriptionManager {
       return {
         ok: false,
         status,
-        error: controller.signal.aborted ? 'Claude login was cancelled.' : claudeSubscriptionErrorMessage(error),
+        error: controller.signal.aborted
+          ? 'Claude login was cancelled.'
+          : expired.aborted
+            ? 'Claude login did not complete.'
+            : claudeSubscriptionErrorMessage(error),
       }
     } finally {
       signal?.removeEventListener('abort', abort)
@@ -956,7 +969,7 @@ export class ClaudeSubscriptionManager {
           startupError = new Error('Claude did not start the sign-in (no URL was printed).')
           kill()
         }, options.urlTimeoutMs ?? 20_000)
-        totalTimer = setTimeout(kill, options.totalTimeoutMs ?? 15 * 60_000)
+        totalTimer = setTimeout(kill, options.totalTimeoutMs ?? CLAUDE_LOGIN_TIMEOUT_MS)
         const exitCode = await child.exited
         finished = true
         clearInterval(poll)

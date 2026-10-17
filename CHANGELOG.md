@@ -212,6 +212,11 @@ User-visible changes by version. Downloads are on
   for conversations of this computer. The Computer tab stays in the drawer.
 - Keep the browser of a conversation on a server from staying on "Connecting to
   the browser on the server…" when its stream answered faster than its start.
+- **Sign in with Claude** opens the sign-in in your default browser on Linux,
+  as it does on macOS and Windows, instead of waiting for a browser that never
+  opened. A sign-in left unfinished now gives up after 15 minutes.
+- Quitting Maestrly no longer hangs, leaving only its tray icon, while a Claude
+  sign-in is waiting for the browser: quitting cancels it.
 
 ### Removed
 

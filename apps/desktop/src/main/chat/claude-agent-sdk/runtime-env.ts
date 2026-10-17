@@ -55,6 +55,28 @@ export const CLAUDE_RUNTIME_ENV_ALLOWLIST = [
   'CLAUDE_CODE_GIT_BASH_PATH',
 ] as const
 
+/**
+ * The desktop session `claude auth login` needs to open the user's default browser, as `open` and `start` do on
+ * macOS and Windows. On Linux, Claude Code refuses to open a browser without a display and `xdg-open` needs the
+ * session bus, desktop name and data directories to find the default browser. These carry no provider credentials.
+ */
+const CLAUDE_LOGIN_DESKTOP_ENV_ALLOWLIST = [
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'XAUTHORITY',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'XDG_SESSION_TYPE',
+  'XDG_CURRENT_DESKTOP',
+  'XDG_SESSION_DESKTOP',
+  'DESKTOP_SESSION',
+  'XDG_DATA_DIRS',
+  'XDG_DATA_HOME',
+  'XDG_CONFIG_DIRS',
+  'XDG_CONFIG_HOME',
+  'BROWSER',
+] as const
+
 export const CLAUDE_SUBSCRIPTION_RUNTIME_FLAGS = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
@@ -83,4 +105,17 @@ export function claudeSubscriptionRuntimeEnvironment(
     ...CLAUDE_SUBSCRIPTION_RUNTIME_FLAGS,
     CLAUDE_CONFIG_DIR: configDirectory,
   }
+}
+
+/** The runtime environment plus the desktop session, so the sign-in opens in the user's own browser. */
+export function claudeSubscriptionLoginEnvironment(
+  configDirectory: string,
+  source: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const environment: Record<string, string> = {}
+  for (const name of CLAUDE_LOGIN_DESKTOP_ENV_ALLOWLIST) {
+    const value = source[name]
+    if (typeof value === 'string' && value) environment[name] = value
+  }
+  return { ...environment, ...claudeSubscriptionRuntimeEnvironment(configDirectory, source) }
 }

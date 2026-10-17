@@ -129,6 +129,7 @@ vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   getClaudeSessionBinding: vi.fn(() => null),
   getClaudeSubscriptionManager: () => h.manager,
   inspectClaudeSessionCompatibility: vi.fn(async () => true),
+  listClaudeSubscriptionManagers: () => [h.manager],
   putClaudeSessionBinding: vi.fn(),
   retryManagedClaudeSessionCleanup: h.retryCleanup,
   runClaudeChat: h.runClaude,
@@ -145,6 +146,7 @@ vi.mock('../../src/main/chat/codex-subscription', () => ({
   deleteCodexThreadForConversation: vi.fn(async () => {}),
   deleteManagedCodexThread: vi.fn(async () => {}),
   getCodexThreadBinding: vi.fn(() => null),
+  listCodexSubscriptionManagers: () => [],
   retryManagedCodexThreadCleanup: vi.fn(async () => {}),
   runCodexSubscriptionChat: vi.fn(),
   getCodexSubscriptionManager: () => ({
@@ -167,6 +169,7 @@ vi.mock('../../src/main/chat/github-copilot', () => ({
   deleteGitHubCopilotSessionForConversation: vi.fn(async () => {}),
   getGitHubCopilotSessionBinding: vi.fn(() => null),
   githubCopilotErrorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  listGitHubCopilotSubscriptionManagers: () => [],
   retryManagedGitHubCopilotSessionCleanup: vi.fn(async () => {}),
   runGitHubCopilotChat: vi.fn(),
   getGitHubCopilotSubscriptionManager: () => ({
@@ -194,6 +197,7 @@ vi.mock('../../src/main/chat/portable-summarizer', () => ({
 import { CLAUDE_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
 import {
   compactReserved,
+  disposeChat,
   registerChatIpc,
   revalidateFrozenChatSelection,
   resolveFrozenChatSelection,
@@ -903,5 +907,34 @@ describe('Claude subscription service integration', () => {
     )
     await vi.waitFor(() => expect(h.deleteAll).toHaveBeenCalled())
     expect(h.manager.abortAllQueries).toHaveBeenCalled()
+  })
+
+  // Disposal is once per process: keep this test last.
+  it('cancels a sign-in still waiting for its browser before shutdown awaits it', async () => {
+    const { handlers } = register()
+    let finishLogin: ((result: any) => void) | undefined
+    h.manager.login.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishLogin = resolve
+        })
+    )
+    h.manager.cancelLogin.mockImplementation(() =>
+      finishLogin?.({
+        ok: false,
+        status: { ...h.state.status, state: 'signed-out', authenticated: false, account: null },
+        error: 'Claude login was cancelled.',
+      })
+    )
+
+    await expect(handlers.get('chat:claude-subscription:login')?.({})).resolves.toMatchObject({
+      ok: true,
+      status: { state: 'signing-in' },
+    })
+    await vi.waitFor(() => expect(h.manager.login).toHaveBeenCalledOnce())
+
+    await expect(disposeChat()).resolves.toBeUndefined()
+    expect(h.manager.cancelLogin).toHaveBeenCalled()
+    expect(h.manager.dispose).toHaveBeenCalled()
   })
 })
