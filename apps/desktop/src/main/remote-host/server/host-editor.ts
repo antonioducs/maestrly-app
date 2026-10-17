@@ -7,6 +7,7 @@ import http, {
 import type { Duplex } from 'node:stream'
 import {
   FLEET_HOST_EDITOR_FORWARDED_HOST,
+  FLEET_HOST_EDITOR_ORIGIN_HOST,
   FLEET_PROTOCOL_HEADER,
   isFleetHostEditorForwardedHost,
 } from '@maestrly/bot-fleet-protocol'
@@ -58,6 +59,7 @@ const CALLER_HEADERS = [
   'x-forwarded-proto',
   'x-forwarded-port',
   FLEET_HOST_EDITOR_FORWARDED_HOST,
+  FLEET_HOST_EDITOR_ORIGIN_HOST,
 ]
 const WEBSOCKET_HEADERS = [
   'sec-websocket-key',
@@ -120,9 +122,12 @@ function upstreamHeaders(request: IncomingMessage, server: HostEditorServer): Ou
   else if (request.headers['transfer-encoding'] !== undefined) headers['transfer-encoding'] = 'chunked'
   headers.host = `127.0.0.1:${server.port}`
   headers.cookie = cookieWithToken(request.headers.cookie, server.token)
-  // The editor writes this origin into its pages and WebSocket addresses: the computer's, never another one.
-  const forwarded = request.headers[FLEET_HOST_EDITOR_FORWARDED_HOST]
-  if (isFleetHostEditorForwardedHost(forwarded)) headers[FLEET_HOST_EDITOR_FORWARDED_HOST] = forwarded
+  // The editor writes this origin into its pages and WebSocket addresses: the computer's, never another one. The
+  // computer's own header comes first: a reverse proxy before the gateway may have replaced X-Forwarded-Host.
+  const forwarded = [request.headers[FLEET_HOST_EDITOR_ORIGIN_HOST], request.headers[FLEET_HOST_EDITOR_FORWARDED_HOST]]
+    .flat()
+    .find(isFleetHostEditorForwardedHost)
+  if (forwarded) headers[FLEET_HOST_EDITOR_FORWARDED_HOST] = forwarded
   return headers
 }
 

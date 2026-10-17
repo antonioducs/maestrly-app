@@ -648,7 +648,10 @@ one through a **bridge**: see [remote workspaces](remote-workspaces.md).
   receives that token as a cookie too, because VS Code's page sends it in the
   handshake of its own connection; with it alone nothing reaches the editor,
   which answers only on the host's loopback and through the control server. It
-  accepts as the editor's origin only a loopback address. The editor can do on
+  accepts as the editor's origin only a loopback address. It reads that origin
+  from `X-Maestrly-Editor-Host` before `X-Forwarded-Host`, because a reverse
+  proxy before the gateway (such as Tailscale Serve) replaces
+  `X-Forwarded-Host` with its public address. The editor can do on
   the host what its terminal can: it adds no authority. Its channels over the
   bridge (`editor:*`, in `REMOTE_VIEWER_CHANNELS`) open, follow, and restart it,
   only for another computer and only in server mode. The first opening

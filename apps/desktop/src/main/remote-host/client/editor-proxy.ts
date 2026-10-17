@@ -8,7 +8,7 @@ import http, {
 import https from 'node:https'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
-import { FLEET_HOST_EDITOR_FORWARDED_HOST } from '@maestrly/bot-fleet-protocol'
+import { FLEET_HOST_EDITOR_FORWARDED_HOST, FLEET_HOST_EDITOR_ORIGIN_HOST } from '@maestrly/bot-fleet-protocol'
 
 /** Where a host's editor is reached from this computer: under the gateway's editor prefix, or a development host's. */
 export interface EditorUpstream {
@@ -68,6 +68,7 @@ const PAGE_HEADERS = [
   'forwarded',
   'x-forwarded-for',
   FLEET_HOST_EDITOR_FORWARDED_HOST,
+  FLEET_HOST_EDITOR_ORIGIN_HOST,
 ]
 const WEBSOCKET_HEADERS = [
   'sec-websocket-key',
@@ -223,7 +224,9 @@ export class EditorProxy {
     else if (request.headers['transfer-encoding'] !== undefined) headers['transfer-encoding'] = 'chunked'
     const cookies = cookiePairs(request.headers.cookie).filter((pair) => !isAccessPair(pair))
     if (cookies.length) headers.cookie = cookies.join('; ')
-    // The editor writes this origin into its pages and WebSocket addresses.
+    // The editor writes this origin into its pages and WebSocket addresses. A proxy before the gateway may replace
+    // X-Forwarded-Host; the host reads its own header first, and hosts that predate it still read X-Forwarded-Host.
+    headers[FLEET_HOST_EDITOR_ORIGIN_HOST] = `127.0.0.1:${this.port}`
     headers[FLEET_HOST_EDITOR_FORWARDED_HOST] = `127.0.0.1:${this.port}`
     Object.assign(headers, upstream.headers(), extra)
     const options = {
