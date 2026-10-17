@@ -9,12 +9,17 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   and a pairing code.
 - **Bots:** see every bot by environment, with what it is doing right now and
   what waits on you. Read a bot's conversation as it streams, scroll back
-  through older messages, and send text, photos and files.
+  through older messages, and send text, photos and files. With an image copied,
+  **Paste image** shows above the message field and in its **+** menu.
 - **Chats and workspaces:** the chats and workspaces of the server's
   [workspaces environment](remote-workspaces.md#on-a-phone), in the menu's
-  **Chats** and **Workspaces** tabs. Open a chat, start a new one on its own or
-  in a workspace, and change its mode, model, effort, skills, MCP servers and
-  context limit. A [plugin](plugins.md)'s skills and servers are listed where
+  **Chats** and **Workspaces** tabs. The **Workspaces** tab lists every chat of
+  each workspace; chats that share a branch sit in a folder named after it, as
+  in the desktop sidebar. Open a chat, start a new one on its own or in a
+  workspace, and change its mode, model, effort, skills, MCP servers and
+  context limit. A new chat in a workspace works on a new branch, named by you
+  or after the chat, from the branch you choose (the default branch unless you
+  change it), or on an existing local or remote branch. A [plugin](plugins.md)'s skills and servers are listed where
   the plugin applies, and each account of a server with several signed-in
   accounts has a switch of its own. A card shows the conversations an agent started from a chat,
   each with a way to open it, and a message, report or result another
@@ -149,8 +154,9 @@ phone also removes its push registration from the server.
   Keystore, readable after the first unlock and never moved to another device.
 - The list of paired servers, your theme, language and notification choices, the
   defaults for new chats, and messages not yet sent are kept in the app's
-  storage. Photos and files waiting to be sent stay in the app's cache until
-  they are.
+  storage. Photos, pasted images and files waiting to be sent stay in the app's
+  cache until they are. The app checks whether the clipboard holds an image
+  without reading it, and reads it only when you choose **Paste image**.
 - The app talks only to the servers you paired and, when you turn notifications
   on, to Expo's push service and the phone's (Apple's or Google's) to get a push
   token. It sends no telemetry.
@@ -340,8 +346,9 @@ Before a release, on a real phone with a `preview` build:
    the bots, and the offer to turn notifications on.
 2. Send a message to a bot and watch the reply arrive as it streams.
 3. Approve a request from its card.
-4. In **Chats**, start a new chat in a workspace, send a message, and change its
-   mode from the setup pill.
+4. In **Chats**, start a new chat in a workspace on a new branch from a branch
+   you choose, send a message, and change its mode from the setup pill. Attach
+   a photo and a file from **+**, and paste a copied image.
 5. Lock the phone and have a bot ask for approval: a notification arrives;
    tapping it opens the bot. **Send a test notification** arrives too.
 6. Dictate a message with **Settings → Language** on English, then on

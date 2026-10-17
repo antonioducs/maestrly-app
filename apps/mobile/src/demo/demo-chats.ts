@@ -586,8 +586,23 @@ export function createDemoChatsSource(
         if (a.workspaceId === null && experience === 'maestro')
           throw new MobileBridgeError('invalid', 'Maestro needs a workspace')
         const created = createChat(a.workspaceId as string | null, a.name as string | undefined, experience)
+        const branch = a.branch as { name: string } | undefined
+        if (branch && created.conversation.workspaceId) created.conversation.branch = branch.name
         emit('lists', {})
         return created.conversation
+      }
+      case 'branches': {
+        const workspace = workspaces.find((item) => item.id === a.workspaceId)
+        if (!workspace) throw new MobileBridgeError('not-found', 'Unknown workspace')
+        const local = new Set([workspace.defaultBranch])
+        for (const item of chats.values())
+          if (item.conversation.workspaceId === workspace.id && item.conversation.branch)
+            local.add(item.conversation.branch)
+        return {
+          defaultBranch: workspace.defaultBranch,
+          local: [...local],
+          remote: [{ name: 'release', remote: 'origin' }],
+        }
       }
       case 'open': {
         const current = chat()

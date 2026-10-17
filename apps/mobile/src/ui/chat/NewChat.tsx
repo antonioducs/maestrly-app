@@ -1,4 +1,9 @@
-import type { MobileChatDefaults } from '@maestrly/bot-fleet-protocol'
+import {
+  MobileBridgeError,
+  type MobileBranches,
+  type MobileChatDefaults,
+  type MobileConversation,
+} from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
 import { AccessibilityInfo, Pressable, ScrollView, Switch, View } from 'react-native'
@@ -9,9 +14,11 @@ import { useI18n } from '../../i18n'
 import { useServers } from '../../servers/ServersProvider'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
-import { clearDraft, ComposerShell } from '../composer/Composer'
+import { clearDraft, ComposerShell, ShownError } from '../composer/Composer'
 import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
+import { branchChoice, EMPTY_BRANCH_DRAFT, type BranchDraft } from '../../chats/branch'
+import { BranchChoice } from './BranchChoice'
 import { ChatHostBanner } from './ChatHostBanner'
 
 const SUGGESTIONS = [1, 2, 3] as const
@@ -89,6 +96,10 @@ export function NewChat({ workspaceId }: { workspaceId: string | null }) {
   )
   const [defaults, setDefaults] = useState<MobileChatDefaults | null>(null)
   const [maestro, setMaestro] = useState(false)
+  // Null until the host lists them, and on hosts that predate the choice: the chat then gets a new branch of its own.
+  const [branches, setBranches] = useState<MobileBranches | null>(null)
+  const [branchDraft, setBranchDraft] = useState<BranchDraft>(EMPTY_BRANCH_DRAFT)
+  const branch = branches ? branchChoice(branchDraft) : undefined
   const server = active?.name ?? ''
   const draftKey = `${active?.id ?? ''}:new:${workspaceId ?? ''}`
 
@@ -98,11 +109,34 @@ export function NewChat({ workspaceId }: { workspaceId: string | null }) {
     void chats.loadModels().catch(() => {})
   }, [chats, online])
 
+  useEffect(() => {
+    setBranches(null)
+    setBranchDraft(EMPTY_BRANCH_DRAFT)
+    if (!online || !workspaceId) return
+    let live = true
+    void chats.branches(workspaceId).then(
+      (value) => live && setBranches(value),
+      () => {}
+    )
+    return () => {
+      live = false
+    }
+  }, [chats, online, workspaceId])
+
   async function start(text: string, files: Parameters<typeof chats.send>[2]) {
-    const conversation = await chats.create({
-      workspaceId,
-      ...(workspaceId && maestro ? { experience: 'maestro' as const } : {}),
-    })
+    if (branch === null) throw new ShownError(t('branch.incomplete'))
+    let conversation: MobileConversation
+    try {
+      conversation = await chats.create({
+        workspaceId,
+        ...(workspaceId && maestro ? { experience: 'maestro' as const } : {}),
+        ...(workspaceId && branch ? { branch } : {}),
+      })
+    } catch (cause) {
+      // The host's reason (a branch that exists, or is checked out elsewhere) says more than a failed send.
+      if (branch && cause instanceof MobileBridgeError && cause.message) throw new ShownError(cause.message)
+      throw cause
+    }
     await chats.send(conversation.id, text, files)
     clearDraft(draftKey)
     setCurrent({ kind: 'chat', id: conversation.id })
@@ -135,10 +169,13 @@ export function NewChat({ workspaceId }: { workspaceId: string | null }) {
               {t('chat.new.workspaceTitle', { name: workspace?.name ?? '' })}
             </AppText>
             <AppText tone="muted" style={{ textAlign: 'center' }}>
-              {workspace?.defaultBranch
-                ? t('chat.new.workspaceBody', { server, branch: workspace.defaultBranch })
-                : t('chat.new.workspaceBodyNoBranch', { server })}
+              {branches
+                ? t('chat.new.workspaceBodyChoose', { server })
+                : workspace?.defaultBranch
+                  ? t('chat.new.workspaceBody', { server, branch: workspace.defaultBranch })
+                  : t('chat.new.workspaceBodyNoBranch', { server })}
             </AppText>
+            {branches ? <BranchChoice branches={branches} draft={branchDraft} onChange={setBranchDraft} /> : null}
             <View
               style={{
                 alignSelf: 'stretch',
@@ -220,7 +257,7 @@ export function NewChat({ workspaceId }: { workspaceId: string | null }) {
         stopLabel={null}
         onStop={async () => {}}
         onSend={start}
-        disabled={!online}
+        disabled={!online || branch === null}
       />
     </>
   )

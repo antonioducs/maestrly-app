@@ -221,6 +221,7 @@ export class MobileApi {
     const handlers: { [P in MobileChannelKey]: (args: MobileArgs<P>) => Promise<MobileResult<P>> } = {
       lists: () => this.lists(),
       create: (value) => this.create(value),
+      branches: (value) => this.branches(value.workspaceId),
       open: (value) => this.openConversation(value.conversationId),
       close: async (value) => {
         this.closeConversation(value.conversationId)
@@ -336,20 +337,51 @@ export class MobileApi {
     const { workspaces } = await this.hostLists()
     const workspace = workspaces.find((item) => item.id === args.workspaceId)
     if (!workspace) throw new MobileApiError('not-found', 'Unknown workspace')
-    const branches = (await this.call('workspace:branches', workspace.id)) as { defaultBranch?: string } | null
-    // A chat started from a phone works on a new branch of its own, from the workspace's default branch.
-    const branch = `chat/${conversationDispatchBranchSlug(args.name ?? 'chat')}-${randomUUID().slice(0, 8)}`
+    // As the desktop's new conversation does: a new branch from a base (the default branch unless chosen), or an
+    // existing branch. Without a choice, the chat works on a new branch of its own.
+    const choice = args.branch
+    let target: { branch: string; isNewBranch: boolean; base?: string }
+    if (choice?.kind === 'existing') target = { branch: choice.name, isNewBranch: false }
+    else {
+      const base =
+        choice?.base ??
+        ((await this.call('workspace:branches', workspace.id)) as { defaultBranch?: string } | null)?.defaultBranch
+      target = {
+        branch:
+          choice?.name ?? `chat/${conversationDispatchBranchSlug(args.name ?? 'chat')}-${randomUUID().slice(0, 8)}`,
+        isNewBranch: true,
+        ...(base ? { base } : {}),
+      }
+    }
     const created = (await this.call('conversation:create', {
       workspaceId: workspace.id,
-      branch,
-      isNewBranch: true,
-      ...(branches?.defaultBranch ? { base: branches.defaultBranch } : {}),
+      ...target,
       mode: 'worktree',
       experience: args.experience ?? 'standard',
       ...(args.name ? { name: args.name } : {}),
     })) as Conversation
     this.listsChanged()
     return mobileConversation(created, workspace.name)
+  }
+
+  private async branches(workspaceId: string): Promise<MobileResult<'branches'>> {
+    const { workspaces } = await this.hostLists()
+    if (!workspaces.some((item) => item.id === workspaceId)) throw new MobileApiError('not-found', 'Unknown workspace')
+    const info = (await this.call('workspace:branches', workspaceId)) as {
+      local?: string[]
+      remoteRefs?: Array<{ remote: string; name: string }>
+      defaultBranch?: string
+    } | null
+    const local = (info?.local ?? []).slice(0, 2000)
+    const seen = new Set(local)
+    const remote: MobileResult<'branches'>['remote'] = []
+    for (const ref of info?.remoteRefs ?? []) {
+      // A remote branch that is also local is offered once, as the local one; HEAD is no branch to work on.
+      if (seen.has(ref.name) || ref.name === 'HEAD' || remote.length >= 2000) continue
+      seen.add(ref.name)
+      remote.push({ name: ref.name, remote: ref.remote })
+    }
+    return { defaultBranch: info?.defaultBranch || null, local, remote }
   }
 
   // ---- Conversations ----

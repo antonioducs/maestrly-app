@@ -1,6 +1,6 @@
 import { router } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, View } from 'react-native'
+import { View } from 'react-native'
 import { useFleet, useFleetController } from '../fleet/react'
 import type { FleetState } from '../fleet/state'
 import { useI18n } from '../i18n'
@@ -10,10 +10,13 @@ import { mix } from '../theme/tokens'
 import { Icon, type IconName } from './icons'
 import { Button } from './primitives/Button'
 import { AppText } from './primitives/Text'
+import { useHeldFor } from './useHeldFor'
 
 const selectConnection = (state: FleetState) => ({ connection: state.connection, retryAt: state.retryAt })
+/** Coming back to the app reconnects at once; only a reconnection that takes longer than this is shown. */
+const RECONNECT_GRACE_MS = 2500
 
-/** Whether this phone reaches its server; it only shows when something is off, and briefly once it is back. */
+/** Whether this phone reaches its server; it only shows when something is off, and says nothing once it is back. */
 export function ConnectionBanner() {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -21,22 +24,10 @@ export function ConnectionBanner() {
   const { active, forget } = useServers()
   const { connection, retryAt } = useFleet(selectConnection)
   const [now, setNow] = useState(Date.now())
-  const [back, setBack] = useState(false)
   const wasOpen = useRef(false)
-  const wasDown = useRef(false)
+  if (connection === 'open') wasOpen.current = true
   const server = active?.name ?? ''
-
-  useEffect(() => {
-    if (connection === 'retrying' || (connection === 'connecting' && wasOpen.current)) wasDown.current = true
-    if (connection !== 'open') return
-    wasOpen.current = true
-    if (!wasDown.current) return
-    wasDown.current = false
-    setBack(true)
-    AccessibilityInfo.announceForAccessibility(t('conn.back'))
-    const timer = setTimeout(() => setBack(false), 2800)
-    return () => clearTimeout(timer)
-  }, [connection, t])
+  const slowReconnect = useHeldFor(connection === 'connecting' && wasOpen.current, RECONNECT_GRACE_MS)
 
   useEffect(() => {
     if (connection !== 'retrying') return
@@ -46,7 +37,7 @@ export function ConnectionBanner() {
   }, [connection])
 
   let icon: IconName = 'wifi-off'
-  let tone = palette.brick
+  const tone = palette.brick
   let title: string
   let detail: string | null = null
   let action: { label: string; onPress: () => void } | null = null
@@ -54,7 +45,7 @@ export function ConnectionBanner() {
     title = t('conn.offline', { server })
     detail = t('conn.retrying', { seconds: Math.max(0, Math.ceil(((retryAt ?? now) - now) / 1000)) })
     action = { label: t('conn.retryNow'), onPress: () => controller.foreground() }
-  } else if (connection === 'connecting' && wasOpen.current) {
+  } else if (slowReconnect) {
     title = t('conn.reconnecting', { server })
   } else if (connection === 'unauthorized') {
     title = t('conn.unauthorized', { server })
@@ -67,10 +58,6 @@ export function ConnectionBanner() {
   } else if (connection === 'incompatible') {
     icon = 'alert'
     title = t('conn.incompatible', { server })
-  } else if (connection === 'open' && back) {
-    icon = 'check'
-    tone = palette.moss
-    title = t('conn.back')
   } else {
     return null
   }

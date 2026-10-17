@@ -11,11 +11,14 @@ export function Sheet({
   open,
   title,
   onClose,
+  onDismissed,
   children,
 }: {
   open: boolean
   title: string
   onClose: () => void
+  /** iOS only: the sheet has finished closing, so another screen (a picker) can be presented over the app. */
+  onDismissed?: () => void
   children: ReactNode
 }) {
   const { palette } = useTheme()
@@ -23,7 +26,13 @@ export function Sheet({
   const insets = useSafeAreaInsets()
   const reduced = useReducedMotion()
   return (
-    <Modal visible={open} transparent animationType={reduced ? 'fade' : 'slide'} onRequestClose={onClose}>
+    <Modal
+      visible={open}
+      transparent
+      animationType={reduced ? 'fade' : 'slide'}
+      onRequestClose={onClose}
+      onDismiss={onDismissed}
+    >
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable
           accessibilityRole="button"
