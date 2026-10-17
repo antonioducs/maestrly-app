@@ -1,7 +1,14 @@
 import type { TFunction } from 'i18next'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import type { PluginHookDto, PluginMarketplaceDto, PluginOpErrorCode, PluginReason } from '../../../shared/plugins'
+import {
+  type PluginHookDto,
+  type PluginInputDto,
+  type PluginMarketplaceDto,
+  type PluginOpErrorCode,
+  type PluginReason,
+  pluginTokenInputId,
+} from '../../../shared/plugins'
 
 export const inputCls =
   'w-full rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-indigo-500/60'
@@ -53,6 +60,19 @@ export function errorText(t: TFunction, error: PluginOpErrorCode | string | unde
     ns: 'plugins',
     defaultValue: t('errors.install-failed', { ns: 'plugins' }),
   })
+}
+
+/** How a setting a plugin asks for is shown; the access token Maestrly asks for itself is named in the app's language. */
+export function inputText(
+  t: TFunction,
+  input: Pick<PluginInputDto, 'id' | 'label' | 'description' | 'serverKey'>
+): { label: string; description: string | null } {
+  if (input.serverKey && input.id === pluginTokenInputId(input.serverKey))
+    return {
+      label: t('install.accessToken', { ns: 'plugins', server: input.serverKey }),
+      description: t('install.accessTokenHint', { ns: 'plugins' }),
+    }
+  return { label: input.label, description: input.description }
 }
 
 export const shortCommit = (commit: string | null | undefined): string => (commit ? commit.slice(0, 7) : '')

@@ -50,6 +50,15 @@ User-visible changes by version. Downloads are on
   readable message, such as Gemini's, used to leave the response empty. A
   rejected key or exhausted credits now fail on the first request instead of
   being retried, and hovering the red status icon in the sidebar explains it.
+- A plugin MCP server that signs in only with its publisher's own app, such as
+  Slack in OpenAI's catalog, now asks for your access token under **Edit
+  settings** and sends it as `Authorization: Bearer`. It used to show no sign-in
+  and fail with "Sign-in required". Plugins installed before ask for it after
+  the update. See [Plugins](docs/plugins.md#mcp-servers-and-sign-in).
+- A bot told to sign in to an MCP server now points to its environment's
+  settings in the app instead of **Settings → Maestrly Chat → Tools** on this
+  computer, names **Plugins** for a plugin's server, and asks for a new token
+  when the server rejected the one it has.
 
 ## [0.20.0] - 2026-10-16
 

@@ -154,6 +154,8 @@ every model.
   Maestrly cannot run `SessionStart`, `UserPromptSubmit`, or `Stop` hooks, so it does not start in an Agent
   conversation with a plugin that has them. Switch that plugin's hooks off, or limit where the plugin applies.
 
+### MCP servers and sign-in
+
 A plugin's MCP servers appear in the **+** menu and in **Settings → Maestrly Chat → Tools**, marked **From
 &lt;plugin&gt;**. You can switch a server off in one conversation from the **+** menu. Switch it off everywhere, or back
 on, in **Plugins**.
@@ -161,6 +163,12 @@ on, in **Plugins**.
 A server that uses OAuth shows **Needs sign-in**. Choose **Sign in** next to it, in **Installed** or under **Tools**,
 and finish in your browser. The sign-in is kept on the host that runs the server, which renews it as needed. Servers
 that take a token instead ask for it as a setting.
+
+Some plugins sign in only with their publisher's own app, which works only in the publisher's products: Slack in
+OpenAI's catalog is one. Maestrly never uses that app. Such a server asks for an **access token** instead, under **Edit
+settings**, and stays off until you enter one; Maestrly sends it as `Authorization: Bearer <token>`. Get the token from
+the service, for example from an app you create in your own Slack workspace. If the server rejects the token, the
+model tells you to replace it.
 
 ### Several accounts
 

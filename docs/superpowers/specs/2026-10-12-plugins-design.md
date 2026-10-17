@@ -233,7 +233,9 @@ Rules:
 - **Credential safety:**
   - An `oauth.client_id` that looks like `<PLACEHOLDER>` makes the server `unusable`.
   - Any other publisher-provided client (`client_id` or `client_secret`) makes it `manual`. The user supplies a token,
-    and the publisher's client is never used.
+    and the publisher's client is never used. Unless the server already sets or asks for an `Authorization` header,
+    normalization adds a required sensitive input `token:<server>` sent as `Authorization: Bearer <token>`. Startup
+    reads the inputs of installed plugins again, so plugins installed before this rule ask for the token too.
 - **URLs:** HTTPS only, except loopback. No user information or fragment. A plain-HTTP non-loopback URL makes the entry
   invalid.
 - **Transports:** an unknown `type` (for example `ws`) is reported as an unsupported transport.

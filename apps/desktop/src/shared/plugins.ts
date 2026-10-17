@@ -97,6 +97,11 @@ export interface PluginComponentDto {
   detail?: string
 }
 export type PluginScope = { kind: 'global' } | { kind: 'projects'; workspaceIds: string[] }
+/**
+ * The access token Maestrly asks for a remote server whose plugin names its publisher's own OAuth client, which is never
+ * used: the token is sent as `Authorization: Bearer <token>`.
+ */
+export const pluginTokenInputId = (serverKey: string): string => `token:${serverKey}`
 export interface PluginInputDto {
   id: string
   label: string

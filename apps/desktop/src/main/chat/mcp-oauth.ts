@@ -428,7 +428,7 @@ export function hostMcpOAuthProvider(server: McpServer): OAuthClientProvider {
   const stop = (): never => {
     const account = current()
     markMcpNeedsAuth(account ? accountKey(server.id, account.id) : server.id)
-    throw new McpNeedsAuthError(server.id, server.name, account?.label)
+    throw new McpNeedsAuthError(server, account?.label)
   }
   const update = (patch: (account: McpOAuthAccount) => McpOAuthAccount) => {
     const record = usableRecord(server)
