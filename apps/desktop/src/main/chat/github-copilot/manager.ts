@@ -122,6 +122,8 @@ interface LoginRecord {
 
 const COPILOT_HOME_DIRECTORY = 'github-copilot-subscription'
 
+const CLIENT_ID_MISSING_MESSAGE = 'GitHub Copilot OAuth Client ID is not configured in this build'
+
 /**
  * Ambient values required for normal process/network behavior. Credentials and provider-specific variables are
  * deliberately absent: the SDK layers the selected GitHub token and COPILOT_HOME onto this environment itself.
@@ -331,6 +333,19 @@ export class GitHubCopilotSubscriptionManager {
     return this.statusCache
   }
 
+  /**
+   * Device Flow needs the build's public OAuth Client ID. Without it and without a stored token, nothing can
+   * produce a session: installing the runtime would not help, so callers must not offer it.
+   */
+  missingConfigurationError(): GitHubCopilotPublicError | null {
+    return this.configurationError(this.knownFingerprint)
+  }
+
+  private configurationError(fingerprint: string | null): GitHubCopilotPublicError | null {
+    if (fingerprint || this.dependencies.getOAuthClientId().trim()) return null
+    return { code: 'configuration_missing', message: CLIENT_ID_MISSING_MESSAGE }
+  }
+
   exportToken(): string | null {
     return this.dependencies.tokenStore.get()
   }
@@ -404,12 +419,7 @@ export class GitHubCopilotSubscriptionManager {
       if (record.attempt.state === 'pending') record.controller.abort()
     }
     const clientId = this.dependencies.getOAuthClientId().trim()
-    if (!clientId) {
-      throw new GitHubCopilotOAuthError(
-        'configuration_missing',
-        'GitHub Copilot OAuth Client ID is not configured in this build'
-      )
-    }
+    if (!clientId) throw new GitHubCopilotOAuthError('configuration_missing', CLIENT_ID_MISSING_MESSAGE)
 
     const oauth = this.dependencies.createOAuthClient({ clientId })
     const controller = new AbortController()
@@ -753,7 +763,21 @@ export class GitHubCopilotSubscriptionManager {
   }
 
   private async loadStatus(identity: GitHubCopilotAccountIdentity): Promise<GitHubCopilotSubscriptionStatus> {
-    const clientIdConfigured = Boolean(this.dependencies.getOAuthClientId().trim())
+    // Reported before the runtime probe, which would otherwise hide it behind "runtime not installed".
+    const configurationError = this.configurationError(identity.fingerprint)
+    if (configurationError) {
+      return {
+        state: 'ready',
+        available: false,
+        connected: false,
+        authenticated: false,
+        account: null,
+        storageMode: this.dependencies.tokenStore.mode(),
+        accountFingerprint: null,
+        accountEpoch: identity.epoch,
+        error: configurationError,
+      }
+    }
     try {
       // Read-only component probe. In production this verifies the managed ready asset and never installs it.
       await this.dependencies.resolveRuntimePath()
@@ -773,19 +797,14 @@ export class GitHubCopilotSubscriptionManager {
     if (!identity.fingerprint) {
       return {
         state: 'ready',
-        available: clientIdConfigured,
+        available: true,
         connected: false,
         authenticated: false,
         account: null,
         storageMode: this.dependencies.tokenStore.mode(),
         accountFingerprint: null,
         accountEpoch: identity.epoch,
-        error: clientIdConfigured
-          ? null
-          : {
-              code: 'configuration_missing',
-              message: 'GitHub Copilot OAuth Client ID is not configured in this build',
-            },
+        error: null,
       }
     }
 

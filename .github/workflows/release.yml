@@ -31,6 +31,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Check release build configuration
+        env:
+          MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
+        run: node scripts/check-release-build-config.mjs
       - name: Validate tag, version, and release state
         id: release
         env:
@@ -87,6 +91,8 @@ jobs:
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 75
+    env:
+      MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,6 +109,8 @@ jobs:
         run: npx playwright install-deps chromium
       - name: Build Linux packages
         run: npm run package:linux
+      - name: Verify embedded build configuration
+        run: node scripts/check-release-build-config.mjs --bundle apps/desktop/out/main
       - name: Stage Linux release assets
         run: node scripts/stage-release-assets.mjs linux apps/desktop/dist .release-local-staging/linux
       - name: Upload Linux release assets
@@ -119,6 +127,8 @@ jobs:
     needs: validate
     runs-on: windows-2025
     timeout-minutes: 75
+    env:
+      MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,6 +143,8 @@ jobs:
         run: npm ci
       - name: Build Windows package
         run: npm run package:win
+      - name: Verify embedded build configuration
+        run: node scripts/check-release-build-config.mjs --bundle apps/desktop/out/main
       - name: Stage Windows release assets
         run: node scripts/stage-release-assets.mjs windows apps/desktop/dist .release-local-staging/windows
       - name: Upload Windows release assets
@@ -150,6 +162,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     environment: release
+    env:
+      MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,6 +232,8 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: npm run package:release
+      - name: Verify embedded build configuration
+        run: node scripts/check-release-build-config.mjs --bundle apps/desktop/out/main
       - name: Verify app and notarize exact DMG
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}

@@ -123,7 +123,11 @@ export function AccountsSettingsPanel({
         metaTone: 'bad',
       }
     }
-    if (status.state === 'unavailable') return { meta: t(copyKey('Unavailable')), metaTone: 'muted' }
+    if (status.state === 'unavailable') {
+      return status.errorCode === 'subscription-provider-not-configured'
+        ? { meta: t('settings.subscriptionNotConfiguredShort'), metaTone: 'bad' }
+        : { meta: t(copyKey('Unavailable')), metaTone: 'muted' }
+    }
     if (runtimeMissing(snapshot?.runtime) && snapshot?.runtime) {
       return {
         meta: t('settings.componentRequired', { name: t(`settings.componentName_${snapshot.runtime.id}`) }),

@@ -1208,6 +1208,9 @@ export default {
     apiFormatCursorSubscription: 'Cursor subscription',
     apiFormatAntigravitySubscription: 'Google AI subscription',
     subscriptionMemoryOnly: 'This account is connected for this session only. Sign in again after restarting the app.',
+    subscriptionNotConfigured:
+      'This build of Maestrly cannot sign in to {{provider}}: it was built without the OAuth Client ID that sign-in requires. Install a Maestrly release that includes it.',
+    subscriptionNotConfiguredShort: 'Not configured in this build',
     cursorSubscriptionHeading: 'Cursor with subscription',
     cursorSubscriptionDescription:
       'Use your Cursor plan in Maestrly Chat via the official Cursor Agent SDK. Sign in with your Cursor account in the browser.',

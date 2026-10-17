@@ -44,6 +44,7 @@ const h = vi.hoisted(() => {
     listModels: vi.fn(async () => state.models),
     getAccountIdentity: vi.fn(() => ({ ...state.identity })),
     assertAccountIdentity: vi.fn(),
+    missingConfigurationError: vi.fn<() => { code: string; message: string } | null>(() => null),
     onAuthUpdated: vi.fn((listener: () => void) => {
       authUpdated = listener
       return () => {
@@ -151,7 +152,11 @@ vi.mock('../../src/main/chat/codex-subscription', () => ({
   runCodexSubscriptionChat: vi.fn(),
 }))
 
-import { addProvider, GITHUB_COPILOT_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
+import {
+  addProvider,
+  addSubscriptionAccount,
+  GITHUB_COPILOT_SUBSCRIPTION_PROVIDER_ID,
+} from '../../src/main/chat/catalog'
 import type { ChatIpcDeps } from '../../src/main/chat/service'
 import { registerChatIpc } from '../../src/main/chat/service'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
@@ -255,6 +260,8 @@ describe('GitHub Copilot chat service integration', () => {
     h.manager.getAccountIdentity.mockClear()
     h.manager.getAccountIdentity.mockImplementation(() => ({ ...h.state.identity }))
     h.manager.assertAccountIdentity.mockReset()
+    h.manager.missingConfigurationError.mockReset()
+    h.manager.missingConfigurationError.mockReturnValue(null)
     h.compactSession.mockClear()
     h.summarizePortable.mockClear()
     h.getBinding.mockClear()
@@ -381,6 +388,65 @@ describe('GitHub Copilot chat service integration', () => {
         error: 'Login denied',
       })
     )
+  })
+
+  it('reports a build without the OAuth client ID and refuses sign-in before the runtime download', async () => {
+    const { handlers } = register()
+    const configurationError = {
+      code: 'configuration_missing',
+      message: 'GitHub Copilot OAuth Client ID is not configured in this build',
+    }
+    h.state.status = { ...signedOutStatus(), available: false, error: configurationError }
+    h.manager.missingConfigurationError.mockReturnValue(configurationError)
+    const notConfigured = {
+      state: 'unavailable',
+      authenticated: false,
+      error: configurationError.message,
+      errorCode: 'subscription-provider-not-configured',
+    }
+
+    await expect(handlers.get('chat:github-copilot-subscription:status')?.({}, { refresh: true })).resolves.toEqual(
+      notConfigured
+    )
+    h.manager.getStatus.mockClear()
+    await expect(handlers.get('chat:github-copilot-subscription:login')?.({})).resolves.toEqual({
+      ok: false,
+      error: configurationError.message,
+      status: notConfigured,
+    })
+    // Refused before the runtime asset is ensured and before the account state is touched.
+    expect(h.manager.getStatus).not.toHaveBeenCalled()
+    expect(h.manager.resetLocalData).not.toHaveBeenCalled()
+    expect(h.manager.startLogin).not.toHaveBeenCalled()
+    expect(h.deleteAll).not.toHaveBeenCalled()
+    expect(h.webContents.send).toHaveBeenCalledWith('chat:github-copilot-subscription:auth-changed', notConfigured)
+
+    const account = addSubscriptionAccount('github-copilot-subscription', 'Work')
+    await expect(
+      handlers.get('chat:github-copilot-subscription:login')?.({}, { accountId: account.id })
+    ).resolves.toEqual({
+      ok: false,
+      error: configurationError.message,
+      status: { ...notConfigured, accountId: account.id },
+    })
+    expect(h.manager.getStatus).not.toHaveBeenCalled()
+    expect(h.manager.startLogin).not.toHaveBeenCalled()
+  })
+
+  it('keeps the reason when the provider is unavailable', async () => {
+    const { handlers } = register()
+    h.state.status = {
+      ...signedOutStatus(),
+      state: 'error',
+      available: false,
+      error: { message: 'GitHub Copilot runtime is not installed' },
+    }
+
+    await expect(handlers.get('chat:github-copilot-subscription:status')?.({}, { refresh: true })).resolves.toEqual({
+      state: 'unavailable',
+      authenticated: false,
+      error: 'GitHub Copilot runtime is not installed',
+    })
   })
 
   it('deletes old-account sessions before clearing the token', async () => {

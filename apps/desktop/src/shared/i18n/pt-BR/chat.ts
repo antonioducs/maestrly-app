@@ -1218,6 +1218,9 @@ export default {
     apiFormatAntigravitySubscription: 'Assinatura Google AI',
     subscriptionMemoryOnly:
       'Esta conta está conectada apenas nesta sessão. Entre novamente após reiniciar o aplicativo.',
+    subscriptionNotConfigured:
+      'Esta versão do Maestrly não consegue entrar no {{provider}}: ela foi gerada sem o Client ID OAuth que o login exige. Instale uma versão do Maestrly que o inclua.',
+    subscriptionNotConfiguredShort: 'Não configurado nesta versão',
     cursorSubscriptionHeading: 'Cursor com assinatura',
     cursorSubscriptionDescription:
       'Use seu plano Cursor no Maestrly Chat via o Agent SDK oficial. Entre com a conta Cursor no navegador.',
