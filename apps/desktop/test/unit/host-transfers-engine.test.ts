@@ -1,13 +1,17 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import type http from 'node:http'
@@ -53,6 +57,7 @@ let server: http.Server
 let real: HostFilesEndpoint
 let fault: Fault | null
 let calls: Array<{ key: string; range: string | null }>
+let jsonCalls: string[]
 const engines: HostTransferEngine[] = []
 
 beforeEach(async () => {
@@ -63,7 +68,12 @@ beforeEach(async () => {
   downloads = path.join(base, 'downloads')
   openDir = path.join(base, 'open')
   for (const dir of [srv, local]) mkdirSync(dir)
-  const hostFiles = new HostFiles({ roots: () => [srv], readRoots: () => [], uploadsDir: path.join(base, 'uploads') })
+  const hostFiles = new HostFiles({
+    roots: () => [srv],
+    readRoots: () => [],
+    uploadsDir: path.join(base, 'uploads'),
+    archivesDir: path.join(base, 'archives'),
+  })
   server = createInstanceControlServer(config, { events: new InstanceEvents() } as unknown as InstanceEnvironment, {
     hostFiles,
   })
@@ -76,6 +86,7 @@ beforeEach(async () => {
   })
   fault = null
   calls = []
+  jsonCalls = []
 })
 afterEach(async () => {
   for (const engine of engines.splice(0)) await engine.stop()
@@ -87,7 +98,10 @@ afterEach(async () => {
 
 /** The host's endpoint, with the test's fault applied to raw calls. */
 const endpoint: HostFilesEndpoint = {
-  json: (key, init) => real.json(key, init),
+  json: (key, init) => {
+    jsonCalls.push(key)
+    return real.json(key, init)
+  },
   async raw(key, init) {
     const range = init.headers.range ?? null
     calls.push({ key, range })
@@ -106,8 +120,9 @@ function engine(overrides: Partial<HostTransferEngineDeps> = {}) {
     openDir: () => openDir,
     openPath: async (file) => void opened.push(file),
     emit: (transfers) => emitted.push(transfers),
+    packDir: () => path.join(base, 'pack'),
     backoffMs: () => 0,
-    limits: { rangeBytes: MiB, chunkBytes: 512 * KiB },
+    limits: { rangeBytes: MiB, chunkBytes: 512 * KiB, archivePollMs: 5 },
     ...overrides,
   })
   engines.push(created)
@@ -135,6 +150,8 @@ function hold() {
   const wait = (init: RawInit) =>
     new Promise<never>((_resolve, reject) => {
       started()
+      // A call that starts once its transfer was already aborted, as the next chunk of a pool can.
+      if (init.signal?.aborted) return reject(init.signal.reason)
       init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
     })
   return { reached, wait }
@@ -163,8 +180,12 @@ describe.skipIf(process.platform === 'win32')('host transfer engine', () => {
     const bytes = randomBytes(1.3 * MiB)
     writeFileSync(path.join(local, 'data.bin'), bytes)
     const { engine: queue } = engine()
-    const { queued, skipped } = await queue.upload(HOST, [path.join(local, 'data.bin'), local, 'relative'], srv)
-    expect(skipped).toEqual(['local', 'relative'])
+    const { queued, skipped } = await queue.upload(
+      HOST,
+      [path.join(local, 'data.bin'), path.join(local, 'missing.bin'), 'relative'],
+      srv
+    )
+    expect(skipped).toEqual(['missing.bin', 'relative'])
     const done = await settled(queue, queued[0], 'done')
     expect(done).toMatchObject({ remotePath: path.join(srv, 'data.bin'), sha256: sha(bytes) })
     expect(calls.filter((call) => call.key === 'hostFileUploadChunk')).toHaveLength(3)
@@ -383,5 +404,140 @@ describe.skipIf(process.platform === 'win32')('host transfer engine', () => {
     const waiting = queue.whenSettled(queued[1])
     await queue.stop()
     await expect(waiting).rejects.toThrow(/stopped/)
+  })
+  /** A project on the host: nested folders, an executable, an inner link, and `size` bytes that do not compress. */
+  function project(root: string, size = 64 * KiB) {
+    mkdirSync(path.join(root, 'src', 'deep'), { recursive: true })
+    mkdirSync(path.join(root, 'empty'))
+    writeFileSync(path.join(root, 'src', 'deep', 'a.ts'), 'export const a = 1\n')
+    writeFileSync(path.join(root, 'run.sh'), '#!/bin/sh\n')
+    chmodSync(path.join(root, 'run.sh'), 0o755)
+    writeFileSync(path.join(root, 'data.bin'), randomBytes(size))
+    symlinkSync('src/deep/a.ts', path.join(root, 'a-link.ts'))
+  }
+  function sameTree(from: string, to: string) {
+    expect(readFileSync(path.join(to, 'src', 'deep', 'a.ts'), 'utf8')).toBe('export const a = 1\n')
+    expect(sha(readFileSync(path.join(to, 'data.bin')))).toBe(sha(readFileSync(path.join(from, 'data.bin'))))
+    expect(statSync(path.join(to, 'run.sh')).mode & 0o777).toBe(0o755)
+    expect(readlinkSync(path.join(to, 'a-link.ts'))).toBe('src/deep/a.ts')
+    expect(readdirSync(path.join(to, 'empty'))).toEqual([])
+  }
+  const archivesLeft = () => (existsSync(path.join(base, 'archives')) ? readdirSync(path.join(base, 'archives')) : [])
+
+  it('downloads a folder extracted under its name, never over a folder already there', async () => {
+    project(path.join(srv, 'project'))
+    const { engine: queue } = engine()
+    const first = await queue.downloadFolder(HOST, path.join(srv, 'project'))
+    const done = await queue.whenSettled(first)
+    expect(done).toMatchObject({ state: 'done', kind: 'folder', localPath: path.join(downloads, 'project') })
+    sameTree(path.join(srv, 'project'), path.join(downloads, 'project'))
+    // The archive on the host and the partial files here are gone.
+    expect(archivesLeft()).toEqual([])
+    expect(readdirSync(downloads)).toEqual(['project'])
+    expect(jsonCalls).toContain('hostFileArchiveRelease')
+    const second = await queue.downloadFolder(HOST, path.join(srv, 'project'))
+    expect((await queue.whenSettled(second)).localPath).toBe(path.join(downloads, 'project (2)'))
+    expect(readdirSync(downloads).sort()).toEqual(['project', 'project (2)'])
+  })
+
+  it('pauses a folder download and resumes it from the ranges left', async () => {
+    project(path.join(srv, 'big'), 2.5 * MiB)
+    const held = hold()
+    const { engine: queue } = engine({
+      limits: { rangeBytes: MiB, chunkBytes: 512 * KiB, rangesPerTransfer: 1, archivePollMs: 5 },
+    })
+    fault = async ({ init, range, count }) =>
+      range === `bytes=${MiB}-${2 * MiB - 1}` && count === 1 ? held.wait(init) : undefined
+    const id = await queue.downloadFolder(HOST, path.join(srv, 'big'))
+    await held.reached
+    queue.pause(id)
+    expect(await settled(queue, id, 'paused')).toMatchObject({ doneBytes: MiB, stage: 'transferring' })
+    queue.resume(id)
+    await settled(queue, id, 'done')
+    expect(calls.filter((call) => call.range === `bytes=0-${MiB - 1}`)).toHaveLength(1)
+    // Packed once: resuming reads the same archive.
+    expect(jsonCalls.filter((key) => key === 'hostFileArchiveBegin')).toHaveLength(1)
+    sameTree(path.join(srv, 'big'), path.join(downloads, 'big'))
+  })
+
+  it('packs a folder again when its archive went away on the host', async () => {
+    project(path.join(srv, 'project'))
+    fault = async ({ count }) => {
+      // The host restarted, or swept the archive, before its first range was read.
+      if (count === 1) for (const name of archivesLeft()) rmSync(path.join(base, 'archives', name), { force: true })
+    }
+    const { engine: queue } = engine()
+    const id = await queue.downloadFolder(HOST, path.join(srv, 'project'))
+    expect((await queue.whenSettled(id)).state).toBe('done')
+    expect(jsonCalls.filter((key) => key === 'hostFileArchiveBegin')).toHaveLength(2)
+    sameTree(path.join(srv, 'project'), path.join(downloads, 'project'))
+  })
+
+  it('fails a folder that is not there, and one a host cannot move', async () => {
+    const { engine: queue } = engine()
+    const missing = await queue.downloadFolder(HOST, path.join(srv, 'missing'))
+    expect(await queue.whenSettled(missing)).toMatchObject({ state: 'failed', error: 'not-found' })
+    const old = engine({ folderTransfers: () => false }).engine
+    await expect(old.downloadFolder(HOST, srv)).rejects.toMatchObject({ reason: 'host-update-required' })
+    const { queued, skipped } = await old.upload(HOST, [local], srv)
+    expect([queued, skipped]).toEqual([[], ['local']])
+  })
+
+  it('uploads a folder extracted on the host, next to one already there', async () => {
+    project(path.join(local, 'site'))
+    mkdirSync(path.join(srv, 'site'))
+    const { engine: queue } = engine()
+    const { queued, skipped } = await queue.upload(HOST, [path.join(local, 'site')], srv)
+    expect(skipped).toEqual([])
+    const done = await queue.whenSettled(queued[0])
+    expect(done).toMatchObject({ state: 'done', kind: 'folder', remotePath: path.join(srv, 'site (2)') })
+    sameTree(path.join(local, 'site'), path.join(srv, 'site (2)'))
+    expect(readdirSync(path.join(srv, 'site'))).toEqual([])
+    // Neither the archive packed here nor the upload session on the host stays.
+    expect(readdirSync(path.join(base, 'pack'))).toEqual([])
+    expect(readdirSync(path.join(base, 'uploads'))).toEqual([])
+    expect(readdirSync(srv).sort()).toEqual(['site', 'site (2)'])
+  })
+
+  it('cancels folder transfers, leaving nothing of their archives on either side', async () => {
+    project(path.join(local, 'site'), 2 * MiB)
+    const chunk = hold()
+    fault = async ({ key, init }) => (key === 'hostFileUploadChunk' ? chunk.wait(init) : undefined)
+    const { engine: queue } = engine()
+    const { queued } = await queue.upload(HOST, [path.join(local, 'site')], srv)
+    await chunk.reached
+    await queue.cancel(queued[0])
+    expect((await queue.whenSettled(queued[0])).state).toBe('canceled')
+    expect(readdirSync(path.join(base, 'pack'))).toEqual([])
+    expect(readdirSync(path.join(base, 'uploads'))).toEqual([])
+    expect(readdirSync(srv)).toEqual([])
+
+    project(path.join(srv, 'project'), 2 * MiB)
+    const range = hold()
+    fault = async ({ key, init }) => (key === 'hostFileContent' ? range.wait(init) : undefined)
+    const id = await queue.downloadFolder(HOST, path.join(srv, 'project'))
+    await range.reached
+    await queue.cancel(id)
+    expect((await queue.whenSettled(id)).state).toBe('canceled')
+    expect(archivesLeft()).toEqual([])
+    expect(existsSync(downloads) ? readdirSync(downloads) : []).toEqual([])
+  })
+
+  it('uploads files and folders dropped together', async () => {
+    project(path.join(local, 'site'))
+    writeFileSync(path.join(local, 'notes.txt'), 'notes')
+    const { engine: queue } = engine()
+    const { queued, skipped } = await queue.upload(
+      HOST,
+      [path.join(local, 'notes.txt'), path.join(local, 'site'), path.join(local, 'gone')],
+      srv
+    )
+    expect(skipped).toEqual(['gone'])
+    const views = await Promise.all(queued.map((id) => queue.whenSettled(id)))
+    expect(views.map((view) => [view.kind, view.state, view.remotePath])).toEqual([
+      ['file', 'done', path.join(srv, 'notes.txt')],
+      ['folder', 'done', path.join(srv, 'site')],
+    ])
+    sameTree(path.join(local, 'site'), path.join(srv, 'site'))
   })
 })

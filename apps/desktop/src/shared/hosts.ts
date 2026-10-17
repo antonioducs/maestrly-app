@@ -39,6 +39,8 @@ export interface HostView {
   browser: boolean
   /** Whether the host's conversations have computers (a Computer tab). */
   computer: boolean
+  /** Whether whole folders move to and from the host in its Files tab, not only files. */
+  folderTransfers: boolean
   environment: HostEnvironmentView | null
   /** The app version of a host that refused this computer's, when it said so. */
   hostVersion: string | null

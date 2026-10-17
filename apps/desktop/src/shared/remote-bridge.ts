@@ -36,6 +36,8 @@ export interface RemoteHostInfo {
   browser: boolean
   /** Whether the host gives its conversations computers of their own (a workspaces host on the bot image). */
   computer: boolean
+  /** Whether whole folders move to and from the host (`FLEET_HOST_FILES_FOLDERS_FEATURE`), not only files. */
+  folderTransfers: boolean
 }
 
 /** Which of this computer's renderers an origin is: the main window, or a drawer panel of one conversation. */

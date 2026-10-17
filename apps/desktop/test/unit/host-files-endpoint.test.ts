@@ -75,6 +75,25 @@ describe('host files endpoint', () => {
     expect(gateway.seen[0].headers['x-maestrly-fleet-protocol']).toBe('1')
   })
 
+  it('sends the folder routes only through a gateway that passes them', async () => {
+    const gateway = await stub(() => ({ status: 200, body: { archiveId: 'a'.repeat(32) } }))
+    const through = (features: string[]) =>
+      resolveHostFilesEndpoint('server-1/workspaces', {
+        registry: registry([host('server-1/workspaces', 'running')]),
+        fleet: fleet(gateway.origin, features),
+      })
+    const begin = { body: { path: '/srv/site' } }
+    const old = await through(['host-files'])
+      .json('hostFileArchiveBegin', begin)
+      .catch((error) => error)
+    expect((old as TransferFailure).reason).toBe('gateway-update-required')
+    expect(gateway.seen).toEqual([])
+    expect(await through(['host-files', 'host-files-folders']).json('hostFileArchiveBegin', begin)).toEqual({
+      archiveId: 'a'.repeat(32),
+    })
+    expect(gateway.seen[0]).toMatchObject({ method: 'POST', url: '/v1/environments/workspaces/host-files/archives' })
+  })
+
   it('reaches the development host straight at its control server', async () => {
     const direct = await stub(() => ({ status: 200, body: STAT }))
     const endpoint = resolveHostFilesEndpoint('direct/host', {
@@ -163,6 +182,16 @@ describe('host files endpoint', () => {
         reason: 'verification-failed',
       })
     expect(classifyTransferError(http(409, 'CONFLICT', FLEET_HOST_FILE_ERRORS.exists)).reason).toBe('exists')
+    expect(classifyTransferError(http(409, 'CONFLICT', FLEET_HOST_FILE_ERRORS['unsafe-archive'])).reason).toBe(
+      'unsafe-archive'
+    )
+    expect(classifyTransferError(http(404, 'NOT_FOUND', FLEET_HOST_FILE_ERRORS['archive-expired'])).reason).toBe(
+      'archive-expired'
+    )
+    expect(classifyTransferError(http(409, 'CONFLICT', FLEET_HOST_FILE_ERRORS['no-space']))).toMatchObject({
+      transient: false,
+      reason: 'host-full',
+    })
     expect(classifyTransferError(new TransferFailure('local-missing')).reason).toBe('local-missing')
     expect(classifyTransferError(new Error('odd'))).toEqual({ transient: false, reason: 'unknown', message: 'odd' })
   })

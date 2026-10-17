@@ -1,9 +1,20 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDownToLine, ArrowUpFromLine, FolderOpen, Pause, Play, RotateCcw, Replace, Trash2, X } from 'lucide-react'
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Folder,
+  FolderOpen,
+  Pause,
+  Play,
+  RotateCcw,
+  Replace,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HOST_TRANSFER_FINAL_STATES, type HostTransferView } from '../../../shared/host-transfers'
-import { transferDetail } from './files-model'
+import { transferDetail, transferProgress, transferStageLabel } from './files-model'
 
 function Action({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
@@ -53,7 +64,8 @@ export function TransferList({ transfers }: { transfers: HostTransferView[] }) {
         {transfers.map((transfer) => {
           const active = transfer.state === 'queued' || transfer.state === 'running' || transfer.state === 'waiting'
           const final = HOST_TRANSFER_FINAL_STATES.has(transfer.state)
-          const percent = transfer.size ? Math.min(100, (transfer.doneBytes / transfer.size) * 100) : 100
+          const progress = transferProgress(transfer)
+          const stage = transferStageLabel(transfer)
           const Direction = transfer.direction === 'download' ? ArrowDownToLine : ArrowUpFromLine
           return (
             <li
@@ -69,11 +81,17 @@ export function TransferList({ transfers }: { transfers: HostTransferView[] }) {
                     transfer.direction === 'download' ? 'files.transfers.download' : 'files.transfers.upload'
                   )}
                 />
+                {transfer.kind === 'folder' && (
+                  <Folder
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                    aria-label={t('files.transfers.folder')}
+                  />
+                )}
                 <span className="min-w-0 flex-1 truncate" title={transfer.remotePath}>
                   {transfer.name}
                 </span>
                 <span className="shrink-0 text-[11px] text-muted-foreground">
-                  {t(`files.transfers.states.${transfer.state}`)}
+                  {t(stage ? `files.transfers.stages.${stage}` : `files.transfers.states.${transfer.state}`)}
                 </span>
                 {active && (
                   <Action
@@ -135,13 +153,15 @@ export function TransferList({ transfers }: { transfers: HostTransferView[] }) {
               <div
                 role="progressbar"
                 aria-valuemin={0}
-                aria-valuemax={transfer.size}
-                aria-valuenow={transfer.doneBytes}
+                aria-valuemax={100}
+                aria-valuenow={progress === null ? undefined : Math.round(progress)}
                 className="h-1.5 overflow-hidden rounded-full bg-white/10"
               >
                 <div
-                  className={`h-full rounded-full ${transfer.state === 'failed' ? 'bg-destructive' : 'bg-primary'}`}
-                  style={{ width: `${percent}%` }}
+                  className={`h-full rounded-full ${transfer.state === 'failed' ? 'bg-destructive' : 'bg-primary'} ${
+                    progress === null ? 'w-1/3 animate-pulse' : ''
+                  }`}
+                  style={progress === null ? undefined : { width: `${progress}%` }}
                 />
               </div>
               <div className="text-[11px] text-muted-foreground">{transferDetail(transfer, i18n.language, t)}</div>

@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net'
 import {
   FLEET_HOST_FILE_GATEWAY_ERRORS,
   FLEET_HOST_FILE_LIMITS,
+  FLEET_HOST_FILES_FOLDERS_FEATURE,
   FLEET_HOST_FILE_ROUTE_KEYS,
   FLEET_GATEWAY_ROUTES,
 } from '@maestrly/bot-fleet-protocol'
@@ -181,6 +182,48 @@ describe('host files proxy', () => {
     const update = await fetch(old.origin + '/v1/environments/workspaces/host-files/stat', { method: 'POST' })
     expect(update.status).toBe(409)
     expect((await update.json()).message).toBe(FLEET_HOST_FILE_GATEWAY_ERRORS.updateHost)
+  })
+
+  it('passes the folder routes only to an environment that moves folders', async () => {
+    const h = await setup(
+      (_req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ archiveId: 'a'.repeat(32) }))
+      },
+      { supports: (_environment, feature) => feature !== FLEET_HOST_FILES_FOLDERS_FEATURE }
+    )
+    const archives = h.origin + '/v1/environments/workspaces/host-files/archives'
+    for (const [method, url] of [
+      ['POST', archives],
+      ['GET', `${archives}/${'a'.repeat(32)}`],
+      ['DELETE', `${archives}/${'a'.repeat(32)}`],
+    ]) {
+      const refused = await fetch(url, { method })
+      expect(refused.status).toBe(409)
+      expect((await refused.json()).message).toBe(FLEET_HOST_FILE_GATEWAY_ERRORS.updateHost)
+    }
+    // Files still move.
+    expect((await fetch(h.origin + '/v1/environments/workspaces/host-files/stat', { method: 'POST' })).status).toBe(200)
+    expect(h.seen.map((request) => request.url)).toEqual(['/v1/host-files/stat'])
+
+    const current = await setup((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ archiveId: 'a'.repeat(32) }))
+    })
+    const body = JSON.stringify({ path: '/srv/site' })
+    const begun = await fetch(current.origin + '/v1/environments/workspaces/host-files/archives', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': String(body.length) },
+      body,
+    })
+    expect(begun.status).toBe(200)
+    expect(current.seen[0]).toMatchObject({ method: 'POST', url: '/v1/host-files/archives' })
+    expect(current.seen[0].body.toString()).toBe(body)
+    const big = await fetch(current.origin + '/v1/environments/workspaces/host-files/archives', {
+      method: 'POST',
+      body: JSON.stringify({ path: `/${'x'.repeat(70 * 1024)}` }),
+    })
+    expect(big.status).toBe(400)
   })
 
   it('cuts the transfers of a revoked device or a stopped environment, and only those', async () => {

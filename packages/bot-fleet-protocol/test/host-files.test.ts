@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_HOST_FILE_ERRORS,
+  FLEET_HOST_FILE_FOLDER_ROUTE_KEYS,
   FLEET_HOST_FILE_ROUTE_KEYS,
   FLEET_INSTANCE_ROUTES,
+  fleetHostFileArchiveSchema,
   fleetHostFileErrorReason,
   fleetHostFileStatSchema,
   fleetHostFileUploadBeginSchema,
@@ -36,6 +38,30 @@ describe('host file routes', () => {
     for (const name of ['', '.', '..', 'a/b', 'a\\b'])
       expect(fleetHostFileUploadBeginSchema.safeParse({ ...begin, name }).success).toBe(false)
     expect(fleetHostFileUploadBeginSchema.safeParse({ ...begin, size: 2 ** 40 + 1 }).success).toBe(false)
+  })
+
+  it('moves a folder as an archive: packed on the host, or extracted there and never over another', () => {
+    for (const key of FLEET_HOST_FILE_FOLDER_ROUTE_KEYS) expect(FLEET_HOST_FILE_ROUTE_KEYS).toContain(key)
+    const begin = { directory: '/srv/maestrly', name: 'site', size: 3, overwrite: false }
+    expect(fleetHostFileUploadBeginSchema.parse({ ...begin, kind: 'folder' })).toMatchObject({ kind: 'folder' })
+    expect(fleetHostFileUploadBeginSchema.safeParse({ ...begin, kind: 'folder', overwrite: true }).success).toBe(false)
+    expect(fleetHostFileUploadBeginSchema.safeParse({ ...begin, kind: 'zip' }).success).toBe(false)
+    expect(fleetHostFileUploadBeginSchema.parse({ ...begin, overwrite: true })).not.toHaveProperty('kind')
+    const archiveId = 'a'.repeat(32)
+    const packing = { state: 'packing', archiveId, bytes: 10, totalBytes: 0 }
+    expect(fleetHostFileArchiveSchema.parse(packing)).toEqual(packing)
+    const ready = {
+      state: 'ready',
+      archiveId,
+      name: 'site',
+      path: '/home/maestrly/.config/Maestrly/host-file-archives/a.tar.zst',
+      size: 512,
+      identity: '512:1:2',
+      entries: 3,
+    }
+    expect(fleetHostFileArchiveSchema.parse(ready)).toEqual(ready)
+    expect(fleetHostFileArchiveSchema.safeParse({ ...ready, state: 'packing' }).success).toBe(false)
+    expect(fleetHostFileArchiveSchema.safeParse({ ...ready, archiveId: '../x' }).success).toBe(false)
   })
 
   it('tells refusals apart by their message', () => {

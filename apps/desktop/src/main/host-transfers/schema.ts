@@ -21,4 +21,12 @@ export function initializeHostTransferSchema(db: DatabaseSync): void {
     );
     CREATE INDEX IF NOT EXISTS host_transfers_created ON host_transfers(created_at);
   `)
+  // Folders move as archives: what a transfer carries, where it stands, and the archive it moves.
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(host_transfers)').all() as Array<{ name: string }>).map((column) => column.name)
+  )
+  if (!columns.has('kind')) db.exec("ALTER TABLE host_transfers ADD COLUMN kind TEXT NOT NULL DEFAULT 'file';")
+  if (!columns.has('stage')) db.exec('ALTER TABLE host_transfers ADD COLUMN stage TEXT;')
+  if (!columns.has('archive_id')) db.exec('ALTER TABLE host_transfers ADD COLUMN archive_id TEXT;')
+  if (!columns.has('archive_path')) db.exec('ALTER TABLE host_transfers ADD COLUMN archive_path TEXT;')
 }

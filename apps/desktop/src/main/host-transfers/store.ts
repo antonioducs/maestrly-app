@@ -1,4 +1,10 @@
-import type { HostTransferDirection, HostTransferError, HostTransferState } from '../../shared/host-transfers'
+import type {
+  HostTransferDirection,
+  HostTransferError,
+  HostTransferKind,
+  HostTransferStage,
+  HostTransferState,
+} from '../../shared/host-transfers'
 import { getDb, transaction } from '../store'
 import type { HostTransferRange } from './ranges'
 
@@ -8,6 +14,13 @@ export interface HostTransferRecord {
   hostId: string
   direction: HostTransferDirection
   purpose: 'save' | 'open'
+  kind: HostTransferKind
+  /** Where a folder's transfer stands; null for a file. */
+  stage: HostTransferStage | null
+  /** The host's archive of a folder being downloaded. */
+  archiveId: string | null
+  /** The archive a folder moves as: the host's for a download, the one packed on this computer for an upload. */
+  archivePath: string | null
   name: string
   remotePath: string
   /** Where an upload goes on the host. */
@@ -33,8 +46,19 @@ export interface HostTransferRecord {
 
 export type NewHostTransfer = Omit<
   HostTransferRecord,
-  'uploadId' | 'state' | 'error' | 'errorMessage' | 'remoteSha256' | 'localSha256' | 'finishedAt' | 'doneBytes'
->
+  | 'uploadId'
+  | 'state'
+  | 'error'
+  | 'errorMessage'
+  | 'remoteSha256'
+  | 'localSha256'
+  | 'finishedAt'
+  | 'doneBytes'
+  | 'kind'
+  | 'stage'
+  | 'archiveId'
+  | 'archivePath'
+> & { kind?: HostTransferKind; stage?: HostTransferStage | null }
 
 export type HostTransferPatch = Partial<
   Pick<
@@ -49,6 +73,9 @@ export type HostTransferPatch = Partial<
     | 'remoteSha256'
     | 'localSha256'
     | 'finishedAt'
+    | 'stage'
+    | 'archiveId'
+    | 'archivePath'
   >
 >
 
@@ -63,6 +90,9 @@ const COLUMNS: Record<keyof HostTransferPatch, string> = {
   remoteSha256: 'remote_sha256',
   localSha256: 'local_sha256',
   finishedAt: 'finished_at',
+  stage: 'stage',
+  archiveId: 'archive_id',
+  archivePath: 'archive_path',
 }
 const LIST_LIMIT = 500
 
@@ -75,6 +105,10 @@ function record(row: Row): HostTransferRecord {
     hostId: String(row.host_id),
     direction: row.direction as HostTransferDirection,
     purpose: row.purpose as 'save' | 'open',
+    kind: row.kind === 'folder' ? 'folder' : 'file',
+    stage: text(row.stage) as HostTransferStage | null,
+    archiveId: text(row.archive_id),
+    archivePath: text(row.archive_path),
     name: String(row.name),
     remotePath: String(row.remote_path),
     remoteDirectory: text(row.remote_directory),
@@ -112,8 +146,8 @@ export function insertHostTransfer(transfer: NewHostTransfer, ranges: HostTransf
     getDb()
       .prepare(
         `INSERT INTO host_transfers (id, host_id, direction, purpose, name, remote_path, remote_directory, local_path,
-          local_directory, partial_path, size, identity, overwrite, state, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`
+          local_directory, partial_path, size, identity, overwrite, state, created_at, kind, stage)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`
       )
       .run(
         transfer.id,
@@ -129,7 +163,9 @@ export function insertHostTransfer(transfer: NewHostTransfer, ranges: HostTransf
         transfer.size,
         transfer.identity,
         transfer.overwrite ? 1 : 0,
-        transfer.createdAt
+        transfer.createdAt,
+        transfer.kind ?? 'file',
+        transfer.stage ?? null
       )
     insertRanges(transfer.id, ranges)
   })

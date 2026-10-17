@@ -69,7 +69,15 @@ describe('workspaces host environment', () => {
       appVersion: '1.2.3',
       protocol: 1,
       ready: true,
-      capabilities: ['provisioning', 'environments', 'workspaces-host', 'host-files', 'host-editor', 'mobile-api'],
+      capabilities: [
+        'provisioning',
+        'environments',
+        'workspaces-host',
+        'host-files',
+        'host-files-folders',
+        'host-editor',
+        'mobile-api',
+      ],
       busy: false,
     })
     state.busy = true
@@ -80,7 +88,15 @@ describe('workspaces host environment', () => {
     const { environment } = setup()
     expect(await environment.environmentStatus()).toMatchObject({
       environmentId: 'workspaces',
-      capabilities: ['provisioning', 'environments', 'workspaces-host', 'host-files', 'host-editor', 'mobile-api'],
+      capabilities: [
+        'provisioning',
+        'environments',
+        'workspaces-host',
+        'host-files',
+        'host-files-folders',
+        'host-editor',
+        'mobile-api',
+      ],
       bots: [],
     })
   })

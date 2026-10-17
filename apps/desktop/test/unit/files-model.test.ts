@@ -3,6 +3,8 @@ import {
   defaultRoot,
   formatDuration,
   transferDetail,
+  transferProgress,
+  transferStageLabel,
   transfersOfHost,
   uploadsLandedIn,
 } from '../../src/renderer/components/files/files-model'
@@ -14,6 +16,9 @@ const view = (overrides: Partial<HostTransferView>): HostTransferView => ({
   hostId: 'direct/host',
   direction: 'upload',
   purpose: 'save',
+  kind: 'file',
+  stage: null,
+  stageProgress: null,
   name: 'x.bin',
   remotePath: '/srv/x.bin',
   localPath: null,
@@ -78,5 +83,42 @@ describe('files panel model', () => {
       '1.0 MB of 4.0 MB · 1.0 MB/s · 3 sec left'
     )
     expect(transferDetail(view({ doneBytes: 2 * MiB }), 'en', t)).toBe('2.0 MB of 4.0 MB')
+  })
+
+  it('shows a folder being packed or extracted by its own progress, not by bytes moved', () => {
+    const t = () => 'bytes'
+    const folder = (overrides: Partial<HostTransferView>) => view({ kind: 'folder', size: 0, ...overrides })
+    const packing = folder({ direction: 'download', stage: 'packing', stageProgress: null })
+    expect(transferStageLabel(packing)).toBe('packingRemote')
+    expect(transferProgress(packing)).toBeNull()
+    expect(transferDetail(packing, 'en', t)).toBe('')
+    const local = folder({ stage: 'packing', stageProgress: 0.25 })
+    expect(transferStageLabel(local)).toBe('packingLocal')
+    expect(transferProgress(local)).toBe(25)
+    expect(transferDetail(local, 'en', t)).toBe('25%')
+    // Paused while packing: nothing moves, and nothing pretends to.
+    expect(transferProgress(folder({ stage: 'packing', state: 'paused' }))).toBe(0)
+    expect(transferStageLabel(folder({ stage: 'packing', state: 'paused' }))).toBeNull()
+    const extracting = folder({ direction: 'download', stage: 'extracting', size: 4 * MiB, stageProgress: 0.5 })
+    expect(transferStageLabel(extracting)).toBe('extractingLocal')
+    expect(transferProgress(extracting)).toBe(50)
+    expect(transferStageLabel(folder({ stage: 'transferring', state: 'verifying', size: 4 * MiB }))).toBe(
+      'extractingRemote'
+    )
+    const moving = folder({ stage: 'transferring', size: 4 * MiB, doneBytes: MiB })
+    expect([transferStageLabel(moving), transferProgress(moving), transferDetail(moving, 'en', t)]).toEqual([
+      null,
+      25,
+      'bytes',
+    ])
+    const done = folder({
+      direction: 'download',
+      stage: 'extracting',
+      state: 'done',
+      size: 4 * MiB,
+      doneBytes: 4 * MiB,
+    })
+    expect(transferProgress(done)).toBe(100)
+    expect(transferStageLabel(view({ state: 'verifying' }))).toBeNull()
   })
 })

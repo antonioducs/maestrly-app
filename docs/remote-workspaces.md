@@ -262,12 +262,14 @@ this computer. It opens on the conversation's folder when that folder is one Mae
   entries whose names start with a dot.
 - **Preview, rename, and delete.** The **…** menu of a file shows its first 64 KB, renames it, or deletes it. Deleting
   a folder deletes everything in it, and asks first. A link is deleted without what it points to.
-- **Upload.** Use **Upload…** to choose files on this computer, or drag them from the Finder or the file manager onto
-  the tab. They go to the folder on screen. A name that is already taken stops the upload; choose **Replace** to
-  overwrite the file on the server. Folders are not uploaded: compress them first.
+- **Upload.** Use **Upload…** to choose files on this computer, or **Upload folder…** to choose folders, or drag files
+  and folders from the Finder or the file manager onto the tab. They go to the folder on screen. A file name that is
+  already taken stops the upload; choose **Replace** to overwrite the file on the server. A folder never replaces
+  another: when its name is taken, it arrives as `name (2)`, `name (3)`, and so on.
 - **Download.** The download button of a file saves it to this computer's **Downloads** folder, next to any file of the
   same name rather than over it. **Open on this computer** in the **…** menu downloads the file into a temporary folder
-  and opens it with this computer's default app.
+  and opens it with this computer's default app. The download button of a folder, also in its **…** menu, saves the
+  whole folder, ready to use, to **Downloads** under its name, or `name (2)` when that is taken.
 - **PDF attachments** of a chat on the server open on this computer the same way, through a download.
 
 The **Transfers** list under the files shows each transfer's progress, speed, and time left, and can pause, resume,
@@ -278,6 +280,17 @@ way. Once all parts arrive, the whole file is checked against the original on th
 Transfers survive interruptions. When this computer sleeps, the connection drops, the server restarts, or the app quits,
 a transfer keeps the parts it has and goes on with the rest once the server can be reached. If the file changes on
 either end while it moves, the transfer stops: **Try again** starts it over with the new version.
+
+A folder moves as one file: a zstd-compressed tar archive of everything in it, `.git` and `node_modules` included,
+which moves like any other file. A download is packed on the server (**Preparing on the server**) and extracted here
+(**Extracting**); an upload is packed here (**Preparing**) and extracted on the server (**Extracting on the server**).
+The archive is a snapshot: a file that changes while the folder is packed goes in as it was when it was read. Links are
+kept as links when they point inside the folder, and left out when they point outside it, as are devices, FIFOs, and
+sockets. An archive with an entry that would land outside the folder, or a link out of it, is refused whole. Packing
+needs free space for a copy of the folder on the side that packs, and extracting needs room for the folder on the side
+that extracts. An archive the server packed is removed once the download finishes, or after a day nobody reads it; a
+download whose archive went away packs the folder again. On Windows, links arrive only when the system lets the app
+create them (developer mode), and names Windows cannot hold are left out.
 
 ## Connection states
 
@@ -308,9 +321,9 @@ kept by the server: opening the conversation on one computer clears it on the ot
 - **In the remote browser:** uploading a file through a page (a file field says so instead of opening), DevTools,
   date and color pickers of the page, drop-down lists inside frames of other sites (use the keyboard), the page's
   sound, and downloads, which stay on the server. The picture is not sharper on high-resolution displays.
-- **Whole folders do not move.** **Files** uploads and downloads files one by one; compress a folder in a terminal of
-  the server, or use Git. Revealing a file or folder of the server in a file manager is unavailable, because it would
-  open on the server's own desktop, which nobody sees.
+- **Downloading a folder as a `.zip`, or leaving files out of a folder transfer.** A folder always moves whole, and
+  arrives extracted. Revealing a file or folder of the server in a file manager is unavailable, because it would open
+  on the server's own desktop, which nobody sees.
 - **Alert sounds** do not play for conversations on a server.
 - **The Computer tab stays in the drawer:** it opens in no pop-up or floating window, and has no shortcut by default.
 - **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not

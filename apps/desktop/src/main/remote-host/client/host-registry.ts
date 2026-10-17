@@ -106,6 +106,7 @@ export class HostRegistry {
       editor: true,
       browser: true,
       computer: false,
+      folderTransfers: false,
       environment: null,
       hostVersion: null,
     }
@@ -129,6 +130,7 @@ export class HostRegistry {
       editor: info?.editor ?? false,
       browser: info?.browser ?? false,
       computer: info?.computer ?? false,
+      folderTransfers: info?.folderTransfers ?? false,
       environment: environment && {
         id: environment.id,
         lifecycle: environment.lifecycle,

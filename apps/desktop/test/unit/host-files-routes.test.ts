@@ -5,7 +5,12 @@ import type http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { FLEET_HOST_FILE_ROUTE_KEYS, FLEET_INSTANCE_ROUTES, buildPath } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_HOST_FILE_ERRORS,
+  FLEET_HOST_FILE_ROUTE_KEYS,
+  FLEET_INSTANCE_ROUTES,
+  buildPath,
+} from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import {
@@ -45,6 +50,7 @@ async function listen(withFiles: boolean) {
     roots: () => [path.join(base, 'srv')],
     readRoots: () => [],
     uploadsDir: path.join(base, 'uploads'),
+    archivesDir: path.join(base, 'archives'),
   })
   const server = createInstanceControlServer(config, environment, withFiles ? { hostFiles } : {})
   servers.push(server)
@@ -113,14 +119,47 @@ describe.skipIf(process.platform === 'win32')('host file routes of the control s
     expect((await call('/v1/host-files/stat', { ...json({ path: file }), auth: false })).status).toBe(401)
   })
 
+  it('packs a folder, reports it ready, and releases it through HTTP', async () => {
+    const call = await listen(true)
+    mkdirSync(path.join(base, 'srv', 'site'))
+    writeFileSync(path.join(base, 'srv', 'site', 'index.html'), '<p>hi</p>')
+    const begin = await call('/v1/host-files/archives', json({ path: path.join(base, 'srv', 'site') }))
+    expect(begin.status).toBe(200)
+    const { archiveId } = (await begin.json()) as { archiveId: string }
+    let status: { state: string; path?: string; identity?: string; entries?: number }
+    do {
+      const answer = await call(`/v1/host-files/archives/${archiveId}`)
+      expect(answer.status).toBe(200)
+      status = (await answer.json()) as typeof status
+    } while (status.state !== 'ready')
+    expect(status).toMatchObject({ state: 'ready', entries: 1 })
+    const whole = await call(`/v1/host-files/content?path=${encodeURIComponent(status.path!)}`, {
+      headers: { 'x-maestrly-file-identity': status.identity! },
+    })
+    expect(whole.status).toBe(200)
+    expect((await call(`/v1/host-files/archives/${archiveId}`, { method: 'DELETE' })).status).toBe(204)
+    const gone = await call(`/v1/host-files/archives/${archiveId}`)
+    expect(gone.status).toBe(404)
+    expect(((await gone.json()) as { message: string }).message).toBe(FLEET_HOST_FILE_ERRORS['archive-expired'])
+    // A folder upload never overwrites.
+    const overwrite = await call(
+      '/v1/host-files/uploads',
+      json({ directory: path.join(base, 'srv'), name: 'site', size: 1, overwrite: true, kind: 'folder' })
+    )
+    expect(overwrite.status).toBe(400)
+  })
+
   it('has no file routes where it hosts bots', async () => {
     const call = await listen(false)
     for (const key of FLEET_HOST_FILE_ROUTE_KEYS) {
       const route = FLEET_INSTANCE_ROUTES[key]
-      const response = await call(buildPath(route.path, { uploadId: 'abcdefghijklmnopqrstuv' }), {
-        method: route.method,
-        ...(route.body ? { headers: { 'content-type': 'application/json' }, body: '{}' } : {}),
-      })
+      const response = await call(
+        buildPath(route.path, { uploadId: 'abcdefghijklmnopqrstuv', archiveId: 'abcdefghijklmnopqrstuv' }),
+        {
+          method: route.method,
+          ...(route.body ? { headers: { 'content-type': 'application/json' }, body: '{}' } : {}),
+        }
+      )
       expect([key, response.status, ((await response.json()) as { message: string }).message]).toEqual([
         key,
         404,

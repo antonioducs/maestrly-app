@@ -477,7 +477,9 @@ describe('workspaces environment routes', () => {
     const bots = await h.request('POST', stat, { path: '/a' })
     expect(bots.status).toBe(409)
     expect((await json(bots)).message).toBe('The workspaces environment is not running.')
-    expect((await json(await h.request('GET', '/v1/meta'))).features).toContain('host-files')
+    const meta = await json(await h.request('GET', '/v1/meta'))
+    expect(meta.features).toContain('host-files')
+    expect(meta.moreFeatures).toContain('host-files-folders')
   })
 
   it("passes a workspaces environment's editor only to a paired device", async () => {

@@ -44,6 +44,7 @@ export interface ServerHostDeps {
 
 /** The programs a conversation's computer runs, which the bot image has. */
 const COMPUTER_PROGRAMS = ['Xvfb', 'openbox', 'tint2', 'maestrly-browser-presenter', 'xprop']
+const HOST_FILES_SWEEP_MS = 60 * 60 * 1_000
 
 function onPath(program: string): boolean {
   for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
@@ -148,8 +149,11 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       roots: () => hostFsRoots().map((root) => root.path),
       readRoots: () => [attachmentPreviewRoot()],
       uploadsDir: path.join(app.getPath('userData'), 'host-file-uploads'),
+      archivesDir: path.join(app.getPath('userData'), 'host-file-archives'),
     })
     void hostFiles.sweep().catch(() => undefined)
+    // Folder archives are whole copies of folders: the ones nobody reads go within the day, not at the next restart.
+    setInterval(() => void hostFiles.sweep().catch(() => undefined), HOST_FILES_SWEEP_MS).unref()
     // Computers open the host's editor (VS Code's serve-web, started when one asks for it) through this server.
     const editor = new HostEditor({
       ensureServer: async () => {

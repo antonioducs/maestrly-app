@@ -4,6 +4,8 @@ import type { HostTransferUploadResult, HostTransferView } from '../shared/host-
 export type {
   HostTransferDirection,
   HostTransferError,
+  HostTransferKind,
+  HostTransferStage,
   HostTransferState,
   HostTransferUploadResult,
   HostTransferView,
@@ -18,7 +20,13 @@ export const transfersApi = {
   /** Downloads a host's file into a temporary folder and opens it there once it is verified. */
   transfersOpen: (hostId: string, remotePath: string): Promise<string> =>
     ipcRenderer.invoke('transfers:open', hostId, remotePath),
-  /** Files dropped from Finder: their paths are read from the files themselves, never taken from the page. */
+  /** Downloads a host's folder, extracted, into this computer's Downloads folder; returns the transfer's id. */
+  transfersDownloadFolder: (hostId: string, remotePath: string): Promise<string> =>
+    ipcRenderer.invoke('transfers:download-folder', hostId, remotePath),
+  /**
+   * Files and folders dropped from Finder: their paths are read from the files themselves, never taken from the
+   * page; this computer tells files from folders.
+   */
   transfersUploadFiles: (hostId: string, remoteDirectory: string, files: File[]): Promise<HostTransferUploadResult> =>
     ipcRenderer.invoke(
       'transfers:upload-paths',
@@ -26,9 +34,12 @@ export const transfersApi = {
       remoteDirectory,
       files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
     ),
-  /** Asks for files with this computer's file dialog and uploads them to `remoteDirectory`. */
-  transfersUploadPick: (hostId: string, remoteDirectory: string): Promise<HostTransferUploadResult> =>
-    ipcRenderer.invoke('transfers:upload-pick', hostId, remoteDirectory),
+  /** Asks for files, or folders, with this computer's file dialog and uploads them to `remoteDirectory`. */
+  transfersUploadPick: (
+    hostId: string,
+    remoteDirectory: string,
+    mode: 'files' | 'folder' = 'files'
+  ): Promise<HostTransferUploadResult> => ipcRenderer.invoke('transfers:upload-pick', hostId, remoteDirectory, mode),
   transfersPause: (id: string): Promise<void> => ipcRenderer.invoke('transfers:pause', id),
   transfersResume: (id: string): Promise<void> => ipcRenderer.invoke('transfers:resume', id),
   transfersCancel: (id: string): Promise<void> => ipcRenderer.invoke('transfers:cancel', id),

@@ -1,6 +1,17 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Download, Eye, ExternalLink, File, Folder, FolderX, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import {
+  Download,
+  Eye,
+  ExternalLink,
+  File,
+  Folder,
+  FolderDown,
+  FolderX,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -15,6 +26,7 @@ export function FileList({
   error,
   onOpenFolder,
   onDownload,
+  onDownloadFolder,
   onOpen,
   onPreview,
   onRename,
@@ -25,6 +37,8 @@ export function FileList({
   error: HostDirectoryError | null
   onOpenFolder: (entry: HostFsEntry) => void
   onDownload: (entry: HostFsEntry) => void
+  /** Absent for a host that cannot move whole folders: folders then have no download. */
+  onDownloadFolder?: (entry: HostFsEntry) => void
   onOpen: (entry: HostFsEntry) => void
   onPreview: (entry: HostFsEntry) => void
   /** Rejects with the reason the host refused the name. */
@@ -52,6 +66,7 @@ export function FileList({
     <ul className="min-h-0 flex-1 overflow-y-auto py-1" aria-label={listing?.path} aria-busy={loading}>
       {listing?.entries.map((entry) => {
         const isFile = entry.kind === 'file'
+        const downloadFolder = entry.kind === 'directory' ? onDownloadFolder : undefined
         return (
           <li
             key={entry.path}
@@ -126,6 +141,19 @@ export function FileList({
                 <Download className="size-3.5" />
               </Button>
             )}
+            {downloadFolder && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                aria-label={`${t('files.downloadFolder')}: ${entry.name}`}
+                title={t('files.downloadFolder')}
+                onClick={() => downloadFolder(entry)}
+              >
+                <FolderDown className="size-3.5" />
+              </Button>
+            )}
             {entry.kind !== 'link' && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -141,6 +169,11 @@ export function FileList({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {downloadFolder && (
+                    <DropdownMenuItem onClick={() => downloadFolder(entry)}>
+                      <FolderDown /> {t('files.downloadFolder')}
+                    </DropdownMenuItem>
+                  )}
                   {isFile && (
                     <DropdownMenuItem onClick={() => onOpen(entry)}>
                       <ExternalLink /> {t('files.open')}

@@ -20,6 +20,7 @@ import { zstdCompressSync, zstdDecompressSync } from 'node:zlib'
 import { FLEET_HOST_FILE_ERRORS, FLEET_HOST_FILE_LIMITS } from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { InstanceHttpError } from '../../src/main/fleet/instance/server'
+import { packFolder } from '../../src/main/folder-archive'
 import { HostFiles, parseRange } from '../../src/main/remote-host/server/host-files'
 import { fileIdentity } from '../../src/main/transfer-io'
 
@@ -31,6 +32,7 @@ let home: string
 let srv: string
 let previews: string
 let uploads: string
+let archives: string
 let clock: number
 let server: http.Server
 let port: number
@@ -53,6 +55,7 @@ beforeEach(async () => {
   srv = path.join(base, 'srv')
   previews = path.join(base, 'previews')
   uploads = path.join(base, 'uploads')
+  archives = path.join(base, 'archives')
   for (const dir of [home, srv, previews, path.join(base, 'outside')]) mkdirSync(dir)
   clock = 1_000
   let tokens = 0
@@ -60,6 +63,7 @@ beforeEach(async () => {
     roots: () => [home, srv],
     readRoots: () => [previews],
     uploadsDir: uploads,
+    archivesDir: archives,
     now: () => clock,
     token: () => TOKEN.slice(0, 30) + String(tokens++).padStart(2, '0'),
   })
@@ -261,6 +265,140 @@ describe.skipIf(process.platform === 'win32')('host files', () => {
     expect(await files.digest({ path: file, identity })).toEqual({ sha256: sha(Buffer.from('hello')) })
     expect(await reasonOf(files.digest({ path: file, identity: '5:0:0' }))).toBe('changed')
     expect(existsSync(file)).toBe(true)
+  })
+
+  /** Asks for the archive's status until packing is over. */
+  async function ready(archiveId: string) {
+    for (;;) {
+      const status = await files.archiveStatus(archiveId)
+      if (status.state === 'ready') return status
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
+  it('packs a folder of the roots into an archive read like any file, until it is released', async () => {
+    mkdirSync(path.join(srv, 'site', 'css'), { recursive: true })
+    writeFileSync(path.join(srv, 'site', 'index.html'), '<p>hi</p>')
+    writeFileSync(path.join(srv, 'site', 'css', 'a.css'), 'p{}')
+    const { archiveId } = await files.beginArchive({ path: path.join(srv, 'site') })
+    const archive = await ready(archiveId)
+    expect(archive).toMatchObject({ state: 'ready', archiveId, name: 'site', entries: 3 })
+    expect(path.dirname(archive.path)).toBe(archives)
+    // The download routes read it as they read a file of the roots.
+    const stat = await files.stat({ path: archive.path })
+    expect(stat).toMatchObject({ size: archive.size, identity: archive.identity })
+    const whole = await content(archive.path, { 'x-maestrly-file-identity': archive.identity })
+    expect(whole.status).toBe(200)
+    expect(await files.digest({ path: archive.path, identity: archive.identity })).toEqual({
+      sha256: sha(Buffer.from(await whole.arrayBuffer())),
+    })
+    await files.releaseArchive(archiveId)
+    expect(readdirSync(archives)).toEqual([])
+    expect(await reasonOf(files.archiveStatus(archiveId))).toBe('archive-expired')
+    expect(await reasonOf(files.stat({ path: archive.path }))).toBe('archive-expired')
+    const gone = await content(archive.path, { 'x-maestrly-file-identity': archive.identity })
+    expect((await gone.json()).message).toBe(FLEET_HOST_FILE_ERRORS['archive-expired'])
+    // Releasing what is gone, or was never there, is no error.
+    await files.releaseArchive(archiveId)
+    await files.releaseArchive('not an id')
+  })
+
+  it('packs only folders of the roots', async () => {
+    writeFileSync(path.join(srv, 'a.txt'), 'a')
+    expect(await reasonOf(files.beginArchive({ path: path.join(srv, 'a.txt') }))).toBe('not-a-directory')
+    expect(await reasonOf(files.beginArchive({ path: path.join(base, 'outside') }))).toBe('outside-roots')
+    expect(await reasonOf(files.beginArchive({ path: previews }))).toBe('outside-roots')
+    expect(await reasonOf(files.beginArchive({ path: path.join(srv, 'missing') }))).toBe('not-found')
+    expect(await reasonOf(files.archiveStatus('unknown-archive-id-0000000000'))).toBe('archive-expired')
+  })
+
+  it('never packs its own archives, even from a folder that holds them', async () => {
+    const own = new HostFiles({
+      roots: () => [home],
+      readRoots: () => [],
+      uploadsDir: path.join(home, '.maestrly', 'uploads'),
+      archivesDir: path.join(home, '.maestrly', 'archives'),
+    })
+    writeFileSync(path.join(home, 'notes.txt'), 'n')
+    const { archiveId } = await own.beginArchive({ path: home })
+    for (;;) {
+      const status = await own.archiveStatus(archiveId)
+      if (status.state === 'ready') {
+        // `.maestrly` and `notes.txt`: the archives and uploads folders are left out.
+        expect(status.entries).toBe(2)
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  })
+
+  it('sweeps archives nobody read within a day, and what a stopped host left behind', async () => {
+    mkdirSync(path.join(srv, 'docs'))
+    writeFileSync(path.join(srv, 'docs', 'a.md'), '# a')
+    const read = await ready((await files.beginArchive({ path: path.join(srv, 'docs') })).archiveId)
+    const idle = await ready((await files.beginArchive({ path: path.join(srv, 'docs') })).archiveId)
+    // Left by a host that stopped while packing, and an archive without its record.
+    writeFileSync(
+      path.join(archives, 'stale-archive-id-000000000.json'),
+      JSON.stringify({ archiveId: 'stale-archive-id-000000000', path: '', source: srv, touchedAt: clock })
+    )
+    writeFileSync(path.join(archives, 'orphan-archive-id-00000000.tar.zst'), 'x')
+    expect(await files.sweep()).toBe(2)
+    clock += FLEET_HOST_FILE_LIMITS.archiveTtlMs - 1
+    // Reading a range of an archive keeps it.
+    await content(read.path, { range: 'bytes=0-0', 'x-maestrly-file-identity': read.identity })
+    clock += 2
+    expect(await files.sweep()).toBe(1)
+    expect(readdirSync(archives).sort()).toEqual([`${read.archiveId}.json`, `${read.archiveId}.tar.zst`])
+    expect(await reasonOf(files.archiveStatus(idle.archiveId))).toBe('archive-expired')
+  })
+
+  it('extracts an uploaded folder into a free name, never over another folder', async () => {
+    const source = path.join(base, 'outside', 'site')
+    mkdirSync(path.join(source, 'img'), { recursive: true })
+    writeFileSync(path.join(source, 'index.html'), '<p>new</p>')
+    writeFileSync(path.join(source, 'img', 'a.svg'), '<svg/>')
+    const archive = path.join(base, 'site.tar.zst')
+    await packFolder(source, archive)
+    const bytes = readFileSync(archive)
+    mkdirSync(path.join(srv, 'site'))
+    writeFileSync(path.join(srv, 'site', 'old.html'), 'old')
+    // A taken name is no reason to refuse a folder, which never overwrites.
+    const session = await files.beginUpload({
+      directory: srv,
+      name: 'site',
+      size: bytes.length,
+      overwrite: false,
+      kind: 'folder',
+    })
+    expect((await chunk(session.uploadId, 0, bytes)).status).toBe(204)
+    expect(await files.commitUpload(session.uploadId, { sha256: sha(bytes) })).toEqual({
+      path: path.join(srv, 'site (2)'),
+      size: bytes.length,
+      sha256: sha(bytes),
+    })
+    expect(readdirSync(path.join(srv, 'site'))).toEqual(['old.html'])
+    expect(readFileSync(path.join(srv, 'site (2)', 'img', 'a.svg'), 'utf8')).toBe('<svg/>')
+    expect(readdirSync(srv).sort()).toEqual(['site', 'site (2)'])
+    expect(readdirSync(uploads)).toEqual([])
+    // Asked again by a computer that lost the answer: the same folder, not a third one.
+    expect((await files.commitUpload(session.uploadId, { sha256: sha(bytes) })).path).toBe(path.join(srv, 'site (2)'))
+    expect(readdirSync(srv).sort()).toEqual(['site', 'site (2)'])
+  })
+
+  it('ends an uploaded folder whose archive cannot be extracted safely', async () => {
+    const bytes = zstdCompressSync(Buffer.alloc(1024, 1))
+    const session = await files.beginUpload({
+      directory: srv,
+      name: 'junk',
+      size: bytes.length,
+      overwrite: false,
+      kind: 'folder',
+    })
+    await chunk(session.uploadId, 0, bytes)
+    expect(await reasonOf(files.commitUpload(session.uploadId, { sha256: sha(bytes) }))).toBe('unsafe-archive')
+    expect(readdirSync(srv)).toEqual([])
+    expect(readdirSync(uploads)).toEqual([])
   })
 
   it('serves one range at a time, never more than a range of a large file', () => {

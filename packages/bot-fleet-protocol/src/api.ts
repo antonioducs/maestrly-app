@@ -6,6 +6,9 @@ import {
   fleetPushRegistrationSchema,
 } from './push.js'
 import {
+  fleetHostFileArchiveBeginSchema,
+  fleetHostFileArchiveRequestSchema,
+  fleetHostFileArchiveSchema,
   fleetHostFileDigestRequestSchema,
   fleetHostFileDigestSchema,
   fleetHostFileStatRequestSchema,
@@ -1720,6 +1723,24 @@ export const FLEET_GATEWAY_ROUTES = {
     body: null,
     response: null,
   },
+  hostFileArchiveBegin: {
+    method: 'POST',
+    path: '/v1/environments/:eid/host-files/archives',
+    body: null,
+    response: null,
+  },
+  hostFileArchiveStatus: {
+    method: 'GET',
+    path: '/v1/environments/:eid/host-files/archives/:archiveId',
+    body: null,
+    response: null,
+  },
+  hostFileArchiveRelease: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/host-files/archives/:archiveId',
+    body: null,
+    response: null,
+  },
   botUiOpen: { method: 'POST', path: '/v1/bots/:id/ui/open', body: fleetUiOpenRequestSchema, response: null },
   botConversationCall: {
     method: 'POST',
@@ -2397,6 +2418,25 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetHostFileUploadResultSchema,
   },
   hostFileUploadAbort: { method: 'DELETE', path: '/v1/host-files/uploads/:uploadId', body: null, response: null },
+  // A folder moves as one archive: the host packs it here, and the download routes read the archive by its path.
+  hostFileArchiveBegin: {
+    method: 'POST',
+    path: '/v1/host-files/archives',
+    body: fleetHostFileArchiveRequestSchema,
+    response: fleetHostFileArchiveBeginSchema,
+  },
+  hostFileArchiveStatus: {
+    method: 'GET',
+    path: '/v1/host-files/archives/:archiveId',
+    body: null,
+    response: fleetHostFileArchiveSchema,
+  },
+  hostFileArchiveRelease: {
+    method: 'DELETE',
+    path: '/v1/host-files/archives/:archiveId',
+    body: null,
+    response: null,
+  },
 } as const satisfies Record<string, FleetRoute>
 
 /** The routes that move a workspaces host's files; each gateway route passes through to the instance route. */
@@ -2408,8 +2448,17 @@ export const FLEET_HOST_FILE_ROUTE_KEYS = [
   'hostFileUploadChunk',
   'hostFileUploadCommit',
   'hostFileUploadAbort',
+  'hostFileArchiveBegin',
+  'hostFileArchiveStatus',
+  'hostFileArchiveRelease',
 ] as const
 export type FleetHostFileRouteKey = (typeof FLEET_HOST_FILE_ROUTE_KEYS)[number]
+/** The host-file routes that only an environment with `FLEET_HOST_FILES_FOLDERS_FEATURE` serves. */
+export const FLEET_HOST_FILE_FOLDER_ROUTE_KEYS = [
+  'hostFileArchiveBegin',
+  'hostFileArchiveStatus',
+  'hostFileArchiveRelease',
+] as const satisfies readonly FleetHostFileRouteKey[]
 
 export function buildPath(
   pattern: string,

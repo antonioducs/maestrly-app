@@ -45,6 +45,7 @@ class FakeSocket extends EventEmitter {
         editor: false,
         browser: false,
         computer: false,
+        folderTransfers: false,
       },
     })
   }
@@ -138,6 +139,7 @@ describe('host registry', () => {
         editor: true,
         browser: true,
         computer: false,
+        folderTransfers: false,
         environment: null,
         hostVersion: null,
       },
@@ -183,13 +185,14 @@ describe('host registry', () => {
       editor: false,
       browser: false,
       computer: false,
+      folderTransfers: false,
       environment: { id: 'workspaces', lifecycle: 'running', updateAvailable: false },
       hostVersion: null,
     })
     expect(h.changes.at(-1)).toEqual(h.registry.list())
   })
 
-  it('offers a Computer tab only for a host that says it has computers', async () => {
+  it('offers a Computer tab and folder transfers only for a host that says it has them', async () => {
     const welcome = (host: Record<string, unknown>) =>
       ({
         t: 'welcome',
@@ -210,17 +213,18 @@ describe('host registry', () => {
     current.fleet.change({ ...paired, environments: [environment()] })
     await vi.waitFor(() => expect(current.sockets).toHaveLength(1))
     current.sockets[0].emit('open', {})
-    current.sockets[0].answer(welcome({ computer: true }))
+    current.sockets[0].answer(welcome({ computer: true, folderTransfers: true }))
     expect(current.remote()?.computer).toBe(true)
+    expect(current.remote()?.folderTransfers).toBe(true)
     expect(current.registry.list()[0].computer).toBe(false)
 
-    // A host from before computers does not say.
+    // A host from before computers, or from before folder transfers, does not say.
     const older = setup()
     older.fleet.change({ ...paired, environments: [environment()] })
     await vi.waitFor(() => expect(older.sockets).toHaveLength(1))
     older.sockets[0].emit('open', {})
     older.sockets[0].answer(welcome({}))
-    expect(older.remote()).toMatchObject({ state: 'online', computer: false })
+    expect(older.remote()).toMatchObject({ state: 'online', computer: false, folderTransfers: false })
   })
 
   it('uses a secure socket for a server reached over HTTPS and refuses a ticket path it does not expect', async () => {
