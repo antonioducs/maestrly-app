@@ -125,9 +125,36 @@ describe("a workspaces host's editor", () => {
     expect(h.activity).toEqual([0])
   })
 
+  it("prefers the computer's own origin header to an X-Forwarded-Host a proxy before the gateway replaced", async () => {
+    const h = await setup()
+    await fetch(h.origin + '/v1/editor/', {
+      headers: {
+        ...h.credentials,
+        'X-Maestrly-Editor-Host': '127.0.0.1:41234',
+        'X-Forwarded-Host': 'server.tailnet.ts.net',
+      },
+    })
+    const socket = await open(`ws://127.0.0.1:${h.port}/v1/editor/stable-x`, {
+      ...h.credentials,
+      'X-Maestrly-Editor-Host': '127.0.0.1:41234',
+      'X-Forwarded-Host': 'server.tailnet.ts.net',
+    })
+    socket.close()
+    for (const seen of [h.upstream.requests[0], h.upstream.upgrades[0]]) {
+      expect(seen.headers['x-forwarded-host']).toBe('127.0.0.1:41234')
+      expect(seen.headers['x-maestrly-editor-host']).toBeUndefined()
+    }
+  })
+
   it('drops an origin the editor would be reached at other than a loopback one', async () => {
     const h = await setup()
-    await fetch(h.origin + '/v1/editor', { headers: { ...h.credentials, 'X-Forwarded-Host': 'attacker.example:443' } })
+    await fetch(h.origin + '/v1/editor', {
+      headers: {
+        ...h.credentials,
+        'X-Maestrly-Editor-Host': 'attacker.example:443',
+        'X-Forwarded-Host': 'attacker.example:443',
+      },
+    })
     expect(h.upstream.requests[0].url).toBe('/')
     expect(h.upstream.requests[0].headers['x-forwarded-host']).toBeUndefined()
     expect(h.upstream.requests[0].headers.cookie).toBe(`vscode-tkn=${editorToken}`)

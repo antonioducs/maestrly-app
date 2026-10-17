@@ -138,6 +138,7 @@ describe("this computer's door to a host's editor", () => {
     expect(seen.headers['x-maestrly-fleet-protocol']).toBe('1')
     expect(seen.headers.cookie).toBe('vscode-cli-secret-half=s')
     expect(seen.headers['x-forwarded-host']).toBe(`127.0.0.1:${h.port}`)
+    expect(seen.headers['x-maestrly-editor-host']).toBe(`127.0.0.1:${h.port}`)
     expect(seen.headers.origin).toBeUndefined()
     expect(seen.headers.referer).toBeUndefined()
     expect(JSON.stringify(seen.headers)).not.toContain(h.proxy.access)
@@ -155,6 +156,7 @@ describe("this computer's door to a host's editor", () => {
     expect(seen.headers.origin).toBeUndefined()
     expect(seen.headers.cookie).toBeUndefined()
     expect(seen.headers['x-forwarded-host']).toBe(`127.0.0.1:${h.port}`)
+    expect(seen.headers['x-maestrly-editor-host']).toBe(`127.0.0.1:${h.port}`)
   })
 
   it('answers 503 while the host cannot be reached', async () => {

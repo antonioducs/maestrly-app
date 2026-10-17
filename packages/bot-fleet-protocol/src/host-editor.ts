@@ -28,6 +28,13 @@ export const FLEET_HOST_EDITOR_LIMITS = {
  * loopback address and port are accepted: the editor is never reached at any other origin.
  */
 export const FLEET_HOST_EDITOR_FORWARDED_HOST = 'x-forwarded-host'
+/**
+ * The same origin as the computer sends it to the host. A reverse proxy in front of the gateway (Tailscale Serve,
+ * Caddy, Traefik) replaces `X-Forwarded-Host` with its own public address, which the host refuses, and the editor
+ * then points its WebSockets at the host's loopback, which the computer cannot reach. No proxy touches this header:
+ * the host reads it first and gives it to the editor as `X-Forwarded-Host`.
+ */
+export const FLEET_HOST_EDITOR_ORIGIN_HOST = 'x-maestrly-editor-host'
 export function isFleetHostEditorForwardedHost(value: unknown): value is string {
   const match = typeof value === 'string' ? /^(?:127\.0\.0\.1|localhost):(\d{1,5})$/.exec(value) : null
   return !!match && Number(match[1]) > 0 && Number(match[1]) <= 65_535
