@@ -49,12 +49,13 @@ describe('Maestro renderer contract', () => {
     expect(timeline).not.toContain('snapshot?.diversity')
   })
 
-  it('keeps Send beside Stop and routes text to the active Maestro run with a durable fallback', () => {
+  it('sends to the active Maestro run while it streams and routes text with a durable fallback', () => {
     const view = readFileSync('src/renderer/components/chat/ChatView.tsx', 'utf8')
     const composer = readFileSync('src/renderer/components/chat/ChatComposer.tsx', 'utf8')
     const preload = readFileSync('src/preload/api-chat.ts', 'utf8')
-    expect(composer).toContain('sendWhileStreaming')
-    expect(composer).toContain('(!streaming || sendWhileStreaming)')
+    // While the run streams, the main button sends whatever is typed; it stops the run only with nothing to send.
+    expect(composer).toContain('const stopMode = streaming && (!canSend || !!disabled)')
+    expect(composer).toContain('const queues = streaming && !sendWhileStreaming')
     expect(view).toContain('chatMaestroLivePost')
     expect(view).toContain("maestroSendTarget === 'current'")
     expect(view).toContain("t('composer.maestroTargetNext')")
