@@ -7,6 +7,21 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** unit).toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`
 }
 
+/**
+ * Version an asset shows: the one in use or being installed, otherwise the one installing it would get. Null when
+ * the installation gets the latest release and no check has told which one yet, so its sizes are unknown too.
+ */
+export function runtimeAssetVersion(asset: RuntimeAssetInfo): string | null {
+  if (asset.provided?.active) return asset.provided.version
+  if (asset.status.version) return asset.status.version
+  return asset.installsLatest ? null : asset.availableVersion
+}
+
+/** Download size: what the server reports while downloading, otherwise the release's estimate. */
+export function runtimeAssetDownloadBytes(asset: RuntimeAssetInfo): number {
+  return asset.status.totalBytes || asset.downloadBytes
+}
+
 export function assetProgress(asset: RuntimeAssetInfo): number {
   const total = asset.status.totalBytes || asset.downloadBytes
   return total > 0 ? Math.min(100, ((asset.status.bytesDownloaded ?? 0) / total) * 100) : 0

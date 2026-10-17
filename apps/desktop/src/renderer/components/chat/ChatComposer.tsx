@@ -6,6 +6,7 @@ import { hasDraggedFiles } from '@/lib/attachment-kind'
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { ChatAttachmentKind, ChatFileHit, ChatSlashCommand } from '../../../shared/chat'
+import { pasteShortcutLabel } from '../../../shared/shortcuts'
 import { MentionEditor, type MentionEditorHandle } from './MentionEditor'
 
 export interface UIAttachment {
@@ -305,7 +306,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
               ? (disabledPlaceholder ?? t('composer.placeholderDisabled'))
               : streaming
                 ? (streamingPlaceholder ?? t('composer.placeholderQueue'))
-                : (placeholder ?? t('composer.placeholder'))
+                : (placeholder ??
+                  t('composer.placeholder', { pasteShortcut: pasteShortcutLabel(window.api.platformInfo.os) }))
           }
           className="chat-input max-h-[220px] overflow-y-auto"
           maxHeight={MAX_H}

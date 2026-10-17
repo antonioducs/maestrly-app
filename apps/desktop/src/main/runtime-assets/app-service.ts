@@ -366,6 +366,11 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
     !!baseline &&
     (compareStableVersions(status.version, baseline.version) ?? 0) > 0
   const definition = installableDefinition(id)
+  const installsLatest =
+    isUpdatableRuntimeAssetId(id) &&
+    !baseline &&
+    status.state === 'not-installed' &&
+    !runtimeUpdates(id).hasRecentCheck()
   const target = definition.targets[hostRuntimeTarget()]
   const diskUsageBytes = includeDiskUsage
     ? await directoryBytes(path.join(runtimeService.root, id))
@@ -391,6 +396,7 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
     availableVersion: definition.version,
     downloadBytes: target?.downloadBytes ?? 0,
     unpackedBytes: target?.unpackedBytes ?? 0,
+    ...(installsLatest ? { installsLatest } : {}),
     status: safeStatus,
     ...(update ? { update } : {}),
     ...(baseline ? { provided: { version: baseline.version, active: !managedNewer } } : {}),
@@ -400,6 +406,14 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
 /** Full snapshot for status/list and operation results; includes the current disk footprint. */
 export function runtimeAssetInfo(id: RuntimeAssetId): Promise<RuntimeAssetInfo> {
   return buildRuntimeAssetInfo(id, true)
+}
+
+/**
+ * Called when the renderer reads an asset to show it: an updatable runtime awaiting its first installation looks up
+ * the release that installation would receive in the background, and the refreshed snapshot follows as a change.
+ */
+export function previewRuntimeAssetInstall(id: RuntimeAssetId): void {
+  if (isUpdatableRuntimeAssetId(id)) void runtimeUpdates(id).resolveInitialRelease()
 }
 
 /** Hot-path snapshot for in-flight progress; it never walks the asset directory. */

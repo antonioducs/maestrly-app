@@ -12,6 +12,8 @@ import { RuntimeAssetUpdateError, type RuntimeAssetService, type RuntimeAssetUpd
 
 export const RUNTIME_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000
 export const RUNTIME_UPDATE_INITIAL_DELAY_MS = 60_000
+/** Minimum spacing of the checks that preview a first installation, so a failing check is not retried on every read. */
+export const RUNTIME_INITIAL_RELEASE_RETRY_MS = 5 * 60_000
 
 /**
  * Failures attributable to the release itself. Only these exclude a version from automatic installation; network,
@@ -102,6 +104,8 @@ export class RuntimeUpdateController {
   private readonly intervalMs: number
   private operation: Operation | null = null
   private initialInstall: { controller: AbortController; promise: Promise<RuntimeAssetStatus> } | null = null
+  private initialRelease: { controller: AbortController; promise: Promise<void> } | null = null
+  private initialReleaseAttemptAt = Number.NEGATIVE_INFINITY
   private progress: Progress | null = null
   private lastError: PublicUpdateError | null = null
   private startupTimer: ReturnType<typeof setTimeout> | null = null
@@ -247,18 +251,56 @@ export class RuntimeUpdateController {
     return promise.then(() => this.snapshot())
   }
 
-  /** Query the official stable release. `force = false` reuses a check made within the scheduling interval. */
-  check(force = true): Promise<RuntimeAssetUpdateInfo> {
+  /** Whether a release check ran within the scheduling interval. Unavailable metadata counts as no recent check. */
+  hasRecentCheck(): boolean {
     let last = Number.NaN
     try {
       last = Date.parse(this.options.store.lastCheckedAt ?? '')
     } catch {
-      // Unavailable metadata: query again; recording the result reports its own failure.
+      return false
     }
-    if (!force && Number.isFinite(last) && this.now().getTime() - last < this.intervalMs) return this.snapshot()
+    return Number.isFinite(last) && this.now().getTime() - last < this.intervalMs
+  }
+
+  /** Query the official stable release. `force = false` reuses a check made within the scheduling interval. */
+  check(force = true): Promise<RuntimeAssetUpdateInfo> {
+    if (!force && this.hasRecentCheck()) return this.snapshot()
     return this.run('check', async (signal) => {
       await this.discover(signal)
     })
+  }
+
+  /**
+   * Learn the release a first installation would receive, so it can be shown before the user installs. Runs only
+   * where background checks are scheduled, while nothing is installed, provided, or being installed, without a recent
+   * check, and at most once per retry window. Failures are only logged: the installation checks again when it starts.
+   */
+  resolveInitialRelease(): Promise<void> {
+    if (this.initialRelease) return this.initialRelease.promise
+    const now = this.now().getTime()
+    if (
+      !this.options.schedule ||
+      this.disposed ||
+      now - this.initialReleaseAttemptAt < RUNTIME_INITIAL_RELEASE_RETRY_MS
+    )
+      return Promise.resolve()
+    this.initialReleaseAttemptAt = now
+    const controller = new AbortController()
+    const promise = (async () => {
+      if (this.operation || this.initialInstall || this.hasRecentCheck()) return
+      if ((await this.effectiveVersion()) !== null) return
+      try {
+        const latest = await this.options.discover(this.options.target, controller.signal)
+        this.options.store.recordCheck(latest)
+        this.changed()
+      } catch (error) {
+        if (!controller.signal.aborted) this.log('Release check before installation failed', error)
+      }
+    })().finally(() => {
+      if (this.initialRelease?.promise === promise) this.initialRelease = null
+    })
+    this.initialRelease = { controller, promise }
+    return promise
   }
 
   private async discover(signal: AbortSignal): Promise<RuntimeAssetDefinition | null> {
@@ -524,6 +566,7 @@ export class RuntimeUpdateController {
     if (this.intervalTimer) clearInterval(this.intervalTimer)
     this.startupTimer = null
     this.intervalTimer = null
+    this.initialRelease?.controller.abort(new Error(`${this.options.profile.label} release check cancelled`))
     this.cancel()
   }
 }

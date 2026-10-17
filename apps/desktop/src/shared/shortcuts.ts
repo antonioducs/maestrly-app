@@ -192,6 +192,11 @@ export function formatAccelerator(binding: ShortcutBinding, os: ShortcutOs): str
   return [...ordered.map((m) => PC_LABEL[m]), key].join('+')
 }
 
+/** The system paste shortcut as shown in hints: ⌘V on macOS, Ctrl+V on Windows and Linux. */
+export function pasteShortcutLabel(os: ShortcutOs): string {
+  return formatAccelerator({ key: 'v', mods: [os === 'mac' ? 'meta' : 'control'] }, os)
+}
+
 export function defaultClosePopup(_os: ShortcutOs): ShortcutBinding {
   return { key: 'escape', mods: ['control'] }
 }

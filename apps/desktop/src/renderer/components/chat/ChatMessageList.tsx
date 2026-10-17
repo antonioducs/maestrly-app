@@ -44,6 +44,7 @@ import type { ChatMessage, ChatModelMeta, MessagePart } from '../../../shared/ch
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
+import { pasteShortcutLabel } from '../../../shared/shortcuts'
 import { MentionEditor, type MentionEditorHandle } from './MentionEditor'
 
 function textOnly(m: ChatMessage): string {
@@ -540,7 +541,7 @@ function UserEditor({
         structuredAgentMentions={draftMentions}
         agents={agents}
         autoFocus
-        placeholder={t('composer.placeholder')}
+        placeholder={t('composer.placeholder', { pasteShortcut: pasteShortcutLabel(window.api.platformInfo.os) })}
         className="max-h-[240px] w-full resize-none overflow-y-auto bg-transparent"
         maxHeight={240}
         onOpenMention={onOpenMention}

@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import enChat from '../../src/shared/i18n/en/chat'
 import ptBrChat from '../../src/shared/i18n/pt-BR/chat'
-import { RUNTIME_ASSET_IDS } from '../../src/shared/runtime-assets'
+import { RUNTIME_ASSET_IDS, type RuntimeAssetInfo } from '../../src/shared/runtime-assets'
+import {
+  runtimeAssetDownloadBytes,
+  runtimeAssetVersion,
+} from '../../src/renderer/components/chat/runtime-asset-presentation'
 
 const apiSettings = readFileSync(
   new URL('../../src/renderer/components/chat/ApiKeySettings.tsx', import.meta.url),
@@ -101,6 +105,46 @@ describe('managed runtime renderer contract', () => {
       expect(catalog.componentProvidedByImage).toEqual(expect.any(String))
     }
     expect(componentSettings).toContain("t('settings.componentProvidedByImage')")
+  })
+
+  it('shows the version an installation gets, or that it gets the latest one', () => {
+    const asset = (overrides: Partial<RuntimeAssetInfo> = {}): RuntimeAssetInfo => ({
+      id: 'codex-runtime',
+      displayName: 'Codex runtime',
+      requiredBy: 'Codex',
+      availableVersion: '0.155.1',
+      downloadBytes: 100,
+      unpackedBytes: 200,
+      status: { id: 'codex-runtime', state: 'not-installed', diskUsageBytes: 0 },
+      ...overrides,
+    })
+    expect(runtimeAssetVersion(asset({ installsLatest: true }))).toBeNull()
+    expect(runtimeAssetVersion(asset())).toBe('0.155.1')
+    // The download publishes the version it installs and the server-reported size.
+    const downloading = asset({
+      installsLatest: true,
+      status: {
+        id: 'codex-runtime',
+        state: 'downloading',
+        version: '0.163.0',
+        totalBytes: 150,
+        diskUsageBytes: 0,
+      },
+    })
+    expect(runtimeAssetVersion(downloading)).toBe('0.163.0')
+    expect(runtimeAssetDownloadBytes(downloading)).toBe(150)
+    expect(runtimeAssetDownloadBytes(asset())).toBe(100)
+    expect(runtimeAssetVersion(asset({ provided: { version: '0.160.0', active: true } }))).toBe('0.160.0')
+
+    for (const source of [subscriptionAccount, componentSettings]) {
+      expect(source).toContain('runtimeAssetVersion(')
+      expect(source).toContain("t('settings.componentLatestVersion')")
+      expect(source).not.toMatch(/v\{(?:runtime|asset)\.availableVersion\}/)
+    }
+    for (const catalog of [enChat.settings, ptBrChat.settings]) {
+      expect(catalog.componentLatestVersion).toEqual(expect.any(String))
+      expect(catalog.componentSizesEstimate).toContain('~{{download}}')
+    }
   })
 
   it('requires an explicit tunnel-client install before tunnel creation', () => {

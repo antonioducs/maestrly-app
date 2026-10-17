@@ -12,6 +12,8 @@ import {
   formatBytes,
   formatCheckedAt,
   isRuntimeAssetUpdateActive,
+  runtimeAssetDownloadBytes,
+  runtimeAssetVersion,
   updateProgress,
 } from './runtime-asset-presentation'
 
@@ -23,12 +25,6 @@ const buttonCls = 'rounded border border-border px-2 py-0.5 text-[11px] disabled
 /** In a bot, the runtime its image ships is in use until a newer managed installation replaces it. */
 function providedActive(asset: RuntimeAssetInfo): boolean {
   return asset.provided?.active === true
-}
-
-function displayedVersion(asset: RuntimeAssetInfo): string {
-  return providedActive(asset) && asset.provided
-    ? asset.provided.version
-    : (asset.status.version ?? asset.availableVersion)
 }
 
 /**
@@ -85,7 +81,7 @@ function RuntimeAssetUpdatePanel({
     <div className="mt-2 flex flex-col gap-1.5 border-t border-border/60 pt-2">
       <div className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
         <span className="text-foreground">
-          {t('settings.componentUpdateInstalled', { version: displayedVersion(asset) })}
+          {t('settings.componentUpdateInstalled', { version: runtimeAssetVersion(asset) ?? asset.availableVersion })}
         </span>
         {update.availableVersion ? (
           <span className="text-indigo-300">
@@ -211,6 +207,7 @@ export function RuntimeComponentsSettings() {
         const active = ['downloading', 'verifying', 'installing', 'removing'].includes(asset.status.state)
         const updating = asset.update ? isRuntimeAssetUpdateActive(asset.update.state) : false
         const provided = providedActive(asset)
+        const version = runtimeAssetVersion(asset)
         return (
           <div key={asset.id} className="rounded-md border border-border px-2.5 py-2" data-runtime-asset={asset.id}>
             <div className="flex items-center gap-2">
@@ -221,11 +218,23 @@ export function RuntimeComponentsSettings() {
                   {provided && asset.status.state === 'not-installed'
                     ? t('settings.componentProvidedByImage')
                     : t(`settings.componentState_${asset.status.state}`)}{' '}
-                  · v{displayedVersion(asset)} ·{' '}
-                  {t('settings.componentSizes', {
-                    download: formatBytes(asset.downloadBytes),
-                    installed: formatBytes(asset.status.diskUsageBytes || asset.unpackedBytes),
-                  })}
+                  ·{' '}
+                  {version ? (
+                    <>
+                      v{version} ·{' '}
+                      {t(
+                        provided || asset.status.state === 'ready'
+                          ? 'settings.componentSizes'
+                          : 'settings.componentSizesEstimate',
+                        {
+                          download: formatBytes(runtimeAssetDownloadBytes(asset)),
+                          installed: formatBytes(asset.status.diskUsageBytes || asset.unpackedBytes),
+                        }
+                      )}
+                    </>
+                  ) : (
+                    t('settings.componentLatestVersion')
+                  )}
                 </p>
                 {active && asset.status.state !== 'removing' && (
                   <div className="mt-1 h-1 overflow-hidden rounded bg-white/10">

@@ -9,7 +9,10 @@ import { CODEX_RELEASE_PROFILE } from '../../src/main/runtime-assets/codex-relea
 import { RuntimeReleaseStore, type RuntimeReleaseStorage } from '../../src/main/runtime-assets/release-store'
 import type { RuntimeDownloader } from '../../src/main/runtime-assets/downloader'
 import { createCodexTarget, type RuntimeAssetDefinition } from '../../src/main/runtime-assets/registry'
-import { RuntimeUpdateController } from '../../src/main/runtime-assets/runtime-updates'
+import {
+  RUNTIME_INITIAL_RELEASE_RETRY_MS,
+  RuntimeUpdateController,
+} from '../../src/main/runtime-assets/runtime-updates'
 import { RuntimeAssetService } from '../../src/main/runtime-assets/service'
 
 let userData: string
@@ -52,12 +55,19 @@ function harness(
     schedule?: boolean
     storage?: ReturnType<typeof memoryStorage>
     baseline?: { version: string | null }
+    now?: () => Date
   } = {}
 ) {
   const storage = options.storage ?? memoryStorage()
   const embedded = codexDefinition('1.0.0')
   const empty = (id: RuntimeAssetId): RuntimeAssetDefinition => ({ id, version: 'none', targets: {} })
-  const store = new RuntimeReleaseStore({ profile: CODEX_RELEASE_PROFILE, storage, target: 'mac-arm64', embedded })
+  const store = new RuntimeReleaseStore({
+    profile: CODEX_RELEASE_PROFILE,
+    storage,
+    target: 'mac-arm64',
+    embedded,
+    ...(options.now ? { now: options.now } : {}),
+  })
   const downloader = vi.fn<RuntimeDownloader>(async (target, destination, download) => {
     await writeFile(destination, 'archive')
     download.onProgress?.(7, 7)
@@ -113,6 +123,7 @@ function harness(
     initialDelayMs: 1_000,
     intervalMs: 10_000,
     log: () => undefined,
+    ...(options.now ? { now: options.now } : {}),
     ...(baseline ? { baseline: async () => (baseline.version ? { version: baseline.version } : null) } : {}),
   })
   return { storage, store, service, update, downloader, discover, validate, onChanged, controller, latest, embedded }
@@ -384,6 +395,55 @@ describe('RuntimeUpdateController', () => {
       await service.install('codex-runtime')
       await expect(controller.installInitial()).resolves.toMatchObject({ version: '1.0.0' })
       expect(discover).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('resolveInitialRelease', () => {
+    it('records the release a first install would receive, once per check interval', async () => {
+      const { controller, discover, store, onChanged, downloader } = harness({ schedule: true })
+      expect(controller.hasRecentCheck()).toBe(false)
+      await Promise.all([controller.resolveInitialRelease(), controller.resolveInitialRelease()])
+      expect(discover).toHaveBeenCalledTimes(1)
+      expect(store.candidate()?.version).toBe('2.0.0')
+      expect(controller.hasRecentCheck()).toBe(true)
+      expect(onChanged).toHaveBeenCalled()
+      expect(downloader).not.toHaveBeenCalled()
+      // A preview is not an update check: it never reports an update state for a missing component.
+      expect(await controller.snapshot()).toMatchObject({ state: 'idle' })
+    })
+
+    it('stays offline in development and E2E builds', async () => {
+      const { controller, discover } = harness({ schedule: false })
+      await controller.resolveInitialRelease()
+      expect(discover).not.toHaveBeenCalled()
+    })
+
+    it('never checks for an installed or provided runtime', async () => {
+      const installed = harness({ schedule: true })
+      await installed.service.install('codex-runtime')
+      await installed.controller.resolveInitialRelease()
+      expect(installed.discover).not.toHaveBeenCalled()
+
+      const provided = harness({ schedule: true, baseline: { version: '1.0.0' } })
+      await provided.controller.resolveInitialRelease()
+      expect(provided.discover).not.toHaveBeenCalled()
+    })
+
+    it('only logs a failed check and retries it after the retry window', async () => {
+      let now = Date.parse('2026-10-17T12:00:00.000Z')
+      const { controller, discover, store } = harness({ schedule: true, now: () => new Date(now) })
+      discover.mockRejectedValueOnce(new Error('offline'))
+      await controller.resolveInitialRelease()
+      expect(discover).toHaveBeenCalledTimes(1)
+      expect(store.candidate()).toBeNull()
+      expect(await controller.snapshot()).not.toHaveProperty('error')
+
+      await controller.resolveInitialRelease()
+      expect(discover).toHaveBeenCalledTimes(1)
+      now += RUNTIME_INITIAL_RELEASE_RETRY_MS
+      await controller.resolveInitialRelease()
+      expect(discover).toHaveBeenCalledTimes(2)
+      expect(store.candidate()?.version).toBe('2.0.0')
     })
   })
 

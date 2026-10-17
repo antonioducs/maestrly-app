@@ -17,8 +17,17 @@ import type {
 import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../../shared/runtime-assets'
 import { SubscriptionUsagePanel } from '../SubscriptionUsagePanel'
 import { supportsSubscriptionUsage } from '../subscription-usage-presentation'
-import { assetProgress, formatBytes } from '../runtime-asset-presentation'
-import type { SubscriptionAccountEntry, SubscriptionAccountSnapshot } from './account-entries'
+import {
+  assetProgress,
+  formatBytes,
+  runtimeAssetDownloadBytes,
+  runtimeAssetVersion,
+} from '../runtime-asset-presentation'
+import {
+  subscriptionPlanLabel,
+  type SubscriptionAccountEntry,
+  type SubscriptionAccountSnapshot,
+} from './account-entries'
 import {
   DetailBackButton,
   DetailHeader,
@@ -378,6 +387,8 @@ export function SubscriptionAccount({
             ? t(copyKey('Unavailable'))
             : t(copyKey('Disconnected'))
   const identity = status?.username ?? status?.email
+  const plan = subscriptionPlanLabel(status?.planType, t)
+  const runtimeVersion = runtime ? runtimeAssetVersion(runtime) : null
   const providerName = t(`settings.accountProviderName_${providerKind}`)
 
   const refreshAll = async () => {
@@ -523,8 +534,8 @@ export function SubscriptionAccount({
         }
       />
 
-      {signedIn && (identity || status.planType) && (
-        <p className="mt-3 text-[12px] text-foreground/80">{[identity, status.planType].filter(Boolean).join(' · ')}</p>
+      {signedIn && (identity || plan) && (
+        <p className="mt-3 text-[12px] text-foreground/80">{[identity, plan].filter(Boolean).join(' · ')}</p>
       )}
       {!signedIn && <p className="mt-3 text-[12px] text-muted-foreground">{t(copyKey('Description'))}</p>}
       {runtime && runtimeOffered && (
@@ -534,12 +545,18 @@ export function SubscriptionAccount({
               name: t(`settings.componentName_${runtime.id}`),
             })}
           </p>
-          <p className="mt-0.5 text-muted-foreground">
-            v{runtime.availableVersion} ·{' '}
-            {t('settings.componentSizes', {
-              download: formatBytes(runtime.downloadBytes),
-              installed: formatBytes(runtime.status.diskUsageBytes || runtime.unpackedBytes),
-            })}
+          <p className="mt-0.5 text-muted-foreground" data-runtime-install-version={runtimeVersion ?? 'latest'}>
+            {runtimeVersion ? (
+              <>
+                v{runtimeVersion} ·{' '}
+                {t('settings.componentSizesEstimate', {
+                  download: formatBytes(runtimeAssetDownloadBytes(runtime)),
+                  installed: formatBytes(runtime.status.diskUsageBytes || runtime.unpackedBytes),
+                })}
+              </>
+            ) : (
+              t('settings.componentLatestVersion')
+            )}
           </p>
           {runtimeActive && runtime.status.state !== 'removing' && (
             <div className="mt-2 flex items-center gap-2">
