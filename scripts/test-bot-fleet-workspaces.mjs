@@ -11,11 +11,13 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import http from 'node:http'
@@ -23,7 +25,8 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { inflateSync, zstdDecompressSync } from 'node:zlib'
+import { inflateSync, zstdCompressSync, zstdDecompressSync } from 'node:zlib'
+import tar from 'tar-stream'
 import { ScreenStreamClient } from './fleet-screen-client.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -540,6 +543,7 @@ async function main() {
       editor: true,
       browser: true,
       computer: true,
+      folderTransfers: true,
     }
   )
   bridge.open(1, { role: 'main' })
@@ -1249,6 +1253,77 @@ async function main() {
     'host files',
     `20 MiB upload committed on the Docker host (owner uid ${statSync(uploaded).uid}); 64 MiB zstd range verified; ` +
       'refusals 409/416/403'
+  )
+
+  // A folder moves as one archive: the host packs it for a download, and extracts an uploaded one into a new folder.
+  const folder = path.join(hostFolder, 'e2e-folder')
+  mkdirSync(path.join(folder, 'sub'), { recursive: true })
+  writeFileSync(path.join(folder, 'a.txt'), 'alpha')
+  writeFileSync(path.join(folder, 'sub', 'b.txt'), 'beta')
+  symlinkSync('sub/b.txt', path.join(folder, 'b-link.txt'))
+  const begunArchive = await raw('POST', files + '/archives', json({ path: folder }))
+  const { archiveId } = await begunArchive.json()
+  assert.equal(begunArchive.status, 200, archiveId)
+  const archive = await poll(
+    'the folder archive',
+    async () => {
+      const status = await (await raw('GET', files + '/archives/' + archiveId)).json()
+      assert.ok(status.state === 'packing' || status.state === 'ready', JSON.stringify(status))
+      return status.state === 'ready' ? status : null
+    },
+    60000
+  )
+  assert.equal(archive.entries, 4, JSON.stringify(archive))
+  const packed = await raw('GET', files + '/content?path=' + encodeURIComponent(archive.path), {
+    headers: { 'x-maestrly-file-identity': archive.identity },
+  })
+  assert.equal(packed.status, 200)
+  const packedBytes = Buffer.from(await packed.arrayBuffer())
+  assert.equal(sha256(packedBytes), packed.headers.get('x-maestrly-sha256'))
+  const listed = {}
+  const extract = tar.extract()
+  extract.end(zstdDecompressSync(packedBytes))
+  for await (const entry of extract) {
+    const chunks = []
+    for await (const chunk of entry) chunks.push(chunk)
+    const { name, type, linkname } = entry.header
+    listed[name] = type === 'file' ? Buffer.concat(chunks).toString() : type === 'symlink' ? '-> ' + linkname : type
+  }
+  assert.deepEqual(listed, { 'a.txt': 'alpha', 'b-link.txt': '-> sub/b.txt', sub: 'directory', 'sub/b.txt': 'beta' })
+  assert.equal((await raw('DELETE', files + '/archives/' + archiveId)).status, 204)
+  assert.equal((await raw('GET', files + '/archives/' + archiveId)).status, 404)
+
+  const pack = tar.pack()
+  pack.entry({ name: 'index.html' }, '<p>e2e</p>')
+  pack.entry({ name: 'img', type: 'directory' })
+  pack.entry({ name: 'img/a.svg' }, '<svg/>')
+  pack.finalize()
+  const tarChunks = []
+  for await (const chunk of pack) tarChunks.push(chunk)
+  const upFolder = zstdCompressSync(Buffer.concat(tarChunks))
+  const folderBegun = await raw(
+    'POST',
+    files + '/uploads',
+    json({ directory: hostFolder, name: 'e2e-folder', size: upFolder.length, overwrite: false, kind: 'folder' })
+  )
+  const folderSession = await folderBegun.json()
+  assert.equal(folderBegun.status, 200, JSON.stringify(folderSession))
+  const folderPut = await raw('PUT', files + '/uploads/' + folderSession.uploadId + '?offset=0', {
+    headers: { 'x-maestrly-sha256': sha256(upFolder), 'x-maestrly-length': String(upFolder.length) },
+    body: upFolder,
+  })
+  assert.equal(folderPut.status, 204, await folderPut.text())
+  const extracted = await (
+    await raw('POST', files + '/uploads/' + folderSession.uploadId + '/commit', json({ sha256: sha256(upFolder) }))
+  ).json()
+  // The name is taken by the folder downloaded above: an uploaded folder never replaces another.
+  assert.equal(extracted.path, path.join(hostFolder, 'e2e-folder (2)'), JSON.stringify(extracted))
+  assert.equal(readFileSync(path.join(hostFolder, 'e2e-folder (2)', 'img', 'a.svg'), 'utf8'), '<svg/>')
+  assert.equal(readFileSync(path.join(folder, 'a.txt'), 'utf8'), 'alpha')
+  pass(
+    'host folders',
+    'a folder with a link packed on the host and its archive read through the gateway; an uploaded folder extracted ' +
+      'as e2e-folder (2) beside the one already there'
   )
 
   // Revoking the device closes its bridge and cuts its transfers.

@@ -27,6 +27,11 @@ export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindo
     openDir: () => path.join(app.getPath('temp'), 'maestrly-remote-files'),
     openPath: (file) => shell.openPath(file),
     emit: (transfers) => broadcast('transfers:changed', transfers),
+    packDir: () => path.join(app.getPath('temp'), 'maestrly-folder-uploads'),
+    folderTransfers: (hostId) =>
+      hostRegistry()
+        ?.list()
+        .find((host) => host.id === hostId)?.folderTransfers ?? false,
   })
   engineInstance = engine
   engine.start()
@@ -41,6 +46,9 @@ export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindo
   reg.mhandle('transfers:open', (_event, hostId: unknown, remotePath: unknown) =>
     engine.download(text(hostId), text(remotePath), 'open')
   )
+  reg.mhandle('transfers:download-folder', (_event, hostId: unknown, remotePath: unknown) =>
+    engine.downloadFolder(text(hostId), text(remotePath))
+  )
   reg.mhandle('transfers:upload-paths', (_event, hostId: unknown, remoteDirectory: unknown, paths: unknown) =>
     engine.upload(
       text(hostId),
@@ -48,10 +56,12 @@ export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindo
       text(remoteDirectory)
     )
   )
-  reg.mhandle('transfers:upload-pick', async (_event, hostId: unknown, remoteDirectory: unknown) => {
+  reg.mhandle('transfers:upload-pick', async (_event, hostId: unknown, remoteDirectory: unknown, mode: unknown) => {
     const window = deps.getMainWindow()
     if (!window) return { queued: [], skipped: [] }
-    const picked = await dialog.showOpenDialog(window, { properties: ['openFile', 'multiSelections'] })
+    const picked = await dialog.showOpenDialog(window, {
+      properties: [mode === 'folder' ? 'openDirectory' : 'openFile', 'multiSelections'],
+    })
     return picked.canceled
       ? { queued: [], skipped: [] }
       : engine.upload(text(hostId), picked.filePaths, text(remoteDirectory))

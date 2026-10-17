@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { planRanges } from '../../src/main/host-transfers/ranges'
+import { initializeHostTransferSchema } from '../../src/main/host-transfers/schema'
 import {
   deleteHostTransfer,
   finishHostTransferRange,
@@ -102,6 +103,34 @@ describe('host transfer queue', () => {
       w: 'queued',
       v: 'queued',
       p: 'paused',
+    })
+  })
+
+  it('records where a folder transfer stands and the archive it moves', () => {
+    insertHostTransfer(transfer('f', { kind: 'folder', stage: 'packing', size: 0, identity: '' }), [])
+    expect(getHostTransfer('f')).toMatchObject({ kind: 'folder', stage: 'packing', archiveId: null, archivePath: null })
+    updateHostTransfer('f', { archiveId: 'a'.repeat(32), archivePath: '/archives/a.tar.zst', stage: 'transferring' })
+    expect(getHostTransfer('f')).toMatchObject({
+      stage: 'transferring',
+      archiveId: 'a'.repeat(32),
+      archivePath: '/archives/a.tar.zst',
+    })
+    insertHostTransfer(transfer('plain'), planRanges(10, 4))
+    expect(getHostTransfer('plain')).toMatchObject({ kind: 'file', stage: null })
+  })
+
+  it('adds the folder columns to a queue recorded before folders moved, its transfers being files', () => {
+    insertHostTransfer(transfer('old'), planRanges(10, 4))
+    for (const column of ['kind', 'stage', 'archive_id', 'archive_path'])
+      getDb().exec(`ALTER TABLE host_transfers DROP COLUMN ${column};`)
+    initializeHostTransferSchema(getDb())
+    initializeHostTransferSchema(getDb())
+    expect(getHostTransfer('old')).toMatchObject({
+      kind: 'file',
+      stage: null,
+      archiveId: null,
+      archivePath: null,
+      doneBytes: 0,
     })
   })
 

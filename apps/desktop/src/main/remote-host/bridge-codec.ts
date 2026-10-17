@@ -112,6 +112,8 @@ const hostInfo = z.object({
   browser: z.boolean(),
   // Hosts from before computers do not say.
   computer: z.boolean().default(false),
+  // Nor do hosts from before folder transfers.
+  folderTransfers: z.boolean().default(false),
 })
 const hostFrame = z.union([
   z.object({

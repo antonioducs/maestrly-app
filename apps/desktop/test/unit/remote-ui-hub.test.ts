@@ -36,6 +36,7 @@ const hostInfo: RemoteHostInfo = {
   editor: false,
   browser: false,
   computer: false,
+  folderTransfers: false,
 }
 const hello: BridgeClientFrame = {
   t: 'hello',

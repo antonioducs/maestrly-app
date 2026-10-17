@@ -7,6 +7,7 @@ import {
   fleetSettingsRouteKey,
   parseFleetInstanceEditorPath,
   type FleetEnvironmentSettingsService,
+  type FleetHostFileArchiveRequest,
   type FleetHostFileDigestRequest,
   type FleetHostFileStatRequest,
   type FleetHostFileUploadBegin,
@@ -437,7 +438,16 @@ type Handler = (request: { params: Record<string, string>; url: URL; input: unkn
 /** What the control server needs of a workspaces host's files; only a workspaces host passes them. */
 export type HostFilesRoutes = Pick<
   HostFiles,
-  'stat' | 'digest' | 'content' | 'beginUpload' | 'uploadChunk' | 'commitUpload' | 'abortUpload'
+  | 'stat'
+  | 'digest'
+  | 'content'
+  | 'beginUpload'
+  | 'uploadChunk'
+  | 'commitUpload'
+  | 'abortUpload'
+  | 'beginArchive'
+  | 'archiveStatus'
+  | 'releaseArchive'
 >
 
 /** Takes over an authenticated upgrade of the bridge path; a workspaces host passes its remote UI hub. */
@@ -650,6 +660,9 @@ export function createInstanceControlServer(
     hostFileUploadCommit: ({ params, input }) =>
       hostFiles().commitUpload(params.uploadId, input as FleetHostFileUploadCommit),
     hostFileUploadAbort: ({ params }) => hostFiles().abortUpload(params.uploadId),
+    hostFileArchiveBegin: ({ input }) => hostFiles().beginArchive(input as FleetHostFileArchiveRequest),
+    hostFileArchiveStatus: ({ params }) => hostFiles().archiveStatus(params.archiveId),
+    hostFileArchiveRelease: ({ params }) => hostFiles().releaseArchive(params.archiveId),
   }
 
   const server = http.createServer(async (request, response) => {

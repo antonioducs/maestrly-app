@@ -1,8 +1,10 @@
 import {
   buildPath,
   FLEET_GATEWAY_ROUTES,
+  FLEET_HOST_FILE_FOLDER_ROUTE_KEYS,
   FLEET_HOST_FILE_GATEWAY_ERRORS,
   FLEET_HOST_FILES_FEATURE,
+  FLEET_HOST_FILES_FOLDERS_FEATURE,
   FLEET_INSTANCE_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
@@ -22,6 +24,7 @@ const CALL_TIMEOUT_MS = 30_000
 const RAW_TIMEOUT_MS = 30 * 60 * 1_000
 // The development host of unpackaged builds and tests (see host-registry).
 const DIRECT_HOST_ID: HostId = 'direct/host'
+const FOLDER_KEYS: ReadonlySet<FleetHostFileRouteKey> = new Set(FLEET_HOST_FILE_FOLDER_ROUTE_KEYS)
 
 type Routes = typeof FLEET_INSTANCE_ROUTES
 type RawKey = 'hostFileContent' | 'hostFileUploadChunk'
@@ -85,8 +88,11 @@ export function httpHostFilesEndpoint(target: {
   origin: string
   headers: () => Record<string, string>
   path: (key: FleetHostFileRouteKey, params: Record<string, string>) => string
+  /** False when the way to the host does not pass the folder-archive routes: they fail before they are sent. */
+  folders?: boolean
 }): HostFilesEndpoint {
   const send = async (key: FleetHostFileRouteKey, init: SendInit): Promise<Response> => {
+    if (target.folders === false && FOLDER_KEYS.has(key)) throw new TransferFailure('gateway-update-required')
     const query = init.query
       ? '?' +
         new URLSearchParams(
@@ -169,6 +175,7 @@ export function resolveHostFilesEndpoint(
     // Read on each request: the device token may be replaced while a transfer runs.
     headers: () => deps.fleet.hostFilesAccess()?.headers ?? access.headers,
     path: (key, params) => buildPath(FLEET_GATEWAY_ROUTES[key].path, { eid: environment.id, ...params }),
+    folders: deps.fleet.hasFeature(FLEET_HOST_FILES_FOLDERS_FEATURE),
   })
 }
 
@@ -193,6 +200,9 @@ const HOST_REASONS: Partial<Record<FleetHostFileErrorReason, HostTransferError>>
   'digest-mismatch': 'verification-failed',
   'chunk-mismatch': 'verification-failed',
   'unknown-upload': 'verification-failed',
+  'unsafe-archive': 'unsafe-archive',
+  'archive-expired': 'archive-expired',
+  'no-space': 'host-full',
 }
 
 const codeOf = (error: unknown): string | undefined => {

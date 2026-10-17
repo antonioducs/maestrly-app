@@ -1,9 +1,11 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import {
+  FLEET_HOST_FILE_FOLDER_ROUTE_KEYS,
   FLEET_HOST_FILE_GATEWAY_ERRORS,
   FLEET_HOST_FILE_LIMITS,
   FLEET_HOST_FILE_ROUTE_KEYS,
   FLEET_HOST_FILES_FEATURE,
+  FLEET_HOST_FILES_FOLDERS_FEATURE,
   FLEET_INSTANCE_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
@@ -15,15 +17,20 @@ import { GatewayError } from './errors.js'
 import { endToEnd, upstreamHeaders } from './forward-headers.js'
 import type { Lifecycle } from './lifecycle.js'
 
+// Routes that hash a whole file, or extract an uploaded folder, before they answer.
 const SLOW: ReadonlySet<FleetHostFileRouteKey> = new Set(['hostFileDigest', 'hostFileUploadCommit'])
+const FOLDER_ROUTES: ReadonlySet<FleetHostFileRouteKey> = new Set(FLEET_HOST_FILE_FOLDER_ROUTE_KEYS)
 const JSON_BODY_MAX = 64 * 1024
 const BODY_LIMITS: Record<FleetHostFileRouteKey, number> = {
   hostFileStat: JSON_BODY_MAX,
   hostFileDigest: JSON_BODY_MAX,
   hostFileUploadBegin: JSON_BODY_MAX,
   hostFileUploadCommit: JSON_BODY_MAX,
+  hostFileArchiveBegin: JSON_BODY_MAX,
   hostFileContent: 0,
   hostFileUploadAbort: 0,
+  hostFileArchiveStatus: 0,
+  hostFileArchiveRelease: 0,
   hostFileUploadChunk: FLEET_HOST_FILE_LIMITS.uploadChunkBytes + FLEET_HOST_FILE_LIMITS.chunkBodySlackBytes,
 }
 // What only the device and the gateway share: never forwarded to the environment.
@@ -32,8 +39,8 @@ const CALLER_HEADERS = ['authorization', 'host', 'cookie', FLEET_PROTOCOL_HEADER
 export interface HostFilesProxyDeps {
   host: (environmentId: string) => string | null
   secret: (environmentId: string) => string | null
-  /** Whether the environment's Maestrly serves host files. */
-  supports: (environmentId: string) => boolean
+  /** Whether the environment's Maestrly has a capability: host files, or moving whole folders. */
+  supports: (environmentId: string, feature: string) => boolean
   instancePort: number
   /** A transfer whose environment says nothing for this long is cut. */
   idleTimeoutMs: number
@@ -48,7 +55,7 @@ export function lifecycleHostFilesDeps(lifecycle: Lifecycle): HostFilesProxyDeps
     host: bridge.host,
     secret: bridge.secret,
     instancePort: bridge.instancePort,
-    supports: (id) => lifecycle.environmentCapabilities(id).includes(FLEET_HOST_FILES_FEATURE),
+    supports: (id, feature) => lifecycle.environmentCapabilities(id).includes(feature),
     idleTimeoutMs: 120_000,
     slowTimeoutMs: 6 * 60 * 60 * 1_000,
   }
@@ -87,7 +94,10 @@ export class HostFilesProxy {
     const host = this.deps.host(environmentId)
     const secret = this.deps.secret(environmentId)
     if (!host || !secret) throw new GatewayError('CONFLICT', FLEET_HOST_FILE_GATEWAY_ERRORS.notRunning)
-    if (!this.deps.supports(environmentId))
+    if (
+      !this.deps.supports(environmentId, FLEET_HOST_FILES_FEATURE) ||
+      (FOLDER_ROUTES.has(key) && !this.deps.supports(environmentId, FLEET_HOST_FILES_FOLDERS_FEATURE))
+    )
       throw new GatewayError('CONFLICT', FLEET_HOST_FILE_GATEWAY_ERRORS.updateHost)
     const declared = Number(request.headers['content-length'] ?? 0)
     if (

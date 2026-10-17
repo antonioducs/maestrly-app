@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -243,7 +243,7 @@ test('without a remote host the sidebar has no host switcher', async () => {
 })
 
 // Files of a host, moved to and from this computer through the host's control server, as the gateway would carry them.
-test('remote host files: browse, preview, rename, delete, upload and download', async () => {
+test('remote host files: browse, preview, rename, delete, upload and download files and folders', async () => {
   test.setTimeout(240_000)
   test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
   await access(path.join(desktop, 'out/main/index.js'))
@@ -351,6 +351,35 @@ test('remote host files: browse, preview, rename, delete, upload and download', 
     expect(opened).toContain(`${path.sep}maestrly-remote-files${path.sep}`)
     expect(path.basename(opened)).toBe('report.csv')
     expect(sha(await readFile(opened))).toBe(sha(report))
+
+    // A folder of the host, downloaded whole and extracted in Downloads.
+    await mkdir(path.join(workspacesRoot, 'site', 'css'), { recursive: true })
+    await writeFile(path.join(workspacesRoot, 'site', 'index.html'), '<p>hi</p>')
+    await writeFile(path.join(workspacesRoot, 'site', 'css', 'a.css'), 'p{}')
+    await symlink('index.html', path.join(workspacesRoot, 'site', 'home.html'))
+    await panel.getByRole('button', { name: 'Refresh' }).click()
+    await panel.getByRole('button', { name: 'Download folder to this computer: site' }).click()
+    await expect(panel.locator('[data-transfer="site"][data-transfer-state="done"]')).toHaveCount(1, {
+      timeout: 60_000,
+    })
+    expect(await readFile(path.join(downloads, 'site', 'css', 'a.css'), 'utf8')).toBe('p{}')
+    expect(await readlink(path.join(downloads, 'site', 'home.html'))).toBe('index.html')
+    expect((await readdir(downloads)).sort()).toEqual(['big.bin', 'report.csv', 'site'])
+
+    // A folder of this computer, uploaded next to the host's folder of the same name.
+    await client.evaluate(
+      ({ dialog }, folders) => {
+        dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: folders })) as typeof dialog.showOpenDialog
+      },
+      [path.join(downloads, 'site')]
+    )
+    await panel.getByRole('button', { name: 'Upload folder…' }).click()
+    await expect(panel.locator('[data-transfer="site"][data-transfer-state="done"]')).toHaveCount(2, {
+      timeout: 60_000,
+    })
+    await expect(panel.locator('[data-file-entry="site (2)"]')).toBeVisible()
+    expect(await readFile(path.join(workspacesRoot, 'site (2)', 'index.html'), 'utf8')).toBe('<p>hi</p>')
+    expect(await readlink(path.join(workspacesRoot, 'site (2)', 'home.html'))).toBe('index.html')
   } finally {
     await client?.close().catch(() => undefined)
     await host?.close().catch(() => undefined)

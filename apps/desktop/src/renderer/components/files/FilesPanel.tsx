@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronUp, HardDrive, Home, LoaderCircle, RefreshCw, Upload } from 'lucide-react'
+import { ChevronUp, FolderUp, HardDrive, Home, LoaderCircle, RefreshCw, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { hasDraggedFiles } from '@/lib/attachment-kind'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useHostDirectory } from '@/lib/hosts/use-host-directory'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { usePanelMemoryEviction } from '@/lib/panel-memory-eviction'
 import { cn } from '@/lib/utils'
 import { type HostFsEntry, type HostFsUsage, hostFsErrorCode } from '../../../shared/host-fs'
@@ -20,11 +21,15 @@ import { useHostTransfers } from './use-host-transfers'
 // Transfers live in this computer's main process: the panel holds nothing that eviction would lose.
 const evictable = () => ({ safe: true })
 
-/** The files of a host, for a conversation that runs there: browse, preview, rename, delete, and move files. */
+/**
+ * The files of a host, for a conversation that runs there: browse, preview, rename, delete, and move files and whole
+ * folders.
+ */
 export function FilesPanel({ conv }: { conv: string }) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
   const hostId = useHostId()
+  const folders = useHostInfo(hostId).folderTransfers
   usePanelMemoryEviction(conv, 'files', evictable)
   const start = useCallback(
     async (roots: Parameters<typeof defaultRoot>[0]) =>
@@ -68,6 +73,10 @@ export function FilesPanel({ conv }: { conv: string }) {
   }
   const uploaded = (result: HostTransferUploadResult) =>
     setNotice(result.skipped.length ? t('files.skipped', { names: result.skipped.join(', ') }) : null)
+  const pick = (mode: 'files' | 'folder') => {
+    if (!current) return
+    window.api.transfersUploadPick(hostId, current, mode).then(uploaded, () => setNotice(t('files.actionFailed')))
+  }
   const drop = async (files: File[]) => {
     if (!current || !files.length) return
     try {
@@ -119,20 +128,32 @@ export function FilesPanel({ conv }: { conv: string }) {
             )
           })}
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="ml-auto h-7 gap-1.5 px-2 text-xs"
-          disabled={!current}
-          onClick={() => {
-            if (!current) return
-            window.api.transfersUploadPick(hostId, current).then(uploaded, () => setNotice(t('files.actionFailed')))
-          }}
-        >
-          <Upload className="size-3.5" />
-          {t('files.upload')}
-        </Button>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 px-2 text-xs"
+            disabled={!current}
+            onClick={() => pick('files')}
+          >
+            <Upload className="size-3.5" />
+            {t('files.upload')}
+          </Button>
+          {folders && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 px-2 text-xs"
+              disabled={!current}
+              onClick={() => pick('folder')}
+            >
+              <FolderUp className="size-3.5" />
+              {t('files.uploadFolder')}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-1.5 px-2 py-1.5">
@@ -198,6 +219,9 @@ export function FilesPanel({ conv }: { conv: string }) {
         error={directory.error}
         onOpenFolder={(entry) => void go(entry.path)}
         onDownload={(entry) => started(window.api.transfersDownload(hostId, entry.path))}
+        onDownloadFolder={
+          folders ? (entry) => started(window.api.transfersDownloadFolder(hostId, entry.path)) : undefined
+        }
         onOpen={(entry) => started(window.api.transfersOpen(hostId, entry.path))}
         onPreview={setPreview}
         onRename={async (entry, name) => {

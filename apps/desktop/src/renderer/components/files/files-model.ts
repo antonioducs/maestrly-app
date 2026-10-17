@@ -46,12 +46,40 @@ export function formatDuration(ms: number, locale: string): string {
   return rest ? `${unit(locale, 'hour', hours)} ${unit(locale, 'minute', rest)}` : unit(locale, 'hour', hours)
 }
 
+/** A folder's archive is made, or taken apart, while this holds: its bytes are not moving yet, or any more. */
+const preparing = (transfer: HostTransferView): boolean =>
+  transfer.kind === 'folder' &&
+  (transfer.stage === 'packing' || (transfer.stage === 'extracting' && transfer.state !== 'done'))
+
+/** How far a transfer went, in percent; null while a folder is packed or extracted at a pace nobody knows yet. */
+export function transferProgress(transfer: HostTransferView): number | null {
+  if (preparing(transfer)) {
+    if (transfer.stageProgress !== null) return Math.min(100, transfer.stageProgress * 100)
+    return transfer.state === 'running' ? null : 0
+  }
+  return transfer.size ? Math.min(100, (transfer.doneBytes / transfer.size) * 100) : 100
+}
+
+export type TransferStageLabel = 'packingRemote' | 'packingLocal' | 'extractingLocal' | 'extractingRemote'
+
+/** What a running folder transfer does besides moving bytes; null when its state says it all. */
+export function transferStageLabel(transfer: HostTransferView): TransferStageLabel | null {
+  if (transfer.kind !== 'folder') return null
+  const download = transfer.direction === 'download'
+  if (transfer.state === 'running' && transfer.stage === 'packing') return download ? 'packingRemote' : 'packingLocal'
+  if (transfer.state === 'running' && transfer.stage === 'extracting' && download) return 'extractingLocal'
+  // An uploaded folder is extracted on the host while it is committed.
+  if (transfer.state === 'verifying' && !download) return 'extractingRemote'
+  return null
+}
+
 /** "done of total · speed · time left", leaving out what is not known yet. */
 export function transferDetail(
   transfer: HostTransferView,
   locale: string,
   t: (key: string, values: Record<string, string>) => string
 ): string {
+  if (preparing(transfer)) return transfer.stageProgress === null ? '' : `${Math.round(transfer.stageProgress * 100)}%`
   const parts = [
     t('files.transfers.progress', { done: formatBytes(transfer.doneBytes), total: formatBytes(transfer.size) }),
   ]

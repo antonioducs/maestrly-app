@@ -261,6 +261,11 @@ export const FLEET_WORKSPACES_HOST_FEATURE = 'workspaces-host'
  */
 export const FLEET_HOST_FILES_FEATURE = 'host-files'
 /**
+ * Gateway feature (`/v1/meta`): the gateway passes the folder-archive routes of host files through. As an instance
+ * capability: the environment's Maestrly packs folders for download and extracts uploaded folders.
+ */
+export const FLEET_HOST_FILES_FOLDERS_FEATURE = 'host-files-folders'
+/**
  * Gateway feature (`/v1/meta`): a server hosts several workspaces environments, one per scope of the owner's work, each
  * with a Docker network and a server folder of its own, and every environment may have a CPU limit, a tint and (for
  * workspaces) an idle stop.

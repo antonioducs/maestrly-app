@@ -1195,6 +1195,7 @@ app.whenReady().then(async () => {
         editor: true,
         browser: true,
         computer: serverComputers() !== null,
+        folderTransfers: true,
       }),
       // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
       // language of the computer that connected last.

@@ -20,6 +20,12 @@ User-visible changes by version. Downloads are on
 - The mobile app's **Workspaces** tab lists every chat of each workspace, with
   the chats that share a branch in a folder named after it, as in the desktop
   sidebar.
+- The **Files** tab of a conversation on a server downloads and uploads whole
+  folders: a folder's download button saves it, extracted, to **Downloads**,
+  and **Upload folder…** or dragging a folder sends it to the server. A folder
+  never replaces another: a taken name arrives as `name (2)`. It needs a
+  workspaces environment and a bot server on this version. See
+  [Files](docs/remote-workspaces.md#files).
 
 ### Fixed
 

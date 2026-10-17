@@ -17,6 +17,7 @@ import {
   FLEET_WORKSPACES_HOST_FEATURE,
   FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_HOST_FILES_FEATURE,
+  FLEET_HOST_FILES_FOLDERS_FEATURE,
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
@@ -363,7 +364,12 @@ export async function publicRoute(
           ],
           // Past the 20 features installed desktops read (`FLEET_META_FEATURES_LEGACY_MAX`). `phones` is announced
           // also when push is off: a phone then hears from the push routes that this server sends none.
-          moreFeatures: [FLEET_PHONES_FEATURE, FLEET_DEVICES_FEATURE, FLEET_ENVIRONMENT_PLUGINS_FEATURE],
+          moreFeatures: [
+            FLEET_PHONES_FEATURE,
+            FLEET_DEVICES_FEATURE,
+            FLEET_ENVIRONMENT_PLUGINS_FEATURE,
+            FLEET_HOST_FILES_FOLDERS_FEATURE,
+          ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },

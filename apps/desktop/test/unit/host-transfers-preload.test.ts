@@ -11,6 +11,16 @@ describe('transfer queue preload', () => {
     expect(invoke).toHaveBeenCalledWith('transfers:upload-paths', 'direct/host', '/srv', ['/a.csv'])
   })
 
+  it('asks for files or folders to upload, and downloads a folder by its path', async () => {
+    const invoke = vi.spyOn(electron.ipcRenderer, 'invoke').mockResolvedValue({ queued: [], skipped: [] })
+    await transfersApi.transfersUploadPick('direct/host', '/srv')
+    expect(invoke).toHaveBeenLastCalledWith('transfers:upload-pick', 'direct/host', '/srv', 'files')
+    await transfersApi.transfersUploadPick('direct/host', '/srv', 'folder')
+    expect(invoke).toHaveBeenLastCalledWith('transfers:upload-pick', 'direct/host', '/srv', 'folder')
+    await transfersApi.transfersDownloadFolder('direct/host', '/srv/site')
+    expect(invoke).toHaveBeenLastCalledWith('transfers:download-folder', 'direct/host', '/srv/site')
+  })
+
   it('follows the queue until the subscriber stops', () => {
     const on = vi.spyOn(electron.ipcRenderer, 'on')
     const off = vi.spyOn(electron.ipcRenderer, 'removeListener')

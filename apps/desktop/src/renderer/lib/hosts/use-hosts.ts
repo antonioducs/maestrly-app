@@ -21,6 +21,7 @@ function localHost(): HostView {
     editor: true,
     browser: true,
     computer: false,
+    folderTransfers: false,
     environment: null,
     hostVersion: null,
   }
