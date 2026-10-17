@@ -794,7 +794,8 @@ The actions are reading its conversations, creating them and sending messages, c
 answering its ordinary questions. The approval ceiling bounds how far its conversations on that computer run before
 they ask you: **Ask for approval** waits for every file change, command, web fetch and tool; **Approve for me** runs
 reading and editing inside the project and still asks for commands and folders outside it; **Full access** asks for
-nothing, so choose it only for a bot you control yourself. A conversation can never be set past the ceiling.
+nothing. **Full access** is selected when you first give access, because the work is already delegated to the bot;
+choose a stricter ceiling for a bot you do not control yourself. A conversation can never be set past the ceiling.
 
 The bot gets these tools once its server and its environment's image support them, even before any computer gives
 it access, so it can tell you how to give it access:

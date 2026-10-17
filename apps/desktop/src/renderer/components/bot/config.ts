@@ -9,5 +9,5 @@ export const BOT_ACTION_NAMES: readonly BotActionName[] = ['chats:read', 'chats:
 /** Offered in the order they widen, so the person reads the strictest choice first. */
 export const BOT_PERMISSION_CEILING_NAMES: readonly BotPermissionCeiling[] = ['ask', 'auto', 'full']
 
-/** What a bot the person just approved starts with: routine work runs, commands still ask. */
-export const SUGGESTED_BOT_PERMISSION_CEILING: BotPermissionCeiling = 'auto'
+/** What a bot the person just approved starts with: work is delegated to it, so nothing asks. */
+export const SUGGESTED_BOT_PERMISSION_CEILING: BotPermissionCeiling = 'full'
