@@ -290,7 +290,7 @@ Desktop apps from before environments can list, restore and delete an archived e
 
 **Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
-The gateway migrates schemas 5 to 14 to schema 15 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; and schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before). Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+The gateway migrates schemas 5 to 15 to schema 16 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); and schema 16 which workspaces environments linked which bot for the desktop bridge. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Workspaces environments need the gateway's `workspaces-host` feature and a bot image that can host workspaces. The desktop app offers **Set up workspaces on this server** only with that feature. A desktop app from before it shows a workspaces environment as an environment with no bots; the gateway refuses to add a bot to it. On an image from before it, a workspaces environment fails to start with "This bot image cannot host workspaces. Update the server."
 
@@ -303,7 +303,9 @@ Environment default compaction models need the gateway's `environment-compaction
 The unified desktop needs the environment's image to advertise the `unified-desktop` capability. An environment on an
 older image keeps its separate **Browser** and **Apps** areas until it restarts onto the current image.
 
-A bot reaches the projects of your computers when the gateway has the `desktop-bridge` feature, the environment's image has the matching capability, and the computer runs a desktop app that answers desktop calls; until all three are updated, the bot's **This computer** settings say what is missing and the bot has no `desktop_*` tools. A computer on an older desktop app never asks for desktop calls, so it is offline for every bot. This adds schema 10 (`desktop_links`) to the gateway database: back up the gateway volume before upgrading, since an older gateway refuses a newer schema.
+A bot reaches the projects of your computers when the gateway has the `desktop-bridge` feature, the environment's image has the matching capability, and the computer runs a desktop app that answers desktop calls; until all three are updated, the bot's **Projects** settings say what is missing and the bot has no `desktop_*` tools. A computer on an older desktop app never asks for desktop calls, so it is offline for every bot. This adds schema 10 (`desktop_links`) to the gateway database: back up the gateway volume before upgrading, since an older gateway refuses a newer schema.
+
+A bot reaches the projects of a workspaces environment when the gateway has the `host-desktop-calls` feature (announced in `moreFeatures` of `/v1/meta`), the bot's environment has the `desktop-bridge` capability, and the workspaces environment runs an image that advertises `host-desktop-calls`, which it does only with its host token. Until all three are updated, **Workspaces on the server** in the bot's **Projects** settings says what is missing. A desktop app from before it lists a workspaces environment's link among the computers with access, and can remove it. This adds schema 16 (`environment_desktop_links`) to the gateway database.
 
 Editing your last message to a bot needs the gateway's `message-edit` feature and the matching capability in the environment's image. Until both are updated, **Edit and resend** does not appear.
 
@@ -782,11 +784,11 @@ input; completed and cancelled are final.
 A bot can start and follow development conversations in the projects of the computers you paired with its bot
 server. Each computer decides on its own:
 
-1. On that computer, open the bot, then **Settings → This computer**.
+1. On that computer, open the bot, then **Settings → Projects**.
 2. Turn on **Give this bot access to this computer**. Choose the projects, the account/model pairs, the actions,
    the approval ceiling, and the name this computer shows the bot (its pairing name by default), then **Give
    access**.
-3. Repeat on every computer the bot should reach. **Other computers with access** lists the others and whether
+3. Repeat on every computer the bot should reach. **Other computers and environments with access** lists the others and whether
    each is online now. From there you can remove another computer's access; what a computer grants changes only
    on that computer.
 
@@ -802,10 +804,10 @@ it access, so it can tell you how to give it access:
 
 | Tool | Scope |
 | --- | --- |
-| `desktop_list_desktops` | The computers that gave the bot access: `desktopId`, name, online now, last seen. |
-| `desktop_list_workspaces`, `desktop_list_chats` | One computer, or every computer that is online at once, grouped by computer; offline ones are marked. |
-| `desktop_list_selections` | The account/model pairs one computer offers. |
-| `desktop_create_chat` | Start a conversation in one authorized project of one computer, on a base branch. |
+| `desktop_list_desktops` | The computers and workspaces environments that gave the bot access: `desktopId`, name, `kind` (`computer` or `environment`), online now, last seen. |
+| `desktop_list_workspaces`, `desktop_list_chats` | One of them, or every computer that is online and every environment at once, grouped by `desktopId`; offline computers are marked. |
+| `desktop_list_selections` | The account/model pairs one computer or environment offers. |
+| `desktop_create_chat` | Start a conversation in one authorized project of one computer or environment, on a base branch. |
 | `desktop_read_chat`, `desktop_read_chat_history`, `desktop_wait_events` | Follow a conversation the bot created; a wait lasts at most 20 seconds. |
 | `desktop_send_message`, `desktop_configure_chat`, `desktop_cancel_turn`, `desktop_answer_question` | Steer a conversation the bot created. |
 
@@ -856,6 +858,45 @@ What reaches the bot is opaque ids, project and model labels, branches, its own 
 ordinary questions and execution status. No local path, no credential, and not the computer's own id. The bot server sees calls and answers as they pass and
 stores only which computers linked which bot, and under what name.
 
+### In the server's workspaces environments
+
+A workspaces environment of the bot's server can give it access too, so the bot works there while your computers are
+off. The environment decides on its own, as a computer does:
+
+1. On any of your computers, open the bot, then **Settings → Projects**. **Workspaces on the server** lists the
+   server's workspaces environments; one that is stopped asks you to start it first.
+2. Turn on **Give this bot access to this environment** on the environment's card, and choose its projects, account/model
+   pairs, actions, ceiling, and the name the bot sees (the environment's name by default). The choices travel over
+   that environment's bridge and are kept there: the environment links itself to the bot with its own host token.
+
+```mermaid
+sequenceDiagram
+  participant B as Bot (environment)
+  participant G as Bot server
+  participant H as Workspaces environment
+  B->>G: desktop call for the environment's desktopId
+  G->>H: the call, posted to that environment's control server
+  H->>H: runs it as that bot's conversation tool, under the environment's grants
+  H-->>G: the answer, in the same request
+  G-->>B: the answer, or why there is none
+```
+
+- **One environment per call.** The bot sees the environment as one more `desktopId`, of kind `environment`, never
+  its id on the server. The server posts the call to that environment alone, with the control token it already holds
+  for it; no other computer or environment stands in.
+- **A stopped environment starts.** A call for an environment that is stopped, by you or by its idle stop, fails with
+  `desktop_offline` and starts it; the bot is told to try again in about a minute. A call in flight keeps the
+  environment from stopping for being idle, and fails with `desktop_offline` if the environment stops anyway.
+- **What the host token may do.** Besides publishing artifacts, an environment's host token links and unlinks that
+  environment for a bot, and lists its own links; it never acts as a bot, and a bot's token never links an
+  environment.
+
+Conversations the bot starts there are conversations of that environment, in worktrees of its own, with the bot's
+badge: open them from the environment's host in the sidebar to pause them, release them, or continue them. **Turn
+off** on the environment's card ends the access at once. Removing the environment's link from **Other computers and
+environments with access**, deleting the bot, or deleting the environment ends it too; a running environment revokes its side at once,
+and one that is stopped does when it next starts.
+
 ## What a bot can do
 
 Bot conversations have no Plan review tab and do not expose `review_plan`. When
@@ -877,7 +918,7 @@ owner help for logins instead.
 | `memory_forget` | Permanently delete its own memory, subject to the normal approval gate. |
 | `request_owner_help` | Ask you to help with its screen or a blocking issue. |
 | `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Conversations with other bots**, within gateway budgets. |
-| `desktop_*` | Start and follow development conversations in the projects your computers gave it, one computer per call; see [Work in the projects of your computers](#work-in-the-projects-of-your-computers). Reads run without approval prompts; changes follow its ceiling. |
+| `desktop_*` | Start and follow development conversations in the projects your computers and the server's workspaces environments gave it, one per call; see [Work in the projects of your computers](#work-in-the-projects-of-your-computers). Reads run without approval prompts; changes follow its ceiling. |
 
 A bot cannot directly use your computer's screen, browser, terminal, accounts, or local files. It reaches the projects of your computers only through `desktop_*`, as conversations that run on each computer under the access that computer gave. It can use the credentials and files you explicitly bring to its environment, which the other bots of that environment can use too. Its approval ceiling bounds how far it may run without you:
 

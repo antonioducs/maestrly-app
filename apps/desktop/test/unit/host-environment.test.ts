@@ -5,7 +5,7 @@ import { type InstanceEnvironment, InstanceEvents, InstanceHttpError } from '../
 import { ComputerUnavailableError } from '../../src/main/remote-host/server/computers'
 import { HostEnvironment, type HostComputers } from '../../src/main/remote-host/server/host-environment'
 
-function setup(busy = false, computers: HostComputers | null = null) {
+function setup(busy = false, computers: HostComputers | null = null, desktopCalls = false) {
   const runtime = {
     events: new InstanceEvents(),
     health: vi.fn(() => ({
@@ -48,7 +48,8 @@ function setup(busy = false, computers: HostComputers | null = null) {
   const environment: InstanceEnvironment = new HostEnvironment(
     runtime as unknown as EnvironmentRuntime,
     () => state.busy,
-    computers
+    computers,
+    desktopCalls
   )
   return { runtime, environment, state }
 }
@@ -82,6 +83,13 @@ describe('workspaces host environment', () => {
     })
     state.busy = true
     expect(environment.health().busy).toBe(true)
+  })
+
+  it('says it takes the calls of the bots it gives access to only when it can link itself to them', async () => {
+    const { environment } = setup(false, null, true)
+    expect(environment.health().capabilities).toContain('host-desktop-calls')
+    expect((await environment.environmentStatus()).capabilities).toContain('host-desktop-calls')
+    expect(setup().environment.health().capabilities).not.toContain('host-desktop-calls')
   })
 
   it('reports no bots', async () => {

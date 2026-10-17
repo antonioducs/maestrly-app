@@ -25,6 +25,8 @@ interface Props {
   providers: BotProviderOption[]
   value: BotGrantDraft
   onChange: (patch: Partial<BotGrantDraft>) => void
+  /** Where the grant applies: this computer, or a workspaces environment of the server. */
+  place?: 'computer' | 'environment'
 }
 
 export const botChipClass =
@@ -37,8 +39,17 @@ export const botChipClass =
  * The grant a bot of the person's bot server gets on this computer: nothing is pre-selected by these fields, and the
  * person reads the strictest choice first.
  */
-export function BotGrantFields({ scope, testId = 'bot-setup', workspaces, providers, value, onChange }: Props) {
+export function BotGrantFields({
+  scope,
+  testId = 'bot-setup',
+  workspaces,
+  providers,
+  value,
+  onChange,
+  place = 'computer',
+}: Props) {
   const { t } = useTranslation('ui')
+  const environment = place === 'environment'
   const toggleWorkspace = (id: string) =>
     onChange({
       workspaceIds: value.workspaceIds.includes(id)
@@ -50,7 +61,7 @@ export function BotGrantFields({ scope, testId = 'bot-setup', workspaces, provid
     <>
       <fieldset className="space-y-2">
         <legend className="mb-2 flex items-center gap-2 text-xs font-medium">
-          {t('bots.projects')}
+          {t(environment ? 'bots.environmentProjects' : 'bots.projects')}
           <span className="text-[11px] font-normal text-muted-foreground">{t('bots.required')}</span>
         </legend>
         {workspaces.length ? (
@@ -68,7 +79,9 @@ export function BotGrantFields({ scope, testId = 'bot-setup', workspaces, provid
             ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">{t('bots.noProjects')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(environment ? 'bots.noEnvironmentProjects' : 'bots.noProjects')}
+          </p>
         )}
       </fieldset>
 
@@ -110,7 +123,9 @@ export function BotGrantFields({ scope, testId = 'bot-setup', workspaces, provid
             </div>
           ))
         ) : (
-          <p className="text-xs text-muted-foreground">{t('bots.noModels')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(environment ? 'bots.noEnvironmentModels' : 'bots.noModels')}
+          </p>
         )}
       </fieldset>
 
@@ -182,7 +197,7 @@ export function BotGrantFields({ scope, testId = 'bot-setup', workspaces, provid
             data-testid={`${testId}-ceiling-warning`}
             className="mt-1 rounded-md border border-amber-400/25 bg-amber-400/[0.06] p-2.5 text-[11px] leading-relaxed text-amber-200"
           >
-            {t('bots.ceiling.fullWarning')}
+            {t(environment ? 'bots.ceiling.fullWarningEnvironment' : 'bots.ceiling.fullWarning')}
           </p>
         )}
       </fieldset>

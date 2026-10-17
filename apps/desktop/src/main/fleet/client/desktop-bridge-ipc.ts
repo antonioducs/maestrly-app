@@ -22,7 +22,7 @@ const ids = z
   .max(200)
   .refine((value) => new Set(value).size === value.length, 'Duplicate identifiers are not allowed.')
 /** The choices the person makes for a bot's access, plus the name this computer shows the bot. */
-const accessInput = z
+export const fleetDesktopAccessInputSchema = z
   .object({
     macName: fleetDesktopNameSchema,
     workspaceIds: ids.min(1),
@@ -95,7 +95,7 @@ export function registerFleetDesktopBridgeIpc(reg: IpcRegistrar, fleet: FleetCli
   if (process.env.MAESTRLY_BOT_MODE !== '1') fleet.desktopBridge = bridge
   reg.handle('fleet:desktopAccess:get', (_event, botId: unknown) => bridge.state(fleetBotIdSchema.parse(botId)))
   reg.mhandle('fleet:desktopAccess:save', (_event, botId: unknown, input: unknown) =>
-    bridge.save(fleetBotIdSchema.parse(botId), accessInput.parse(input))
+    bridge.save(fleetBotIdSchema.parse(botId), fleetDesktopAccessInputSchema.parse(input))
   )
   reg.mhandle('fleet:desktopAccess:disable', (_event, botId: unknown) => bridge.disable(fleetBotIdSchema.parse(botId)))
   reg.mhandle('fleet:desktopAccess:removeOther', (_event, botId: unknown, desktopId: unknown) =>

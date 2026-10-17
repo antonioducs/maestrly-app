@@ -450,8 +450,19 @@ export default {
     required: 'obrigatório',
     projects: 'Projetos locais',
     noProjects: 'Adicione primeiro um projeto local ao Maestrly.',
+    environmentProjects: 'Projetos deste ambiente',
+    noEnvironmentProjects: 'Adicione primeiro um projeto a este ambiente.',
     models: 'Contas e modelos',
     noModels: 'Conecte primeiro uma conta de modelo nas configurações do Maestrly Chat.',
+    noEnvironmentModels: 'Conecte primeiro uma conta de modelo neste ambiente.',
+    blockersTitle: 'Antes de dar acesso:',
+    blockers: {
+      noProjects: 'Ainda não há projeto para escolher.',
+      projects: 'Escolha pelo menos um projeto.',
+      noModels: 'Ainda não há conta de modelo para escolher.',
+      models: 'Escolha pelo menos uma conta e um modelo.',
+      actions: 'Escolha pelo menos uma ação.',
+    },
     permissions: 'O que este bot pode fazer',
     ownerGates:
       'Aprovações de plano sempre vêm para você no desktop, qualquer que seja a escolha abaixo. Cada nova conversa do bot recebe uma worktree própria.',
@@ -466,6 +477,8 @@ export default {
       fullHint: 'Nada é perguntado. O bot roda comandos e edita arquivos na worktree dele sem parar.',
       fullWarning:
         'Com acesso total este bot roda comandos neste computador sem perguntar. Escolha isso apenas para um bot que é seu.',
+      fullWarningEnvironment:
+        'Com acesso total este bot roda comandos neste ambiente sem perguntar. Escolha isso apenas para um bot que é seu.',
     },
     actions: {
       read: 'Ler suas próprias conversas',

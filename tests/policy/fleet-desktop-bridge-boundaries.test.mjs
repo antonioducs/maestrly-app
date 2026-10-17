@@ -18,11 +18,14 @@ const bridge = code('apps/desktop/src/main/fleet/client/desktop-bridge.ts')
 const tools = code('apps/desktop/src/main/mcp/tools/bot-desktops.ts')
 const policy = code('apps/desktop/src/main/chat/tool-policy.ts')
 const conversationTools = code('apps/desktop/src/main/bot/local-service.ts')
+const server = code('apps/bot-gateway/src/server.ts')
+const hostAccess = code('apps/desktop/src/main/remote-host/server/bot-access.ts')
 
 test('a desktop call reaches only the computer its link names, and only that computer answers it', () => {
   // The target comes from the stored link of the calling bot, never from anything else in the request.
-  assert.match(gateway, /const link = this\.store\.desktopLinkById\(request\.desktopId\)/)
-  assert.match(gateway, /!link \|\| link\.botId !== botId/)
+  assert.match(gateway, /const target = this\.store\.desktopLinkById\(request\.desktopId\)/)
+  assert.match(gateway, /!target \|\|\s*target\.link\.botId !== botId/)
+  assert.match(gateway, /const link = target\.link/)
   assert.match(gateway, /this\.events\.sendToDevice\(link\.deviceId,/)
   // An answer from any other device is refused.
   assert.match(gateway, /call\.deviceId !== deviceId\) throw new GatewayError\('FORBIDDEN'/)
@@ -96,4 +99,34 @@ test('only a fleet bot’s connection is served here, and its access needs both 
   // A link the server could not record leaves no access behind, and a missing link revokes the access here.
   assert.match(bridge, /if \(created\) await this\.host\.revokeFleetConnection\(connection\.id\)/)
   assert.match(bridge, /else if \(!self && connection\) \{[\s\S]{0,200}revokeFleetConnection/)
+})
+
+test('a call for a workspaces environment goes to that environment alone, and only its host token links it', () => {
+  // The link names one environment; a call for it is posted there, and never to a computer or another environment.
+  assert.match(
+    gateway,
+    /if \(target\.kind === 'environment'\) return this\.callEnvironment\(botId, target\.link, request\)/
+  )
+  assert.match(gateway, /this\.hosts\.call\(link\.environmentId, call, abort\.signal\)/)
+  const environmentCall = gateway.slice(
+    gateway.indexOf('private callEnvironment('),
+    gateway.indexOf('private notOnline(')
+  )
+  assert.ok(environmentCall.length > 100, 'the gateway routes calls to environments')
+  assert.doesNotMatch(environmentCall, /sendToDevice|desktopLinks\(|environmentDesktopLinks\(|\bqueue\b|fallback/i)
+  // The gateway keeps which environment linked which bot, never what it granted or holds.
+  const table =
+    read('apps/bot-gateway/src/store.ts').match(
+      /CREATE TABLE IF NOT EXISTS environment_desktop_links \(([^;]*)\);/
+    )?.[1] ?? ''
+  assert.ok(table, 'the gateway stores environment links')
+  assert.doesNotMatch(table, /workspace|grant|selection|conversation|transcript|path/i)
+  // A host token reaches its artifacts and its own links only, and the environment is the one its token names.
+  assert.match(server, /!match\.key\.startsWith\('artifact'\) && !hostLinkRoute\)/)
+  assert.match(server, /'botId' in internalCaller && hostLinkRoute\)/)
+  assert.match(server, /const environmentId = \(internalCaller as \{ environmentId: string \}\)\.environmentId/)
+  // The host answers in the gateway's own request: it never posts anything back, nor removes another's link.
+  assert.match(hostAccess, /answer: async \(\) => \{\}/)
+  assert.match(hostAccess, /remove: async \(\) => \{\s*throw new Error/)
+  assert.doesNotMatch(hostAccess, /\b(?:cwd|worktreePath|workspace\.path|getWorkspace)\b/)
 })

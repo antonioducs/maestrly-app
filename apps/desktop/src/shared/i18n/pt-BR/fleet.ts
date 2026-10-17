@@ -982,7 +982,7 @@ export default {
       peers: 'Conversas',
       routines: 'Rotinas',
       memory: 'Memória',
-      desktops: 'Este computador',
+      desktops: 'Projetos',
       environment: 'Ambiente',
       where: 'Onde roda',
       archive: 'Arquivar',
@@ -1066,9 +1066,9 @@ export default {
           'Reinicie o ambiente deste bot numa imagem atualizada para dar a ele acesso aos projetos dos seus computadores.',
       },
       others: {
-        title: 'Outros computadores com acesso',
+        title: 'Outros computadores e ambientes com acesso',
         note: 'Cada computador define o próprio acesso. Daqui você só pode remover o de outro computador; aquele computador desliga o acesso assim que fica sabendo.',
-        empty: 'Nenhum outro computador dá acesso a este bot.',
+        empty: 'Nenhum outro computador ou ambiente dá acesso a este bot.',
         unknown: 'O servidor de bots não conseguiu listar os computadores agora.',
         online: 'Online',
         offline: 'Offline',
@@ -1078,7 +1078,39 @@ export default {
         removeTitle: 'Remover o acesso de {{name}}?',
         removeMessage:
           'O bot deixa de alcançar os projetos de {{name}}. Aquele computador desliga o acesso assim que se conectar; as conversas dele continuam lá.',
+        removeEnvironmentMessage:
+          'O bot deixa de alcançar os projetos de {{name}}. Aquele ambiente desliga o acesso na hora, se estiver rodando, ou quando iniciar de novo; as conversas dele continuam lá.',
         removeConfirm: 'Remover',
+        environment: 'Ambiente do servidor',
+      },
+    },
+    environments: {
+      title: 'Workspaces do servidor',
+      note: 'Deixe este bot iniciar conversas de desenvolvimento em projetos dos ambientes de workspaces do servidor. Elas rodam lá, cada uma no próprio worktree, com seus computadores ligados ou não.',
+      none: 'Este servidor ainda não tem ambiente de workspaces.',
+      stopped: 'Inicie este ambiente para dar ao bot acesso aos projetos dele.',
+      connecting: 'Conectando a este ambiente…',
+      enable: 'Dar a este bot acesso a este ambiente',
+      enableHint:
+        'Cada ambiente decide por si. Nada é compartilhado até você escolher projetos e modelos e dar acesso.',
+      on: 'Este ambiente dá acesso como “{{name}}”.',
+      turnOff: 'Acesso deste ambiente',
+      macName: 'Nome com que este ambiente aparece para o bot',
+      macNameHint:
+        'O bot usa esse nome para diferenciar seus computadores e ambientes; ele começa com o nome do ambiente.',
+      nameRequired: 'Dê um nome a este ambiente.',
+      approvals:
+        'Aprovações de plano, e o que o teto abaixo deixar com você, esperam por você nas conversas deste ambiente. O bot nunca as responde.',
+      disableTitle: 'Desligar o acesso deste ambiente?',
+      disableMessage:
+        'O bot deixa de alcançar os projetos deste ambiente. As conversas e worktrees dele continuam lá e deixam de receber instruções dele.',
+      unavailable: {
+        disconnected: 'Conecte este computador ao servidor de bots para dar a este bot acesso aos ambientes dele.',
+        'gateway-update':
+          'Atualize o servidor de bots para dar aos bots acesso aos projetos dos ambientes de workspaces dele.',
+        'bot-update':
+          'Reinicie o ambiente deste bot numa imagem atualizada para dar a ele acesso aos ambientes de workspaces do servidor.',
+        'host-update': 'Reinicie este ambiente numa imagem atualizada para dar aos bots acesso aos projetos dele.',
       },
     },
     savesNow: 'Salva na hora',

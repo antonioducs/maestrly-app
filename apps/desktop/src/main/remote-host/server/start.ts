@@ -23,6 +23,7 @@ import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
 import { setHostModelOptions } from './mobile-api'
 import { watchChatAttention } from './chat-attention'
+import type { HostBotAccess } from './bot-access'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { getPending as getPendingPlan } from '../../plan-broker'
 
@@ -40,6 +41,8 @@ export interface ServerHostDeps {
   watchStatuses(listener: (conversationId: string, status: string) => void): () => void
   /** Moves a conversation's browser window where its computer or its Browser tab's video needs it. */
   placeBrowser(conversationId: string, placement: BrowserPlacement): void
+  /** What the host gives the bots of its server; it takes their calls only when it can link itself to them. */
+  bots: HostBotAccess
 }
 
 /** The programs a conversation's computer runs, which the bot image has. */
@@ -171,12 +174,14 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       started && {
         computers: started.computers,
         conversationExists: (id) => getConversation(id) !== undefined,
-      }
+      },
+      deps.bots.available
     )
     const server = createInstanceControlServer(config, host, {
       bridge: deps.hub,
       hostFiles,
       editor,
+      ...(deps.bots.available ? { desktopCalls: deps.bots } : {}),
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -185,6 +190,8 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
         resolve()
       })
     })
+    // The access this host gave bots is checked against the server once: it may have changed while the host was down.
+    void deps.bots.start().catch(() => undefined)
     window.on('closed', async () => {
       stopAttention()
       deps.hub.closeAll()

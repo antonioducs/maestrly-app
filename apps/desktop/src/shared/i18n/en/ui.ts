@@ -444,8 +444,19 @@ export default {
     required: 'required',
     projects: 'Local projects',
     noProjects: 'Add a local project to Maestrly first.',
+    environmentProjects: 'Projects of this environment',
+    noEnvironmentProjects: 'Add a project to this environment first.',
     models: 'Accounts and models',
     noModels: 'Connect a model account in Maestrly Chat settings first.',
+    noEnvironmentModels: 'Connect a model account in this environment first.',
+    blockersTitle: 'Before you give access:',
+    blockers: {
+      noProjects: 'There is no project to choose yet.',
+      projects: 'Choose at least one project.',
+      noModels: 'There is no model account to choose yet.',
+      models: 'Choose at least one account and model.',
+      actions: 'Choose at least one action.',
+    },
     permissions: 'What this bot can do',
     ownerGates:
       'Plan approvals always come to you in the desktop, whatever you choose below. Every new bot conversation gets its own worktree.',
@@ -460,6 +471,8 @@ export default {
       fullHint: 'Nothing is asked. The bot runs commands and edits files in its worktree without stopping.',
       fullWarning:
         'With full access this bot runs commands on this computer without asking. Choose it only for a bot you control yourself.',
+      fullWarningEnvironment:
+        'With full access this bot runs commands in this environment without asking. Choose it only for a bot you control yourself.',
     },
     actions: {
       read: 'Read its conversations',

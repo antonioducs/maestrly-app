@@ -29,15 +29,18 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
   const ownerRequest = routeKey.startsWith('ownerMemory')
   const artifactRequest = routeKey.startsWith('artifact')
   const desktopRequest = routeKey.startsWith('desktop')
-  const family = routineRequest
-    ? 'routine'
-    : ownerRequest
-      ? 'owner memory'
-      : artifactRequest
-        ? 'artifact'
-        : desktopRequest
-          ? 'desktop'
-          : 'peer'
+  const hostLinkRequest = routeKey.startsWith('hostDesktop')
+  const family = hostLinkRequest
+    ? 'bot access'
+    : routineRequest
+      ? 'routine'
+      : ownerRequest
+        ? 'owner memory'
+        : artifactRequest
+          ? 'artifact'
+          : desktopRequest
+            ? 'desktop'
+            : 'peer'
   const peerRequest = family === 'peer'
   let response: Response
   try {
@@ -65,6 +68,15 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
       throw new Error((envelope.success ? envelope.data.message : 'Routine request failed.') + routineHint)
     if (peerRequest && response.status === 403)
       throw new Error('Peer contact is not allowed by the bot ACL. Ask your owner to update permissions.')
+    // What a workspaces host's owner reads in its settings: the server's own reason (a bot gone, too many links), or,
+    // from a server that predates bots' access to environments (no such route, or a host token for artifacts only),
+    // what to do.
+    if (hostLinkRequest && ['CONFLICT', 'NOT_FOUND', 'FORBIDDEN', 'INVALID_REQUEST'].includes(code ?? ''))
+      throw new Error(
+        envelope.success && code !== 'FORBIDDEN' && envelope.data.message !== 'Route not found'
+          ? envelope.data.message
+          : 'Update the bot server before giving bots access to this environment.'
+      )
     if (desktopRequest && code === 'INVALID_REQUEST')
       throw new Error('The gateway refused this desktop call as invalid. Check desktopId and the arguments.')
     if (peerRequest && response.status === 429)

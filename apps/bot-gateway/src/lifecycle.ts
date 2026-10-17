@@ -164,6 +164,11 @@ export class Lifecycle {
   onCloseEnvironmentScreens: (environmentId: string, code: number) => void = () => {}
   /** Closes the bridges computers hold to a workspaces environment: its container stops or goes away. */
   onCloseEnvironmentBridges: (environmentId: string) => void = () => {}
+  /**
+   * An environment's lifecycle changed, or it was archived, restored or deleted: bots' calls to it follow. A deleted
+   * one names the bots whose links to it went with it.
+   */
+  onEnvironmentChanged: (environmentId: string, formerlyLinked?: string[]) => void = () => {}
   controlCount: (id: string) => number = () => 0
   artifactsEnabled: () => boolean = () => false
   onReady: (id: string) => void = () => {}
@@ -591,6 +596,7 @@ export class Lifecycle {
   private updateEnvironment(id: string, changes: EnvironmentChanges) {
     this.store.updateEnvironment(id, changes)
     this.emitEnvironment(id)
+    if (changes.lifecycle !== undefined) this.onEnvironmentChanged(id)
   }
   private update(id: string, changes: Partial<FleetBot>) {
     const bot = this.store.getBot(id)
@@ -1744,6 +1750,7 @@ export class Lifecycle {
       for (const botId of botIds) this.onEvent({ type: 'bot.removed', at: now(), botId })
       this.recordEnvironmentActivity(id, 'environment_archived')
       this.onEvent({ type: 'environment.removed', at: now(), environmentId: id })
+      this.onEnvironmentChanged(id)
       return this.environmentView(this.store.getEnvironment(id)!)
     })
   }
@@ -1788,6 +1795,7 @@ export class Lifecycle {
     for (const peerId of peers) this.emitBot(peerId)
     this.recordEnvironmentActivity(id, 'environment_restored')
     this.emitEnvironment(id)
+    this.onEnvironmentChanged(id)
     this.queueProvision(id, true)
     return { environment: this.environment(id)!, botIds }
   }
@@ -1797,6 +1805,8 @@ export class Lifecycle {
     if (!environment?.archivedAt || this.deletingEnvironments.has(id))
       throw new GatewayError('NOT_FOUND', 'Archived environment not found')
     this.deletingEnvironments.add(id)
+    // The bots it gave access to, whose links go with its records.
+    const linked = this.store.desktopLinksOfEnvironment(id).map((link) => link.botId)
     let removed: { botIds: string[]; ownerMemoriesDeleted: number }
     try {
       removed = await this.exclusive(id, async () => {
@@ -1816,6 +1826,7 @@ export class Lifecycle {
       this.onEvent({ type: 'owner_memory.updated', at: now(), revision: this.store.ownerMemoryRevision() })
     this.recordEnvironmentActivity(id, 'environment_deleted', {}, environment.name)
     this.onEvent({ type: 'environment.removed', at: now(), environmentId: id })
+    this.onEnvironmentChanged(id, linked)
   }
   private async removeFiles(environment: StoredEnvironment, subject: 'bot' | 'environment') {
     const leftover = await this.container(environment)

@@ -151,8 +151,9 @@ describe('desktop tools of a fleet bot', () => {
     })
     const listed = json(await mcp.callTool({ name: 'desktop_list_desktops', arguments: {} }))
     expect(listed).toEqual({ desktops: [], note: expect.stringContaining('Workspaces on this computer') })
+    expect(listed.note).toEqual(expect.stringContaining('Workspaces on the server'))
     const workspaces = json(await mcp.callTool({ name: 'desktop_list_workspaces', arguments: {} }))
-    expect(workspaces.note).toEqual(expect.stringContaining('No computer gives you access yet'))
+    expect(workspaces.note).toEqual(expect.stringContaining('No computer or environment gives you access yet'))
     expect(gateway.calls).toEqual([])
     expect(gateway.headers.every((item) => item.auth === 'Bearer secret' && item.protocol === '1')).toBe(true)
     await mcp.close()
@@ -183,17 +184,61 @@ describe('desktop tools of a fleet bot', () => {
         {
           desktopId: macbook.desktopId,
           name: 'MacBook',
+          kind: 'computer',
           online: true,
           workspaces: [{ workspaceId: 'w-1', label: 'maestrly', branches: ['main'], defaultBranch: 'main' }],
           selections: [],
         },
-        { desktopId: imac.desktopId, name: 'iMac', online: false, error: 'desktop_offline' },
+        { desktopId: imac.desktopId, name: 'iMac', kind: 'computer', online: false, error: 'desktop_offline' },
       ],
     })
     // The offline Mac is never asked.
     expect(gateway.calls.map((call) => call.desktopId)).toEqual([macbook.desktopId])
     const chats = json(await mcp.callTool({ name: 'desktop_list_chats', arguments: { desktopId: macbook.desktopId } }))
-    expect(chats).toEqual({ desktopId: macbook.desktopId, desktopName: 'MacBook', conversations: [] })
+    expect(chats).toEqual({
+      desktopId: macbook.desktopId,
+      desktopName: 'MacBook',
+      desktopKind: 'computer',
+      conversations: [],
+    })
+    await mcp.close()
+  })
+
+  it('asks a workspaces environment that is offline too, since the call starts it', async () => {
+    const personal: FleetDesktopLink = {
+      desktopId: 'dsk_personalpersonalpers',
+      name: 'Personal',
+      kind: 'environment',
+      online: false,
+      lastSeenAt: null,
+      linkedAt: '2026-10-03T10:00:00.000Z',
+    }
+    const gateway = await fakeGateway([imac, personal], (request) => ({
+      ok: false,
+      error: { code: 'desktop_offline', message: `"Personal" is starting now (${request.op}).` },
+    }))
+    const mcp = await client({
+      gatewayConfigured: true,
+      gatewayConfig: { url: gateway.url, token: 'secret' },
+      peerNames: new Map(),
+      desktopBridgeEnabled: true,
+    })
+    const all = json(await mcp.callTool({ name: 'desktop_list_chats', arguments: {} }))
+    expect(all).toEqual({
+      desktops: [
+        { desktopId: imac.desktopId, name: 'iMac', kind: 'computer', online: false, error: 'desktop_offline' },
+        {
+          desktopId: personal.desktopId,
+          name: 'Personal',
+          kind: 'environment',
+          online: false,
+          error: 'desktop_offline: "Personal" is starting now (listChats).',
+        },
+      ],
+    })
+    expect(gateway.calls.map((call) => call.desktopId)).toEqual([personal.desktopId])
+    const listed = json(await mcp.callTool({ name: 'desktop_list_desktops', arguments: {} }))
+    expect(listed.desktops).toEqual([imac, personal])
     await mcp.close()
   })
 
@@ -238,6 +283,7 @@ describe('desktop tools of a fleet bot', () => {
     expect(json(created)).toEqual({
       desktopId: macbook.desktopId,
       desktopName: 'MacBook',
+      desktopKind: 'computer',
       conversation: { id: 'c', workspaceId: 'w-1' },
     })
     const sent = gateway.calls.at(-1)!

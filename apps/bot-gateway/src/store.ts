@@ -112,6 +112,19 @@ export type StoredDesktopLink = {
   linkedAt: string
   updatedAt: string
 }
+/** A workspaces environment that gave a bot access to its workspaces: the id and name the bot sees it by. */
+export type StoredEnvironmentDesktopLink = {
+  botId: string
+  environmentId: string
+  desktopId: string
+  name: string
+  linkedAt: string
+  updatedAt: string
+}
+/** Where a desktop id leads: the link of a paired computer, or of a workspaces environment. */
+export type StoredDesktopTarget =
+  | { kind: 'device'; link: StoredDesktopLink }
+  | { kind: 'environment'; link: StoredEnvironmentDesktopLink }
 
 const now = () => new Date().toISOString()
 const SLOTS = FLEET_ENVIRONMENT_LIMITS.botsMax
@@ -225,7 +238,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 15) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 16) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -312,6 +325,15 @@ export class Store {
       if (columns.length && !columns.includes('kind')) this.db.exec('ALTER TABLE devices ADD COLUMN kind TEXT')
       if (columns.length && !columns.includes('platform')) this.db.exec('ALTER TABLE devices ADD COLUMN platform TEXT')
       this.db.prepare("UPDATE meta SET value='15' WHERE key='schema_version'").run()
+    }
+    if (version <= 15) {
+      // Schema 16: which workspaces environments gave which bot access to their workspaces, as desktop_links does for
+      // Macs. The gateway routes a bot's calls by these and keeps nothing else (no grant, catalog or conversation).
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS environment_desktop_links (bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, environment_id TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE, desktop_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, linked_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (bot_id, environment_id));
+        CREATE INDEX IF NOT EXISTS idx_environment_desktop_links_environment ON environment_desktop_links(environment_id);
+      `)
+      this.db.prepare("UPDATE meta SET value='16' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -710,9 +732,71 @@ export class Store {
         .all(deviceId) as Row[]
     ).map((row) => this.desktopLink(row))
   }
-  desktopLinkById(desktopId: string): StoredDesktopLink | null {
+  /** The one link a desktop id names, a computer's or an environment's; ids are unique across both. */
+  desktopLinkById(desktopId: string): StoredDesktopTarget | null {
     const row = this.db.prepare('SELECT * FROM desktop_links WHERE desktop_id=?').get(desktopId) as Row | undefined
-    return row ? this.desktopLink(row) : null
+    if (row) return { kind: 'device', link: this.desktopLink(row) }
+    const environment = this.db.prepare('SELECT * FROM environment_desktop_links WHERE desktop_id=?').get(desktopId) as
+      | Row
+      | undefined
+    return environment ? { kind: 'environment', link: this.environmentDesktopLink(environment) } : null
+  }
+  private environmentDesktopLink(row: Row): StoredEnvironmentDesktopLink {
+    return {
+      botId: String(row.bot_id),
+      environmentId: String(row.environment_id),
+      desktopId: String(row.desktop_id),
+      name: String(row.name),
+      linkedAt: String(row.linked_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+  /** The workspaces environments linked to a bot, oldest link first. */
+  environmentDesktopLinks(botId: string): StoredEnvironmentDesktopLink[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM environment_desktop_links WHERE bot_id=? ORDER BY linked_at, desktop_id')
+        .all(botId) as Row[]
+    ).map((row) => this.environmentDesktopLink(row))
+  }
+  /** The bots a workspaces environment gave access to, oldest link first. */
+  desktopLinksOfEnvironment(environmentId: string): StoredEnvironmentDesktopLink[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM environment_desktop_links WHERE environment_id=? ORDER BY linked_at, desktop_id')
+        .all(environmentId) as Row[]
+    ).map((row) => this.environmentDesktopLink(row))
+  }
+  /** Links a workspaces environment to a bot under a name, or renames its link; its `desktopId` stays as it was. */
+  saveEnvironmentDesktopLink(
+    botId: string,
+    environmentId: string,
+    name: string,
+    desktopId: string,
+    at = now()
+  ): StoredEnvironmentDesktopLink {
+    this.db
+      .prepare(
+        `INSERT INTO environment_desktop_links(bot_id,environment_id,desktop_id,name,linked_at,updated_at) VALUES(?,?,?,?,?,?)
+         ON CONFLICT(bot_id,environment_id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at`
+      )
+      .run(botId, environmentId, desktopId, name, at, at)
+    const row = this.db
+      .prepare('SELECT * FROM environment_desktop_links WHERE bot_id=? AND environment_id=?')
+      .get(botId, environmentId) as Row
+    return this.environmentDesktopLink(row)
+  }
+  deleteEnvironmentDesktopLink(botId: string, environmentId: string): StoredEnvironmentDesktopLink | null {
+    return this.transaction(() => {
+      const row = this.db
+        .prepare('SELECT * FROM environment_desktop_links WHERE bot_id=? AND environment_id=?')
+        .get(botId, environmentId) as Row | undefined
+      if (!row) return null
+      this.db
+        .prepare('DELETE FROM environment_desktop_links WHERE bot_id=? AND environment_id=?')
+        .run(botId, environmentId)
+      return this.environmentDesktopLink(row)
+    })
   }
   /**
    * Links a Mac to a bot under a name, or renames its link: a link keeps its `desktopId` for as long as it exists, so
@@ -993,6 +1077,7 @@ export class Store {
       this.db.prepare('DELETE FROM activity WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environment_secrets WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM host_secrets WHERE environment_id=?').run(id)
+      this.db.prepare('DELETE FROM environment_desktop_links WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environments WHERE id=?').run(id)
       return { botIds, ownerMemoriesDeleted }
     })
@@ -1267,6 +1352,7 @@ export class Store {
       this.db.prepare('DELETE FROM routines WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM desktop_links WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM environment_desktop_links WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db

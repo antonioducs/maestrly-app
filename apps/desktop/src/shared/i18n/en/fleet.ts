@@ -978,7 +978,7 @@ export default {
       peers: 'Conversations',
       routines: 'Routines',
       memory: 'Memory',
-      desktops: 'This computer',
+      desktops: 'Projects',
       environment: 'Environment',
       where: 'Where it runs',
       archive: 'Archive',
@@ -1061,9 +1061,9 @@ export default {
           'Restart this bot’s environment on an updated image to give it access to the projects of your computers.',
       },
       others: {
-        title: 'Other computers with access',
+        title: 'Other computers and environments with access',
         note: 'Each computer sets its own access. From here you can only remove another computer’s; that computer turns its access off as soon as it hears of it.',
-        empty: 'No other computer gives this bot access.',
+        empty: 'No other computer or environment gives this bot access.',
         unknown: 'The bot server could not list the computers right now.',
         online: 'Online',
         offline: 'Offline',
@@ -1073,7 +1073,38 @@ export default {
         removeTitle: 'Remove the access of {{name}}?',
         removeMessage:
           'The bot can no longer reach the projects of {{name}}. That computer turns its access off as soon as it connects; its conversations stay there.',
+        removeEnvironmentMessage:
+          'The bot can no longer reach the projects of {{name}}. That environment turns its access off at once if it runs, or when it next starts; its conversations stay there.',
         removeConfirm: 'Remove',
+        environment: 'Server environment',
+      },
+    },
+    environments: {
+      title: 'Workspaces on the server',
+      note: 'Let this bot start development conversations in projects of the server’s workspaces environments. They run there, each in a worktree of its own, whether or not your computers are on.',
+      none: 'This server has no workspaces environment yet.',
+      stopped: 'Start this environment to give the bot access to its projects.',
+      connecting: 'Connecting to this environment…',
+      enable: 'Give this bot access to this environment',
+      enableHint:
+        'Each environment decides on its own. Nothing is shared until you choose projects and models and give access.',
+      on: 'This environment gives access as “{{name}}”.',
+      turnOff: 'Access of this environment',
+      macName: 'Name this environment shows the bot',
+      macNameHint:
+        'The bot uses it to tell your computers and environments apart; it starts as the environment’s name.',
+      nameRequired: 'Give this environment a name.',
+      approvals:
+        'Plan approvals, and whatever the ceiling below leaves to you, wait for you in this environment’s conversations. The bot never answers them.',
+      disableTitle: 'Turn off this environment’s access?',
+      disableMessage:
+        'The bot can no longer reach the projects of this environment. Its conversations and worktrees stay there and stop taking its instructions.',
+      unavailable: {
+        disconnected: 'Connect this computer to the bot server to give this bot access to its environments.',
+        'gateway-update': 'Update the bot server to give bots access to the projects of its workspaces environments.',
+        'bot-update':
+          'Restart this bot’s environment on an updated image to give it access to the server’s workspaces environments.',
+        'host-update': 'Restart this environment on an updated image to give bots access to its projects.',
       },
     },
     savesNow: 'Saves right away',

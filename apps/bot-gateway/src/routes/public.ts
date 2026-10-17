@@ -3,6 +3,7 @@ import {
   FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_HOST_DESKTOP_CALLS_FEATURE,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
@@ -369,6 +370,7 @@ export async function publicRoute(
             FLEET_DEVICES_FEATURE,
             FLEET_ENVIRONMENT_PLUGINS_FEATURE,
             FLEET_HOST_FILES_FOLDERS_FEATURE,
+            FLEET_HOST_DESKTOP_CALLS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
