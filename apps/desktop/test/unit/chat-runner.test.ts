@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { jsonSchema, tool } from 'ai'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { toPublicChatUsage, listChatMessages } from '../../src/main/chat/chat-store'
+import { toPublicChatUsage, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import {
   addNormalizedUsage,
   applyFastModeServiceTier,
@@ -45,6 +45,10 @@ import { clearEphemeralToolImages } from '../../src/main/chat/tool-output'
 import { freshDb, closeDb } from '../helpers/db'
 import type { PermissionBroker } from '../../src/main/chat/permission'
 import type { QuestionBroker } from '../../src/main/chat/question-broker'
+import { APICallError } from '@ai-sdk/provider'
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import type { ChatStreamEvent } from '../../src/shared/chat'
+import { startFakeProvider, type FakeProviderServer } from '../helpers/fake-provider'
 
 const mocks = vi.hoisted(() => ({
   streamText: vi.fn(),
@@ -1219,5 +1223,166 @@ describe('runtime tool-image capability learning', () => {
 
     expect(getConvUiPrefs('c').chat?.imagesUnsupported).toBeUndefined()
     expect(mocks.generateText).not.toHaveBeenCalled()
+  })
+
+  it('learns image flags from the provider message, not from a provider named after vision', async () => {
+    enableInterpreter()
+    const gateway = addProvider({ name: 'Vision Gateway', baseURL: 'https://gateway.test/v1' })
+    mocks.streamText.mockReturnValueOnce(
+      fullStream([
+        { type: 'tool-call', toolCallId: 'shot-1', toolName: 'browser_screenshot', input: {} },
+        { type: 'tool-result', toolCallId: 'shot-1', toolName: 'browser_screenshot', output: screenshotToolResult },
+        {
+          type: 'error',
+          error: new APICallError({
+            message: 'invalid api key',
+            url: 'https://gateway.test/v1/chat/completions',
+            requestBodyValues: {},
+            statusCode: 401,
+          }),
+        },
+      ]) as never
+    )
+
+    await runChat({
+      conversationId: 'c',
+      projectId: 'w',
+      cwd: '/tmp/w',
+      selection: { providerId: gateway.id, modelId: 'gpt-test' },
+      broker: { assert: async () => {} } as unknown as PermissionBroker,
+      questionBroker: {} as unknown as QuestionBroker,
+      emit: () => {},
+      signal: new AbortController().signal,
+      assistantMessageId: 'a1',
+      assistantCreatedAt: 1000,
+      responseStartedAt: 1000,
+    })
+
+    expect(listChatMessages('c').find((m) => m.id === 'a1')?.error).toBe(
+      'Vision Gateway returned HTTP 401 Unauthorized: invalid api key'
+    )
+    expect(getConvUiPrefs('c').chat?.imagesUnsupported).toBeUndefined()
+  })
+})
+
+describe('API-key provider failures', () => {
+  const KEY = 'sk-test-fake-0123456789abcdef'
+  let server: FakeProviderServer | null = null
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    freshDb()
+    insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
+    insertConversation({
+      scope: 'project',
+      id: 'c',
+      workspaceId: 'w',
+      name: 'C',
+      branch: 'main',
+      mode: 'local',
+      experience: 'standard',
+      cwd: '/tmp/w',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+      isMulti: 0,
+    })
+    mocks.getProviderModelMetaWithStatus.mockResolvedValue({ status: 'unavailable', meta: null })
+    mocks.buildMcpTools.mockResolvedValue({ tools: {}, close: async () => {} })
+    mocks.buildAppTools.mockResolvedValue({ tools: {}, close: async () => {} })
+    mocks.hasApiKey.mockReturnValue(true)
+    mocks.getApiKey.mockReturnValue(KEY)
+  })
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    mocks.streamText.mockReset()
+    await server?.close()
+    server = null
+    closeDb()
+  })
+
+  it.each([
+    {
+      status: 402,
+      // Gemini's OpenAI-compatible error shape, over a status line without a reason phrase (as with HTTP/2).
+      reply: {
+        status: 402,
+        reason: '',
+        body: [
+          { error: { code: 402, message: 'Your prepayment credits are depleted.', status: 'RESOURCE_EXHAUSTED' } },
+        ],
+      },
+      expected: 'Gemini returned HTTP 402 Payment Required: Your prepayment credits are depleted.',
+    },
+    {
+      status: 401,
+      reply: {
+        status: 401,
+        body: { error: { message: `Incorrect API key provided: ${KEY}`, code: 'invalid_api_key' } },
+      },
+      expected: 'Gemini returned HTTP 401 Unauthorized: Incorrect API key provided: ***',
+    },
+  ])('shows an HTTP $status in the conversation, redacted and without logging the request', async (scenario) => {
+    server = await startFakeProvider(scenario.reply)
+    const provider = addProvider({ name: 'Gemini', baseURL: server.baseURL })
+    const { streamText } = await vi.importActual<typeof import('ai')>('ai')
+    mocks.streamText.mockImplementation(streamText as never)
+    mocks.resolveChatModel.mockReturnValue({
+      model: createOpenAICompatible({
+        name: provider.id,
+        baseURL: server.baseURL,
+        apiKey: KEY,
+        fetch: globalThis.fetch,
+      })('models/gemini-3-flash-preview'),
+      transport: 'openai',
+      harnessProfile: 'legacy-v1',
+      promptProfile: 'maestrly-legacy',
+      capabilities: {
+        encryptedReasoning: false,
+        nativeApplyPatch: false,
+        nativeCompaction: false,
+        nativeShell: false,
+        promptCacheKey: false,
+        toolSearch: false,
+      },
+      providerFingerprint: 'test-fp',
+    })
+    upsertChatMessage({
+      id: 'u1',
+      conversationId: 'c',
+      role: 'user',
+      parts: [{ type: 'text', id: 'u1-text', text: 'Hello' }],
+      createdAt: 900,
+    })
+    const consoleError = vi.spyOn(console, 'error')
+    const events: ChatStreamEvent[] = []
+
+    await runChat({
+      conversationId: 'c',
+      projectId: 'w',
+      cwd: '/tmp/w',
+      selection: { providerId: provider.id, modelId: 'models/gemini-3-flash-preview' },
+      broker: { assert: async () => {} } as unknown as PermissionBroker,
+      questionBroker: {} as unknown as QuestionBroker,
+      emit: (event) => events.push(event),
+      signal: new AbortController().signal,
+      assistantMessageId: 'a1',
+      assistantCreatedAt: 1000,
+      responseStartedAt: 1000,
+    })
+
+    expect(server.requests.map((request) => request.path)).toEqual(['/v1/chat/completions'])
+    expect(events.filter((event) => event.kind === 'error')).toEqual([
+      expect.objectContaining({ messageId: 'a1', message: scenario.expected }),
+    ])
+    expect(listChatMessages('c').find((m) => m.id === 'a1')?.error).toBe(scenario.expected)
+    expect(mocks.chatDiag).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'stream-error', status: scenario.status, error: scenario.expected })
+    )
+    expect(JSON.stringify(mocks.chatDiag.mock.calls)).not.toContain(KEY)
+    // The SDK default would print the whole APICallError, prompt included.
+    expect(consoleError.mock.calls.flat().some((arg) => APICallError.isInstance(arg))).toBe(false)
   })
 })

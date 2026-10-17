@@ -43,6 +43,13 @@ User-visible changes by version. Downloads are on
   packages again: release builds include the GitHub sign-in configuration they
   were missing. A build without it now says so on the Copilot card instead of
   downloading the Copilot runtime and failing with a generic sign-in error.
+- A turn that fails at a provider added with an API key, such as an
+  OpenAI-compatible endpoint that runs out of credits, now shows the error in
+  the conversation: the provider's name, the HTTP status and the provider's
+  message, with keys and tokens masked. Errors that come back without a
+  readable message, such as Gemini's, used to leave the response empty. A
+  rejected key or exhausted credits now fail on the first request instead of
+  being retried, and hovering the red status icon in the sidebar explains it.
 
 ## [0.20.0] - 2026-10-16
 

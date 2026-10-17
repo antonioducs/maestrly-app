@@ -1286,6 +1286,7 @@ export default {
     deleteGroup: 'Excluir grupo',
     attentionTitle: 'Terminou em background — precisa da sua atenção (some ao abrir)',
     planWaiting: 'Plano aguardando revisão',
+    statusError: 'A última resposta falhou ou foi interrompida. Abra a conversa para ver o que aconteceu.',
     worktreeTitle: 'Worktree isolada (branch própria, fora da pasta do projeto)',
     localModeTitle: 'Roda na pasta local do projeto (sem worktree isolada)',
     maestroConversation: 'Conversa Maestro',

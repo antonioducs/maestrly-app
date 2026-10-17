@@ -43,6 +43,7 @@ import {
 import { createDeltaCoalescer } from './delta-coalescer'
 import { toModelMessages, type PersistedReplayStats } from './message'
 import { resolveChatModel } from './provider'
+import { describeProviderError, providerErrorContext } from './provider-error'
 import { getProvider, isAnthropicProvider, isClaudeSubscriptionProvider } from './catalog'
 import type { QuestionBroker } from './question-broker'
 import { buildAppTools, buildMcpTools } from './mcp'
@@ -1607,6 +1608,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     if (openAILifecycle) openAILifecycle = rollbackOpenAICompactionLifecycle(openAILifecycle)
   }
 
+  const describeFailure = (error: unknown) => describeProviderError(error, providerErrorContext(selection.providerId))
+  /** Final failure of the turn; recorded here because streamText no longer logs it (see `onError`). */
+  const terminalFailure = (error: unknown) => {
+    const failure = describeFailure(error)
+    chatDiag({
+      kind: 'stream-error',
+      runtime: 'byok-ai-sdk',
+      provider: selection.providerId,
+      model: selection.modelId,
+      conv: conversationId,
+      attempt,
+      status: failure.status,
+      error: failure.message,
+    })
+    return failure
+  }
+
   // Intra-turn guard requires known window AND compaction (stopping at threshold alone would not help).
   const guard =
     contextWindow &&
@@ -1639,6 +1657,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       stopWhen,
       maxRetries: AI_SDK_MAX_RETRIES,
       abortSignal: signal,
+      // fullStream delivers the same error below. The SDK default prints the whole APICallError to
+      // stdout, request body (the prompt) included, and unredacted.
+      onError: () => undefined,
       ...(maxOutputTokens ? { maxOutputTokens } : {}),
       ...(providerOptions ? { providerOptions } : {}),
     })
@@ -1943,7 +1964,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             if (canRetry && retryTransient(p.error)) {
               chatDiag({
                 kind: 'retryable-error-part',
-                error: errMessage(p.error),
+                error: describeFailure(p.error).message,
                 lastPart,
                 steps,
                 produced,
@@ -1954,14 +1975,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               discardPendingOpenAICompaction()
               return 'truncated'
             }
-            const message = errMessage(p.error)
-            learnImageUnsupported(message)
+            const failure = terminalFailure(p.error)
+            // The provider's own text: a provider named after vision must not flag the conversation.
+            learnImageUnsupported(failure.detail)
             {
               const pair = withStoredUsage(
                 {
                   kind: 'error' as const,
                   messageId: assistantId,
-                  message,
+                  message: failure.message,
                   responseDurationMs: responseDurationMs(responseStartedAt),
                 },
                 buildPersistedUsage(
@@ -1992,7 +2014,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       if (canRetry && retryTransient(e)) {
         chatDiag({
           kind: 'retryable-thrown',
-          error: errMessage(e),
+          error: describeFailure(e).message,
           lastPart,
           steps,
           produced,
@@ -2003,14 +2025,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         discardPendingOpenAICompaction()
         return 'truncated'
       }
-      const message = errMessage(e)
-      learnImageUnsupported(message)
+      const failure = terminalFailure(e)
+      learnImageUnsupported(failure.detail)
       {
         const pair = withStoredUsage(
           {
             kind: 'error' as const,
             messageId: assistantId,
-            message,
+            message: failure.message,
             responseDurationMs: responseDurationMs(responseStartedAt),
           },
           buildPersistedUsage(

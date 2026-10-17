@@ -1276,6 +1276,7 @@ export default {
     deleteGroup: 'Delete group',
     attentionTitle: 'Finished in the background — needs your attention (disappears when you open it)',
     planWaiting: 'Plan waiting for review',
+    statusError: 'The last response failed or was interrupted. Open the conversation to see what happened.',
     worktreeTitle: 'Isolated worktree (its own branch, outside the project folder)',
     localModeTitle: 'Runs in the local project folder (no isolated worktree)',
     maestroConversation: 'Maestro conversation',

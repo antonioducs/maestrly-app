@@ -15,6 +15,7 @@ import { harnessSubagentPrompt } from './harness/host-contracts'
 import { buildHarnessPrompt } from './harness/prompt-builder'
 import { serializableReasoningEffort } from './harness/policies'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
+import { describeProviderError, providerErrorContext } from './provider-error'
 import {
   resolveInterleavedReplayPolicy,
   wrapInterleavedReplayModel,
@@ -331,6 +332,8 @@ export async function runSubagent(args: {
   const effective = args.profile.effective
   if (!effective) return { text: '', error: `Subagent "${args.agentName}" has no runnable execution profile.` }
   const usedModel: ChatModelRef = { providerId: effective.providerId, modelId: effective.modelId }
+  const describeFailure = (error: unknown) =>
+    describeProviderError(error, providerErrorContext(usedModel.providerId)).message
   try {
     // Snapshot already resolved once per toolCallId. Adapter, harness, and options derive ONLY from it;
     // continuations never reevaluate rules/credentials or fail over after a possible mutation.
@@ -658,6 +661,8 @@ export async function runSubagent(args: {
           stopWhen: () => false,
           maxRetries: AI_SDK_MAX_RETRIES,
           abortSignal: args.signal,
+          // fullStream delivers the same error; the SDK default prints it to stdout with the prompt, unredacted.
+          onError: () => undefined,
           ...(subMaxOutputTokens ? { maxOutputTokens: subMaxOutputTokens } : {}),
           ...(subProviderOptions ? { providerOptions: subProviderOptions } : {}),
         })
@@ -731,7 +736,7 @@ export async function runSubagent(args: {
                 if (subLifecycle) subLifecycle = rollbackOpenAICompactionLifecycle(subLifecycle)
                 return 'truncated'
               }
-              throw Object.assign(new Error(errMessage(part.error)), { maestrlyRetryClassified: true })
+              throw Object.assign(new Error(describeFailure(part.error)), { maestrlyRetryClassified: true })
             case 'abort':
               throw new Error(part.reason || 'Subagent aborted')
             case 'custom':
@@ -868,7 +873,7 @@ export async function runSubagent(args: {
     // 'error'. Return usage even on failure (attempts still consumed tokens).
     return {
       text: '',
-      error: errMessage(e),
+      error: describeFailure(e),
       ...(usage.totalInput || usage.output ? { usage, model: usedModel } : {}),
     }
   }
