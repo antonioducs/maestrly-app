@@ -11,7 +11,10 @@ import {
   fleetEnvironmentSchema,
   fleetGatewayEventSchema,
   fleetHostInfoSchema,
+  fleetLoginAttemptSchema,
   type FleetEnvironment,
+  type FleetLoginAttempt,
+  type FleetLoginStartRequest,
 } from '@maestrly/bot-fleet-protocol'
 import {
   desktop,
@@ -29,10 +32,12 @@ const now = () => new Date().toISOString()
 /**
  * A bot server with one bots environment, able to host workspaces. Its bridge is the real gateway's in miniature: a
  * one-use ticket for a paired device, then the WebSocket handshake passed through to the host with the control token
- * the gateway holds. The host it passes to is a real instance of the app in server mode.
+ * the gateway holds. The host it passes to is a real instance of the app in server mode. With `workspaces`, a running
+ * workspaces environment of that name is already set up.
  */
-function fakeGateway(host: () => LaunchedHost | null, options: { scopes?: boolean } = {}) {
-  const requests: Array<{ key: string; body: unknown }> = []
+function fakeGateway(host: () => LaunchedHost | null, options: { scopes?: boolean; workspaces?: string } = {}) {
+  const requests: Array<{ key: string; body: unknown; path: string }> = []
+  const logins = new Map<string, FleetLoginAttempt>()
   const streams = new Set<ServerResponse>()
   const tickets = new Set<string>()
   const bridges = new Set<Duplex>()
@@ -58,6 +63,13 @@ function fakeGateway(host: () => LaunchedHost | null, options: { scopes?: boolea
       ...patch,
     })
   const environments: FleetEnvironment[] = [environment('acme', 'Acme', { botIds: ['scout'] })]
+  if (options.workspaces)
+    environments.push(
+      environment('workspaces', options.workspaces, {
+        kind: 'workspaces',
+        capabilities: [...capabilities, 'workspaces-host'],
+      })
+    )
   const bots = [
     fleetBotSchema.parse({
       id: 'scout',
@@ -118,7 +130,7 @@ function fakeGateway(host: () => LaunchedHost | null, options: { scopes?: boolea
         return send(400, { code: 'INVALID_REQUEST', message: 'Bad body' })
       }
     }
-    requests.push({ key, body })
+    requests.push({ key, body, path: url.pathname })
     if (key === 'events') {
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
       streams.add(response)
@@ -231,6 +243,35 @@ function fakeGateway(host: () => LaunchedHost | null, options: { scopes?: boolea
         tickets.add(ticket)
         return send(201, { ticket, path: `/v1/bridge?ticket=${ticket}`, expiresAt: new Date(Date.now() + 30_000) })
       }
+      case 'environmentLoginStart': {
+        if (!found) return send(404, { code: 'NOT_FOUND', message: 'Not found' })
+        const input = body as FleetLoginStartRequest
+        // A provider's device page: the computer that asked opens it; the environment waits for the code typed there.
+        const attempt = fleetLoginAttemptSchema.parse({
+          loginId: `login-${logins.size + 1}`,
+          kind: input.kind,
+          accountId: input.slot === 'auto' || input.slot === 'default' ? null : input.slot,
+          method: 'device',
+          state: 'pending',
+          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+          browser: null,
+          device: { verificationUrl: 'https://accounts.x.ai/device?user_code=SYNTH-CODE', userCode: 'SYNTH-CODE' },
+          manual: null,
+          account: null,
+          error: null,
+        })
+        logins.set(attempt.loginId, attempt)
+        return send(200, attempt)
+      }
+      case 'environmentLoginGet':
+      case 'environmentLoginCancel': {
+        const attempt = logins.get(url.pathname.split('/').at(-1) ?? '')
+        if (!found || !attempt) return send(404, { code: 'NOT_FOUND', message: 'Not found' })
+        if (key === 'environmentLoginGet') return send(200, attempt)
+        if (attempt.state === 'pending') attempt.state = 'cancelled'
+        response.writeHead(204)
+        return response.end()
+      }
       case 'environmentAccountsList':
         return send(200, { apiKeys: [], subscriptions: [] })
       case 'environmentSkillsList':
@@ -278,7 +319,7 @@ function fakeGateway(host: () => LaunchedHost | null, options: { scopes?: boolea
     upstream.on('error', () => refuse(502))
     upstream.end()
   })
-  return { server, requests, environments, tickets, bridges }
+  return { server, requests, environments, tickets, bridges, logins }
 }
 
 // The path a person's server takes: the desktop paired with a gateway sets up workspaces on it from the Server page,
@@ -561,6 +602,97 @@ test('server page creates one workspaces environment per scope, each a host name
     await expect(options.nth(2)).toContainText('Company A')
     await options.nth(2).click()
     await expect(page.locator('[data-host-switcher]')).toContainText('Company A')
+  } finally {
+    await client?.close().catch(() => undefined)
+    await host?.app.close().catch(() => undefined)
+    gateway.server.closeAllConnections()
+    await new Promise((resolve) => gateway.server.close(resolve))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+// Signed in on the host itself, a provider's page would open on the server, where nobody sees it, or call back to a
+// port of this computer that nothing listens on. A host's account signs in through its environment instead, as the
+// environment's own accounts do: the page opens on this computer and the server keeps the sign-in.
+test('a host’s account signs in through its environment, with the provider’s page on this computer', async () => {
+  test.setTimeout(240_000)
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-login-')))
+  const workspacesRoot = path.join(root, 'srv')
+  await mkdir(workspacesRoot)
+  let host: LaunchedHost | null = null
+  let client: ElectronApplication | undefined
+  let page!: Page
+  const gateway = fakeGateway(() => host, { workspaces: 'Personal' })
+  const local = (name: string, ...args: unknown[]) =>
+    page.evaluate(({ name, args }) => (window as any).api[name](...args), { name, args })
+  // What an app opens in the browser, recorded instead of opened.
+  const recordOpened = (app: ElectronApplication) =>
+    app.evaluate(({ shell }) => {
+      const urls: string[] = []
+      ;(globalThis as { __opened?: string[] }).__opened = urls
+      shell.openExternal = async (url: string) => {
+        urls.push(url)
+      }
+    })
+  const opened = (app: ElectronApplication) =>
+    app.evaluate(() => (globalThis as { __opened?: string[] }).__opened ?? [])
+  try {
+    await listen(gateway.server)
+    host = await launchHost(path.join(root, 'host-profile'), workspacesRoot)
+    await recordOpened(host.app)
+    client = await electron.launch({
+      args: [path.join(desktop, 'out/main/index.js')],
+      env: instanceEnv(path.join(root, 'client-profile'), 'remote-login-e2e'),
+    })
+    await recordOpened(client)
+    page = await client.firstWindow()
+    await page.waitForFunction(() => Boolean((window as any).api))
+    await page.getByRole('button', { name: 'Skip', exact: true }).click()
+    await local('fleetConnect', { url: `http://127.0.0.1:${portOf(gateway.server)}`, code: 'ABCD-EFGH' })
+    await expect
+      .poll(async () => ((await local('hostsList')) as Array<{ remote: boolean; state: string }>)[1]?.state)
+      .toBe('online')
+    const [, { id: hostId }] = (await local('hostsList')) as Array<{ id: string }>
+
+    // The host's accounts, in its settings: Grok signs in from there.
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const selector = page.locator('[data-settings-host]')
+    await selector.getByRole('combobox').click()
+    await page.getByRole('option', { name: 'Personal', exact: true }).click()
+    await expect(selector.getByRole('combobox')).toContainText('Personal')
+    // A host with no account offers to add one in the header and in the empty list.
+    await page.getByRole('button', { name: 'Add account', exact: true }).first().click()
+    const add = page.getByTestId('add-account-dialog')
+    await add.locator('button[aria-pressed]', { hasText: 'Grok' }).click()
+    await add.getByRole('button', { name: 'Sign in with Grok', exact: true }).click()
+
+    // The environment starts the sign-in, and its page opens on this computer.
+    const login = page.getByRole('dialog', { name: 'Sign in to Grok on Personal' })
+    await expect(login.getByText('SYNTH-CODE', { exact: true })).toBeVisible()
+    await expect(login.getByText('Enter this code on accounts.x.ai', { exact: true })).toBeVisible()
+    expect(gateway.requests.filter((item) => item.key === 'environmentLoginStart')).toEqual([
+      {
+        key: 'environmentLoginStart',
+        path: '/v1/environments/workspaces/logins',
+        body: { kind: 'grok', method: 'device', slot: 'default' },
+      },
+    ])
+    expect(await opened(client)).toEqual(['https://accounts.x.ai/device?user_code=SYNTH-CODE'])
+    // The host started no sign-in of its own, and opened nothing on the server.
+    expect(await opened(host.app)).toEqual([])
+    const status = await page.evaluate(
+      (id) => (window as any).api.hostApi(id).chatSubscriptionStatus('grok-subscription', true),
+      hostId
+    )
+    expect(status).toMatchObject({ state: 'signed-out', authenticated: false })
+
+    // Leaving the dialog cancels the sign-in on the server, and the account can sign in again.
+    await login.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(login).toBeHidden()
+    await expect.poll(() => gateway.logins.get('login-1')?.state).toBe('cancelled')
+    const card = page.locator('[data-subscription-provider="grok-subscription"][data-subscription-account="default"]')
+    await expect(card.getByRole('button', { name: 'Sign in with Grok', exact: true })).toBeEnabled()
   } finally {
     await client?.close().catch(() => undefined)
     await host?.app.close().catch(() => undefined)

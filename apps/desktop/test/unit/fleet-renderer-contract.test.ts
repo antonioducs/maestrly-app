@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { FLEET_ENVIRONMENTS_FEATURE, FLEET_UNIFIED_DESKTOP_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { botComputerMode } from '../../src/renderer/lib/fleet/provisioning'
+import { environmentSubscriptionLogin } from '../../src/renderer/lib/fleet/use-bot-login'
 import { resources } from '../../src/shared/i18n/resources'
 
 const source = (path: string) => readFileSync(new URL(`../../src/renderer/${path}`, import.meta.url), 'utf8')
@@ -270,6 +271,36 @@ describe('fleet provisioning wiring', () => {
       expect(component, name).not.toContain('window.open')
     }
     expect(login).not.toContain('window.open')
+  })
+  it('signs a workspaces host in to subscriptions through its environment, which brings the page to this computer', () => {
+    const host = {
+      remote: true,
+      environment: { id: 'personal', lifecycle: 'running' as const, updateAvailable: false },
+    }
+    expect(environmentSubscriptionLogin('antigravity-subscription', host)).toEqual({
+      kind: 'antigravity',
+      environmentId: 'personal',
+    })
+    expect(environmentSubscriptionLogin('claude-subscription', host)).toEqual({
+      kind: 'claude',
+      environmentId: 'personal',
+    })
+    expect(environmentSubscriptionLogin('codex-subscription', host)).toEqual({
+      kind: 'codex',
+      environmentId: 'personal',
+    })
+    expect(environmentSubscriptionLogin('grok-subscription', host)).toEqual({ kind: 'grok', environmentId: 'personal' })
+    // Their pages call nothing back on this computer: the host signs them in itself.
+    expect(environmentSubscriptionLogin('github-copilot-subscription', host)).toBeNull()
+    expect(environmentSubscriptionLogin('cursor-subscription', host)).toBeNull()
+    // This computer signs itself in, and a host reached without a server has no environment to relay.
+    expect(environmentSubscriptionLogin('antigravity-subscription', { remote: false, environment: null })).toBeNull()
+    expect(environmentSubscriptionLogin('antigravity-subscription', { remote: true, environment: null })).toBeNull()
+    const account = source('components/chat/accounts/SubscriptionAccount.tsx')
+    expect(account).toContain('environmentSubscriptionLogin(providerKind, host)')
+    expect(account).toMatch(/if \(environmentLogin\) \{\s*setEnvironmentLoginOpen\(true\)\s*return\s*\}/)
+    expect(account).toContain('<BotLoginDialog')
+    expect(account).toContain("slot={accountId ?? 'default'}")
   })
   it('avoids native select controls in provisioning', () => {
     for (const name of [
