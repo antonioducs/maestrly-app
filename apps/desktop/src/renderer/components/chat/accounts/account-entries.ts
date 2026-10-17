@@ -131,6 +131,31 @@ export function runtimeMissing(runtime: RuntimeAssetInfo | null | undefined): bo
   return !!runtime && runtime.status.state !== 'ready' && runtime.provided?.active !== true
 }
 
+/** Plan codes the providers report (Codex `planType`, Claude `subscriptionType`) that have a readable name. */
+const KNOWN_SUBSCRIPTION_PLANS = new Set([
+  'free',
+  'go',
+  'plus',
+  'pro',
+  'prolite',
+  'max',
+  'team',
+  'business',
+  'self_serve_business_usage_based',
+  'enterprise',
+  'enterprise_cbp_usage_based',
+  'edu',
+])
+
+/** Readable plan name; codes without one show as reported, and an unknown plan shows nothing. */
+export function subscriptionPlanLabel(planType: string | null | undefined, t: (key: string) => string): string | null {
+  const reported = planType?.trim()
+  if (!reported) return null
+  const code = reported.toLowerCase()
+  if (code === 'unknown') return null
+  return KNOWN_SUBSCRIPTION_PLANS.has(code) ? t(`settings.subscriptionPlan_${code}`) : reported
+}
+
 export function subscriptionAccountSummary(
   entry: SubscriptionAccountEntry,
   snapshot: SubscriptionAccountSnapshot | undefined

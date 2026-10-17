@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   packaged: false,
   bundledClaude: null as string | null,
   settings: new Map<string, string>(),
+  discoverCodex: null as null | ((target: string) => Promise<unknown>),
 }))
 
 vi.mock('electron', () => ({
@@ -40,20 +41,55 @@ vi.mock('../../src/main/chat/codex-subscription/runtime-resolver', () => ({
   }),
 }))
 
+vi.mock('../../src/main/runtime-assets/codex-releases', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/runtime-assets/codex-releases')>()
+  return {
+    ...original,
+    discoverCodexRelease: (target: string) =>
+      state.discoverCodex ? state.discoverCodex(target) : Promise.reject(new Error('Unexpected Codex release check')),
+  }
+})
+
 import {
   cleanupOrphanRuntimeAssetTemps,
   imageRuntimeBaseline,
+  previewRuntimeAssetInstall,
   resetRuntimeAssetAppServiceForTests,
   runtimeAssetInfo,
   runtimeUpdates,
   startRuntimeAssetUpdates,
 } from '../../src/main/runtime-assets/app-service'
+import {
+  createCodexTarget,
+  hostRuntimeTarget,
+  RUNTIME_TARGET_IDS,
+  type RuntimeAssetDefinition,
+} from '../../src/main/runtime-assets/registry'
 import { RuntimeUpdateController } from '../../src/main/runtime-assets/runtime-updates'
+
+function codexRelease(version: string): RuntimeAssetDefinition {
+  return {
+    id: 'codex-runtime',
+    version,
+    targets: Object.fromEntries(
+      RUNTIME_TARGET_IDS.map((target) => [
+        target,
+        createCodexTarget(target, version, {
+          sha512Base64: Buffer.alloc(64, 1).toString('base64'),
+          downloadBytes: 150_000_000,
+          maxDownloadBytes: 160_000_000,
+          unpackedBytes: 420_000_000,
+        }),
+      ])
+    ),
+  }
+}
 
 beforeEach(async () => {
   state.userData = await mkdtemp(path.join(os.tmpdir(), 'runtime-app-service-bot-'))
   state.settings.clear()
   state.packaged = false
+  state.discoverCodex = null
   Object.defineProperty(process, 'resourcesPath', { configurable: true, value: path.join(state.userData, 'resources') })
   const claude = path.join(state.userData, 'claude')
   await writeFile(claude, '#!/bin/sh\n')
@@ -150,6 +186,36 @@ describe('runtime asset app service on the desktop', () => {
     expect(info.update?.automatic).toBe(false)
     expect((await runtimeAssetInfo('antigravity-acp-runtime')).update?.automatic).toBe(false)
     expect(await imageRuntimeBaseline('claude-code-runtime')).toBeNull()
+  })
+
+  it('says a first install gets the latest release until a check tells which one', async () => {
+    expect(await runtimeAssetInfo('codex-runtime')).toMatchObject({
+      installsLatest: true,
+      status: { state: 'not-installed' },
+    })
+    expect(await runtimeAssetInfo('antigravity-acp-runtime')).toMatchObject({ installsLatest: true })
+    // Fixed-version components always install their embedded version.
+    expect(await runtimeAssetInfo('github-copilot-runtime')).not.toHaveProperty('installsLatest')
+    // Unpackaged builds never query release channels on their own.
+    previewRuntimeAssetInstall('codex-runtime')
+    await runtimeUpdates('codex-runtime').resolveInitialRelease()
+    expect(await runtimeAssetInfo('codex-runtime')).toMatchObject({ installsLatest: true })
+  })
+
+  it('previews the release a first install receives, with its sizes', async () => {
+    state.packaged = true
+    const discovered: string[] = []
+    state.discoverCodex = async (target) => {
+      discovered.push(target)
+      return codexRelease('0.163.0')
+    }
+    previewRuntimeAssetInstall('codex-runtime')
+    await runtimeUpdates('codex-runtime').resolveInitialRelease()
+    expect(discovered).toEqual([hostRuntimeTarget()])
+    const info = await runtimeAssetInfo('codex-runtime')
+    expect(info).not.toHaveProperty('installsLatest')
+    expect(info).toMatchObject({ availableVersion: '0.163.0', downloadBytes: 150_000_000, unpackedBytes: 420_000_000 })
+    expect(info.status).toMatchObject({ state: 'not-installed', diskUsageBytes: 0 })
   })
 
   it('never starts Claude Code updates and schedules nothing in an unpackaged build', async () => {

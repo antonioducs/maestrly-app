@@ -1050,7 +1050,7 @@ export default {
       reset: 'Reset to default',
     },
     maestrlyChat: {
-      desc: 'Chat with your ChatGPT or GitHub Copilot subscription through their official runtimes, or connect any provider with your own API key. Credentials stay on this device.',
+      desc: 'Chat with an AI subscription you already have, through its official runtime, or connect any provider with your own API key. Credentials stay on this device.',
     },
     execution: {
       heading: 'Execution',
@@ -1468,7 +1468,7 @@ export default {
     createConv: 'Create conversation',
     createChat: 'Create chat',
     chatDesc:
-      'Maestrly Chat: use your ChatGPT or GitHub Copilot subscription, or a direct API, with file/shell tools on the branch/worktree chosen above (like the CLIs). Connect a provider in Settings › Maestrly Chat.',
+      'Maestrly Chat: use an AI subscription you already have, or a direct API, with file/shell tools on the branch/worktree chosen above (like the CLIs). Connect a provider in Settings › Maestrly Chat.',
     errSelectRepo: 'Select at least one repository.',
     errCoordBranch: 'Enter the coordinated branch name.',
     errBranch: 'Enter the branch name.',

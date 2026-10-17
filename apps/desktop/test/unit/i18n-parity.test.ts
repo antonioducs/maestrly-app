@@ -28,6 +28,30 @@ describe('i18n — catalog parity (English is the source)', () => {
   }
 })
 
+describe('i18n — copy that holds across providers and systems', () => {
+  const lookup = (catalog: unknown, key: string): string =>
+    String(
+      key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], catalog)
+    )
+
+  it('describes subscriptions without listing providers, which keep being added', () => {
+    for (const language of ['en', 'pt-BR'] as const)
+      for (const key of ['ui.settings.maestrlyChat.desc', 'ui.newConv.chatDesc', 'chat.messages.emptyState']) {
+        const text = lookup(resources[language], key)
+        expect(text, `${language} ${key}`).not.toBe('undefined')
+        expect(text, `${language} ${key}`).not.toMatch(/ChatGPT|Copilot|Claude|Grok|Cursor|Google|Gemini/)
+      }
+  })
+
+  it('leaves the paste shortcut of the composer hint to the platform', () => {
+    for (const language of ['en', 'pt-BR'] as const) {
+      const placeholder = lookup(resources[language], 'chat.composer.placeholder')
+      expect(placeholder, language).toContain('{{pasteShortcut}}')
+      expect(placeholder, language).not.toMatch(/⌘|Ctrl/)
+    }
+  })
+})
+
 describe('i18n — the computer the app runs on', () => {
   const lookup = (catalog: unknown, key: string): unknown =>
     key.split('.').reduce<unknown>((node, part) => (node as Record<string, unknown> | undefined)?.[part], catalog)

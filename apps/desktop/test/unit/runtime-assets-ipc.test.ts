@@ -58,10 +58,12 @@ const mocks = vi.hoisted(() => {
     },
     updates,
     runtimeUpdates: vi.fn((_id: RuntimeAssetId) => updates),
+    previewInstall: vi.fn((_id: RuntimeAssetId) => undefined),
   }
 })
 
 vi.mock('../../src/main/runtime-assets/app-service', () => ({
+  previewRuntimeAssetInstall: mocks.previewInstall,
   runtimeAssetInfo: mocks.info,
   runtimeAssetService: () => mocks.service,
   runtimeUpdates: mocks.runtimeUpdates,
@@ -86,6 +88,7 @@ describe('runtime asset IPC', () => {
     Object.values(mocks.service).forEach((fn) => fn.mockClear())
     Object.values(mocks.updates).forEach((fn) => fn.mockClear())
     mocks.runtimeUpdates.mockClear()
+    mocks.previewInstall.mockClear()
     const reg = {
       handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
       mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
@@ -132,6 +135,22 @@ describe('runtime asset IPC', () => {
     await expect(reads.get('runtime-assets:list')?.({})).resolves.toHaveLength(6)
     expect(mocks.service.install).not.toHaveBeenCalled()
     expect(mocks.service.repair).not.toHaveBeenCalled()
+    expect(mocks.updates.installInitial).not.toHaveBeenCalled()
+  })
+
+  it('previews the first installation of every asset it shows, never of a rejected id', async () => {
+    await reads.get('runtime-assets:status')?.({}, 'codex-runtime')
+    expect(mocks.previewInstall).toHaveBeenCalledWith('codex-runtime')
+    mocks.previewInstall.mockClear()
+    await reads.get('runtime-assets:list')?.({})
+    expect(mocks.previewInstall.mock.calls.map(([id]) => id)).toEqual(
+      expect.arrayContaining(['codex-runtime', 'antigravity-acp-runtime'])
+    )
+    mocks.previewInstall.mockClear()
+    await expect(
+      Promise.resolve().then(() => reads.get('runtime-assets:status')?.({}, 'claude-code-runtime'))
+    ).rejects.toThrow('Unknown runtime asset id')
+    expect(mocks.previewInstall).not.toHaveBeenCalled()
   })
 
   it.each(['status', 'install', 'cancel', 'repair', 'remove', 'check-update', 'update', 'rollback', 'set-auto-update'])(

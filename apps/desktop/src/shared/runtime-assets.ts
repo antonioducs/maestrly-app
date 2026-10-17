@@ -126,6 +126,11 @@ export interface RuntimeAssetInfo {
   readonly availableVersion: string
   readonly downloadBytes: number
   readonly unpackedBytes: number
+  /**
+   * Set while an updatable runtime awaits its first installation and no recent check knows the latest release: the
+   * installation resolves it when it starts, so `availableVersion` and the sizes describe only the embedded fallback.
+   */
+  readonly installsLatest?: boolean
   readonly status: RuntimeAssetPublicStatus
   /** Present only for assets in `UPDATABLE_RUNTIME_ASSET_IDS`. */
   readonly update?: RuntimeAssetUpdateInfo

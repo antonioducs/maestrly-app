@@ -1,7 +1,13 @@
 import type { RuntimeAssetId, RuntimeAssetInfo, UpdatableRuntimeAssetId } from '../../shared/runtime-assets'
 import { isUpdatableRuntimeAssetId } from '../../shared/runtime-assets'
 import type { IpcRegistrar } from '../ipc-registrar'
-import { runtimeAssetInfo, runtimeAssetService, runtimeUpdates, setRuntimeAssetChangedEmitter } from './app-service'
+import {
+  previewRuntimeAssetInstall,
+  runtimeAssetInfo,
+  runtimeAssetService,
+  runtimeUpdates,
+  setRuntimeAssetChangedEmitter,
+} from './app-service'
 import type { RuntimeUpdateController } from './runtime-updates'
 import { isListedRuntimeAssetId, listedRuntimeAssetIds } from './visibility'
 
@@ -51,8 +57,12 @@ export function registerRuntimeAssetIpc(reg: IpcRegistrar, dependencies: Runtime
   const updateOperation = (rawId: unknown, run: (controller: RuntimeUpdateController) => Promise<unknown>) =>
     operation(rawId, () => run(runtimeUpdates(updatableAssetId(rawId))), updatableAssetId)
 
-  reg.handle('runtime-assets:status', async (_event, id) => runtimeAssetInfo(assetId(id)))
-  reg.handle('runtime-assets:list', () => Promise.all(listedRuntimeAssetIds().map(runtimeAssetInfo)))
+  const read = (id: RuntimeAssetId): Promise<RuntimeAssetInfo> => {
+    previewRuntimeAssetInstall(id)
+    return runtimeAssetInfo(id)
+  }
+  reg.handle('runtime-assets:status', async (_event, id) => read(assetId(id)))
+  reg.handle('runtime-assets:list', () => Promise.all(listedRuntimeAssetIds().map(read)))
   reg.mhandle('runtime-assets:install', (_event, id) =>
     operation(id, (valid) =>
       // Updatable runtimes first install the latest validated stable release, falling back to the embedded pin.

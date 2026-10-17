@@ -25,6 +25,7 @@ import {
   matchesAccountFilter,
   needsAttention,
   runtimeMissing,
+  subscriptionPlanLabel,
 } from './account-entries'
 import { inputCls, primaryButtonCls, ProviderMark, type ProviderMarkKind, UsageGauge } from './account-ui'
 import { AddAccountDialog, type AddAccountIntent } from './AddAccountDialog'
@@ -110,7 +111,9 @@ export function AccountsSettingsPanel({
           metaTone: 'bad',
         }
       }
-      const facts = [status.username ?? status.email, status.planType].filter(Boolean).join(' · ')
+      const facts = [status.username ?? status.email, subscriptionPlanLabel(status.planType, t)]
+        .filter(Boolean)
+        .join(' · ')
       return { meta: facts || t(copyKey('Connected')), metaTone: 'muted' }
     }
     if (status.state === 'signing-in') return { meta: t(copyKey('WaitingShort')), metaTone: 'warn' }
@@ -177,7 +180,8 @@ export function AccountsSettingsPanel({
         t(`settings.${subscriptionProviderCopy[row.entry.providerKind].prefix}Heading`),
         status?.email ?? '',
         status?.username ?? '',
-        status?.planType ?? ''
+        status?.planType ?? '',
+        subscriptionPlanLabel(status?.planType, t) ?? ''
       )
     } else if (row.entry.type === 'chatgpt-web') {
       parts.push(t('settings.chatgptWebHeading'))

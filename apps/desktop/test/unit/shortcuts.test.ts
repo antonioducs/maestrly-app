@@ -14,6 +14,7 @@ import {
   formatAccelerator,
   eventKey,
   osFromPlatform,
+  pasteShortcutLabel,
   defaultClosePopup,
   defaultDrawerShortcut,
   parseDrawerShortcut,
@@ -28,6 +29,14 @@ describe('osFromPlatform', () => {
     expect(osFromPlatform('win32')).toBe('win')
     expect(osFromPlatform('linux')).toBe('linux')
     expect(osFromPlatform('freebsd')).toBe('linux')
+  })
+})
+
+describe('pasteShortcutLabel', () => {
+  it('uses Command on macOS and Ctrl on Windows and Linux', () => {
+    expect(pasteShortcutLabel('mac')).toBe('⌘V')
+    expect(pasteShortcutLabel('win')).toBe('Ctrl+V')
+    expect(pasteShortcutLabel('linux')).toBe('Ctrl+V')
   })
 })
 

@@ -12,8 +12,11 @@ import {
   needsAttention,
   type SubscriptionAccountEntry,
   subscriptionAccountSummary,
+  subscriptionPlanLabel,
 } from '../../src/renderer/components/chat/accounts/account-entries'
 import type { ChatGptWebStatus, ChatProviderInfo, ChatSubscriptionUsage } from '../../src/shared/chat'
+import enChat from '../../src/shared/i18n/en/chat'
+import ptBrChat from '../../src/shared/i18n/pt-BR/chat'
 
 function provider(overrides: Partial<ChatProviderInfo> & Pick<ChatProviderInfo, 'id'>): ChatProviderInfo {
   return { name: overrides.id, baseURL: 'test://provider', apiKeyPresent: false, ...overrides }
@@ -213,5 +216,27 @@ describe('account entries', () => {
     expect(hasActiveRotation(routes, 'c')).toBe(false)
     expect(hasActiveRotation(routes, 'd')).toBe(false)
     expect(hasActiveRotation(routes, 'b')).toBe(false)
+  })
+
+  it('names the plans providers report and shows unknown codes as reported', () => {
+    const catalog = (settings: Record<string, unknown>) => (key: string) => {
+      const value = settings[key.replace(/^settings\./, '')]
+      if (typeof value !== 'string') throw new Error(`Missing ${key}`)
+      return value
+    }
+    const en = catalog(enChat.settings)
+    expect(subscriptionPlanLabel('prolite', en)).toBe('Pro Lite')
+    expect(subscriptionPlanLabel('plus', en)).toBe('Plus')
+    expect(subscriptionPlanLabel('self_serve_business_usage_based', en)).toBe('Business (usage-based)')
+    // Claude reports its subscription type the same way.
+    expect(subscriptionPlanLabel('max', en)).toBe('Max')
+    expect(subscriptionPlanLabel('PRO', en)).toBe('Pro')
+    expect(subscriptionPlanLabel('free', catalog(ptBrChat.settings))).toBe('Gratuito')
+    expect(subscriptionPlanLabel('SuperGrok Heavy', en)).toBe('SuperGrok Heavy')
+    for (const missing of ['unknown', '  ', null, undefined]) expect(subscriptionPlanLabel(missing, en)).toBeNull()
+    const labels = Object.entries(enChat.settings).filter(([key]) => key.startsWith('subscriptionPlan_'))
+    expect(labels.length).toBeGreaterThan(0)
+    for (const [key, label] of labels)
+      expect(subscriptionPlanLabel(key.slice('subscriptionPlan_'.length), en)).toBe(label)
   })
 })
