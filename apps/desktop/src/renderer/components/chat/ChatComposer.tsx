@@ -6,8 +6,15 @@ import { hasDraggedFiles } from '@/lib/attachment-kind'
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { ChatAttachmentKind, ChatFileHit, ChatSlashCommand } from '../../../shared/chat'
-import { pasteShortcutLabel } from '../../../shared/shortcuts'
+import { bindingMatchesEvent, pasteShortcutLabel } from '../../../shared/shortcuts'
 import { MentionEditor, type MentionEditorHandle } from './MentionEditor'
+import {
+  ComposerDictationContext,
+  dictationShortcut,
+  WorkingRing,
+  type ComposerDictation,
+  type DictationControl,
+} from './composer-dictation'
 
 export interface UIAttachment {
   id: string
@@ -125,8 +132,27 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
     onPickCommand?.(cmd)
   }
 
+  const [dictating, setDictating] = useState(false)
+  const dictationControl = useRef<DictationControl | null>(null)
+  const queues = streaming && !sendWhileStreaming
+  const dictation = useMemo<ComposerDictation>(
+    () => ({
+      streaming,
+      queues,
+      control: dictationControl,
+      onActiveChange: setDictating,
+      focusEditor: () => editorRef.current?.focus(),
+    }),
+    [streaming, queues]
+  )
+
   const submit = () => {
     if (disabled) return
+    // Enter while dictating sends the draft together with the recording, once it is transcribed.
+    if (dictationControl.current?.active) {
+      dictationControl.current.finish('send')
+      return
+    }
 
     const { text, mentions } = editorRef.current?.serialize() ?? { text: value, mentions: [] }
     if (!text.trim() && attachments.length === 0) return
@@ -168,10 +194,39 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
         return true
       }
     }
+    // Esc during an IME composition cancels the composition only.
+    if (e.nativeEvent.isComposing) return false
+    const control = dictationControl.current
+    const togglesDictation = bindingMatchesEvent(dictationShortcut(window.api.platformInfo.os), {
+      key: e.key,
+      code: e.code,
+      meta: e.metaKey,
+      control: e.ctrlKey,
+      alt: e.altKey,
+      shift: e.shiftKey,
+    })
+    if (togglesDictation && control) {
+      e.preventDefault()
+      control.toggle()
+      return true
+    }
+    if (e.key === 'Escape' && control?.active) {
+      e.preventDefault()
+      control.finish('discard')
+      return true
+    }
+    // With text in the box the main button queues, so Esc is how to stop the agent then.
+    if (e.key === 'Escape' && streaming) {
+      e.preventDefault()
+      onStop()
+      return true
+    }
     return false
   }
 
   const canSend = value.trim().length > 0 || attachments.length > 0
+  // One main button: it sends, queues or steers while there is something to send, and stops the agent otherwise.
+  const stopMode = streaming && (!canSend || !!disabled)
 
   // Files dragged from the operating system onto the composer are attached like picked or pasted ones. Text and
   // in-app drags keep the editor's default behavior.
@@ -304,10 +359,12 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
           placeholder={
             disabled
               ? (disabledPlaceholder ?? t('composer.placeholderDisabled'))
-              : streaming
-                ? (streamingPlaceholder ?? t('composer.placeholderQueue'))
-                : (placeholder ??
-                  t('composer.placeholder', { pasteShortcut: pasteShortcutLabel(window.api.platformInfo.os) }))
+              : dictating
+                ? t('composer.placeholderDictating')
+                : streaming
+                  ? (streamingPlaceholder ?? t('composer.placeholderQueue'))
+                  : (placeholder ??
+                    t('composer.placeholder', { pasteShortcut: pasteShortcutLabel(window.api.platformInfo.os) }))
           }
           className="chat-input max-h-[220px] overflow-y-auto"
           maxHeight={MAX_H}
@@ -318,37 +375,46 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
           onKeyDown={handleKeyDown}
         />
 
-        <div className="mt-1.5 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-0.5">{leftSlot}</div>
-          <div className="flex shrink-0 items-center gap-2">
-            {micSlot}
-            {(!streaming || sendWhileStreaming) && (
-              <button
-                type="button"
-                onClick={submit}
-                disabled={!canSend || disabled}
-                className={cn(
-                  'chat-send-button flex h-8 w-8 items-center justify-center rounded-full transition-[color,background,box-shadow,transform]',
-                  canSend ? 'bg-indigo-500 text-white hover:bg-indigo-400' : 'bg-foreground/10 text-muted-foreground',
-                  disabled && 'bg-foreground/10 text-muted-foreground'
-                )}
-                title={t('composer.send')}
-              >
-                <ArrowUp className="h-4 w-4" />
-              </button>
-            )}
-            {streaming && (
-              <button
-                type="button"
-                onClick={onStop}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20"
-                title={t('composer.stop')}
-              >
-                <Square className="h-3.5 w-3.5" />
-              </button>
-            )}
+        <ComposerDictationContext.Provider value={dictation}>
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            {/* Hidden, not unmounted: the pickers keep their state through a dictation. */}
+            <div className={cn('flex min-w-0 flex-1 items-center gap-0.5', dictating && 'hidden')}>{leftSlot}</div>
+            <div className={cn('flex items-center gap-2', dictating ? 'min-w-0 flex-1' : 'shrink-0')}>
+              {micSlot}
+              {!dictating &&
+                (stopMode ? (
+                  <button
+                    type="button"
+                    onClick={onStop}
+                    className="relative flex h-8 w-8 items-center justify-center rounded-full bg-foreground/10 text-foreground hover:bg-foreground/20"
+                    title={t('composer.stop')}
+                    aria-keyshortcuts="Escape"
+                  >
+                    <WorkingRing active />
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={submit}
+                    disabled={!canSend || disabled}
+                    className={cn(
+                      'chat-send-button relative flex h-8 w-8 items-center justify-center rounded-full transition-[color,background,box-shadow,transform]',
+                      canSend
+                        ? 'bg-indigo-500 text-white hover:bg-indigo-400'
+                        : 'bg-foreground/10 text-muted-foreground',
+                      disabled && 'bg-foreground/10 text-muted-foreground'
+                    )}
+                    title={queues ? t('composer.queue') : t('composer.send')}
+                    aria-keyshortcuts="Enter"
+                  >
+                    <WorkingRing active={streaming} />
+                    <ArrowUp className="h-4 w-4" />
+                  </button>
+                ))}
+            </div>
           </div>
-        </div>
+        </ComposerDictationContext.Provider>
       </div>
 
       {metaSlot && (

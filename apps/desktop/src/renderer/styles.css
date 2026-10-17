@@ -294,6 +294,11 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   box-shadow: 0 5px 18px rgba(249, 115, 22, 0.24);
 }
 
+.chat-design-ambient .chat-working-ring {
+  border-color: rgba(251, 191, 36, 0.2);
+  border-top-color: #fbbf24;
+}
+
 .chat-design-ambient .chat-send-button:not(:disabled):hover {
   background: linear-gradient(135deg, #fcd34d, #fb923c);
   box-shadow: 0 6px 22px rgba(249, 115, 22, 0.32);

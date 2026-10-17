@@ -345,7 +345,7 @@ export function BotComposer({
         micSlot={
           <ChatMicButton
             onTranscribed={(text) => setDraft((previous) => appendDictation(previous, text))}
-            onAutoSend={(text) => {
+            onSendDictation={(text) => {
               if (busy || locked) return false
               void send(appendDictation(draft, text))
               return true

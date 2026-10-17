@@ -2485,7 +2485,7 @@ export function ChatView({
                   micSlot={
                     <ChatMicButton
                       onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
-                      onAutoSend={(t) => {
+                      onSendDictation={(t) => {
                         if (keyMissing || botBlocked) return false
                         submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
                         return true

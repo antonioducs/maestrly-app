@@ -246,7 +246,8 @@ test('detached standalone stream survives navigation, background source and nati
   await expect.poll(() => nativeChild.evaluate((window) => window.isVisible())).toBe(true)
   chunk(session.held(), 'while main is hidden ')
   await expect(child.getByText('while main is hidden', { exact: false })).toBeVisible()
-  await expect(child.locator('button[title="Stop"]:visible')).toBeVisible()
+  // With a draft in the box the main button queues it; it offers queueing only while the turn runs.
+  await expect(child.locator('button[title="Queue message"]:visible')).toBeVisible()
 
   // Native close must request reattachment; destroying/closing the Page directly bypasses this handshake.
   const closed = child.waitForEvent('close')
@@ -259,7 +260,7 @@ test('detached standalone stream survives navigation, background source and nati
   finish(session.held())
   await expect.poll(() => requests.length).toBe(2)
   await expect(page.getByText('Detached reply 2.', { exact: true })).toBeVisible()
-  await expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
+  await expect(page.locator('button[title="Send"]:visible')).toBeVisible()
   expect(JSON.stringify(requests[1].messages)).toContain('image draft edited')
   expect(JSON.stringify(requests[1].messages)).toContain('data:image/png;base64,')
   await expect(editor(page)).toHaveText('unsent native-close draft')

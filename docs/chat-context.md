@@ -183,26 +183,45 @@ viewer receives a read-only copy named after the attachment, kept in the
 application profile until its message or conversation is deleted or Maestrly
 restarts; changes saved from the viewer never alter the attachment.
 
+## Stopping and queueing
+
+While the agent works, the composer's main button stops it. Once you type or
+attach something, the same button sends instead: the message waits in the queue
+until the turn ends, or reaches the running turn where the agent accepts
+messages mid-turn, as bots and active Maestro runs do. To stop the agent with
+text in the composer, press Esc there. In a chat, stopping also discards the
+queued messages.
+
 ## Voice dictation
 
-Click the microphone in a chat or bot composer to speak, and click it again to
-stop; with **Hold to record** on, hold the button while you speak. Speech never
-leaves the computer: Maestrly transcribes it locally with whisper.cpp and the
-Whisper large-v3-turbo model, and a voice-activity check discards recordings with
-no speech, so silence or room noise never becomes a message.
+Click the microphone in a chat or bot composer to speak, or press ⌘D (Ctrl+D on
+Windows and Linux) in the composer. With **Hold to record** on, hold the button
+while you speak. Speech never leaves the computer: Maestrly transcribes it
+locally with whisper.cpp and the Whisper large-v3-turbo model, and a
+voice-activity check discards recordings with no speech, so silence or room
+noise never becomes a message.
 
-With **Send automatically** on (the default), the transcription is sent as your
-message, after any text already in the composer and together with its
-attachments. During a running turn it is queued or steers the agent, exactly
-like pressing Enter. Turn the switch off in the microphone menu to place the text
-in the composer instead, for example to review it first. When the composer cannot
-send (no provider, or a conversation managed by a bot), the text always goes to
-the composer.
+While you record, the composer's action bar shows the elapsed time and the
+microphone level, and you can keep editing the text. The recording ends one of
+three ways:
 
-The microphone menu also chooses the dictation language: **App language** (the
-default) transcribes in the language Maestrly is displayed in, which is the most
-accurate choice; **Detect automatically** lets the model identify the language
-and takes about twice as long.
+- **↑** or Enter sends the text already in the composer followed by the
+  transcription, together with its attachments. During a running turn it is
+  queued or reaches the agent, like any message you send then.
+- **Insert**, or ⌘D again, adds the transcription to the composer, for example
+  to review it first. Releasing the button with **Hold to record** also inserts.
+- **✕** or Esc discards the recording.
+
+While the text is transcribed, ✕ cancels it. When the composer cannot send (no
+provider, or a conversation managed by a bot), the transcription goes to the
+composer.
+
+Right-click the microphone, or use the options button while recording, to
+choose the microphone, turn **Hold to record** on or off, and choose the
+dictation language: **App language** (the default) transcribes in the language
+Maestrly is displayed in, which is the most accurate choice; **Detect
+automatically** lets the model identify the language and takes about twice as
+long.
 
 The first click offers to download the voice model once (547 MB). Nothing is
 downloaded before you confirm. The model appears as **Voice model** in
