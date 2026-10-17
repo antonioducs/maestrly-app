@@ -1208,6 +1208,8 @@ export interface ChatPermissionRequest {
   action: string
   title: string
   resources: string[]
+  /** Exact text under review (the whole command, line breaks included); resources may only hold its segments. */
+  preview?: string
 
   allowAlways?: boolean
 }

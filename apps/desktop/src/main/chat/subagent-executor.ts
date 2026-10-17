@@ -230,7 +230,7 @@ export async function executeSubagent(args: {
           toolCallId: namespaceSubagentToolCallId(taskCallId, toolCallId),
           cwd: args.cwd,
           signal: toolSignal,
-          ask: (action, resources, save) => {
+          ask: (action, resources, save, preview) => {
             return args.broker.assert(
               subagentPermissionAssertInput({
                 conversationId: args.conversationId,
@@ -239,6 +239,7 @@ export async function executeSubagent(args: {
                 action,
                 resources,
                 save,
+                preview,
                 toolCallId: namespaceSubagentToolCallId(taskCallId, toolCallId),
                 signal: toolSignal,
               })

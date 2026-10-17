@@ -192,7 +192,7 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Bash
   // Chained command → one resource PER subcommand (all need allow); "always" saves each prefix.
   const segments = commandSegments(args.command)
   const resources = segments.length > 1 ? segments : [args.command]
-  await ctx.ask('bash', resources, [...new Set(resources.map(bashPermissionSavePattern))])
+  await ctx.ask('bash', resources, [...new Set(resources.map(bashPermissionSavePattern))], args.command)
 
   const isWin = process.platform === 'win32'
   const shell = commandShell()

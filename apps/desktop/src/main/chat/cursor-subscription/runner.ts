@@ -420,7 +420,7 @@ async function runCursorSubscriptionChatInScope(
       toolCallId,
       cwd: args.cwd,
       signal: toolSignal,
-      ask: (action, resources, save) =>
+      ask: (action, resources, save, preview) =>
         args.broker.assert({
           conversationId: args.conversationId,
           projectId: args.projectId,
@@ -428,6 +428,7 @@ async function runCursorSubscriptionChatInScope(
           action,
           resources,
           save,
+          preview,
           toolName: action,
           toolCallId,
           signal: toolSignal,

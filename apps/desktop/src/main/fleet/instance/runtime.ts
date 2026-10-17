@@ -53,6 +53,7 @@ import {
   type ChatStreamEvent,
 } from '../../../shared/chat'
 import { sameContextModel, selectContextObservation } from '../../../shared/context-observation'
+import { permissionExtraResources } from '../../../shared/permission-preview'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
 import { getHiddenChatModelsFor } from '../../store/settings'
@@ -851,7 +852,7 @@ export class BotRuntime {
         id: request.id,
         at: this.permissionAt.get(request.id) ?? new Date().toISOString(),
         title: request.title,
-        detail: request.resources.join(', ') || null,
+        detail: permissionExtraResources(request).join(', ') || null,
         tool: this.permissionToolFor(request),
         itemId: 'perm:' + request.id,
       }))
@@ -1589,7 +1590,7 @@ export class BotRuntime {
         at,
         requestId: request.id,
         title: request.title,
-        detail: request.resources.join(', ') || null,
+        detail: permissionExtraResources(request).join(', ') || null,
         tool: this.permissionToolFor(request),
         state: 'pending',
         resolvedAt: null,

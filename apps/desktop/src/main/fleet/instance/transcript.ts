@@ -85,12 +85,19 @@ export function toolTarget(input: unknown): string | null {
   if (typeof value.text === 'string') return short(value.text, 40)
   return null
 }
+/** A permission preview is what the owner approves, so it travels whole up to a bound that says what it left out. */
+const PERMISSION_PREVIEW_MAX = 8_000
+function permissionPreviewTarget(preview: string): string {
+  if (preview.length <= PERMISSION_PREVIEW_MAX) return preview
+  return `${preview.slice(0, PERMISSION_PREVIEW_MAX)}\n… (${preview.length - PERMISSION_PREVIEW_MAX} more characters)`
+}
 export function permissionTool(
-  request: Pick<PermissionRequest, 'action' | 'resources' | 'toolName' | 'toolCallId'>,
+  request: Pick<PermissionRequest, 'action' | 'resources' | 'toolName' | 'toolCallId' | 'preview'>,
   messages: ChatMessage[]
 ): { name: string; target: string | null } | null {
   const name = request.toolName || (request.action === 'bash' ? 'bash' : null)
   if (!name) return null
+  if (request.preview) return { name, target: permissionPreviewTarget(request.preview) }
   const call = request.toolCallId
     ? messages
         .flatMap((message) => message.parts)

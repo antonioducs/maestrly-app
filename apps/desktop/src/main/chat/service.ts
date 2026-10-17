@@ -2486,6 +2486,7 @@ function toRequestPayload(req: PermissionRequest): Extract<ChatPermissionEvent, 
       action: req.action,
       title: req.title,
       resources: req.resources,
+      ...(req.preview ? { preview: req.preview } : {}),
       ...(req.save?.length && !remoteChatPolicy(req.conversationId)
         ? { allowAlways: true }
         : {}),

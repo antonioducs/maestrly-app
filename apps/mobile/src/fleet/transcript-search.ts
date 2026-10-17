@@ -15,7 +15,7 @@ function itemText(item: MobileChatItem): string[] {
     case 'tool':
       return [item.name, item.target ?? '', item.output ?? '']
     case 'permission':
-      return [item.title, item.detail ?? '']
+      return [item.title, item.tool?.target ?? '', item.detail ?? '']
     case 'question':
       return item.questions.flatMap((question) => [question.question, ...question.options.map((o) => o.label)])
     case 'help':
