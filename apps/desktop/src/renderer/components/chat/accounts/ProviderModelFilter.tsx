@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import { ModelVisibilityCheckbox } from '../ModelVisibilityCheckbox'
+import { modelDisplayName } from '../model-search'
 import { inputCls } from './account-ui'
 
 export function ProviderModelFilter({
@@ -212,7 +213,12 @@ export function ProviderModelFilter({
             {!loading &&
               !failed &&
               shown.map((m) => (
-                <ModelVisibilityCheckbox key={m} name={m} checked={!hiddenSet.has(m)} onChange={() => toggle(m)} />
+                <ModelVisibilityCheckbox
+                  key={m}
+                  name={modelDisplayName(m)}
+                  checked={!hiddenSet.has(m)}
+                  onChange={() => toggle(m)}
+                />
               ))}
           </div>
           {saveError && <p className="text-[11px] text-destructive">{t('settings.modelFilterSaveFailed')}</p>}

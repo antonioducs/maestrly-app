@@ -2,8 +2,9 @@ import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { registerChatIpc, type ChatIpcDeps } from '../../src/main/chat/service'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
+import { initialStandaloneChatMode } from '../../src/main/chat/new-chat-defaults'
 import { closeDb, freshDb } from '../helpers/db'
-import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { makeConversation, makeStandaloneConversation, makeWorkspace } from '../helpers/factories'
 
 type Handler = (event: never, ...args: unknown[]) => unknown
 
@@ -64,6 +65,22 @@ describe('Design mode service contract', () => {
     expect(setMode(undefined as never, conversation.id, 'invalid')).toEqual({ ok: false, error: 'invalid-mode' })
     expect(setMode(undefined as never, 'missing', 'agent')).toEqual({ ok: false, error: 'invalid-conversation' })
     expect(getConvUiPrefs(conversation.id).chat?.mode).toBe('design')
+  })
+
+  it('carries the mode of a standalone chat to the next one, never a project or bot conversation', () => {
+    const setMode = register().get('chat:set-mode')!
+    const project = makeConversation(makeWorkspace().id)
+    const bot = makeStandaloneConversation({ botOrigin: { kind: 'bot', connectionId: 'bot-1', botName: 'Bot' } })
+    const chat = makeStandaloneConversation()
+
+    expect(initialStandaloneChatMode()).toBe('ask')
+    expect(setMode(undefined as never, project.id, 'plan')).toEqual({ ok: true })
+    expect(setMode(undefined as never, bot.id, 'design')).toEqual({ ok: true })
+    expect(initialStandaloneChatMode()).toBe('ask')
+    expect(setMode(undefined as never, chat.id, 'agent')).toEqual({ ok: true })
+    expect(initialStandaloneChatMode()).toBe('agent')
+    expect(setMode(undefined as never, chat.id, 'maestro')).toEqual({ ok: false, error: 'invalid-mode' })
+    expect(initialStandaloneChatMode()).toBe('agent')
   })
 
   it('normalizes corrupt persisted values without changing the stored value', () => {

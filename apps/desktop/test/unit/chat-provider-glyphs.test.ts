@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../src/main/store', () => ({
+  getAppSetting: () => null,
+  setAppSetting: vi.fn(),
+  getAppFlag: () => false,
+  setAppFlag: vi.fn(),
+}))
+
+import { PROVIDER_PRESETS } from '../../src/main/chat/catalog'
 import { apiProviderGlyph, subscriptionGlyph } from '../../src/renderer/components/chat/accounts/provider-glyphs'
-import { CHAT_SUBSCRIPTION_PROVIDER_KINDS } from '../../src/shared/chat'
+import { CHAT_SUBSCRIPTION_PROVIDER_KINDS, defaultProviderKind } from '../../src/shared/chat'
 
 describe('provider glyphs', () => {
   it('gives every subscription its provider mark', () => {
@@ -25,6 +34,14 @@ describe('provider glyphs', () => {
     expect(apiProviderGlyph('https://api.mistral.ai/v1')).toBe('mistral')
     expect(apiProviderGlyph('https://token-plan-sgp.xiaomimimo.com/v1')).toBe('xiaomi')
     expect(apiProviderGlyph('https://API.X.AI/v1')).toBe('grok')
+  })
+
+  it('marks every API key preset, including Gemini through its OpenAI-compatible endpoint', () => {
+    for (const preset of PROVIDER_PRESETS) expect(apiProviderGlyph(preset.baseURL), preset.name).not.toBeNull()
+    const gemini = PROVIDER_PRESETS.find((preset) => preset.name === 'Gemini')
+    expect(gemini).toMatchObject({ baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai' })
+    expect(apiProviderGlyph(gemini!.baseURL)).toBe('gemini')
+    expect(gemini!.kind ?? defaultProviderKind(gemini!.baseURL)).toBe('openai')
   })
 
   it('shows no mark for unknown, look-alike or invalid endpoints', () => {

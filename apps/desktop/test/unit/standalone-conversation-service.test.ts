@@ -2,18 +2,24 @@ import { mkdtemp, realpath, rm, stat, symlink, mkdir, writeFile, access } from '
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-const h = vi.hoisted(() => ({ base: '', insert: vi.fn() }))
+const h = vi.hoisted(() => ({ base: '', insert: vi.fn(), settings: new Map<string, string>() }))
 vi.mock('electron', () => ({ app: { getPath: () => h.base } }))
-vi.mock('../../src/main/store', () => ({ insertConversation: h.insert }))
+vi.mock('../../src/main/store', () => ({
+  insertConversation: h.insert,
+  getAppSetting: (key: string) => h.settings.get(key) ?? null,
+  setAppSetting: (key: string, value: string) => h.settings.set(key, value),
+}))
 import {
   createStandaloneConversation,
   removeStandaloneConversationDirectory,
   ensureStandaloneConversationDirectory,
 } from '../../src/main/standalone-conversation-service'
 import { setMainLocale } from '../../src/main/i18n'
+import { rememberStandaloneChatMode } from '../../src/main/chat/new-chat-defaults'
 beforeEach(async () => {
   h.base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'standalone-')))
   h.insert.mockReset()
+  h.settings.clear()
   setMainLocale('en')
 })
 afterEach(async () => {
@@ -53,6 +59,12 @@ it('creates a private non-Git directory and explicit Ask defaults', async () => 
   if (process.platform !== 'win32') expect((await stat(c.cwd)).mode & 0o777).toBe(0o700)
   await expect(access(path.join(c.cwd, '.git'))).rejects.toThrow()
   expect(h.insert).toHaveBeenCalledWith(c)
+})
+it('starts in the mode of the last standalone chat the person switched, with permissions still at Ask', async () => {
+  rememberStandaloneChatMode('plan')
+  expect((await createStandaloneConversation({})).uiPrefs).toMatchObject({ chat: { mode: 'plan', permMode: 'ask' } })
+  h.settings.set('chat.lastStandaloneMode', 'maestro')
+  expect((await createStandaloneConversation({})).uiPrefs).toMatchObject({ chat: { mode: 'ask', permMode: 'ask' } })
 })
 it('uses auto naming only when no name was supplied', async () => {
   expect((await createStandaloneConversation({})).uiPrefs).toMatchObject({ autoName: true })

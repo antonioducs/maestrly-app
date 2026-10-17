@@ -67,6 +67,7 @@ export function makeStandaloneConversation(overrides: Partial<StandaloneConversa
     lastActivityAt: overrides.lastActivityAt ?? Date.now(),
     isMulti: 0,
     uiPrefs: overrides.uiPrefs,
+    ...(overrides.botOrigin ? { botOrigin: overrides.botOrigin } : {}),
   }
   insertConversation(conv)
   return conv
