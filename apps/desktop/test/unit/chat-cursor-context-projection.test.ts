@@ -175,6 +175,31 @@ describe('Cursor context projection uses the runner resume boundary', () => {
     expect(stats.contextProjection?.quality).toBe('measured')
     expect(stats.contextProjection?.usedTokens).toBeGreaterThan(0)
     expect(stats.contextProjection?.modelContextWindow).toBe(200_000)
+    expect(stats.contextProjection?.occupancyUnknown).toBeUndefined()
+  })
+
+  it('reports unknown occupancy for the per-turn billed usage the Cursor SDK reports', async () => {
+    const { conversationId, workspaceId } = await seedConversation()
+    await seedBinding(conversationId, workspaceId)
+    // The runner's shape: SDK `usage` totals for the whole turn, summed over its model calls, with no occupancy.
+    upsertChatMessage({
+      ...listChatMessages(conversationId).find((message) => message.id === 'assistant-1')!,
+      usage: {
+        usageVersion: 2,
+        input: 1_800,
+        output: 950,
+        cachedInput: 61_000,
+        cacheCreate: 0,
+        modelContextWindow: 200_000,
+      },
+    })
+    const stats = await historyStats(conversationId)
+    expect(stats.contextProjection).toEqual({
+      usedTokens: estimateNativeSeedContextTokens(listConversationContextMessages(conversationId)),
+      source: 'portable-transcript',
+      quality: 'estimated',
+      occupancyUnknown: true,
+    })
   })
 
   it('estimates current context when only child usage was reported after an older measurement', async () => {

@@ -2,6 +2,7 @@
 // Scripted stand-in for Google's Antigravity ACP server (1.2.1): JSON-RPC 2.0 over stdio, one message per line.
 // The last line of the last text block of `session/prompt` selects the behavior:
 //   ECHO <text> | TOOL <name> <json args> | NATIVE | SLOW | SKIPMCP | EXIT | ASKCLIENT <method>
+//   USAGE <used>:<size> ... (one `usage_update` per model call, as servers from 1.3.0 send)
 // Any other text is echoed back as `ok:<text>` after the MCP server has been initialized.
 // Environment: FAKE_ACP_SCENARIO (auth-cancel), FAKE_ACP_PROJECT, FAKE_ACP_LOG (NDJSON of received messages),
 // FAKE_ACP_CHILD_PID_FILE (spawn a helper and write its pid), FAKE_ACP_STDERR_BYTES (stderr noise at startup).
@@ -195,6 +196,15 @@ async function runPrompt(session, prompt) {
       ],
     })
     chunk(`permission:${decision?.outcome?.outcome === 'selected' ? decision.outcome.optionId : 'cancelled'}`)
+    return { stopReason: 'end_turn' }
+  }
+  if (verb === 'USAGE') {
+    for (const call of rest) {
+      const [used, size] = call.split(':').map(Number)
+      chunk(`call:${used} `)
+      notifyUpdate(session.id, { sessionUpdate: 'usage_update', used, size })
+    }
+    chunk('done')
     return { stopReason: 'end_turn' }
   }
   if (verb === 'ASKCLIENT') {

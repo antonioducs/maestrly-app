@@ -325,6 +325,26 @@ describe('composer context observations', () => {
     expect(contextMeterReading(history, null, snapshot({ quality: 'estimated' }), model).quality).toBe('estimated')
     expect(contextMeterReading(history, null, snapshot({ usedTokens: 0 }), model).used).toBe(0)
   })
+
+  it('reads an unmeasured runtime as unknown instead of its transcript floor', () => {
+    const unmeasured: ChatHistoryStats = {
+      ...history,
+      contextProjection: {
+        usedTokens: 367,
+        quality: 'estimated',
+        source: 'portable-transcript',
+        occupancyUnknown: true,
+      },
+    }
+    expect(contextMeterReading(unmeasured, { contextWindow: 1_000_000 } as never, undefined, model)).toMatchObject({
+      unknown: true,
+      used: 367,
+      window: 1_000_000,
+    })
+    // A measured sample of the current turn is the reading, whatever the projection says.
+    expect(contextMeterReading(unmeasured, null, snapshot(), model)).toMatchObject({ unknown: false, used: 80_100 })
+    expect(contextMeterReading(history, null, undefined, model).unknown).toBe(false)
+  })
 })
 
 describe('localized compaction presentation', () => {

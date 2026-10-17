@@ -147,7 +147,7 @@ export function ChatContextMeter({
   if (context.used === 0 && !context.observation) return null
 
   const win = context.window
-  const pct = win ? context.used / win : null
+  const pct = win && !context.unknown ? context.used / win : null
 
   const hasPricing = stats.costAvailable && stats.cost > 0
 
@@ -155,19 +155,25 @@ export function ChatContextMeter({
 
   const activeLimit = info?.limit != null && ceiling != null && info.limit < ceiling ? info.limit : null
   const tip =
-    t(
-      context.observation
-        ? context.quality === 'measured'
-          ? 'meter.lastMeasuredContext'
-          : 'meter.lastEstimatedContext'
-        : context.quality === 'estimated'
-          ? 'meter.nextRequestEstimate'
-          : 'meter.contextTip',
-      { used: fmt(context.used) }
-    ) +
-    (win ? t('meter.contextWindowSuffix', { win: fmt(win), pct: ((pct ?? 0) * 100).toFixed(1) }) : '') +
+    (context.unknown
+      ? t('meter.unknownContextTip') +
+        (win ? t('meter.unknownContextWindowSuffix', { win: fmt(win) }) : '') +
+        t('meter.transcriptFloor', { used: fmt(context.used) })
+      : t(
+          context.observation
+            ? context.quality === 'measured'
+              ? 'meter.lastMeasuredContext'
+              : 'meter.lastEstimatedContext'
+            : context.quality === 'estimated'
+              ? 'meter.nextRequestEstimate'
+              : 'meter.contextTip',
+          { used: fmt(context.used) }
+        ) + (win ? t('meter.contextWindowSuffix', { win: fmt(win), pct: ((pct ?? 0) * 100).toFixed(1) }) : '')) +
     (context.observation && context.projection
-      ? '\n' + t('meter.nextRequestEstimate', { used: fmt(context.projection.usedTokens) })
+      ? '\n' +
+        (context.projection.occupancyUnknown
+          ? t('meter.nextRequestUnknown')
+          : t('meter.nextRequestEstimate', { used: fmt(context.projection.usedTokens) }))
       : '') +
     (activeLimit != null ? t('meter.limitBadge', { limit: fmt(activeLimit), ceiling: fmt(ceiling as number) }) : '') +
     (hasPricing
@@ -179,7 +185,11 @@ export function ChatContextMeter({
   return (
     <div className="relative" ref={ref}>
       <ChatContextMeterDisplay
-        text={`${context.quality === 'estimated' ? '~' : ''}${fmt(context.used)}${win ? `/${fmt(win)}` : ''}${pct != null ? ` ${(pct * 100).toFixed(1)}%` : ` ${t('meter.tokenUnit')}`}${hasPricing ? ` · ~${fmtCost(stats.cost)}` : ''}`}
+        text={`${
+          context.unknown
+            ? t('meter.unknownContext')
+            : `${context.quality === 'estimated' ? '~' : ''}${fmt(context.used)}${win ? `/${fmt(win)}` : ''}${pct != null ? ` ${(pct * 100).toFixed(1)}%` : ` ${t('meter.tokenUnit')}`}`
+        }${hasPricing ? ` · ~${fmtCost(stats.cost)}` : ''}`}
         title={canLimit ? tip + '\n\n' + t('meter.limitButtonTitle') : tip}
         pct={pct}
         activeLimit={activeLimit != null}

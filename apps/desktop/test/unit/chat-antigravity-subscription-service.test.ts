@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatSubscriptionAuthStatus } from '../../src/shared/chat'
+import type {
+  ChatContextProjection,
+  ChatContextSnapshot,
+  ChatHistoryStats,
+  ChatMessage,
+  ChatSubscriptionAuthStatus,
+} from '../../src/shared/chat'
 
 const h = vi.hoisted(() => {
   const calls: string[] = []
@@ -109,7 +115,8 @@ import {
 } from '../../src/main/chat/antigravity-subscription/session-store'
 import { addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
 import { type ChatIpcDeps, registerChatIpc } from '../../src/main/chat/service'
-import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
+import { listChatMessages, listConversationContextMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
+import { estimateNativeSeedContextTokens } from '../../src/main/chat/portable-context'
 import { patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -326,5 +333,89 @@ describe('Google AI subscription service', () => {
     expect(listChatMessages(conv.id).at(-1)?.parts).toContainEqual(
       expect.objectContaining({ type: 'compaction', text: 'Gemini summary' })
     )
+  })
+})
+
+describe('Google AI context projection', () => {
+  const selection = { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro' }
+  const measured = (patch: Partial<ChatContextSnapshot> = {}): ChatContextSnapshot => ({
+    usedTokens: 24_310,
+    modelContextWindow: 1_048_576,
+    model: selection,
+    quality: 'measured',
+    observedAt: 3,
+    sequence: 2,
+    ...patch,
+  })
+
+  function seed(answer: Partial<ChatMessage> = {}, earlier: (conversationId: string) => void = () => {}): string {
+    const conv = makeConversation(makeWorkspace().id)
+    patchConvUiPrefs(conv.id, { chat: { ...selection } })
+    earlier(conv.id)
+    upsertChatMessage({
+      id: `${conv.id}-user`,
+      conversationId: conv.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'u', text: 'Run two commands and save their output.' }],
+      createdAt: 1,
+    })
+    upsertChatMessage({
+      id: `${conv.id}-answer`,
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'text', id: 'a', text: 'Saved to /tmp/out.txt.' }],
+      model: selection,
+      createdAt: 2,
+      ...answer,
+    })
+    putAntigravitySessionBinding({
+      conversationId: conv.id,
+      accountId: null,
+      accountFingerprint: 'project:null',
+      sessionId: 'session',
+      modelValue: 'gemini-pro-agent',
+      toolSignature: 't',
+      instructionHash: 'i',
+      lastMessageId: `${conv.id}-answer`,
+    })
+    return conv.id
+  }
+  const projection = async (conversationId: string): Promise<ChatContextProjection | undefined> =>
+    ((await register().get('chat:history:stats')!({}, conversationId)) as ChatHistoryStats).contextProjection
+
+  it('reuses the occupancy the session measured for its next request', async () => {
+    const conversationId = seed({ contextSnapshot: measured() })
+    const reading = await projection(conversationId)
+    expect(reading).toEqual({ usedTokens: 24_310, source: 'runtime-usage', quality: 'measured' })
+  })
+
+  it('reports unknown occupancy when the server measured none, instead of the transcript size', async () => {
+    const conversationId = seed()
+    const reading = await projection(conversationId)
+    expect(reading).toMatchObject({ source: 'portable-transcript', quality: 'estimated', occupancyUnknown: true })
+    expect(reading?.usedTokens).toBe(estimateNativeSeedContextTokens(listConversationContextMessages(conversationId)))
+  })
+
+  it('does not lend an earlier runtime’s usage to the Antigravity session', async () => {
+    const conversationId = seed({}, (id) =>
+      upsertChatMessage({
+        id: `${id}-claude-answer`,
+        conversationId: id,
+        role: 'assistant',
+        parts: [{ type: 'text', id: 'c', text: 'Earlier answer.' }],
+        model: { providerId: 'builtin_claude_subscription', modelId: 'claude-opus' },
+        usage: { usageVersion: 2, input: 90_000, output: 100, contextInput: 90_000, contextOutput: 100 },
+        createdAt: 0,
+      })
+    )
+    expect(await projection(conversationId)).toMatchObject({ occupancyUnknown: true, quality: 'estimated' })
+  })
+
+  it('treats a measurement as unknown once the session or the model no longer matches', async () => {
+    const otherModel = seed({ contextSnapshot: measured({ model: { ...selection, modelId: 'gemini-3.8-flash' } }) })
+    expect(await projection(otherModel)).toMatchObject({ occupancyUnknown: true })
+    const retired = seed({ contextSnapshot: measured() })
+    putAntigravitySessionBinding({ ...getAntigravitySessionBinding(retired)!, lastMessageId: 'another-message' })
+    expect(await projection(retired)).toMatchObject({ occupancyUnknown: true })
   })
 })

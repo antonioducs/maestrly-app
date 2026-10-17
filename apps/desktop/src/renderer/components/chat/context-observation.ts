@@ -33,6 +33,8 @@ export function contextMeterReading(
     used,
     window,
     quality: observation?.quality ?? projection?.quality ?? 'measured',
+    /** No measurement to show: `used` is then only the transcript floor, not the context size. */
+    unknown: !observation && projection?.occupancyUnknown === true,
     observation,
     projection,
   }

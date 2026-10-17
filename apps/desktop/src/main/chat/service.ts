@@ -397,6 +397,7 @@ import {
   resolveUltraEffort,
 } from '../../shared/chat'
 import { responseDurationMs } from '../../shared/response-duration'
+import { sameContextModel } from '../../shared/context-observation'
 import type {
   ChatAttachmentInput,
   ChatConfig,
@@ -3413,6 +3414,9 @@ async function currentChatHistoryStats(
   let runtimeReusable = false
   let runtimeWindowReusable = false
   let usesNativeSeedProjection = false
+  // Set by runtimes that report occupancy apart from billing usage: the measured tokens, or null when this target has
+  // no measurement. A transcript estimate then leaves out the runtime's own instructions and tools, so it is unknown.
+  let reportedOccupancy: number | null | undefined
   if (isCodexSubscriptionProvider(selection?.providerId)) {
     usesNativeSeedProjection = true
     const binding = getCodexThreadBinding(conversationId)
@@ -3500,7 +3504,14 @@ async function currentChatHistoryStats(
       binding.lastMessageId === latestMessage?.id &&
       binding.accountFingerprint === identity.fingerprint
     )
-    // The ACP server reports no token usage, so there is no measured window to reuse.
+    // The ACP server reports no billing usage. Servers from 1.3.0 send the session's occupancy (`usage_update`), kept
+    // as the turn's context snapshot; older servers send nothing. The snapshot's window is not reused: the selected
+    // model or its manual limit may have changed since.
+    const snapshot = latestMessage?.contextSnapshot
+    reportedOccupancy =
+      runtimeReusable && snapshot?.quality === 'measured' && sameContextModel(snapshot.model, selection)
+        ? snapshot.usedTokens
+        : null
     runtimeWindowReusable = false
     stats = chatHistoryStats(conversationId, {
       isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
@@ -3576,6 +3587,9 @@ async function currentChatHistoryStats(
       }
     }
     runtimeWindowReusable = runtimeReusable
+    // The Cursor SDK reports the tokens billed for a turn, summed over all of its model calls, never the occupancy.
+    // Only a usage that carries an explicit occupancy (`contextInput`) is a measurement of this agent's context.
+    if (!runtimeReusable || latestMessage?.usage?.contextInput == null) reportedOccupancy = null
     stats = chatHistoryStats(conversationId, {
       isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
     })
@@ -3620,22 +3634,27 @@ async function currentChatHistoryStats(
     runtimeWindowReusable = runtimeReusable
   }
 
-  const hasReusableUsage = runtimeReusable && stats.lastUsage !== null
+  const hasReusableUsage = reportedOccupancy === undefined && runtimeReusable && stats.lastUsage !== null
+  const measuredTokens =
+    reportedOccupancy != null
+      ? reportedOccupancy
+      : hasReusableUsage && stats.lastUsage
+        ? contextOccupancy(stats.lastUsage)
+        : undefined
+  const measured = measuredTokens !== undefined
   const usedTokens =
-    hasReusableUsage && stats.lastUsage
-      ? contextOccupancy(stats.lastUsage)
-      : usesNativeSeedProjection
-        ? estimateNativeSeedContextTokens(history)
-        : estimatePortableContextTokens(history)
+    measuredTokens ??
+    (usesNativeSeedProjection ? estimateNativeSeedContextTokens(history) : estimatePortableContextTokens(history))
   return {
     ...stats,
     contextProjection: {
       usedTokens,
-      source: hasReusableUsage ? 'runtime-usage' : 'portable-transcript',
-      quality: hasReusableUsage ? 'measured' : 'estimated',
+      source: measured ? 'runtime-usage' : 'portable-transcript',
+      quality: measured ? 'measured' : 'estimated',
       ...(hasReusableUsage && runtimeWindowReusable && stats.lastUsage?.modelContextWindow
         ? { modelContextWindow: stats.lastUsage.modelContextWindow }
         : {}),
+      ...(reportedOccupancy === null ? { occupancyUnknown: true as const } : {}),
     },
   }
 }
@@ -5664,6 +5683,7 @@ async function startSend(
           ...backgroundPrefixHook,
           signal: controller.signal,
           responseStartedAt,
+          contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
           canPersistSession: () => {
             if (!run.allowAntigravityPersistence || antigravityAuth.busy(selectionAccountId)) return false

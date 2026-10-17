@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type {
   ChatCompactionProgress,
+  ChatContextProjection,
   ChatContextSnapshot,
   ChatMessage,
   ChatModelRef,
@@ -51,7 +52,19 @@ test.afterEach(async () => {
   await removeTempDirEventually(root)
 })
 
-async function openChat(model: ChatModelRef) {
+// Deliberately differs from every measured sample: refreshing billing/projection must not replace it.
+const ESTIMATED_PROJECTION: ChatContextProjection = {
+  usedTokens: 4_000,
+  modelContextWindow: 200_000,
+  quality: 'estimated',
+  source: 'portable-transcript',
+}
+
+async function openChat(
+  model: ChatModelRef,
+  projection: ChatContextProjection = ESTIMATED_PROJECTION,
+  initialMeter = '~4.0k/200.0k 2.0%'
+) {
   const repository = path.join(root, 'context-fixture')
   mkdirSync(repository)
   const git = (args: string[]) => execFileSync('git', args, { cwd: repository, stdio: 'pipe' })
@@ -73,7 +86,7 @@ async function openChat(model: ChatModelRef) {
   await page.waitForFunction(() => typeof window.api !== 'undefined')
   await page.evaluate(() => window.api.setOnboardingDone(true))
 
-  await app.evaluate(({ BrowserWindow, ipcMain }, selection) => {
+  await app.evaluate(({ BrowserWindow, ipcMain }, { selection, projection }) => {
     const state: StubState = { messages: [], historyReads: 0, statsReads: 0 }
     ;(globalThis as typeof globalThis & { __contextProgress: StubState }).__contextProgress = state
     const replace = (channel: string, handler: Parameters<typeof ipcMain.handle>[1]) => {
@@ -112,7 +125,6 @@ async function openChat(model: ChatModelRef) {
       state.historyReads++
       return { messages: state.messages, hasMore: false, earliestSeq: state.messages.length ? 1 : null }
     })
-    // Deliberately differs from every measured sample: refreshing billing/projection must not replace it.
     replace('chat:history:stats', () => {
       state.statsReads++
       return {
@@ -121,12 +133,7 @@ async function openChat(model: ChatModelRef) {
         perModel: [],
         modelIds: [],
         bytesSaved: 0,
-        contextProjection: {
-          usedTokens: 4_000,
-          modelContextWindow: 200_000,
-          quality: 'estimated',
-          source: 'portable-transcript',
-        },
+        contextProjection: projection,
       }
     })
     // Synthetic events are the only source of turns; an accidental send cannot reach a provider.
@@ -137,7 +144,7 @@ async function openChat(model: ChatModelRef) {
       replace(`chat:${provider}-subscription:status`, () => ({ state: 'signed-out', authenticated: false }))
     }
     BrowserWindow.getAllWindows()[0]?.setSize(1440, 1000)
-  }, model)
+  }, { selection: model, projection })
 
   const conversation = await page.evaluate(async (directory) => {
     const workspace = await window.api.addWorkspace(directory)
@@ -164,7 +171,7 @@ async function openChat(model: ChatModelRef) {
   }, conversation.id)
   await page.reload()
   await page.locator('li.conv-item:visible').filter({ hasText: 'Context progress fixture' }).click()
-  await expect(page.getByRole('button', { name: '~4.0k/200.0k 2.0%', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: initialMeter, exact: true })).toBeVisible()
   return { page, conversationId: conversation.id }
 }
 
@@ -342,6 +349,44 @@ for (const [label, model] of [
     await expect(stop).toHaveCount(0)
   })
 }
+
+test('an unmeasured runtime shows unknown context until it reports a measurement', async () => {
+  const model = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6' }
+  // What Google AI without `usage_update` and Cursor report: only Maestrly's own transcript, a floor.
+  const { page, conversationId } = await openChat(
+    model,
+    { usedTokens: 367, quality: 'estimated', source: 'portable-transcript', occupancyUnknown: true },
+    'context unknown'
+  )
+  const unknown = page.getByRole('button', { name: 'context unknown', exact: true })
+  await expect(unknown).toHaveAttribute('title', /does not report how much of the context window is in use/)
+  await expect(unknown).toHaveAttribute('title', /\(window of 200\.0k\)/)
+  await expect(unknown).toHaveAttribute('title', /transcript alone takes ~367 tokens/)
+  await expect(page.getByRole('button', { name: /^~?367/ })).toHaveCount(0)
+
+  const messageId = 'context-assistant'
+  const createdAt = Date.now()
+  await emit(
+    conversationId,
+    { kind: 'message-start', messageId, model, createdAt, responseStartedAt: createdAt },
+    {
+      kind: 'context-usage',
+      messageId,
+      snapshot: {
+        model,
+        usedTokens: 24_000,
+        modelContextWindow: 200_000,
+        quality: 'measured',
+        observedAt: createdAt + 1,
+        sequence: 1,
+      },
+    }
+  )
+  const meter = page.locator('button[title^="Last measured context:"]')
+  await expect(meter).toHaveText('24.0k/200.0k 12.0%')
+  await expect(meter).toHaveAttribute('title', /Next-request context: unknown/)
+  await expect(unknown).toHaveCount(0)
+})
 
 interface ManualCompactQueueState {
   calls: string[]

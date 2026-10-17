@@ -2,6 +2,18 @@ import type { ChatStreamEvent } from '../../../shared/chat'
 import { type AcpSessionUpdate, isAcpMessageChunk, isAcpToolCallUpdate } from '../acp/protocol'
 import { ANTIGRAVITY_HOST_MCP_SERVER_NAME } from './permissions'
 
+/** The context occupancy reported by a `usage_update`, or null for any other update or a malformed one. */
+export function readAntigravityContextUsage(update: AcpSessionUpdate): { used: number; size?: number } | null {
+  if (update.sessionUpdate !== 'usage_update') return null
+  const used = (update as { used?: unknown }).used
+  const size = (update as { size?: unknown }).size
+  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) return null
+  return {
+    used: Math.floor(used),
+    ...(typeof size === 'number' && Number.isFinite(size) && size > 0 ? { size: Math.floor(size) } : {}),
+  }
+}
+
 export interface AntigravityStreamMapper {
   push(update: AcpSessionUpdate): ChatStreamEvent[]
   /** Called before host tool events so later text opens a new text part. */
