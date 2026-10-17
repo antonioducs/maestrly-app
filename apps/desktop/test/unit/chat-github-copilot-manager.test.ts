@@ -440,21 +440,61 @@ describe('GitHubCopilotSubscriptionManager', () => {
     })
   })
 
-  it('avoids network access when OAuth client IDs are missing', async () => {
+  it('reports a missing OAuth client ID before probing or installing the runtime', async () => {
     await manager.dispose()
     tokenStore = new MemoryTokenStore(null)
+    const resolveRuntimePath = vi.fn(async () => {
+      throw new Error('github-copilot-runtime is not installed')
+    })
+    const createOAuthClient = vi.fn()
     manager = new GitHubCopilotSubscriptionManager({
       getOAuthClientId: () => '',
       tokenStore,
+      resolveRuntimePath,
+      createOAuthClient,
     })
 
+    const configurationError = {
+      code: 'configuration_missing',
+      message: 'GitHub Copilot OAuth Client ID is not configured in this build',
+    }
+    expect(manager.missingConfigurationError()).toEqual(configurationError)
     await expect(manager.getStatus()).resolves.toMatchObject({
       state: 'ready',
       available: false,
       authenticated: false,
-      error: { code: 'configuration_missing' },
+      error: configurationError,
     })
+    expect(resolveRuntimePath).not.toHaveBeenCalled()
     await expect(manager.startLogin()).rejects.toMatchObject({ code: 'configuration_missing' })
+    expect(createOAuthClient).not.toHaveBeenCalled()
+  })
+
+  it('keeps a stored token usable in a build without an OAuth client ID', async () => {
+    await manager.dispose()
+    manager = new GitHubCopilotSubscriptionManager({
+      getOAuthClientId: () => '',
+      tokenStore,
+      getUserDataPath: () => '/tmp/maestrly-user-data',
+      ensureDirectory: vi.fn(async () => {}),
+      resolveConnection: () => RuntimeConnection.forStdio({ path: '/fixture/copilot' }),
+      createClient: () => client,
+    })
+
+    expect(manager.missingConfigurationError()).toBeNull()
+    await expect(manager.getStatus()).resolves.toMatchObject({ available: true, authenticated: true, error: null })
+  })
+
+  it('offers sign-in once the runtime is ready and the build has a client ID', async () => {
+    await manager.logout()
+
+    expect(manager.missingConfigurationError()).toBeNull()
+    await expect(manager.getStatus(true)).resolves.toMatchObject({
+      state: 'ready',
+      available: true,
+      authenticated: false,
+      error: null,
+    })
   })
 
   it('redacts runtime error tokens', async () => {

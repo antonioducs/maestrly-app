@@ -152,6 +152,8 @@ import {
   retryManagedGitHubCopilotSessionCleanup,
   runGitHubCopilotChat,
   type GitHubCopilotAccountIdentity,
+  type GitHubCopilotPublicError,
+  type GitHubCopilotSubscriptionManager,
   type GitHubCopilotSubscriptionStatus,
 } from './github-copilot'
 import { GITHUB_COPILOT_SERIALIZABLE_EFFORTS } from './github-copilot/runner'
@@ -1366,6 +1368,9 @@ function toGitHubCopilotAuthStatus(
       enterpriseUrl: status.account?.host,
     }
   }
+  if (status.error?.code === 'configuration_missing' && !status.available) {
+    return githubCopilotNotConfiguredStatus(status.error)
+  }
   if (status.state === 'error') {
     return {
       state: status.available ? 'error' : 'unavailable',
@@ -1373,8 +1378,31 @@ function toGitHubCopilotAuthStatus(
       ...(status.error?.message ? { error: status.error.message } : {}),
     }
   }
-  if (!status.available || status.state === 'disposed') return { state: 'unavailable', authenticated: false }
+  if (!status.available || status.state === 'disposed') {
+    return { state: 'unavailable', authenticated: false, ...(status.error ? { error: status.error.message } : {}) }
+  }
   return { state: 'signed-out', authenticated: false }
+}
+
+function githubCopilotNotConfiguredStatus(error: GitHubCopilotPublicError): ChatSubscriptionAuthStatus {
+  return {
+    state: 'unavailable',
+    authenticated: false,
+    error: error.message,
+    errorCode: 'subscription-provider-not-configured',
+  }
+}
+
+/** Refuses sign-in before the runtime download when this build cannot complete it anyway. */
+function githubCopilotLoginBlocked(
+  manager: GitHubCopilotSubscriptionManager,
+  accountId: string | null
+): { ok: false; error: string; status: ChatSubscriptionAuthStatus } | null {
+  const configurationError = manager.missingConfigurationError()
+  if (!configurationError) return null
+  const status = { ...githubCopilotNotConfiguredStatus(configurationError), ...(accountId ? { accountId } : {}) }
+  broadcastGitHubCopilotAuth(status)
+  return { ok: false, error: configurationError.message, status }
 }
 
 async function githubCopilotAuthStatus(
@@ -6527,6 +6555,8 @@ async function loginGitHubCopilotSubscriptionAccount(accountId: string): Promise
   const providerId = subscriptionProviderIdFor('github-copilot-subscription', accountId)
   const signingIn: ChatSubscriptionAuthStatus = { state: 'signing-in', authenticated: false, accountId }
   const manager = getGitHubCopilotSubscriptionManager(accountId)
+  const blocked = githubCopilotLoginBlocked(manager, accountId)
+  if (blocked) return blocked
   try {
     await ensurePackagedProviderAsset('github-copilot-runtime')
     const recovered = await githubCopilotAuthStatus(true, accountId)
@@ -9490,6 +9520,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (accountId) return loginGitHubCopilotSubscriptionAccount(accountId)
     if (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)
       return { ok: false, error: 'GitHub Copilot account transition is still in progress.' }
+    const blocked = githubCopilotLoginBlocked(getGitHubCopilotSubscriptionManager(), null)
+    if (blocked) return blocked
     try {
       await ensurePackagedProviderAsset('github-copilot-runtime')
       const recovered = await githubCopilotAuthStatus(true)

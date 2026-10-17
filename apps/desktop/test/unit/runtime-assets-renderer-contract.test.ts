@@ -45,6 +45,18 @@ describe('managed runtime renderer contract', () => {
     expect(subscriptionAccount).toContain('chatSubscriptionStatus(providerKind, force, accountId)')
   })
 
+  it('never offers the runtime download when the build cannot sign in, and names the reason', () => {
+    expect(subscriptionAccount).toContain("status?.errorCode === 'subscription-provider-not-configured'")
+    expect(subscriptionAccount).toMatch(/const loginDisabled =[^;]*\bnotConfigured\b/)
+    expect(subscriptionAccount).toContain("runtime.status.state !== 'ready' && !notConfigured")
+    expect(subscriptionAccount).toContain('statusErrorText(recovered) ||')
+    expect(subscriptionAccount).toContain('statusErrorText(result.status) || result.error ||')
+    for (const catalog of [enChat.settings, ptBrChat.settings] as Record<string, unknown>[]) {
+      expect(catalog.subscriptionNotConfigured).toEqual(expect.stringContaining('{{provider}}'))
+      expect(catalog.subscriptionNotConfiguredShort).toEqual(expect.any(String))
+    }
+  })
+
   it('refreshes the matching account card once when a managed runtime becomes ready', () => {
     expect(subscriptionAccount).toContain("next.status.state === 'ready'")
     expect(subscriptionAccount).toContain("previousState !== 'ready'")

@@ -47,8 +47,25 @@ plus `CSC_NAME`, `APPLE_API_KEY` (a local key path), `APPLE_API_KEY_ID`, and
 `APPLE_API_ISSUER`. Local packaging does not publish; verify signing and
 notarization against the exact distributable bytes before distribution.
 
-Copilot-enabled distributions also need the public OAuth Client ID described in
-[Development](development.md#runtimes-and-icons).
+## Build configuration
+
+Desktop packages embed public identifiers at build time. They are GitHub Actions
+repository variables (**Settings → Secrets and variables → Actions →
+Variables**), not secrets, because each value ships inside the app. The workflow
+stops before building when one is missing or malformed, and checks each built
+main-process bundle for it.
+
+| Variable | Value |
+| --- | --- |
+| `MAESTRLY_GITHUB_COPILOT_CLIENT_ID` | Client ID of the Maestrly GitHub OAuth App, used for GitHub Copilot sign-in |
+
+Create a dedicated OAuth App, owned by the account or organization that
+publishes Maestrly, in **Settings → Developer settings → OAuth Apps → New OAuth
+App**: users see its name and owner when they authorize it. Use the project's
+homepage as both the homepage and callback URL (Device Flow never calls it back),
+then select **Enable Device Flow** and save. Copy only the client ID; the app
+uses no client secret, so do not generate one. Store the ID with
+`gh variable set MAESTRLY_GITHUB_COPILOT_CLIENT_ID --body "<client ID>"`.
 
 ## Publish
 

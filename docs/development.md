@@ -189,7 +189,10 @@ without credentials.
 
 Copilot login needs a distributor-owned public OAuth Client ID:
 `MAIN_VITE_GITHUB_COPILOT_CLIENT_ID` at package build time, or
-`MAESTRLY_GITHUB_COPILOT_CLIENT_ID` for unpackaged development.
+`MAESTRLY_GITHUB_COPILOT_CLIENT_ID` for unpackaged development. Releases read it
+from a repository variable; see [Releasing](releasing.md#build-configuration).
+Without one, the Copilot card says the build cannot sign in and does not offer
+the runtime download.
 
 Icons are checked in. Regenerate on macOS with `npm run icon`, `icon:beta`, or
 `icon:dev`; the converter uses `apps/desktop/resources/icon.png` or `MAESTRLY_ICON_SOURCE`.

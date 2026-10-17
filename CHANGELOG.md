@@ -39,6 +39,10 @@ User-visible changes by version. Downloads are on
   own, such as English with the region set to Brazil, no longer says the phone
   can't take dictation in its language: it listens in that language's main
   variant, such as US English.
+- **GitHub Copilot** can sign in on the published Linux, macOS, and Windows
+  packages again: release builds include the GitHub sign-in configuration they
+  were missing. A build without it now says so on the Copilot card instead of
+  downloading the Copilot runtime and failing with a generic sign-in error.
 
 ## [0.20.0] - 2026-10-16
 

@@ -1124,6 +1124,8 @@ export type ChatErrorCode =
   | 'codex-accounts-exhausted'
   | 'claude-accounts-exhausted'
   | 'review-loop-process-interrupted'
+  /** The build lacks the provider's public OAuth configuration; installing its runtime cannot fix it. */
+  | 'subscription-provider-not-configured'
 
 export type ChatStreamEvent =
   | {

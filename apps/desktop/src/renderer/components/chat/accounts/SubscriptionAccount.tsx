@@ -115,6 +115,12 @@ export function SubscriptionAccount({
   const copy = subscriptionProviderCopy[providerKind]
   const copyKey = (suffix: string) => `settings.${copy.prefix}${suffix}`
   const usageSupported = supportsSubscriptionUsage(providerKind)
+  const statusErrorText = (value: ChatSubscriptionAuthStatus | null | undefined): string | undefined =>
+    value?.errorCode === 'claude-authentication-required'
+      ? t('messages.claudeAuthenticationRequired')
+      : value?.errorCode === 'subscription-provider-not-configured'
+        ? t('settings.subscriptionNotConfigured', { provider: t(`settings.accountProviderName_${providerKind}`) })
+        : value?.error
 
   useEffect(() => {
     onSnapshot(entry.key, { status, usage, runtime })
@@ -248,7 +254,7 @@ export function SubscriptionAccount({
           return
         }
         if (recovered?.state !== 'signed-out') {
-          throw new Error(recovered?.error || t(copyKey('LoginFailed')))
+          throw new Error(statusErrorText(recovered) || t(copyKey('LoginFailed')))
         }
       }
       // A workspaces host would open the provider's page on the server: its environment relays it to this computer.
@@ -259,7 +265,7 @@ export function SubscriptionAccount({
       const result = await api.chatSubscriptionLogin(providerKind, accountId)
       if (!result.ok) {
         if (result.status) setStatus(result.status)
-        throw new Error(result.error || t(copyKey('LoginFailed')))
+        throw new Error(statusErrorText(result.status) || result.error || t(copyKey('LoginFailed')))
       }
       setLoginInstructions(result)
       setStatus(result.status ?? { state: 'signing-in', authenticated: false })
@@ -330,11 +336,18 @@ export function SubscriptionAccount({
   const signedIn = status?.state === 'signed-in'
   const signingIn = status?.state === 'signing-in'
   const unavailable = status?.state === 'unavailable'
+  // Installing the runtime cannot fix a build without the provider's OAuth configuration, so it is not offered.
+  const notConfigured = status?.errorCode === 'subscription-provider-not-configured'
   const runtimeActive =
     runtime !== null && ['downloading', 'verifying', 'installing', 'removing'].includes(runtime.status.state)
   const runtimeReady = !runtimeId || runtime?.status.state === 'ready' || runtime?.provided?.active === true
+  const runtimeOffered = runtime !== null && runtime.status.state !== 'ready' && !notConfigured
   const loginDisabled =
-    busy !== null || signingIn || (runtimeReady && unavailable) || (runtimeId !== undefined && runtime === null)
+    busy !== null ||
+    signingIn ||
+    notConfigured ||
+    (runtimeReady && unavailable) ||
+    (runtimeId !== undefined && runtime === null)
 
   const renameOpen = renaming !== null
   useEffect(() => {
@@ -359,9 +372,11 @@ export function SubscriptionAccount({
       ? t(copyKey('Connected'))
       : signingIn
         ? t(copyKey('Waiting'))
-        : unavailable
-          ? t(copyKey('Unavailable'))
-          : t(copyKey('Disconnected'))
+        : notConfigured
+          ? t('settings.subscriptionNotConfiguredShort')
+          : unavailable
+            ? t(copyKey('Unavailable'))
+            : t(copyKey('Disconnected'))
   const identity = status?.username ?? status?.email
   const providerName = t(`settings.accountProviderName_${providerKind}`)
 
@@ -455,7 +470,7 @@ export function SubscriptionAccount({
                 ) : (
                   <LogIn className="h-3.5 w-3.5" />
                 )}
-                {runtime && runtime.status.state !== 'ready'
+                {runtime && runtimeOffered
                   ? runtime.status.state === 'failed' || runtime.status.state === 'corrupt'
                     ? t('settings.componentRetryAndConnect')
                     : t('settings.componentInstallAndConnect')
@@ -512,7 +527,7 @@ export function SubscriptionAccount({
         <p className="mt-3 text-[12px] text-foreground/80">{[identity, status.planType].filter(Boolean).join(' · ')}</p>
       )}
       {!signedIn && <p className="mt-3 text-[12px] text-muted-foreground">{t(copyKey('Description'))}</p>}
-      {runtime && runtime.status.state !== 'ready' && (
+      {runtime && runtimeOffered && (
         <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 text-[12px]">
           <p className="font-medium text-amber-200">
             {t('settings.componentRequired', {
@@ -559,12 +574,7 @@ export function SubscriptionAccount({
         </div>
       )}
       {(actionError || status?.error) && (
-        <p className="mt-2 text-[12px] text-destructive">
-          {actionError ||
-            (status?.errorCode === 'claude-authentication-required'
-              ? t('messages.claudeAuthenticationRequired')
-              : status?.error)}
-        </p>
+        <p className="mt-2 text-[12px] text-destructive">{actionError || statusErrorText(status)}</p>
       )}
       {!provider && signedIn && <p className="mt-2 text-[12px] text-amber-300">{t(copyKey('ProviderPending'))}</p>}
 
