@@ -710,7 +710,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     toolCallId,
     cwd,
     signal: toolSignal,
-    ask: (action, resources, save) =>
+    ask: (action, resources, save, preview) =>
       broker.assert({
         conversationId,
         projectId,
@@ -718,6 +718,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         action,
         resources,
         save,
+        preview,
         toolName: action,
         toolCallId,
         signal: toolSignal,

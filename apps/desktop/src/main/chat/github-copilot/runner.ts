@@ -481,7 +481,7 @@ async function prepareRuntime(
     toolCallId,
     cwd: args.cwd,
     signal: toolSignal,
-    ask: (action, resources, save) =>
+    ask: (action, resources, save, preview) =>
       args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
@@ -489,6 +489,7 @@ async function prepareRuntime(
         action,
         resources,
         save,
+        preview,
         toolName: action,
         toolCallId,
         signal: toolSignal,

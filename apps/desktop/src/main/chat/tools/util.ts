@@ -24,8 +24,8 @@ export interface ToolContext {
   /** Conversation working directory (worktree/root). Tools operate relative to it. */
   cwd: string
   signal: AbortSignal
-  /** Permission gate; resolves on allow, throws on deny/reject. */
-  ask: (action: PermissionAction, resources: string[], save?: string[]) => Promise<void>
+  /** Permission gate; resolves on allow, throws on deny/reject. `preview` is the exact text the person reviews. */
+  ask: (action: PermissionAction, resources: string[], save?: string[], preview?: string) => Promise<void>
   /** ask_question (mark X): presents user questions and blocks until answered. [] = dismissed. */
   askQuestion: (questions: ChatQuestion[]) => Promise<string[][]>
   /** review_plan (chat): registers the drawer plan and SIGNALS the runner to cut at the step boundary

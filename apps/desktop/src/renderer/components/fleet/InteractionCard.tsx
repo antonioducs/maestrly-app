@@ -49,7 +49,7 @@ export function InteractionCard({
               : item.title}
           </div>
           {(item.tool ? item.tool.target : item.detail) && (
-            <code className="mt-2 block overflow-x-auto rounded bg-muted p-2 text-xs">
+            <code className="mt-2 block max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 font-mono text-xs">
               {item.tool ? item.tool.target : item.detail}
             </code>
           )}

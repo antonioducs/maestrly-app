@@ -265,7 +265,7 @@ export async function runAntigravitySubscriptionChat(
       toolCallId,
       cwd: args.cwd,
       signal,
-      ask: (action, resources, save) =>
+      ask: (action, resources, save, preview) =>
         args.broker.assert({
           conversationId: args.conversationId,
           projectId: args.projectId,
@@ -273,6 +273,7 @@ export async function runAntigravitySubscriptionChat(
           action,
           resources,
           save,
+          preview,
           toolName: action,
           toolCallId,
           signal,

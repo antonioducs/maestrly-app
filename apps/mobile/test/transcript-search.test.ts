@@ -53,6 +53,22 @@ describe('conversation search', () => {
     expect(searchRows(rows, '   ')).toEqual([])
   })
 
+  it('finds a permission request by the command it would run', () => {
+    const permission: MobileChatItem = {
+      id: 'perm:p1',
+      at: at(),
+      kind: 'permission',
+      requestId: 'p1',
+      title: 'Run command (2 lines)',
+      detail: null,
+      tool: { name: 'bash', target: 'uname -sr\nnproc' },
+      state: 'pending',
+      resolvedAt: null,
+    }
+    const rows = transcriptRows([permission])
+    expect(searchRows(rows, 'nproc')).toEqual([0])
+  })
+
   it('lets the person edit only their own last message, once nothing waits', () => {
     expect(editableItemId([user('m1:0', 'a'), said('a1', 'x'), user('m2:0', 'b')], 'chat')).toBe('m2:0')
     expect(editableItemId([user('m1:0', 'a'), user('m2:0', 'b', { queued: true })], 'chat')).toBeNull()

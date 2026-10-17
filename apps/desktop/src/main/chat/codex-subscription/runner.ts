@@ -1585,6 +1585,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
         toolName: 'bash',
         toolCallId: visibleItemId,
         title: approvalTitle('command', params),
+        ...(typeof params.command === 'string' && params.command.trim() ? { preview: params.command } : {}),
         signal: pendingRequest.signal,
       })
       return { decision: decision === 'always' && allowSession ? 'acceptForSession' : 'accept' }
@@ -1928,7 +1929,7 @@ async function buildDynamicTools(
             toolCallId,
             cwd: args.cwd,
             signal,
-            ask: (action, resources, save) =>
+            ask: (action, resources, save, preview) =>
               args.broker.assert({
                 conversationId: args.conversationId,
                 projectId: args.projectId,
@@ -1936,6 +1937,7 @@ async function buildDynamicTools(
                 action,
                 resources,
                 save,
+                preview,
                 toolName: action,
                 toolCallId,
                 signal,

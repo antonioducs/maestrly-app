@@ -1,5 +1,5 @@
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
-import { View } from 'react-native'
+import { ScrollView, View } from 'react-native'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
@@ -31,20 +31,16 @@ export function PermissionCard({ item }: { item: Extract<FleetTranscriptItem, { 
         {command === null ? item.title : bot ? t('perm.titleCommand', { name }) : t('perm.titleCommandChat')}
       </AppText>
       {item.tool?.target ? (
-        <View
-          style={{
-            marginBottom: 8,
-            paddingVertical: 10,
-            paddingHorizontal: 12,
-            borderRadius: 10,
-            backgroundColor: palette.codeBg,
-          }}
+        <ScrollView
+          nestedScrollEnabled
+          style={{ marginBottom: 8, maxHeight: 220, borderRadius: 10, backgroundColor: palette.codeBg }}
+          contentContainerStyle={{ paddingVertical: 10, paddingHorizontal: 12 }}
         >
-          <AppText style={{ fontFamily: fonts.mono, fontSize: 13, lineHeight: 18, color: palette.codeInk }}>
+          <AppText selectable style={{ fontFamily: fonts.mono, fontSize: 13, lineHeight: 18, color: palette.codeInk }}>
             {command !== null ? <AppText style={{ color: '#d4b273', fontFamily: fonts.mono }}>$ </AppText> : null}
             {item.tool.target}
           </AppText>
-        </View>
+        </ScrollView>
       ) : null}
       {item.detail ? (
         <AppText variant="sub" tone="muted" style={{ fontSize: 14, lineHeight: 20, marginBottom: 12 }}>

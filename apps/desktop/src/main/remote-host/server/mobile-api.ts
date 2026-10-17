@@ -43,6 +43,7 @@ import {
   type MessagePart,
 } from '../../../shared/chat'
 import type { Conversation, ConversationStatus } from '../../../shared/conversation'
+import { permissionExtraResources } from '../../../shared/permission-preview'
 import {
   conversationDispatchBranchSlug,
   parseConversationDispatchBatchResult,
@@ -870,7 +871,7 @@ export class MobileApi {
       at: new Date(this.now()).toISOString(),
       requestId: request.id,
       title: request.title,
-      detail: request.resources.join(', ') || null,
+      detail: permissionExtraResources(request).join(', ') || null,
       tool: permissionTool(request, open.messages),
       state: 'pending',
       resolvedAt: null,

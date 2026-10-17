@@ -1,4 +1,5 @@
 import { permissionScopeKey, type PermissionScope } from '../../shared/conversation-scope'
+import { permissionSubjectTitle } from '../../shared/permission-preview'
 import { autonomousPolicy, assertAutonomousPermission } from './autonomous'
 import { remoteChatPolicy, assertRemoteChatPermission } from './remote-policy'
 /**
@@ -52,6 +53,8 @@ export interface AssertInput {
   toolCallId?: string
   /** Contextual title from external bridges (cwd, reason, host, etc.). */
   title?: string
+  /** Exact text shown for review, e.g. the whole command before it is split into one resource per segment. */
+  preview?: string
   /** Cancels only this gate without persisting rules. Used by protocols clearing server-side requests. */
   signal?: AbortSignal
 }
@@ -67,6 +70,7 @@ export interface PermissionRequest {
   toolName?: string
   toolCallId?: string
   title: string
+  preview?: string
 }
 
 export interface ReplyInput {
@@ -207,23 +211,23 @@ function deferred<T = void>() {
   return { promise, resolve, reject }
 }
 
-function titleFor(action: string, resources: string[]): string {
-  const first = resources[0] ?? '*'
+function titleFor(action: string, resources: string[], preview?: string): string {
+  const subject = preview ?? resources[0] ?? '*'
   switch (action) {
     case 'bash':
-      return `Run command: ${first}`
+      return permissionSubjectTitle('Run command', subject)
     case 'edit':
-      return `Write file: ${first}`
+      return permissionSubjectTitle('Write file', subject)
     case 'webfetch':
-      return `Fetch URL: ${first}`
+      return permissionSubjectTitle('Fetch URL', subject)
     case 'web_search':
-      return `Search the web: ${first}`
+      return permissionSubjectTitle('Search the web', subject)
     case 'external_directory':
-      return `Access directory outside the project: ${first}`
+      return permissionSubjectTitle('Access directory outside the project', subject)
     case 'mcp':
-      return `Use MCP tool: ${first}`
+      return permissionSubjectTitle('Use MCP tool', subject)
     default:
-      return `Allow ${action}: ${first}`
+      return permissionSubjectTitle(`Allow ${action}`, subject)
   }
 }
 
@@ -290,7 +294,8 @@ export class PermissionBroker extends EventEmitter {
       save: input.save,
       toolName: input.toolName,
       toolCallId: input.toolCallId,
-      title: input.title ?? titleFor(input.action, input.resources),
+      title: input.title ?? titleFor(input.action, input.resources, input.preview),
+      ...(input.preview ? { preview: input.preview } : {}),
     }
   }
 
