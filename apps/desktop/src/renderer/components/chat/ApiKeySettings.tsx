@@ -1,8 +1,10 @@
 import { WebSearchSettings } from './WebSearchSettings'
+import { DictationSettings } from './DictationSettings'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Trash2, Plus, X, Pencil, Sparkles } from 'lucide-react'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatUserPrompt, McpServerInfo } from '../../../shared/chat'
 import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
@@ -25,6 +27,7 @@ export function ApiKeySettings({
 }: ChatSettingsOptions = {}) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
+  const hostId = useHostId()
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const visibleTabs = tabs ? CHAT_SETTINGS_TABS.filter((tab) => tabs.includes(tab.id)) : CHAT_SETTINGS_TABS
   const shown = (id: ChatSettingsTab) => visibleTabs.some((tab) => tab.id === id)
@@ -157,6 +160,8 @@ export function ApiKeySettings({
             onChanged={refresh}
           />
           {config.webSearch && <WebSearchSettings webSearch={config.webSearch} onChanged={refresh} />}
+          {/* Dictation runs on this computer, where the microphone is: a remote host's settings do not show it. */}
+          {hostId === LOCAL_HOST_ID && <DictationSettings />}
           <FlagToggle
             headingKey="settings.generatedInterfacesHeading"
             descriptionKey="settings.generatedInterfacesDescription"
