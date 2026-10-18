@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash, randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -232,11 +232,12 @@ describe('moving a bot between environments', () => {
     expect(getAppSetting('fleet.instance.bots.alpha.gatewayToken')).toBeNull()
     const conversation = getConversation(conversationId)!
     expect(conversation).toMatchObject({ scope: 'standalone', status: 'idle' })
-    expect(conversation.cwd.startsWith(home.userData)).toBe(true)
+    // The folder is named from the resolved data folder; macOS's temporary folder is behind a symbolic link.
+    expect(conversation.cwd).toBe(path.join(await realpath(home.userData), 'standalone-chats', conversationId))
     expect(await readFile(path.join(conversation.cwd, 'report.md'), 'utf8')).toBe('# Report\n')
     expect(await readFile(path.join(conversation.cwd, '.agents', 'notes', 'plan.md'), 'utf8')).toBe('Plan\n')
     expect(await exists(path.join(conversation.cwd, 'outside'))).toBe(false)
-    expect((await stat(conversation.cwd)).mode & 0o777).toBe(0o700)
+    if (process.platform !== 'win32') expect((await stat(conversation.cwd)).mode & 0o777).toBe(0o700)
     expect(await readFile(path.join(attachmentConversationDir(conversationId), 'shot.png'))).toEqual(
       Buffer.from([137, 80, 78, 71])
     )
