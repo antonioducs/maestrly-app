@@ -181,8 +181,8 @@ export class FleetClientService {
     if (!this.api) throw new FleetClientError('UNAUTHORIZED', 401, 'Fleet is not connected')
     return this.api
   }
-  getImage(botId: string, imageId: string) {
-    return this.requireApi().getImage(botId, imageId)
+  getImage(botId: string, imageId: string, runId?: string | null) {
+    return this.requireApi().getImage(botId, imageId, runId)
   }
 
   /** Saves a bot file to Downloads and resolves with its receipt; joins the transfer already running for it. */

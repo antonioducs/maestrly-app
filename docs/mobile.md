@@ -108,7 +108,7 @@ Notifications** chooses what you hear about, for every paired server:
 | --- | --- |
 | **Waiting on you** | A bot or chat asks for approval, asks a question, has a plan for you, or needs help. |
 | **Replies** | A bot or chat finishes a turn you started. |
-| **Routine reports** | A bot's routine finishes. |
+| **Routine reports** | A bot's routine finishes. With [routine runs in conversations of their own](bot-fleet.md#routine-runs), the bot's **Tell me about finished runs** setting chooses which runs notify. |
 | **Problems** | A turn fails, or a bot stops unexpectedly. |
 
 **Send a test notification** asks the server for one. A notification for the

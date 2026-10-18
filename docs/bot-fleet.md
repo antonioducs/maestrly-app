@@ -475,7 +475,7 @@ The bot Conversation tab uses the same chat composer as desktop chats. Its model
 
 When a bot tracks multi-step work with `todo_write`, the Conversation tab shows its latest to-do list as a checklist, as desktop chats do. The checklist keeps up to 50 items of up to 500 characters. It needs the desktop app, the gateway, and the environment image from the same release; with an older gateway or image, `todo_write` appears as a plain tool row.
 
-A routine run appears as one line with the routine's title, how it runs, and when it ran. A run whose instructions match the previous run of the same routine says so. Choose **Instructions** to unfold what the routine asked, shown as Markdown that keeps the lines as you typed them. A message between bots, sent or received, names both bots and shows its text as Markdown, with **Open bot** for the other bot. A long message is folded with **Show all**, and one with headings lists its sections as shortcuts. Bots are asked to structure longer messages to each other with headings, lists, or tables; a bot on an older environment image may still send one long paragraph.
+A routine run appears as one line with the routine's title, how it runs, and when it ran. With a bot server and environment image that keep [routine runs in conversations of their own](#routine-runs), runs no longer appear here: the conversation shows a notice where a run ended instead. A run whose instructions match the previous run of the same routine says so. Choose **Instructions** to unfold what the routine asked, shown as Markdown that keeps the lines as you typed them. A message between bots, sent or received, names both bots and shows its text as Markdown, with **Open bot** for the other bot. A long message is folded with **Show all**, and one with headings lists its sections as shortcuts. Bots are asked to structure longer messages to each other with headings, lists, or tables; a bot on an older environment image may still send one long paragraph.
 
 Press **Command+F** (**Ctrl+F** on Windows and Linux) in the Conversation tab to search the conversation, as in desktop chats. Enter and Shift+Enter move to the next and previous match, and Esc closes the bar. Matches are highlighted in your messages, the bot's replies and reasoning, compaction summaries, routine instructions, and messages between bots; a folded activity, routine, or long message that contains a match opens by itself. Tool commands and output are not searched. The gateway sends the transcript in pages, so a search first loads the older pages it has not shown yet; on a very long conversation this can take a moment.
 
@@ -806,20 +806,34 @@ turn, the bot fetches owner memory with a 1,000 ms timeout inside the 1,500 ms
 turn-memory budget, falling back to its last good copy on failure. Changes reach
 the context through memory updates or a rebuilt core.
 
-## Routine history
+## Routine runs
 
-In a bot's **Settings → Routines**, expand a routine's **History** toggle to see
-run status, time, summary, pending work, notes and the final answer. The gateway
-keeps the last 50 runs per routine; deleting the routine or bot deletes its runs.
-Each new run receives up to three previous runs to help avoid repeating work.
+With a bot server and environment image from this release, each routine run works in a **conversation of its own**, apart from your conversation with the bot. Open them from the **Runs** tab next to **Conversation** in the bot's header. The tab counts the runs that ended with something new since you last looked; this count is kept on each computer. While a run works, the header shows its routine and how long it has been running, and your messages to the bot wait until it ends.
 
-During a routine, `routine_report` records a summary of up to 600 characters,
-pending work of up to 400, and notes for the next run of up to 600. It is unavailable
-outside a routine run. The final answer is stored separately, up to 4,000
-characters. Status can be delivered, completed, failed, cancelled or unknown;
-unknown means a delivered input is no longer queued or running without a recorded
-completion. A failed run can still become completed when the bot retries the same
-input; completed and cancelled are final.
+The **Runs** tab lists runs by day, newest first. Runs of one routine that found nothing new on the same day fold into one line. When the bot has runs of several routines, the chips above the list show the runs of one of them. Each run shows what it did, how many images, videos, and files its conversation holds, how many changes you asked for, and when retention will delete its conversation, once that is within a week. Runs survive their routine: deleting a routine keeps the runs that had conversations of their own.
+
+Open a run to read its whole conversation: its instructions, tools, images, videos, files, final answer, and report. Once it has ended, ask for a change in the field at the bottom. The bot answers there, with what the run did, and your conversation with it does not change; if the change alters what the run did, the bot records a new report. **Stop** ends a run that is working. **Cite in the conversation** takes the run to your conversation with the bot: your next message carries it, and the bot reads its report and files before answering. **Keep** stops retention from ever deleting the run's conversation.
+
+**Delete conversation** removes the run's messages, tool activity, and the changes you asked for. Its report stays in the history and in what the next runs receive. The images and attachments of its conversation are copied to a `routines` folder in the bot's conversation folder, and the files the run wrote or shared stay where they are; the deleted run lists them. You can undo for a few seconds after confirming. A run that is working cannot be deleted.
+
+When a run ends, your conversation with the bot shows a notice with what it did and **Open**. These notices are for you only: the bot does not read them. To talk about a run, cite it or ask about it; the bot reads past runs with `bot_routines_runs`. A run that ends while you are looking at the bot also shows a notice in the corner, unless you are reading that run.
+
+The button above the list opens the bot's settings for its runs, saved as you change them:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| **Delete run conversations after** | 30 days | 30, 60, or 90 days after the run's last activity (a change you ask for starts the time again), or **Never**. |
+| **Keep at most 50 runs per routine** | On | Older runs' conversations are deleted and the runs leave the history. Off keeps up to 1,000. |
+| **Delete runs with nothing new sooner** | On | Runs that found nothing new keep their conversations 7 days. |
+| **Tell me about finished runs** | New things and failures | Which runs show a notice in your conversation and send a **Routine reports** notification to your phone: **New things and failures**, **All**, or **None**. |
+
+Runs you keep and runs still working are never deleted on their own. Retention runs only while the bot runs, and deletes at most a few conversations at a time. Deleting the bot deletes all its runs.
+
+During a routine, `routine_report` records a summary of up to 600 characters, pending work of up to 400, notes for the next run of up to 600, and whether the run found nothing new. It is unavailable outside a routine run. The final answer is stored separately, up to 4,000 characters. Each new run receives up to three previous reports to help avoid repeating work. Status can be delivered, completed, failed, cancelled or unknown; unknown means a delivered input is no longer queued or running without a recorded completion. A failed run can still become completed when the bot retries the same input; completed and cancelled are final.
+
+### With an older server or image
+
+A bot server or environment image from before this release runs routines in the bot's conversation. There, in a bot's **Settings → Routines**, expand a routine's **History** toggle to see run status, time, summary, pending work, notes and the final answer. The gateway keeps the last 50 runs per routine; deleting the routine or bot deletes those runs. After an update, earlier runs stay in the bot's conversation and in **History**; new runs get conversations of their own.
 
 ## Work in the projects of your computers
 

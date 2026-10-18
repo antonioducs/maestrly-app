@@ -71,9 +71,9 @@ export function insertConversation(c: Conversation): void {
   getDb()
     .prepare(
       `INSERT INTO conversations
-       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, bot_origin, bot_management_state, bot_manual_chat_enabled, position)
+       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, bot_origin, bot_management_state, bot_manual_chat_enabled, folder_owner_id, position)
      VALUES
-       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs, @botOrigin, @botManagementState, @botManualChatEnabled,
+       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs, @botOrigin, @botManagementState, @botManualChatEnabled, @folderOwnerId,
         (SELECT COALESCE(MAX(position), -1) + 1 FROM conversations WHERE scope = @scope AND workspace_id IS @workspaceId))`
     )
     .run({
@@ -96,6 +96,7 @@ export function insertConversation(c: Conversation): void {
       botManagementState: c.botOrigin ? (c.botManagementState ?? 'active') : null,
       // Releasing a bot chat for the person's own messages is their later choice, never a creation default.
       botManualChatEnabled: c.botOrigin && c.botManualChatEnabled ? 1 : 0,
+      folderOwnerId: c.scope === 'standalone' ? (c.folderOwnerId ?? null) : null,
     })
 }
 
@@ -373,6 +374,7 @@ function rowToConversation(r: any): Conversation | undefined {
     lastActivityAt: r.last_activity_at ?? r.created_at,
     isMulti: r.is_multi ?? 0,
     uiPrefs: parseUiPrefs(r.ui_prefs),
+    ...(r.scope === 'standalone' && typeof r.folder_owner_id === 'string' ? { folderOwnerId: r.folder_owner_id } : {}),
     ...(r.bot_origin
       ? {
           botOrigin: JSON.parse(r.bot_origin),

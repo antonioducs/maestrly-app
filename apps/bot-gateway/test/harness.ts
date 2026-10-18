@@ -89,6 +89,16 @@ async function fake(
   const memoryRequests: unknown[] = []
   const provisioningRequests: Array<{ method: string; path: string; body: unknown }> = []
   /**
+   * Routine runs' own conversations (`routine-conversations`): the requests for them, the page each transcript
+   * answers, what a deletion keeps, and the runs it no longer has.
+   */
+  const runConversations = {
+    requests: [] as Array<{ method: string; runId: string; path: string }>,
+    page: { items: [], before: null } as import('@maestrly/bot-fleet-protocol').FleetTranscriptPage,
+    kept: { folder: 'routines/prices/2026-09-25-1000', files: [{ name: 'chart.png', kind: 'image', byteSize: 84 }] },
+    missing: new Set<string>(),
+  }
+  /**
    * Installations to refuse with a synthetic internal error, or to drop (the connection closes unanswered), the next
    * ones first; and how many installations were asked for, answered or not.
    */
@@ -412,6 +422,17 @@ async function fake(
         receipts.set(input.idempotencyKey, receipt)
         return send(200, receipt)
       }
+      const run = /^\/v1\/runs\/([^/]+)(\/transcript)?$/.exec(url.pathname)
+      if (run) {
+        const runId = decodeURIComponent(run[1])
+        runConversations.requests.push({ method: req.method!, runId, path: url.pathname + url.search })
+        if (runConversations.missing.has(runId)) return send(404, { code: 'NOT_FOUND', message: 'No conversation' })
+        if (run[2] && req.method === 'GET') return send(200, runConversations.page)
+        if (!run[2] && req.method === 'DELETE') {
+          runConversations.missing.add(runId)
+          return send(200, { kept: runConversations.kept })
+        }
+      }
       const edited = messageEdit && req.method === 'POST' ? /^\/v1\/inputs\/([^/]+)\/edit$/.exec(url.pathname) : null
       if (edited) {
         const inputId = decodeURIComponent(edited[1])
@@ -444,6 +465,7 @@ async function fake(
     memoryRequests,
     provisioning,
     provisioningRequests,
+    runConversations,
     installed,
     installs,
     uninstalls,

@@ -3,9 +3,16 @@ import {
   FLEET_CHAT_ATTENTION_QUERY,
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_REASONING_QUERY,
+  FLEET_ROUTINE_RUNS_QUERY,
   FLEET_UPDATE_BUSY_STATUSES,
 } from './constants.js'
-import type { FleetBot, FleetSelection, FleetSelectionOption, FleetTranscriptItem } from './domain.js'
+import type {
+  FleetBot,
+  FleetGatewayEvent,
+  FleetSelection,
+  FleetSelectionOption,
+  FleetTranscriptItem,
+} from './domain.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
 export function deriveBotId(name: string, existingIds: Iterable<string>): string {
@@ -190,6 +197,20 @@ export function fleetReaderWantsReasoning(search: URLSearchParams): boolean {
 /** Whether a reader of an environment's events asked for `chat.attention` events; an older gateway would fail on them. */
 export function fleetReaderWantsChatAttention(search: URLSearchParams): boolean {
   return search.get(FLEET_CHAT_ATTENTION_QUERY) === '1'
+}
+
+/**
+ * Whether a reader of events asked for routine runs (`routine-conversations`): the transcripts of runs' own
+ * conversations and the changes of their records. An older reader would fail on them, or take a run's items for the
+ * bot's own.
+ */
+export function fleetReaderWantsRoutineRuns(search: URLSearchParams): boolean {
+  return search.get(FLEET_ROUTINE_RUNS_QUERY) === '1'
+}
+
+/** Whether a gateway event is about routine runs, sent only to readers that asked for them. */
+export function isFleetRoutineRunEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
+  return event.type.startsWith('routine_run.')
 }
 
 /** Whether a transcript item may go to a reader: `reasoning` items only to one that asked for them. */

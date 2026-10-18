@@ -1037,6 +1037,13 @@ function initializeSchema(): void {
     db.exec('ALTER TABLE conversations ADD COLUMN bot_manual_chat_enabled INTEGER NOT NULL DEFAULT 0;')
   // When the conversation started waiting for the person; kept by the host so every computer shows and clears it.
   if (!hasCol('attention_at')) db.exec('ALTER TABLE conversations ADD COLUMN attention_at INTEGER;')
+  // A standalone conversation working in another one's managed folder (a bot's routine run); never changes.
+  if (!hasCol('folder_owner_id')) db.exec('ALTER TABLE conversations ADD COLUMN folder_owner_id TEXT;')
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS conversation_folder_owner_immutable BEFORE UPDATE OF folder_owner_id ON conversations
+    WHEN NEW.folder_owner_id IS NOT OLD.folder_owner_id
+    BEGIN SELECT RAISE(ABORT, 'Conversation folder owner is immutable'); END;
+  `)
   db.exec(`
     CREATE TABLE IF NOT EXISTS bot_conversation_allocations (
       instance_id TEXT NOT NULL, owner_user_id TEXT NOT NULL, desktop_id TEXT NOT NULL,

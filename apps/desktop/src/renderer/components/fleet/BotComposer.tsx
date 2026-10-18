@@ -43,6 +43,8 @@ export function BotComposer({
   onOpenSettings,
   onOpenEnvironmentScreen,
   onOpenEnvironmentSettings,
+  citation = null,
+  onCitationSent,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -51,6 +53,9 @@ export function BotComposer({
   /** A bot of an environment manages skills, accounts and MCP servers on its environment's screen. */
   onOpenEnvironmentScreen?: () => void
   onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
+  /** The routine run the next message refers to, cleared once it is sent. */
+  citation?: string | null
+  onCitationSent?: () => void
 }) {
   const { t } = useTranslation('fleet')
   const [draftState, setDraftState] = useState(() => ({ botId: bot.id, text: readBotDraft(bot.id) }))
@@ -270,7 +275,8 @@ export function BotComposer({
           data: new Uint8Array(await file.arrayBuffer()),
         }))
       )
-      await window.api.fleetSendMessage(bot.id, text.trim(), attachments)
+      await window.api.fleetSendMessage(bot.id, text.trim(), attachments, citation)
+      if (citation) onCitationSent?.()
       setDraft('')
       setImages((previous) => {
         previous.forEach(({ attachment }) => URL.revokeObjectURL(attachment.previewUrl ?? ''))
@@ -313,7 +319,8 @@ export function BotComposer({
       <ChatComposer
         value={draft}
         onChange={setDraft}
-        streaming={bot.status === 'working'}
+        // While a routine run works in its own conversation, messages here wait for it; it is stopped from there.
+        streaming={bot.status === 'working' && !bot.runningRun}
         sendWhileStreaming
         disabled={locked || busy}
         disabledPlaceholder={

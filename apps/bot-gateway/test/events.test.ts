@@ -48,4 +48,38 @@ describe('event hub', () => {
     expect(shape(reader.sent())).toEqual(['hello', 'reasoning', 'assistant', 'transcript.reset'])
     hub.close()
   })
+
+  it("sends routine runs only to devices that asked for them, a run's reasoning only to those that asked for it", () => {
+    const hub = new EventHub(async () => {})
+    const older = subscriber()
+    const runs = subscriber()
+    const everything = subscriber()
+    hub.add(older.response, 0, 'mac-old')
+    hub.add(runs.response, 0, 'mac-runs', { routineRuns: true })
+    hub.add(everything.response, 0, 'mac-new', { routineRuns: true, reasoning: true })
+    const at = '2026-09-29T10:00:00.000Z'
+    const upsert = (item: FleetTranscriptItem): FleetGatewayEvent => ({
+      type: 'routine_run.transcript.upsert',
+      at,
+      botId: 'alpha',
+      runId: 'run-1',
+      item,
+    })
+    hub.emit(upsert({ kind: 'reasoning', id: 'm:0', at, text: 'Thinking', truncated: false, streaming: true }))
+    hub.emit(upsert({ kind: 'assistant', id: 'm:1', at, text: 'Answer', streaming: false }))
+    hub.emit({ type: 'routine_run.transcript.reset', at, botId: 'alpha', runId: 'run-1' })
+    hub.emit({ type: 'routine_run.removed', at, botId: 'alpha', runId: 'run-1' })
+    const shape = (events: FleetGatewayEvent[]) =>
+      events.map((event) => (event.type === 'routine_run.transcript.upsert' ? event.item.kind : event.type))
+    expect(shape(older.sent())).toEqual(['hello'])
+    expect(shape(runs.sent())).toEqual(['hello', 'assistant', 'routine_run.transcript.reset', 'routine_run.removed'])
+    expect(shape(everything.sent())).toEqual([
+      'hello',
+      'reasoning',
+      'assistant',
+      'routine_run.transcript.reset',
+      'routine_run.removed',
+    ])
+    hub.close()
+  })
 })

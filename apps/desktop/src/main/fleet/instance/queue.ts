@@ -37,6 +37,8 @@ const storedInputSchema = z.object({
     })
     .optional(),
   peer: z.object({ botId: z.string(), name: z.string() }).optional(),
+  run: z.object({ id: z.string() }).optional(),
+  citation: z.object({ runId: z.string(), routineTitle: z.string(), at: z.string() }).optional(),
 })
 const attachmentSchema = z.object({
   id: z.string().regex(/^q-(?:file-)?[a-f0-9-]{36}-[0-7]$/),
@@ -344,6 +346,22 @@ export class InstanceInputQueue {
     return existing ? { inputId: existing.id, itemId: existing.itemId, queued: !existing.started } : null
   }
   /**
+   * Forgets every input of a routine run's conversation, which is being deleted: those still waiting leave the queue,
+   * and settled ones the settled log. Their attachments go with them.
+   */
+  async forgetRun(runId: string): Promise<void> {
+    const ofRun = (item: QueuedInput) => item.input.run?.id === runId
+    const waiting = this.items.filter(ofRun).map((item) => item.id)
+    await this.update((items) => {
+      const kept = items.filter((item) => !ofRun(item))
+      if (kept.length === items.length) return { result: undefined, changed: false }
+      items.splice(0, items.length, ...kept)
+      return { result: undefined, changed: true }
+    })
+    await this.forget(this.settled.filter(ofRun).map((item) => item.id))
+    for (const id of waiting) await this.cleanup(id)
+  }
+  /**
    * Removes settled inputs whose native messages a truncation deleted: the settled log is written again without them.
    * Inputs that can still change stay.
    */
@@ -515,14 +533,21 @@ export class InstanceInputQueue {
     })
   }
 
-  async reconcile(nativeUsers: Array<{ id: string; at: number; text: string }>): Promise<void> {
+  /**
+   * Maps the started inputs of one conversation (`scope`) to its native user messages, by text and time; one with no
+   * message goes back to the queue.
+   */
+  async reconcile(
+    nativeUsers: Array<{ id: string; at: number; text: string }>,
+    scope: (item: QueuedInput) => boolean = () => true
+  ): Promise<void> {
     await this.update((items) => {
       const claimed = new Set(
         [...this.settled, ...items].map((item) => item.nativeMessageId).filter((id): id is string => !!id)
       )
       let changed = false
       for (const item of items) {
-        if (!item.started || item.nativeMessageId) continue
+        if (!item.started || item.nativeMessageId || !scope(item)) continue
         const match = nativeUsers.find(
           (user) =>
             !claimed.has(user.id) && user.at >= Date.parse(item.at) - 1_000 && user.text === promptForInput(item.input)
@@ -538,6 +563,40 @@ export class InstanceInputQueue {
   }
 }
 
+/** What a run in a conversation of its own adds: whom this conversation is for, and how the owner follows it. */
+export const RUN_CONVERSATION_NOTE =
+  'This conversation belongs to this run alone: your conversation with your owner is separate and does not show it. Work on your own with your tools as usual; files you write stay in your conversation folder, which both conversations share. Your owner can read this run later and ask you here for changes to what it did.'
+
+/** What a transcript reads of the queue: the inputs of one of the bot's conversations. */
+export type TranscriptQueue = Pick<InstanceInputQueue, 'list' | 'transcriptInputs' | 'byItemId' | 'refs' | 'fileRefs'>
+
+/** The run an input goes to: null for the bot's own conversation. */
+export const inputRunId = (item: QueuedInput): string | null => item.input.run?.id ?? null
+
+/** The inputs of one of a bot's conversations: its own (`runId` null) or a routine run's. */
+export function conversationQueue(queue: InstanceInputQueue, runId: string | null): TranscriptQueue {
+  const mine = (item: QueuedInput | undefined): item is QueuedInput => !!item && inputRunId(item) === runId
+  return {
+    list: () => queue.list().filter(mine),
+    transcriptInputs: () => {
+      const inputs = queue.transcriptInputs()
+      return {
+        forMessage: (messageId) => {
+          const item = inputs.forMessage(messageId)
+          return mine(item) ? item : undefined
+        },
+        unmapped: inputs.unmapped.filter(mine),
+      }
+    },
+    byItemId: (itemId) => {
+      const item = queue.byItemId(itemId)
+      return mine(item) ? item : undefined
+    },
+    refs: (item) => queue.refs(item),
+    fileRefs: (item) => queue.fileRefs(item),
+  }
+}
+
 function routinePrompt(input: StoredInput): string {
   const base = `Scheduled routine "${input.routine?.title ?? ''}". Do this now:\n\n${input.text}`
   if (!input.routine?.runId) return base
@@ -545,13 +604,24 @@ function routinePrompt(input: StoredInput): string {
   const history = runs.length
     ? `Previous runs of this routine, newest first:\n${runs.map((run) => `- ${run.at.slice(0, 16).replace('T', ' ')} UTC · ${run.status}${run.summary ? ` · Did: ${run.summary}` : ''}${run.pending ? ` · Pending: ${run.pending}` : ''}${run.notes ? ` · Notes for this run: ${run.notes}` : ''}`).join('\n')}`
     : 'This is the first recorded run of this routine.'
-  return `${base}\n\n${history}\n\nWhen you finish, call routine_report with a short summary of what you did, anything still pending, and notes for the next run.`
+  const report = input.run
+    ? "When you finish, call routine_report with a short summary of what you did, anything still pending, notes for the next run, and nothing_new set to true when the run found nothing worth the owner's attention."
+    : 'When you finish, call routine_report with a short summary of what you did, anything still pending, and notes for the next run.'
+  return `${base}\n\n${history}\n\n${input.run ? RUN_CONVERSATION_NOTE + '\n\n' : ''}${report}`
+}
+
+/** An owner's message that refers to a routine run: the bot reads that run before it answers. */
+function citedPrompt(input: StoredInput): string {
+  const citation = input.citation
+  if (!citation) return input.text
+  const at = citation.at.slice(0, 16).replace('T', ' ')
+  return `${input.text}\n\n(The owner refers to the run of the routine "${citation.routineTitle}" from ${at} UTC, run id ${citation.runId}. Read it with bot_routines_runs before you answer.)`
 }
 
 export function promptForInput(input: StoredInput): string {
   switch (input.source) {
     case 'owner':
-      return input.text
+      return citedPrompt(input)
     case 'routine':
       return routinePrompt(input)
     case 'peer':

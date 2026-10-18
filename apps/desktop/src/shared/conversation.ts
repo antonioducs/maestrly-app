@@ -161,6 +161,11 @@ export interface StandaloneConversation extends ConversationBase {
   experience: 'standard'
   isMulti: 0
   repos?: never
+  /**
+   * The standalone conversation whose managed folder this one works in, as a bot's routine run works in its bot's.
+   * Set once by the main process; deleting this conversation never deletes that folder.
+   */
+  folderOwnerId?: string
 }
 
 export type Conversation = ProjectConversation | StandaloneConversation

@@ -8,7 +8,7 @@ type Entry = { url: string; bytes: number; users: number }
  * Images nobody displays are evicted, oldest first, beyond `capacity` entries or `maxBytes`; displayed ones never are.
  */
 export function createFleetImageCache(
-  load: (botId: string, imageId: string) => Promise<FleetImageData>,
+  load: (botId: string, imageId: string, runId: string | null) => Promise<FleetImageData>,
   urls: Pick<typeof URL, 'createObjectURL' | 'revokeObjectURL'> = URL,
   capacity = 64,
   maxBytes = 96 * 1024 * 1024
@@ -17,7 +17,9 @@ export function createFleetImageCache(
   const pending = new Map<string, Promise<string>>()
   // Holds requested while an image loads, counted on arrival so no eviction can slip in between.
   const waiting = new Map<string, number>()
-  const keyFor = (botId: string, imageId: string) => `${botId}:${imageId}`
+  // A routine run's image is read from its own conversation (`runId`).
+  const keyFor = (botId: string, imageId: string, runId: string | null = null) =>
+    runId ? `${botId}:${runId}:${imageId}` : `${botId}:${imageId}`
   const evict = () => {
     let bytes = [...entries.values()].reduce((sum, entry) => sum + entry.bytes, 0)
     for (const [key, entry] of entries) {
@@ -30,8 +32,8 @@ export function createFleetImageCache(
   }
   return {
     /** Resolves to the image's URL and holds it until the matching `release`. */
-    acquire(botId: string, imageId: string): Promise<string> {
-      const key = keyFor(botId, imageId)
+    acquire(botId: string, imageId: string, runId: string | null = null): Promise<string> {
+      const key = keyFor(botId, imageId, runId)
       const hit = entries.get(key)
       if (hit) {
         entries.delete(key)
@@ -42,7 +44,7 @@ export function createFleetImageCache(
       waiting.set(key, (waiting.get(key) ?? 0) + 1)
       let task = pending.get(key)
       if (!task) {
-        task = load(botId, imageId)
+        task = load(botId, imageId, runId)
           .then((image) => {
             const url = urls.createObjectURL(new Blob([new Uint8Array(image.data)], { type: image.mediaType }))
             entries.set(key, { url, bytes: image.data.byteLength, users: waiting.get(key) ?? 0 })
@@ -57,8 +59,8 @@ export function createFleetImageCache(
       }
       return task
     },
-    release(botId: string, imageId: string) {
-      const entry = entries.get(keyFor(botId, imageId))
+    release(botId: string, imageId: string, runId: string | null = null) {
+      const entry = entries.get(keyFor(botId, imageId, runId))
       if (entry) entry.users = Math.max(0, entry.users - 1)
       evict()
     },
@@ -66,8 +68,8 @@ export function createFleetImageCache(
 }
 export type FleetImageCache = ReturnType<typeof createFleetImageCache>
 
-export const fleetImageCache: FleetImageCache = createFleetImageCache((botId, imageId) =>
-  window.api.fleetGetImage(botId, imageId)
+export const fleetImageCache: FleetImageCache = createFleetImageCache((botId, imageId, runId) =>
+  window.api.fleetGetImage(botId, imageId, runId)
 )
 
 /**
@@ -79,14 +81,15 @@ export function holdFleetImage(
   botId: string,
   imageId: string,
   onReady: (url: string) => void,
-  onError: (cause: unknown) => void
+  onError: (cause: unknown) => void,
+  runId: string | null = null
 ): () => void {
   let active = true
   let held = false
-  cache.acquire(botId, imageId).then(
+  cache.acquire(botId, imageId, runId).then(
     (url) => {
       if (!active) {
-        cache.release(botId, imageId)
+        cache.release(botId, imageId, runId)
         return
       }
       held = true
@@ -100,7 +103,7 @@ export function holdFleetImage(
     active = false
     if (held) {
       held = false
-      cache.release(botId, imageId)
+      cache.release(botId, imageId, runId)
     }
   }
 }

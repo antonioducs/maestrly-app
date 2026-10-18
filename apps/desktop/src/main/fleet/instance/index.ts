@@ -26,7 +26,7 @@ export function botRuntimeForConversation(conversationId: string | undefined): B
 export async function requestOwnerHelp(conversationId: string, reason: string): Promise<string> {
   const bot = botRuntimeForConversation(conversationId)
   if (!bot) throw new Error('This conversation does not belong to a bot.')
-  return bot.help.requestHelp(reason)
+  return bot.helpFor(conversationId).requestHelp(reason)
 }
 
 /** What bot mode needs from the main process. */

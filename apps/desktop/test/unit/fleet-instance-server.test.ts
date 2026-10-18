@@ -132,6 +132,11 @@ function fakeBot(botId: string, slot: number) {
     patchMemory: vi.fn(async (_id: string, _patch: FleetBotMemoryPatchRequest) => ({ ...botMemory, pinned: true })),
     deleteMemory: vi.fn(async (_id: string) => {}),
     transcript: vi.fn(async (_before: string | null, _limit: number) => ({ items: [], before: null })),
+    runTranscript: vi.fn(async (_runId: string, _before: string | null, _limit: number, _reasoning: boolean) => ({
+      items: [],
+      before: null,
+    })),
+    deleteRun: vi.fn(async (_runId: string) => ({ kept: { folder: 'routines/run-1', files: [] } })),
     image: vi.fn(async (_imageId: string) => ({ mediaType: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) })),
     fileMeta: vi.fn(async (fileId: string) => ({
       id: fileId,
@@ -459,6 +464,7 @@ describe('instance control HTTP', () => {
       'video-screens',
       'bot-move',
       'mcp-test-detail',
+      'routine-conversations',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

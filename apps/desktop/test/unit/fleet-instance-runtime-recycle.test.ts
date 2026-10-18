@@ -6,7 +6,12 @@ import {
 } from '../../src/main/fleet/instance/runtime-recycle'
 
 function idle(): RecycleStatus {
-  return { turn: { state: 'idle', startedAt: null, inputId: null }, queue: [], pending: [], compaction: null }
+  return {
+    turn: { state: 'idle', startedAt: null, inputId: null, runId: null },
+    queue: [],
+    pending: [],
+    compaction: null,
+  }
 }
 
 function compaction(
@@ -45,13 +50,15 @@ afterEach(() => {
 describe('blocksRuntimeRecycle', () => {
   it('blocks while a bot has a turn, a queue, a pending request or a compaction in progress', () => {
     expect(blocksRuntimeRecycle(idle())).toBe(false)
-    expect(blocksRuntimeRecycle({ ...idle(), turn: { state: 'running', startedAt: null, inputId: null } })).toBe(true)
-    expect(blocksRuntimeRecycle({ ...idle(), turn: { state: 'cancelling', startedAt: null, inputId: null } })).toBe(
-      true
-    )
-    expect(blocksRuntimeRecycle({ ...idle(), queue: [{ inputId: 'input-1', source: 'owner', preview: 'Hi' }] })).toBe(
-      true
-    )
+    expect(
+      blocksRuntimeRecycle({ ...idle(), turn: { state: 'running', startedAt: null, inputId: null, runId: null } })
+    ).toBe(true)
+    expect(
+      blocksRuntimeRecycle({ ...idle(), turn: { state: 'cancelling', startedAt: null, inputId: null, runId: null } })
+    ).toBe(true)
+    expect(
+      blocksRuntimeRecycle({ ...idle(), queue: [{ inputId: 'input-1', source: 'owner', preview: 'Hi', runId: null }] })
+    ).toBe(true)
     expect(blocksRuntimeRecycle({ ...idle(), pending: [{} as RecycleStatus['pending'][number]] })).toBe(true)
     expect(blocksRuntimeRecycle({ ...idle(), compaction: compaction('running') })).toBe(true)
     expect(blocksRuntimeRecycle({ ...idle(), compaction: compaction('retrying') })).toBe(true)
@@ -75,7 +82,7 @@ describe('RuntimeRecycleScheduler', () => {
   }
 
   it('waits until every bot is idle, then recycles once', async () => {
-    const busy = { ...idle(), turn: { state: 'running' as const, startedAt: null, inputId: null } }
+    const busy = { ...idle(), turn: { state: 'running' as const, startedAt: null, inputId: null, runId: null } }
     const { scheduler, recycle, set } = harness([idle(), busy])
     scheduler.request()
     await vi.advanceTimersByTimeAsync(0)

@@ -44,6 +44,7 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'bot_routines_create',
   'bot_routines_update',
   'bot_routines_delete',
+  'bot_routines_runs',
   'request_owner_help',
   'owner_memory_save',
   'owner_memory_forget',
@@ -521,6 +522,7 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('ask', 'bot_routines_create')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_update')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_delete')).toBe(false)
+    expect(appToolAllowed('ask', 'bot_routines_runs')).toBe(true)
     expect(appToolAllowed('plan', 'artifact_create')).toBe(true)
     expect(appToolAllowed('maestro', 'artifact_get')).toBe(true)
     expect(appToolAllowed('maestro', 'artifact_list')).toBe(true)

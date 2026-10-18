@@ -23,6 +23,8 @@ import {
   type FleetLifecycle,
   type FleetPeerMessage,
   type FleetRoutine,
+  type FleetRoutineRunSettings,
+  FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -244,7 +246,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 17) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 18) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -351,6 +353,31 @@ export class Store {
         CREATE INDEX IF NOT EXISTS idx_bot_moves_release ON bot_moves(from_environment_id) WHERE phase='releasing-source';
       `)
       this.db.prepare("UPDATE meta SET value='17' WHERE key='schema_version'").run()
+    }
+    if (version <= 17) {
+      // Schema 18: routine runs in conversations of their own (`routine-conversations`). A run keeps its routine's
+      // title, where it ran, whether the owner keeps it, its last activity, what its conversation holds, what was kept
+      // when that conversation was deleted, and the owner's changes there; a bot keeps how long those conversations
+      // stay. Runs from before ran in the bot's conversation.
+      const columns = new Set(
+        (this.db.prepare('PRAGMA table_info(routine_runs)').all() as Row[]).map((row) => row.name)
+      )
+      const add = (name: string, definition: string) => {
+        if (!columns.has(name)) this.db.exec(`ALTER TABLE routine_runs ADD COLUMN ${name} ${definition}`)
+      }
+      add('routine_title', 'TEXT')
+      add('conversation', "TEXT NOT NULL DEFAULT 'primary'")
+      add('quiet', 'INTEGER NOT NULL DEFAULT 0')
+      add('pinned', 'INTEGER NOT NULL DEFAULT 0')
+      add('last_activity_at', 'TEXT')
+      add('conversation_deleted_at', 'TEXT')
+      add('media_json', 'TEXT')
+      add('kept_json', 'TEXT')
+      add('adjustments', 'INTEGER NOT NULL DEFAULT 0')
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_routine_runs_bot ON routine_runs(bot_id, delivered_at DESC)')
+      const bots = new Set((this.db.prepare('PRAGMA table_info(bots)').all() as Row[]).map((row) => row.name))
+      if (!bots.has('run_settings_json')) this.db.exec('ALTER TABLE bots ADD COLUMN run_settings_json TEXT')
+      this.db.prepare("UPDATE meta SET value='18' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -482,6 +509,7 @@ export class Store {
     this.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
+    const json = <T>(value: unknown): T | null => (value ? (JSON.parse(String(value)) as T) : null)
     return {
       id: String(row.id),
       routineId: String(row.routine_id),
@@ -491,14 +519,25 @@ export class Store {
       status: row.status as FleetRoutineRun['status'],
       deliveredAt: String(row.delivered_at),
       finishedAt: (row.finished_at as string | null) ?? null,
-      report: row.report_json ? (JSON.parse(String(row.report_json)) as FleetRoutineRun['report']) : null,
+      report: json<FleetRoutineRun['report']>(row.report_json),
       finalText: (row.final_text as string | null) ?? null,
+      routineTitle: (row.routine_title as string | null) ?? null,
+      conversation: ((row.conversation as string | null) ?? 'primary') as FleetRoutineRun['conversation'],
+      quiet: Boolean(row.quiet),
+      pinned: Boolean(row.pinned),
+      lastActivityAt: (row.last_activity_at as string | null) ?? null,
+      // Computed from the bot's settings when the run is read.
+      expiresAt: null,
+      conversationDeletedAt: (row.conversation_deleted_at as string | null) ?? null,
+      media: json<FleetRoutineRun['media']>(row.media_json),
+      kept: json<FleetRoutineRun['kept']>(row.kept_json),
+      adjustments: Number(row.adjustments ?? 0),
     }
   }
   insertRoutineRun(run: StoredRoutineRun) {
     this.db
       .prepare(
-        'INSERT OR IGNORE INTO routine_runs(id,routine_id,bot_id,input_id,trigger,status,delivered_at,finished_at,report_json,final_text) VALUES(?,?,?,?,?,?,?,?,?,?)'
+        'INSERT OR IGNORE INTO routine_runs(id,routine_id,bot_id,input_id,trigger,status,delivered_at,finished_at,report_json,final_text,routine_title,conversation,quiet,pinned,last_activity_at,conversation_deleted_at,media_json,kept_json,adjustments) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
       )
       .run(
         run.id,
@@ -510,13 +549,38 @@ export class Store {
         run.deliveredAt,
         run.finishedAt,
         run.report ? JSON.stringify(run.report) : null,
-        run.finalText
+        run.finalText,
+        run.routineTitle ?? null,
+        run.conversation ?? 'primary',
+        Number(run.quiet ?? false),
+        Number(run.pinned ?? false),
+        run.lastActivityAt ?? null,
+        run.conversationDeletedAt ?? null,
+        run.media ? JSON.stringify(run.media) : null,
+        run.kept ? JSON.stringify(run.kept) : null,
+        run.adjustments ?? 0
       )
   }
   updateRoutineRun(run: StoredRoutineRun) {
     this.db
-      .prepare('UPDATE routine_runs SET status=?, finished_at=?, report_json=?, final_text=? WHERE id=?')
-      .run(run.status, run.finishedAt, run.report ? JSON.stringify(run.report) : null, run.finalText, run.id)
+      .prepare(
+        'UPDATE routine_runs SET status=?, finished_at=?, report_json=?, final_text=?, conversation=?, quiet=?, pinned=?, last_activity_at=?, conversation_deleted_at=?, media_json=?, kept_json=?, adjustments=? WHERE id=?'
+      )
+      .run(
+        run.status,
+        run.finishedAt,
+        run.report ? JSON.stringify(run.report) : null,
+        run.finalText,
+        run.conversation,
+        Number(run.quiet),
+        Number(run.pinned),
+        run.lastActivityAt,
+        run.conversationDeletedAt,
+        run.media ? JSON.stringify(run.media) : null,
+        run.kept ? JSON.stringify(run.kept) : null,
+        run.adjustments,
+        run.id
+      )
   }
   routineRuns(routineId: string, limit: number): StoredRoutineRun[] {
     return (
@@ -524,6 +588,58 @@ export class Store {
         .prepare('SELECT * FROM routine_runs WHERE routine_id=? ORDER BY delivered_at DESC LIMIT ?')
         .all(routineId, limit) as Row[]
     ).map((row) => this.routineRun(row))
+  }
+  /** A bot's runs, newest first; `before` starts after that run, `routineId` keeps one routine's. */
+  botRoutineRuns(
+    botId: string,
+    options: { limit: number; before?: StoredRoutineRun | null; routineId?: string | null }
+  ): StoredRoutineRun[] {
+    const clauses = ['bot_id=?']
+    const values: Array<string | number> = [botId]
+    if (options.routineId) {
+      clauses.push('routine_id=?')
+      values.push(options.routineId)
+    }
+    if (options.before) {
+      clauses.push('(delivered_at<? OR (delivered_at=? AND id<?))')
+      values.push(options.before.deliveredAt, options.before.deliveredAt, options.before.id)
+    }
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM routine_runs WHERE ${clauses.join(' AND ')} ORDER BY delivered_at DESC, id DESC LIMIT ?`
+        )
+        .all(...values, options.limit) as Row[]
+    ).map((row) => this.routineRun(row))
+  }
+  /** The runs whose conversations are their own and still there, of one bot or of all: what retention looks at. */
+  ownRoutineRuns(botId?: string): StoredRoutineRun[] {
+    return (
+      (botId
+        ? this.db
+            .prepare("SELECT * FROM routine_runs WHERE conversation='own' AND bot_id=? ORDER BY delivered_at DESC")
+            .all(botId)
+        : this.db
+            .prepare("SELECT * FROM routine_runs WHERE conversation='own' ORDER BY delivered_at DESC")
+            .all()) as Row[]
+    ).map((row) => this.routineRun(row))
+  }
+  /** The routines whose runs are recorded for a bot, with the newest title of each: runs outlive their routines. */
+  routineRunGroups(botId: string): Array<{ routineId: string; routineTitle: string | null; count: number }> {
+    return (
+      this.db
+        .prepare(
+          'SELECT routine_id, (SELECT routine_title FROM routine_runs AS newest WHERE newest.routine_id=r.routine_id AND newest.bot_id=r.bot_id ORDER BY delivered_at DESC LIMIT 1) AS title, COUNT(*) AS count FROM routine_runs AS r WHERE bot_id=? GROUP BY routine_id'
+        )
+        .all(botId) as Row[]
+    ).map((row) => ({
+      routineId: String(row.routine_id),
+      routineTitle: (row.title as string | null) ?? null,
+      count: Number(row.count),
+    }))
+  }
+  deleteRoutineRun(id: string) {
+    this.db.prepare('DELETE FROM routine_runs WHERE id=?').run(id)
   }
   routineRunById(id: string): StoredRoutineRun | null {
     const row = this.db.prepare('SELECT * FROM routine_runs WHERE id=?').get(id) as Row | undefined
@@ -535,12 +651,31 @@ export class Store {
       | undefined
     return row ? this.routineRun(row) : null
   }
-  pruneRoutineRuns(routineId: string, keep: number) {
-    this.db
-      .prepare(
-        'DELETE FROM routine_runs WHERE routine_id=? AND id NOT IN (SELECT id FROM routine_runs WHERE routine_id=? ORDER BY delivered_at DESC LIMIT ?)'
-      )
-      .run(routineId, routineId, keep)
+  /**
+   * Keeps a routine's newest `keep` runs, and older ones the owner keeps or whose conversations are still there: those
+   * leave once retention deleted their conversations.
+   */
+  pruneRoutineRuns(routineId: string, keep: number): string[] {
+    const removed = (
+      this.db
+        .prepare(
+          "SELECT id FROM routine_runs WHERE routine_id=? AND pinned=0 AND conversation<>'own' AND id NOT IN (SELECT id FROM routine_runs WHERE routine_id=? ORDER BY delivered_at DESC LIMIT ?)"
+        )
+        .all(routineId, routineId, keep) as Row[]
+    ).map((row) => String(row.id))
+    const remove = this.db.prepare('DELETE FROM routine_runs WHERE id=?')
+    this.transaction(() => {
+      for (const id of removed) remove.run(id)
+    })
+    return removed
+  }
+  /** How a bot keeps its runs' conversations; null until the owner chose. */
+  runSettings(botId: string): FleetRoutineRunSettings | null {
+    const row = this.db.prepare('SELECT run_settings_json FROM bots WHERE id=?').get(botId) as Row | undefined
+    return row?.run_settings_json ? (JSON.parse(String(row.run_settings_json)) as FleetRoutineRunSettings) : null
+  }
+  saveRunSettings(botId: string, settings: FleetRoutineRunSettings) {
+    this.db.prepare('UPDATE bots SET run_settings_json=? WHERE id=?').run(JSON.stringify(settings), botId)
   }
 
   private ownerMemory(row: Row): FleetOwnerMemoryEntry {
@@ -1461,6 +1596,10 @@ export class Store {
       capabilities: [],
       environmentId: String(row.environment_id),
       move: null,
+      runSettings: row.run_settings_json
+        ? (JSON.parse(String(row.run_settings_json)) as FleetRoutineRunSettings)
+        : FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+      runningRun: null,
     }
   }
   getBot(id: string): FleetBot | null {
@@ -1752,9 +1891,10 @@ export class Store {
         routine.createdBy
       )
   }
+  /** A routine leaves with the runs it made in the bot's conversation; those with conversations of their own stay. */
   deleteRoutine(id: string) {
     this.transaction(() => {
-      this.db.prepare('DELETE FROM routine_runs WHERE routine_id=?').run(id)
+      this.db.prepare("DELETE FROM routine_runs WHERE routine_id=? AND conversation='primary'").run(id)
       this.db.prepare('DELETE FROM routines WHERE id=?').run(id)
     })
   }

@@ -39,6 +39,10 @@ import {
   fleetRoutineRunSchema,
   fleetRoutineRunReportSchema,
   fleetRoutinePreviousRunSchema,
+  fleetRoutineRunCitationSchema,
+  fleetRoutineRunKeptSchema,
+  fleetRoutineRunMediaSchema,
+  fleetRoutineRunSettingsSchema,
   fleetBotMemorySchema,
   fleetActivityEntrySchema,
   fleetArchivedBotSchema,
@@ -123,6 +127,20 @@ export const fleetInternalOwnerMemoryForgetRequestSchema = z.object({
   reason: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.reasonMax),
 })
 export const fleetRoutineRunsResponseSchema = z.object({ runs: z.array(fleetRoutineRunSchema) })
+/**
+ * A page of a bot's routine runs (`routine-conversations`), newest first: `before` names the oldest run of the page,
+ * to read the runs before it, or is null when there are none.
+ */
+export const fleetRoutineRunPageSchema = z.object({
+  runs: z.array(fleetRoutineRunSchema).max(FLEET_ROUTINE_RUN_LIMITS.pageMax),
+  before: fleetIdSchema.nullable(),
+})
+export type FleetRoutineRunPage = z.infer<typeof fleetRoutineRunPageSchema>
+export const fleetRoutineRunPatchRequestSchema = z.object({ pinned: z.boolean() }).strict()
+export type FleetRoutineRunPatchRequest = z.infer<typeof fleetRoutineRunPatchRequestSchema>
+/** What a bot kept of a run whose conversation it deleted. */
+export const fleetInstanceRunDeletedSchema = z.object({ kept: fleetRoutineRunKeptSchema })
+export type FleetInstanceRunDeleted = z.infer<typeof fleetInstanceRunDeletedSchema>
 export const fleetRoutineRunReportRequestSchema = fleetRoutineRunReportSchema
 export const fleetBotMemoriesResponseSchema = z.object({ memories: z.array(fleetBotMemorySchema) })
 export const fleetBotMemoryPatchRequestSchema = z
@@ -641,6 +659,8 @@ export const fleetSendMessageRequestSchema = z
     text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
     idempotencyKey: fleetIdempotencyKeySchema,
     attachments: fleetAttachmentsSchema,
+    /** A routine run of this bot the message refers to (`routine-conversations`): the bot reads it to answer. */
+    citation: z.object({ runId: fleetIdSchema }).optional(),
   })
   .refine(hasContent, 'a message needs text or an image')
 export type FleetSendMessageRequest = z.infer<typeof fleetSendMessageRequestSchema>
@@ -852,6 +872,8 @@ export const fleetInstanceProfileSchema = z.object({
     artifactsEnabled: z.boolean().default(false),
     /** The gateway routes calls to the Macs that link the bot (`desktop-bridge`); older gateways send none. */
     desktopBridgeEnabled: z.boolean().default(false),
+    /** The gateway runs the bot's routines in conversations of their own (`routine-conversations`). */
+    routineConversations: z.boolean().optional(),
   }),
   /** The bot's color, for its desktop. Gateways from before the unified desktop send none. */
   tint: z
@@ -920,6 +942,8 @@ export const fleetInstanceStatusSchema = z.object({
     startedAt: fleetTimestampSchema.nullable(),
     /** The queued input the running turn was started from, so the gateway can tell a routine run is still going. */
     inputId: fleetIdSchema.nullable().default(null),
+    /** The routine run whose own conversation the turn works in (`routine-conversations`); null for the bot's own. */
+    runId: fleetIdSchema.nullable().default(null),
   }),
   hold: fleetInstanceHoldSchema,
   queue: z.array(
@@ -927,6 +951,8 @@ export const fleetInstanceStatusSchema = z.object({
       inputId: fleetIdSchema,
       source: fleetInputSourceSchema,
       preview: z.string().max(FLEET_QUEUE_PREVIEW_MAX),
+      /** The routine run whose conversation it waits for; null for the bot's own. */
+      runId: fleetIdSchema.nullable().default(null),
     })
   ),
   activity: fleetActivitySchema.nullable(),
@@ -971,9 +997,21 @@ export const fleetInstanceInputSchema = z
     peer: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).optional(),
     // Only owner messages carry images.
     attachments: fleetAttachmentsSchema,
+    /**
+     * The routine run whose own conversation this input goes to (`routine-conversations`): a routine's input with it
+     * starts the run's conversation, and an owner's continues it. Without it the input goes to the bot's conversation.
+     */
+    run: z.object({ id: fleetIdSchema }).optional(),
+    /** The routine run an owner's message refers to, for the bot to read. */
+    citation: fleetRoutineRunCitationSchema.optional(),
   })
   .refine(hasContent, 'an input needs text or an image')
   .refine((value) => value.source === 'owner' || value.attachments.length === 0, 'only owner inputs carry images')
+  .refine((value) => !value.run || value.source !== 'peer', 'peer messages go to the bot conversation')
+  .refine(
+    (value) => !value.run || value.source !== 'routine' || value.routine?.runId === value.run.id,
+    'a run starts with its own routine input'
+  )
 export type FleetInstanceInput = z.infer<typeof fleetInstanceInputSchema>
 /** Every event names its bot; null from an instance that predates environments (it hosts a single bot). */
 const instanceEventBase = {
@@ -983,7 +1021,13 @@ const instanceEventBase = {
 }
 export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
   z.object({ ...instanceEventBase, type: z.literal('status'), status: fleetInstanceStatusSchema }),
-  z.object({ ...instanceEventBase, type: z.literal('transcript.upsert'), item: fleetTranscriptItemSchema }),
+  z.object({
+    ...instanceEventBase,
+    type: z.literal('transcript.upsert'),
+    item: fleetTranscriptItemSchema,
+    /** An item of a routine run's own conversation, sent only to readers that ask (`routineRuns=1`). */
+    runId: fleetIdSchema.nullable().default(null),
+  }),
   z.object({
     ...instanceEventBase,
     type: z.literal('turn.finished'),
@@ -993,8 +1037,13 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
     source: fleetInputSourceSchema.nullable().default(null),
     outcome: z.enum(['completed', 'cancelled', 'failed']),
     summary: z.string().nullable(),
+    /** The routine run whose own conversation the turn worked in; null for the bot's own. */
+    runId: fleetIdSchema.nullable().default(null),
+    /** What that run's conversation holds for the owner, once the turn ended. */
+    media: fleetRoutineRunMediaSchema.nullable().default(null),
   }),
-  z.object({ ...instanceEventBase, type: z.literal('reset') }),
+  /** With `runId`, only that run's transcript changed (sent only to readers that ask for runs). */
+  z.object({ ...instanceEventBase, type: z.literal('reset'), runId: fleetIdSchema.nullable().default(null) }),
   /** A workspaces host's chat needs the owner (`chatAttention` readers only); the gateway turns it into a push. */
   z.object({
     ...instanceEventBase,
@@ -1692,7 +1741,8 @@ export const FLEET_GATEWAY_ROUTES = {
   },
 
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
-  // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript).
+  // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript; `?run=<runId>` for one of
+  // a routine run's conversation, `routine-conversations`).
   botImage: { method: 'GET', path: '/v1/bots/:id/images/:imageId', body: null, response: null },
   botFileMeta: { method: 'GET', path: '/v1/bots/:id/files/:fileId', body: null, response: fleetFileRefSchema },
   botFile: { method: 'GET', path: '/v1/bots/:id/files/:fileId/content', body: null, response: null },
@@ -1821,6 +1871,42 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   botRoutineDelete: { method: 'DELETE', path: '/v1/bots/:id/routines/:rid', body: null, response: null },
   botRoutineRun: { method: 'POST', path: '/v1/bots/:id/routines/:rid/run', body: null, response: fleetRoutineSchema },
+  // Gateways with `routine-conversations`: every run of a bot, newest first (`?before=<runId>&limit=&routineId=`), and
+  // one run's record, conversation, messages and the bot's settings for keeping them.
+  botRuns: { method: 'GET', path: '/v1/bots/:id/routine-runs', body: null, response: fleetRoutineRunPageSchema },
+  botRunGet: { method: 'GET', path: '/v1/bots/:id/routine-runs/:runId', body: null, response: fleetRoutineRunSchema },
+  botRunPatch: {
+    method: 'PATCH',
+    path: '/v1/bots/:id/routine-runs/:runId',
+    body: fleetRoutineRunPatchRequestSchema,
+    response: fleetRoutineRunSchema,
+  },
+  /** Deletes the run's conversation; its report and its files stay. */
+  botRunConversationDelete: {
+    method: 'DELETE',
+    path: '/v1/bots/:id/routine-runs/:runId/conversation',
+    body: null,
+    response: fleetRoutineRunSchema,
+  },
+  botRunTranscript: {
+    method: 'GET',
+    path: '/v1/bots/:id/routine-runs/:runId/transcript',
+    body: null,
+    response: fleetTranscriptPageSchema,
+  },
+  /** An owner's message in the run's conversation, which the bot answers there with what the run did. */
+  botRunMessageSend: {
+    method: 'POST',
+    path: '/v1/bots/:id/routine-runs/:runId/messages',
+    body: fleetSendMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
+  botRunSettings: {
+    method: 'PUT',
+    path: '/v1/bots/:id/routine-run-settings',
+    body: fleetRoutineRunSettingsSchema,
+    response: fleetRoutineRunSettingsSchema,
+  },
   // Gateways with `desktop-bridge`: the Mac asking links or unlinks itself, lists every Mac linked to the bot, or
   // removes another Mac's link; and answers a call it received on its event stream.
   botDesktopLinkPut: {
@@ -1908,6 +1994,19 @@ export const FLEET_INTERNAL_ROUTES = {
     response: fleetRoutineSchema,
   },
   routineDelete: { method: 'DELETE', path: '/internal/v1/routines/:rid', body: null, response: null },
+  /** Gateways with `routine-conversations`: the calling bot's runs (`?before=&limit=&routineId=`) and one run. */
+  routineRunsList: {
+    method: 'GET',
+    path: '/internal/v1/routine-runs',
+    body: null,
+    response: fleetRoutineRunPageSchema,
+  },
+  routineRunGet: {
+    method: 'GET',
+    path: '/internal/v1/routine-runs/:runId',
+    body: null,
+    response: fleetRoutineRunSchema,
+  },
   /** The Macs that linked the calling bot, and whether each is online. */
   desktops: { method: 'GET', path: '/internal/v1/desktops', body: null, response: fleetInternalDesktopsResponseSchema },
   /** One call for one of those Macs; answers once the Mac does, or with why it could not. */
@@ -2421,7 +2520,21 @@ export const FLEET_INSTANCE_ROUTES = {
     body: null,
     response: fleetTranscriptPageSchema,
   },
-  // Binary: the image bytes with their Content-Type.
+  /** Capability `routine-conversations`: a page of a routine run's own conversation. */
+  botRunTranscript: {
+    method: 'GET',
+    path: '/v1/bots/:botId/runs/:runId/transcript',
+    body: null,
+    response: fleetTranscriptPageSchema,
+  },
+  /** Capability `routine-conversations`: deletes a run's conversation, keeping its images and attachments in files. */
+  botRunDelete: {
+    method: 'DELETE',
+    path: '/v1/bots/:botId/runs/:runId',
+    body: null,
+    response: fleetInstanceRunDeletedSchema,
+  },
+  // Binary: the image bytes with their Content-Type (`?run=<runId>` for an image of a run's conversation).
   botImage: { method: 'GET', path: '/v1/bots/:botId/images/:imageId', body: null, response: null },
   botFileMeta: { method: 'GET', path: '/v1/bots/:botId/files/:fileId', body: null, response: fleetFileRefSchema },
   botFile: { method: 'GET', path: '/v1/bots/:botId/files/:fileId/content', body: null, response: null },

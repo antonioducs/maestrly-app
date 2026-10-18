@@ -166,7 +166,28 @@ export const FLEET_ROUTINE_RUN_LIMITS = {
   finalTextMax: 4_000,
   previousRuns: 3,
   keepPerRoutine: 50,
+  /** Runs of one routine kept when the owner turned off `capPerRoutine`; older ones go as if it were on. */
+  storedPerRoutineMax: 1_000,
+  /** Days a run that reported nothing new keeps its conversation, when `quietEarly` is on. */
+  quietRetentionDays: 7,
+  /** Runs one page of a bot's run history holds. */
+  pageMax: 200,
+  /** Files listed as kept when a run's conversation is deleted. */
+  keptFilesMax: 100,
 } as const
+/**
+ * Gateway feature (`moreFeatures` of `/v1/meta`) and instance capability: each routine run works in a conversation of
+ * its own, which the owner reads and continues after it ends, instead of in the bot's conversation. The gateway asks
+ * for it per run (`run` on the input) only from an instance with the capability; runs of older instances stay in the
+ * bot's conversation. Readers of transcripts and events get run items only when they ask with `routineRuns=1`.
+ */
+export const FLEET_ROUTINE_CONVERSATIONS_FEATURE = 'routine-conversations'
+/** The query parameter a reader of events sets to `1` to receive the transcripts and records of routine runs. */
+export const FLEET_ROUTINE_RUNS_QUERY = 'routineRuns'
+/** How many days a finished run keeps its conversation after its last activity; null keeps it until deleted. */
+export const FLEET_ROUTINE_RUN_RETENTION_DAYS = [30, 60, 90] as const
+/** The folder of a bot's conversation where a deleted run's images and attachments are kept. */
+export const FLEET_ROUTINE_RUN_KEPT_FOLDER = 'routines'
 export const FLEET_BOT_MEMORY_LIMITS = { contentMax: 4_000, listMax: 200 } as const
 
 /** Bringing a bot what the owner's Mac has: accounts, skills and MCP servers. */

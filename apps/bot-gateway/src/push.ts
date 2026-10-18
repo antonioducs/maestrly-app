@@ -177,8 +177,10 @@ export class PushNotifier {
     if (event.type !== 'activity' || !event.entry.botId) return
     const { botId, kind, data } = event.entry
     if (kind === 'turn_completed') {
-      if (data.source === 'routine') void this.bot(botId, 'routines', 'routine', String(event.entry.seq))
-      else if (data.source === 'owner') void this.bot(botId, 'replies', 'finished', String(event.entry.seq))
+      // A run that found nothing new, or that the bot's settings keep quiet, alerts no one.
+      if (data.source === 'routine') {
+        if (data.alert !== false) void this.bot(botId, 'routines', 'routine', String(event.entry.seq))
+      } else if (data.source === 'owner') void this.bot(botId, 'replies', 'finished', String(event.entry.seq))
     } else if (kind === 'turn_failed') void this.bot(botId, 'errors', 'turnFailed', String(event.entry.seq))
     else if (kind === 'bot_failed') void this.bot(botId, 'errors', 'botFailed', String(event.entry.seq))
   }

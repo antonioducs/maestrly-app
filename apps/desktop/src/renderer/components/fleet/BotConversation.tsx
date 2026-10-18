@@ -5,6 +5,7 @@ import {
   FLEET_MESSAGE_EDIT_FEATURE,
   type FleetBot,
   type FleetRoutine,
+  type FleetRoutineRun,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
@@ -31,6 +32,8 @@ import { BotTranscriptImages } from './BotTranscriptImages'
 import { BotTranscriptFiles } from './BotTranscriptFiles'
 import { BotPeerMessage } from './BotPeerMessage'
 import { BotRoutineMessage } from './BotRoutineMessage'
+import { RoutineRunMarker, RunCitationChip } from './RoutineRunMarker'
+import { runTitle } from '@/lib/fleet/runs'
 import { AgentActivity } from '@/components/chat/AgentActivity'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
@@ -168,7 +171,7 @@ function BotMessageEditor({
 }
 
 /** Editing the owner's last message: offered on the one message that may be edited. */
-interface RowEdit {
+export interface RowEdit {
   editable: boolean
   draft: string | null
   onStart: () => void
@@ -177,7 +180,8 @@ interface RowEdit {
   onSubmit: () => void
 }
 
-function TranscriptRow({
+/** One item of a bot's transcript: of its own conversation, or of a routine run's. */
+export function TranscriptRow({
   bot,
   item,
   fleet,
@@ -192,6 +196,8 @@ function TranscriptRow({
   routineSchedule,
   repeatedRoutine,
   onExpand,
+  onOpenRun,
+  removeQueuedMessage,
 }: {
   bot: FleetBot
   imageCache: FleetImageCache
@@ -211,6 +217,10 @@ function TranscriptRow({
   repeatedRoutine: boolean
   /** A folded row unfolds: the transcript keeps the owner's reading position. */
   onExpand: () => void
+  /** Opens the routine run an owner's message refers to. */
+  onOpenRun?: (runId: string) => void
+  /** Removes a queued message; a run's conversation removes its own. */
+  removeQueuedMessage?: (inputId: string) => Promise<void>
 }) {
   const { t, i18n } = useTranslation('fleet')
   const at = new Date(item.at).toLocaleTimeString(i18n.language, {
@@ -230,10 +240,13 @@ function TranscriptRow({
     }`
   }
   const removeQueued = () =>
-    void window.api
-      .fleetRemoveQueuedMessage(bot.id, item.id.replace(/^input:/, ''))
-      .then(() => fleet.loadTranscript(bot.id))
-      .catch(() => {})
+    void (
+      removeQueuedMessage
+        ? removeQueuedMessage(item.id.replace(/^input:/, ''))
+        : window.api
+            .fleetRemoveQueuedMessage(bot.id, item.id.replace(/^input:/, ''))
+            .then(() => fleet.loadTranscript(bot.id))
+    ).catch(() => {})
   const fleetBot = (id: string | undefined) => fleet.state.snapshot.bots.find((peer) => peer.id === id)
   if (item.kind === 'user') {
     if (item.source === 'peer') {
@@ -288,6 +301,15 @@ function TranscriptRow({
       )
     return (
       <div className="group/message ml-auto max-w-[85%] rounded-xl border border-border-strong bg-surface-elevated px-4 py-3 text-sm">
+        {item.citation && (
+          <div className="mb-1.5">
+            <RunCitationChip
+              title={item.citation.routineTitle || t('transcript.routine.label')}
+              at={item.citation.at}
+              onOpen={onOpenRun ? () => onOpenRun(item.citation!.runId) : undefined}
+            />
+          </div>
+        )}
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
           <SearchText text={item.text} query={searchQuery} current={currentSearchMatch} />
         </p>
@@ -459,7 +481,7 @@ function TranscriptRow({
 }
 
 /** A bot turn's reasoning and tool calls, folded into one line like a chat message's. */
-function BotAgentActivity({
+export function BotAgentActivity({
   bot,
   segment,
   imageCache,
@@ -519,6 +541,10 @@ export function BotConversation({
   onOpenEnvironmentScreen,
   onGiveBack,
   onOpenEnvironmentSettings,
+  runMarkers = [],
+  onOpenRun,
+  citation = null,
+  onClearCitation,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -530,6 +556,12 @@ export function BotConversation({
   /** The owner controls the computer: reveals it and asks about handing control back. */
   onGiveBack: () => void
   onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
+  /** Routine runs that finished, shown where they ended (`routine-conversations`); none before. */
+  runMarkers?: FleetRoutineRun[]
+  onOpenRun?: (runId: string) => void
+  /** The run the owner's next message refers to, and how to drop it. */
+  citation?: FleetRoutineRun | null
+  onClearCitation?: () => void
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
@@ -646,7 +678,8 @@ export function BotConversation({
   }
 
   const latestTodoId = latestTodoItemId(shownItems)
-  const working = bot.status === 'working' || bot.status === 'waiting'
+  // A routine run works in a conversation of its own: this one waits meanwhile, and is not working.
+  const working = (bot.status === 'working' || bot.status === 'waiting') && !bot.runningRun
 
   // --- Routine runs say how their routine runs, which the transcript does not carry. ---
   const hasRoutineRuns = useMemo(
@@ -704,6 +737,33 @@ export function BotConversation({
   )
   // A live activity line already says what the bot is doing.
   const liveLine = segments.some((segment) => segment.kind === 'activity' && segment.live)
+  // Finished routine runs show where they ended; before the oldest item loaded only once the whole history is.
+  const markersBefore = useMemo(() => {
+    const oldest = shownItems[0]?.at
+    const shown = runMarkers
+      .filter((run) => !transcript?.before || (oldest && (run.finishedAt ?? run.deliveredAt) >= oldest))
+      .sort((a, b) => ((a.finishedAt ?? a.deliveredAt) < (b.finishedAt ?? b.deliveredAt) ? -1 : 1))
+    const at = (segment: FleetActivitySegment) =>
+      segment.kind === 'activity' ? (segment.steps[0]?.source.at ?? '') : segment.item.at
+    const byKey = new Map<string, FleetRoutineRun[]>()
+    const trailing: FleetRoutineRun[] = []
+    let index = 0
+    for (const run of shown) {
+      const time = run.finishedAt ?? run.deliveredAt
+      while (index < segments.length && at(segments[index]) <= time) index++
+      if (index >= segments.length) trailing.push(run)
+      else {
+        const key = transcriptSegmentKey(segments[index])
+        byKey.set(key, [...(byKey.get(key) ?? []), run])
+      }
+    }
+    return { byKey, trailing }
+  }, [runMarkers, segments, shownItems, transcript?.before])
+  const marker = (run: FleetRoutineRun) => (
+    <div key={'run:' + run.id} className="@container">
+      <RoutineRunMarker run={run} botName={bot.name} onOpen={() => onOpenRun?.(run.id)} />
+    </div>
+  )
 
   // --- Search (Cmd/Ctrl+F), like a chat's. ---
   const ownerWindow = useChatOwnerWindow()
@@ -869,7 +929,8 @@ export function BotConversation({
                 const key = transcriptSegmentKey(segment)
                 const query = searchHighlight && searchHitKeys.has(key) ? searchHighlight : undefined
                 const current = key === currentHitKey
-                return (
+                return [
+                  ...(markersBefore.byKey.get(key) ?? []).map(marker),
                   // `contents` keeps the transcript's layout: a row that renders nothing adds no gap.
                   <div key={key} data-search-key={key} className="contents">
                     {segment.kind === 'activity' ? (
@@ -909,13 +970,15 @@ export function BotConversation({
                         }
                         repeatedRoutine={repeatedRoutines.has(segment.item.id)}
                         onExpand={holdReadingPosition}
+                        onOpenRun={onOpenRun}
                       />
                     )}
-                  </div>
-                )
+                  </div>,
+                ]
               })}
+              {markersBefore.trailing.map(marker)}
             </GenUiContext.Provider>
-            {bot.status === 'working' && !runningToolLast && !liveLine && (
+            {bot.status === 'working' && !bot.runningRun && !runningToolLast && !liveLine && (
               <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
                 {t('transcript.working')}
@@ -984,6 +1047,37 @@ export function BotConversation({
                 ))}
             </div>
           )}
+          {bot.runningRun && (
+            <p role="status" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
+              <span className="min-w-0 flex-1 truncate">
+                {t('runs.waiting', {
+                  name: bot.name,
+                  title: bot.runningRun.title || t('transcript.routine.label'),
+                })}
+              </span>
+              {onOpenRun && (
+                <button
+                  type="button"
+                  className="shrink-0 text-sky-300 hover:underline"
+                  onClick={() => onOpenRun(bot.runningRun!.id)}
+                >
+                  {t('runs.waitingOpen')}
+                </button>
+              )}
+            </p>
+          )}
+          {citation && (
+            <div className="mb-2">
+              <RunCitationChip
+                composing
+                title={runTitle(citation, t('transcript.routine.label'))}
+                at={citation.deliveredAt}
+                onOpen={onOpenRun ? () => onOpenRun(citation.id) : undefined}
+                onRemove={onClearCitation}
+              />
+            </div>
+          )}
           <BotComposer
             bot={bot}
             fleet={fleet}
@@ -991,6 +1085,8 @@ export function BotConversation({
             onOpenSettings={onOpenSettings}
             onOpenEnvironmentScreen={onOpenEnvironmentScreen}
             onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+            citation={citation?.id ?? null}
+            onCitationSent={onClearCitation}
           />
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">

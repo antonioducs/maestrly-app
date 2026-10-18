@@ -1,6 +1,12 @@
 import { useTranslation } from 'react-i18next'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { FLEET_ENVIRONMENT_SETTINGS_FEATURE, type FleetBot } from '@maestrly/bot-fleet-protocol'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Repeat, X } from 'lucide-react'
+import {
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  type FleetBot,
+  type FleetRoutineRun,
+} from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { environmentOf } from '@/lib/fleet/selectors'
@@ -10,7 +16,19 @@ import { fleetErrorText } from '@/lib/fleet/errors'
 import { useBotWorkspaceLayout } from '@/lib/fleet/use-bot-workspace-layout'
 import { ChatWindowHost } from '@/components/chat/ChatWindowHost'
 import type { EnvironmentSettingsSection } from './environment-settings/sections'
-import { BotChatHeader } from './BotChatHeader'
+import { BotChatHeader, type BotConversationPane } from './BotChatHeader'
+import { RoutineRunsView } from './RoutineRunsView'
+import { emptyRuns } from '@/lib/fleet/state'
+import {
+  readSeenRuns,
+  runAlerts,
+  runMarkers,
+  runSeenKey,
+  runSettingsOf,
+  runTitle,
+  unseenRuns,
+  writeSeenRuns,
+} from '@/lib/fleet/runs'
 import { BotConversation } from './BotConversation'
 import type { BotPane } from './BotPaneSwitch'
 import { BotScreen } from './BotScreen'
@@ -59,6 +77,77 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     // Existing destinations (including help requests) still reveal the computer.
     if (active && view.tab === 'screen') openComputer()
   }, [active, view.tab, openComputer])
+
+  // --- Routine runs in conversations of their own (`routine-conversations`). ---
+  const runsSupported =
+    fleet.state.connection.features.includes(FLEET_ROUTINE_CONVERSATIONS_FEATURE) &&
+    bot.capabilities.includes(FLEET_ROUTINE_CONVERSATIONS_FEATURE)
+  const [pane, setPane] = useState<BotConversationPane>(view.tab === 'runs' ? 'runs' : 'conversation')
+  const [runId, setRunId] = useState<string | null>(view.runId ?? null)
+  useEffect(() => {
+    if (view.tab !== 'runs') return
+    setPane('runs')
+    if (view.runId) setRunId(view.runId)
+  }, [view.tab, view.runId])
+  const shownPane: BotConversationPane = runsSupported ? pane : 'conversation'
+  const { ensureRuns } = fleet
+  useEffect(() => {
+    if (runsSupported) ensureRuns(bot.id)
+  }, [bot.id, ensureRuns, runsSupported])
+  const runs = (fleet.state.runs[bot.id] ?? emptyRuns).runs
+  const runSettings = runSettingsOf(bot)
+  const markers = useMemo(
+    () => (runsSupported ? runMarkers(runs, runSettings) : []),
+    [runSettings, runs, runsSupported]
+  )
+  const [citation, setCitation] = useState<FleetRoutineRun | null>(null)
+  // The runs the owner opened, kept on this computer: the others that ended with something new count as new.
+  const seenKey = runSeenKey(fleet.state.connection.url, bot.id)
+  const runsLoaded = !!fleet.state.runs[bot.id]?.loaded
+  const [seen, setSeen] = useState<Set<string> | null>(null)
+  useEffect(() => {
+    setSeen(null)
+  }, [seenKey])
+  useEffect(() => {
+    if (runsLoaded && !seen) setSeen(readSeenRuns(seenKey, runs))
+  }, [runs, runsLoaded, seen, seenKey])
+  const showingRun = active && shownPane === 'runs' ? runId : null
+  useEffect(() => {
+    if (!seen || !showingRun || seen.has(showingRun)) return
+    const next = new Set(seen).add(showingRun)
+    writeSeenRuns(seenKey, next)
+    setSeen(next)
+  }, [seen, seenKey, showingRun])
+  const unseen = seen ? unseenRuns(runs, seen, bot).length : 0
+  const openRun = useCallback((id: string | null) => {
+    setPane('runs')
+    setRunId(id)
+  }, [])
+  // A run that ends tells the owner, unless they are looking at it, as the bot's settings say.
+  const [notices, setNotices] = useState<FleetRoutineRun[]>([])
+  const statuses = useRef<Map<string, FleetRoutineRun['status']> | null>(null)
+  useEffect(() => {
+    if (!runsLoaded) return
+    const previous = statuses.current
+    statuses.current = new Map(runs.map((run) => [run.id, run.status]))
+    if (!previous) return
+    const ended = runs.filter(
+      (run) =>
+        (previous.get(run.id) === 'delivered' || previous.get(run.id) === 'unknown') &&
+        (run.status === 'completed' || run.status === 'failed') &&
+        run.conversation !== 'primary' &&
+        runAlerts(run, runSettings) &&
+        run.id !== showingRun
+    )
+    // A bot shown elsewhere (its conversation in a window of its own) tells only through its badge.
+    if (ended.length && active)
+      setNotices((list) => [...ended, ...list.filter((item) => !ended.some((run) => run.id === item.id))].slice(0, 3))
+  }, [active, runSettings, runs, runsLoaded, showingRun])
+  useEffect(() => {
+    if (!notices.length) return
+    const timer = setTimeout(() => setNotices((list) => list.slice(0, -1)), 9_000)
+    return () => clearTimeout(timer)
+  }, [notices])
   const environment = hasEnvironments(fleet.state.connection)
     ? environmentOf(fleet.state.snapshot.environments, bot)
     : undefined
@@ -120,6 +209,19 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
               onOpenSettings={openSettings}
               onOpenServer={() => go({ kind: 'server' })}
               onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
+              runs={
+                runsSupported
+                  ? {
+                      pane: shownPane,
+                      unseen,
+                      onPane: (next) => {
+                        setPane(next)
+                        if (next === 'conversation' && view.tab === 'runs') onView(botView('conversation'))
+                      },
+                      onOpenRun: (id) => openRun(id),
+                    }
+                  : undefined
+              }
             />
             <ChatWindowHost
               target={{ kind: 'bot', id: bot.id }}
@@ -127,29 +229,50 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
               onDetachedChange={handleDetachedChange}
               onReattach={() => go(botView('conversation'))}
             >
-              {(inWindow) => (
-                <BotConversation
-                  bot={bot}
-                  fleet={fleet}
-                  visible={inWindow || (active && layout.showChat)}
-                  onOpenBot={(id) => {
-                    onOpenBot(id)
-                    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
-                  }}
-                  onOpenScreen={showComputer}
-                  onOpenSettings={openSettings}
-                  onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-                  onOpenEnvironmentSettings={
-                    environmentSettings
-                      ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
-                      : undefined
-                  }
-                  onGiveBack={() => {
-                    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
-                    setGiveBackRequest((value) => value + 1)
-                  }}
-                />
-              )}
+              {(inWindow) =>
+                shownPane === 'runs' ? (
+                  <RoutineRunsView
+                    bot={bot}
+                    fleet={fleet}
+                    selectedRunId={runId}
+                    seen={seen}
+                    onSelect={setRunId}
+                    visible={inWindow || (active && layout.showChat)}
+                    onCite={(run) => {
+                      setCitation(run)
+                      setPane('conversation')
+                    }}
+                    onOpenBot={onOpenBot}
+                    onOpenScreen={showComputer}
+                  />
+                ) : (
+                  <BotConversation
+                    bot={bot}
+                    fleet={fleet}
+                    runMarkers={markers}
+                    onOpenRun={runsSupported ? (id) => openRun(id) : undefined}
+                    citation={citation}
+                    onClearCitation={() => setCitation(null)}
+                    visible={inWindow || (active && layout.showChat)}
+                    onOpenBot={(id) => {
+                      onOpenBot(id)
+                      if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                    }}
+                    onOpenScreen={showComputer}
+                    onOpenSettings={openSettings}
+                    onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+                    onOpenEnvironmentSettings={
+                      environmentSettings
+                        ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
+                        : undefined
+                    }
+                    onGiveBack={() => {
+                      if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                      setGiveBackRequest((value) => value + 1)
+                    }}
+                  />
+                )
+              }
             </ChatWindowHost>
           </>
         }
@@ -178,6 +301,56 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
           ) : null
         }
       />
+      {active && notices.length > 0 && (
+        <div
+          aria-live="polite"
+          className="pointer-events-none fixed right-4 top-[60px] z-40 flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2"
+        >
+          {notices.map((run) => {
+            const failed = run.status === 'failed'
+            const title = runTitle(run, t('transcript.routine.label'))
+            return (
+              <div
+                key={run.id}
+                role="status"
+                className="pointer-events-auto flex gap-2.5 rounded-xl border border-border-strong bg-popover p-3 text-[13px] shadow-2xl"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`flex size-[26px] shrink-0 items-center justify-center rounded-lg ${failed ? 'bg-red-400/10 text-red-300' : 'bg-sky-400/10 text-sky-300'}`}
+                >
+                  {failed ? <AlertTriangle className="size-3.5" /> : <Repeat className="size-3.5" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">{t(failed ? 'runs.notice.failed' : 'runs.notice.finished', { title })}</p>
+                  {(run.report?.summary || run.finalText) && (
+                    <p className="line-clamp-2 text-xs text-muted-foreground">{run.report?.summary ?? run.finalText}</p>
+                  )}
+                  <button
+                    type="button"
+                    className="mt-2 rounded-md border border-border-strong px-2.5 py-1 text-xs hover:bg-white/[0.05]"
+                    onClick={() => {
+                      setNotices((list) => list.filter((item) => item.id !== run.id))
+                      openRun(run.id)
+                      onView(botView('conversation'))
+                    }}
+                  >
+                    {t('runs.notice.open')}
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  aria-label={t('runs.notice.dismiss')}
+                  className="self-start rounded-md p-1 text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+                  onClick={() => setNotices((list) => list.filter((item) => item.id !== run.id))}
+                >
+                  <X aria-hidden="true" className="size-3.5" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
       {settingsOpen && (
         <BotSettingsSheet
           bot={bot}

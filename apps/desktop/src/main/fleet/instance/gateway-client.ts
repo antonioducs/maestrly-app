@@ -22,7 +22,8 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
   routeKey: K,
   body?: unknown,
   params: Record<string, string> = {},
-  signal: AbortSignal = AbortSignal.timeout(10_000)
+  signal: AbortSignal = AbortSignal.timeout(10_000),
+  query?: Record<string, string | number | undefined>
 ): Promise<z.infer<Extract<(typeof FLEET_INTERNAL_ROUTES)[K]['response'], z.ZodType>>> {
   const route = FLEET_INTERNAL_ROUTES[routeKey]
   const routineRequest = routeKey.startsWith('routine')
@@ -44,7 +45,7 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
   const peerRequest = family === 'peer'
   let response: Response
   try {
-    response = await fetch(new URL(buildPath(route.path, params), config.url), {
+    response = await fetch(new URL(buildPath(route.path, params, query), config.url), {
       method: route.method,
       headers: {
         Authorization: `Bearer ${config.token}`,

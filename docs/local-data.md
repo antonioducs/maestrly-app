@@ -97,7 +97,8 @@ transaction with integrity and foreign-key checks. Schema v7 adds
 environment's bots without one of their own (`bots.compaction_json` is null);
 the migration seeds it from each environment's bots in the same transaction. Owner memory survives bot
 deletion; entries that belong to an environment are deleted with that
-environment. Routine runs are deleted with their routine or bot. Each bot's own
+environment. Routine runs are deleted with their bot; deleting a routine deletes only its runs from before
+[conversations of their own](bot-fleet.md#routine-runs), and the others outlive it. Each bot's own
 memory lives in its environment's desktop profile inside the environment's
 persistent home volume. Back up both gateway data and environment homes. A
 gateway binary refuses a database newer than its supported schema; an older

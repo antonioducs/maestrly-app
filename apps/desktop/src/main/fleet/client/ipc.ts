@@ -39,7 +39,10 @@ import {
   FLEET_FILE_LIMITS,
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_REASONING_QUERY,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  FLEET_ROUTINE_RUN_LIMITS,
   fleetAddApiKeyAccountRequestSchema,
+  fleetRoutineRunSettingsSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { isHeadlessInstance } from '../../remote-host/server/config'
@@ -52,6 +55,8 @@ import {
   FLEET_DEVICES_UNSUPPORTED,
   FLEET_EDIT_CONFLICT,
   FLEET_EDIT_UNSUPPORTED,
+  FLEET_RUN_CONFLICT,
+  FLEET_RUNS_UNSUPPORTED,
   FLEET_SCOPES_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
 import {
@@ -305,14 +310,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       },
     })
   )
-  reg.mhandle('fleet:sendMessage', (_event, botId: unknown, text: unknown, attachments: unknown = []) => {
+  /** An owner's message, as the composer sends it; with `citation`, it refers to one of the bot's routine runs. */
+  const ownerMessage = (text: unknown, attachments: unknown, citation?: string) => {
     const admitted = outgoingAttachments.parse(attachments)
     try {
       for (const attachment of admitted) validateAttachmentBytes(attachment, attachment.data)
     } catch {
       throw new Error('FLEET_ATTACHMENT_INVALID')
     }
-    const input = fleetSendMessageRequestSchema.parse({
+    return fleetSendMessageRequestSchema.parse({
       text: z.string().max(16_000).parse(text),
       attachments: admitted.map((item) => ({
         kind: item.kind,
@@ -321,15 +327,93 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
         dataBase64: Buffer.from(item.data).toString('base64'),
       })),
       idempotencyKey: fleet.idempotencyKey(),
+      ...(citation ? { citation: { runId: citation } } : {}),
     })
-    if (input.attachments.some((attachment) => attachment.kind !== 'image')) {
-      if (!fleet.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-      return fleet.call('botGet', { params: { id: id.parse(botId) } }).then((bot) => {
-        if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-        return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
-      })
+  }
+  /**
+   * Checks the bot can take documents, when the message has some. A gateway without them throws at once, as every
+   * invalid input does; the bot's answer settles the promise.
+   */
+  const requireFiles = (botId: string, input: { attachments: Array<{ kind?: string }> }): Promise<void> => {
+    if (!input.attachments.some((attachment) => attachment.kind !== 'image')) return Promise.resolve()
+    if (!fleet.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+    return fleet.call('botGet', { params: { id: botId } }).then((bot) => {
+      if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+    })
+  }
+  /** The bot after checking it and its gateway keep routine runs in conversations of their own. */
+  const requireRuns = async (botId: string) => {
+    if (!fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
+    const bot = await fleet.call('botGet', { params: { id: botId } })
+    if (!bot.capabilities.includes(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
+  }
+  /** A run's conversation that is working or gone answers 409: the renderer says so. */
+  const runConflict = (error: unknown): never => {
+    if (error instanceof FleetClientError && error.status === 409) throw new Error(FLEET_RUN_CONFLICT)
+    throw error
+  }
+  reg.mhandle(
+    'fleet:sendMessage',
+    (_event, botId: unknown, text: unknown, attachments: unknown = [], citation: unknown = null) => {
+      const params = { id: id.parse(botId) }
+      const run = citation === null ? undefined : opaqueId.parse(citation)
+      const input = ownerMessage(text, attachments, run)
+      if (run && !fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
+      return requireFiles(params.id, input).then(() => fleet.call('botMessageSend', { params, body: input }))
     }
-    return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
+  )
+  // A bot's routine runs, each in a conversation of its own (`routine-conversations`).
+  reg.handle('fleet:listRuns', (_event, botId: unknown, before: unknown = null, routineId: unknown = null) => {
+    if (!fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
+    return fleet.call('botRuns', {
+      params: { id: id.parse(botId) },
+      query: {
+        before: opaqueId.nullable().parse(before) ?? undefined,
+        routineId: opaqueId.nullable().parse(routineId) ?? undefined,
+        limit: FLEET_ROUTINE_RUN_LIMITS.pageMax,
+      },
+    })
+  })
+  reg.handle('fleet:getRun', (_event, botId: unknown, runId: unknown) =>
+    fleet.call('botRunGet', { params: { id: id.parse(botId), runId: opaqueId.parse(runId) } })
+  )
+  reg.handle('fleet:getRunTranscript', (_event, botId: unknown, runId: unknown, before: unknown, limit: unknown) =>
+    fleet.call('botRunTranscript', {
+      params: { id: id.parse(botId), runId: opaqueId.parse(runId) },
+      query: {
+        before: z.string().max(256).nullable().optional().parse(before),
+        limit: optionalLimit.parse(limit),
+        [FLEET_REASONING_QUERY]: 1,
+      },
+    })
+  )
+  reg.mhandle('fleet:pinRun', (_event, botId: unknown, runId: unknown, pinned: unknown) =>
+    fleet.call('botRunPatch', {
+      params: { id: id.parse(botId), runId: opaqueId.parse(runId) },
+      body: { pinned: z.boolean().parse(pinned) },
+    })
+  )
+  reg.mhandle('fleet:deleteRunConversation', (_event, botId: unknown, runId: unknown) =>
+    fleet
+      .call('botRunConversationDelete', { params: { id: id.parse(botId), runId: opaqueId.parse(runId) } })
+      .catch(runConflict)
+  )
+  reg.mhandle(
+    'fleet:sendRunMessage',
+    (_event, botId: unknown, runId: unknown, text: unknown, attachments: unknown = []) => {
+      const params = { id: id.parse(botId), runId: opaqueId.parse(runId) }
+      const input = ownerMessage(text, attachments)
+      return requireRuns(params.id)
+        .then(() => requireFiles(params.id, input))
+        .then(() => fleet.call('botRunMessageSend', { params, body: input }).catch(runConflict))
+    }
+  )
+  reg.mhandle('fleet:setRunSettings', (_event, botId: unknown, settings: unknown) => {
+    if (!fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
+    return fleet.call('botRunSettings', {
+      params: { id: id.parse(botId) },
+      body: fleetRoutineRunSettingsSchema.parse(settings),
+    })
   })
   // A missing file rejects with FLEET_FILE_NOT_FOUND, a canceled one with FLEET_DOWNLOAD_CANCELED.
   reg.mhandle('fleet:downloadFile', (_event, botId: unknown, fileId: unknown) =>
@@ -358,13 +442,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       throw error
     })
   )
-  reg.handle('fleet:getImage', (_event, botId: unknown, rawImageId: unknown) =>
-    fleet.getImage(id.parse(botId), imageId.parse(rawImageId)).catch((error: unknown) => {
-      // IPC keeps only the message: mark a truly missing image so the UI can tell it from a failed load.
-      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND'))
-        throw new Error('FLEET_IMAGE_NOT_FOUND')
-      throw error
-    })
+  reg.handle('fleet:getImage', (_event, botId: unknown, rawImageId: unknown, runId: unknown = null) =>
+    fleet
+      .getImage(id.parse(botId), imageId.parse(rawImageId), opaqueId.nullable().parse(runId))
+      .catch((error: unknown) => {
+        // IPC keeps only the message: mark a truly missing image so the UI can tell it from a failed load.
+        if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND'))
+          throw new Error('FLEET_IMAGE_NOT_FOUND')
+        throw error
+      })
   )
   reg.mhandle('fleet:removeQueuedMessage', (_event, botId: unknown, inputId: unknown) =>
     fleet.call('botMessageDelete', { params: { id: id.parse(botId), inputId: opaqueId.parse(inputId) } })
