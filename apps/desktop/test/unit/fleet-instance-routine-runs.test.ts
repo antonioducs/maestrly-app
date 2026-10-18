@@ -76,14 +76,14 @@ async function bot() {
   const extras = new InstanceTranscriptExtras(path.join(dir, 'transcript.json'), (item) =>
     publish({ type: 'transcript.upsert', item })
   )
-  let turnInputId: () => string | null = () => null
+  let turnInputId: (runId: string) => string | null = () => null
   const runs = new BotRunConversations({
     file: path.join(dir, 'runs.json'),
     folder: path.join(dir, 'runs'),
     queue,
     images,
     publish: (runId, item) => publish({ type: 'transcript.upsert', item, runId }),
-    turnInputId: () => turnInputId(),
+    turnInputId: (runId) => turnInputId(runId),
     changed: () => {},
   })
   const host = {
@@ -118,9 +118,9 @@ async function bot() {
     compactionProblem: null,
     manualCompacting: false,
     editing: false,
-    turning: false,
-    retryAt: 0,
-    startFailures: 0,
+    turns: new Map(),
+    retries: new Map(),
+    quotaRetryAt: 0,
     reportedStartFailure: null,
     floatTimers: new Set(),
     permissionTools: new Map(),
@@ -137,7 +137,8 @@ async function bot() {
     // Turns start when the test runs one (`turn`), not on their own after each input.
     tick: async () => {},
   })
-  turnInputId = () => (runtime as unknown as { turnInputId: string | null }).turnInputId
+  turnInputId = (runId) =>
+    (runtime as unknown as { turns: Map<string | null, { inputId: string }> }).turns.get(runId)?.inputId ?? null
   await queue.load()
   await runs.load()
   return { runtime, primary, published, runs, queue, host }
@@ -238,7 +239,7 @@ describe('routine runs in conversations of their own', () => {
     let during: ReturnType<typeof runtime.currentInput> = null
     let foreground: string | null = null
     vi.spyOn(chatService, 'acquireChatConversationSlot').mockImplementation(async () => {
-      during = runtime.currentInput()
+      during = runtime.currentInput(runs.get(runId)!.conversationId)
       foreground = runtime.foregroundConversationId
       return { release: () => {}, operation: {} } as never
     })
@@ -345,14 +346,14 @@ describe('routine runs in conversations of their own', () => {
     const { conversations } = answer('Brighter now.')
     let during: ReturnType<typeof runtime.currentInput> = null
     vi.spyOn(chatService, 'acquireChatConversationSlot').mockImplementation(async () => {
-      during = runtime.currentInput()
+      during = runtime.currentInput(runs.get(runId)!.conversationId)
       return { release: () => {}, operation: {} } as never
     })
     await turn(runtime)
     expect(conversations).toEqual([runs.get(runId)!.conversationId])
     // The routine's metadata stays with an owner's change, so the run's report can be updated.
     expect(during).toMatchObject({ source: 'owner', routine: { id: 'post', runId }, run: { id: runId } })
-    expect(runtime.currentInput()).toBeNull()
+    expect(runtime.currentInput(runs.get(runId)!.conversationId)).toBeNull()
   })
 
   it('asks the bot to read a cited run with the tool that reads runs', () => {

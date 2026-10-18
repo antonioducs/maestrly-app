@@ -190,7 +190,8 @@ describe('instance durable memory control', () => {
   it('finds the active input even after it has left the pending queue', () => {
     const bot = runtime()
     Object.assign(bot, {
-      turnInputId: 'input',
+      stored: { primaryConversationId: 'own' },
+      turns: new Map([[null, { inputId: 'input' }]]),
       queue: {
         list: () => [],
         all: () => [
@@ -202,9 +203,12 @@ describe('instance durable memory control', () => {
         ],
       },
     })
-    expect(bot.currentInput()).toEqual({ source: 'routine', routine: { id: 'r1', title: 'Check', runId: 'run-1' } })
-    Object.assign(bot, { turnInputId: null })
-    expect(bot.currentInput()).toBeNull()
+    expect(bot.currentInput('own')).toEqual({
+      source: 'routine',
+      routine: { id: 'r1', title: 'Check', runId: 'run-1' },
+    })
+    Object.assign(bot, { turns: new Map() })
+    expect(bot.currentInput('own')).toBeNull()
   })
 })
 
@@ -232,7 +236,7 @@ describe('runtime turn memory integration', () => {
       images: idle,
       runs: noRunConversations(),
       usageTask: Promise.resolve(),
-      turnSettled: Promise.resolve(),
+      turns: new Map(),
     })
     try {
       await (bot as unknown as { ensureConversation(): Promise<void> }).ensureConversation()
@@ -281,11 +285,11 @@ describe('runtime turn memory integration', () => {
       Object.assign(bot, {
         botId: 'scout',
         stored: { primaryConversationId: conversation.id },
-        retryAt: 0,
-        startFailures: 0,
+        turns: new Map(),
+        retries: new Map(),
+        quotaRetryAt: 0,
         reportedStartFailure: null,
         ready: true,
-        turning: false,
         accountOptions: [{}],
         compactionProblem: null,
         manualCompacting: false,
@@ -307,7 +311,7 @@ describe('runtime turn memory integration', () => {
         queue,
       })
       const start = vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(async (input) => {
-        expect(bot.currentInput()?.source).toBe(source)
+        expect(bot.currentInput(conversation.id)?.source).toBe(source)
         if (scenario === 'throw') throw new Error('Synthetic admission failure')
         upsertChatMessage({
           id: 'assistant',
@@ -353,7 +357,7 @@ describe('runtime turn memory integration', () => {
                 : 'completed',
         }),
       ])
-      expect(bot.currentInput()).toBeNull()
+      expect(bot.currentInput(conversation.id)).toBeNull()
     }
   )
   it('waits out the usage limit of all its accounts instead of retrying every few seconds, and says so once', async () => {
@@ -386,11 +390,11 @@ describe('runtime turn memory integration', () => {
     Object.assign(bot, {
       botId: 'scout',
       stored: { primaryConversationId: conversation.id },
-      retryAt: 0,
-      startFailures: 0,
+      turns: new Map(),
+      retries: new Map(),
+      quotaRetryAt: 0,
       reportedStartFailure: null,
       ready: true,
-      turning: false,
       accountOptions: [{}],
       compactionProblem: null,
       manualCompacting: false,
@@ -421,15 +425,15 @@ describe('runtime turn memory integration', () => {
     const start = vi
       .spyOn(chatService, 'startExecutorChatTurn')
       .mockRejectedValue(new Error('claude-accounts-exhausted'))
-    const runtime = bot as unknown as { tick(): Promise<void>; retryAt: number }
+    const runtime = bot as unknown as { tick(): Promise<void>; quotaRetryAt: number }
     try {
       await runtime.tick()
       // The reset is an hour away: the bot checks again in ten minutes, not in five seconds.
-      expect(runtime.retryAt).toBeGreaterThanOrEqual(Date.now() + 9 * 60_000)
-      expect(runtime.retryAt).toBeLessThanOrEqual(Date.now() + 10 * 60_000)
+      expect(runtime.quotaRetryAt).toBeGreaterThanOrEqual(Date.now() + 9 * 60_000)
+      expect(runtime.quotaRetryAt).toBeLessThanOrEqual(Date.now() + 10 * 60_000)
       await runtime.tick()
       expect(start).toHaveBeenCalledTimes(1)
-      runtime.retryAt = 0
+      runtime.quotaRetryAt = 0
       await runtime.tick()
       expect(start).toHaveBeenCalledTimes(2)
       expect(item.started).toBe(false)

@@ -312,7 +312,7 @@ export function registerBotInstanceTools(
         const entry = await ownerMemory().save({
           content,
           ...(replaces_id ? { replacesId: replaces_id } : {}),
-          origin: bot()?.currentInput()?.source ?? 'owner',
+          origin: bot()?.currentInput(ctx.convId)?.source ?? 'owner',
           idempotencyKey: keyForToolCall(extra),
         })
         return ok(JSON.stringify({ saved: true, id: entry.id, content: entry.content }))
@@ -357,7 +357,7 @@ export function registerBotInstanceTools(
       annotations: { readOnlyHint: false },
     },
     async ({ summary, pending, notes_for_next_run, nothing_new }) => {
-      const routine = bot()?.currentInput()?.routine
+      const routine = bot()?.currentInput(ctx.convId)?.routine
       if (!routine?.runId) return err('routine_report works only while running a scheduled routine.')
       try {
         await gatewayRequest(

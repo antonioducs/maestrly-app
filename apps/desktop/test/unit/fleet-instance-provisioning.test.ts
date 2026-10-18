@@ -258,8 +258,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     accountOptions: [],
     stored: null,
     compactionProblem: 'missing',
-    turning: false,
-    cancelling: false,
+    turns: new Map(),
     ready: true,
     usage: null,
   })

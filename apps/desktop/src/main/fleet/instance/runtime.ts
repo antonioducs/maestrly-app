@@ -3,6 +3,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { app } from 'electron'
 import {
+  FLEET_BOT_SIDE_TURNS_MAX,
   FLEET_PROTOCOL_VERSION,
   FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_BOT_MEMORY_LIMITS,
@@ -150,14 +151,30 @@ import {
   setConversationSkillSelection,
 } from '../../chat/skill-state'
 
+/** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
   ready: boolean,
   connected: boolean,
-  running: boolean,
   hold: FleetInstanceHold['state'],
   compactionReady = true
 ): boolean {
-  return ready && connected && compactionReady && !running && hold === 'none'
+  return ready && connected && compactionReady && hold === 'none'
+}
+
+/** A turn running in one of the bot's conversations: its own (`key` null) or a side conversation's lane. */
+interface ActiveTurn {
+  key: string | null
+  inputId: string
+  startedAt: string
+  abort: AbortController
+  /** The side conversation's lane, once loaded; null for the bot's own. */
+  lane: RunLane | null
+  cancelling: boolean
+  /** The tool it uses now. */
+  tool: { tool: string; target: string | null } | null
+  /** Resolves once the turn ended. */
+  settled: Promise<void>
+  settle: () => void
 }
 
 function continuationText(reason: 'takeover' | 'paused', durationMs: number | null, note: string | null): string {
@@ -352,24 +369,19 @@ export class BotRuntime {
   /** Whether the environment's accounts were read once: until then, a compaction model cannot be checked. */
   private accountsLoaded = false
   private ready = false
-  private turning = false
-  private cancelling = false
+  /** The turns running now, one per conversation: the bot's own (`null`) and its side conversations' (by run id). */
+  private readonly turns = new Map<string | null, ActiveTurn>()
   private releaseContinuationKey: string | null = null
-  private turnStartedAt: string | null = null
-  private turnInputId: string | null = null
-  /** The routine run whose conversation the running turn works in; null for the bot's own. */
-  private turnLane: RunLane | null = null
   /** The run whose turn a hold interrupted: its continuation goes back to it. */
   private interruptedRunId: string | null = null
-  private turnSettled: Promise<void> = Promise.resolve()
-  private retryAt = 0
-  /** Turns that could not start in a row, and the kind of failure last reported among them. */
-  private startFailures = 0
+  /** Per conversation, the turns that could not start in a row and when the next one may. */
+  private readonly retries = new Map<string | null, { at: number; failures: number }>()
+  /** A usage limit of the bot's accounts: no conversation starts a turn before it. */
+  private quotaRetryAt = 0
+  /** The kind of start failure last reported to the owner, for every conversation. */
   private reportedStartFailure: string | null = null
-  private activeTool: { tool: string; target: string | null } | null = null
   private lastSummary: string | null = null
   private lastTurnAt: string | null = null
-  private turnAbort: AbortController | null = null
   private floatAttempted = false
   private stopObserving: (() => void) | null = null
   private stopGate: (() => void) | null = null
@@ -378,7 +390,7 @@ export class BotRuntime {
   private transcriptTimer: NodeJS.Timeout | null = null
   private floatTimers = new Set<NodeJS.Timeout>()
   /** Tool calls whose app comes forward once they finish, such as a terminal just created. */
-  private readonly presentOnCompletion = new Map<string, PresentationRequest>()
+  private readonly presentOnCompletion = new Map<string, { conversationId: string; request: PresentationRequest }>()
   private permissionAt = new Map<string, string>()
   private questionAt = new Map<string, string>()
   /** The transcript item id of each question asked, by tool call. */
@@ -424,7 +436,7 @@ export class BotRuntime {
       extras: this.extras,
       images: this.images,
       publish: (item) => this.publish({ type: 'transcript.upsert', item }),
-      turnInputId: () => this.turnInputId,
+      turnInputId: () => this.turns.get(null)?.inputId ?? null,
     })
     this.runs = new BotRunConversations({
       file: paths.runs,
@@ -432,7 +444,7 @@ export class BotRuntime {
       queue: this.queue,
       images: this.images,
       publish: (runId, item) => this.publish({ type: 'transcript.upsert', item, runId }),
-      turnInputId: () => this.turnInputId,
+      turnInputId: (runId) => this.turns.get(runId)?.inputId ?? null,
       changed: () => this.changed(),
     })
     this.holdManager = new InstanceHoldManager(
@@ -443,7 +455,7 @@ export class BotRuntime {
         else if (this.holdManager.state.state === 'none') writeBotPaused(this.botId, false)
         this.changed()
       },
-      () => this.turnLane?.conversationId ?? this.foregroundConversationId
+      () => this.foregroundConversationId
     )
   }
   get primaryConversationId(): string | null {
@@ -459,9 +471,15 @@ export class BotRuntime {
     if (this.help.pending().length > 0) return primary
     return this.runs.loadedLanes().find((lane) => lane.help.pending().length > 0)?.conversationId ?? primary
   }
-  /** The conversation the running turn works in. */
-  private get turnConversationId(): string | null {
-    return this.turnLane?.conversationId ?? this.primaryConversationId
+  /** The conversation a turn works in: a side conversation's, or the bot's own. */
+  private conversationOfTurn(turn: ActiveTurn): string | null {
+    if (turn.key === null) return this.primaryConversationId
+    return turn.lane?.conversationId ?? this.runs.get(turn.key)?.conversationId ?? null
+  }
+  /** The conversation's key among the turns: null for the bot's own, its run id for a side conversation. */
+  private turnKeyOf(conversationId: string): string | null | undefined {
+    if (conversationId === this.primaryConversationId) return null
+    return this.runs.byConversation(conversationId)?.runId
   }
   /** Whether a conversation is this bot's: its own, or one of its routine runs'. */
   ownsConversation(conversationId: string | undefined): boolean {
@@ -519,15 +537,17 @@ export class BotRuntime {
         if (lane.unregister) setOwnerMemoryWriter(lane.conversationId, this.ownerMemory.writer())
   }
   /**
-   * The input the running turn answers: who sent it, and for a turn in a routine run's conversation, that run (an
-   * owner's message there too, so the run's report can be updated).
+   * The input the turn running in a conversation answers: who sent it, and for a turn in a routine run's conversation,
+   * that run (an owner's message there too, so the run's report can be updated).
    */
-  currentInput(): {
+  currentInput(conversationId: string): {
     source: FleetInputSource
     routine?: { id: string; title: string; runId?: string }
     run?: { id: string }
   } | null {
-    const item = this.queue.all().find((item) => item.id === this.turnInputId)
+    const key = this.turnKeyOf(conversationId)
+    const inputId = key === undefined ? undefined : this.turns.get(key)?.inputId
+    const item = inputId ? this.queue.all().find((item) => item.id === inputId) : undefined
     if (!item) return null
     const routine = item.input.routine
     const record = item.input.run ? this.runs.get(item.input.run.id) : undefined
@@ -615,7 +635,8 @@ export class BotRuntime {
     for (const timer of this.floatTimers) clearTimeout(timer)
     this.floatTimers.clear()
     this.pollTimer = this.statusTimer = this.transcriptTimer = null
-    this.turnAbort?.abort()
+    const running = [...this.turns.values()]
+    for (const turn of running) turn.abort.abort()
     // Stopped before the hooks go, so no gap lets its work fall back to the environment's settings.
     const background = options.uninstall ? this.stopBackgroundWork() : Promise.resolve()
     this.unregisterConversation(options.uninstall === true)
@@ -626,7 +647,7 @@ export class BotRuntime {
     this.runs.unloadAll()
     // Owner memory goes through the bot's token; an uninstalled bot keeps none, even for a caller holding its writer.
     if (options.uninstall) this.gatewayToken = null
-    await this.turnSettled.catch(() => undefined)
+    await Promise.all(running.map((turn) => turn.settled)).catch(() => undefined)
     await Promise.all([
       this.queue.idle(),
       this.extras.idle(),
@@ -903,7 +924,7 @@ export class BotRuntime {
     if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
     const record = this.runs.get(runId)
     if (!record) throw new InstanceHttpError(404, 'NOT_FOUND', 'This routine run has no conversation.')
-    if (this.turning && this.turnLane?.runId === runId)
+    if (this.turns.has(runId))
       throw new InstanceHttpError(409, 'CONFLICT', 'The routine run is working; stop it first.')
     const primary = this.primaryConversationId ? getConversation(this.primaryConversationId) : undefined
     const kept = getConversation(record.conversationId)
@@ -1220,7 +1241,7 @@ export class BotRuntime {
       ? selectContextObservation(listChatMessagesPage(conversationId, { limit: 20 }).messages, {
           conversationId,
           model: this.currentSelection(),
-          streaming: this.turning,
+          streaming: this.turns.has(null),
           compacting: this.manualCompacting,
         }).progress
       : undefined
@@ -1260,6 +1281,13 @@ export class BotRuntime {
       ]).values(),
     ]
     const pending = this.pending()
+    // The bot's own conversation's turn first, then its side conversations' from the oldest.
+    const turns = [...this.turns.values()].sort(
+      (a, b) => (a.key === null ? 0 : 1) - (b.key === null ? 0 : 1) || a.startedAt.localeCompare(b.startedAt)
+    )
+    const legacy = turns[0] ?? null
+    // What the bot does shows from its own conversation first, else from its side conversations.
+    const activeTool = turns.find((turn) => turn.tool)?.tool ?? null
     const queue = this.queue
       .list()
       .filter((item) => !item.attachmentError)
@@ -1286,9 +1314,9 @@ export class BotRuntime {
                   ? { kind: 'setup', need: 'compaction' }
                   : compaction?.progress?.status === 'running' || compaction?.progress?.status === 'retrying'
                     ? { kind: 'compacting' }
-                    : this.activeTool
-                      ? { kind: 'tool', ...this.activeTool }
-                      : this.turning
+                    : activeTool
+                      ? { kind: 'tool', ...activeTool }
+                      : turns.length
                         ? { kind: 'thinking' }
                         : queue.length
                           ? { kind: 'queued', count: queue.length }
@@ -1304,12 +1332,22 @@ export class BotRuntime {
       profile: this.stored ? { botId: this.stored.profile.botId, name: this.stored.profile.name } : null,
       conversationId: this.primaryConversationId,
       ...(await fleetRuntimeReport()),
-      turn: {
-        state: this.cancelling ? 'cancelling' : this.turning ? 'running' : 'idle',
-        startedAt: this.turnStartedAt,
-        inputId: this.turnInputId,
-        runId: this.turnLane?.runId ?? null,
-      },
+      // Older readers know one turn: the bot's own conversation's, else the oldest.
+      turn: legacy
+        ? {
+            state: legacy.cancelling ? 'cancelling' : 'running',
+            startedAt: legacy.startedAt,
+            inputId: legacy.inputId,
+            runId: legacy.key,
+          }
+        : { state: 'idle', startedAt: null, inputId: null, runId: null },
+      turns: turns.map((turn) => ({
+        state: turn.cancelling ? 'cancelling' : 'running',
+        startedAt: turn.startedAt,
+        inputId: turn.inputId,
+        runId: turn.key,
+        tool: turn.tool,
+      })),
       hold: this.holdManager.state,
       queue,
       activity,
@@ -1357,7 +1395,10 @@ export class BotRuntime {
     if (runId) await this.openRun(value)
     const result = await this.queue.enqueue(value)
     // The owner writing again is the moment to check at once whether a turn that could not start now can.
-    if (value.source === 'owner') this.retryAt = 0
+    if (value.source === 'owner') {
+      this.retries.delete(runId)
+      this.quotaRetryAt = 0
+    }
     const item = this.queue.all().find((candidate) => candidate.id === result.inputId)
     if (item && !item.started)
       this.publish({
@@ -1441,14 +1482,17 @@ export class BotRuntime {
     if (!conversationId || !record) throw new InstanceHttpError(404, 'NOT_FOUND', 'Input not found.')
     if (record.input.source !== 'owner' || record.input.run)
       throw new InstanceHttpError(409, 'CONFLICT', 'Only a message of the owner can be edited.')
+    // Only the bot's own conversation needs to rest: its side conversations may keep working meanwhile.
+    const ownQueue = conversationQueue(this.queue, null)
     if (
       this.editing ||
-      this.turning ||
+      this.turns.has(null) ||
       this.manualCompacting ||
       this.holdManager.state.state !== 'none' ||
-      this.queue.list().length > 0 ||
-      this.queue.transcriptInputs().unmapped.length > 0 ||
-      this.pending().length > 0
+      ownQueue.list().length > 0 ||
+      ownQueue.transcriptInputs().unmapped.length > 0 ||
+      this.interactionsOf(conversationId, this.live).length > 0 ||
+      this.help.pending().length > 0
     )
       throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
     const native = record.nativeMessageId
@@ -1505,7 +1549,8 @@ export class BotRuntime {
       }
     }
     // The owner writing again, as a new message does: the edited turn does not wait out an earlier failure's delay.
-    this.retryAt = 0
+    this.retries.delete(null)
+    this.quotaRetryAt = 0
     void this.tick()
     return receipt
   }
@@ -1610,7 +1655,7 @@ export class BotRuntime {
   private async runLane(runId: string): Promise<RunLane | null> {
     const known = this.runs.loaded(runId)
     const lane = await this.runs.lane(runId, (candidate) => this.keepsLane(candidate))
-    if (lane && !known && lane !== this.turnLane) {
+    if (lane && !known && lane !== this.turns.get(runId)?.lane) {
       for (const item of lane.extras.list()) {
         if (item.kind === 'permission' && item.state === 'pending')
           await lane.extras.upsert({ ...item, state: 'expired', resolvedAt: new Date().toISOString() })
@@ -1622,7 +1667,7 @@ export class BotRuntime {
   }
   private keepsLane(lane: RunLane): boolean {
     return (
-      lane === this.turnLane ||
+      this.turns.has(lane.runId) ||
       lane.help.pending().length > 0 ||
       getChatPermissionBroker().pendingFor(lane.conversationId).length > 0 ||
       getChatQuestionBroker().pendingQuestionsFor(lane.conversationId).length > 0
@@ -1649,32 +1694,71 @@ export class BotRuntime {
     }
     return tool
   }
+  /** The turns running in the bot's side conversations. */
+  private sideTurns(): number {
+    let count = 0
+    for (const key of this.turns.keys()) if (key !== null) count++
+    return count
+  }
+  /**
+   * Starts a turn in each conversation that has an input waiting and none running: the bot's own conversation always,
+   * and up to `FLEET_BOT_SIDE_TURNS_MAX` side conversations at once. A conversation's inputs run one after another; a
+   * conversation never waits for another. Resolves once the turns it started have ended.
+   */
   private async tick(): Promise<void> {
-    if (this.disposed || !this.primaryConversationId || Date.now() < this.retryAt) return
+    if (this.disposed || !this.primaryConversationId || Date.now() < this.quotaRetryAt) return
     await this.refreshAccounts()
     if (
       this.disposed ||
       !canDispatch(
         this.ready,
         this.accountOptions.length > 0,
-        this.turning || this.manualCompacting || this.editing,
         this.holdManager.state.state,
         this.compactionProblem === null
       )
     )
       return
-    const item = this.queue.list().find((candidate) => !candidate.attachmentError)
-    if (!item) return
-    const runId = inputRunId(item)
-    this.turning = true
-    this.turnStartedAt = new Date().toISOString()
-    this.turnInputId = item.id
-    this.turnAbort = new AbortController()
+    const now = Date.now()
+    const seen = new Set<string | null>()
+    const started: Promise<void>[] = []
+    // Claimed synchronously, with no await in between: two ticks never start the same conversation.
+    for (const item of this.queue.list()) {
+      if (item.attachmentError) continue
+      const key = inputRunId(item)
+      if (seen.has(key)) continue
+      seen.add(key)
+      if (this.turns.has(key) || (this.retries.get(key)?.at ?? 0) > now) continue
+      if (key === null && (this.manualCompacting || this.editing)) continue
+      if (key !== null && this.sideTurns() >= FLEET_BOT_SIDE_TURNS_MAX) continue
+      started.push(this.runTurn(this.claim(key, item), item))
+    }
+    await Promise.all(started)
+  }
+  /** Takes a conversation's next input for a turn of its own. */
+  private claim(key: string | null, item: QueuedInput): ActiveTurn {
     let settle!: () => void
-    this.turnSettled = new Promise<void>((resolve) => {
+    const settled = new Promise<void>((resolve) => {
       settle = resolve
     })
+    const turn: ActiveTurn = {
+      key,
+      inputId: item.id,
+      startedAt: new Date().toISOString(),
+      abort: new AbortController(),
+      lane: null,
+      cancelling: false,
+      tool: null,
+      settled,
+      settle,
+    }
+    this.turns.set(key, turn)
     this.changed()
+    return turn
+  }
+  /** Runs one turn in its conversation: the bot's own, or a side conversation's lane. */
+  private async runTurn(turn: ActiveTurn, item: QueuedInput): Promise<void> {
+    const runId = turn.key
+    const signal = turn.abort.signal
     let release: (() => void) | null = null
     let lane: RunLane | null = null
     try {
@@ -1684,27 +1768,28 @@ export class BotRuntime {
           await this.dropRunInput(item, runId)
           return
         }
-        this.turnLane = lane
+        turn.lane = lane
         this.changed()
       }
       const id = lane?.conversationId ?? this.primaryConversationId
       const live = lane?.live ?? this.live
-      const slot = await acquireChatConversationSlot(id, this.turnAbort.signal)
+      if (!id) return
+      const slot = await acquireChatConversationSlot(id, signal)
       release = slot.release
       if (
-        this.turnAbort.signal.aborted ||
+        signal.aborted ||
         this.holdManager.state.state !== 'none' ||
         this.compactionProblem !== null ||
-        this.manualCompacting ||
+        (!lane && this.manualCompacting) ||
         !this.queue.list().some((candidate) => candidate.id === item.id)
       )
         return
       if (lane) this.prepareRun(lane)
       else this.applyProfile()
       const attachments = await this.queue.readAttachments(item)
-      this.turnAbort.signal.throwIfAborted()
+      signal.throwIfAborted()
       await this.queue.markStarted(item.id)
-      this.turnAbort.signal.throwIfAborted()
+      signal.throwIfAborted()
       live.turnStarted()
       // Pages show it so until its native message is saved: readers holding it as queued learn it was taken.
       const starting = live.startingItem()
@@ -1715,10 +1800,10 @@ export class BotRuntime {
         skipMemory: item.input.source === 'continuation',
         memoryQuery: item.input.text,
         attachments,
-        signal: this.turnAbort.signal,
+        signal,
         slot,
       })
-      this.startFailures = 0
+      this.retries.delete(runId)
       this.reportedStartFailure = null
       await this.queue.cleanup(item.id)
       release = null
@@ -1754,7 +1839,8 @@ export class BotRuntime {
         this.lastSummary = summary
         this.lastTurnAt = new Date().toISOString()
       }
-      this.retryAt = 0
+      this.retries.delete(runId)
+      this.quotaRetryAt = 0
       if (outcome.status !== 'success')
         await this.system(
           outcome.status === 'cancelled' ? 'turn_cancelled' : 'turn_failed',
@@ -1774,19 +1860,22 @@ export class BotRuntime {
       })
       if (!lane) void this.refreshUsage()
     } catch (error) {
-      const cancelled = this.turnAbort?.signal.aborted === true
+      const cancelled = signal.aborted
       const attachment =
         !cancelled &&
         error instanceof Error &&
         (error.message === 'invalid-attachment' || error.message === 'pdf-unreadable')
           ? error.message
           : null
-      // The input stays queued: it starts again later, after its accounts' usage limit or a growing delay.
+      // The input stays queued: it starts again later, after its accounts' usage limit or a growing delay. A usage
+      // limit holds every conversation, since they share the accounts; any other failure holds only this one.
+      const failures = (this.retries.get(runId)?.failures ?? 0) + 1
       const retry =
-        cancelled || attachment
-          ? null
-          : startRetry(error, ++this.startFailures, () => this.currentSelection()?.providerId ?? null)
-      this.retryAt = retry?.at ?? Date.now() + START_RETRY_MIN_MS
+        cancelled || attachment ? null : startRetry(error, failures, () => this.currentSelection()?.providerId ?? null)
+      if (retry?.quota) {
+        this.quotaRetryAt = retry.at
+        this.retries.set(runId, { at: 0, failures })
+      } else this.retries.set(runId, { at: retry?.at ?? Date.now() + START_RETRY_MIN_MS, failures })
       const live = lane?.live ?? this.live
       await this.queue
         .reconcile(this.nativeUsersForQueue(live, runId), (candidate) => inputRunId(candidate) === runId)
@@ -1796,7 +1885,7 @@ export class BotRuntime {
           if (requeued) this.publish({ type: 'transcript.upsert', item: requeued, runId })
           if (attachment) {
             await this.queue.failAttachment(item.id, attachment)
-            this.retryAt = 0
+            this.retries.delete(runId)
             this.publish(runId ? { type: 'reset', runId } : { type: 'reset' })
           }
         })
@@ -1826,14 +1915,8 @@ export class BotRuntime {
       }
     } finally {
       release?.()
-      this.turning = false
-      this.cancelling = false
-      this.turnStartedAt = null
-      this.turnInputId = null
-      this.turnAbort = null
-      this.turnLane = null
-      this.activeTool = null
-      settle()
+      if (this.turns.get(runId) === turn) this.turns.delete(runId)
+      turn.settle()
       this.changed()
       // A run that ended gives back what it opened: its browser, terminals and the programs they run.
       if (lane && !this.queue.list().some((candidate) => inputRunId(candidate) === lane!.runId))
@@ -1856,22 +1939,28 @@ export class BotRuntime {
       runId,
     })
   }
-  async cancel(): Promise<void> {
-    const id = this.turnConversationId
-    if (!id || !this.turning) return
-    this.cancelling = true
-    this.turnAbort?.abort()
-    await stopChatAndWait(id)
+  /**
+   * Stops turns: every running one (`undefined`), the bot's own conversation's (`null`), or a side conversation's (its
+   * run id). The others keep running.
+   */
+  async cancel(conversation?: string | null): Promise<void> {
+    const stopping = [...this.turns.values()].filter((turn) => conversation === undefined || turn.key === conversation)
+    await Promise.all(
+      stopping.map(async (turn) => {
+        turn.cancelling = true
+        turn.abort.abort()
+        this.changed()
+        const id = this.conversationOfTurn(turn)
+        if (id) await stopChatAndWait(id)
+      })
+    )
     this.changed()
-  }
-  /** Stops the turn of one routine run, if it is the one running: the run's own Stop. */
-  async cancelRun(runId: string): Promise<void> {
-    if (this.turnLane?.runId === runId) await this.cancel()
   }
   async hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold> {
     const wasHeld = this.holdManager.state.state !== 'none'
-    const interrupted = this.turning ? (this.turnLane?.runId ?? null) : null
-    const state = await this.holdManager.hold(reason, this.turning, () => this.cancel())
+    const running = this.turns.size > 0
+    const interrupted = running ? (this.turns.has(null) ? null : ([...this.turns.keys()][0] ?? null)) : null
+    const state = await this.holdManager.hold(reason, running, () => this.cancel())
     if (!wasHeld) {
       this.interruptedRunId = interrupted
       await this.system(reason === 'takeover' ? 'takeover' : 'paused', null, null)
@@ -1986,7 +2075,7 @@ export class BotRuntime {
         break
       case 'chatCompact':
         if (this.compactionProblem !== null) result = { ok: false, error: 'not-configured' }
-        else if (this.turning || this.manualCompacting || this.editing) result = { ok: false, error: 'busy' }
+        else if (this.turns.has(null) || this.manualCompacting || this.editing) result = { ok: false, error: 'busy' }
         else {
           const started = startManualCompaction(id, () => {
             this.manualCompacting = false
@@ -2132,15 +2221,18 @@ export class BotRuntime {
     const id = lane?.conversationId ?? this.primaryConversationId
     // Only the conversation the bot's desktop shows brings its browser and apps forward there.
     const active = () => !this.disposed && !!id && id === this.foregroundConversationId
+    // Each conversation's turn tracks its own tool: conversations working at once never mix theirs up.
+    const turn = this.turns.get(lane?.runId ?? null)
     if (event.kind === 'tool-call') {
-      this.activeTool = { tool: event.toolName, target: toolTarget(event.input) }
+      if (turn) turn.tool = { tool: event.toolName, target: toolTarget(event.input) }
       if (event.toolName.startsWith('browser_') && id)
         this.schedule(() => {
           if (active()) this.host.floatBrowser(id)
         }, 1_000)
       const request = presentationForTool(event.toolName, event.input)
       if (id && request) {
-        if (presentsOnCompletion(event.toolName)) this.presentOnCompletion.set(event.toolCallId, request)
+        if (presentsOnCompletion(event.toolName))
+          this.presentOnCompletion.set(event.toolCallId, { conversationId: id, request })
         else
           this.schedule(() => {
             if (active()) this.host.present?.(id, request)
@@ -2148,14 +2240,17 @@ export class BotRuntime {
       }
     }
     if (event.kind === 'tool-state' && event.state.status !== 'running') {
-      this.activeTool = null
-      const request = this.presentOnCompletion.get(event.toolCallId)
-      if (request && event.state.status !== 'pending' && event.state.status !== 'awaiting-permission') {
+      if (turn) turn.tool = null
+      const presented = this.presentOnCompletion.get(event.toolCallId)
+      if (presented && event.state.status !== 'pending' && event.state.status !== 'awaiting-permission') {
         this.presentOnCompletion.delete(event.toolCallId)
-        if (event.state.status === 'completed' && id) this.host.present?.(id, request)
+        if (event.state.status === 'completed' && active())
+          this.host.present?.(presented.conversationId, presented.request)
       }
     }
-    if (event.kind === 'finish' || event.kind === 'aborted') this.presentOnCompletion.clear()
+    if (event.kind === 'finish' || event.kind === 'aborted')
+      for (const [toolCallId, presented] of this.presentOnCompletion)
+        if (presented.conversationId === id) this.presentOnCompletion.delete(toolCallId)
     if (
       event.kind === 'text-delta' ||
       event.kind === 'text-start' ||

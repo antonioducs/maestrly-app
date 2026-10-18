@@ -48,7 +48,7 @@ export class RunLane {
       extras: this.extras,
       images: options.images,
       publish,
-      turnInputId: options.turnInputId,
+      turnInputId: () => options.turnInputId(record.runId),
     })
   }
   get runId(): string {
@@ -67,7 +67,8 @@ interface RunConversationsOptions {
   queue: InstanceInputQueue
   images: FleetImageStore
   publish: (runId: string, item: FleetTranscriptItem) => void
-  turnInputId: () => string | null
+  /** The input the turn running in a run's conversation answers, if one runs there. */
+  turnInputId: (runId: string) => string | null
   changed: () => void
 }
 

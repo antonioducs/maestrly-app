@@ -60,9 +60,15 @@ function bot(conversationId = makeConversation(makeWorkspace().id).id) {
     live,
     holdManager: { state: NO_HOLD },
     editing: false,
-    turning: false,
+    turns: new Map(),
+    retries: new Map(),
+    quotaRetryAt: 0,
     manualCompacting: false,
-    pending: () => [],
+    help: { pending: () => [] },
+    permissionAt: new Map(),
+    questionAt: new Map(),
+    questionItems: new Map(),
+    permissionTools: new Map(),
     changed: vi.fn(),
     refreshUsage: vi.fn(async () => {}),
     tick,
@@ -159,7 +165,10 @@ describe('editing the owner last message', () => {
     target.live.anchor()
 
     // A turn that could not start earlier left a delay before the next attempt.
-    Object.assign(target.runtime, { retryAt: Date.now() + 60_000 })
+    Object.assign(target.runtime, {
+      retries: new Map([[null, { at: Date.now() + 60_000, failures: 1 }]]),
+      quotaRetryAt: Date.now() + 60_000,
+    })
     const request = edit('Second task, done differently')
     const receipt = await target.runtime.editInput(last.inputId, request)
 
@@ -187,7 +196,9 @@ describe('editing the owner last message', () => {
     expect(target.published.filter((event) => event.type === 'reset')).toHaveLength(1)
     expect(target.tick).toHaveBeenCalledOnce()
     // The owner wrote again: the edited turn is tried at once.
-    expect((target.runtime as unknown as { retryAt: number }).retryAt).toBe(0)
+    const retried = target.runtime as unknown as { retries: Map<string | null, unknown>; quotaRetryAt: number }
+    expect(retried.retries.has(null)).toBe(false)
+    expect(retried.quotaRetryAt).toBe(0)
     const page = await target.runtime.transcript(null, 50)
     expect(page.items.map((item) => item.id)).toEqual([
       first.itemId,
@@ -249,17 +260,17 @@ describe('editing the owner last message', () => {
     await refusal(randomUUID(), 404)
 
     const latest = await answered(target, 'Latest task', start + 120_000)
-    for (const busy of [{ turning: true }, { manualCompacting: true }, { editing: true }]) {
+    for (const busy of [{ turns: new Map([[null, {}]]) }, { manualCompacting: true }, { editing: true }]) {
       Object.assign(target.runtime, busy)
       await refusal(latest.inputId, 409)
-      Object.assign(target.runtime, { turning: false, manualCompacting: false, editing: false })
+      Object.assign(target.runtime, { turns: new Map(), manualCompacting: false, editing: false })
     }
     Object.assign(target.runtime, { holdManager: { state: { ...NO_HOLD, state: 'held', reason: 'paused' } } })
     await refusal(latest.inputId, 409)
     Object.assign(target.runtime, { holdManager: { state: NO_HOLD } })
-    Object.assign(target.runtime, { pending: () => [{ kind: 'help', id: 'h', at: iso(start), reason: 'x' }] })
+    Object.assign(target.runtime, { help: { pending: () => [{ kind: 'help', id: 'h', at: iso(start), reason: 'x' }] } })
     await refusal(latest.inputId, 409)
-    Object.assign(target.runtime, { pending: () => [] })
+    Object.assign(target.runtime, { help: { pending: () => [] } })
     const waiting = await target.queue.enqueue({ idempotencyKey: randomUUID(), text: 'Next', source: 'owner' })
     await refusal(latest.inputId, 409)
     await target.queue.delete(waiting.inputId)

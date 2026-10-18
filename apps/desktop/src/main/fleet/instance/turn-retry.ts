@@ -19,6 +19,8 @@ export interface StartRetry {
   key: string
   /** The transcript text: an exhausted code carries ` until=<ISO time>` once that time is known. */
   text: string
+  /** Whether the bot's accounts reached their usage limits: every conversation of the bot waits, not only this one. */
+  quota: boolean
 }
 
 /**
@@ -36,15 +38,17 @@ export function startRetry(
 ): StartRetry {
   const message = error instanceof Error ? error.message : ''
   const backoff = now + Math.min(START_RETRY_MAX_MS, START_RETRY_MIN_MS * 2 ** Math.max(0, failures - 1))
-  if (!EXHAUSTED_CODES.has(message)) return { at: backoff, key: message, text: message.slice(0, 400) || 'Turn failed.' }
+  if (!EXHAUSTED_CODES.has(message))
+    return { at: backoff, key: message, text: message.slice(0, 400) || 'Turn failed.', quota: false }
   const providerId = selectedProvider()
   const chain = providerId ? freezeFailoverChain(providerId) : []
   const recovery = router.recoveryAt(chain.length ? chain : providerId ? [providerId] : [], now)
   // The router may already admit an account its admission refused a moment ago (its probe time just came).
-  if (recovery <= now) return { at: backoff, key: message, text: message }
+  if (recovery <= now) return { at: backoff, key: message, text: message, quota: true }
   return {
     at: Math.max(now + START_RETRY_MIN_MS, Math.min(recovery, now + QUOTA_RECHECK_MS)),
     key: message,
     text: `${message} until=${new Date(recovery).toISOString()}`,
+    quota: true,
   }
 }
