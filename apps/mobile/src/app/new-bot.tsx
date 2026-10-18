@@ -6,7 +6,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useMemo, useRef, useState } from 'react'
-import { AccessibilityInfo, TextInput, View } from 'react-native'
+import { AccessibilityInfo, TextInput, type TextInputInstance, View } from 'react-native'
 import {
   createBotIssue,
   environmentChoices,
@@ -76,7 +76,7 @@ function NewBotForm({ preferred }: { preferred: string | null }) {
   const [problem, setProblem] = useState<NewBotProblem | null>(null)
   const [issue, setIssue] = useState<CreateBotIssue | null>(null)
   const [busy, setBusy] = useState(false)
-  const nameInput = useRef<TextInput>(null)
+  const nameInput = useRef<TextInputInstance>(null)
   const online = fleet.connection === 'open'
   // Only an environment that can take the bot now stays chosen; one that filled up or stopped meanwhile does not.
   const wanted = picked ?? initialEnvironment(choices, preferred)

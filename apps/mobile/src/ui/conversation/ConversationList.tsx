@@ -239,7 +239,7 @@ export function ConversationList({
             >
               {t('status.thinking')}
             </AppText>
-          ) : null
+          ) : undefined
         }
         ListFooterComponent={
           <View>

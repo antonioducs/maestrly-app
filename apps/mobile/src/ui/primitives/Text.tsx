@@ -49,7 +49,7 @@ export function AppText({
   return (
     <NativeText
       {...props}
-      style={weighted(StyleSheet.flatten([VARIANTS[variant], { color: toneColor(palette, tone) }, style]))}
+      style={weighted(StyleSheet.flatten([VARIANTS[variant], { color: toneColor(palette, tone) }, style]) ?? {})}
     />
   )
 }

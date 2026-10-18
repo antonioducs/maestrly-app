@@ -125,20 +125,20 @@ SOFTWARE.
 
 ## Mobile app
 
-The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 57
-(`expo` 57.0.28 and the `expo-*` modules, such as `expo-video` 57.0.5 and
-`expo-sharing` 57.0.23, Expo Router 57.0.26) and
-[React Native](https://reactnative.dev) 0.86.3, both under the MIT License. It
+The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 58
+(`expo` 58.0.14 and the `expo-*` modules, such as `expo-video` 58.0.11 and
+`expo-sharing` 58.0.19, Expo Router 58.0.23) and
+[React Native](https://reactnative.dev) 0.88.0, both under the MIT License. It
 also includes, under the MIT License,
 [react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2
 with [marked](https://github.com/markedjs/marked) 18.0.14,
-[react-native-svg](https://github.com/software-mansion/react-native-svg) 15.15.4,
+[react-native-svg](https://github.com/software-mansion/react-native-svg) 15.16.0,
 [react-native-webview](https://github.com/react-native-webview/react-native-webview)
-13.16.1,
+14.0.1,
 [AsyncStorage](https://github.com/react-native-async-storage/async-storage)
 2.2.0, and
 [expo-speech-recognition](https://github.com/jamsch/expo-speech-recognition)
-57.1.1 (Copyright (c) 2024 jamsch). Their complete licenses are distributed with
+58.0.0 (Copyright (c) 2024 jamsch). Their complete licenses are distributed with
 each package.
 
 The app bundles three font families through `@expo-google-fonts` (MIT): Bricolage
