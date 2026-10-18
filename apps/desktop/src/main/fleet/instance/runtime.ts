@@ -116,6 +116,8 @@ import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } 
 import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
 import { BotRunConversations, isRunId, type RunLane } from './routine-runs'
+import type { BotDisplay } from './displays'
+import type { LaneComputers } from './lane-computers'
 import { keepRunFiles, runMedia } from './run-files'
 import { clearBotIdentity, setBotIdentity, type BotIdentityPeer } from './identity'
 import type { GatewayConfig } from './gateway-client'
@@ -301,6 +303,24 @@ export interface BotRuntimeHost {
   closeConversation?(conversationId: string): Promise<void>
   /** Deletes a conversation with its messages and files: a routine run's, when the owner or retention deletes it. */
   purgeConversation?(conversationId: string): Promise<void>
+  /** The desktops of the bots' side conversations, when the environment gives bots displays. */
+  laneComputers?: Pick<LaneComputers, 'open' | 'close' | 'computer'> | null
+}
+
+/**
+ * The shell environment of a side conversation without a desktop of its own: the bot's browser and theme, and no
+ * display, session bus or desktop socket. They are set empty rather than left out, so its programs never fall back to
+ * the environment display the process runs on, nor open on the desktop of the bot's own conversation.
+ */
+export function laneShellEnv(env: ConversationShellEnv): ConversationShellEnv {
+  return {
+    DISPLAY: '',
+    DBUS_SESSION_BUS_ADDRESS: '',
+    MAESTRLY_DESKTOP_SOCKET: '',
+    ...(env.BROWSER ? { BROWSER: env.BROWSER } : {}),
+    ...(env.MAESTRLY_BOT_BROWSER_PROFILE ? { MAESTRLY_BOT_BROWSER_PROFILE: env.MAESTRLY_BOT_BROWSER_PROFILE } : {}),
+    ...(env.GTK_THEME ? { GTK_THEME: env.GTK_THEME } : {}),
+  }
 }
 
 type EventPayload = Parameters<InstanceEvents['publish']>[0]
@@ -423,14 +443,24 @@ export class BotRuntime {
         else if (this.holdManager.state.state === 'none') writeBotPaused(this.botId, false)
         this.changed()
       },
-      () => this.activeConversationId
+      () => this.turnLane?.conversationId ?? this.foregroundConversationId
     )
   }
   get primaryConversationId(): string | null {
     return this.stored?.primaryConversationId ?? null
   }
-  /** The conversation the bot works in now: a routine run's while its turn runs, else the bot's own. */
-  get activeConversationId(): string | null {
+  /**
+   * The conversation the bot's desktop shows: its own, unless a side conversation asks the owner for help (a login, a
+   * code, a captcha in its browser) while its own does not. Side conversations otherwise work out of sight: their
+   * browser through its tools, their programs on a desktop of their own.
+   */
+  get foregroundConversationId(): string | null {
+    const primary = this.primaryConversationId
+    if (this.help.pending().length > 0) return primary
+    return this.runs.loadedLanes().find((lane) => lane.help.pending().length > 0)?.conversationId ?? primary
+  }
+  /** The conversation the running turn works in. */
+  private get turnConversationId(): string | null {
     return this.turnLane?.conversationId ?? this.primaryConversationId
   }
   /** Whether a conversation is this bot's: its own, or one of its routine runs'. */
@@ -589,6 +619,10 @@ export class BotRuntime {
     // Stopped before the hooks go, so no gap lets its work fall back to the environment's settings.
     const background = options.uninstall ? this.stopBackgroundWork() : Promise.resolve()
     this.unregisterConversation(options.uninstall === true)
+    // The side conversations' desktops go with the bot.
+    const desktops = Promise.all(
+      this.runs.list().map((record) => this.host.laneComputers?.close(record.conversationId))
+    ).catch(() => undefined)
     this.runs.unloadAll()
     // Owner memory goes through the bot's token; an uninstalled bot keeps none, even for a caller holding its writer.
     if (options.uninstall) this.gatewayToken = null
@@ -600,6 +634,7 @@ export class BotRuntime {
       this.images.idle(),
       this.usageTask,
       background,
+      desktops,
     ]).catch(() => undefined)
   }
   /** Suspends the compaction of the bot's conversation and cancels its memory extraction, waiting briefly for both. */
@@ -650,7 +685,49 @@ export class BotRuntime {
     const id = this.primaryConversationId
     if (id && !this.disposed) this.applyScreen(id)
     if (!this.disposed)
-      for (const lane of this.runs.loadedLanes()) if (lane.unregister) this.applyScreen(lane.conversationId)
+      for (const lane of this.runs.loadedLanes()) if (lane.unregister) this.applyLaneScreen(lane.conversationId)
+  }
+  /**
+   * What a side conversation's tools and shells use of the screens. Its browser shows in the bot's area when it comes
+   * forward; its programs open on its own desktop while one runs, and on none otherwise.
+   */
+  private applyLaneScreen(id: string): void {
+    if (!this.screen) {
+      setConversationScreen(id, null)
+      setConversationShellEnv(id, null)
+      return
+    }
+    const own = this.host.laneComputers?.computer(id) ?? null
+    const { display, width, height, browserArea, env } = this.screen
+    setConversationScreen(
+      id,
+      own
+        ? { display: own.display, width: own.width, height: own.height, windowArea: browserArea }
+        : { display, width, height, windowArea: browserArea }
+    )
+    setConversationShellEnv(id, own ? own.env : laneShellEnv(env))
+  }
+  /**
+   * The desktop of one of the bot's side conversations, started on its first use; null where the environment gives
+   * bots no displays, so its tools use the screen they always had.
+   */
+  async laneComputer(conversationId: string): Promise<{ display: BotDisplay; started: boolean } | null> {
+    const computers = this.host.laneComputers
+    if (!computers || !this.screen || this.disposed) return null
+    if (conversationId === this.primaryConversationId || !this.runs.byConversation(conversationId))
+      throw new Error('Only a side conversation of the bot has a desktop of its own.')
+    return computers.open(conversationId, {
+      botArea: this.screen.browserArea,
+      // Given back: the conversation's tools and shells use what a side conversation without a desktop has.
+      restore: () => {
+        const record = this.runs.byConversation(conversationId)
+        if (!this.disposed && record && this.runs.loaded(record.runId)?.unregister) this.applyLaneScreen(conversationId)
+        else {
+          setConversationScreen(conversationId, null)
+          setConversationShellEnv(conversationId, null)
+        }
+      },
+    })
   }
   private applyScreen(id: string): void {
     if (!this.screen) {
@@ -746,7 +823,7 @@ export class BotRuntime {
   private registerRun(lane: RunLane): void {
     if (lane.unregister || this.disposed) return
     const id = lane.conversationId
-    this.applyScreen(id)
+    this.applyLaneScreen(id)
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
     setMemoryCoreExtras(id, (signal) => this.ownerMemory.coreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
@@ -838,6 +915,7 @@ export class BotRuntime {
       : { folder: '', files: [] }
     await this.queue.forgetRun(runId)
     await this.host.closeConversation?.(record.conversationId).catch(() => undefined)
+    await this.host.laneComputers?.close(record.conversationId).catch(() => undefined)
     await cancelMemoryExtraction(record.conversationId)
     if (getConversation(record.conversationId)) await this.host.purgeConversation?.(record.conversationId)
     await this.runs.remove(runId)
@@ -1250,8 +1328,19 @@ export class BotRuntime {
     this.changed()
   }
 
+  /** The conversation the bot's desktop showed when it last changed; undefined before the first change. */
+  private shownForeground: string | null | undefined = undefined
   private changed(): void {
-    if (this.statusTimer || this.disposed) return
+    if (this.disposed) return
+    // A side conversation that asks for help comes forward on the bot's desktop, and goes back once it is helped.
+    const foreground = this.foregroundConversationId
+    const previous = this.shownForeground
+    this.shownForeground = foreground
+    if (previous && foreground && previous !== foreground) {
+      this.host.floatBrowser(foreground)
+      this.host.present?.(foreground, { app: 'browser' })
+    }
+    if (this.statusTimer) return
     this.statusTimer = setTimeout(() => {
       this.statusTimer = null
       if (this.disposed) return
@@ -1768,7 +1857,7 @@ export class BotRuntime {
     })
   }
   async cancel(): Promise<void> {
-    const id = this.activeConversationId
+    const id = this.turnConversationId
     if (!id || !this.turning) return
     this.cancelling = true
     this.turnAbort?.abort()
@@ -2041,8 +2130,8 @@ export class BotRuntime {
   private onChatEvent(event: ChatStreamEvent, lane: RunLane | null = null): void {
     if (this.disposed) return
     const id = lane?.conversationId ?? this.primaryConversationId
-    // A run's conversation reports its activity only while its turn runs; afterwards nothing of it reaches the screen.
-    const active = () => !this.disposed && !!id && id === this.activeConversationId
+    // Only the conversation the bot's desktop shows brings its browser and apps forward there.
+    const active = () => !this.disposed && !!id && id === this.foregroundConversationId
     if (event.kind === 'tool-call') {
       this.activeTool = { tool: event.toolName, target: toolTarget(event.input) }
       if (event.toolName.startsWith('browser_') && id)

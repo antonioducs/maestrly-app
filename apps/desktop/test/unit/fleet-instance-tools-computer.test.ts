@@ -35,6 +35,7 @@ import { setConversationScreen, type ConversationScreen } from '../../src/main/c
 import { registerServerModeTools, SERVER_COMPUTER_DESCRIPTION } from '../../src/main/mcp/tools/server-computer'
 import type { ComputerOpenResult } from '../../src/shared/conversation-computer'
 import type { BotDisplay } from '../../src/main/fleet/instance/displays'
+import { botComputerOptions, type ComputerBot } from '../../src/main/mcp/tools/bot-instance'
 
 async function clientForComputer(convId = 'primary') {
   const server = new McpServer({ name: 'computer-test', version: '1' })
@@ -547,6 +548,101 @@ describe('computer tools on a conversation screen', () => {
         vi.mocked(childProcess.spawnSync).mockReset()
       }
     }
+  })
+})
+
+describe("computer tools of a bot's conversations", () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('lane')])
+  const botScreen: ConversationScreen = {
+    display: ':3',
+    width: 1280,
+    height: 800,
+    windowArea: { x: 1280, y: 0, width: 1280, height: 800 },
+  }
+  const laneDisplay = {
+    botId: 'c1',
+    slot: null,
+    display: ':10',
+    width: 1280,
+    height: 800,
+    env: {},
+    browserArea: null,
+  } as unknown as BotDisplay
+
+  async function client(convId: string, bot: ComputerBot) {
+    const server = new McpServer({ name: 'bot-computer-test', version: '1' })
+    registerComputerTools(
+      { server, convId, locale: 'en', t: (() => '') as never },
+      botComputerOptions(() => bot)
+    )
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const connected = new Client({ name: 'bot-computer-client', version: '1' })
+    await server.connect(serverTransport)
+    await connected.connect(clientTransport)
+    return connected
+  }
+  const texts = (result: unknown) =>
+    (result as { content: { type: string; text?: string }[] }).content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+
+  afterEach(() => {
+    setConversationScreen('bot-primary', null)
+    setConversationScreen('bot-run', null)
+  })
+
+  it("captures a side conversation's own desktop, starting it on first use, and the bot's desktop for its own", async () => {
+    fakeXdotool((_args, child, _options, command) => {
+      queueMicrotask(() => {
+        if (command === 'import') child.stdout.emit('data', png)
+        child.emit('close', 0)
+      })
+    })
+    setConversationScreen('bot-primary', botScreen)
+    setConversationScreen('bot-run', botScreen)
+    let running = false
+    const bot: ComputerBot = {
+      primaryConversationId: 'bot-primary',
+      laneComputer: vi.fn(async () => {
+        const started = !running
+        running = true
+        return { display: laneDisplay, started }
+      }),
+    }
+    const lane = await client('bot-run', bot)
+    const first = await lane.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(first.isError).toBeFalsy()
+    expect(vi.mocked(spawn).mock.calls.at(-1)?.slice(0, 2)).toEqual([
+      'import',
+      ['-display', ':10', '-window', 'root', 'png:-'],
+    ])
+    expect(texts(first).join('\n')).toContain("Started this conversation's own desktop on display :10")
+    expect(texts(first).join('\n')).toContain('DISPLAY=:10')
+    const second = await lane.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(texts(second).join('\n')).not.toContain('Started')
+    expect(bot.laneComputer).toHaveBeenCalledWith('bot-run')
+
+    const own = await client('bot-primary', bot)
+    await own.callTool({ name: 'computer_screenshot', arguments: {} })
+    expect(vi.mocked(spawn).mock.calls.at(-1)?.slice(0, 2)).toEqual([
+      'import',
+      ['-display', ':3', '-window', 'root', 'png:-'],
+    ])
+    expect(bot.laneComputer).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails a call of a side conversation whose desktop cannot start', async () => {
+    const bot: ComputerBot = {
+      primaryConversationId: 'bot-primary',
+      laneComputer: vi.fn(async () => {
+        throw new Error('All 8 desktops for side conversations are in use. Try again in a minute.')
+      }),
+    }
+    const lane = await client('bot-run', bot)
+    const result = await lane.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } })
+    expect(result.isError).toBe(true)
+    expect(texts(result).join('\n')).toContain('All 8 desktops for side conversations are in use')
+    expect(spawn).not.toHaveBeenCalled()
   })
 })
 

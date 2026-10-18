@@ -27,7 +27,9 @@ const { LiveTranscript } = await import('../../src/main/fleet/instance/live-tran
 const { InstanceEvents, InstanceHttpError } = await import('../../src/main/fleet/instance/server')
 const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
 const { InstanceHoldManager } = await import('../../src/main/fleet/instance/gate')
-const { BotRunConversations } = await import('../../src/main/fleet/instance/routine-runs')
+const { BotRunConversations, RunLane: RunLaneClass } = await import('../../src/main/fleet/instance/routine-runs')
+const { conversationScreen } = await import('../../src/main/conversation-screen')
+const { conversationShellEnv } = await import('../../src/main/chat/conversation-env')
 const { runKeptFolder } = await import('../../src/main/fleet/instance/run-files')
 const { BotRuntime } = await import('../../src/main/fleet/instance/runtime')
 const { APP_TOOL_POLICY } = await import('../../src/main/chat/tool-policy')
@@ -234,24 +236,78 @@ describe('routine runs in conversations of their own', () => {
     await runtime.input(routineInput(runId))
     const { conversations } = answer('Posted.', { image: true })
     let during: ReturnType<typeof runtime.currentInput> = null
-    let active: string | null = null
+    let foreground: string | null = null
     vi.spyOn(chatService, 'acquireChatConversationSlot').mockImplementation(async () => {
       during = runtime.currentInput()
-      active = runtime.activeConversationId
+      foreground = runtime.foregroundConversationId
       return { release: () => {}, operation: {} } as never
     })
     await turn(runtime)
     const record = runs.get(runId)!
     expect(conversations).toEqual([record.conversationId])
-    expect(active).toBe(record.conversationId)
+    // The run works out of sight: the bot's desktop keeps showing its own conversation.
+    expect(foreground).toBe(primary.id)
     expect(during).toMatchObject({ source: 'routine', routine: { runId }, run: { id: runId } })
     const finished = published.find((event) => event.type === 'turn.finished')
     expect(finished).toMatchObject({ runId, outcome: 'completed', text: 'Posted.', media: { images: 1 } })
     expect(host.closeConversation).toHaveBeenCalledWith(record.conversationId)
-    expect(runtime.activeConversationId).toBe(primary.id)
+    expect(runtime.foregroundConversationId).toBe(primary.id)
     // The prompt says the conversation is the run's own and asks whether it found anything new.
     expect(promptForInput(routineInput(runId))).toContain(RUN_CONVERSATION_NOTE)
     expect(promptForInput(routineInput(runId))).toContain('nothing_new')
+  })
+
+  it("keeps a run off the bot's desktop, and brings it forward only while it asks the owner for help", async () => {
+    const { runtime, primary, runs } = await bot()
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const record = runs.get(runId)!
+    const area = { x: 1280, y: 0, width: 1280, height: 800 }
+    Object.assign(runtime, {
+      screen: {
+        display: ':3',
+        width: 1280,
+        height: 800,
+        browserArea: area,
+        env: {
+          DISPLAY: ':3',
+          DBUS_SESSION_BUS_ADDRESS: 'unix:path=/bus',
+          BROWSER: '/usr/local/bin/maestrly-open-url',
+          MAESTRLY_BOT_BROWSER_PROFILE: '/profile',
+          GTK_THEME: 'Adwaita:dark',
+          MAESTRLY_DESKTOP_SOCKET: '/desktop.sock',
+        },
+      },
+    })
+    const internals = runtime as unknown as {
+      runLane(runId: string): Promise<InstanceType<typeof RunLaneClass>>
+      registerRun(lane: InstanceType<typeof RunLaneClass>): void
+    }
+    const lane = await internals.runLane(runId)
+    internals.registerRun(lane)
+    try {
+      // Its browser shows in the bot's area when it comes forward; its programs open on no desktop of the bot's.
+      expect(conversationScreen(record.conversationId)).toEqual({
+        display: ':3',
+        width: 1280,
+        height: 800,
+        windowArea: area,
+      })
+      const env = conversationShellEnv(record.conversationId)
+      expect(env).toMatchObject({ DISPLAY: '', DBUS_SESSION_BUS_ADDRESS: '', MAESTRLY_DESKTOP_SOCKET: '' })
+      expect(env.BROWSER).toBe('/usr/local/bin/maestrly-open-url')
+      expect(runtime.foregroundConversationId).toBe(primary.id)
+      await lane.help.requestHelp('Log in to the photo site')
+      expect(runtime.foregroundConversationId).toBe(record.conversationId)
+      // The bot's own conversation asking for help keeps the desktop.
+      const own = await runtime.help.requestHelp('Approve the payment')
+      expect(runtime.foregroundConversationId).toBe(primary.id)
+      await runtime.help.resolve(own, null)
+      await lane.help.resolveAll(null)
+      expect(runtime.foregroundConversationId).toBe(primary.id)
+    } finally {
+      lane.unregister?.()
+    }
   })
 
   it("takes the owner's changes in the run's conversation, and none for a run without one", async () => {
