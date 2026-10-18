@@ -4,6 +4,7 @@ import type { StreamState } from '../src/gateway/event-stream'
 import { BotCompactError, createFleetController } from '../src/fleet/controller'
 import { botRecord } from '../src/fleet/factories'
 import type { FleetSource } from '../src/fleet/source'
+import { GatewayError } from '../src/gateway/client'
 import { memoryStores } from '../src/servers/registry'
 
 const at = '2026-10-12T12:00:00.000Z'
@@ -161,6 +162,33 @@ describe('fleet controller', () => {
     expect(await issue()).toBe('failed')
     answer = null
     expect(await issue()).toBe('failed')
+  })
+
+  it('creates a bot, shows it at once, and keeps the key when the same bot is tried again', async () => {
+    const f = fakeSource()
+    const keys = ['550e8400-e29b-41d4-a716-446655440010', '550e8400-e29b-41d4-a716-446655440011']
+    let next = 0
+    const controller = createFleetController(f.source, memoryStores().kv, { uuid: () => keys[next++] })
+    const request = { name: 'Nova', instructions: '', ceiling: 'auto' as const, talksTo: [], environmentId: 'studio' }
+    const nova = botRecord({ id: 'nova', name: 'Nova', environmentId: 'studio', status: 'starting' })
+    let fail = true
+    f.responses.botsCreate = () => {
+      if (fail) throw new GatewayError('NETWORK', 0, 'lost')
+      return nova
+    }
+    await expect(controller.createBot(request)).rejects.toThrow('lost')
+    fail = false
+    expect(await controller.createBot(request)).toEqual(nova)
+    const sent = f.call.mock.calls.filter(([key]) => key === 'botsCreate').map(([, options]) => options)
+    expect(sent).toEqual([
+      { body: { ...request, idempotencyKey: keys[0] } },
+      { body: { ...request, idempotencyKey: keys[0] } },
+    ])
+    expect(controller.store.getState().bots.map((bot) => bot.id)).toContain('nova')
+
+    // Once the server confirmed it, the next bot is a new request with a key of its own.
+    await controller.createBot(request)
+    expect(f.call.mock.calls.at(-1)?.[1]).toEqual({ body: { ...request, idempotencyKey: keys[1] } })
   })
 
   it('opens no stream when stopped while it was starting', async () => {

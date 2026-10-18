@@ -116,6 +116,34 @@ describe('demo server', () => {
     )
   })
 
+  it('adds a bot to an existing environment once per idempotency key, and sets it up', async () => {
+    const source = createDemoSource({ stepMs: 0, autoplay: false })
+    const events = listen(source)
+    const body = {
+      name: 'Juno',
+      instructions: 'Triage issues',
+      ceiling: 'ask' as const,
+      talksTo: ['ledger'],
+      environmentId: 'research',
+      idempotencyKey: KEY,
+    }
+    const bot = await source.call('botsCreate', { body })
+    expect(bot).toMatchObject({ id: 'juno-2', environmentId: 'research', status: 'starting', talksTo: ['ledger'] })
+    expect(await source.call('botsCreate', { body })).toEqual(bot)
+    const { environments } = await source.call('environmentsList')
+    expect(environments.find((item) => item.id === 'research')?.botIds).toEqual(['ledger', 'scout', 'juno-2'])
+    expect((await source.call('botsList')).bots.filter((item) => item.name === 'Juno')).toHaveLength(2)
+    expect(events.some((event) => event.type === 'environment.updated')).toBe(true)
+    await vi.runAllTimersAsync()
+    expect((await source.call('botGet', { params: { id: 'juno-2' } })).status).toBe('idle')
+    expect((await source.call('botTranscript', { params: { id: 'juno-2' }, query: { limit: 50 } })).items).toEqual([])
+
+    const again = { ...body, idempotencyKey: '550e8400-e29b-41d4-a716-446655440001' }
+    await expect(source.call('botsCreate', { body: { ...again, environmentId: 'personal' } })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    })
+  })
+
   it('refuses what the demo does not offer', async () => {
     const source = createDemoSource({ stepMs: 0, autoplay: false })
     await expect(source.call('botSkillsList', { params: { id: 'juno' } })).rejects.toBeInstanceOf(GatewayError)

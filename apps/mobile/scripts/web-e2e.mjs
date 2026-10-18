@@ -154,6 +154,18 @@ try {
     await page.getByText('Allowed', { exact: true }).waitFor()
   })
 
+  await step('create a bot in an environment', async () => {
+    await openMenu()
+    await page.getByRole('tab', { name: /^Bots/ }).click()
+    await button('New bot in research').click()
+    await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Nova')
+    await page.getByRole('textbox', { name: 'What it does' }).fill('Triage new issues every morning.')
+    await page.getByRole('checkbox', { name: /^Ledger/ }).click()
+    await button('Create bot').click()
+    // Its conversation opens and takes messages once the bot has set up its profile.
+    await page.getByRole('textbox', { name: 'Message Nova' }).waitFor()
+  })
+
   await step('open a published page', async () => {
     await openMenu()
     await page.getByRole('tab', { name: /^Bots/ }).click()
