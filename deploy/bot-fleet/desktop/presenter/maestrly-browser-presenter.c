@@ -907,7 +907,7 @@ static int shm_create(int w, int h, int *format_error)
         px.s_attached = 0;
     if (!px.d_attached || !px.s_attached) {
         log_msg("MIT-SHM attach failed on %s (are the X servers in this IPC namespace?)",
-                !px.d_attached ? DisplayString(dpy) : DisplayString(sdpy));
+                DisplayString(!px.d_attached ? dpy : sdpy));
         goto fail;
     }
     px.have = 0; /* SysV segments start zero-filled: nothing to clear (and no pages to touch) */

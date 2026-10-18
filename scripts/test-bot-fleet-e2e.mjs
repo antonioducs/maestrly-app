@@ -2863,6 +2863,23 @@ async function main() {
     .map((item) => item.id)
     .sort()
   const scoutContainerBeforeMove = await containerState(containers[1])
+  // Its working folder holds a Git repository with an installed package, as a bot's that cloned a project does.
+  const partnerConversationId = (await instanceStatus(containers[1])).bots.find((item) => item.botId === partnerId)
+    .status.conversationId
+  const inPartnerFolder = (name, command) =>
+    docker([
+      'exec',
+      name,
+      'sh',
+      '-c',
+      `cd "$(find /home/bot/.config -maxdepth 3 -type d -path '*/standalone-chats/${partnerConversationId}' | head -1)" && ${command}`,
+    ])
+  await inPartnerFolder(
+    containers[1],
+    'git init -q repo && mkdir -p repo/node_modules/tool repo/node_modules/.bin && ' +
+      'printf "#!/bin/sh\\necho e2e-tool\\n" > repo/node_modules/tool/cli.sh && chmod +x repo/node_modules/tool/cli.sh && ' +
+      'ln -s ../tool/cli.sh repo/node_modules/.bin/tool'
+  )
   const moveStarted = Date.now()
   const moveStart = await request('POST', '/v1/bots/' + partnerId + '/move', {
     newEnvironment: { name: 'E2E Lab ' + suffix },
@@ -2903,6 +2920,11 @@ async function main() {
     partnerMemoriesBeforeMove
   )
   assert.deepEqual(await botFolders(containers[1], partnerId), [])
+  // The repository and the package's link arrived whole.
+  assert.match(
+    (await inPartnerFolder(labContainer, 'git -C repo rev-parse --git-dir && repo/node_modules/.bin/tool')).stdout,
+    /^\.git\ne2e-tool\n$/
+  )
   const scoutContainerAfterMove = await containerState(containers[1])
   assert.deepEqual(
     [scoutContainerAfterMove.id, scoutContainerAfterMove.startedAt],

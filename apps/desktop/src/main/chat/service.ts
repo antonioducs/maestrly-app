@@ -89,7 +89,7 @@ import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failov
 import { runClaudeEphemeralWithFailover } from './subscription-failover/claude-ephemeral'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from './credentials'
-import { fetchModels, fetchModelWindow, invalidateModels } from './models'
+import { currentApiKeyCheck, fetchModels, fetchModelWindow, invalidateModels } from './models'
 import { getContextLimit, setContextLimit, resolveContextWindow } from './context-limits'
 import { limitConversationContextWindow } from './conversation-context-limit'
 import {
@@ -412,6 +412,7 @@ import type {
   ChatModelMeta,
   ChatModelRef,
   ChatPermissionEvent,
+  ChatProviderInfo,
   ChatProviderKind,
   ChatRuntimeState,
   ChatStreamEvent,
@@ -2153,6 +2154,13 @@ function mcpAuthField(server: McpServer): Pick<McpServerInfo, 'oauth'> {
   return oauth ? { oauth } : {}
 }
 
+/** The saved key's last check, for API-key accounts only; companions manage their own credential. */
+function apiKeyCheckField(providerId: string): Pick<ChatProviderInfo, 'keyCheck'> {
+  if (isManagedProvider(providerId)) return {}
+  const keyCheck = currentApiKeyCheck(providerId)
+  return keyCheck ? { keyCheck } : {}
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
@@ -2197,7 +2205,7 @@ function buildConfig(): ChatConfig {
                       builtIn: true,
                       connected: antigravityAuth.status(p.accountId ?? null).authenticated,
                     }
-                  : { connected: hasApiKey(p.id) }),
+                  : { connected: hasApiKey(p.id), ...apiKeyCheckField(p.id) }),
       ...(p.kind ? { kind: getProviderKind(p) } : {}),
       ...(p.accountId ? { accountId: p.accountId } : {}),
       ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
@@ -11254,6 +11262,19 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     invalidateModels(providerId)
     notifyChatRunnerCapabilityChanges(false)
     return { ok: true, mode, present: hasApiKey(providerId) }
+  })
+  // Checks the saved key against the provider's model listing; the result also reaches the config's `keyCheck`.
+  deps.mhandle('chat:key-check', async (_e, providerId: string) => {
+    if (typeof providerId !== 'string' || isManagedProvider(providerId) || !hasApiKey(providerId)) return { ok: false }
+    if (
+      !listAvailableChatProviders().some(
+        (provider) => provider.id === providerId && !isChatSubscriptionProviderKind(provider.kind)
+      )
+    )
+      return { ok: false }
+    await fetchModels(providerId, true)
+    const keyCheck = currentApiKeyCheck(providerId)
+    return keyCheck ? { ok: true, keyCheck } : { ok: false }
   })
   deps.mhandle('chat:key-clear', (_e, providerId: string) => {
     if (isManagedProvider(providerId)) return { ok: false }

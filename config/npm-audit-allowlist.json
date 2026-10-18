@@ -2,20 +2,6 @@
   "schema": 1,
   "exceptions": [
     {
-      "package": "http-cache-semantics",
-      "path": "node_modules/http-cache-semantics",
-      "advisories": ["GHSA-ch52-4w7c-c8xp"],
-      "reason": "Build-time only: electron-builder -> app-builder-lib -> @electron/get 3 -> got 11 -> cacheable-request 7. It is not shipped in the app, and got only reaches it when a request sets a cache store, which nothing in that chain does, so there is no shared cache to disclose. No patched release exists, and electron-builder moves to @electron/get 5 (which drops got) only in 27, still alpha.",
-      "expiresOn": "2026-11-03"
-    },
-    {
-      "package": "sprintf-js",
-      "path": "node_modules/sprintf-js",
-      "advisories": ["GHSA-hp3w-g68c-fv3c"],
-      "reason": "Build-time only: electron-builder -> app-builder-lib -> @electron/get 3 -> global-agent 3 (optional) -> roarr 2. It is not shipped in the app. @electron/get loads global-agent only when ELECTRON_GET_USE_PROXY is set, which no build or CI step does, and global-agent passes only literal format strings to roarr, so no attacker controls a precision specifier. No patched release exists, and electron-builder moves to @electron/get 5 (which drops global-agent) only in 27, still alpha.",
-      "expiresOn": "2026-11-05"
-    },
-    {
       "package": "braces",
       "path": "node_modules/braces",
       "advisories": ["GHSA-vfj7-8cjw-p6xm"],
@@ -27,13 +13,6 @@
       "path": "node_modules/node-forge",
       "advisories": ["GHSA-86w9-cpqp-85rv"],
       "reason": "Build-time only: expo 58 -> @expo/cli (and @expo/code-signing-certificates). The CLI uses it for iOS signing identities and to sign update manifests, neither of which this repository configures; it is not shipped in the app, and the advisory concerns verifying RSA signatures from others. node-forge 1.4.0 is the latest release, so no patched version exists.",
-      "expiresOn": "2026-11-11"
-    },
-    {
-      "package": "uuid",
-      "path": "node_modules/xcode/node_modules/uuid",
-      "advisories": ["GHSA-w5hq-g745-h8pq"],
-      "reason": "Build-time only: expo 58 -> @expo/config-plugins -> xcode 3 -> uuid 7, used when generating native iOS projects (prebuild). The advisory affects v3, v5 and v6 when a buffer is passed; xcode only calls uuid.v4() without one. xcode 3.0.1 is the latest release and requires uuid 7, so no patched combination exists.",
       "expiresOn": "2026-11-11"
     }
   ]

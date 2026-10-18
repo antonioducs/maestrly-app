@@ -5,10 +5,19 @@
  * TWO cache levels: memory (per provider) + DISK (app_settings), surviving app restart —
  * reopening displays the list IMMEDIATELY (no "loading models…") and revalidates in the BACKGROUND
  * (stale-while-revalidate). Invalidate on key changes (compare key FINGERPRINTS, never raw keys).
- * Errors (no /models, 404, network) → [] (UI falls back to manual model-ID entry).
+ * Errors (no /models, 404, network) → [] (UI falls back to manual model-ID entry). Every listing also records
+ * whether the provider accepted the key (see api-key-check.ts), so a refused key is not mistaken for a missing list.
  */
 import { net } from 'electron'
 import { createHash } from 'node:crypto'
+import type { ChatProviderKeyCheck } from '../../shared/chat'
+import {
+  clearApiKeyCheck,
+  getApiKeyCheck,
+  keyCheckFromFailure,
+  keyCheckFromResponse,
+  recordApiKeyCheck,
+} from './api-key-check'
 import { getProvider, getProviderKind } from './catalog'
 import { getApiKey } from './credentials'
 import { getAppSetting, setAppSetting } from '../store'
@@ -68,7 +77,14 @@ function persistToDisk(): void {
 }
 
 /** Fetches provider /models, updates memory+disk. Deduplicates per provider (inflight). */
-function refresh(providerId: string, baseURL: string, apiKey: string, fp: string, anthropic: boolean): Promise<string[]> {
+function refresh(
+  providerId: string,
+  baseURL: string,
+  apiKey: string,
+  fp: string,
+  anthropic: boolean,
+  providerName?: string
+): Promise<string[]> {
   const existing = inflight.get(providerId)
   if (existing) return existing
   const p = (async (): Promise<string[]> => {
@@ -81,10 +97,18 @@ function refresh(providerId: string, baseURL: string, apiKey: string, fp: string
         : { Authorization: `Bearer ${apiKey}` }
       : {}
     try {
-      const res = await net.fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(15_000),
-      })
+      let res: Response
+      try {
+        res = await net.fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(15_000),
+        })
+      } catch (error) {
+        recordApiKeyCheck(providerId, fp, keyCheckFromFailure(error, apiKey))
+        throw error
+      }
+      const body = res.ok ? '' : await res.text().catch(() => '')
+      recordApiKeyCheck(providerId, fp, keyCheckFromResponse(url, res.status, body, { providerName, apiKey }))
       if (!res.ok) throw new Error(`models HTTP ${res.status}`)
       const { models, windows } = extractCatalog(await res.json())
       cache.set(providerId, { fp, at: Date.now(), models, windows, status: 'available' })
@@ -181,11 +205,12 @@ export async function fetchModels(providerId: string, force = false): Promise<st
 
   if (!force && cached && cached.fp === fp) {
     if (Date.now() - cached.at < CACHE_TTL_MS) return cached.models // Fresh.
-    void refresh(providerId, provider.baseURL, apiKey, fp, anthropic).catch(() => {}) // Stale → background revalidate.
+    // Stale → background revalidate.
+    void refresh(providerId, provider.baseURL, apiKey, fp, anthropic, provider.name).catch(() => {})
     return cached.models
   }
   // No cache, changed key, or force → fetch and await.
-  return refresh(providerId, provider.baseURL, apiKey, fp, anthropic)
+  return refresh(providerId, provider.baseURL, apiKey, fp, anthropic, provider.name)
 }
 
 /**
@@ -202,10 +227,22 @@ export async function fetchModelWindow(providerId: string, modelId: string): Pro
   return w[modelId] ?? w[modelId.split('/').pop() ?? ''] ?? undefined
 }
 
+/** The last check of the provider's saved key; undefined when unchecked or when the key cannot be read. */
+export function currentApiKeyCheck(providerId: string): ChatProviderKeyCheck | undefined {
+  let apiKey: string | null
+  try {
+    apiKey = getApiKey(providerId)
+  } catch {
+    return undefined
+  }
+  return getApiKeyCheck(providerId, keyFp(apiKey ?? ''))
+}
+
 /** Invalidates model cache after key change/removal or provider edit — memory AND disk. */
 export function invalidateModels(providerId?: string): void {
   seedFromDisk()
   if (providerId) cache.delete(providerId)
   else cache.clear()
   persistToDisk()
+  clearApiKeyCheck(providerId)
 }

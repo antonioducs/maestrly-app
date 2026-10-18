@@ -1,4 +1,8 @@
-import { CHAT_SUBSCRIPTION_PROVIDER_KINDS, isChatSubscriptionProviderKind } from '../../../../shared/chat'
+import {
+  CHAT_SUBSCRIPTION_PROVIDER_KINDS,
+  isChatProviderKeyRejected,
+  isChatSubscriptionProviderKind,
+} from '../../../../shared/chat'
 import type {
   ChatConfig,
   ChatGptWebStatus,
@@ -217,8 +221,10 @@ export function chatGptWebSummary(snapshot: ChatGptWebAccountSnapshot | undefine
 }
 
 export function apiKeyAccountSummary(entry: ApiKeyAccountEntry): AccountSummary {
-  const connected = entry.provider.connected ?? entry.provider.apiKeyPresent
-  return { health: connected ? 'ok' : 'attention', connected, ...NO_USAGE }
+  const keyed = entry.provider.connected ?? entry.provider.apiKeyPresent
+  // A key the provider refused is saved but unusable: it needs a new key, so it does not count as connected.
+  if (keyed && isChatProviderKeyRejected(entry.provider)) return { health: 'error', connected: false, ...NO_USAGE }
+  return { health: keyed ? 'ok' : 'attention', connected: keyed, ...NO_USAGE }
 }
 
 export function accountSummary(entry: AccountEntry, snapshot: AccountSnapshot | undefined): AccountSummary {

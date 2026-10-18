@@ -1,11 +1,21 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, MoreHorizontal, Trash2 } from 'lucide-react'
+import { AlertCircle, Check, Loader2, MoreHorizontal, Trash2 } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
-import { effectiveProviderKind, isChatProviderConnected, isOfficialOpenAIProvider } from '../../../../shared/chat'
-import type { ChatProviderInfo, ChatProviderKind, ChatSubscriptionProviderKind } from '../../../../shared/chat'
+import {
+  effectiveProviderKind,
+  isChatProviderConnected,
+  isChatProviderKeyRejected,
+  isOfficialOpenAIProvider,
+} from '../../../../shared/chat'
+import type {
+  ChatProviderInfo,
+  ChatProviderKeyCheck,
+  ChatProviderKind,
+  ChatSubscriptionProviderKind,
+} from '../../../../shared/chat'
 import type { ApiKeyAccountEntry } from './account-entries'
 import {
   DetailBackButton,
@@ -13,6 +23,7 @@ import {
   DetailSection,
   iconButtonCls,
   inputCls,
+  linkButtonCls,
   primaryButtonCls,
   ProviderMark,
 } from './account-ui'
@@ -78,15 +89,48 @@ export function ApiKeyAccount({
   const api = useHostApi()
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
+  // The check's own answer, shown until the refreshed config carries it.
+  const [answered, setAnswered] = useState<ChatProviderKeyCheck | null>(null)
+  const autoChecked = useRef(new Set<string>())
   const officialOpenAI = isOfficialOpenAIProvider(provider.baseURL)
   const effectiveKind = effectiveProviderKind(provider.baseURL, provider.kind)
+  const keyCheck = provider.apiKeyPresent
+    ? [provider.keyCheck, answered].reduce<ChatProviderKeyCheck | undefined>(
+        (latest, candidate) => (candidate && (!latest || candidate.checkedAt > latest.checkedAt) ? candidate : latest),
+        undefined
+      )
+    : undefined
+  const rejected = isChatProviderKeyRejected({ keyCheck })
+
+  const checkKey = useCallback(async () => {
+    setChecking(true)
+    try {
+      const result = await api.chatCheckKey(provider.id)
+      setAnswered(result.ok && result.keyCheck ? result.keyCheck : null)
+    } catch {
+      // A host without the check keeps showing the key as saved.
+    } finally {
+      setChecking(false)
+    }
+    onChanged()
+  }, [api, provider.id, onChanged])
+
+  // A key saved elsewhere (the Add account dialog, an older version) is checked the first time its card opens.
+  useEffect(() => {
+    if (!provider.apiKeyPresent || provider.keyCheck || autoChecked.current.has(provider.id)) return
+    autoChecked.current.add(provider.id)
+    void checkKey()
+  }, [provider.id, provider.apiKeyPresent, provider.keyCheck, checkKey])
 
   const changeKind = async (k: ChatProviderKind) => {
     if (k === effectiveKind) return
     setBusy(true)
     await api.chatUpdateProvider(provider.id, { kind: k })
     setBusy(false)
+    setAnswered(null)
     onChanged()
+    if (provider.apiKeyPresent) void checkKey()
   }
 
   const saveKey = async () => {
@@ -95,7 +139,11 @@ export function ApiKeyAccount({
     await api.chatSetKey(provider.id, value.trim())
     setValue('')
     setBusy(false)
+    setAnswered(null)
+    autoChecked.current.add(provider.id)
     onChanged()
+    // Saving never waits for the provider: an unreachable one leaves the key saved and unverified.
+    void checkKey()
   }
   const remove = async () => {
     if (!confirm(t('settings.confirmRemoveProvider', { name: provider.name }))) return
@@ -112,12 +160,28 @@ export function ApiKeyAccount({
         mark={<ProviderMark kind={{ apiName: provider.name, baseURL: provider.baseURL }} size="lg" />}
         title={provider.name}
         status={
-          provider.apiKeyPresent ? (
-            <span className="inline-flex items-center gap-1 text-[12px] text-emerald-400">
-              <Check className="h-3 w-3" /> {t('settings.accountKeySaved')}
+          !provider.apiKeyPresent ? (
+            <span className="text-[12px] text-amber-300">{t('settings.accountNoApiKey')}</span>
+          ) : checking ? (
+            <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> {t('settings.accountKeyChecking')}
+            </span>
+          ) : rejected ? (
+            <span className="inline-flex items-center gap-1 text-[12px] text-rose-300" data-key-check="rejected">
+              <AlertCircle className="h-3 w-3" /> {t('settings.accountKeyRejected')}
+            </span>
+          ) : keyCheck?.outcome === 'unverified' ? (
+            <span className="text-[12px] text-muted-foreground" data-key-check="unverified">
+              {t('settings.accountKeyUnverified')}
             </span>
           ) : (
-            <span className="text-[12px] text-amber-300">{t('settings.accountNoApiKey')}</span>
+            <span
+              className="inline-flex items-center gap-1 text-[12px] text-emerald-400"
+              data-key-check={keyCheck?.outcome ?? 'unchecked'}
+            >
+              <Check className="h-3 w-3" />{' '}
+              {keyCheck?.outcome === 'accepted' ? t('settings.accountKeyVerified') : t('settings.accountKeySaved')}
+            </span>
           )
         }
         subtitle={t(kindLabelKey[effectiveKind])}
@@ -174,6 +238,28 @@ export function ApiKeyAccount({
             {t('settings.save')}
           </button>
         </div>
+        {!checking && keyCheck && keyCheck.outcome !== 'accepted' && (
+          <div
+            role={rejected ? 'alert' : 'status'}
+            data-key-check-notice={keyCheck.outcome}
+            className={cn(
+              'mt-2.5 rounded-md border px-2.5 py-2 text-[12px]',
+              rejected ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-border text-muted-foreground'
+            )}
+          >
+            <p>
+              {rejected
+                ? t('settings.accountKeyRejectedHint', { status: keyCheck.status ?? 401 })
+                : keyCheck.status
+                  ? t('settings.accountKeyUnverifiedHttpHint', { status: keyCheck.status })
+                  : t('settings.accountKeyUnverifiedHint')}
+            </p>
+            {keyCheck.detail && <p className="mt-1 break-words font-mono text-[11px] opacity-90">{keyCheck.detail}</p>}
+            <button type="button" className={cn(linkButtonCls, 'mt-1.5')} onClick={() => void checkKey()}>
+              {t('settings.accountKeyCheckAgain')}
+            </button>
+          </div>
+        )}
       </DetailSection>
 
       <DetailSection title={t('settings.accountConnectionHeading')}>
@@ -186,7 +272,7 @@ export function ApiKeyAccount({
         )}
       </DetailSection>
 
-      {isChatProviderConnected(provider) && (
+      {isChatProviderConnected(provider) && !rejected && (
         <ProviderModelFilter providerId={provider.id} onFilterChanged={onModelFilterChanged} />
       )}
     </div>

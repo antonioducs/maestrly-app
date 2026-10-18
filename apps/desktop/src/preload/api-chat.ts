@@ -19,6 +19,7 @@ import type {
   ChatModelRef,
   ChatPermissionEvent,
   ChatRuntimeState,
+  ChatProviderKeyCheck,
   ChatProviderKind,
   ChatStreamEvent,
   ChatFileHit,
@@ -878,6 +879,9 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:key-set', providerId, key),
 
     chatClearKey: (providerId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:key-clear', providerId),
+    /** Checks the saved key against the provider; `ok: false` when there is nothing to check. */
+    chatCheckKey: (providerId: string): Promise<{ ok: boolean; keyCheck?: ChatProviderKeyCheck }> =>
+      ipcRenderer.invoke('chat:key-check', providerId),
 
     chatSetImageInterpreter: (
       value: ChatImageInterpreter | null

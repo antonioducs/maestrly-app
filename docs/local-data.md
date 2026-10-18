@@ -113,7 +113,11 @@ chosen in a chat outside a workspace. New chats start from them when no default
 model is set; neither holds a credential. Each window keeps the last model lists
 of every host in its local storage under `chat.modelPicker.rows.v1:<host>` and
 shows them while the accounts answer; it is a rebuildable cache of model ids and
-account names.
+account names. `chat.apiKeyChecks` in `app_settings` keeps, per API-key account,
+the last answer of its model listing: whether the provider accepted the key,
+refused it (HTTP 401 or 403), or could not tell, with the HTTP status and the
+provider's message redacted. It is tied to a fingerprint of the key, never the
+key itself, and is forgotten when the key, endpoint or format changes.
 
 ## MCP configuration
 
@@ -251,9 +255,12 @@ Moving a bot to another environment carries everything in the table above but it
 membership, its gateway token (the gateway installs it again) and its cache folder
 under `~/.cache/maestrly-bots/`, which the new environment makes again. Its
 conversation keeps its id, its messages, its attachments and generated images,
-and the files of its working folder; memory extraction resumes where it was, and
-compaction and model sessions are rebuilt from the transcript. The Chromium
-caches of its profile (`Cache`, `Code Cache`, `GPUCache` and the like) and links
+and its whole working folder, `.git` and empty folders included; memory
+extraction resumes where it was, and compaction and model sessions are rebuilt
+from the transcript.
+Symbolic links in the working folder move when they lead inside it, an absolute
+one rewritten to lead into the folder where the bot arrives; other links, and the
+Chromium caches of its profile (`Cache`, `Code Cache`, `GPUCache` and the like),
 do not move. While the package passes, each environment keeps it in
 `bot-moves/` in the profile and deletes it once the step ends. Once the bot runs
 in its new environment, the former one deletes its copy as deleting a bot
