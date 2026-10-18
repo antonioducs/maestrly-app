@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- Conversations that use an OpenAI API key work again, with the **OpenAI**
+  preset or a custom OpenAI-compatible provider at `https://api.openai.com/v1`.
+  Every first request failed with HTTP 400 "Invalid 'prompt_cache_key': string
+  too long", because the prompt cache key had more than the 64 characters
+  OpenAI accepts. Subagents had the same problem.
+
 ## [0.21.1] - 2026-10-18
 
 ### Fixed

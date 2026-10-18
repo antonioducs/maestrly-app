@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { JSONObject } from '@ai-sdk/provider'
 import type { ChatProviderKind } from '../../../../shared/chat'
 import type { HarnessCapabilityClaims } from '../../../../shared/harness'
@@ -198,6 +199,33 @@ export function bypassLegacyAutoCompaction(
   return openAIHarnessEnabled && isOpenAIResponsesHarness(resolution) && resolution.capabilities.nativeCompaction
 }
 
+/** OpenAI rejects a `prompt_cache_key` longer than this with HTTP 400. */
+export const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH = 64
+
+const PROMPT_CACHE_KEY_PREFIX = { conversation: 'maestrly:', subagent: 'maestrly:sub:' } as const
+
+/**
+ * Deterministic cache-routing key for a stable prompt prefix and tool set. A base64url SHA-256
+ * (43 characters) keeps every prefix within OpenAI's limit; a hex digest alone would use 64.
+ */
+export function openAIPromptCacheKey(
+  scope: keyof typeof PROMPT_CACHE_KEY_PREFIX,
+  stablePrefix: string,
+  toolNames: readonly string[]
+): string {
+  const digest = createHash('sha256')
+    .update(stablePrefix)
+    .update('\0')
+    .update([...toolNames].sort().join('\0'))
+    .digest('base64url')
+  return `${PROMPT_CACHE_KEY_PREFIX[scope]}${digest}`
+}
+
+/** A key OpenAI accepts; callers omit any other key instead of failing the request. */
+export function isValidOpenAIPromptCacheKey(key: string | undefined): key is string {
+  return !!key && key.length <= OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH
+}
+
 export interface OpenAIHarnessRequestPolicy {
   promptCacheKey: string
   reasoningEnabled: boolean
@@ -217,7 +245,7 @@ export function openAIHarnessProviderOptions(
     include: ['reasoning.encrypted_content'],
     strictJsonSchema: true,
     parallelToolCalls: resolution.capabilities.parallelTools,
-    promptCacheKey: policy.promptCacheKey,
+    ...(isValidOpenAIPromptCacheKey(policy.promptCacheKey) ? { promptCacheKey: policy.promptCacheKey } : {}),
     // Never silently discard the prefix: the app context guard/compactor controls this boundary.
     truncation: 'disabled',
   }

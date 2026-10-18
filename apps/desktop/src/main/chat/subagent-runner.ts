@@ -1,5 +1,5 @@
 import type { PermissionScope } from '../../shared/conversation-scope'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { streamText, type ModelMessage, type ToolSet } from 'ai'
 import type { SharedV3ProviderOptions } from '@ai-sdk/provider'
@@ -9,7 +9,7 @@ import type { ChatAgent } from './agents'
 import { getProvider } from './catalog'
 import { chatDiag } from './diag-log'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
-import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
+import { isOpenAIHarnessActive, openAIHarnessProviderOptions, openAIPromptCacheKey } from './harness/adapters/responses'
 import { captureHarnessFlags } from './harness/flags'
 import { harnessSubagentPrompt } from './harness/host-contracts'
 import { buildHarnessPrompt } from './harness/prompt-builder'
@@ -546,11 +546,7 @@ export async function runSubagent(args: {
         },
         executionStore
       )
-      const promptCacheKey = `maestrly:sub:${createHash('sha256')
-        .update(promptStablePrefix)
-        .update('\0')
-        .update(Object.keys(tools).sort().join('\0'))
-        .digest('hex')}`
+      const promptCacheKey = openAIPromptCacheKey('subagent', promptStablePrefix, Object.keys(tools))
       subProviderOptions = {
         ...subProviderOptions,
         openai: {

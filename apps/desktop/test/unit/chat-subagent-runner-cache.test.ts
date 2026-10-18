@@ -325,6 +325,69 @@ describe('BYOK subagent prompt cache contract', () => {
     expect(execute).toHaveBeenCalledOnce()
   })
 
+  it('sends an OpenAI prompt cache key within 64 characters', async () => {
+    mocks.openAIHarness = true
+    mocks.resolveChatModel.mockReturnValue({
+      model: { specificationVersion: 'v4', provider: 'openai', modelId: 'gpt-6-luna' },
+      transport: 'openai',
+      harnessProfile: 'openai-responses-v1',
+      promptProfile: 'maestrly-openai-generic-v1',
+      capabilities: {
+        responseItems: true,
+        encryptedReasoning: false,
+        messagePhase: false,
+        strictTools: true,
+        parallelTools: true,
+        promptCacheKey: true,
+        reasoningContext: false,
+        nativeCompaction: false,
+        toolSearch: false,
+        nativeShell: false,
+        nativeApplyPatch: false,
+        websocket: false,
+      },
+      providerFingerprint: 'subagent-cache-key',
+    })
+    streamTextMock.mockReturnValueOnce(
+      fullStream([
+        { type: 'text-delta', text: 'done' },
+        { type: 'finish-step', usage: { inputTokens: 1, outputTokens: 1 } },
+        { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } },
+      ]) as never
+    )
+
+    await runSubagent({
+      cwd: '/repo',
+      projectId: 'project',
+      conversationId: 'conversation-cache-key',
+      parentMessageId: 'assistant',
+      messageOwnership: { kind: 'standalone' },
+      profile: {
+        version: 1,
+        agentName: 'explore',
+        effective: {
+          providerId: 'openai',
+          modelId: 'gpt-6-luna',
+          configuredEffort: 'off',
+          sentEffort: null,
+          source: 'parent',
+          candidateIndex: 0,
+        },
+        attempts: [],
+      },
+      definition: { name: 'explore', description: 'read only', prompt: 'Investigate.', source: 'built-in' },
+      broker: {} as never,
+      signal: new AbortController().signal,
+      agentName: 'explore',
+      task: 'Find the cause',
+      readOnly: true,
+    })
+
+    const key = streamTextMock.mock.calls[0]?.[0].providerOptions?.openai?.promptCacheKey
+    expect(key).toMatch(/^maestrly:sub:[A-Za-z0-9_-]{43}$/)
+    expect(String(key).length).toBeLessThanOrEqual(64)
+  })
+
   it('exposes and executes generate_image in a BYOK worker only with the parent ToolSet', async () => {
     const worker = {
       name: 'general-purpose',
