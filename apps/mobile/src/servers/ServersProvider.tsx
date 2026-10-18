@@ -19,6 +19,8 @@ import { createDemoSource, DEMO_SERVER } from '../demo/demo-source'
 import { createFleetController, type FleetController } from '../fleet/controller'
 import { createHttpSource, gatewayClientFor, nativeFetch } from '../fleet/http-source'
 import { FleetProvider } from '../fleet/react'
+import { FLEET_DICTATION_FEATURE, type FleetDictationStatus } from '@maestrly/bot-fleet-protocol'
+import { dictationChoiceKey, isDictationChoice, type DictationChoice } from '../dictation/preference'
 import { GatewayError, type GatewayClient } from '../gateway/client'
 import { useI18n } from '../i18n'
 import { asyncKeyValue, secureSecrets } from './adapters'
@@ -56,6 +58,14 @@ type Servers = {
   setCurrent(current: Current | null): void
   /** A gateway client for a paired server, such as to register for notifications; null for the demo server. */
   clientFor(server: PairedServer): Promise<GatewayClient | null>
+  /**
+   * The active server's dictation: the engine this phone chose for it (null until chosen), and the server's key as
+   * it last said (null when it cannot transcribe or has not answered yet).
+   */
+  dictation: { choice: DictationChoice | null; status: FleetDictationStatus | null }
+  setDictationChoice(choice: DictationChoice): void
+  /** Asks the active server for its dictation key again, after it changed. */
+  refreshDictation(): Promise<void>
 }
 
 const ServersContext = createContext<Servers | null>(null)
@@ -277,6 +287,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       }
       await registry.remove(id)
       await kv.delete(`outbox.${id}`).catch(() => {})
+      await kv.delete(dictationChoiceKey(id)).catch(() => {})
       await forgetServerChats(kv, id)
       await reload()
     },
@@ -290,6 +301,46 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       return token ? gatewayClientFor(server, token) : null
     },
     [registry]
+  )
+
+  const [dictationChoice, setDictationChoiceState] = useState<DictationChoice | null>(null)
+  const [dictationStatus, setDictationStatus] = useState<FleetDictationStatus | null>(null)
+  const dictationCapable = !!active && active.id !== DEMO_SERVER.id && active.features.includes(FLEET_DICTATION_FEATURE)
+  useEffect(() => {
+    setDictationChoiceState(null)
+    if (!active) return
+    let alive = true
+    kv.get(dictationChoiceKey(active.id))
+      .then((value) => {
+        if (alive) setDictationChoiceState(isDictationChoice(value) ? value : null)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [active?.id, kv])
+  const refreshDictation = useCallback(async () => {
+    if (!controller || !dictationCapable) return setDictationStatus(null)
+    try {
+      setDictationStatus(await controller.source.call('dictationGet'))
+    } catch {
+      // Unreachable for now: the last state it said stands.
+    }
+  }, [controller, dictationCapable])
+  useEffect(() => {
+    setDictationStatus(null)
+    void refreshDictation()
+  }, [refreshDictation])
+  const setDictationChoice = useCallback(
+    (choice: DictationChoice) => {
+      setDictationChoiceState(choice)
+      if (active) void kv.set(dictationChoiceKey(active.id), choice).catch(() => {})
+    },
+    [active, kv]
+  )
+  const dictation = useMemo(
+    () => ({ choice: dictationChoice, status: dictationStatus }),
+    [dictationChoice, dictationStatus]
   )
 
   const value = useMemo<Servers>(
@@ -309,6 +360,9 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       current,
       setCurrent,
       clientFor,
+      dictation,
+      setDictationChoice,
+      refreshDictation,
     }),
     [
       ready,
@@ -325,6 +379,9 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       forget,
       current,
       clientFor,
+      dictation,
+      setDictationChoice,
+      refreshDictation,
     ]
   )
   return (

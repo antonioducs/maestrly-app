@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native'
+import { router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { appendDictation } from '../../dictation/session'
 import { useDictation } from '../../dictation/useDictation'
@@ -138,7 +139,10 @@ export function ComposerShell({
   }, [editingId, editingText, draftKey, showText])
   const dictation = useDictation((heard) => setText(appendDictation(latestText.current, heard)))
   const listening = dictation.state.phase !== 'idle'
+  const transcribing = dictation.state.phase === 'transcribing'
   const dictationIssue = dictation.state.phase === 'idle' ? dictation.state.issue : null
+  // A failed transcription kept its recording, which Try again sends to the server again.
+  const dictationRetry = dictation.state.phase === 'idle' && dictation.state.retry === true
   const add = (picked: OutboxAttachment[]) => {
     const problem = validateAttachments(attachments, picked, filesEnabled)
     setIssue(problem)
@@ -229,6 +233,27 @@ export function ComposerShell({
               </AppText>
             </Pressable>
           ) : null}
+          {dictationIssue === 'keyRejected' || dictationIssue === 'notConfigured' ? (
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={12}
+              onPress={() => {
+                dictation.dismiss()
+                router.push('/settings')
+              }}
+            >
+              <AppText style={{ fontSize: 13, color: palette.brass, fontFamily: fonts.bodySemi }}>
+                {t('dictation.openDictationSettings')}
+              </AppText>
+            </Pressable>
+          ) : null}
+          {dictationRetry ? (
+            <Pressable accessibilityRole="button" hitSlop={12} onPress={dictation.retry}>
+              <AppText style={{ fontSize: 13, color: palette.brass, fontFamily: fonts.bodySemi }}>
+                {t('dictation.retry')}
+              </AppText>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
       {editingId ? (
@@ -265,7 +290,9 @@ export function ComposerShell({
         {listening ? (
           <Listening
             starting={dictation.state.phase === 'starting'}
+            transcribing={transcribing}
             text={dictation.state.phase === 'listening' ? dictation.state.text : ''}
+            level={dictation.state.phase === 'listening' ? dictation.state.level : undefined}
           />
         ) : null}
         {clipboard.available && focused && !listening ? (
@@ -372,6 +399,8 @@ export function ComposerShell({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t('dictation.stop')}
+              aria-disabled={transcribing}
+              disabled={transcribing}
               onPress={dictation.stop}
               hitSlop={4}
               style={({ pressed }) => ({
@@ -382,6 +411,7 @@ export function ComposerShell({
                 alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: palette.ink,
+                opacity: transcribing ? 0.4 : 1,
                 transform: [{ scale: pressed ? 0.94 : 1 }],
               })}
             >
