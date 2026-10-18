@@ -8,6 +8,8 @@ const messageListSource = source('src/renderer/components/chat/ChatMessageList.t
 const stylesSource = source('src/renderer/styles.css')
 const toolCallCardSource = source('src/renderer/components/chat/ToolCallCard.tsx')
 const subagentCardSource = source('src/renderer/components/chat/SubagentCard.tsx')
+const botConversationSource = source('src/renderer/components/fleet/BotConversation.tsx')
+const interactionCardSource = source('src/renderer/components/fleet/InteractionCard.tsx')
 
 describe('chat horizontal scrolling contract without a global scrollbar', () => {
   it('restricts main conversation scrolling to vertical', () => {
@@ -41,6 +43,20 @@ describe('chat horizontal scrolling contract without a global scrollbar', () => 
     expect(stylesSource).toMatch(/\.chat-msgs \.dark-glass-prose pre,[\s\S]*?overflow-x: auto/)
     expect(stylesSource).toMatch(/\.chat-msgs \.dark-glass-prose table[\s\S]*?overflow-x: auto/)
     expect(stylesSource).toMatch(/\.chat-msgs \.dark-glass-prose pre,[\s\S]*?overflow-wrap: normal/)
+  })
+
+  it('wraps long text in a bot transcript without sideways scrolling', () => {
+    expect(botConversationSource).toContain('min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden')
+    expect(botConversationSource).toContain('bot-transcript mx-auto flex min-w-0 max-w-3xl')
+    expect(botConversationSource).toContain('<p className="whitespace-pre-wrap [overflow-wrap:anywhere]">')
+    expect(interactionCardSource).toContain(
+      '<p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">{item.reason}</p>'
+    )
+    expect(stylesSource).toMatch(/\.bot-transcript \.dark-glass-prose \{[^}]*overflow-wrap: anywhere/s)
+    expect(stylesSource).toMatch(
+      /\.bot-transcript \.dark-glass-prose :not\(pre\) > code \{[^}]*overflow-wrap: anywhere/s
+    )
+    expect(stylesSource).toMatch(/\.bot-transcript \.dark-glass-prose pre,[\s\S]*?overflow-x: auto/)
   })
 
   it('prevents tool and subagent cards from widening conversations', () => {

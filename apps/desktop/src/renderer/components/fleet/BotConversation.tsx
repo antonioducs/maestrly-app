@@ -288,7 +288,7 @@ function TranscriptRow({
       )
     return (
       <div className="group/message ml-auto max-w-[85%] rounded-xl border border-border-strong bg-surface-elevated px-4 py-3 text-sm">
-        <p className="whitespace-pre-wrap">
+        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
           <SearchText text={item.text} query={searchQuery} current={currentSearchMatch} />
         </p>
         {item.memories.length > 0 && (
@@ -834,9 +834,9 @@ export function BotConversation({
             atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
             setAtBottom(atBottomRef.current)
           }}
-          className="min-h-0 flex-1 overflow-y-auto"
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
         >
-          <div ref={contentRef} className="bot-transcript mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
+          <div ref={contentRef} className="bot-transcript mx-auto flex min-w-0 max-w-3xl flex-col gap-4 px-6 py-6">
             {transcript?.error && (
               <div role="alert" className="text-center text-xs text-destructive">
                 {transcript.error}{' '}

@@ -676,6 +676,27 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   word-break: normal;
 }
 
+/* A bot's transcript wraps long words and links like the agent chat, so its column never scrolls sideways. */
+.bot-transcript .dark-glass-prose {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.bot-transcript .dark-glass-prose :not(pre) > code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.bot-transcript .dark-glass-prose pre,
+.bot-transcript .dark-glass-prose table {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 /*
  * What a generated interface shows around its frame (its problems, its source) is styled with utilities, which sit in
  * a cascade layer and so lose to the unlayered prose rules above, whatever their specificity. Inside an interface

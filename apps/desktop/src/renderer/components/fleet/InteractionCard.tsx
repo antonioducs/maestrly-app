@@ -105,7 +105,7 @@ export function InteractionCard({
               name: fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId,
             })}
           </div>
-          <p className="mt-1 text-muted-foreground">{item.reason}</p>
+          <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">{item.reason}</p>
           {item.state === 'pending' ? (
             <div className="mt-3 flex gap-2">
               <button
