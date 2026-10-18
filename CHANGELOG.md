@@ -21,6 +21,11 @@ User-visible changes by version. Downloads are on
   no explanation. Saving or replacing a key checks it right away. When the
   provider cannot be reached or has no model list, the key is saved and shown
   as not verified.
+- Conversations that use an OpenAI API key work again, with the **OpenAI**
+  preset or a custom OpenAI-compatible provider at `https://api.openai.com/v1`.
+  Every first request failed with HTTP 400 "Invalid 'prompt_cache_key': string
+  too long", because the prompt cache key had more than the 64 characters
+  OpenAI accepts. Subagents had the same problem.
 
 ## [0.21.1] - 2026-10-18
 

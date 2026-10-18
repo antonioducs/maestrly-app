@@ -20,6 +20,10 @@ import {
   withoutOpenAIRawResponsesPrefix,
 } from '../../src/main/chat/openai/raw-input'
 import { setApiKey } from '../../src/main/chat/credentials'
+import {
+  OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH,
+  openAIPromptCacheKey,
+} from '../../src/main/chat/harness/adapters/responses'
 import { closeDb, freshDb } from '../helpers/db'
 
 beforeEach(freshDb)
@@ -256,6 +260,37 @@ describe('OpenAI standalone compaction', () => {
     expect(result.requestId).toBe('req_123')
     expect(result.canonicalWindow.response.output).toEqual([retained, checkpoint])
     expect(transport.providerFingerprint).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('never sends a prompt cache key longer than OpenAI accepts', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    vi.spyOn(net, 'fetch').mockImplementation(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      return new Response(JSON.stringify({ object: 'response.compaction', output: [retained, checkpoint] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }) as never
+    })
+    const transport = {
+      providerId: 'openai',
+      baseURL: 'https://api.openai.com/v1',
+      apiKey: 'test-key',
+      providerFingerprint: 'a'.repeat(64),
+    }
+    const input = [{ role: 'user', content: 'compacte' }]
+    const key = openAIPromptCacheKey('conversation', 'stable prefix', ['read'])
+
+    await compactOpenAIResponses({ transport, modelId: 'gpt-6-luna', input, promptCacheKey: key })
+    await compactOpenAIResponses({
+      transport,
+      modelId: 'gpt-6-luna',
+      input,
+      promptCacheKey: `maestrly:${'a'.repeat(64)}`,
+    })
+
+    expect(bodies[0]?.prompt_cache_key).toBe(key)
+    expect(key.length).toBeLessThanOrEqual(OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH)
+    expect(bodies[1]).not.toHaveProperty('prompt_cache_key')
   })
 
   it('allows endpoint and network fallbacks without masking authentication or rate limits', () => {

@@ -1178,6 +1178,41 @@ describe('runtime tool-image capability learning', () => {
     expect(serialized).not.toContain('"type":"file"')
   })
 
+  it('sends an OpenAI prompt cache key within 64 characters', async () => {
+    mocks.isHarnessActive.mockReturnValue(true)
+    mocks.resolveChatModel.mockReturnValue({
+      model: { specificationVersion: 'v4', provider: 'openai', modelId: 'gpt-6-luna' },
+      transport: 'openai',
+      harnessProfile: 'openai-responses-v1',
+      promptProfile: 'maestrly-openai-generic-v1',
+      capabilities: {
+        responseItems: true,
+        encryptedReasoning: false,
+        messagePhase: false,
+        strictTools: true,
+        parallelTools: true,
+        promptCacheKey: true,
+        reasoningContext: false,
+        nativeCompaction: false,
+        toolSearch: false,
+        nativeShell: false,
+        nativeApplyPatch: false,
+        websocket: false,
+      },
+      providerFingerprint: 'a'.repeat(64),
+    })
+    mocks.streamText.mockReturnValue(fullStream([]) as never)
+
+    await runTurn('c')
+
+    const request = mocks.streamText.mock.calls[0]?.[0] as {
+      providerOptions?: { openai?: { promptCacheKey?: unknown } }
+    }
+    const key = request.providerOptions?.openai?.promptCacheKey
+    expect(key).toMatch(/^maestrly:[A-Za-z0-9_-]{43}$/)
+    expect(String(key).length).toBeLessThanOrEqual(64)
+  })
+
   it('learns unsupported-image flags without inventing descriptions', async () => {
     mocks.streamText.mockReturnValueOnce(
       fullStream([
