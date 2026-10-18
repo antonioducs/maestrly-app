@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   FLEET_ROUTINE_RUN_KEPT_FOLDER,
+  FLEET_PEER_THREAD_KEPT_FOLDER,
   FLEET_ROUTINE_RUN_LIMITS,
   type FleetImageRef,
   type FleetRoutineRunKept,
@@ -13,7 +14,7 @@ import { listChatMessagesAfter } from '../../chat/chat-store'
 import { readGeneratedImage } from '../../chat/generated-images'
 import type { FleetImageStore } from './images'
 import { imageMediaType } from './images'
-import type { RunRecord } from './routine-runs'
+import type { LaneRecord, RunRecord } from './routine-runs'
 import { projectMessages, transcriptInputs } from './transcript'
 
 type ToolRefs = (part: Extract<MessagePart, { type: 'tool' }>) => FleetImageRef[]
@@ -58,21 +59,40 @@ function safeName(value: string | null | undefined, fallback: string, mediaType:
   return extension && !path.extname(name) ? name + extension : name
 }
 
-/** The folder of one run among the kept ones: by its routine, then the time it ran (UTC). */
-export function runKeptFolder(record: Pick<RunRecord, 'routineTitle' | 'createdAt'>): string {
-  const slug =
-    record.routineTitle
+/** A folder name of a title: plain letters and digits joined by dashes. */
+function slugOf(title: string, fallback: string): string {
+  return (
+    title
       .normalize('NFD')
       .replace(/\p{M}/gu, '')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 48)
-      .replace(/-+$/g, '') || 'routine'
-  const at = new Date(record.createdAt)
+      .replace(/-+$/g, '') || fallback
+  )
+}
+
+/** The folder of one run among the kept ones: by its routine, then the time it ran (UTC). */
+export function runKeptFolder(record: Pick<RunRecord, 'routineTitle' | 'createdAt'>): string {
+  return path.posix.join(
+    FLEET_ROUTINE_RUN_KEPT_FOLDER,
+    slugOf(record.routineTitle, 'routine'),
+    stampOf(record.createdAt)
+  )
+}
+
+/** The folder of a side conversation among the kept ones: a run's by its routine, a thread's by the other bot. */
+export function laneKeptFolder(record: LaneRecord): string {
+  return record.kind === 'routine'
+    ? runKeptFolder(record)
+    : path.posix.join(FLEET_PEER_THREAD_KEPT_FOLDER, slugOf(record.peerName, 'bot'), stampOf(record.createdAt))
+}
+
+function stampOf(createdAt: string): string {
+  const at = new Date(createdAt)
   const pad = (value: number) => String(value).padStart(2, '0')
-  const stamp = `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}-${pad(at.getUTCHours())}${pad(at.getUTCMinutes())}`
-  return path.posix.join(FLEET_ROUTINE_RUN_KEPT_FOLDER, slug, stamp)
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}-${pad(at.getUTCHours())}${pad(at.getUTCMinutes())}`
 }
 
 type Kept = FleetRoutineRunKept['files'][number]
@@ -89,7 +109,7 @@ interface Copy {
  * ever overwritten: a name taken gets a number.
  */
 export async function keepRunFiles(options: {
-  record: RunRecord
+  record: LaneRecord
   /** The bot's conversation folder, or null when it is gone: nothing is copied then. */
   folder: string | null
   images: FleetImageStore
@@ -162,7 +182,7 @@ export async function keepRunFiles(options: {
         byteSize: file.byteSize,
       })
   }
-  const relative = runKeptFolder(record)
+  const relative = laneKeptFolder(record)
   const kept: Kept[] = []
   if (copies.length && options.folder) {
     const root = await fs.realpath(options.folder)

@@ -5,6 +5,8 @@ import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   FLEET_BOT_MOVE_FEATURE,
+  FLEET_CANCEL_CONVERSATION_QUERY,
+  FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_DEVICES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -41,6 +43,9 @@ import {
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_RUN_LIMITS,
+  FLEET_PEER_CONVERSATIONS_FEATURE,
+  fleetPeerThreadSettingsSchema,
+  fleetPeerThreadPatchRequestSchema,
   fleetAddApiKeyAccountRequestSchema,
   fleetRoutineRunSettingsSchema,
 } from '@maestrly/bot-fleet-protocol'
@@ -57,6 +62,8 @@ import {
   FLEET_EDIT_UNSUPPORTED,
   FLEET_RUN_CONFLICT,
   FLEET_RUNS_UNSUPPORTED,
+  FLEET_PEER_THREAD_CONFLICT,
+  FLEET_PEER_THREADS_UNSUPPORTED,
   FLEET_SCOPES_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
 import {
@@ -121,6 +128,8 @@ const moveInput = z
   .strict()
 const createRoutine = fleetCreateRoutineRequestSchema.omit({ idempotencyKey: true })
 const action = z.enum(['start', 'stop', 'restart', 'archive', 'pause', 'resume', 'cancel'])
+/** The conversation whose turn a cancel stops: the bot's own, or a side conversation's id. */
+const cancelConversation = z.union([z.literal('primary'), z.string().regex(/^[A-Za-z0-9-]{1,80}$/)])
 const actionRoute = {
   start: 'botStart',
   stop: 'botStop',
@@ -185,6 +194,16 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   )
   reg.mhandle('fleet:botAction', (_event, botId: unknown, rawAction: unknown) =>
     fleet.call(actionRoute[action.parse(rawAction)], { params: { id: id.parse(botId) } })
+  )
+  // One conversation's turn (`parallel-turns`): `primary` for the bot's own, or a side conversation's id. A gateway
+  // that predates them stops the bot's only turn.
+  reg.mhandle('fleet:cancelTurn', (_event, botId: unknown, conversation: unknown) =>
+    fleet.call('botCancel', {
+      params: { id: id.parse(botId) },
+      ...(fleet.hasFeature(FLEET_PARALLEL_TURNS_FEATURE)
+        ? { query: { [FLEET_CANCEL_CONVERSATION_QUERY]: cancelConversation.parse(conversation) } }
+        : {}),
+    })
   )
   // The gateway answers at once; the move's progress arrives in the bot's `move`, through the events already followed.
   reg.mhandle('fleet:moveBot', (_event, botId: unknown, input: unknown) => {
@@ -413,6 +432,68 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     return fleet.call('botRunSettings', {
       params: { id: id.parse(botId) },
       body: fleetRoutineRunSettingsSchema.parse(settings),
+    })
+  })
+  // A bot's conversations with other bots, each in a conversation of its own (`peer-conversations`).
+  const requireThreads = () => {
+    if (!fleet.hasFeature(FLEET_PEER_CONVERSATIONS_FEATURE)) throw new Error(FLEET_PEER_THREADS_UNSUPPORTED)
+  }
+  /** A thread's conversation that is working or gone answers 409: the renderer says so. */
+  const threadConflict = (error: unknown): never => {
+    if (error instanceof FleetClientError && error.status === 409) throw new Error(FLEET_PEER_THREAD_CONFLICT)
+    throw error
+  }
+  const threadParams = (botId: unknown, threadId: unknown) => ({
+    id: id.parse(botId),
+    threadId: opaqueId.parse(threadId),
+  })
+  reg.handle('fleet:listPeerThreads', (_event, botId: unknown) => {
+    requireThreads()
+    return fleet.call('botPeerThreads', { params: { id: id.parse(botId) } })
+  })
+  reg.handle(
+    'fleet:getPeerThreadTranscript',
+    (_event, botId: unknown, threadId: unknown, before: unknown, limit: unknown) => {
+      requireThreads()
+      return fleet.call('botPeerThreadTranscript', {
+        params: threadParams(botId, threadId),
+        query: {
+          before: z.string().max(256).nullable().optional().parse(before),
+          limit: optionalLimit.parse(limit),
+          [FLEET_REASONING_QUERY]: 1,
+        },
+      })
+    }
+  )
+  reg.mhandle('fleet:patchPeerThread', (_event, botId: unknown, threadId: unknown, patch: unknown) => {
+    requireThreads()
+    return fleet.call('botPeerThreadPatch', {
+      params: threadParams(botId, threadId),
+      body: fleetPeerThreadPatchRequestSchema.parse(patch),
+    })
+  })
+  reg.mhandle('fleet:deletePeerThreadConversation', (_event, botId: unknown, threadId: unknown) => {
+    requireThreads()
+    return fleet
+      .call('botPeerThreadConversationDelete', { params: threadParams(botId, threadId) })
+      .catch(threadConflict)
+  })
+  reg.mhandle(
+    'fleet:sendPeerThreadMessage',
+    (_event, botId: unknown, threadId: unknown, text: unknown, attachments: unknown = []) => {
+      requireThreads()
+      const params = threadParams(botId, threadId)
+      const input = ownerMessage(text, attachments)
+      return requireFiles(params.id, input).then(() =>
+        fleet.call('botPeerThreadMessageSend', { params, body: input }).catch(threadConflict)
+      )
+    }
+  )
+  reg.mhandle('fleet:setPeerThreadSettings', (_event, botId: unknown, settings: unknown) => {
+    requireThreads()
+    return fleet.call('botPeerThreadSettings', {
+      params: { id: id.parse(botId) },
+      body: fleetPeerThreadSettingsSchema.parse(settings),
     })
   })
   // A missing file rejects with FLEET_FILE_NOT_FOUND, a canceled one with FLEET_DOWNLOAD_CANCELED.

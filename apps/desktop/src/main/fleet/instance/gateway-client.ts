@@ -67,8 +67,15 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
       throw new Error(envelope.success ? envelope.data.message : 'Owner memory request failed.')
     if (routineRequest && ['FORBIDDEN', 'CONFLICT', 'NOT_FOUND', 'INVALID_REQUEST'].includes(code ?? ''))
       throw new Error((envelope.success ? envelope.data.message : 'Routine request failed.') + routineHint)
+    // A thread between bots that is not this one's, or a report it may not make, says why; anything else is the ACL.
+    const threadRequest =
+      routeKey === 'peerThreadReport' || typeof (body as { thread?: unknown } | undefined)?.thread === 'string'
     if (peerRequest && response.status === 403)
-      throw new Error('Peer contact is not allowed by the bot ACL. Ask your owner to update permissions.')
+      throw new Error(
+        threadRequest && envelope.success && envelope.data.message !== 'Peer is not allowed'
+          ? envelope.data.message
+          : 'Peer contact is not allowed by the bot ACL. Ask your owner to update permissions.'
+      )
     // What a workspaces host's owner reads in its settings: the server's own reason (a bot gone, too many links), or,
     // from a server that predates bots' access to environments (no such route, or a host token for artifacts only),
     // what to do.
@@ -82,7 +89,9 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
       throw new Error('The gateway refused this desktop call as invalid. Check desktopId and the arguments.')
     if (peerRequest && response.status === 429)
       throw new Error(
-        'Peer messaging is rate-limited. Stop messaging peers and summarize the situation for your owner.'
+        envelope.success && envelope.data.message.includes('paused until your owner')
+          ? `${envelope.data.message} Stop messaging this bot here and wait for your owner.`
+          : 'Peer messaging is rate-limited. Stop messaging peers and summarize the situation for your owner.'
       )
     if (code === 'BOT_NOT_RUNNING' || code === 'INSTANCE_UNAVAILABLE')
       throw new Error('Target bot is offline or unavailable. Check later or ask your owner.')

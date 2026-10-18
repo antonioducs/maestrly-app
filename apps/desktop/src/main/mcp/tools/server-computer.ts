@@ -29,6 +29,7 @@ export function registerServerModeTools(
       }
       const display = computers.computer(conversationId)
       if (!display) throw new Error("This conversation's computer stopped. Try again.")
+      if (!display.browserArea) throw new Error('A bot display always has a tile.')
       const notes: string[] = []
       if (opened.started)
         notes.push(

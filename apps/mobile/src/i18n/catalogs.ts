@@ -181,6 +181,7 @@ export const en = {
   'system.turn_cancelled': 'The turn was stopped',
   'system.compaction': 'Conversation compacted',
   'system.peerOut': 'Sent to {name}',
+  'system.peerThread': 'Opened a conversation with {name}, apart from this one. The desktop app shows it.',
 
   'cue.eyebrow': 'Waiting on you',
   'cue.offline': 'You can answer when the connection is back.',
@@ -920,6 +921,7 @@ export const ptBR: Record<keyof typeof en, string> = {
   'system.turn_cancelled': 'O turno foi interrompido',
   'system.compaction': 'Conversa compactada',
   'system.peerOut': 'Enviado para {name}',
+  'system.peerThread': 'Abriu uma conversa com {name}, separada desta. O app desktop mostra essa conversa.',
 
   'cue.eyebrow': 'Esperando por você',
   'cue.offline': 'Você pode responder quando a conexão voltar.',

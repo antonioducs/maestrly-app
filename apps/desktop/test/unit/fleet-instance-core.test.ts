@@ -59,8 +59,7 @@ describe('fleet conversation admission', () => {
         ],
         stored: null,
         compactionProblem: 'missing',
-        turning: false,
-        cancelling: false,
+        turns: new Map(),
         ready: true,
         usage: null,
       })
@@ -101,15 +100,64 @@ describe('fleet conversation admission', () => {
         holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
         host: {},
         events: { lastSeq: 0 },
-        accountOptions: [],
+        accountOptions: [
+          {
+            id: 'p::m',
+            providerId: 'p',
+            providerLabel: 'P',
+            modelId: 'm',
+            modelLabel: 'M',
+            efforts: [],
+            fastMode: false,
+          },
+        ],
+        compactionProblem: null,
         stored: null,
-        turning: true,
-        turnStartedAt: '2026-09-25T10:00:00.000Z',
-        turnInputId: 'queued-input',
+        turns: new Map([
+          [
+            null,
+            {
+              key: null,
+              inputId: 'queued-input',
+              startedAt: '2026-09-25T10:00:00.000Z',
+              cancelling: false,
+              tool: null,
+            },
+          ],
+          [
+            'run-1',
+            {
+              key: 'run-1',
+              inputId: 'run-input',
+              startedAt: '2026-09-25T09:59:00.000Z',
+              cancelling: true,
+              tool: { tool: 'browser_navigate', target: 'example.com' },
+            },
+          ],
+        ]),
       })
-      expect((await runtime.status()).turn.inputId).toBe('queued-input')
-      Object.assign(runtime, { turning: false, turnStartedAt: null, turnInputId: null })
+      const status = await runtime.status()
+      // Older readers see the bot's own conversation's turn; newer ones every turn, its own first.
+      expect(status.turn).toEqual({
+        state: 'running',
+        startedAt: '2026-09-25T10:00:00.000Z',
+        inputId: 'queued-input',
+        runId: null,
+      })
+      expect(status.turns).toEqual([
+        { state: 'running', startedAt: '2026-09-25T10:00:00.000Z', inputId: 'queued-input', runId: null, tool: null },
+        {
+          state: 'cancelling',
+          startedAt: '2026-09-25T09:59:00.000Z',
+          inputId: 'run-input',
+          runId: 'run-1',
+          tool: { tool: 'browser_navigate', target: 'example.com' },
+        },
+      ])
+      expect(status.activity).toEqual({ kind: 'tool', tool: 'browser_navigate', target: 'example.com' })
+      Object.assign(runtime, { turns: new Map() })
       expect((await runtime.status()).turn.inputId).toBeNull()
+      expect((await runtime.status()).turns).toEqual([])
     } finally {
       closeDb()
     }
@@ -310,6 +358,8 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/bot/chat')).toContain('Track updates.')
     expect(botIdentityPrompt('/bot/chat')).toContain('Plan review is unavailable')
     expect(botIdentityPrompt('/bot/chat')).toContain('present it directly in the conversation')
+    // Its conversations work at once, in the same folder.
+    expect(botIdentityPrompt('/bot/chat')).toContain('may be working at the same time in the same folder')
     expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 24')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
@@ -1018,15 +1068,14 @@ describe('additional tool states', () => {
 })
 
 describe('dispatcher conditions and release prompt', () => {
-  it('requires readiness, account, idle turn and no hold', () => {
-    expect(canDispatch(true, true, false, 'none')).toBe(true)
-    expect(canDispatch(false, true, false, 'none')).toBe(false)
-    expect(canDispatch(true, false, false, 'none')).toBe(false)
-    expect(canDispatch(true, true, true, 'none')).toBe(false)
-    expect(canDispatch(true, true, false, 'held')).toBe(false)
-    expect(canDispatch(true, true, false, 'holding')).toBe(false)
-    expect(canDispatch(true, true, false, 'none', false)).toBe(false)
-    expect(canDispatch(true, true, false, 'none', true)).toBe(true)
+  it('requires readiness, account and no hold; turns of other conversations do not stop one', () => {
+    expect(canDispatch(true, true, 'none')).toBe(true)
+    expect(canDispatch(false, true, 'none')).toBe(false)
+    expect(canDispatch(true, false, 'none')).toBe(false)
+    expect(canDispatch(true, true, 'held')).toBe(false)
+    expect(canDispatch(true, true, 'holding')).toBe(false)
+    expect(canDispatch(true, true, 'none', false)).toBe(false)
+    expect(canDispatch(true, true, 'none', true)).toBe(true)
   })
   it('renders exact continuation text', () => {
     expect(continuationText('takeover', 75_000, 'Fixed login')).toBe(
@@ -1054,6 +1103,8 @@ describe('hold gate', () => {
       holdManager: manager,
       help: { pending: () => [], resolveAll },
       runs: noRunConversations(),
+      interrupted: new Set(),
+      releaseKeys: new Map(),
       input,
       system,
       changed: vi.fn(),

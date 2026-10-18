@@ -6,6 +6,7 @@ import {
   FLEET_BOT_ENV,
   FLEET_BOT_MOVE_FEATURE,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+  FLEET_PEER_THREAD_SETTINGS_DEFAULT,
   type FleetBotMove,
   type FleetBotMoveRequest,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -34,6 +35,9 @@ import {
   type FleetInstanceEvent,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
+  type FleetInstanceTurn,
+  type FleetBotTurn,
+  fleetInstanceTurns,
   type FleetLifecycle,
   type FleetPatchBotRequest,
   type FleetResources,
@@ -399,12 +403,19 @@ export class Lifecycle {
     if (event.type === 'status') this.updateStatus(id, event.status)
     else if (event.type === 'transcript.upsert')
       this.onEvent(
+        // A side conversation's item is a thread's (`peer-conversations`) or a routine run's.
         event.runId
-          ? { type: 'routine_run.transcript.upsert', at: now(), botId: id, runId: event.runId, item: event.item }
+          ? this.store.peerThreadSide(event.runId, id)
+            ? { type: 'peer_thread.transcript.upsert', at: now(), botId: id, threadId: event.runId, item: event.item }
+            : { type: 'routine_run.transcript.upsert', at: now(), botId: id, runId: event.runId, item: event.item }
           : { type: 'transcript.upsert', at: now(), botId: id, item: event.item }
       )
     else if (event.type === 'reset' && event.runId)
-      this.onEvent({ type: 'routine_run.transcript.reset', at: now(), botId: id, runId: event.runId })
+      this.onEvent(
+        this.store.peerThreadSide(event.runId, id)
+          ? { type: 'peer_thread.transcript.reset', at: now(), botId: id, threadId: event.runId }
+          : { type: 'routine_run.transcript.reset', at: now(), botId: id, runId: event.runId }
+      )
     else if (event.type === 'turn.finished') {
       const run =
         this.onTurnFinished?.(id, {
@@ -558,16 +569,18 @@ export class Lifecycle {
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
     bot.resources = resourcesView(resources)
-    // The routine run whose own conversation its turn works in.
-    const runId = status && status.turn.state !== 'idle' ? status.turn.runId : null
-    const run = runId ? this.store.routineRunById(runId) : null
+    // Every turn it runs now, one per conversation (`parallel-turns`), and for older readers the routine run one of
+    // them works on, in the run's own conversation.
+    bot.turns = status ? this.botTurns(bot.id, fleetInstanceTurns(status)) : null
+    const routineTurn = bot.turns?.find((turn) => turn.kind === 'routine') ?? null
+    const run = routineTurn?.id ? this.store.routineRunById(routineTurn.id) : null
     bot.runningRun =
-      run && run.botId === bot.id
+      run && routineTurn
         ? {
             id: run.id,
             routineId: run.routineId,
             title: run.routineTitle ?? '',
-            startedAt: status?.turn.startedAt ?? null,
+            startedAt: routineTurn.startedAt,
           }
         : null
     if (bot.lifecycle === 'stopped' || bot.lifecycle === 'archived' || bot.lifecycle === 'failed')
@@ -578,7 +591,9 @@ export class Lifecycle {
     else if (status.pending.length) bot.status = 'waiting'
     else if (!status.accounts.connected || bot.compactionState?.configured === false) bot.status = 'setup'
     else if (
+      // `turn` is the bot's own conversation's turn, else the oldest: any turn of an instance of any age.
       status.turn.state !== 'idle' ||
+      fleetInstanceTurns(status).length ||
       status.queue.length ||
       bot.compactionState?.progress?.status === 'running' ||
       bot.compactionState?.progress?.status === 'retrying'
@@ -586,6 +601,24 @@ export class Lifecycle {
       bot.status = 'working'
     else bot.status = 'idle'
     return bot
+  }
+  /**
+   * A bot's turns as devices see them: its own conversation's, and each side conversation's with the routine whose
+   * run it is. A turn in a conversation the gateway does not know (a run it never recorded) is left out.
+   */
+  private botTurns(botId: string, turns: FleetInstanceTurn[]): FleetBotTurn[] {
+    return turns.flatMap((turn): FleetBotTurn[] => {
+      const common = {
+        startedAt: turn.startedAt,
+        tool: turn.tool?.tool ?? null,
+        cancelling: turn.state === 'cancelling',
+      }
+      if (turn.runId === null) return [{ kind: 'primary', id: null, title: '', ...common }]
+      const run = this.store.routineRunById(turn.runId)
+      if (run && run.botId === botId) return [{ kind: 'routine', id: run.id, title: run.routineTitle ?? '', ...common }]
+      const thread = this.store.peerThreadSide(turn.runId, botId) ? this.store.peerThread(turn.runId) : null
+      return thread ? [{ kind: 'peer', id: thread.id, title: thread.title, ...common }] : []
+    })
   }
   /** An active environment as devices see it, or null. */
   environment(id: string): FleetEnvironment | null {
@@ -917,6 +950,8 @@ export class Lifecycle {
       move: null,
       runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
       runningRun: null,
+      turns: null,
+      peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       createdAt: at,
       updatedAt: at,
     }

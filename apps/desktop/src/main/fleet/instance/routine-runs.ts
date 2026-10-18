@@ -25,6 +25,47 @@ const fileSchema = z.object({ version: z.literal(1), runs: z.array(recordSchema)
 /** A routine run's own conversation, as the bot keeps it. */
 export type RunRecord = z.infer<typeof recordSchema>
 
+const threadRecordSchema = z.object({
+  threadId: runIdSchema,
+  peerBotId: z.string().min(1).max(64),
+  peerName: z.string().max(200),
+  title: z.string().max(200),
+  /** `primary`: the bot opened it from its own conversation; `side`: from another side conversation; `peer`: the other bot did. */
+  origin: z.enum(['primary', 'side', 'peer']),
+  conversationId: z.uuid(),
+  createdAt: z.iso.datetime(),
+  /**
+   * What this bot sent to open it from another conversation, and the owner's request there, for the thread's first
+   * answer; null once given, or for a thread the other bot opened.
+   */
+  opening: z.object({ sent: z.string().max(4000), ask: z.string().max(2000).nullable() }).nullable(),
+})
+const threadsFileSchema = z.object({ version: z.literal(1), threads: z.array(threadRecordSchema) })
+
+/** A conversation between this bot and another (`peer-conversations`), as the bot keeps its side of it. */
+export type ThreadRecord = z.infer<typeof threadRecordSchema>
+
+/**
+ * A side conversation of a bot: a routine run's, or a thread's with another bot. Both are keyed by `runId`: the run's
+ * id, or the thread's.
+ */
+export type LaneRecord = (RunRecord & { kind: 'routine' }) | (ThreadRecord & { kind: 'thread'; runId: string })
+
+/** The id a side conversation is known by: its run's, or its thread's. */
+export function laneIdOf(record: LaneRecord): string {
+  return record.runId
+}
+const routineLane = (record: RunRecord): LaneRecord => ({ ...record, kind: 'routine' })
+const threadLane = (record: ThreadRecord): LaneRecord => ({ ...record, kind: 'thread', runId: record.threadId })
+function threadOf(record: Extract<LaneRecord, { kind: 'thread' }>): ThreadRecord {
+  const { kind: _kind, runId: _runId, ...thread } = record
+  return thread
+}
+function runOf(record: Extract<LaneRecord, { kind: 'routine' }>): RunRecord {
+  const { kind: _kind, ...run } = record
+  return run
+}
+
 /** Lanes of runs kept in memory at once; a lane in use is never put away. */
 const LOADED_MAX = 16
 
@@ -36,7 +77,7 @@ export class RunLane {
   /** Undoes what the bot registered for this conversation to run turns in it; null while nothing is. */
   unregister: (() => void) | null = null
   constructor(
-    readonly record: RunRecord,
+    readonly record: LaneRecord,
     options: RunConversationsOptions
   ) {
     const publish = (item: FleetTranscriptItem) => options.publish(record.runId, item)
@@ -48,7 +89,7 @@ export class RunLane {
       extras: this.extras,
       images: options.images,
       publish,
-      turnInputId: options.turnInputId,
+      turnInputId: () => options.turnInputId(record.runId),
     })
   }
   get runId(): string {
@@ -62,12 +103,15 @@ export class RunLane {
 interface RunConversationsOptions {
   /** The list of the bot's run conversations. */
   file: string
+  /** The list of the bot's thread conversations (`peer-conversations`); none without it. */
+  threadsFile?: string
   /** Where each run keeps its transcript extras, in a folder named by its run id. */
   folder: string
   queue: InstanceInputQueue
   images: FleetImageStore
   publish: (runId: string, item: FleetTranscriptItem) => void
-  turnInputId: () => string | null
+  /** The input the turn running in a run's conversation answers, if one runs there. */
+  turnInputId: (runId: string) => string | null
   changed: () => void
 }
 
@@ -77,31 +121,36 @@ interface RunConversationsOptions {
  * the least recently used first, beyond `LOADED_MAX`.
  */
 export class BotRunConversations {
-  private records: RunRecord[] = []
-  private readonly byConversationId = new Map<string, RunRecord>()
+  private records: LaneRecord[] = []
+  private readonly byConversationId = new Map<string, LaneRecord>()
   private readonly lanes = new Map<string, RunLane>()
   private readonly loading = new Map<string, Promise<RunLane>>()
   private writeTail: Promise<void> = Promise.resolve()
   constructor(private readonly options: RunConversationsOptions) {}
 
   async load(): Promise<void> {
-    let records: RunRecord[] = []
-    try {
-      records = fileSchema.parse(JSON.parse(await fs.readFile(this.options.file, 'utf8'))).runs
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
+    const records = await readLaneFiles(this.options.file, this.options.threadsFile)
     this.records = records
     this.byConversationId.clear()
     for (const record of records) this.byConversationId.set(record.conversationId, record)
   }
-  list(): readonly RunRecord[] {
+  list(): readonly LaneRecord[] {
     return this.records
   }
-  get(runId: string): RunRecord | undefined {
+  get(runId: string): LaneRecord | undefined {
     return this.records.find((record) => record.runId === runId)
   }
-  byConversation(conversationId: string | undefined): RunRecord | undefined {
+  /** A routine run's conversation, if the id names one. */
+  routine(runId: string): Extract<LaneRecord, { kind: 'routine' }> | undefined {
+    const record = this.get(runId)
+    return record?.kind === 'routine' ? record : undefined
+  }
+  /** A thread's conversation with another bot, if the id names one. */
+  thread(threadId: string): Extract<LaneRecord, { kind: 'thread' }> | undefined {
+    const record = this.get(threadId)
+    return record?.kind === 'thread' ? record : undefined
+  }
+  byConversation(conversationId: string | undefined): LaneRecord | undefined {
     return conversationId ? this.byConversationId.get(conversationId) : undefined
   }
   /** Resolves once every write started so far has finished. */
@@ -110,11 +159,27 @@ export class BotRunConversations {
     await Promise.all([...this.lanes.values()].map((lane) => lane.extras.idle()))
   }
   async add(record: RunRecord): Promise<void> {
-    const valid = recordSchema.parse(record)
+    const valid = routineLane(recordSchema.parse(record))
     if (this.get(valid.runId)) throw new Error('This run already has a conversation.')
     this.records = [...this.records, valid]
     this.byConversationId.set(valid.conversationId, valid)
-    await this.write()
+    await this.write('routine')
+  }
+  async addThread(record: ThreadRecord): Promise<void> {
+    if (!this.options.threadsFile) throw new Error('This bot keeps no conversations with other bots.')
+    const valid = threadLane(threadRecordSchema.parse(record))
+    if (this.get(valid.runId)) throw new Error('This thread already has a conversation.')
+    this.records = [...this.records, valid]
+    this.byConversationId.set(valid.conversationId, valid)
+    await this.write('thread')
+  }
+  /** Changes a thread's record, such as once its opening was given to its first answer. */
+  async updateThread(record: ThreadRecord): Promise<void> {
+    const valid = threadLane(threadRecordSchema.parse(record))
+    if (!this.thread(valid.runId)) throw new Error('This thread has no conversation.')
+    this.records = this.records.map((entry) => (entry.runId === valid.runId ? valid : entry))
+    this.byConversationId.set(valid.conversationId, valid)
+    await this.write('thread')
   }
   /** Forgets a run's conversation: its lane, its record and its transcript extras. */
   async remove(runId: string): Promise<void> {
@@ -129,7 +194,7 @@ export class BotRunConversations {
     }
     this.records = this.records.filter((entry) => entry.runId !== runId)
     this.byConversationId.delete(record.conversationId)
-    await this.write()
+    await this.write(record.kind)
     await fs.rm(path.join(this.options.folder, runIdSchema.parse(runId)), { recursive: true, force: true })
   }
   /** The run's loaded lane, if it is loaded. */
@@ -191,9 +256,18 @@ export class BotRunConversations {
     }
     this.lanes.clear()
   }
-  private write(): Promise<void> {
-    const contents = JSON.stringify({ version: 1, runs: this.records })
-    const file = this.options.file
+  /** Writes the list of one kind of side conversation: the runs' file, or the threads'. */
+  private write(kind: LaneRecord['kind']): Promise<void> {
+    const contents = JSON.stringify(
+      kind === 'routine'
+        ? { version: 1, runs: this.records.flatMap((record) => (record.kind === 'routine' ? [runOf(record)] : [])) }
+        : {
+            version: 1,
+            threads: this.records.flatMap((record) => (record.kind === 'thread' ? [threadOf(record)] : [])),
+          }
+    )
+    const file = kind === 'routine' ? this.options.file : this.options.threadsFile
+    if (!file) return Promise.resolve()
     const write = this.writeTail.then(async () => {
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
       const temporary = file + '.' + randomUUID() + '.tmp'
@@ -209,17 +283,27 @@ export class BotRunConversations {
   }
 }
 
-/** The conversations of a bot's routine runs, read from its list without loading the bot: what a purge deletes. */
-export async function readRunConversationIds(file: string): Promise<string[]> {
-  return (await readRunRecords(file)).map((record) => record.conversationId)
+/** Reads a bot's side conversations from their lists: its routine runs', and its threads' with other bots. */
+async function readLaneFiles(runsFile: string, threadsFile?: string): Promise<LaneRecord[]> {
+  const read = async <T>(file: string, parse: (value: unknown) => T[]): Promise<T[]> => {
+    try {
+      return parse(JSON.parse(await fs.readFile(file, 'utf8')))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+  }
+  const runs = await read(runsFile, (value) => fileSchema.parse(value).runs)
+  const threads = threadsFile ? await read(threadsFile, (value) => threadsFileSchema.parse(value).threads) : []
+  return [...runs.map(routineLane), ...threads.map(threadLane)]
 }
 
-/** The routine runs of a bot that have conversations, read from its list without loading the bot: what a move carries. */
-export async function readRunRecords(file: string): Promise<RunRecord[]> {
-  try {
-    return fileSchema.parse(JSON.parse(await fs.readFile(file, 'utf8'))).runs
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw error
-  }
+/** The conversations of a bot's side conversations, read without loading the bot: what a purge deletes. */
+export async function readRunConversationIds(files: { runs: string; threads: string }): Promise<string[]> {
+  return (await readRunRecords(files)).map((record) => record.conversationId)
+}
+
+/** A bot's side conversations (routine runs and threads), read without loading the bot: what a move carries. */
+export function readRunRecords(files: { runs: string; threads: string }): Promise<LaneRecord[]> {
+  return readLaneFiles(files.runs, files.threads)
 }

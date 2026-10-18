@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import os from 'node:os'
 import {
   FLEET_CONVERSATION_COMPUTER_LIMITS,
@@ -10,7 +9,7 @@ import type { ComputerOpenResult } from '../../../shared/conversation-computer'
 import { setConversationShellEnv } from '../../chat/conversation-env'
 import { type ScreenArea, setConversationScreen, setPresentedBrowserSize } from '../../conversation-screen'
 import type { BotDesktopHooks } from '../../fleet/instance/desktop/bot-desktop'
-import type { BotDisplay, DisplayManager, ScreenLease } from '../../fleet/instance/displays'
+import { type BotDisplay, type DisplayManager, type ScreenLease, computerOwnerKey } from '../../fleet/instance/displays'
 import type { BotDesktopHandle, BotDesktopTarget } from '../../fleet/instance/environment'
 
 /**
@@ -37,13 +36,7 @@ export class ComputerUnavailableError extends Error {
   }
 }
 
-/**
- * The display manager's key for a conversation's computer: a bot id's shape (32 lowercase characters) derived from the
- * conversation id, so the paths of its bus and desktop socket stay short and name no conversation.
- */
-export function computerOwnerKey(conversationId: string): string {
-  return 'c' + createHash('sha256').update(conversationId).digest('hex').slice(0, 31)
-}
+export { computerOwnerKey }
 
 export interface ConversationComputersDeps {
   displays: Pick<DisplayManager, 'startDesktop' | 'stopBot' | 'acquireScreen' | 'ownProcessIds'>

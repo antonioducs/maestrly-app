@@ -3,6 +3,7 @@ import {
   type FleetActivityEntry,
   type FleetEnvironment,
   type FleetGatewayEvent,
+  type FleetPeerThread,
   type FleetRoutineRun,
   type FleetRoutineRunPage,
   type FleetTranscriptItem,
@@ -24,6 +25,13 @@ export type RunsState = {
   loading: boolean
   error: string | null
 }
+/** A bot's conversations with other bots (`peer-conversations`), the most recently active first. */
+export type ThreadsState = {
+  threads: FleetPeerThread[]
+  loaded: boolean
+  loading: boolean
+  error: string | null
+}
 export type FleetState = {
   connection: FleetConnectionView
   snapshot: FleetSnapshot
@@ -31,8 +39,30 @@ export type FleetState = {
   activity: FleetActivityEntry[]
   transcripts: Record<string, TranscriptState>
   runs: Record<string, RunsState>
-  /** The transcripts of runs' own conversations, by `runTranscriptKey`. */
+  /** The transcripts of runs' and threads' own conversations, by `runTranscriptKey` of the run's or thread's id. */
   runTranscripts: Record<string, TranscriptState>
+  threads: Record<string, ThreadsState>
+}
+export const emptyThreads: ThreadsState = { threads: [], loaded: false, loading: false, error: null }
+/** Threads the most recently active first, then by id. */
+export function sortThreads(threads: FleetPeerThread[]): FleetPeerThread[] {
+  return [...threads].sort((a, b) =>
+    a.lastActivityAt === b.lastActivityAt ? (a.id < b.id ? 1 : -1) : a.lastActivityAt < b.lastActivityAt ? 1 : -1
+  )
+}
+function upsertThread(state: FleetState, botId: string, thread: FleetPeerThread): FleetState {
+  const previous = state.threads[botId]
+  if (!previous?.loaded) return state
+  return {
+    ...state,
+    threads: {
+      ...state.threads,
+      [botId]: {
+        ...previous,
+        threads: sortThreads([...previous.threads.filter((item) => item.id !== thread.id), thread]),
+      },
+    },
+  }
 }
 export const emptyRuns: RunsState = { runs: [], before: null, loaded: false, loading: false, error: null }
 /** The key of a run's transcript in the state: its bot and its run. */
@@ -80,6 +110,7 @@ export const initialFleetState: FleetState = {
   transcripts: {},
   runs: {},
   runTranscripts: {},
+  threads: {},
 }
 
 export function mergeTranscriptItems(
@@ -108,6 +139,7 @@ function withoutEnvironment(state: FleetState, environmentId: string): FleetStat
     transcripts: ofBots(state.transcripts, bots),
     runs: ofBots(state.runs, bots),
     runTranscripts: ofBots(state.runTranscripts, bots, botOfRunKey),
+    threads: ofBots(state.threads, bots),
   }
 }
 
@@ -130,6 +162,10 @@ export type FleetAction =
   | { type: 'runTranscript.loading'; botId: string; runId: string }
   | { type: 'runTranscript.page'; botId: string; runId: string; page: FleetTranscriptPage; older: boolean }
   | { type: 'runTranscript.error'; botId: string; runId: string; error: string }
+  | { type: 'threads.loading'; botId: string }
+  | { type: 'threads.list'; botId: string; threads: FleetPeerThread[] }
+  | { type: 'threads.error'; botId: string; error: string }
+  | { type: 'threads.upsert'; botId: string; thread: FleetPeerThread }
 
 /** A transcript with a page it loaded: an older page joins it, the newest one replaces what it covers. */
 function transcriptWithPage(
@@ -220,6 +256,29 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
     }
     case 'runs.upsert':
       return upsertRun(state, action.botId, action.run)
+    case 'threads.loading':
+    case 'threads.error':
+      return {
+        ...state,
+        threads: {
+          ...state.threads,
+          [action.botId]: {
+            ...(state.threads[action.botId] ?? emptyThreads),
+            loading: action.type === 'threads.loading',
+            error: action.type === 'threads.error' ? action.error : null,
+          },
+        },
+      }
+    case 'threads.list':
+      return {
+        ...state,
+        threads: {
+          ...state.threads,
+          [action.botId]: { threads: sortThreads(action.threads), loaded: true, loading: false, error: null },
+        },
+      }
+    case 'threads.upsert':
+      return upsertThread(state, action.botId, action.thread)
     case 'runTranscript.loading':
     case 'runTranscript.error': {
       const key = runTranscriptKey(action.botId, action.runId)
@@ -272,6 +331,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             transcripts: ofBots(state.transcripts, removed),
             runs: ofBots(state.runs, removed),
             runTranscripts: ofBots(state.runTranscripts, removed, botOfRunKey),
+            threads: ofBots(state.threads, removed),
           }
         }
         case 'host.updated':
@@ -333,8 +393,31 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             runTranscripts,
           }
         }
-        case 'routine_run.transcript.upsert': {
-          const key = runTranscriptKey(event.botId, event.runId)
+        case 'peer_thread.updated':
+          return upsertThread(state, event.botId, event.thread)
+        case 'peer_thread.removed': {
+          const previous = state.threads[event.botId]
+          const { [runTranscriptKey(event.botId, event.threadId)]: _gone, ...runTranscripts } = state.runTranscripts
+          return {
+            ...state,
+            threads: previous
+              ? {
+                  ...state.threads,
+                  [event.botId]: {
+                    ...previous,
+                    threads: previous.threads.filter((item) => item.id !== event.threadId),
+                  },
+                }
+              : state.threads,
+            runTranscripts,
+          }
+        }
+        case 'routine_run.transcript.upsert':
+        case 'peer_thread.transcript.upsert': {
+          const key = runTranscriptKey(
+            event.botId,
+            event.type === 'peer_thread.transcript.upsert' ? event.threadId : event.runId
+          )
           const previous = state.runTranscripts[key]
           if (!previous?.loaded) return state
           return {
@@ -346,10 +429,13 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
           }
         }
         case 'routine_run.transcript.reset':
-          return {
-            ...state,
-            runTranscripts: { ...state.runTranscripts, [runTranscriptKey(event.botId, event.runId)]: emptyTranscript },
-          }
+        case 'peer_thread.transcript.reset': {
+          const key = runTranscriptKey(
+            event.botId,
+            event.type === 'peer_thread.transcript.reset' ? event.threadId : event.runId
+          )
+          return { ...state, runTranscripts: { ...state.runTranscripts, [key]: emptyTranscript } }
+        }
         case 'activity':
           return {
             ...state,

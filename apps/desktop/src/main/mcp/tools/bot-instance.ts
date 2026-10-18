@@ -1,5 +1,6 @@
 import {
   FLEET_ROUTINE_LIMITS,
+  FLEET_PEER_THREAD_LIMITS,
   FLEET_OWNER_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_ROUTINE_PROMPT_MAX,
@@ -18,7 +19,9 @@ import { getConversation } from '../../store'
 import { gatewayRequest, keyForToolCall, type GatewayConfig } from '../../fleet/instance/gateway-client'
 import { OwnerMemoryClient } from '../../fleet/instance/owner-memory'
 import { isBotMode } from '../../fleet/instance/config'
-import { canUseComputer, registerComputerTools } from './computer'
+import { canUseComputer, registerComputerTools, type ComputerToolOptions } from './computer'
+import { conversationScreen } from '../../conversation-screen'
+import type { BotRuntime } from '../../fleet/instance/runtime'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
 import { registerBotFileTools } from './bot-files'
@@ -152,25 +155,94 @@ export function registerBotInstanceTools(
     'bot_peers_send',
     {
       description:
-        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. Use only when coordination is useful; do not keep retrying rate limits.',
-      inputSchema: { to: fleetBotIdSchema, text: fleetPeerTextSchema },
+        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. A message to a bot you are not already talking with here opens a conversation of its own with it, apart from this one, named by topic; its replies come there, and messages you send from it to the same bot stay in it. Use only when coordination is useful; do not keep retrying rate limits.',
+      inputSchema: {
+        to: fleetBotIdSchema,
+        text: fleetPeerTextSchema,
+        topic: z
+          .string()
+          .trim()
+          .min(1)
+          .max(FLEET_PEER_THREAD_LIMITS.topicMax)
+          .optional()
+          .describe('A short subject for the conversation this message opens.'),
+      },
       annotations: { readOnlyHint: false },
     },
-    async ({ to, text }, extra) => {
+    async ({ to, text, topic }, extra) => {
       try {
+        const runtime = bot()
+        // In a conversation with this bot, the message stays in it; anywhere else it opens one.
+        const lane = runtime?.runs.byConversation(ctx.convId)
+        const continuing = lane?.kind === 'thread' && lane.peerBotId === to ? lane.runId : undefined
+        const origin = ctx.convId === runtime?.primaryConversationId ? 'primary' : 'side'
         const result = await gatewayRequest(gatewayFor(), 'peerMessageSend', {
           to,
           text,
           idempotencyKey: keyForToolCall(extra),
+          ...(continuing ? { thread: continuing } : { origin, ...(topic ? { topic } : {}) }),
         })
+        const name = peerNames().get(to) ?? to
+        if (result.thread && !continuing && runtime) {
+          const asked = runtime.currentInput(ctx.convId)
+          await runtime.recordThread(
+            {
+              threadId: result.thread,
+              peerBotId: to,
+              peerName: name,
+              title: (topic ?? text.replace(/\s+/g, ' ').trim().slice(0, 60)) || 'Conversation',
+              origin,
+              opening: {
+                sent: text.slice(0, 4000),
+                ask: asked?.source === 'owner' ? asked.text.slice(0, 2000) || null : null,
+              },
+            },
+            {
+              kind: 'peer_out',
+              id: 'thread-open:' + result.thread,
+              at: new Date().toISOString(),
+              to: { botId: to, name },
+              text,
+              delivered: result.delivered,
+              thread: { id: result.thread },
+            }
+          )
+        }
         return ok(
           JSON.stringify({
             ...result,
             to,
-            name: peerNames().get(to) ?? to,
+            name,
             status: result.delivered ? 'delivered' : 'queued',
+            ...(result.thread && !continuing
+              ? { note: 'This opened a conversation of its own with this bot. Its replies come there, not here.' }
+              : {}),
           })
         )
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error))
+      }
+    }
+  )
+  ctx.server.registerTool(
+    'bot_peers_report',
+    {
+      description:
+        'In a conversation with another bot that you opened from your conversation with your owner: bring back a short answer to what your owner asked there. It shows in that conversation, where your owner reads it, and you see it there on your next turn. Report once you have what they need.',
+      inputSchema: { text: z.string().trim().min(1).max(FLEET_PEER_THREAD_LIMITS.reportMax) },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ text }) => {
+      const runtime = bot()
+      const lane = runtime?.runs.byConversation(ctx.convId)
+      if (!runtime || lane?.kind !== 'thread' || lane.origin !== 'primary')
+        return err(
+          'bot_peers_report works only in a conversation with another bot that you opened from your conversation with your owner.'
+        )
+      try {
+        await gatewayRequest(gatewayFor(), 'peerThreadReport', { text }, { threadId: lane.runId })
+        await runtime.reportThread(lane.runId, text)
+        return ok(JSON.stringify({ reported: true }))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
       }
@@ -310,7 +382,7 @@ export function registerBotInstanceTools(
         const entry = await ownerMemory().save({
           content,
           ...(replaces_id ? { replacesId: replaces_id } : {}),
-          origin: bot()?.currentInput()?.source ?? 'owner',
+          origin: bot()?.currentInput(ctx.convId)?.source ?? 'owner',
           idempotencyKey: keyForToolCall(extra),
         })
         return ok(JSON.stringify({ saved: true, id: entry.id, content: entry.content }))
@@ -355,7 +427,7 @@ export function registerBotInstanceTools(
       annotations: { readOnlyHint: false },
     },
     async ({ summary, pending, notes_for_next_run, nothing_new }) => {
-      const routine = bot()?.currentInput()?.routine
+      const routine = bot()?.currentInput(ctx.convId)?.routine
       if (!routine?.runId) return err('routine_report works only while running a scheduled routine.')
       try {
         await gatewayRequest(
@@ -439,6 +511,43 @@ export function registerBotInstanceTools(
   )
 }
 
+/** What the computer tools need of the bot whose conversation calls them. */
+export type ComputerBot = Pick<BotRuntime, 'primaryConversationId' | 'laneComputer'>
+
+/**
+ * The screens of a bot's computer tools: its own conversation uses the bot's desktop, and each of its side
+ * conversations a desktop of its own, started on its first use, so conversations working at once never share a mouse.
+ */
+export function botComputerOptions(
+  resolve: (conversationId: string) => ComputerBot | null = (conversationId) =>
+    botRuntimeForConversation(conversationId)
+): ComputerToolOptions {
+  return {
+    prepare: async (conversationId) => {
+      const bot = resolve(conversationId)
+      if (!bot || conversationId === bot.primaryConversationId)
+        return { screen: conversationScreen(conversationId), notes: [] }
+      const own = await bot.laneComputer(conversationId)
+      if (!own) return { screen: conversationScreen(conversationId), notes: [] }
+      const { display } = own
+      const registered = conversationScreen(conversationId)
+      return {
+        screen: {
+          display: display.display,
+          width: display.width,
+          height: display.height,
+          windowArea: registered?.windowArea ?? { x: 0, y: 0, width: display.width, height: display.height },
+        },
+        notes: own.started
+          ? [
+              `Started this conversation's own desktop on display ${display.display}. Programs you start from a shell show on it while it runs; in this turn, run them with DISPLAY=${display.display}.`,
+            ]
+          : [],
+      }
+    },
+  }
+}
+
 export function registerBotModeTools(
   ctx: McpToolContext,
   env: NodeJS.ProcessEnv = process.env,
@@ -446,5 +555,5 @@ export function registerBotModeTools(
 ): void {
   if (!isBotMode(env)) return
   registerBotInstanceTools(ctx)
-  if (computerAvailable()) registerComputerTools(ctx)
+  if (computerAvailable()) registerComputerTools(ctx, botComputerOptions())
 }

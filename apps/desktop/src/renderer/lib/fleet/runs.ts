@@ -1,5 +1,6 @@
 import {
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+  fleetLaneTurn,
   type FleetBot,
   type FleetRoutineRun,
   type FleetRoutineRunSettings,
@@ -7,11 +8,14 @@ import {
 
 const DAY = 86_400_000
 
+/** What run states read of a bot: the turns it runs now (or, from an older gateway, the run it works on). */
+export type RunBot = Pick<FleetBot, 'runningRun'> & { turns?: FleetBot['turns'] }
+
 /** What a run is now, as its history shows it. */
 export type RunState = 'running' | 'queued' | 'ok' | 'quiet' | 'failed' | 'cancelled' | 'deleted' | 'unknown'
 
-export function runState(run: FleetRoutineRun, bot: Pick<FleetBot, 'runningRun'>): RunState {
-  if (bot.runningRun?.id === run.id) return 'running'
+export function runState(run: FleetRoutineRun, bot: RunBot): RunState {
+  if (fleetLaneTurn({ turns: bot.turns ?? null, runningRun: bot.runningRun }, run.id)) return 'running'
   if (run.conversation === 'deleted') return 'deleted'
   if (run.status === 'delivered') return 'queued'
   if (run.status === 'failed') return 'failed'
@@ -68,7 +72,7 @@ const dayStart = (time: number): number => {
  * A bot's runs by local day, newest first. Within a day, two or more runs of one routine that finished with nothing
  * new fold into one line where the first of them would be; any other run stays on its own.
  */
-export function runDays(runs: FleetRoutineRun[], bot: Pick<FleetBot, 'runningRun'>): RunDay[] {
+export function runDays(runs: FleetRoutineRun[], bot: RunBot): RunDay[] {
   const days: RunDay[] = []
   for (const run of runs) {
     const day = dayStart(Date.parse(run.deliveredAt))
@@ -165,7 +169,7 @@ export function writeSeenRuns(key: string, seen: ReadonlySet<string>): void {
 }
 
 /** Finished runs with something new the owner has not opened yet. */
-export function unseenRuns(runs: FleetRoutineRun[], seen: ReadonlySet<string>, bot: Pick<FleetBot, 'runningRun'>) {
+export function unseenRuns(runs: FleetRoutineRun[], seen: ReadonlySet<string>, bot: RunBot) {
   return runs.filter((run) => {
     const state = runState(run, bot)
     return !seen.has(run.id) && (state === 'ok' || state === 'failed')

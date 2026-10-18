@@ -1,5 +1,7 @@
 import {
+  FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetMetaFeatures,
   type FleetBot,
@@ -342,8 +344,15 @@ export function createFleetController(
       return source.call('botInteractionResolve', { params: { id: botId, interactionId }, body: resolution })
     },
     async action(botId: string, action: BotAction) {
-      // Every action answers with the bot except cancel, which answers with nothing.
-      const result = (await source.call(ACTION_ROUTES[action], { params: { id: botId } })) as FleetBot | undefined
+      // Every action answers with the bot except cancel, which answers with nothing. The phone shows the bot's own
+      // conversation: its Stop stops that conversation's turn, and the bot's routine runs keep working.
+      const query =
+        action === 'cancel' && has(FLEET_PARALLEL_TURNS_FEATURE)
+          ? { [FLEET_CANCEL_CONVERSATION_QUERY]: 'primary' }
+          : undefined
+      const result = (await source.call(ACTION_ROUTES[action], { params: { id: botId }, query })) as
+        | FleetBot
+        | undefined
       if (result) applyBot(result)
     },
     async patchBot(botId: string, patch: FleetPatchBotRequest) {

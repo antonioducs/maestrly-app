@@ -49,6 +49,37 @@ describe('event hub', () => {
     hub.close()
   })
 
+  it('sends threads between bots only to devices that asked for them', () => {
+    const hub = new EventHub(async () => {})
+    const older = subscriber()
+    const threads = subscriber()
+    hub.add(older.response, 0, 'mac-old', { routineRuns: true })
+    hub.add(threads.response, 0, 'mac-threads', { peerThreads: true })
+    const at = '2026-10-18T10:00:00.000Z'
+    hub.emit({
+      type: 'peer_thread.transcript.upsert',
+      at,
+      botId: 'alpha',
+      threadId: 'thread-1',
+      item: { kind: 'reasoning', id: 'm:0', at, text: 'Thinking', truncated: false, streaming: true },
+    })
+    hub.emit({
+      type: 'peer_thread.transcript.upsert',
+      at,
+      botId: 'alpha',
+      threadId: 'thread-1',
+      item: { kind: 'assistant', id: 'm:1', at, text: 'Answer', streaming: false },
+    })
+    hub.emit({ type: 'peer_thread.transcript.reset', at, botId: 'alpha', threadId: 'thread-1' })
+    hub.emit({ type: 'peer_thread.removed', at, botId: 'alpha', threadId: 'thread-1' })
+    const shape = (events: FleetGatewayEvent[]) =>
+      events.map((event) => (event.type === 'peer_thread.transcript.upsert' ? event.item.kind : event.type))
+    expect(shape(older.sent())).toEqual(['hello'])
+    // A thread's reasoning goes only to devices that asked for reasoning too.
+    expect(shape(threads.sent())).toEqual(['hello', 'assistant', 'peer_thread.transcript.reset', 'peer_thread.removed'])
+    hub.close()
+  })
+
   it("sends routine runs only to devices that asked for them, a run's reasoning only to those that asked for it", () => {
     const hub = new EventHub(async () => {})
     const older = subscriber()

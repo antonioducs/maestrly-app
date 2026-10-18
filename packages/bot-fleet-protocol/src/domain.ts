@@ -25,6 +25,7 @@ import {
   FLEET_RUNTIME_IDS,
   FLEET_RUNTIME_STATES,
   FLEET_DESKTOP_BRIDGE_LIMITS,
+  FLEET_PEER_THREAD_LIMITS,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -338,6 +339,20 @@ export const FLEET_ROUTINE_RUN_SETTINGS_DEFAULT: FleetRoutineRunSettings = {
   quietEarly: true,
   notify: 'notable',
 }
+/**
+ * How a bot keeps its conversations with other bots (`peer-conversations`): a thread's conversation is deleted
+ * `retentionDays` after its last activity (never with null), unless pinned; and a thread pauses once the bots
+ * exchanged `hopLimit` messages in a row without one of the owner's, until the owner writes or lets it go on.
+ */
+export const fleetPeerThreadSettingsSchema = z.object({
+  retentionDays: z
+    .union([z.literal(30), z.literal(60), z.literal(90)])
+    .nullable()
+    .default(30),
+  hopLimit: z.union([z.literal(4), z.literal(8), z.literal(16)]).default(8),
+})
+export type FleetPeerThreadSettings = z.infer<typeof fleetPeerThreadSettingsSchema>
+export const FLEET_PEER_THREAD_SETTINGS_DEFAULT: FleetPeerThreadSettings = { retentionDays: 30, hopLimit: 8 }
 /** The routine run a bot is working on now, in its own conversation. */
 export const fleetRunningRoutineRunSchema = z.object({
   id: fleetIdSchema,
@@ -346,6 +361,20 @@ export const fleetRunningRoutineRunSchema = z.object({
   startedAt: fleetTimestampSchema.nullable(),
 })
 export type FleetRunningRoutineRun = z.infer<typeof fleetRunningRoutineRunSchema>
+/** A turn a bot runs now in one of its conversations (`parallel-turns`). */
+export const fleetBotTurnSchema = z.object({
+  /** Its own conversation, a routine run's or a conversation with another bot. */
+  kind: z.enum(['primary', 'routine', 'peer']),
+  /** The run or thread id; null for the bot's own conversation. */
+  id: fleetIdSchema.nullable(),
+  /** The routine's title or the thread's subject; empty for the bot's own conversation. */
+  title: z.string(),
+  startedAt: fleetTimestampSchema,
+  /** The tool it uses now, if any. */
+  tool: z.string().nullable(),
+  cancelling: z.boolean(),
+})
+export type FleetBotTurn = z.infer<typeof fleetBotTurnSchema>
 
 export const fleetBotSchema = z.object({
   id: fleetBotIdSchema,
@@ -395,8 +424,15 @@ export const fleetBotSchema = z.object({
   move: fleetBotMoveSchema.nullable().default(null),
   /** How it keeps its routine runs' conversations; null from gateways without `routine-conversations`. */
   runSettings: fleetRoutineRunSettingsSchema.nullable().default(null),
+  /** How it keeps its conversations with other bots; null from gateways without `peer-conversations`. */
+  peerSettings: fleetPeerThreadSettingsSchema.nullable().default(null),
   /** The routine run its turn works on now, in the run's own conversation; null otherwise. */
   runningRun: fleetRunningRoutineRunSchema.nullable().default(null),
+  /**
+   * Every turn it runs now, one per conversation (`parallel-turns`); null from gateways that predate them, whose
+   * `status` and `runningRun` tell the same for one turn at a time. Read with `fleetPrimaryWorking`/`fleetLaneTurn`.
+   */
+  turns: z.array(fleetBotTurnSchema).nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -615,6 +651,39 @@ export const fleetRoutineRunKeptSchema = z.object({
     .max(FLEET_ROUTINE_RUN_LIMITS.keptFilesMax),
 })
 export type FleetRoutineRunKept = z.infer<typeof fleetRoutineRunKeptSchema>
+/**
+ * A conversation between two bots (`peer-conversations`), as one of them (`botId`) sees it: its own conversation
+ * of the thread, apart from its conversation with its owner.
+ */
+export const fleetPeerThreadSchema = z.object({
+  id: fleetIdSchema,
+  botId: fleetBotIdSchema,
+  peer: z.object({ botId: fleetBotIdSchema, name: z.string() }),
+  title: z.string().max(FLEET_PEER_THREAD_LIMITS.titleMax),
+  /** `primary`: this bot opened it from its own conversation; `side`: from another side conversation; `peer`: the other bot did. */
+  origin: z.enum(['primary', 'side', 'peer']),
+  /** `paused` once the bots reached `hopLimit` messages in a row without the owner. */
+  status: z.enum(['open', 'paused']),
+  /** Messages between the bots in a row without one of the owner's. */
+  hops: fleetNonNegativeIntSchema,
+  hopLimit: z.number().int().min(1),
+  messages: fleetNonNegativeIntSchema,
+  pinned: z.boolean(),
+  conversation: z.enum(['own', 'deleted']),
+  /** What this bot brought back to its owner's conversation, for a thread it opened there. */
+  report: z.string().max(FLEET_PEER_THREAD_LIMITS.reportMax).nullable(),
+  reportAt: fleetTimestampSchema.nullable(),
+  /** Whether this bot, or the other one, has a turn running in its conversation of the thread. */
+  working: z.boolean(),
+  peerWorking: z.boolean(),
+  createdAt: fleetTimestampSchema,
+  lastActivityAt: fleetTimestampSchema,
+  /** When its conversation is deleted on its own; null when never (pinned, or kept until deleted). */
+  expiresAt: fleetTimestampSchema.nullable(),
+  conversationDeletedAt: fleetTimestampSchema.nullable(),
+  kept: fleetRoutineRunKeptSchema.nullable(),
+})
+export type FleetPeerThread = z.infer<typeof fleetPeerThreadSchema>
 export const fleetRoutineRunSchema = z.object({
   id: fleetIdSchema,
   routineId: fleetIdSchema,
@@ -770,6 +839,8 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     to: peerRef,
     text: fleetPeerTextSchema,
     delivered: z.boolean(),
+    /** The thread the message went to (`peer-conversations`), which goes on in a conversation of its own. */
+    thread: z.object({ id: fleetIdSchema }).optional(),
   }),
   z.object({
     ...transcriptBase,
@@ -1132,6 +1203,32 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
     at: fleetTimestampSchema,
     botId: fleetBotIdSchema,
     runId: fleetIdSchema,
+  }),
+  // Threads between bots (`peer-conversations`): sent only to the streams that asked for them (`peerThreads=1`).
+  z.object({
+    type: z.literal('peer_thread.updated'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    thread: fleetPeerThreadSchema,
+  }),
+  z.object({
+    type: z.literal('peer_thread.removed'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    threadId: fleetIdSchema,
+  }),
+  z.object({
+    type: z.literal('peer_thread.transcript.upsert'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    threadId: fleetIdSchema,
+    item: fleetTranscriptItemSchema,
+  }),
+  z.object({
+    type: z.literal('peer_thread.transcript.reset'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    threadId: fleetIdSchema,
   }),
 ])
 export type FleetGatewayEvent = z.infer<typeof fleetGatewayEventSchema>

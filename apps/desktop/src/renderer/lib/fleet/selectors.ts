@@ -60,3 +60,6 @@ export function environmentOf(
 ): FleetEnvironment | undefined {
   return bot.environmentId ? environments.find((environment) => environment.id === bot.environmentId) : undefined
 }
+
+/** The color of a bot the server no longer lists. */
+export const UNKNOWN_BOT_TINT = '#777'

@@ -28,6 +28,10 @@ import type {
   FleetRoutineRun,
   FleetRoutineRunPage,
   FleetRoutineRunSettings,
+  FleetPeerThread,
+  FleetPeerThreadList,
+  FleetPeerThreadPatchRequest,
+  FleetPeerThreadSettings,
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
   FleetArchivedBot,
@@ -163,6 +167,10 @@ export type {
   FleetRoutineRun,
   FleetRoutineRunPage,
   FleetRoutineRunSettings,
+  FleetPeerThread,
+  FleetPeerThreadList,
+  FleetPeerThreadPatchRequest,
+  FleetPeerThreadSettings,
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
   FleetBot,
@@ -250,6 +258,9 @@ export const fleetApi = {
     botId: string,
     action: 'start' | 'stop' | 'restart' | 'archive' | 'pause' | 'resume' | 'cancel'
   ): Promise<FleetBot | void> => ipcRenderer.invoke('fleet:botAction', botId, action),
+  /** Stops one conversation's turn: `primary` for the bot's own, or a routine run's or a peer thread's id. */
+  fleetCancelTurn: (botId: string, conversation: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:cancelTurn', botId, conversation),
   /**
    * Moves a bot to another environment of its server, or to a new one, with everything that is its own (`bot-move`).
    * Answers at once with the move; its progress arrives in the bot's `move`.
@@ -364,6 +375,35 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:sendRunMessage', botId, runId, text, attachments),
   fleetSetRunSettings: (botId: string, settings: FleetRoutineRunSettings): Promise<FleetRoutineRunSettings> =>
     ipcRenderer.invoke('fleet:setRunSettings', botId, settings),
+  /** The bot's conversations with other bots, each in a conversation of its own (`peer-conversations`). */
+  fleetListPeerThreads: (botId: string): Promise<FleetPeerThreadList> =>
+    ipcRenderer.invoke('fleet:listPeerThreads', botId),
+  fleetGetPeerThreadTranscript: (
+    botId: string,
+    threadId: string,
+    before?: string | null,
+    limit?: number
+  ): Promise<FleetTranscriptPage> =>
+    ipcRenderer.invoke('fleet:getPeerThreadTranscript', botId, threadId, before, limit),
+  /** Keeps a thread (`pinned`), or lets a paused one go on (`resume`). */
+  fleetPatchPeerThread: (
+    botId: string,
+    threadId: string,
+    patch: FleetPeerThreadPatchRequest
+  ): Promise<FleetPeerThread> => ipcRenderer.invoke('fleet:patchPeerThread', botId, threadId, patch),
+  /** Deletes the bot's conversation of the thread; its files stay. Rejects with FLEET_PEER_THREAD_CONFLICT while it works. */
+  fleetDeletePeerThreadConversation: (botId: string, threadId: string): Promise<FleetPeerThread> =>
+    ipcRenderer.invoke('fleet:deletePeerThreadConversation', botId, threadId),
+  /** The owner's message in the bot's conversation of the thread: the bots' messages in a row start again from it. */
+  fleetSendPeerThreadMessage: (
+    botId: string,
+    threadId: string,
+    text: string,
+    attachments: FleetOutgoingAttachment[] = []
+  ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
+    ipcRenderer.invoke('fleet:sendPeerThreadMessage', botId, threadId, text, attachments),
+  fleetSetPeerThreadSettings: (botId: string, settings: FleetPeerThreadSettings): Promise<FleetPeerThreadSettings> =>
+    ipcRenderer.invoke('fleet:setPeerThreadSettings', botId, settings),
   /** Resolves with a receipt; joins the transfer already running for the file instead of starting another. */
   fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
     ipcRenderer.invoke('fleet:downloadFile', botId, fileId),

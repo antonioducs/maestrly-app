@@ -6,6 +6,8 @@ import { createInstanceControlServer } from './server'
 import { parseBotInstanceConfig } from './config'
 import { DisplayManager } from './displays'
 import { startBotDesktop } from './desktop/bot-desktop'
+import { LaneComputers } from './lane-computers'
+import { listDisplayWindows } from '../../remote-host/server/computer-windows'
 import {
   EnvironmentRuntime,
   currentEnvironmentRuntime,
@@ -73,11 +75,23 @@ export async function startBotInstanceMode(
   }
   // The environment screen shares the environment display, and its keyboard focus, with the bots' browsers.
   setScreenFocusOwner(window, { kind: 'environment' })
+  // The side conversations' own desktops run on the same display manager as the bots' desktops.
+  const laneComputers = displays
+    ? new LaneComputers({
+        displays,
+        listWindows: (display) => listDisplayWindows(display),
+        now: Date.now,
+        setInterval,
+        clearInterval,
+        log: (message) => console.error(JSON.stringify({ component: 'bot-instance', level: 'info', message })),
+      })
+    : null
   const environment = new EnvironmentRuntime({
     config,
     userData: app.getPath('userData'),
     home,
     displays,
+    laneComputers,
     floatBrowser: hooks.floatBrowser,
     // A bot's desktop needs its apps display: outside a container there is none.
     ...(displays

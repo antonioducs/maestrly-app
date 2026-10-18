@@ -20,6 +20,8 @@ import {
 } from './host-files.js'
 import { z } from 'zod'
 import {
+  FLEET_BOT_SIDE_TURNS_MAX,
+  FLEET_PEER_THREAD_LIMITS,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROVISIONING_LIMITS,
   FLEET_OWNER_MEMORY_LIMITS,
@@ -41,6 +43,8 @@ import {
   fleetRoutinePreviousRunSchema,
   fleetRoutineRunCitationSchema,
   fleetRoutineRunKeptSchema,
+  fleetPeerThreadSchema,
+  fleetPeerThreadSettingsSchema,
   fleetRoutineRunMediaSchema,
   fleetRoutineRunSettingsSchema,
   fleetBotMemorySchema,
@@ -791,9 +795,36 @@ export const fleetInternalPeerMessageRequestSchema = z.object({
   to: fleetBotIdSchema,
   text: fleetPeerTextSchema,
   idempotencyKey: fleetIdempotencyKeySchema,
+  /** The thread the message continues (`peer-conversations`); without it the message opens a thread. */
+  thread: fleetIdSchema.optional(),
+  /** The subject of the thread it opens. */
+  topic: z.string().trim().min(1).max(FLEET_PEER_THREAD_LIMITS.topicMax).optional(),
+  /** Where the sender opens it from: its conversation with its owner, or another side conversation. */
+  origin: z.enum(['primary', 'side']).optional(),
 })
 export type FleetInternalPeerMessageRequest = z.infer<typeof fleetInternalPeerMessageRequestSchema>
-export const fleetInternalPeerMessageResponseSchema = z.object({ messageId: fleetIdSchema, delivered: z.boolean() })
+export const fleetInternalPeerMessageResponseSchema = z.object({
+  messageId: fleetIdSchema,
+  delivered: z.boolean(),
+  /** The thread the message went to, from a gateway with `peer-conversations`. */
+  thread: fleetIdSchema.optional(),
+})
+/** What a bot brings back to its owner's conversation from a thread it opened there. */
+export const fleetInternalPeerThreadReportRequestSchema = z.object({
+  text: z.string().trim().min(1).max(FLEET_PEER_THREAD_LIMITS.reportMax),
+})
+export const fleetInternalPeerThreadReportResponseSchema = z.object({ ok: z.literal(true) })
+/** A bot's threads with other bots, the most recent first. */
+export const fleetPeerThreadListSchema = z.object({
+  threads: z.array(fleetPeerThreadSchema).max(FLEET_PEER_THREAD_LIMITS.listMax),
+})
+export type FleetPeerThreadList = z.infer<typeof fleetPeerThreadListSchema>
+/** The owner keeps a thread (`pinned`), or lets a paused one go on for `hopLimit` more messages (`resume`). */
+export const fleetPeerThreadPatchRequestSchema = z
+  .object({ pinned: z.boolean().optional(), resume: z.literal(true).optional() })
+  .strict()
+  .refine((value) => value.pinned !== undefined || value.resume !== undefined, 'nothing to change')
+export type FleetPeerThreadPatchRequest = z.infer<typeof fleetPeerThreadPatchRequestSchema>
 export type FleetInternalPeerMessageResponse = z.infer<typeof fleetInternalPeerMessageResponseSchema>
 /**
  * A bot's own routines, through the internal API. The caller is the bot the gateway token identifies: it lists all of
@@ -924,6 +955,16 @@ export const fleetInstanceHoldSchema = z.object({
   interruptedTurn: z.boolean(),
 })
 export type FleetInstanceHold = z.infer<typeof fleetInstanceHoldSchema>
+/** A turn running in one of the bot's conversations (`parallel-turns`). */
+export const fleetInstanceTurnSchema = z.object({
+  state: z.enum(['running', 'cancelling']),
+  startedAt: fleetTimestampSchema,
+  inputId: fleetIdSchema,
+  /** The side conversation it works in (a routine run or a peer thread); null for the bot's own. */
+  runId: fleetIdSchema.nullable(),
+  tool: z.object({ tool: z.string(), target: z.string().nullable() }).nullable(),
+})
+export type FleetInstanceTurn = z.infer<typeof fleetInstanceTurnSchema>
 export const fleetInstanceStatusSchema = z.object({
   capabilities: fleetFeaturesSchema,
   appVersion: z.string(),
@@ -945,6 +986,14 @@ export const fleetInstanceStatusSchema = z.object({
     /** The routine run whose own conversation the turn works in (`routine-conversations`); null for the bot's own. */
     runId: fleetIdSchema.nullable().default(null),
   }),
+  /**
+   * Every turn running now, one per conversation (`parallel-turns`); `turn` stays the bot's own conversation's, else
+   * the oldest, for older readers. Empty from an instance that predates it: read both with `fleetInstanceTurns`.
+   */
+  turns: z
+    .array(fleetInstanceTurnSchema)
+    .max(FLEET_BOT_SIDE_TURNS_MAX + 1)
+    .default([]),
   hold: fleetInstanceHoldSchema,
   queue: z.array(
     z.object({
@@ -1004,10 +1053,27 @@ export const fleetInstanceInputSchema = z
     run: z.object({ id: fleetIdSchema }).optional(),
     /** The routine run an owner's message refers to, for the bot to read. */
     citation: fleetRoutineRunCitationSchema.optional(),
+    /**
+     * The thread between bots whose own conversation this input goes to (`peer-conversations`): another bot's message
+     * starts the thread's conversation on this side, and an owner's continues it. `context` is what this bot sent to
+     * open it from another conversation, for the thread's first answer.
+     */
+    thread: z
+      .object({
+        id: fleetIdSchema,
+        title: z.string().max(FLEET_PEER_THREAD_LIMITS.titleMax),
+        context: z.string().max(FLEET_PEER_THREAD_LIMITS.contextMax).optional(),
+      })
+      .optional(),
   })
   .refine(hasContent, 'an input needs text or an image')
   .refine((value) => value.source === 'owner' || value.attachments.length === 0, 'only owner inputs carry images')
   .refine((value) => !value.run || value.source !== 'peer', 'peer messages go to the bot conversation')
+  .refine((value) => !(value.run && value.thread), 'an input goes to one conversation')
+  .refine(
+    (value) => !value.thread || ['peer', 'owner', 'continuation'].includes(value.source),
+    'a thread takes messages of bots and of the owner'
+  )
   .refine(
     (value) => !value.run || value.source !== 'routine' || value.routine?.runId === value.run.id,
     'a run starts with its own routine input'
@@ -1907,6 +1973,47 @@ export const FLEET_GATEWAY_ROUTES = {
     body: fleetRoutineRunSettingsSchema,
     response: fleetRoutineRunSettingsSchema,
   },
+  // Gateways with `peer-conversations`: a bot's threads with other bots, each one's conversation and messages, and the
+  // bot's settings for keeping them.
+  botPeerThreads: { method: 'GET', path: '/v1/bots/:id/peer-threads', body: null, response: fleetPeerThreadListSchema },
+  botPeerThreadGet: {
+    method: 'GET',
+    path: '/v1/bots/:id/peer-threads/:threadId',
+    body: null,
+    response: fleetPeerThreadSchema,
+  },
+  botPeerThreadPatch: {
+    method: 'PATCH',
+    path: '/v1/bots/:id/peer-threads/:threadId',
+    body: fleetPeerThreadPatchRequestSchema,
+    response: fleetPeerThreadSchema,
+  },
+  /** Deletes the bot's conversation of the thread; its files stay. */
+  botPeerThreadConversationDelete: {
+    method: 'DELETE',
+    path: '/v1/bots/:id/peer-threads/:threadId/conversation',
+    body: null,
+    response: fleetPeerThreadSchema,
+  },
+  botPeerThreadTranscript: {
+    method: 'GET',
+    path: '/v1/bots/:id/peer-threads/:threadId/transcript',
+    body: null,
+    response: fleetTranscriptPageSchema,
+  },
+  /** An owner's message in the bot's conversation of the thread: the bots' messages in a row start again from it. */
+  botPeerThreadMessageSend: {
+    method: 'POST',
+    path: '/v1/bots/:id/peer-threads/:threadId/messages',
+    body: fleetSendMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
+  botPeerThreadSettings: {
+    method: 'PUT',
+    path: '/v1/bots/:id/peer-thread-settings',
+    body: fleetPeerThreadSettingsSchema,
+    response: fleetPeerThreadSettingsSchema,
+  },
   // Gateways with `desktop-bridge`: the Mac asking links or unlinks itself, lists every Mac linked to the bot, or
   // removes another Mac's link; and answers a call it received on its event stream.
   botDesktopLinkPut: {
@@ -1979,6 +2086,13 @@ export const FLEET_INTERNAL_ROUTES = {
     path: '/internal/v1/peers/messages',
     body: fleetInternalPeerMessageRequestSchema,
     response: fleetInternalPeerMessageResponseSchema,
+  },
+  /** Gateways with `peer-conversations`: a thread's answer, for the owner's conversation of the bot that opened it. */
+  peerThreadReport: {
+    method: 'POST',
+    path: '/internal/v1/peers/threads/:threadId/report',
+    body: fleetInternalPeerThreadReportRequestSchema,
+    response: fleetInternalPeerThreadReportResponseSchema,
   },
   routinesList: { method: 'GET', path: '/internal/v1/routines', body: null, response: fleetRoutinesResponseSchema },
   routineCreate: {

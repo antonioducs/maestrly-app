@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_RUN_LIMITS,
+  fleetBotSchema,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
   fleetRoutineRunPageSchema,
   fleetRoutineRunSchema,
@@ -220,10 +222,70 @@ describe('routine runs in conversations of their own', () => {
     })
   })
 
+  it("tells devices every conversation working at once, the bot's own and its runs'", async () => {
+    const { h, run, status } = await setup()
+    const { run: record, inputId } = await run()
+    const at = new Date().toISOString()
+    status.capabilities = [...status.capabilities, FLEET_PARALLEL_TURNS_FEATURE]
+    status.turn = { state: 'running', startedAt: at, inputId: 'own-input', runId: null }
+    status.turns = [
+      { state: 'running', startedAt: at, inputId: 'own-input', runId: null, tool: null },
+      {
+        state: 'cancelling',
+        startedAt: at,
+        inputId,
+        runId: record.id,
+        tool: { tool: 'browser_navigate', target: null },
+      },
+      // A conversation the gateway never recorded is left out.
+      { state: 'running', startedAt: at, inputId: 'unknown-input', runId: 'unknown-run', tool: null },
+    ]
+    const bot = fleetBotSchema.parse(await (await h.request('GET', `/v1/bots/${h.bot.id}`)).json())
+    expect(bot.status).toBe('working')
+    expect(bot.turns).toEqual([
+      { kind: 'primary', id: null, title: '', startedAt: at, tool: null, cancelling: false },
+      { kind: 'routine', id: record.id, title: 'Prices', startedAt: at, tool: 'browser_navigate', cancelling: true },
+    ])
+    expect(bot.runningRun).toMatchObject({ id: record.id, title: 'Prices', startedAt: at })
+    const features = await (await h.request('GET', '/v1/meta')).json()
+    expect(features.moreFeatures).toContain(FLEET_PARALLEL_TURNS_FEATURE)
+  })
+
+  it("never runs a routine again, nor deletes its run's conversation, while its turn runs beside others", async () => {
+    const { h, base, routine, run, status, clock } = await setup()
+    const { run: record, inputId } = await run()
+    const at = new Date().toISOString()
+    // The bot's own conversation is the one an older reader sees; the run works too.
+    status.turn = { state: 'running', startedAt: at, inputId: 'own-input', runId: null }
+    status.turns = [
+      { state: 'running', startedAt: at, inputId: 'own-input', runId: null, tool: null },
+      { state: 'running', startedAt: at, inputId, runId: record.id, tool: null },
+    ]
+    const sent = h.instance.inputs.length
+    clock.advance(15 * 60_000)
+    await h.gateway.routines.tick()
+    expect(h.instance.inputs).toHaveLength(sent)
+    expect(h.store.routineById(routine.id)?.lastOutcome).toBe('skipped_busy')
+    expect((await h.request('DELETE', `${base}/routine-runs/${record.id}/conversation`)).status).toBe(409)
+    const view = fleetRoutineRunSchema.parse(await (await h.request('GET', `${base}/routine-runs/${record.id}`)).json())
+    expect(view.status).toBe('delivered')
+  })
+
+  it("stops one conversation's turn, or every turn for a device that names none", async () => {
+    const { h, base } = await setup()
+    expect((await h.request('POST', `${base}/cancel?conversation=run-1`)).status).toBe(204)
+    expect((await h.request('POST', `${base}/cancel?conversation=primary`)).status).toBe(204)
+    expect((await h.request('POST', `${base}/cancel`)).status).toBe(204)
+    expect((await h.request('POST', `${base}/cancel?conversation=../x`)).status).toBe(400)
+    expect(
+      h.instance.botRequests.filter((request) => request.path.startsWith('/turn/cancel')).map((request) => request.path)
+    ).toEqual(['/turn/cancel?conversation=run-1', '/turn/cancel?conversation=primary', '/turn/cancel'])
+  })
+
   it("deletes a run's conversation and keeps its report and what the bot kept of it", async () => {
     const { h, base, run, status } = await setup()
     const { run: record, inputId } = await run()
-    status.turn = { ...status.turn, state: 'running', inputId, runId: record.id }
+    status.turn = { ...status.turn, state: 'running', startedAt: new Date().toISOString(), inputId, runId: record.id }
     expect((await h.request('DELETE', `${base}/routine-runs/${record.id}/conversation`)).status).toBe(409)
     expect((await (await h.request('GET', `/v1/bots/${h.bot.id}`)).json()).runningRun).toMatchObject({
       id: record.id,

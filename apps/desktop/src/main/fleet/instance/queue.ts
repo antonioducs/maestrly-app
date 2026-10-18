@@ -39,6 +39,8 @@ const storedInputSchema = z.object({
   peer: z.object({ botId: z.string(), name: z.string() }).optional(),
   run: z.object({ id: z.string() }).optional(),
   citation: z.object({ runId: z.string(), routineTitle: z.string(), at: z.string() }).optional(),
+  // A queued message of a thread with another bot stays in the thread's conversation across restarts.
+  thread: z.object({ id: z.string(), title: z.string(), context: z.string().optional() }).optional(),
 })
 const attachmentSchema = z.object({
   id: z.string().regex(/^q-(?:file-)?[a-f0-9-]{36}-[0-7]$/),
@@ -570,8 +572,8 @@ export const RUN_CONVERSATION_NOTE =
 /** What a transcript reads of the queue: the inputs of one of the bot's conversations. */
 export type TranscriptQueue = Pick<InstanceInputQueue, 'list' | 'transcriptInputs' | 'byItemId' | 'refs' | 'fileRefs'>
 
-/** The run an input goes to: null for the bot's own conversation. */
-export const inputRunId = (item: QueuedInput): string | null => item.input.run?.id ?? null
+/** The side conversation an input goes to (a routine run's, or a thread's with another bot); null for the bot's own. */
+export const inputRunId = (item: QueuedInput): string | null => item.input.run?.id ?? item.input.thread?.id ?? null
 
 /** The inputs of one of a bot's conversations: its own (`runId` null) or a routine run's. */
 export function conversationQueue(queue: InstanceInputQueue, runId: string | null): TranscriptQueue {
@@ -618,6 +620,17 @@ function citedPrompt(input: StoredInput): string {
   return `${input.text}\n\n(The owner refers to the run of the routine "${citation.routineTitle}" from ${at} UTC, run id ${citation.runId}. Read it with bot_routines_runs before you answer.)`
 }
 
+/**
+ * Another bot's message in a thread with it (`peer-conversations`): the conversation is the thread's own, and replies
+ * stay in it. The thread's first message to the bot that opened it starts with what it had sent and why.
+ */
+function threadPeerPrompt(input: StoredInput): string {
+  const name = input.peer?.name ?? ''
+  const id = input.peer?.botId ?? ''
+  const context = input.thread?.context ? input.thread.context + '\n\n' : ''
+  return `${context}Message from bot "${name}" (id ${id}) in your conversation with them about "${input.thread?.title ?? ''}", a conversation of its own, separate from your main one with your owner:\n\n${input.text}\n\nReply with bot_peers_send to ${id}: the reply stays in this conversation.`
+}
+
 export function promptForInput(input: StoredInput): string {
   switch (input.source) {
     case 'owner':
@@ -625,7 +638,9 @@ export function promptForInput(input: StoredInput): string {
     case 'routine':
       return routinePrompt(input)
     case 'peer':
-      return `Message from bot "${input.peer?.name ?? ''}" (id ${input.peer?.botId ?? ''}), delivered by the Maestrly gateway:\n\n${input.text}\n\nIf a reply is useful, send it with bot_peers_send.`
+      return input.thread
+        ? threadPeerPrompt(input)
+        : `Message from bot "${input.peer?.name ?? ''}" (id ${input.peer?.botId ?? ''}), delivered by the Maestrly gateway:\n\n${input.text}\n\nIf a reply is useful, send it with bot_peers_send.`
     case 'continuation':
       return input.text
   }
