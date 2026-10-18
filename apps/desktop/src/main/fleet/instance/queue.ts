@@ -39,6 +39,8 @@ const storedInputSchema = z.object({
   peer: z.object({ botId: z.string(), name: z.string() }).optional(),
   run: z.object({ id: z.string() }).optional(),
   citation: z.object({ runId: z.string(), routineTitle: z.string(), at: z.string() }).optional(),
+  // A queued message of a thread with another bot stays in the thread's conversation across restarts.
+  thread: z.object({ id: z.string(), title: z.string(), context: z.string().optional() }).optional(),
 })
 const attachmentSchema = z.object({
   id: z.string().regex(/^q-(?:file-)?[a-f0-9-]{36}-[0-7]$/),

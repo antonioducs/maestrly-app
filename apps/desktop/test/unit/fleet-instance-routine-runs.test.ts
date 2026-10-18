@@ -479,6 +479,20 @@ describe('threads with other bots in conversations of their own', () => {
     await expect(runtime.input(peerInput(runId))).rejects.toMatchObject({ status: 400 })
   })
 
+  it("keeps a queued message of a thread in the thread's conversation after a restart", async () => {
+    const { runtime, queue } = await bot()
+    const threadId = randomUUID()
+    await runtime.input(peerInput(threadId))
+    await queue.idle()
+    // A restart reads the queue from its file again.
+    const reloaded = new InstanceInputQueue(path.join(dir, 'inputs.json'), path.join(dir, 'attachments'))
+    await reloaded.load()
+    const [item] = reloaded.list().filter((entry) => entry.input.source === 'peer')
+    expect(inputRunId(item)).toBe(threadId)
+    expect(item.input.thread).toEqual({ id: threadId, title: 'Release 4.2' })
+    expect(promptForInput(item.input)).toContain('a conversation of its own')
+  })
+
   it('tells the first answer of a thread the bot opened what it had sent and why, once', async () => {
     const { runtime, runs, queue } = await bot()
     const threadId = randomUUID()
