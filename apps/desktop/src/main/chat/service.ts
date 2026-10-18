@@ -40,7 +40,7 @@ import {
  * `chat:permission:<convId>`. API keys NEVER cross into the renderer (only presence + mode).
  */
 import type { IpcMainInvokeEvent, IpcMainEvent, WebContents } from 'electron'
-import { app, clipboard, shell, systemPreferences } from 'electron'
+import { app, clipboard, net, shell, systemPreferences } from 'electron'
 import { ensureRuntimeAsset } from '../runtime-assets/app-service'
 import {
   addProvider,
@@ -383,8 +383,18 @@ import {
   getProviderModelMeta,
 } from './model-meta'
 import { rememberChatSelection, rememberStandaloneChatMode, rememberedChatSelection } from './new-chat-defaults'
-import { currentAsrSupport, transcribe, warmAsr } from '../asr-service'
+import { currentAsrSupport, warmAsr } from '../asr-service'
 import { asrLanguage } from '../../shared/asr'
+import { checkDictationKey } from '@maestrly/bot-fleet-protocol'
+import { isDictationApiProvider, isDictationEngine } from '../../shared/dictation'
+import { transcribeDictation } from '../dictation/transcribe'
+import {
+  clearDictationKey,
+  dictationConfig,
+  getDictationEngine,
+  setDictationEngine,
+  setDictationKey,
+} from '../dictation/settings'
 import { findMentions, type MentionMatch } from '../../shared/chat-mentions'
 import {
   applyChatEvent,
@@ -10637,18 +10647,37 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       return { ok: true, status: 'unknown' } // API unavailable → let getUserMedia try.
     }
   })
-  // Voice dictation: transcribe 16kHz mono PCM through local whisper.cpp → text. Receives ArrayBuffer (Float32 bytes).
+  // Voice dictation: 16 kHz mono PCM (Float32 bytes) → text, through the engine chosen in Settings.
   deps.mhandle('chat:transcribe', async (_e, buf: ArrayBuffer, options?: { language?: unknown }) => {
     const audio = buf instanceof ArrayBuffer ? new Float32Array(buf) : new Float32Array(0)
-    const r = await transcribe(audio, { language: asrLanguage(options?.language) })
-    if (r.modelMissing) return { error: 'model-missing' }
-    if (r.text == null) return { error: 'unavailable' }
-    if (r.silent) return { error: 'silent' } // Silent audio (mic permission missing / no speech) → UI notifies the user.
-    return { text: r.text }
+    return transcribeDictation(audio, asrLanguage(options?.language))
   })
   // Loads the engine ahead of a dictation so the first result is not delayed by model loading.
   deps.mhandle('chat:asr-warm', () => warmAsr())
-  deps.mhandle('chat:asr-support', () => currentAsrSupport())
+  // An API engine dictates on any system; local Whisper needs a supported one.
+  deps.mhandle('chat:asr-support', () => (getDictationEngine() !== 'local' ? { supported: true } : currentAsrSupport()))
+  deps.mhandle('chat:dictation-config', () => dictationConfig())
+  deps.mhandle('chat:set-dictation-engine', (_e, engine: unknown) => {
+    if (!isDictationEngine(engine)) throw new Error('Invalid dictation engine')
+    setDictationEngine(engine)
+    return { ok: true }
+  })
+  deps.mhandle('chat:set-dictation-key', async (_e, provider: unknown, key: unknown) => {
+    if (!isDictationApiProvider(provider)) throw new Error('Invalid dictation provider')
+    if (typeof key !== 'string' || !key.trim() || key.trim().length > 512) throw new Error('Invalid dictation key')
+    const checked = await checkDictationKey({
+      provider,
+      key: key.trim(),
+      fetch: net.fetch as unknown as typeof fetch,
+    })
+    if (checked !== 'ok') return { ok: false, error: checked }
+    return { ok: true, storage: setDictationKey(provider, key) }
+  })
+  deps.mhandle('chat:clear-dictation-key', (_e, provider: unknown) => {
+    if (!isDictationApiProvider(provider)) throw new Error('Invalid dictation provider')
+    clearDictationKey(provider)
+    return { ok: true }
+  })
   deps.mhandle('chat:prompts', () => listUserPrompts()) // List only user prompts (Settings screen).
   deps.mhandle('chat:prompt-add', (_e, input: { name: string; description?: string; content: string }) => {
     try {

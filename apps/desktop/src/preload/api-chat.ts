@@ -3,6 +3,7 @@ import type { AppToolGroup } from '../shared/app-tool-groups'
 import type { WebSearchKeyProvider, WebSearchProvider } from '../shared/web-search'
 import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
+import type { DictationApiProvider, DictationConfig, DictationEngine } from '../shared/dictation'
 import { ARTIFACT_OPEN_REQUEST_CHANNEL, type ArtifactOpenRequest, parseArtifactOpenRequest } from '../shared/artifacts'
 import type { IpcTransport } from './ipc-transport'
 import type { PluginScope } from '../shared/plugins'
@@ -165,6 +166,18 @@ export const chatLocalApi = {
     ),
   chatAsrWarm: (): Promise<boolean> => ipcRenderer.invoke('chat:asr-warm'),
   chatAsrSupport: (): Promise<AsrSupport> => ipcRenderer.invoke('chat:asr-support'),
+  /** The dictation engine and whether each API key is set; the keys stay in main. */
+  chatDictationConfig: (): Promise<DictationConfig> => ipcRenderer.invoke('chat:dictation-config'),
+  chatSetDictationEngine: (engine: DictationEngine): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('chat:set-dictation-engine', engine),
+  /** Checks the key with the provider before storing it. */
+  chatSetDictationKey: (
+    provider: DictationApiProvider,
+    key: string
+  ): Promise<{ ok: true; storage: 'secure' | 'memory' } | { ok: false; error: 'key-rejected' | 'unchecked' }> =>
+    ipcRenderer.invoke('chat:set-dictation-key', provider, key),
+  chatClearDictationKey: (provider: DictationApiProvider): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('chat:clear-dictation-key', provider),
   /** Signs in to a remote MCP server of `hostId` in this computer's browser; the host keeps the sign-in. */
   chatMcpOAuthConnect: (
     hostId: string,
@@ -537,7 +550,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatSetWebSearchKey: (
       provider: WebSearchKeyProvider,
       key: string
-    ): Promise<{ ok: boolean; mode?: 'secure' | 'memory' }> => ipcRenderer.invoke('chat:set-web-search-key', provider, key),
+    ): Promise<{ ok: boolean; mode?: 'secure' | 'memory' }> =>
+      ipcRenderer.invoke('chat:set-web-search-key', provider, key),
 
     chatClearWebSearchKey: (provider: WebSearchKeyProvider): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:clear-web-search-key', provider),
@@ -854,7 +868,11 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatReviewHandoff: (conversationId: string, input: ReviewHandoffInput): Promise<ReviewHandoffResult> =>
       ipcRenderer.invoke('chat:review:handoff', conversationId, input),
     /** Marks a saved code report as sent with this message; the caller then sends the message. */
-    chatReviewSendReport: (conversationId: string, messageId: string, message: string): Promise<ReviewSendReportResult> =>
+    chatReviewSendReport: (
+      conversationId: string,
+      messageId: string,
+      message: string
+    ): Promise<ReviewSendReportResult> =>
       ipcRenderer.invoke('chat:review:send-report', conversationId, messageId, message),
     /** Checks whether the fixes or the plan revision a receipt asked for hold up. */
     chatReviewCheck: (conversationId: string, messageId: string): Promise<ReviewStartResult> =>
