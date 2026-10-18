@@ -32,6 +32,8 @@ import {
   evaluateHumanTurnGrant,
   type ConversationDispatchGrant,
 } from '../conversation-dispatch-authorization'
+import { autonomousPolicy } from '../autonomous'
+import { remoteChatPolicy } from '../remote-policy'
 import { HOST_CONVERSATION_DISPATCH_GUIDANCE, HOST_WORKSPACE_CREATION_GUIDANCE } from '../harness/host-contracts'
 import { CONVERSATION_DISPATCH_TOOL_NAMES, conversationDispatchToolsAllowed } from '../tool-policy'
 import { defineTool } from './util'
@@ -217,17 +219,23 @@ export function conversationDispatchRuntimeFor(
 }
 
 /**
- * Runner helper: when this turn may start conversations, add the tool names to the enabled built-ins and return the
- * runtime to place ONLY in the main tool context.
+ * Runner helper: in the modes that allow them, add the tool names to the enabled built-ins, and return the runtime to
+ * place ONLY in the main tool context when this turn may start conversations.
+ *
+ * The names do not depend on who started the turn. A native session is resumed only while its tool set holds, so
+ * hiding the tools from host-started turns discarded the session on every switch between typed and host turns. Such
+ * a turn gets the same names without a runtime, and every tool refuses without it. Unattended executor and remote
+ * turns never have a typed origin and stay without the names.
  */
 export function enableConversationDispatchTools(
   enabled: Set<string>,
   conversationId: string,
   mode: ChatBehavior
 ): ConversationDispatchToolRuntime | undefined {
-  const runtime = conversationDispatchRuntimeFor(conversationId, mode)
-  if (runtime) for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) enabled.add(name)
-  return runtime
+  if (!conversationDispatchToolsAllowed(mode) || autonomousPolicy(conversationId) || remoteChatPolicy(conversationId))
+    return undefined
+  for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) enabled.add(name)
+  return conversationDispatchRuntimeFor(conversationId, mode)
 }
 
 const UNAVAILABLE =

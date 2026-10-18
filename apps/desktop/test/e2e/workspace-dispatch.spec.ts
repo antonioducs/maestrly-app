@@ -114,6 +114,14 @@ test('hands a standalone Ask plan to a named workspace branch without changing t
       if (!results.collision) return call(res, 'collision', 'start_conversations', batch(true))
       return end(res, 'Existing branch preserved.')
     }
+    // The destination's seeded turn was not typed: what it tries with the conversation tools is refused.
+    if (lastUser.includes(PLAN)) {
+      if (!results.rogue)
+        return call(res, 'rogue', 'start_conversations', {
+          tasks: [{ requestKey: 'rogue', title: 'Rogue', prompt: 'Unrequested work.' }],
+        })
+      if (!results['rogue-inventory']) return call(res, 'rogue-inventory', 'list_conversation_workspaces', {})
+    }
     end(res, 'Received the development plan.')
   })
   const api = (name: string, ...args: unknown[]): Promise<any> =>
@@ -185,8 +193,12 @@ test('hands a standalone Ask plan to a named workspace branch without changing t
     await idle(destination.id)
     const seed = requests.find((request) => request.lastUser.includes(PLAN))!
     expect(seed.model).toBe('workspace-secondary')
-    expect(seed.tools).not.toContain('start_conversations')
-    expect(seed.tools).not.toContain('list_conversation_workspaces')
+    const refused = requests.find((request) => request.lastUser.includes(PLAN) && request.results['rogue-inventory'])!
+    expect(JSON.parse(refused.results.rogue)).toMatchObject({ ok: false, items: [] })
+    expect(JSON.parse(refused.results['rogue-inventory'])).toEqual({
+      error: expect.stringContaining('only works in the main agent turn'),
+    })
+    expect(await api('listConversations', workspaceId)).toHaveLength(1)
     expect(await api('chatGetMode', source.id)).toBe('ask')
     expect((await api('listStandaloneConversations', true)).find((item: any) => item.id === source.id)).toMatchObject({
       scope: 'standalone',
@@ -275,6 +287,9 @@ test('creates a workspace from a vague request in a standalone chat and starts t
       if (!results['create-1']) return call(res, 'create-1', 'create_workspace', create)
       return end(res, 'The projects folder is not set yet.')
     }
+    // The new project's seeded turn was not typed: its attempt to create another project is refused.
+    if (lastUser.includes(PLAN) && !results['rogue-create'])
+      return call(res, 'rogue-create', 'create_workspace', { requestKey: 'rogue', name: 'rogue', source: { kind: 'new' } })
     end(res, 'Received.')
   })
   const api = (name: string, ...args: unknown[]): Promise<any> =>
@@ -361,9 +376,10 @@ test('creates a workspace from a vague request in a standalone chat and starts t
     const destinations = await api('listConversations', created.workspaceId)
     expect(destinations).toHaveLength(1)
     await idle(destinations[0].id)
-    const seed = requests.find((request) => request.lastUser.includes(PLAN))!
-    for (const name of ['start_conversations', 'create_workspace', 'find_github_repositories'])
-      expect(seed.tools).not.toContain(name)
+    const seed = requests.find((request) => request.lastUser.includes(PLAN) && request.results['rogue-create'])!
+    expect(JSON.parse(seed.results['rogue-create'])).toMatchObject({ ok: false, code: 'unavailable' })
+    expect(readdirSync(projects)).toEqual(['export-target'])
+    expect(await api('listConversations', created.workspaceId)).toHaveLength(1)
     expect(await api('chatGetMode', source.id)).toBe('ask')
     await expect(page.getByTestId('workspace-creation-card').last()).toContainText('export-target')
   } finally {

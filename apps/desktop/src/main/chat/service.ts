@@ -439,7 +439,7 @@ import {
 import type { ChatAttachmentPdfFileResult, ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
-import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
+import type { MaestroOrchestratorProfileV1, MaestroTurnSnapshotV1 } from '../../shared/maestro'
 import { tFor } from '../i18n'
 import { getMainWebContents, sendToConversation } from '../window-ipc'
 import { hasRemoteMains, sendToRemoteMains } from '../remote-ui-targets'
@@ -3270,6 +3270,18 @@ interface ContextPreflightResult {
   error?: 'context-overflow' | 'context-compaction-failed'
 }
 
+/**
+ * The turn a preflight runs for. Its Claude session check must rebuild the surface THAT turn will run with (its frozen
+ * mode and Maestro snapshot), not the live preferences, or it discards a session the turn could resume.
+ */
+interface PreflightClaudeTurn {
+  mode: ChatBehavior
+  maestro?: MaestroTurnSnapshotV1
+}
+
+/** Axes frozen at admission; the session check compares the binding against these, as the runner will. */
+type PreflightClaudeAxes = Pick<ClaudeRuntimeTarget, 'reasoningEffort' | 'fastMode'> & { maestrlyUltra?: boolean }
+
 /** Target-specific guard. It runs before the pending user message is persisted. */
 async function preflightContext(
   conversationId: string,
@@ -3281,7 +3293,8 @@ async function preflightContext(
   physicalContextWindow?: number | null,
   claudeFailoverChain?: readonly string[],
   physicalClaudeProviderId?: string,
-  claudeExecutionAxes?: Pick<ClaudeRuntimeTarget, 'reasoningEffort' | 'fastMode'>
+  claudeExecutionAxes?: PreflightClaudeAxes,
+  claudeTurn?: PreflightClaudeTurn
 ): Promise<ContextPreflightResult> {
   const hasPhysicalContextWindow = physicalContextWindow !== undefined
   const { meta } = hasPhysicalContextWindow
@@ -3309,9 +3322,23 @@ async function preflightContext(
         cwd: conv.cwd,
         selection,
         resolvedModelId: model.resolvedModel ?? model.value,
-        mode: behaviorFor(conversationId),
+        mode: claudeTurn?.mode ?? behaviorFor(conversationId),
+        ...(claudeTurn?.maestro ? { maestro: claudeTurn.maestro } : {}),
         permMode: permModeFor(conversationId),
         ...axes,
+        ...(claudeExecutionAxes
+          ? {
+              reasoningEffort: claudeExecutionAxes.reasoningEffort,
+              fastMode: claudeExecutionAxes.fastMode,
+              ...(claudeExecutionAxes.maestrlyUltra !== undefined
+                ? { maestrlyUltra: claudeExecutionAxes.maestrlyUltra }
+                : {}),
+            }
+          : {}),
+        dropImages: !supportsChatToolImages({
+          modelVision: true,
+          runtimeImageUnsupported: getConvUiPrefs(conversationId).chat?.imagesUnsupported === true,
+        }),
         manager,
         accountIdentity: {
           fingerprint: status.accountFingerprint,
@@ -3320,7 +3347,17 @@ async function preflightContext(
         broker: getBroker(),
         questionBroker: getQuestionBroker(),
         signal,
-      }).catch(() => false)
+      }).catch((error: unknown) => {
+        // A cancelled send must not cost the session it never got to check.
+        signal.throwIfAborted()
+        chatDiag({
+          kind: 'claude-session-preflight',
+          conv: conversationId,
+          compatible: false,
+          error: redactClaudeCredentials(error instanceof Error ? error.message : String(error)).slice(0, 300),
+        })
+        return false
+      })
       if (!compatible) await deleteClaudeSessionForConversation(conversationId)
     }
   }
@@ -4458,6 +4495,10 @@ async function startSend(
     const initialClaudeAxes = claudeModelAtAdmission
       ? claudeRuntimeAxes(conversationId, claudeModelAtAdmission, claudeRequestedEffort, claudeRequestedFast, isolated)
       : undefined
+    const preflightClaudeTurn: PreflightClaudeTurn = {
+      mode: turnBehavior,
+      ...(maestroTurn ? { maestro: maestroTurn } : {}),
+    }
     const claudeRuntimeContract =
       internalLoop?.selectionOverride.resolvedModelId ??
       claudeRuntimeTarget?.runtimeModelId ??
@@ -4588,7 +4629,8 @@ async function startSend(
             useClaudeSubscription ? smallestClaudeWindow : codexPreflightContextWindow,
             useClaudeSubscription ? claudeFailoverChain : undefined,
             preflightedClaudeProviderId,
-            initialClaudeAxes
+            initialClaudeAxes,
+            preflightClaudeTurn
           )
     if (!preflight.ok) return { ok: false, error: preflight.error }
 
@@ -4708,7 +4750,8 @@ async function startSend(
           smallestClaudeWindow != null ? Math.min(smallestClaudeWindow, window) : window,
           claudeFailoverChain,
           result.target.providerId,
-          initialClaudeAxes
+          initialClaudeAxes,
+          preflightClaudeTurn
         )
         if (!checked.ok) return { ok: false, error: checked.error }
         smallestClaudeWindow = smallestClaudeWindow != null ? Math.min(smallestClaudeWindow, window) : window

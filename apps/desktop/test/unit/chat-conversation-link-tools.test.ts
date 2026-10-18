@@ -162,6 +162,22 @@ describe('conversation link tool surface', () => {
     humanTurn()
     h.autonomous = true
     expect(conversationLinkRuntimeFor('source', 'agent')).toBeUndefined()
+    const enabled = builtinToolNamesForMode('agent')
+    expect(enableConversationLinkTools(enabled, 'source', 'agent')).toBeUndefined()
+    expect(CONVERSATION_LINK_TOOL_NAMES.some((name) => enabled.has(name))).toBe(false)
+  })
+
+  // A native session is resumed only while its tool set holds: hiding the names from host turns (an approved plan, a
+  // review loop) discarded the session at every switch. Those turns see the same names, and nothing acts without the
+  // runtime (see 'refuses without the main-turn runtime').
+  it('offers the same names to host turns, without a runtime', () => {
+    const host = builtinToolNamesForMode('agent')
+    expect(enableConversationLinkTools(host, 'source', 'agent')).toBeUndefined()
+    humanTurn()
+    const typed = builtinToolNamesForMode('agent')
+    expect(enableConversationLinkTools(typed, 'source', 'agent')).toBeDefined()
+    expect([...host].sort()).toEqual([...typed].sort())
+    for (const name of CONVERSATION_LINK_TOOL_NAMES) expect(host.has(name)).toBe(true)
   })
 })
 

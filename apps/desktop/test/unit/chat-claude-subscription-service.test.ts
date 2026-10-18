@@ -111,6 +111,8 @@ const h = vi.hoisted(() => {
     })),
     deleteAll: vi.fn(async () => {}),
     deleteOne: vi.fn(async () => {}),
+    getBinding: vi.fn((): unknown => null),
+    inspect: vi.fn(async (_args: Record<string, unknown>) => true),
     retryCleanup: vi.fn(async () => {}),
     emitAuthenticationRequired(status: any) {
       authenticationRequiredListener?.(status)
@@ -126,9 +128,9 @@ vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   compactClaudeSession: h.compactSession,
   deleteAllManagedClaudeSessions: h.deleteAll,
   deleteClaudeSessionForConversation: h.deleteOne,
-  getClaudeSessionBinding: vi.fn(() => null),
+  getClaudeSessionBinding: h.getBinding,
   getClaudeSubscriptionManager: () => h.manager,
-  inspectClaudeSessionCompatibility: vi.fn(async () => true),
+  inspectClaudeSessionCompatibility: h.inspect,
   listClaudeSubscriptionManagers: () => [h.manager],
   putClaudeSessionBinding: vi.fn(),
   retryManagedClaudeSessionCleanup: h.retryCleanup,
@@ -264,6 +266,8 @@ describe('Claude subscription service integration', () => {
     h.manager.getObservedModelContextWindow.mockReturnValue(undefined)
     modelMeta.getClaudeHarnessModelMeta.mockResolvedValue(null)
     h.runClaude.mockResolvedValue({ planSubmitted: false, sessionId: 'claude-session-1' })
+    h.getBinding.mockImplementation(() => null)
+    h.inspect.mockImplementation(async () => true)
   })
   afterEach(closeDb)
 
@@ -427,6 +431,49 @@ describe('Claude subscription service integration', () => {
     expect(
       listChatMessages(conversation.id).find((message) => message.role === 'assistant')?.memoryContext
     ).toBeUndefined()
+  })
+
+  // The preflight runs before admission. Checking the stored session against the live preferences instead of the axes
+  // this turn froze discarded sessions the turn could resume.
+  it('checks a stored session against the turn being admitted and keeps it when it matches', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    patchConvUiPrefs(conversation.id, {
+      chat: {
+        providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        modelId: 'sonnet',
+        mode: 'agent',
+        permMode: 'ask',
+        reasoning: 'max',
+        fastMode: true,
+      },
+    })
+    h.getBinding.mockImplementation(() => ({
+      conversationId: conversation.id,
+      sessionId: 'claude-session-0',
+      modelId: 'claude-sonnet-5',
+      accountId: null,
+      accountFingerprint: 'sha256:claude-account',
+      accountEpoch: 2,
+      lastMessageId: 'assistant-before',
+    }))
+    const { handlers } = register()
+
+    await expect(
+      handlers.get('chat:send')?.({ sender: h.webContents }, { conversationId: conversation.id, text: 'Continue.' })
+    ).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+
+    expect(h.inspect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: conversation.id,
+        mode: 'agent',
+        reasoningEffort: 'max',
+        fastMode: true,
+        maestrlyUltra: false,
+      })
+    )
+    expect(h.deleteOne).not.toHaveBeenCalled()
   })
 
   it.each([

@@ -15,6 +15,11 @@ const h = vi.hoisted(() => ({
   buildMcpTools: vi.fn(),
   buildAppTools: vi.fn(),
   describeEphemeralToolImage: vi.fn(),
+  gitEnvInfo: vi.fn(async (): Promise<{ branch: string; dirty: boolean } | null> => null),
+}))
+vi.mock('../../src/main/git-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git-service')>()),
+  gitEnvInfo: h.gitEnvInfo,
 }))
 vi.mock('../../src/main/chat/subagent-execution-profile', () => ({
   resolveSubagentExecutionProfile: h.resolveSubagentExecutionProfile,
@@ -319,6 +324,8 @@ describe('Cursor subscription runner', () => {
     h.buildAppTools.mockClear()
     h.describeEphemeralToolImage.mockReset()
     h.describeEphemeralToolImage.mockResolvedValue(null)
+    h.gitEnvInfo.mockReset()
+    h.gitEnvInfo.mockResolvedValue(null)
 
     h.getClaudeSubscriptionManager.mockImplementation(() => ({
       assertAccountIdentity: vi.fn(),
@@ -526,6 +533,37 @@ describe('Cursor subscription runner', () => {
     expect(text2).toContain('terceira')
 
     expect(manager2.createCalls).toHaveLength(0)
+  })
+
+  // The date and git state used to sign the agent's contract, so the first edit that dirtied the tree (or midnight)
+  // discarded the agent and reseeded the whole transcript.
+  it('resumes across environment changes and sends the current environment with the message', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    persistUser(conversation.id, 'user-1', 'primeira', 1)
+    const manager = new FakeManager()
+    manager.queue(async function* () {
+      yield msg('status', { status: 'FINISHED' })
+    })
+    h.gitEnvInfo.mockResolvedValue({ branch: 'main', dirty: false })
+    await runCursorSubscriptionChat({ ...baseArgs(manager, conversation.id, cwd), emit: () => undefined })
+    const binding = getCursorAgentBinding(conversation.id)!
+    expect((manager.lastAgent()!.sends[0].message as { text: string }).text).toContain('Git branch: main (clean).')
+
+    persistUser(conversation.id, 'user-2', 'segunda', 2)
+    const manager2 = new FakeManager()
+    manager2.queue(async function* () {
+      yield msg('status', { status: 'FINISHED' })
+    })
+    h.gitEnvInfo.mockResolvedValue({ branch: 'main', dirty: true })
+    await runCursorSubscriptionChat({ ...baseArgs(manager2, conversation.id, cwd), emit: () => undefined })
+
+    expect(manager2.createCalls).toHaveLength(0)
+    expect(manager2.resumeCalls[0]?.agentId).toBe(binding.agentId)
+    const text = (manager2.lastAgent()!.sends[0].message as { text: string }).text
+    expect(text).toMatch(/^# Current environment\n.*Git branch: main \(uncommitted changes\)\./)
+    expect(text).not.toContain('Maestrly harness')
+    expect(text).toContain('segunda')
   })
 
   it('creates and reseeds when the instruction envelope changes', async () => {

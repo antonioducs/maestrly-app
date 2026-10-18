@@ -714,7 +714,8 @@ async function prepareRuntime(
       `\n\n# Active runtime\nYou are running through the official GitHub Copilot SDK/CLI runtime with the ` +
       `${copilot.profile} Maestrly harness selected from model ${args.selection.modelId}. Copilot is the transport; ` +
       `the selected model family governs behavioral instructions. Only the explicitly supplied tools are available.`
-    let systemMessage =
+    // The environment (date, git state) changes between turns; only the stable part may sign a standalone session.
+    let stableSystemMessage =
       buildMaestrlyBasePrompt({
         harness,
         scope: args.projectId === null ? 'standalone' : 'project',
@@ -730,11 +731,11 @@ async function prepareRuntime(
       (skillContext ? `\n\n# ${args.projectId === null ? 'Available' : 'Project'} skills\n${skillContext}` : '') +
       (agentContext ? `\n\n${args.mode === 'maestro' ? agentContext : `# Subagents\n${agentContext}`}` : '') +
       (args.mode === 'maestro' && args.maestro ? `\n\n${renderMaestroTurnPolicy(args.maestro)}` : '') +
-      (ultra ? `\n\n# Ultra mode\n${ultra}` : '') +
-      `\n\n# Environment\n${env}`
+      (ultra ? `\n\n# Ultra mode\n${ultra}` : '')
+    let systemMessage = `${stableSystemMessage}\n\n# Environment\n${env}`
     // Copilot's legacy prompt key selects the textual axis only; it never enables advanced policies.
     if (copilot.harness.prompts.layout !== 'maestrly-base') {
-      systemMessage = buildHarnessPrompt({
+      const compiled = buildHarnessPrompt({
         scope: args.projectId === null ? 'standalone' : 'project',
         harness: copilot.harness,
         cwd: args.cwd,
@@ -751,13 +752,15 @@ async function prepareRuntime(
         ultraContext: ultra,
         nativeTools: { localShell: false, applyPatch: false },
         generatedInterfaces: generatedInterfacesEnabled(),
-      }).instructions
+      })
+      systemMessage = compiled.instructions
+      stableSystemMessage = compiled.stablePrefix
     }
 
     const toolSignature = gitHubCopilotToolSignature(tools, agents)
     const signature =
       args.projectId === null
-        ? createHash('sha256').update(`standalone:${toolSignature}:${systemMessage}`).digest('hex')
+        ? createHash('sha256').update(`standalone:${toolSignature}:${stableSystemMessage}`).digest('hex')
         : toolSignature
     return {
       tools,

@@ -95,6 +95,7 @@ vi.mock('../../src/main/chat/usage-diagnostics', () => ({
 
 import {
   compactClaudeSession,
+  inspectClaudeSessionCompatibility,
   runClaudeChat,
   type RunClaudeChatArgs,
 } from '../../src/main/chat/claude-agent-sdk/runner'
@@ -1676,7 +1677,12 @@ describe('Claude official chat runner', () => {
     ).value
     expect(structuredPrompt).toMatchObject({
       origin: { kind: 'human' },
-      message: { content: [{ type: 'text', text: 'Make a plan.' }] },
+      message: {
+        content: [
+          { type: 'text', text: expect.stringMatching(/^# Current environment\n/) },
+          { type: 'text', text: 'Make a plan.' },
+        ],
+      },
     })
     expect(manager.calls[0].options?.allowedTools).toEqual(
       expect.arrayContaining(['mcp__maestrly__review_plan', 'mcp__maestrly__ask_question'])
@@ -1733,7 +1739,9 @@ describe('Claude official chat runner', () => {
     expect(events.some((event) => event.kind === 'finish')).toBe(true)
   })
 
-  it.each(['fable', 'opus'] as const)(
+  // `default` is a model without a behavioral profile (e.g. Opus 5.5): the transport alone must keep the hash stable,
+  // or every edit that dirties the tree discards the resumable session.
+  it.each(['fable', 'opus', 'default'] as const)(
     'keeps the %s system/hash stable across environment changes and sends current state transiently',
     async (family) => {
       const workspace = makeWorkspace()
@@ -1754,7 +1762,7 @@ describe('Claude official chat runner', () => {
           cwd: '/repo',
           selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
           harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
-          resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
+          resolvedModelId: family === 'opus' ? 'claude-opus-5' : family === 'default' ? 'claude-opus-5-5' : undefined,
           mode: 'plan',
           permMode: 'ask',
           manager: manager as unknown as ClaudeSubscriptionManager,
@@ -1791,6 +1799,8 @@ describe('Claude official chat runner', () => {
       if (family === 'fable') {
         expect(clean.options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
         expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
+      } else if (family === 'default') {
+        expect(harnessFor('claude-subscription', 'claude-opus-5-5').identity.behaviorProfileId).toBeNull()
       } else {
         expect(clean.options.systemPrompt).toContain(
           harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
@@ -1852,6 +1862,76 @@ describe('Claude official chat runner', () => {
     h.codexStatusSnapshot = { authenticated: false }
     const disconnected = makeConversation(workspace.id, { cwd: '/repo' })
     expect(await runTurn(disconnected.id, 'user-img-noauth')).not.toContain('mcp__maestrly__generate_image')
+  })
+
+  // The context preflight inspects the stored session BEFORE the next turn is admitted, and host turns (an approved
+  // plan, a review loop) are never typed. Both used to rebuild a tool set without the conversation tools or
+  // generate_image, so every check and every switch between typed and host turns discarded the session, and the next
+  // turn reseeded the whole transcript.
+  it('keeps one tool set across typed and host turns, so the session survives the preflight and the switch', async () => {
+    const { recordHumanTurnOrigin, clearHumanTurnOrigin } = await import(
+      '../../src/main/chat/conversation-dispatch-authorization'
+    )
+    h.codexStatusSnapshot = { authenticated: true }
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    const manager = new FakeManager()
+    const turn = {
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      cwd: '/repo',
+      selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+      mode: 'agent' as const,
+      permMode: 'ask' as const,
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      broker: { assert: vi.fn(), on: vi.fn() } as never,
+      questionBroker: { ask: vi.fn() } as never,
+      signal: new AbortController().signal,
+    }
+    const runTurn = async (id: string, text: string, typed: boolean) => {
+      upsertChatMessage({
+        id,
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: `${id}-text`, text }],
+        createdAt: Date.now(),
+      })
+      const token = {}
+      if (typed)
+        recordHumanTurnOrigin({
+          token,
+          conversationId: conversation.id,
+          messageId: id,
+          text,
+          signal: new AbortController().signal,
+        })
+      try {
+        await runClaudeChat({ ...turn, emit: () => {}, onSessionReady: () => true, canPersistSession: () => true })
+      } finally {
+        clearHumanTurnOrigin(conversation.id, token)
+      }
+    }
+
+    await runTurn('user-typed-1', 'Fix the race.', true)
+    const tools = manager.calls[0].options?.allowedTools
+    expect(tools).toEqual(
+      expect.arrayContaining([
+        'mcp__maestrly__start_conversations',
+        'mcp__maestrly__send_to_conversation',
+        'mcp__maestrly__generate_image',
+      ])
+    )
+    // What the preflight checks between turns, before the next one is admitted.
+    expect(await inspectClaudeSessionCompatibility(turn)).toBe(true)
+
+    await runTurn('user-host', 'Approved. Implement the plan.', false)
+    expect(manager.calls[1].options?.allowedTools).toEqual(tools)
+    expect(manager.calls[1].options).toMatchObject({ resume: 'claude-session-1' })
+
+    await runTurn('user-typed-2', 'Continue.', true)
+    expect(manager.calls[2].options?.allowedTools).toEqual(tools)
+    expect(manager.calls[2].options).toMatchObject({ resume: 'claude-session-1' })
   })
 
   it('treats the acknowledged review_plan interrupt diagnostic as a successful measured turn', async () => {

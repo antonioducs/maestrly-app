@@ -28,25 +28,33 @@ export interface ClaudeSessionCompatibility {
   harness?: ResolvedHarness
 }
 
+/** Names of the axes that keep `binding` from being resumed; empty when it is compatible. Never holds values. */
+export function claudeSessionBindingMismatches(
+  binding: ClaudeSessionBinding,
+  expected: ClaudeSessionCompatibility
+): string[] {
+  const checks: Array<[string, boolean]> = [
+    ['model', binding.modelId === expected.modelId],
+    ['effort', binding.effort === (expected.reasoningEffort ?? '')],
+    ['fast-mode', binding.fastMode === Boolean(expected.fastMode)],
+    ['cwd', binding.cwd === expected.cwd],
+    ['harness-profile', binding.harnessProfile === CLAUDE_HARNESS_PROFILE],
+    ['prompt', binding.promptHash === expected.promptHash],
+    ['tools', binding.toolSignature === expected.toolSignature],
+    ['account-fingerprint', binding.accountFingerprint === expected.accountIdentity.fingerprint],
+    ['account-epoch', binding.accountEpoch === expected.accountIdentity.epoch],
+    // Multiple accounts: a session lives in its owner's CLAUDE_CONFIG_DIR; another account must never resume it.
+    ['account', binding.accountId === (expected.accountId ?? null)],
+    ['harness', !expected.harness || snapshotAllowsResume(binding.harnessSnapshot, expected.harness)],
+  ]
+  return checks.filter(([, ok]) => !ok).map(([axis]) => axis)
+}
+
 export function isClaudeSessionBindingCompatible(
   binding: ClaudeSessionBinding | null,
   expected: ClaudeSessionCompatibility
 ): boolean {
-  return Boolean(
-    binding &&
-      binding.modelId === expected.modelId &&
-      binding.effort === (expected.reasoningEffort ?? '') &&
-      binding.fastMode === Boolean(expected.fastMode) &&
-      binding.cwd === expected.cwd &&
-      binding.harnessProfile === CLAUDE_HARNESS_PROFILE &&
-      binding.promptHash === expected.promptHash &&
-      binding.toolSignature === expected.toolSignature &&
-      binding.accountFingerprint === expected.accountIdentity.fingerprint &&
-      binding.accountEpoch === expected.accountIdentity.epoch &&
-      // Multiple accounts: a session lives in its owner's CLAUDE_CONFIG_DIR; another account must never resume it.
-      binding.accountId === (expected.accountId ?? null) &&
-      (!expected.harness || snapshotAllowsResume(binding.harnessSnapshot, expected.harness))
-  )
+  return !!binding && claudeSessionBindingMismatches(binding, expected).length === 0
 }
 
 export interface ResolveClaudeSessionArgs {

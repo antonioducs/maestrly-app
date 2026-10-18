@@ -190,7 +190,16 @@ describe('harness parity: behavioral profiles', () => {
     const opus = harnessFor('claude-opus-5')
     expect(opus.prompts.environment).toEqual({ placement: 'last-user-message', transient: true })
     expect(harnessFor('claude-fable-5-1').prompts.environment).toEqual({ placement: 'system', transient: true })
-    expect(harnessFor('claude-sonnet-4').prompts.environment).toEqual({ placement: 'system', transient: false })
+    // The Claude subscription resumes native sessions only while the system prompt hash holds, so every model on it
+    // gets the environment per turn; other transports keep the default.
+    expect(harnessFor('claude-sonnet-4').prompts.environment).toEqual({
+      placement: 'last-user-message',
+      transient: true,
+    })
+    expect(harnessFor('claude-sonnet-4', 'anthropic').prompts.environment).toEqual({
+      placement: 'system',
+      transient: false,
+    })
     expect(withEnvironmentOnLastUserMessage([{ role: 'user', content: 'hi' }], 'OS: macOS.')).toEqual([
       {
         role: 'user',
@@ -331,7 +340,9 @@ describe('harness parity: prompt layouts', () => {
     expect(prompt.instructions).toContain('# Behavioral profile')
     expect(prompt.instructions).toContain('# Using your tools')
     expect(prompt.transientContext).toBe('OS: macOS.')
-    expect(buildHarnessPrompt({ ...input, harness: harnessFor('claude-sonnet-4'), mode: 'ask' }).transientContext).toBeNull()
+    expect(
+      buildHarnessPrompt({ ...input, harness: harnessFor('claude-sonnet-4', 'anthropic'), mode: 'ask' }).transientContext
+    ).toBeNull()
   })
 })
 
