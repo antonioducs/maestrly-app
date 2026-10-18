@@ -141,6 +141,10 @@ export interface BotPaths {
   /** The routine runs that have conversations of their own, and each one's transcript extras under `runsFolder`. */
   runs: string
   runsFolder: string
+  /** The bot's threads with other bots that have conversations of their own; their extras are under `runsFolder` too. */
+  threads: string
+  /** The latest answers the bot brought back from threads it opened from its own conversation. */
+  threadReports: string
   attachments: string
   images: string
   browserConfig: string
@@ -155,6 +159,8 @@ export function botPaths(userData: string, home: string, botId: string): BotPath
     transcript: path.join(folder, 'transcript.json'),
     runs: path.join(folder, 'runs.json'),
     runsFolder: path.join(folder, 'runs'),
+    threads: path.join(folder, 'threads.json'),
+    threadReports: path.join(folder, 'thread-reports.json'),
     attachments: path.join(userData, 'fleet-inputs', botId),
     images: path.join(userData, 'fleet-images', botId),
     browserConfig: path.join(home, '.config', 'maestrly-bots', botId),

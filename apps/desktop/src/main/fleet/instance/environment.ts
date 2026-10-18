@@ -690,10 +690,8 @@ export class EnvironmentRuntime {
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */
   private async purge(botId: string, conversationId: string | null): Promise<void> {
-    // Its routine runs' conversations first: they work in its conversation's folder.
-    for (const runConversationId of await readRunConversationIds(
-      botPaths(this.deps.userData, this.deps.home, botId).runs
-    ))
+    // Its side conversations first (routine runs' and threads'): they work in its conversation's folder.
+    for (const runConversationId of await readRunConversationIds(botPaths(this.deps.userData, this.deps.home, botId)))
       await this.deps.purgeConversation(runConversationId)
     if (conversationId) {
       await this.deps.purgeConversation(conversationId)

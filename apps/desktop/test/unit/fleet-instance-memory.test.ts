@@ -235,6 +235,10 @@ describe('runtime turn memory integration', () => {
       extras: idle,
       images: idle,
       runs: noRunConversations(),
+      // The answers its threads with other bots brought back follow the owner's memory.
+      threadReports: {
+        section: async () => ({ key: 'peer-reports', heading: 'Answers', intro: '', entries: [], budgetChars: 1 }),
+      },
       usageTask: Promise.resolve(),
       turns: new Map(),
     })
@@ -243,6 +247,7 @@ describe('runtime turn memory integration', () => {
       expect(memorySpaceForConversation(conversation.id)).toEqual({ id: BOT_SPACE, kind: 'bot', roots: [] })
       expect(await loadMemoryCoreExtras(conversation.id, new AbortController().signal)).toMatchObject([
         { key: 'owner' },
+        { key: 'peer-reports' },
       ])
       expect(getOwnerMemoryWriter(conversation.id)).toBeDefined()
     } finally {

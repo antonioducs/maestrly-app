@@ -4,6 +4,7 @@ import { Readable } from 'node:stream'
 import { app } from 'electron'
 import {
   FLEET_BOT_SIDE_TURNS_MAX,
+  FLEET_PEER_THREAD_LIMITS,
   FLEET_PROTOCOL_VERSION,
   FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_BOT_MEMORY_LIMITS,
@@ -116,7 +117,9 @@ import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } from './transcript'
 import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
-import { BotRunConversations, isRunId, type RunLane } from './routine-runs'
+import { BotRunConversations, isRunId, type RunLane, type ThreadRecord } from './routine-runs'
+import { ThreadReports } from './thread-reports'
+import type { MemoryCoreExtraSection } from '../../memory/core'
 import type { BotDisplay } from './displays'
 import type { LaneComputers } from './lane-computers'
 import { keepRunFiles, runMedia } from './run-files'
@@ -184,6 +187,21 @@ function continuationText(reason: 'takeover' | 'paused', durationMs: number | nu
   return `The owner used your screen for ${duration} and handed it back.${note ? ` Their note: "${note}".` : ''} The screen may have changed: take a fresh screenshot before acting, then continue the task.`
 }
 export { continuationText }
+/**
+ * What a thread's first answer tells the bot that opened it from another conversation: what it had sent, why, and,
+ * for one opened from its owner's conversation, how its answer gets back there.
+ */
+export function openingContext(record: Pick<ThreadRecord, 'opening' | 'origin'>): string {
+  const sent = record.opening?.sent ?? ''
+  const ask = record.opening?.ask
+  const parts = [`You opened this conversation from another one by sending: "${sent}".`]
+  if (ask) parts.push(`Your owner had asked there: "${ask}".`)
+  if (record.origin === 'primary')
+    parts.push(
+      'Your owner asked for this in your main conversation. When you have what they need, call bot_peers_report with a short answer: it shows there.'
+    )
+  return parts.join(' ').slice(0, FLEET_PEER_THREAD_LIMITS.contextMax)
+}
 export function releaseSystemCode(reason: 'takeover' | 'paused' | null): 'takeover' | 'resumed' {
   return reason === 'takeover' ? 'takeover' : 'resumed'
 }
@@ -357,8 +375,10 @@ export class BotRuntime {
   readonly images: FleetImageStore
   readonly files: FleetFileStore
   readonly live: LiveTranscript
-  /** The routine runs that work in conversations of their own (`routine-conversations`). */
+  /** The side conversations: routine runs' (`routine-conversations`) and threads' with other bots (`peer-conversations`). */
   readonly runs: BotRunConversations
+  /** The answers the bot brought back to its own conversation from threads it opened there. */
+  readonly threadReports: ThreadReports
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
@@ -441,6 +461,7 @@ export class BotRuntime {
     })
     this.runs = new BotRunConversations({
       file: paths.runs,
+      threadsFile: paths.threads,
       folder: paths.runsFolder,
       queue: this.queue,
       images: this.images,
@@ -448,6 +469,7 @@ export class BotRuntime {
       turnInputId: (runId) => this.turns.get(runId)?.inputId ?? null,
       changed: () => this.changed(),
     })
+    this.threadReports = new ThreadReports(paths.threadReports)
     this.holdManager = new InstanceHoldManager(
       () => {
         if (this.disposed) return
@@ -554,17 +576,21 @@ export class BotRuntime {
    */
   currentInput(conversationId: string): {
     source: FleetInputSource
+    text: string
     routine?: { id: string; title: string; runId?: string }
     run?: { id: string }
+    thread?: { id: string }
   } | null {
     const key = this.turnKeyOf(conversationId)
     const inputId = key === undefined ? undefined : this.turns.get(key)?.inputId
     const item = inputId ? this.queue.all().find((item) => item.id === inputId) : undefined
     if (!item) return null
     const routine = item.input.routine
-    const record = item.input.run ? this.runs.get(item.input.run.id) : undefined
+    const record = item.input.run ? this.runs.routine(item.input.run.id) : undefined
     return {
       source: item.input.source,
+      text: item.input.text,
+      ...(item.input.thread ? { thread: { id: item.input.thread.id } } : {}),
       ...(routine
         ? { routine: { id: routine.id, title: routine.title, ...(routine.runId ? { runId: routine.runId } : {}) } }
         : record
@@ -795,7 +821,7 @@ export class BotRuntime {
     this.applyScreen(id)
     this.applyProfile()
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
-    setMemoryCoreExtras(id, (signal) => this.ownerMemory.coreSections(signal))
+    setMemoryCoreExtras(id, (signal) => this.primaryCoreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     await this.syncCompaction()
     if (!this.floatAttempted) {
@@ -937,7 +963,13 @@ export class BotRuntime {
     const record = this.runs.get(runId)
     if (!record) throw new InstanceHttpError(404, 'NOT_FOUND', 'This routine run has no conversation.')
     if (this.turns.has(runId))
-      throw new InstanceHttpError(409, 'CONFLICT', 'The routine run is working; stop it first.')
+      throw new InstanceHttpError(
+        409,
+        'CONFLICT',
+        record.kind === 'thread'
+          ? 'The conversation with another bot is working; stop it first.'
+          : 'The routine run is working; stop it first.'
+      )
     const primary = this.primaryConversationId ? getConversation(this.primaryConversationId) : undefined
     const kept = getConversation(record.conversationId)
       ? await keepRunFiles({
@@ -1399,12 +1431,13 @@ export class BotRuntime {
       })
     }, 250)
   }
-  async input(value: FleetInstanceInput): Promise<FleetInputReceipt> {
+  async input(received: FleetInstanceInput): Promise<FleetInputReceipt> {
     if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
-    if ((value.source === 'routine' && !value.routine) || (value.source === 'peer' && !value.peer))
+    if ((received.source === 'routine' && !received.routine) || (received.source === 'peer' && !received.peer))
       throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Input source metadata is missing.')
-    const runId = value.run?.id ?? null
-    if (runId) await this.openRun(value)
+    const runId = received.run?.id ?? received.thread?.id ?? null
+    if (received.run) await this.openRun(received)
+    const value = received.thread ? await this.openThread(received) : received
     const result = await this.queue.enqueue(value)
     // The owner writing again is the moment to check at once whether a turn that could not start now can.
     if (value.source === 'owner') {
@@ -1443,6 +1476,8 @@ export class BotRuntime {
     const runId = value.run!.id
     if (!isRunId(runId)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid routine run id.')
     await this.opening.get(runId)
+    // A thread's conversation is never a run's.
+    if (this.runs.thread(runId)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid routine run id.')
     if (this.runs.get(runId)) return
     if (value.source !== 'routine' || !value.routine)
       throw new InstanceHttpError(404, 'NOT_FOUND', 'This routine run has no conversation.')
@@ -1466,6 +1501,75 @@ export class BotRuntime {
     } finally {
       this.opening.delete(runId)
     }
+  }
+  /**
+   * The conversation of the thread an input goes to (`peer-conversations`): made for another bot's first message in
+   * a thread this bot has none of. The thread's first message to the bot that opened it from another conversation
+   * carries what it had sent there, and why.
+   */
+  private async openThread(value: FleetInstanceInput): Promise<FleetInstanceInput> {
+    const thread = value.thread!
+    if (!isRunId(thread.id)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid thread id.')
+    await this.opening.get(thread.id)
+    if (this.runs.routine(thread.id)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid thread id.')
+    if (!this.runs.thread(thread.id)) {
+      if (value.source !== 'peer' || !value.peer)
+        throw new InstanceHttpError(404, 'NOT_FOUND', 'This conversation with another bot is not here.')
+      await this.createThread({
+        threadId: thread.id,
+        peerBotId: value.peer.botId,
+        peerName: value.peer.name,
+        title: thread.title,
+        origin: 'peer',
+        opening: null,
+      })
+    }
+    const record = this.runs.thread(thread.id)
+    if (!record?.opening || value.source !== 'peer') return value
+    const { kind: _kind, runId: _runId, ...stored } = record
+    await this.runs.updateThread({ ...stored, opening: null })
+    return { ...value, thread: { ...thread, context: openingContext(record) } }
+  }
+  /** Makes a thread's conversation on this bot's side, in its conversation folder, as a routine run's. */
+  private async createThread(record: Omit<ThreadRecord, 'conversationId' | 'createdAt'>): Promise<void> {
+    const primary = this.primaryConversationId
+    if (!primary || !getConversation(primary))
+      throw new InstanceHttpError(409, 'CONFLICT', 'The bot conversation is unavailable.')
+    const opening = (async () => {
+      if (this.runs.get(record.threadId)) return
+      const name = `${record.peerName}: ${record.title}`.slice(0, 120)
+      const conversation = await createStandaloneConversationInFolderOf(primary, name)
+      await this.runs.addThread({ ...record, conversationId: conversation.id, createdAt: new Date().toISOString() })
+    })()
+    this.opening.set(record.threadId, opening)
+    try {
+      await opening
+    } finally {
+      this.opening.delete(record.threadId)
+    }
+  }
+  /**
+   * A thread this bot opened from one of its conversations (`bot_peers_send`): its conversation is made now, and
+   * shows first the message that opened it.
+   */
+  async recordThread(record: Omit<ThreadRecord, 'conversationId' | 'createdAt'>, opened: FleetTranscriptItem) {
+    if (this.disposed || this.runs.get(record.threadId)) return
+    await this.createThread(record)
+    const lane = await this.runLane(record.threadId)
+    await lane?.extras.upsert(opened)
+  }
+  /** What the bot brings back to its own conversation from a thread it opened there (`bot_peers_report`). */
+  async reportThread(threadId: string, text: string): Promise<void> {
+    const record = this.runs.thread(threadId)
+    if (!record) throw new Error('This conversation with another bot is not here.')
+    await this.threadReports.add({ threadId, peerName: record.peerName, title: record.title, text })
+  }
+  /** The always-on memory of the bot's own conversation: its owner, and the answers its threads brought back. */
+  private async primaryCoreSections(signal: AbortSignal): Promise<MemoryCoreExtraSection[] | null> {
+    const owner = await this.ownerMemory.coreSections(signal)
+    if (owner === null) return null
+    const reports = await this.threadReports.section().catch(() => null)
+    return reports ? [...owner, reports] : owner
   }
   async deleteInput(id: string): Promise<void> {
     const runId = (() => {

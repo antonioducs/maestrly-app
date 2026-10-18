@@ -279,6 +279,8 @@ it('advertises provisioning, environments, environment compaction and transcript
     'bot-move',
     'mcp-test-detail',
     'routine-conversations',
+    'parallel-turns',
+    'peer-conversations',
   ])
 })
 

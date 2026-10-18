@@ -18,7 +18,7 @@ const chatService = await import('../../src/main/chat/service')
 const { saveGeneratedImage } = await import('../../src/main/chat/generated-images')
 const { createStandaloneConversation } = await import('../../src/main/standalone-conversation-service')
 const { deleteConversation } = await import('../../src/main/workspace-service')
-const { InstanceInputQueue, conversationQueue, promptForInput, RUN_CONVERSATION_NOTE } = await import(
+const { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, RUN_CONVERSATION_NOTE } = await import(
   '../../src/main/fleet/instance/queue'
 )
 const { InstanceTranscriptExtras } = await import('../../src/main/fleet/instance/transcript')
@@ -27,11 +27,16 @@ const { LiveTranscript } = await import('../../src/main/fleet/instance/live-tran
 const { InstanceEvents, InstanceHttpError } = await import('../../src/main/fleet/instance/server')
 const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
 const { InstanceHoldManager } = await import('../../src/main/fleet/instance/gate')
-const { BotRunConversations, RunLane: RunLaneClass } = await import('../../src/main/fleet/instance/routine-runs')
+const {
+  BotRunConversations,
+  RunLane: RunLaneClass,
+  readRunConversationIds,
+} = await import('../../src/main/fleet/instance/routine-runs')
+const { ThreadReports, THREAD_REPORT_LIMITS } = await import('../../src/main/fleet/instance/thread-reports')
 const { conversationScreen } = await import('../../src/main/conversation-screen')
 const { conversationShellEnv } = await import('../../src/main/chat/conversation-env')
-const { runKeptFolder } = await import('../../src/main/fleet/instance/run-files')
-const { BotRuntime } = await import('../../src/main/fleet/instance/runtime')
+const { laneKeptFolder, runKeptFolder } = await import('../../src/main/fleet/instance/run-files')
+const { BotRuntime, openingContext } = await import('../../src/main/fleet/instance/runtime')
 const { APP_TOOL_POLICY } = await import('../../src/main/chat/tool-policy')
 
 const PNG_1X1_BASE64 =
@@ -79,6 +84,7 @@ async function bot() {
   let turnInputId: (runId: string) => string | null = () => null
   const runs = new BotRunConversations({
     file: path.join(dir, 'runs.json'),
+    threadsFile: path.join(dir, 'threads.json'),
     folder: path.join(dir, 'runs'),
     queue,
     images,
@@ -104,6 +110,7 @@ async function bot() {
     images,
     extras,
     runs,
+    threadReports: new ThreadReports(path.join(dir, 'thread-reports.json')),
     help: new InstanceHelpStore(extras, () => {}),
     live: new LiveTranscript({
       conversationId: () => primary.id,
@@ -381,7 +388,7 @@ describe('routine runs in conversations of their own', () => {
       operation: {},
     } as never)
     await turn(runtime)
-    const record = runs.get(runId)!
+    const record = runs.routine(runId)!
     await writeFile(path.join(primary.cwd, 'prices.csv'), 'a,b\n')
     await runtime.input({
       idempotencyKey: randomUUID(),
@@ -416,5 +423,199 @@ describe('routine runs in conversations of their own', () => {
     expect(() =>
       getDb().prepare('UPDATE conversations SET folder_owner_id = ? WHERE id = ?').run(null, record.conversationId)
     ).toThrow(/immutable/)
+  })
+})
+
+const peerInput = (threadId: string, text = 'Release 4.2 passed: 412 of 415 tests.') => ({
+  idempotencyKey: randomUUID(),
+  source: 'peer' as const,
+  text,
+  peer: { botId: 'nina', name: 'Nina' },
+  thread: { id: threadId, title: 'Release 4.2' },
+  attachments: [],
+})
+
+describe('threads with other bots in conversations of their own', () => {
+  it("opens a thread's conversation for another bot's first message, and keeps its items as the thread's", async () => {
+    const { runtime, primary, runs, queue } = await bot()
+    const threadId = randomUUID()
+    const receipt = await runtime.input(peerInput(threadId, 'Can you check the 4.2 regression?'))
+    const record = runs.thread(threadId)!
+    expect(record).toMatchObject({ peerBotId: 'nina', peerName: 'Nina', title: 'Release 4.2', origin: 'peer' })
+    expect(getConversation(record.conversationId)).toMatchObject({ cwd: primary.cwd, folderOwnerId: primary.id })
+    expect(runtime.ownsConversation(record.conversationId)).toBe(true)
+    expect(inputRunId(queue.list().at(-1)!)).toBe(threadId)
+    expect((await runtime.transcript(null, 50)).items).toEqual([])
+    expect((await runtime.runTranscript(threadId, null, 50)).items).toEqual([
+      expect.objectContaining({ id: receipt.itemId, source: 'peer', queued: true }),
+    ])
+    // The bot reads it as a conversation of its own, whose replies stay in it.
+    const prompt = promptForInput(peerInput(threadId))
+    expect(prompt).toContain('a conversation of its own')
+    expect(prompt).toContain('bot_peers_send to nina')
+    await runtime.input(peerInput(threadId, 'One more thing'))
+    expect(runs.list()).toHaveLength(1)
+    // The owner writes only in a thread that is here; a thread is never a run, nor a run a thread.
+    await expect(
+      runtime.input({
+        idempotencyKey: randomUUID(),
+        source: 'owner',
+        text: 'Hi',
+        thread: { id: randomUUID(), title: 'x' },
+        attachments: [],
+      })
+    ).rejects.toMatchObject({ status: 404 })
+    await expect(
+      runtime.input({
+        idempotencyKey: randomUUID(),
+        source: 'owner',
+        text: 'Hi',
+        run: { id: threadId },
+        attachments: [],
+      })
+    ).rejects.toMatchObject({ status: 400 })
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    await expect(runtime.input(peerInput(runId))).rejects.toMatchObject({ status: 400 })
+  })
+
+  it('tells the first answer of a thread the bot opened what it had sent and why, once', async () => {
+    const { runtime, runs, queue } = await bot()
+    const threadId = randomUUID()
+    await runtime.recordThread(
+      {
+        threadId,
+        peerBotId: 'nina',
+        peerName: 'Nina',
+        title: 'Release 4.2',
+        origin: 'primary',
+        opening: { sent: 'Did 4.2 pass?', ask: 'Ask Nina whether 4.2 passed' },
+      },
+      {
+        kind: 'peer_out',
+        id: 'thread-open:' + threadId,
+        at: new Date().toISOString(),
+        to: { botId: 'nina', name: 'Nina' },
+        text: 'Did 4.2 pass?',
+        delivered: true,
+        thread: { id: threadId },
+      }
+    )
+    // The thread's conversation shows first the message that opened it.
+    expect((await runtime.runTranscript(threadId, null, 50)).items).toEqual([
+      expect.objectContaining({ kind: 'peer_out', text: 'Did 4.2 pass?' }),
+    ])
+    await runtime.input(peerInput(threadId))
+    await runtime.input(peerInput(threadId, 'Anything else?'))
+    const [first, second] = queue.list().filter((item) => item.input.thread?.id === threadId)
+    expect(first.input.thread?.context).toBe(
+      openingContext({ origin: 'primary', opening: { sent: 'Did 4.2 pass?', ask: 'Ask Nina whether 4.2 passed' } })
+    )
+    expect(first.input.thread?.context).toContain('bot_peers_report')
+    expect(promptForInput(first.input)).toMatch(/^You opened this conversation from another one/)
+    expect(second.input.thread?.context).toBeUndefined()
+    expect(runs.thread(threadId)?.opening).toBeNull()
+    // One opened from another side conversation has no answer to bring back to the owner's.
+    expect(openingContext({ origin: 'side', opening: { sent: 'Hi', ask: null } })).not.toContain('bot_peers_report')
+  })
+
+  it("runs a thread's turn in its conversation, and deletes it keeping its files under the other bot's name", async () => {
+    const { runtime, primary, runs, published, host } = await bot()
+    const threadId = randomUUID()
+    await runtime.input(peerInput(threadId))
+    const { conversations } = answer('Thanks, noted.', { image: true })
+    vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+      release: () => {},
+      operation: {},
+    } as never)
+    await turn(runtime)
+    const record = runs.thread(threadId)!
+    expect(conversations).toEqual([record.conversationId])
+    expect(published.find((event) => event.type === 'turn.finished')).toMatchObject({
+      runId: threadId,
+      outcome: 'completed',
+    })
+    expect(runtime.foregroundConversationId).toBe(primary.id)
+    const deleted = await runtime.deleteRun(threadId)
+    expect(deleted.kept.folder).toBe(laneKeptFolder(record))
+    expect(deleted.kept.folder).toMatch(/^bots\/nina\//)
+    expect(host.purgeConversation).toHaveBeenCalledWith(record.conversationId)
+    expect(runs.get(threadId)).toBeUndefined()
+  })
+
+  it('keeps runs and threads in lists of their own, both read for a purge', async () => {
+    const { runtime, runs } = await bot()
+    const runId = randomUUID()
+    const threadId = randomUUID()
+    await runtime.input(routineInput(runId))
+    await runtime.input(peerInput(threadId))
+    await runs.idle()
+    const runsFile = JSON.parse(await readFile(path.join(dir, 'runs.json'), 'utf8'))
+    const threadsFile = JSON.parse(await readFile(path.join(dir, 'threads.json'), 'utf8'))
+    expect(runsFile.runs.map((run: { runId: string }) => run.runId)).toEqual([runId])
+    expect(threadsFile.threads.map((thread: { threadId: string }) => thread.threadId)).toEqual([threadId])
+    expect(
+      (
+        await readRunConversationIds({ runs: path.join(dir, 'runs.json'), threads: path.join(dir, 'threads.json') })
+      ).sort()
+    ).toEqual([runs.get(runId)!.conversationId, runs.get(threadId)!.conversationId].sort())
+    const reloaded = new BotRunConversations({
+      file: path.join(dir, 'runs.json'),
+      threadsFile: path.join(dir, 'threads.json'),
+      folder: path.join(dir, 'runs'),
+      queue: runtime.queue,
+      images: runtime.images,
+      publish: () => {},
+      turnInputId: () => null,
+      changed: () => {},
+    })
+    await reloaded.load()
+    expect(reloaded.routine(runId)).toMatchObject({ kind: 'routine', routineId: 'post' })
+    expect(reloaded.thread(threadId)).toMatchObject({ kind: 'thread', peerBotId: 'nina' })
+    // A bot without the threads' list keeps no threads.
+    const older = new BotRunConversations({
+      file: path.join(dir, 'runs.json'),
+      folder: path.join(dir, 'runs'),
+      queue: runtime.queue,
+      images: runtime.images,
+      publish: () => {},
+      turnInputId: () => null,
+      changed: () => {},
+    })
+    await older.load()
+    expect(older.list().map((record) => record.runId)).toEqual([runId])
+  })
+
+  it("brings a thread's answer back to the bot's own conversation through its always-on memory", async () => {
+    let now = Date.parse('2026-10-18T10:00:00.000Z')
+    const reports = new ThreadReports(path.join(dir, 'reports.json'), () => now)
+    expect(await reports.section()).toBeNull()
+    await reports.add({ threadId: 't1', peerName: 'Nina', title: 'Release 4.2', text: 'Passed.' })
+    await reports.add({ threadId: 't1', peerName: 'Nina', title: 'Release 4.2', text: 'Passed: 412 of 415.' })
+    const section = await reports.section()
+    expect(section).toMatchObject({ key: 'peer-reports' })
+    // A thread's latest answer replaces its earlier one.
+    expect(section?.entries).toEqual([
+      expect.objectContaining({ text: 'Passed: 412 of 415.', meta: expect.stringContaining('Nina · Release 4.2') }),
+    ])
+    for (let i = 0; i < THREAD_REPORT_LIMITS.keep + 2; i++)
+      await reports.add({ threadId: 'x' + i, peerName: 'Gamma', title: 'Topic', text: 'Answer ' + i })
+    expect(await reports.list()).toHaveLength(THREAD_REPORT_LIMITS.keep)
+    // Read again from its file, as after a restart; a week later, none is left.
+    const reread = new ThreadReports(path.join(dir, 'reports.json'), () => now)
+    expect((await reread.list()).at(-1)).toMatchObject({ threadId: 'x11' })
+    now += THREAD_REPORT_LIMITS.maxAgeMs + 1
+    expect(await reread.section()).toBeNull()
+  })
+
+  it("reports only from a thread's conversation", async () => {
+    const { runtime } = await bot()
+    const threadId = randomUUID()
+    await runtime.input(peerInput(threadId))
+    await runtime.reportThread(threadId, 'Nina says it passed.')
+    expect(await runtime.threadReports.list()).toEqual([
+      expect.objectContaining({ threadId, peerName: 'Nina', title: 'Release 4.2', text: 'Nina says it passed.' }),
+    ])
+    await expect(runtime.reportThread(randomUUID(), 'No')).rejects.toThrow('not here')
   })
 })

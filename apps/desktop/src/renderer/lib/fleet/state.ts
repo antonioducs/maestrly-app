@@ -362,6 +362,11 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
         // Desktop access is read by the bot settings that show it, on its own channel.
         case 'desktop.call':
         case 'desktop_link.updated':
+        // Threads between bots reach only devices that ask for them (`peerThreads=1`), which this one does not yet.
+        case 'peer_thread.updated':
+        case 'peer_thread.removed':
+        case 'peer_thread.transcript.upsert':
+        case 'peer_thread.transcript.reset':
           return state
         case 'owner_memory.updated':
           return { ...state, ownerMemoryRevision: event.revision }

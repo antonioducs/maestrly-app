@@ -20,9 +20,14 @@ type FakeBot = {
   gatewayConfigured: boolean
   gatewayConfig: { url: string; token: string } | null
   peerNames: Map<string, string>
+  primaryConversationId: string
+  runs: { byConversation: (conversationId: string | undefined) => unknown }
+  currentInput: (conversationId: string) => { source: string; text: string } | null
+  recordThread: ReturnType<typeof vi.fn>
+  reportThread: ReturnType<typeof vi.fn>
 }
-// The bot of the conversation 'primary'; every other conversation has none.
-const conversationBot = vi.hoisted(() => ({ bot: null as FakeBot | null }))
+// The bot of the conversation 'primary', and of the side conversations listed; every other conversation has none.
+const conversationBot = vi.hoisted(() => ({ bot: null as FakeBot | null, sides: new Set<string>() }))
 
 // MCP tool results type `content` as unknown; the tools under test always return text blocks.
 const firstContent = (result: unknown): Record<string, unknown> =>
@@ -30,7 +35,7 @@ const firstContent = (result: unknown): Record<string, unknown> =>
 vi.mock('../../src/main/fleet/instance', () => ({
   requestOwnerHelp: help.requestOwnerHelp,
   botRuntimeForConversation: (conversationId: string | undefined) =>
-    conversationId === 'primary' ? conversationBot.bot : null,
+    conversationId === 'primary' || conversationBot.sides.has(conversationId ?? '') ? conversationBot.bot : null,
 }))
 const servers: Server[] = []
 afterEach(async () => {
@@ -38,11 +43,17 @@ afterEach(async () => {
   for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()))
   help.requestOwnerHelp.mockClear()
   conversationBot.bot = null
+  conversationBot.sides.clear()
 })
-const botWith = (gatewayConfig: FakeBot['gatewayConfig']): FakeBot => ({
+const botWith = (gatewayConfig: FakeBot['gatewayConfig'], lanes: Record<string, unknown> = {}): FakeBot => ({
   gatewayConfigured: true,
   gatewayConfig,
   peerNames: new Map(),
+  primaryConversationId: 'primary',
+  runs: { byConversation: (conversationId) => (conversationId ? lanes[conversationId] : undefined) },
+  currentInput: () => ({ source: 'owner', text: 'Ask Nina whether 4.2 passed' }),
+  recordThread: vi.fn(async () => {}),
+  reportThread: vi.fn(async () => {}),
 })
 
 async function appClient(
@@ -64,6 +75,7 @@ async function fakeGateway() {
   let responseStatus = 200
   let offline = false
   let malformed = false
+  let thread: string | null = null
   const requests: Array<{ path: string; auth: string | undefined; protocol: string | undefined; body: unknown }> = []
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = []
@@ -97,10 +109,15 @@ async function fakeGateway() {
       response.end(
         JSON.stringify(
           responseStatus === 200
-            ? { messageId: randomUUID(), delivered: !offline }
+            ? { messageId: randomUUID(), delivered: !offline, ...(thread ? { thread } : {}) }
             : { code: responseStatus === 429 ? 'RATE_LIMITED' : 'FORBIDDEN', message: 'refused' }
         )
       )
+      return
+    }
+    if (request.url?.startsWith('/internal/v1/peers/threads/')) {
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ ok: true }))
       return
     }
     response.statusCode = 404
@@ -121,6 +138,10 @@ async function fakeGateway() {
     setMalformed: (value: boolean) => {
       malformed = value
     },
+    /** Answers sends with this thread, as a gateway with `peer-conversations` does. */
+    setThread: (value: string | null) => {
+      thread = value
+    },
   }
 }
 
@@ -131,9 +152,8 @@ describe('bot instance tool registration and gateway', () => {
     await off.client.close()
     await off.server.close()
     const bot = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, {
+      ...botWith(null),
       gatewayConfigured: false,
-      gatewayConfig: null,
-      peerNames: new Map(),
     })
     expect((await bot.client.listTools()).tools.map((tool) => tool.name)).toEqual([
       'bot_share_file',
@@ -155,6 +175,7 @@ describe('bot instance tool registration and gateway', () => {
       'request_owner_help',
       'bot_peers_list',
       'bot_peers_send',
+      'bot_peers_report',
       'bot_routines_list',
       'bot_routines_create',
       'bot_routines_update',
@@ -237,6 +258,101 @@ describe('bot instance tool registration and gateway', () => {
     } finally {
       await client.close()
       await server.close()
+    }
+  })
+
+  it("opens a thread from the bot's conversation, and keeps a thread's messages to its bot in it", async () => {
+    const gateway = await fakeGateway()
+    const thread = { kind: 'thread', runId: 'thread-1', peerBotId: 'scout', origin: 'primary' }
+    const elsewhere = { kind: 'thread', runId: 'thread-2', peerBotId: 'nina', origin: 'peer' }
+    const bot = botWith({ url: gateway.url, token: 'secret' }, { 'thread-conv': thread, 'other-thread': elsewhere })
+    conversationBot.sides.add('thread-conv')
+    conversationBot.sides.add('other-thread')
+    bot.peerNames.set('scout', 'Scout')
+    gateway.setThread('thread-1')
+    const own = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot)
+    const inThread = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot, 'thread-conv')
+    const inOther = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot, 'other-thread')
+    const bodies = () =>
+      gateway.requests
+        .filter((request) => request.path === '/internal/v1/peers/messages')
+        .map((request) => request.body as Record<string, unknown>)
+    try {
+      // From its own conversation, a message opens a thread, which gets a conversation of its own here.
+      const opened = await own.client.callTool({
+        name: 'bot_peers_send',
+        arguments: { to: 'scout', text: 'Did 4.2 pass?', topic: 'Release 4.2' },
+      })
+      expect(firstContent(opened)).toMatchObject({ text: expect.stringContaining('opened a conversation of its own') })
+      expect(bodies().at(-1)).toMatchObject({ origin: 'primary', topic: 'Release 4.2' })
+      expect(bodies().at(-1)).not.toHaveProperty('thread')
+      expect(bot.recordThread).toHaveBeenCalledWith(
+        {
+          threadId: 'thread-1',
+          peerBotId: 'scout',
+          peerName: 'Scout',
+          title: 'Release 4.2',
+          origin: 'primary',
+          opening: { sent: 'Did 4.2 pass?', ask: 'Ask Nina whether 4.2 passed' },
+        },
+        expect.objectContaining({ kind: 'peer_out', text: 'Did 4.2 pass?', thread: { id: 'thread-1' } })
+      )
+      // In the thread, a message to its bot stays in it.
+      await inThread.client.callTool({ name: 'bot_peers_send', arguments: { to: 'scout', text: 'Thanks' } })
+      expect(bodies().at(-1)).toMatchObject({ thread: 'thread-1' })
+      expect(bodies().at(-1)).not.toHaveProperty('origin')
+      expect(bot.recordThread).toHaveBeenCalledTimes(1)
+      // From a thread with another bot, a message to Scout opens a thread of its own.
+      gateway.setThread('thread-3')
+      await inOther.client.callTool({ name: 'bot_peers_send', arguments: { to: 'scout', text: 'Also this' } })
+      expect(bodies().at(-1)).toMatchObject({ origin: 'side' })
+      expect(bot.recordThread).toHaveBeenLastCalledWith(
+        expect.objectContaining({ threadId: 'thread-3', origin: 'side' }),
+        expect.anything()
+      )
+      // A refusal in a thread says the gateway's reason; outside one, the ACL's.
+      gateway.setStatus(403)
+      const refused = await inThread.client.callTool({ name: 'bot_peers_send', arguments: { to: 'scout', text: 'No' } })
+      expect(firstContent(refused)).toMatchObject({ text: 'refused' })
+      const denied = await own.client.callTool({ name: 'bot_peers_send', arguments: { to: 'scout', text: 'No' } })
+      expect(firstContent(denied)).toMatchObject({ text: expect.stringContaining('bot ACL') })
+    } finally {
+      for (const { client, server } of [own, inThread, inOther]) {
+        await client.close()
+        await server.close()
+      }
+    }
+  })
+
+  it("reports a thread's answer only from a thread opened from the bot's conversation", async () => {
+    const gateway = await fakeGateway()
+    const opened = { kind: 'thread', runId: 'thread-1', peerBotId: 'scout', origin: 'primary' }
+    const theirs = { kind: 'thread', runId: 'thread-2', peerBotId: 'nina', origin: 'peer' }
+    const bot = botWith({ url: gateway.url, token: 'secret' }, { mine: opened, theirs })
+    conversationBot.sides.add('mine')
+    conversationBot.sides.add('theirs')
+    const mine = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot, 'mine')
+    const other = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot, 'theirs')
+    const own = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot)
+    try {
+      const reported = await mine.client.callTool({ name: 'bot_peers_report', arguments: { text: '4.2 passed.' } })
+      expect(reported.isError).toBeFalsy()
+      expect(gateway.requests.at(-1)).toMatchObject({
+        path: '/internal/v1/peers/threads/thread-1/report',
+        body: { text: '4.2 passed.' },
+      })
+      expect(bot.reportThread).toHaveBeenCalledWith('thread-1', '4.2 passed.')
+      for (const client of [other.client, own.client]) {
+        const refused = await client.callTool({ name: 'bot_peers_report', arguments: { text: 'No' } })
+        expect(refused.isError).toBe(true)
+        expect(firstContent(refused)).toMatchObject({ text: expect.stringContaining('works only in a conversation') })
+      }
+      expect(bot.reportThread).toHaveBeenCalledTimes(1)
+    } finally {
+      for (const { client, server } of [mine, other, own]) {
+        await client.close()
+        await server.close()
+      }
     }
   })
 
