@@ -4,6 +4,8 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   FLEET_ENVIRONMENT_LIMITS,
+  dictationProviderSchema,
+  type DictationProvider,
   fleetErrorCodeSchema,
   fleetPushRegistrationSchema,
   type FleetDeviceClient,
@@ -189,6 +191,7 @@ export type StoredDesktopTarget =
   | { kind: 'environment'; link: StoredEnvironmentDesktopLink }
 /** A bot's move between environments as the gateway journals it, with the slot it leaves and the one it holds. */
 export type StoredBotMove = FleetBotMove & { fromSlot: number; toSlot: number }
+export type StoredDictation = { provider: DictationProvider; key: string; updatedAt: string; updatedBy: string }
 export type BotMoveChanges = Partial<Pick<FleetBotMove, 'phase' | 'state' | 'error'>>
 
 const now = () => new Date().toISOString()
@@ -305,7 +308,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 19) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 20) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -456,6 +459,13 @@ export class Store {
       const bots = new Set((this.db.prepare('PRAGMA table_info(bots)').all() as Row[]).map((row) => row.name))
       if (!bots.has('peer_settings_json')) this.db.exec('ALTER TABLE bots ADD COLUMN peer_settings_json TEXT')
       this.db.prepare("UPDATE meta SET value='19' WHERE key='schema_version'").run()
+    }
+    if (version <= 19) {
+      // Schema 20: the server's speech-to-text key for phone dictation (`dictation`). One row at most.
+      this.db.exec(
+        'CREATE TABLE IF NOT EXISTS dictation_settings (id INTEGER PRIMARY KEY CHECK (id = 1), provider TEXT NOT NULL, api_key TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL)'
+      )
+      this.db.prepare("UPDATE meta SET value='20' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -918,6 +928,29 @@ export class Store {
   }
   deletePushRegistration(deviceId: string): boolean {
     return this.db.prepare('DELETE FROM push_registrations WHERE device_id=?').run(deviceId).changes > 0
+  }
+  /** The server's dictation key, in plaintext like the other secrets the gateway keeps. */
+  dictationSettings(): StoredDictation | null {
+    const row = this.db.prepare('SELECT * FROM dictation_settings WHERE id=1').get() as Row | undefined
+    if (!row) return null
+    const provider = dictationProviderSchema.safeParse(row.provider)
+    if (!provider.success) return null
+    return {
+      provider: provider.data,
+      key: String(row.api_key),
+      updatedAt: String(row.updated_at),
+      updatedBy: String(row.updated_by),
+    }
+  }
+  saveDictationSettings(provider: DictationProvider, key: string, updatedBy: string): void {
+    this.db
+      .prepare(
+        'INSERT INTO dictation_settings(id,provider,api_key,updated_at,updated_by) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, api_key=excluded.api_key, updated_at=excluded.updated_at, updated_by=excluded.updated_by'
+      )
+      .run(provider, key, new Date().toISOString(), updatedBy)
+  }
+  clearDictationSettings(): boolean {
+    return this.db.prepare('DELETE FROM dictation_settings WHERE id=1').run().changes > 0
   }
   /** The registrations of phones still paired. */
   activePushRegistrations(): { deviceId: string; registration: FleetPushRegistration }[] {
