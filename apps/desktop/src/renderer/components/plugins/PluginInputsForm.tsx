@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { PluginInputDto } from '../../../shared/plugins'
-import { inputCls } from './plugin-ui'
+import { inputCls, inputText } from './plugin-ui'
 
 /** Values a plugin asks for. Sensitive ones are masked; saved values are never shown, only replaced. */
 export function PluginInputsForm({
@@ -21,15 +21,16 @@ export function PluginInputsForm({
       <legend className="mb-1 text-[12px] font-medium text-foreground">{t('install.inputs')}</legend>
       {inputs.map((input) => {
         const fieldId = `plugin-input-${input.id.replace(/[^A-Za-z0-9_-]/g, '-')}`
+        const { label, description } = inputText(t, input)
         return (
           <div key={input.id} className="flex flex-col gap-0.5">
             <label htmlFor={fieldId} className="text-[12px] text-foreground">
-              {input.label}{' '}
+              {label}{' '}
               <span className="text-[10px] text-muted-foreground">
                 {input.required ? t('install.required') : t('install.optional')}
               </span>
             </label>
-            {input.description && <span className="text-[11px] text-muted-foreground">{input.description}</span>}
+            {description && <span className="text-[11px] text-muted-foreground">{description}</span>}
             <input
               id={fieldId}
               type={input.sensitive ? 'password' : 'text'}

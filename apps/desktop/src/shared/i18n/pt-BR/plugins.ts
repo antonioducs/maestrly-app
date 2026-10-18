@@ -184,6 +184,9 @@ export default {
     required: 'Obrigatório',
     optional: 'Opcional',
     keepValue: 'Deixe vazio para manter o valor salvo',
+    accessToken: 'Token de acesso de {{server}}',
+    accessTokenHint:
+      'Enviado ao servidor como "Authorization: Bearer". O login do publisher só funciona nos produtos dele.',
     install: 'Instalar',
     installing: 'Instalando…',
     sourceChanged: 'A fonte mudou desde que você abriu. Revise o plugin de novo antes de instalar.',
