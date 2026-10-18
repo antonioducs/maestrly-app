@@ -32,6 +32,11 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
 - **Files and videos from bots:** a file a bot shares shows with its name and
   size. A video downloads to the phone and plays in the conversation; any other
   file downloads and opens the system's share sheet.
+- **A bot's other conversations:** a bot's routine runs and its conversations
+  with other bots work apart from its conversation with you, at the same time;
+  Maestrly on your computer shows them. A message that opened a conversation
+  with another bot says so, and **Stop** stops only the conversation you see.
+  See [Conversations at once](bot-fleet.md#conversations-at-once).
 - **Requests:** approve or deny a command, answer a question, or mark a request
   for help as resolved; in a chat, also review a plan and confirm the
   conversations an agent wants to start.
