@@ -577,8 +577,11 @@ one through a **bridge**: see [remote workspaces](remote-workspaces.md).
   (`packages/bot-fleet-protocol/src/mobile-bridge.ts`): list, create, open,
   rename and archive chats; send messages and attachments; answer permission
   requests, questions and plans; change a chat's model, effort, Fast, mode,
-  permission mode, MCP servers and skills; compact; and read the images of what
-  it was sent. It never calls the host's IPC handlers directly: the host runs
+  permission mode, MCP servers and skills; compact; read the images of what
+  it was sent; and read the quota usage of the connected subscriptions, which
+  names each account by its label and carries an error only as a code, never
+  the account's email, plan, credentials or the provider's error text. It never
+  calls the host's IPC handlers directly: the host runs
   them on its behalf through a window of its own that the phone cannot address,
   so a phone cannot read files, open terminals, change accounts or change
   settings. A phone does not change the host's language. A phone's WebSocket

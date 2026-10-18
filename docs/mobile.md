@@ -47,6 +47,13 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   pause, resume, restart or stop a bot; run a routine now; compact a bot's
   conversation. New chats start with the defaults you choose in **Settings →
   New chats**.
+- **Subscription usage:** **Settings → Subscription usage** shows how much of
+  each plan limit the Claude, ChatGPT and Google AI subscriptions connected on
+  the server's workspaces environment have used, one block per account when a
+  provider has several: the 5-hour, weekly and per-model windows, with when each
+  resets. It loads when it opens and with **Refresh**. The phone only reads it:
+  sign in and manage accounts on the server. A server that predates it asks to
+  be updated.
 - **Notifications:** hear when a bot or chat needs you, finishes a turn you
   started, finishes a routine, or fails. See [Notifications](#notifications).
 - **Dictation:** the microphone in the message field turns what you say into

@@ -330,6 +330,27 @@ const opened = (id: string, streaming = false): MobileResult<'open'> => ({
 describe('chats controller', () => {
   afterEach(() => vi.useRealTimers())
 
+  it('reads subscription usage, forcing a new read only when asked, and names a host that predates it', async () => {
+    const host = new FakeHost()
+    host.answers.lists = () => ({ chats: [], workspaces: [] })
+    host.answers.subscriptionUsage = () => ({ entries: [] })
+    const controller = createChatsController(host, memoryStores().kv, { uuid: () => 'u1' })
+    await controller.start()
+    controller.setHosted(true)
+    host.ready()
+    await expect(controller.subscriptionUsage()).resolves.toEqual({ entries: [] })
+    await controller.subscriptionUsage(true)
+    expect(host.calls.filter(([key]) => key === 'subscriptionUsage').map(([, args]) => args)).toEqual([
+      {},
+      { force: true },
+    ])
+    host.answers.subscriptionUsage = () => {
+      throw new MobileBridgeError('unknown-channel', 'Unknown channel')
+    }
+    await expect(controller.subscriptionUsage()).rejects.toMatchObject({ code: 'unknown-channel' })
+    controller.stop()
+  })
+
   it('connects only while the server hosts chats, then reads the lists and the open chat', async () => {
     const host = new FakeHost()
     host.answers.lists = () => ({ chats: [chat('c1')], workspaces: [] })
@@ -531,6 +552,23 @@ describe('demo chats', () => {
     expect((await connection.invoke('lists', {})).chats.find((item) => item.id === created.id)?.name).toBe(
       'How does push work?'
     )
+    connection.close()
+  })
+
+  it('reports the usage of two Claude accounts, ChatGPT and Google AI', async () => {
+    const source = createDemoChatsSource({ stepMs: 1 })
+    let ready = false
+    const connection = source.connect({ onEvent: () => {}, onState: () => {}, onReady: () => (ready = true) })
+    await vi.waitFor(() => expect(ready).toBe(true))
+    const { entries } = await connection.invoke('subscriptionUsage', { force: true })
+    expect(entries.map((item) => [item.providerKind, item.accountLabel ?? null, item.state])).toEqual([
+      ['codex', null, 'ready'],
+      ['claude', 'Personal', 'ready'],
+      ['claude', 'Work', 'ready'],
+      ['google', null, 'ready'],
+    ])
+    expect(entries.every((item) => item.windows.length > 0)).toBe(true)
+    await expect(connection.invoke('subscriptionUsage', { force: true, x: 1 } as never)).rejects.toThrow()
     connection.close()
   })
 

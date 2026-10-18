@@ -227,6 +227,57 @@ export const mobileChatDefaultsSchema = z.object({
 })
 export type MobileChatDefaults = z.infer<typeof mobileChatDefaultsSchema>
 
+/** A quota window of a subscription account: the share used, and when it starts over. */
+export const mobileSubscriptionUsageWindowSchema = z.object({
+  id: z.string().min(1).max(200),
+  /** A kind this app does not know reads as `other`. */
+  kind: z.enum(['five-hour', 'weekly', 'weekly-model', 'other']).catch('other'),
+  usedPercent: z.number().min(0).max(100),
+  /** Epoch milliseconds; null when the provider does not say. */
+  resetsAt: z.number().nonnegative().nullable(),
+  durationMins: z.number().nonnegative().nullable(),
+  /** The model or group a window counts, as the provider names it. */
+  label: z.string().max(200).optional(),
+})
+export type MobileSubscriptionUsageWindow = z.infer<typeof mobileSubscriptionUsageWindowSchema>
+
+export const mobileSubscriptionProviderKindSchema = z.enum(['claude', 'codex', 'google'])
+export type MobileSubscriptionProviderKind = z.infer<typeof mobileSubscriptionProviderKindSchema>
+
+/**
+ * The quota usage of one subscription account connected on the host. It names the account as the host's models do,
+ * and never carries its email, plan or credentials; an error is only a code.
+ */
+export const mobileSubscriptionUsageEntrySchema = z.object({
+  /** The host's provider id of the account: one entry per account. */
+  providerId: id,
+  providerKind: mobileSubscriptionProviderKindSchema,
+  providerLabel: name,
+  /** Absent for a default account that was never named. */
+  accountLabel: name.optional(),
+  state: z.enum(['ready', 'error']),
+  /** When the host read it (epoch milliseconds); ready entries only. */
+  fetchedAt: z.number().nonnegative().optional(),
+  windows: z.array(mobileSubscriptionUsageWindowSchema).max(50),
+  /** `unavailable`: the provider reports no limits for this account right now. */
+  error: z.enum(['unavailable', 'unknown-account', 'failed']).catch('failed').optional(),
+})
+export type MobileSubscriptionUsageEntry = z.infer<typeof mobileSubscriptionUsageEntrySchema>
+
+export const mobileSubscriptionUsageSchema = z.object({
+  /** Entries this app cannot read, such as those of a provider added later, are left out rather than failing all. */
+  entries: z
+    .array(z.unknown())
+    .max(200)
+    .transform((items) =>
+      items.flatMap((item) => {
+        const entry = mobileSubscriptionUsageEntrySchema.safeParse(item)
+        return entry.success ? [entry.data] : []
+      })
+    ),
+})
+export type MobileSubscriptionUsage = z.output<typeof mobileSubscriptionUsageSchema>
+
 export const mobileAttachmentSchema = z
   .object({
     name: z.string().min(1).max(200),
@@ -361,6 +412,15 @@ export const MOBILE_CHANNELS = {
       })
       .strict(),
     result: mobileChatDefaultsSchema,
+  },
+  /**
+   * The quota usage of the subscriptions connected on the host, read only. `force` reads it from the providers again
+   * instead of the host's last minute of cache. A host that predates it answers `unknown-channel`.
+   */
+  subscriptionUsage: {
+    channel: 'mobile:v1:subscription-usage',
+    args: z.object({ force: z.boolean().optional() }).strict(),
+    result: mobileSubscriptionUsageSchema,
   },
   compact: { channel: 'mobile:v1:compact', args: conversationArgs, result: ok },
   image: {

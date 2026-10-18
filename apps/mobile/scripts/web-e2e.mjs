@@ -230,6 +230,26 @@ try {
     await button('Done').click()
   })
 
+  await step('read the subscription usage', async () => {
+    // The settings the step before closed are still on screen right after it.
+    await page.getByText('Notifications aren’t available here').waitFor({ state: 'hidden' })
+    if (!(await button('Settings').isVisible())) await openMenu()
+    await button('Settings').click()
+    await button('Subscription usage').click()
+    for (const provider of ['ChatGPT', 'Claude', 'Google AI']) await page.getByRole('heading', { name: provider }).waitFor()
+    // Each Claude account shows on its own.
+    await page.getByText('Work', { exact: true }).waitFor()
+    await page.getByRole('progressbar', { name: /^5-hour window, Resets in 47m/ }).waitFor()
+    await page.getByRole('progressbar', { name: 'Weekly · Gemini 3 Pro, Resets in 6d' }).waitFor()
+    await page.getByText('94% used').waitFor()
+    await button('Refresh subscription usage').click()
+    await page.getByText('Updated just now').waitFor()
+    await button('Done').click()
+    await page.getByText('Notifications aren’t available here').waitFor()
+    await button('Done').click()
+    await page.getByText('Notifications aren’t available here').waitFor({ state: 'hidden' })
+  })
+
   await step('show the dark theme', async () => {
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.getByText('Cleared the build cache.', { exact: false }).waitFor()

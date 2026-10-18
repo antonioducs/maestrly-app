@@ -1550,6 +1550,21 @@ export interface ChatSubscriptionAuthStatus {
   errorCode?: ChatErrorCode
 }
 
+/** The subscriptions whose providers report quota usage. */
+export const CHAT_SUBSCRIPTION_USAGE_PROVIDER_KINDS = [
+  'codex-subscription',
+  'claude-subscription',
+  'antigravity-subscription',
+] as const satisfies readonly ChatSubscriptionProviderKind[]
+
+export type ChatSubscriptionUsageProviderKind = (typeof CHAT_SUBSCRIPTION_USAGE_PROVIDER_KINDS)[number]
+
+export function supportsSubscriptionUsage(
+  providerKind: string | null | undefined
+): providerKind is ChatSubscriptionUsageProviderKind {
+  return (CHAT_SUBSCRIPTION_USAGE_PROVIDER_KINDS as readonly string[]).includes(providerKind ?? '')
+}
+
 export type ChatSubscriptionUsageWindowKind = 'five-hour' | 'weekly' | 'weekly-model' | 'other'
 
 export interface ChatSubscriptionUsageWindow {

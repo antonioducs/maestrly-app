@@ -367,6 +367,11 @@ export function createChatsController(
     },
     defaults: () => invoke('defaults', {}),
     setDefaults: (args: MobileArgs<'setDefaults'>) => invoke('setDefaults', args),
+    /**
+     * The quota usage of the host's connected subscriptions; `force` reads it from the providers again. Rejects with
+     * `unknown-channel` on hosts that predate it.
+     */
+    subscriptionUsage: (force = false) => invoke('subscriptionUsage', force ? { force } : {}),
     async compact(conversationId: string) {
       return assertOk(await invoke('compact', { conversationId }))
     },
