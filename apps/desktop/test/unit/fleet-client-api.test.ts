@@ -73,8 +73,8 @@ beforeEach(async () => {
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ deviceId: 'device', token: 'valid' }))
     } else if (
-      req.url === '/v1/events?reasoning=1&routineRuns=1' ||
-      req.url === '/v1/events?reasoning=1&routineRuns=1&desktopBridge=1'
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1'
     ) {
       // Only the stream that asks for `reasoning` transcript items and routine runs is served: the app must always ask.
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -268,9 +268,9 @@ describe('fleet API and events', () => {
     events.start()
     await vi.waitFor(() => expect(seen).toContain('hello'))
     events.stop()
-    expect(requests.some((request) => request.url === '/v1/events?reasoning=1&routineRuns=1&desktopBridge=1')).toBe(
-      true
-    )
+    expect(
+      requests.some((request) => request.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1')
+    ).toBe(true)
   })
 
   it('parses SSE comments and frames and stops on 401 or 426', async () => {

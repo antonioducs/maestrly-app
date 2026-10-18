@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { FleetInteractionResolution } from '@maestrly/bot-fleet-protocol'
-import { emptyRuns, emptyTranscript, fleetReducer, initialFleetState, runTranscriptKey } from './state'
+import { emptyRuns, emptyThreads, emptyTranscript, fleetReducer, initialFleetState, runTranscriptKey } from './state'
 import { fleetErrorMessage } from './errors'
 
 export function useFleet() {
@@ -44,6 +44,28 @@ export function useFleet() {
       throw error
     }
   }, [])
+  /** A bot's conversations with other bots (`peer-conversations`). */
+  const loadThreads = useCallback(async (botId: string) => {
+    dispatch({ type: 'threads.loading', botId })
+    try {
+      const { threads } = await window.api.fleetListPeerThreads(botId)
+      dispatch({ type: 'threads.list', botId, threads })
+    } catch (error) {
+      dispatch({ type: 'threads.error', botId, error: fleetErrorMessage(error) })
+      throw error
+    }
+  }, [])
+  /** A thread's transcript, kept beside the runs' by the thread's id. */
+  const loadThreadTranscript = useCallback(async (botId: string, threadId: string, before?: string | null) => {
+    dispatch({ type: 'runTranscript.loading', botId, runId: threadId })
+    try {
+      const page = await window.api.fleetGetPeerThreadTranscript(botId, threadId, before)
+      dispatch({ type: 'runTranscript.page', botId, runId: threadId, page, older: !!before })
+    } catch (error) {
+      dispatch({ type: 'runTranscript.error', botId, runId: threadId, error: fleetErrorMessage(error) })
+      throw error
+    }
+  }, [])
   const refresh = useCallback(async () => {
     const snapshot = await window.api.fleetRefresh()
     dispatch({ type: 'snapshot', value: snapshot })
@@ -75,24 +97,35 @@ export function useFleet() {
       dispatch({ type: 'event', value: event })
       if (event.type === 'transcript.reset' && before.transcripts[event.botId]?.loaded) {
         void loadTranscript(event.botId).catch(() => {})
-        // The bot restarted or its stream broke: what its runs did meanwhile is read again too.
+        // The bot restarted or its stream broke: what its runs and threads did meanwhile is read again too.
         if (before.runs[event.botId]?.loaded) void loadRuns(event.botId).catch(() => {})
+        if (before.threads[event.botId]?.loaded) void loadThreads(event.botId).catch(() => {})
+        const threadIds = new Set((before.threads[event.botId]?.threads ?? []).map((thread) => thread.id))
         for (const key of Object.keys(before.runTranscripts))
-          if (key.startsWith(runTranscriptKey(event.botId, '')) && before.runTranscripts[key].loaded)
-            void loadRunTranscript(event.botId, key.slice(runTranscriptKey(event.botId, '').length)).catch(() => {})
+          if (key.startsWith(runTranscriptKey(event.botId, '')) && before.runTranscripts[key].loaded) {
+            const id = key.slice(runTranscriptKey(event.botId, '').length)
+            void (threadIds.has(id) ? loadThreadTranscript(event.botId, id) : loadRunTranscript(event.botId, id)).catch(
+              () => {}
+            )
+          }
       }
       if (
         event.type === 'routine_run.transcript.reset' &&
         before.runTranscripts[runTranscriptKey(event.botId, event.runId)]?.loaded
       )
         void loadRunTranscript(event.botId, event.runId).catch(() => {})
+      if (
+        event.type === 'peer_thread.transcript.reset' &&
+        before.runTranscripts[runTranscriptKey(event.botId, event.threadId)]?.loaded
+      )
+        void loadThreadTranscript(event.botId, event.threadId).catch(() => {})
     })
     return () => {
       active = false
       offConnection()
       offEvent()
     }
-  }, [loadRuns, loadRunTranscript, loadTranscript])
+  }, [loadRuns, loadRunTranscript, loadThreads, loadThreadTranscript, loadTranscript])
   const ensureRuns = useCallback(
     (botId: string) => {
       const entry = stateRef.current.runs[botId] ?? emptyRuns
@@ -106,6 +139,20 @@ export function useFleet() {
       if (!entry.loaded && !entry.loading) void loadRunTranscript(botId, runId).catch(() => {})
     },
     [loadRunTranscript]
+  )
+  const ensureThreads = useCallback(
+    (botId: string) => {
+      const entry = stateRef.current.threads[botId] ?? emptyThreads
+      if (!entry.loaded && !entry.loading) void loadThreads(botId).catch(() => {})
+    },
+    [loadThreads]
+  )
+  const ensureThreadTranscript = useCallback(
+    (botId: string, threadId: string) => {
+      const entry = stateRef.current.runTranscripts[runTranscriptKey(botId, threadId)] ?? emptyTranscript
+      if (!entry.loaded && !entry.loading) void loadThreadTranscript(botId, threadId).catch(() => {})
+    },
+    [loadThreadTranscript]
   )
   const ensureTranscript = useCallback(
     (botId: string) => {
@@ -184,6 +231,10 @@ export function useFleet() {
     ensureRuns,
     loadRunTranscript,
     ensureRunTranscript,
+    loadThreads,
+    ensureThreads,
+    loadThreadTranscript,
+    ensureThreadTranscript,
     botAction,
     environmentAction,
     updateEnvironment,
