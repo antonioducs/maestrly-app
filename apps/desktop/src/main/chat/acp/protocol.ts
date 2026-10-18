@@ -40,9 +40,17 @@ export interface AcpInitializeResult {
   agentInfo?: { name: string; title?: string; version: string }
 }
 
+export interface AcpModelInfo {
+  modelId: string
+  name: string
+  description?: string | null
+}
+
 export interface AcpSessionSetupResult {
   sessionId?: string
   configOptions?: AcpConfigOption[]
+  /** Superseded by `configOptions`, but still lists every concrete model id where `model` lists only families. */
+  models?: { availableModels?: AcpModelInfo[]; currentModelId?: string }
   _meta?: Record<string, unknown>
 }
 

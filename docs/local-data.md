@@ -255,9 +255,12 @@ Moving a bot to another environment carries everything in the table above but it
 membership, its gateway token (the gateway installs it again) and its cache folder
 under `~/.cache/maestrly-bots/`, which the new environment makes again. Its
 conversation keeps its id, its messages, its attachments and generated images,
-and the files of its working folder; memory extraction resumes where it was, and
-compaction and model sessions are rebuilt from the transcript. The Chromium
-caches of its profile (`Cache`, `Code Cache`, `GPUCache` and the like) and links
+and its whole working folder, `.git` and empty folders included; memory
+extraction resumes where it was, and compaction and model sessions are rebuilt
+from the transcript.
+Symbolic links in the working folder move when they lead inside it, an absolute
+one rewritten to lead into the folder where the bot arrives; other links, and the
+Chromium caches of its profile (`Cache`, `Code Cache`, `GPUCache` and the like),
 do not move. While the package passes, each environment keeps it in
 `bot-moves/` in the profile and deletes it once the step ends. Once the bot runs
 in its new environment, the former one deletes its copy as deleting a bot

@@ -7,6 +7,12 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- Moving a bot whose working folder holds a Git repository no longer fails
+  while its data is packed. Its whole working folder now moves, `.git` folders,
+  empty folders, files ending in `.tmp`, and the links that lead inside it (such
+  as `node_modules/.bin`) included, and a large folder moves several times
+  faster.
+  See [Move a bot to another environment](docs/bot-fleet.md#move-a-bot-to-another-environment).
 - An API-key account whose key the provider refuses is flagged instead of
   looking connected: when listing its models returns HTTP 401 or 403, its card
   in **Settings → Accounts** shows **Key rejected** with the provider's message,
