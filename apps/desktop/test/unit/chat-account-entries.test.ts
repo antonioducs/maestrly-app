@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accountGroups,
+  apiKeyAccountSummary,
   type AccountSummary,
   chatGptWebPhase,
   chatGptWebSummary,
@@ -147,6 +148,33 @@ describe('account entries', () => {
     const web = groups.find((group) => group.id === 'chatgpt-web')!
     expect(isAccountListed(web.entries[0], idle, { ...context, group: web })).toBe(false)
     expect(isAccountListed(web.entries[0], idle, { ...context, group: web, chatGptWebEnabled: true })).toBe(true)
+  })
+
+  it('flags an API-key account whose key the provider refused and stops counting it as connected', () => {
+    const entry = (overrides: Partial<ChatProviderInfo>) => ({
+      type: 'api-key' as const,
+      key: openRouter.id,
+      provider: { ...openRouter, connected: true, ...overrides },
+    })
+    const rejected = apiKeyAccountSummary(
+      entry({ keyCheck: { outcome: 'rejected', status: 401, detail: 'Incorrect API key provided', checkedAt: 1 } })
+    )
+    expect(rejected).toMatchObject({ health: 'error', connected: false })
+    expect(needsAttention(rejected)).toBe(true)
+    // Not being able to check says nothing about the key: it stays connected.
+    expect(apiKeyAccountSummary(entry({ keyCheck: { outcome: 'unverified', checkedAt: 1 } }))).toMatchObject({
+      health: 'ok',
+      connected: true,
+    })
+    expect(apiKeyAccountSummary(entry({ keyCheck: { outcome: 'accepted', checkedAt: 1 } }))).toMatchObject({
+      health: 'ok',
+      connected: true,
+    })
+    expect(apiKeyAccountSummary(entry({}))).toMatchObject({ health: 'ok', connected: true })
+    expect(apiKeyAccountSummary(entry({ connected: false, apiKeyPresent: false }))).toMatchObject({
+      health: 'attention',
+      connected: false,
+    })
   })
 
   it('offers only unused providers to connect, never the API keys group', () => {

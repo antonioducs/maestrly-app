@@ -10,7 +10,7 @@ import {
   type CSSProperties,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Check, Loader2, Search } from 'lucide-react'
+import { AlertCircle, ChevronDown, Check, Loader2, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
@@ -19,7 +19,12 @@ import { isChatProviderConnected } from '../../../shared/chat'
 import type { ChatConfig, ChatModelRef } from '../../../shared/chat'
 import type { ChatComposerSource } from './chat-composer-source'
 import { modelDisplayName, providerSearchTerms, searchModelRows } from './model-search'
-import { cachedModelPickerRows, loadModelPickerRows, type ModelPickerRow as Row } from './model-picker-rows'
+import {
+  cachedModelPickerRows,
+  loadModelPickerRows,
+  type ModelPickerFailure,
+  type ModelPickerRow as Row,
+} from './model-picker-rows'
 
 interface Props {
   conversationId?: string
@@ -83,6 +88,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (cachedModelPickerRows(hostId) ?? [])))
   // A bot's list arrives at once; a host's arrives account by account, and `loading` stays on until the last one.
   const [loading, setLoading] = useState(false)
+  const [failures, setFailures] = useState<ModelPickerFailure[]>([])
   const [hiddenModels, setHiddenModels] = useState<Record<string, string[]> | null>(null)
   const [choosingKey, setChoosingKey] = useState<string | null>(null)
   const choosingRef = useRef(false)
@@ -130,6 +136,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
             void loadModelPickerRows(api, hostId, (update) => {
               setConfig(update.config)
               setRows(update.rows)
+              setFailures(update.failures)
               setLoading(update.pending > 0)
             }).catch(() => setLoading(false))
           }),
@@ -170,6 +177,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
       if (!alive) return
       setConfig(update.config)
       setRows(update.rows)
+      setFailures(update.failures)
       setLoading(update.pending > 0)
     }).catch(() => alive && setLoading(false))
     focusSearch()
@@ -245,6 +253,16 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     )
     return searchModelRows(offered, query, (providerId) => providerTerms.get(providerId) ?? [])
   }, [rows, query, connectedProviderIds, hiddenModels, providerFilter, providerTerms, source?.bot])
+
+  const shownFailures = useMemo(() => {
+    if (source?.bot) return []
+    const terms = query.trim().toLowerCase()
+    return failures.filter(
+      (failure) =>
+        (!providerFilter || providerFilter(failure.providerId)) &&
+        (!terms || failure.providerName.toLowerCase().includes(terms))
+    )
+  }, [failures, providerFilter, query, source?.bot])
 
   useEffect(() => {
     setActiveIndex((index) => (filtered.length > 0 ? Math.min(index, filtered.length - 1) : 0))
@@ -405,6 +423,21 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                   </button>
                 )
               })}
+            {/* An account whose key the provider refused says so instead of silently listing nothing. */}
+            {shownFailures.map((failure) => (
+              <div
+                key={failure.providerId}
+                role="note"
+                data-model-picker-failure={failure.providerId}
+                title={t('modelChip.keyRejected', { provider: failure.providerName })}
+                className="flex items-center gap-2 px-3 py-1.5 text-[12px] text-rose-300"
+              >
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 truncate">
+                  {t('modelChip.keyRejected', { provider: failure.providerName })}
+                </span>
+              </div>
+            ))}
             {/* Accounts answer one by one: their rows show as they arrive, and this line until the last one. */}
             {loading && !source?.bot && loadingLine}
             {!source?.bot && !loading && filtered.length === 0 && connectedProviders.length > 0 && (

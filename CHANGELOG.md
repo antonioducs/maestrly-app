@@ -5,6 +5,17 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- An API-key account whose key the provider refuses is flagged instead of
+  looking connected: when listing its models returns HTTP 401 or 403, its card
+  in **Settings → Accounts** shows **Key rejected** with the provider's message,
+  with the key masked, it counts as needing attention instead of connected, and
+  the model picker shows a line for it instead of leaving its models out with
+  no explanation. Saving or replacing a key checks it right away. When the
+  provider cannot be reached or has no model list, the key is saved and shown
+  as not verified.
+
 ## [0.21.1] - 2026-10-18
 
 ### Fixed

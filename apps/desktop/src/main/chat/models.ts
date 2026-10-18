@@ -5,10 +5,17 @@
  * TWO cache levels: memory (per provider) + DISK (app_settings), surviving app restart —
  * reopening displays the list IMMEDIATELY (no "loading models…") and revalidates in the BACKGROUND
  * (stale-while-revalidate). Invalidate on key changes (compare key FINGERPRINTS, never raw keys).
- * Errors (no /models, 404, network) → [] (UI falls back to manual model-ID entry).
+ * Errors (no /models, 404, network) → [] (UI falls back to manual model-ID entry). Every listing also records
+ * whether the provider accepted the key (see api-key-check.ts), so a refused key is not mistaken for a missing list.
  */
 import { net } from 'electron'
-import { createHash } from 'node:crypto'
+import {
+  apiKeyFingerprint,
+  clearApiKeyCheck,
+  keyCheckFromFailure,
+  keyCheckFromResponse,
+  recordApiKeyCheck,
+} from './api-key-check'
 import { getProvider, getProviderKind } from './catalog'
 import { getApiKey } from './credentials'
 import { getAppSetting, setAppSetting } from '../store'
@@ -29,11 +36,6 @@ const PERSIST_KEY = 'chat.modelsCache'
 const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<string[]>>() // Deduplicate concurrent refreshes per provider.
 let seeded = false
-
-/** Stable irreversible key fingerprint — safe to persist without exposing the secret. Empty string without a key. */
-function keyFp(apiKey: string): string {
-  return apiKey ? createHash('sha256').update(apiKey).digest('hex').slice(0, 16) : ''
-}
 
 /** Loads disk cache into memory (once, lazily). Tolerates missing/corrupt JSON. */
 function seedFromDisk(): void {
@@ -68,7 +70,14 @@ function persistToDisk(): void {
 }
 
 /** Fetches provider /models, updates memory+disk. Deduplicates per provider (inflight). */
-function refresh(providerId: string, baseURL: string, apiKey: string, fp: string, anthropic: boolean): Promise<string[]> {
+function refresh(
+  providerId: string,
+  baseURL: string,
+  apiKey: string,
+  fp: string,
+  anthropic: boolean,
+  providerName?: string
+): Promise<string[]> {
   const existing = inflight.get(providerId)
   if (existing) return existing
   const p = (async (): Promise<string[]> => {
@@ -81,10 +90,18 @@ function refresh(providerId: string, baseURL: string, apiKey: string, fp: string
         : { Authorization: `Bearer ${apiKey}` }
       : {}
     try {
-      const res = await net.fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(15_000),
-      })
+      let res: Response
+      try {
+        res = await net.fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(15_000),
+        })
+      } catch (error) {
+        recordApiKeyCheck(providerId, apiKey, keyCheckFromFailure(error, apiKey))
+        throw error
+      }
+      const body = res.ok ? '' : await res.text().catch(() => '')
+      recordApiKeyCheck(providerId, apiKey, keyCheckFromResponse(url, res.status, body, { providerName, apiKey }))
       if (!res.ok) throw new Error(`models HTTP ${res.status}`)
       const { models, windows } = extractCatalog(await res.json())
       cache.set(providerId, { fp, at: Date.now(), models, windows, status: 'available' })
@@ -175,17 +192,18 @@ export async function fetchModels(providerId: string, force = false): Promise<st
   const provider = getProvider(providerId)
   if (!provider) return []
   const apiKey = getApiKey(providerId) ?? ''
-  const fp = keyFp(apiKey)
+  const fp = apiKeyFingerprint(apiKey)
   const anthropic = getProviderKind(provider) === 'anthropic'
   const cached = cache.get(providerId)
 
   if (!force && cached && cached.fp === fp) {
     if (Date.now() - cached.at < CACHE_TTL_MS) return cached.models // Fresh.
-    void refresh(providerId, provider.baseURL, apiKey, fp, anthropic).catch(() => {}) // Stale → background revalidate.
+    // Stale → background revalidate.
+    void refresh(providerId, provider.baseURL, apiKey, fp, anthropic, provider.name).catch(() => {})
     return cached.models
   }
   // No cache, changed key, or force → fetch and await.
-  return refresh(providerId, provider.baseURL, apiKey, fp, anthropic)
+  return refresh(providerId, provider.baseURL, apiKey, fp, anthropic, provider.name)
 }
 
 /**
@@ -208,4 +226,5 @@ export function invalidateModels(providerId?: string): void {
   if (providerId) cache.delete(providerId)
   else cache.clear()
   persistToDisk()
+  clearApiKeyCheck(providerId)
 }
