@@ -11,6 +11,11 @@ import { DICTATION_API_MAX_MS, type DictationApiProvider } from '../../shared/di
 import { getDictationKey } from './settings'
 
 const SAMPLES_PER_MS = 16
+/**
+ * The recorder stops at the limit, but its last chunk can run slightly past it; the provider's 25 MB still holds
+ * well over ten minutes of WAV.
+ */
+const LIMIT_GRACE_MS = 30_000
 
 export async function transcribeWithApi(
   audio: Float32Array,
@@ -20,7 +25,7 @@ export async function transcribeWithApi(
 ): Promise<{ text: string } | { error: TranscribeError }> {
   const key = (deps.key ?? getDictationKey)(provider)
   if (!key) return { error: 'key-missing' }
-  if (audio.length > SAMPLES_PER_MS * DICTATION_API_MAX_MS) return { error: 'too-long' }
+  if (audio.length > SAMPLES_PER_MS * (DICTATION_API_MAX_MS + LIMIT_GRACE_MS)) return { error: 'too-long' }
   if (isSilentPcm(audio)) return { error: 'silent' }
   try {
     const raw = await transcribeWithProvider({

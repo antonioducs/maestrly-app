@@ -26,15 +26,25 @@ describe('API dictation engine', () => {
     expect(seen).toHaveLength(0)
   })
 
-  it('does not send silence or recordings past the limit', async () => {
+  it('does not send silence or recordings well past the limit', async () => {
     const { fetch, seen } = provider()
     expect(await transcribeWithApi(new Float32Array(16000), 'openai', 'pt', { fetch, key: withKey })).toEqual({
       error: 'silent',
     })
     expect(
-      await transcribeWithApi(new Float32Array(16 * DICTATION_API_MAX_MS + 1), 'openai', 'pt', { fetch, key: withKey })
+      await transcribeWithApi(new Float32Array(16 * (DICTATION_API_MAX_MS + 30_000) + 1), 'openai', 'pt', {
+        fetch,
+        key: withKey,
+      })
     ).toEqual({ error: 'too-long' })
     expect(seen).toHaveLength(0)
+  })
+
+  it('sends a recording that ran a moment past the limit', async () => {
+    const { fetch, seen } = provider()
+    const audio = new Float32Array(16 * (DICTATION_API_MAX_MS + 200)).map((_, i) => 0.2 * Math.sin(i / 10))
+    expect(await transcribeWithApi(audio, 'openai', 'pt', { fetch, key: withKey })).toEqual({ text: 'olá' })
+    expect(seen).toHaveLength(1)
   })
 
   it('sends WAV in the chosen language and cleans the transcript', async () => {
