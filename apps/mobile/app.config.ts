@@ -20,7 +20,7 @@ const config: ExpoConfig = {
   name: 'Maestrly',
   slug: 'maestrly',
   scheme: 'maestrly',
-  version: '0.1.0',
+  version: '0.1.1',
   ...(owner ? { owner } : {}),
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',

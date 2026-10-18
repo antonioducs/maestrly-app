@@ -605,6 +605,7 @@ export default {
     loading: 'loading models…',
     useAsId: 'use "{{query}}" as model id',
     typeManually: 'type id manually…',
+    keyRejected: '{{provider}}: API key rejected. Replace it in Settings › Accounts.',
   },
   composer: {
     placeholder:
@@ -1586,6 +1587,16 @@ export default {
     accountMoreActions: 'More actions',
     accountConnectAnother: 'Connect another {{provider}} account',
     accountKeySaved: 'Key saved',
+    accountKeyVerified: 'Key verified',
+    accountKeyChecking: 'Checking key…',
+    accountKeyRejected: 'Key rejected',
+    accountKeyUnverified: 'Key saved · not verified',
+    accountKeyRejectedHint:
+      "The provider refused this key (HTTP {{status}}), so this account's models can't load. Paste a valid key above.",
+    accountKeyUnverifiedHint: "The key is saved, but it couldn't be checked: the provider didn't answer.",
+    accountKeyUnverifiedHttpHint:
+      "The key is saved, but it couldn't be checked: listing models returned HTTP {{status}}. This doesn't mean the key is wrong.",
+    accountKeyCheckAgain: 'Check again',
     accountNoApiKey: 'No API key',
     accountApiKeyHeading: 'API key',
     accountApiKeyStored: 'Stored in the system keyring',

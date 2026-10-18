@@ -1,12 +1,28 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHash, randomBytes } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { access, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { createZstdCompress, createZstdDecompress } from 'node:zlib'
 import { app } from 'electron'
+import tar from 'tar-stream'
 import { fleetEnvironmentTile, type FleetInstanceProfile } from '@maestrly/bot-fleet-protocol'
 import * as chatService from '../../src/main/chat/service'
 import { attachmentConversationDir } from '../../src/main/chat/attachment-artifacts'
@@ -149,12 +165,31 @@ async function seededBot(env: Environment) {
     [path.join(env.home, '.config', 'maestrly-bots', 'alpha', 'chromium', 'Default', 'Cache', 'data_0')]: 'cache',
     [path.join(env.home, '.cache', 'maestrly-bots', 'alpha', 'wallpaper.png')]: 'wallpaper',
     [path.join(env.home, '.config', 'shared-tool', 'settings.json')]: '{}',
+    // A repository the bot cloned, a package it installed, and a draft of its own: its working folder moves whole.
+    [path.join(cwd, 'site', '.git', 'HEAD')]: 'ref: refs/heads/main\n',
+    [path.join(cwd, 'site', '.git', 'config')]: '[core]\n\tbare = false\n',
+    [path.join(cwd, 'site', 'node_modules', 'tool', 'cli.js')]: '#!/usr/bin/env node\n',
+    [path.join(cwd, 'draft.tmp')]: 'Draft\n',
   }
   for (const [file, content] of Object.entries(files)) {
     await mkdir(path.dirname(file), { recursive: true })
     await writeFile(file, content)
   }
   await symlink('/etc/hostname', path.join(cwd, 'outside'))
+  // Empty folders: Git needs its own to know the repository; a project may expect its own.
+  for (const folder of [['site', '.git', 'refs', 'tags'], ['site', '.git', 'objects', 'pack'], ['uploads']])
+    await mkdir(path.join(cwd, ...folder), { recursive: true })
+  if (process.platform !== 'win32') {
+    // Links that lead inside the folder move: relative, absolute, or leading nowhere yet. One to another conversation
+    // stays, as its target does.
+    const real = await realpath(cwd)
+    await mkdir(path.join(cwd, 'site', 'node_modules', '.bin'))
+    await symlink('../tool/cli.js', path.join(cwd, 'site', 'node_modules', '.bin', 'tool'))
+    await symlink(path.join(real, 'site', 'node_modules'), path.join(cwd, 'modules'))
+    await symlink('missing/out', path.join(cwd, 'later'))
+    const sibling = getConversation(env.runtime.bot('beta').primaryConversationId!)!.cwd
+    await symlink(await realpath(sibling), path.join(cwd, 'sibling'))
+  }
   return { conversationId, cwd }
 }
 
@@ -167,6 +202,34 @@ async function exported(env: Environment, into: string) {
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(sha256)
   await writeFile(into, bytes)
   return { file: into, size: bytes.length, sha256 }
+}
+/** The same package with its manifest changed, as an environment that tampers with it could send it. */
+async function repacked(
+  pkg: { file: string },
+  into: string,
+  change: (manifest: Record<string, unknown>) => void
+): Promise<{ file: string; size: number; sha256: string }> {
+  const extract = tar.extract()
+  const pack = tar.pack()
+  const written = pipeline(pack, createZstdCompress(), createWriteStream(into))
+  extract.on('entry', (header, stream, next) => {
+    const chunks: Buffer[] = []
+    stream.on('data', (chunk) => chunks.push(chunk as Buffer))
+    stream.on('end', () => {
+      let body = Buffer.concat(chunks)
+      if (header.name === 'manifest.json') {
+        const manifest = JSON.parse(body.toString('utf8'))
+        change(manifest)
+        body = Buffer.from(JSON.stringify(manifest))
+      }
+      pack.entry({ ...header, size: body.length }, body, next)
+    })
+  })
+  await pipeline(createReadStream(pkg.file), createZstdDecompress(), extract)
+  pack.finalize()
+  await written
+  const bytes = await readFile(into)
+  return { file: into, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
 }
 function upload(env: Environment, pkg: { file: string; size: number; sha256: string }, query = '?replace=1') {
   return env.request('PUT', '/v1/bots/alpha/import' + query, {
@@ -237,7 +300,24 @@ describe('moving a bot between environments', () => {
     expect(await readFile(path.join(conversation.cwd, 'report.md'), 'utf8')).toBe('# Report\n')
     expect(await readFile(path.join(conversation.cwd, '.agents', 'notes', 'plan.md'), 'utf8')).toBe('Plan\n')
     expect(await exists(path.join(conversation.cwd, 'outside'))).toBe(false)
-    if (process.platform !== 'win32') expect((await stat(conversation.cwd)).mode & 0o777).toBe(0o700)
+    expect(await readFile(path.join(conversation.cwd, 'site', '.git', 'config'), 'utf8')).toBe(
+      '[core]\n\tbare = false\n'
+    )
+    expect(await readFile(path.join(conversation.cwd, 'site', '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n')
+    expect(await readFile(path.join(conversation.cwd, 'draft.tmp'), 'utf8')).toBe('Draft\n')
+    for (const folder of [['site', '.git', 'refs', 'tags'], ['site', '.git', 'objects', 'pack'], ['uploads']])
+      expect((await stat(path.join(conversation.cwd, ...folder))).isDirectory(), folder.join('/')).toBe(true)
+    if (process.platform !== 'win32') {
+      const real = await realpath(conversation.cwd)
+      const tool = path.join(conversation.cwd, 'site', 'node_modules', '.bin', 'tool')
+      expect(await readlink(tool)).toBe('../tool/cli.js')
+      expect(await readFile(tool, 'utf8')).toBe('#!/usr/bin/env node\n')
+      // An absolute link leads into the folder where the bot arrived.
+      expect(await readlink(path.join(conversation.cwd, 'modules'))).toBe(path.join(real, 'site', 'node_modules'))
+      expect(await readlink(path.join(conversation.cwd, 'later'))).toBe('missing/out')
+      await expect(lstat(path.join(conversation.cwd, 'sibling'))).rejects.toThrow()
+      expect((await stat(conversation.cwd)).mode & 0o777).toBe(0o700)
+    }
     expect(await readFile(path.join(attachmentConversationDir(conversationId), 'shot.png'))).toEqual(
       Buffer.from([137, 80, 78, 71])
     )
@@ -319,6 +399,45 @@ describe('moving a bot between environments', () => {
     ])
       expect(await exists(folder), folder).toBe(false)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses links and folders that would lead out of the working folder',
+    async () => {
+      const work = await environment('work')
+      await seededBot(work)
+      await work.request('POST', '/v1/bots/alpha/freeze')
+      const pkg = await exported(work, path.join(dir, 'alpha.tar.zst'))
+      await leave(work)
+
+      const home = await environment('home')
+      // Next to the folder the bot's conversation would get: a link that resolves there leads out of it.
+      const chats = path.join(home.userData, 'standalone-chats')
+      await mkdir(chats, { recursive: true })
+      await writeFile(path.join(chats, 'secret'), 'secret')
+      const tampered: Array<Record<string, unknown>> = [
+        { links: [{ relative: 'up', target: '../secret', rooted: false }] },
+        { links: [{ relative: 'up', target: '../secret', rooted: true }] },
+        // Each reads as inside; through the first, the second resolves next to the folder.
+        {
+          links: [
+            { relative: 'here', target: '', rooted: true },
+            { relative: 'through', target: 'here/../secret', rooted: false },
+          ],
+        },
+        { directories: ['../beside'] },
+      ]
+      for (const [index, change] of tampered.entries()) {
+        const changed = await repacked(pkg, path.join(dir, `tampered-${index}.tar.zst`), (manifest) => {
+          Object.assign(manifest, change)
+        })
+        const response = await upload(home, changed)
+        expect(response.status, JSON.stringify(change)).toBe(400)
+        expect(getAppSetting('fleet.instance.bots.alpha.profile')).toBeNull()
+        expect(await readdir(chats)).toEqual(['secret'])
+      }
+      expect((await upload(home, pkg, '')).status).toBe(200)
+    }
+  )
 
   it('deletes what an import wrote when it cannot finish, and leaves the rest of the environment alone', async () => {
     const work = await environment('work')

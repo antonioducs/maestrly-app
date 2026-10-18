@@ -41,7 +41,7 @@ import {
   isAntigravityAuthRequired,
 } from './errors'
 import type { AntigravityHostToolset } from './host-mcp'
-import { type AntigravityModelEntry, parseAntigravityModelOptions } from './models'
+import { type AntigravityModelEntry, antigravityModelEntriesFromSession } from './models'
 import {
   antigravityAccountRoot,
   antigravityAccountsRoot,
@@ -444,12 +444,11 @@ export class AntigravitySubscriptionManager {
         mcpServers: [],
         _meta: ANTIGRAVITY_SESSION_META,
       })
-      const option = session.configOptions?.find((candidate) => candidate.id === 'model')
       const probe: AntigravityProbe = {
         sessionId: session.sessionId ?? null,
         generation: connection.generation,
         epoch,
-        entries: parseAntigravityModelOptions(option?.options ?? []),
+        entries: antigravityModelEntriesFromSession(session),
       }
       if (epoch !== this.epoch) return probe
       this.models = { at: this.now(), epoch, generation: connection.generation, entries: probe.entries }

@@ -7,6 +7,20 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- Moving a bot whose working folder holds a Git repository no longer fails
+  while its data is packed. Its whole working folder now moves, `.git` folders,
+  empty folders, files ending in `.tmp`, and the links that lead inside it (such
+  as `node_modules/.bin`) included, and a large folder moves several times
+  faster.
+  See [Move a bot to another environment](docs/bot-fleet.md#move-a-bot-to-another-environment).
+- An API-key account whose key the provider refuses is flagged instead of
+  looking connected: when listing its models returns HTTP 401 or 403, its card
+  in **Settings → Accounts** shows **Key rejected** with the provider's message,
+  with the key masked, it counts as needing attention instead of connected, and
+  the model picker shows a line for it instead of leaving its models out with
+  no explanation. Saving or replacing a key checks it right away. When the
+  provider cannot be reached or has no model list, the key is saved and shown
+  as not verified.
 - While signing in to GitHub Copilot, the account card shows the GitHub
   device page next to the one-time code, with **Copy link** and **Open in
   browser**, and a **Copy code** button. If no browser opened, you can still

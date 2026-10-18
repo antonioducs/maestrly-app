@@ -1,6 +1,11 @@
 import type { HostApi } from '../../../preload'
 import type { HostId } from '../../../shared/host-key'
-import { isChatProviderConnected, type ChatConfig } from '../../../shared/chat'
+import {
+  isChatProviderConnected,
+  isChatProviderKeyRejected,
+  isChatSubscriptionProviderKind,
+  type ChatConfig,
+} from '../../../shared/chat'
 
 export interface ModelPickerRow {
   providerId: string
@@ -8,9 +13,19 @@ export interface ModelPickerRow {
   modelId: string
 }
 
+/** An account whose list is empty because the provider refused its API key. */
+export interface ModelPickerFailure {
+  providerId: string
+  providerName: string
+  /** HTTP status the provider answered with (401 or 403). */
+  status?: number
+}
+
 export interface ModelPickerRowsUpdate {
   config: ChatConfig
   rows: ModelPickerRow[]
+  /** Accounts shown as one error line instead of their models. */
+  failures: ModelPickerFailure[]
   /** Accounts whose list has not arrived yet; their rows are the cached ones meanwhile. */
   pending: number
 }
@@ -55,7 +70,9 @@ function cacheRows(hostId: HostId, rows: ModelPickerRow[]): void {
 /**
  * Asks every connected account for its models and reports after each answer, so one slow account (a subscription
  * runtime starting up) delays only its own rows. Until an account answers, its rows from the last list stand in;
- * an account that fails shows none, as before. A newer load of the same host silences an older one.
+ * an account that fails shows none. An API-key account whose key the provider refused shows a failure instead of
+ * vanishing: its listing is what checks the key, so the config is read again once an API-key account came back
+ * empty. A newer load of the same host silences an older one.
  */
 export async function loadModelPickerRows(
   api: Pick<HostApi, 'chatConfig' | 'chatModels'>,
@@ -64,20 +81,33 @@ export async function loadModelPickerRows(
 ): Promise<void> {
   const generation = (generations.get(hostId) ?? 0) + 1
   generations.set(hostId, generation)
-  const config = await api.chatConfig()
+  let config = await api.chatConfig()
   const connected = config.providers.filter(isChatProviderConnected)
   const previous = cachedModelPickerRows(hostId) ?? []
   const fresh = new Map<string, ModelPickerRow[]>()
+  const keyCheckOf = (providerId: string) => config.providers.find((candidate) => candidate.id === providerId)?.keyCheck
+  const rejected = (providerId: string) =>
+    isChatProviderKeyRejected({ keyCheck: keyCheckOf(providerId) }) && !fresh.get(providerId)?.length
   const publish = () => {
     if (generations.get(hostId) !== generation) return
     const rows = connected.flatMap((provider) =>
-      (fresh.get(provider.id) ?? previous.filter((row) => row.providerId === provider.id)).map((row) => ({
+      (
+        fresh.get(provider.id) ??
+        (rejected(provider.id) ? [] : previous.filter((row) => row.providerId === provider.id))
+      ).map((row) => ({
         ...row,
         providerName: provider.name,
       }))
     )
+    const failures = connected
+      .filter((provider) => rejected(provider.id))
+      .map((provider) => ({
+        providerId: provider.id,
+        providerName: provider.name,
+        ...(keyCheckOf(provider.id)?.status ? { status: keyCheckOf(provider.id)?.status } : {}),
+      }))
     cacheRows(hostId, rows)
-    onUpdate({ config, rows, pending: connected.length - fresh.size })
+    onUpdate({ config, rows, failures, pending: connected.length - fresh.size })
   }
   publish()
   await Promise.all(
@@ -94,6 +124,14 @@ export async function loadModelPickerRows(
         })
     )
   )
+  const emptyApiKeyAccount = connected.some(
+    (provider) => !isChatSubscriptionProviderKind(provider.kind) && !fresh.get(provider.id)?.length
+  )
+  if (!emptyApiKeyAccount || generations.get(hostId) !== generation) return
+  const refreshed = await api.chatConfig().catch(() => null)
+  if (!refreshed) return
+  config = refreshed
+  publish()
 }
 
 export function resetModelPickerRowsForTests(): void {

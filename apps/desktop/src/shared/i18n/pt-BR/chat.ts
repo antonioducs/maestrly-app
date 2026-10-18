@@ -612,6 +612,7 @@ export default {
     loading: 'carregando modelos…',
     useAsId: 'usar "{{query}}" como id do modelo',
     typeManually: 'digitar id manualmente…',
+    keyRejected: '{{provider}}: chave de API recusada. Troque em Configurações › Contas.',
   },
   composer: {
     placeholder:
@@ -1602,6 +1603,16 @@ export default {
     accountMoreActions: 'Mais ações',
     accountConnectAnother: 'Conectar outra conta {{provider}}',
     accountKeySaved: 'Chave salva',
+    accountKeyVerified: 'Chave verificada',
+    accountKeyChecking: 'Verificando chave…',
+    accountKeyRejected: 'Chave recusada',
+    accountKeyUnverified: 'Chave salva · não verificada',
+    accountKeyRejectedHint:
+      'O provedor recusou esta chave (HTTP {{status}}), então os modelos desta conta não carregam. Cole uma chave válida acima.',
+    accountKeyUnverifiedHint: 'A chave foi salva, mas não deu para verificá-la: o provedor não respondeu.',
+    accountKeyUnverifiedHttpHint:
+      'A chave foi salva, mas não deu para verificá-la: a listagem de modelos retornou HTTP {{status}}. Isso não quer dizer que a chave esteja errada.',
+    accountKeyCheckAgain: 'Verificar de novo',
     accountNoApiKey: 'Sem chave de API',
     accountApiKeyHeading: 'Chave de API',
     accountApiKeyStored: 'Guardada no keyring do sistema',
