@@ -196,10 +196,28 @@ queued messages.
 
 Click the microphone in a chat or bot composer to speak, or press ⌘D (Ctrl+D on
 Windows and Linux) in the composer. With **Hold to record** on, hold the button
-while you speak. Speech never leaves the computer: Maestrly transcribes it
-locally with whisper.cpp and the Whisper large-v3-turbo model, and a
-voice-activity check discards recordings with no speech, so silence or room
-noise never becomes a message.
+while you speak. Dictation always runs on this computer, where the microphone
+is, whether the chat runs here, in a remote workspace, or on a bot.
+
+**Settings › Maestrly Chat › Tools › Dictation** chooses the engine:
+
+- **This computer (Whisper)**, the default: speech never leaves the computer.
+  Maestrly transcribes it locally with whisper.cpp and the Whisper
+  large-v3-turbo model, and a voice-activity check discards recordings with no
+  speech, so silence or room noise never becomes a message.
+- **OpenAI** (`gpt-4o-transcribe`) or **Groq** (`whisper-large-v3-turbo`): each
+  recording goes to that provider with your API key and is billed to your
+  account (about US$0.006 and US$0.0007 per minute). Enter the key in the same
+  section; Maestrly checks it with the provider before keeping it in the system
+  keyring, and never shows it again. These engines work on any system,
+  including those where the local model does not run, need no download, and
+  stop a recording by itself after 10 minutes. Silent recordings are not sent.
+  When a transcription fails, the microphone offers **Try again**, which sends
+  the same recording again.
+
+With a bot server connected, the same section shows the server's dictation key,
+which [phones](mobile.md) dictate through. **Use on my phone too** stores this
+computer's engine and key on the server, and **Remove from server** deletes it.
 
 While you record, the composer's action bar shows the elapsed time and the
 microphone level, and you can keep editing the text. The recording ends one of
@@ -216,19 +234,21 @@ While the text is transcribed, ✕ cancels it. When the composer cannot send (no
 provider, or a conversation managed by a bot), the transcription goes to the
 composer.
 
-Right-click the microphone, or use the options button while recording, to
-choose the microphone, turn **Hold to record** on or off, and choose the
-dictation language: **App language** (the default) transcribes in the language
-Maestrly is displayed in, which is the most accurate choice; **Detect
-automatically** lets the model identify the language and takes about twice as
-long.
+Right-click the microphone, or use the options button while recording, to see
+the engine in use, choose the microphone, turn **Hold to record** on or off,
+and choose the dictation language: **App language** (the default) transcribes
+in the language Maestrly is displayed in, which is the most accurate choice;
+**Detect automatically** lets the model identify the language and takes about
+twice as long.
 
-The first click offers to download the voice model once (547 MB). Nothing is
-downloaded before you confirm. The model appears as **Voice model** in
-**Settings › Maestrly Chat › Components**, where it can be removed; see
-[Local data](local-data.md#voice-model). Dictation requires macOS 15 or later on
-Apple silicon, where it uses the GPU, or Windows x64 or Linux x64 (glibc 2.34 or
-later), where it runs on the CPU and is slower.
+With the local engine, the first click offers to download the voice model once
+(547 MB), or to use an API key instead. Nothing is downloaded before you
+confirm. The model appears as **Voice model** in **Settings › Maestrly Chat ›
+Components**, where it can be removed; see
+[Local data](local-data.md#voice-model). The local engine requires macOS 15 or
+later on Apple silicon, where it uses the GPU, or Windows x64 or Linux x64
+(glibc 2.34 or later), where it runs on the CPU and is slower. With an API
+engine and no key yet, the microphone points to the dictation settings.
 
 ## Starting other conversations
 
