@@ -1724,15 +1724,30 @@ async function main() {
     enabled: true,
     idempotencyKey: randomUUID(),
   })
+  // Each run works in a conversation of its own (`routine-conversations`): the bot's conversation does not show it.
+  const runsOf = async () =>
+    (await request('GET', '/v1/bots/' + scoutId + '/routine-runs?routineId=' + routine.id)).runs
+  const runTranscript = async (runId) =>
+    (await request('GET', '/v1/bots/' + scoutId + '/routine-runs/' + runId + '/transcript?limit=500')).items
+  const scheduledRun = await poll(
+    'scheduled routine run',
+    async () => (await runsOf()).find((run) => run.trigger === 'schedule'),
+    100000
+  )
+  assert.equal(scheduledRun.conversation, 'own')
+  assert.equal(scheduledRun.routineTitle, 'E2E routine')
   await poll(
     'routine answer',
     async () =>
-      (await transcript(scoutId)).some((item) => item.kind === 'assistant' && item.text.includes('E2E-ROUTINE-DONE')),
+      (await runTranscript(scheduledRun.id)).some(
+        (item) => item.kind === 'assistant' && item.text.includes('E2E-ROUTINE-DONE')
+      ),
     100000
   )
-  assert.ok((await transcript(scoutId)).some((item) => item.kind === 'user' && item.source === 'routine'))
+  assert.ok((await runTranscript(scheduledRun.id)).some((item) => item.kind === 'user' && item.source === 'routine'))
+  assert.ok(!(await transcript(scoutId)).some((item) => item.kind === 'user' && item.source === 'routine'))
   assert.ok((await activityEntries()).some((item) => item.kind === 'routine_ran' && item.botId === scoutId))
-  pass('scheduled routine', routine.id + ' at ' + hhmm + ' UTC, routine_ran and answer')
+  pass('scheduled routine', routine.id + ' at ' + hhmm + ' UTC, routine_ran and answer in its own conversation')
   const routineHistoryStarted = Date.now()
   const runsRoute = '/v1/bots/' + scoutId + '/routines/' + routine.id + '/runs'
   const recordedRun = await poll('completed routine report', async () =>
@@ -1742,9 +1757,37 @@ async function main() {
   )
   assert.equal(recordedRun.report.notes, 'check the second shelf')
   await request('POST', '/v1/bots/' + scoutId + '/routines/' + routine.id + '/run')
-  await memoryAnswer('E2E-ROUTINE-HISTORY-SEEN')
+  const manualRun = await poll('manual routine run', async () =>
+    (await runsOf()).find((run) => run.trigger === 'manual')
+  )
+  await poll(
+    'E2E-ROUTINE-HISTORY-SEEN',
+    async () => {
+      assert.ok(
+        !(await inbox()).some((item) => item.botId === scoutId && item.interaction.kind === 'permission'),
+        'Routine tools must not request permission'
+      )
+      return (await runTranscript(manualRun.id)).some(
+        (item) => item.kind === 'assistant' && item.text.includes('E2E-ROUTINE-HISTORY-SEEN')
+      )
+    },
+    90000
+  )
   timings.routineHistoryMs = Date.now() - routineHistoryStarted
   pass('routine history', 'report recorded and delivered to the next run')
+  // Deleting a finished run's conversation keeps its report.
+  await poll('manual routine run finished', async () =>
+    (await runsOf()).some((run) => run.id === manualRun.id && run.status !== 'delivered')
+  )
+  const deletedRun = await request(
+    'DELETE',
+    '/v1/bots/' + scoutId + '/routine-runs/' + scheduledRun.id + '/conversation'
+  )
+  assert.equal(deletedRun.conversation, 'deleted')
+  assert.equal(deletedRun.report?.summary, 'E2E-RUN-1 done')
+  assert.ok(deletedRun.kept)
+  assert.equal((await runsOf()).find((run) => run.id === scheduledRun.id)?.conversation, 'deleted')
+  pass('routine run deletion', 'conversation deleted in the environment, report kept')
   const creationStarted = Date.now()
   await request('POST', '/v1/bots/' + scoutId + '/messages', {
     text: 'E2E-ROUTINE-CREATE',

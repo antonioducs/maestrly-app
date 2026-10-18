@@ -437,12 +437,21 @@ async function main() {
   const items = (await request(state, 'GET', `/v1/bots/${scoutId}/transcript?limit=500`)).items
   if (!items.some((item) => item.kind === 'user' && item.text === 'E2E-START')) {
     await request(state, 'POST', `/v1/bots/${scoutId}/routines/${routine.id}/run`)
+    // The run answers in a conversation of its own (`routine-conversations`).
     await poll(
       'routine transcript',
-      async () =>
-        (await request(state, 'GET', `/v1/bots/${scoutId}/transcript?limit=500`)).items.some(
-          (item) => item.kind === 'assistant' && item.text.includes('E2E-ROUTINE-DONE')
-        ),
+      async () => {
+        const { runs } = await request(state, 'GET', `/v1/bots/${scoutId}/routine-runs?routineId=${routine.id}`)
+        for (const run of runs.filter((item) => item.conversation === 'own')) {
+          const { items: answers } = await request(
+            state,
+            'GET',
+            `/v1/bots/${scoutId}/routine-runs/${run.id}/transcript?limit=500`
+          )
+          if (answers.some((item) => item.kind === 'assistant' && item.text.includes('E2E-ROUTINE-DONE'))) return true
+        }
+        return false
+      },
       90000
     )
     await request(state, 'POST', `/v1/bots/${scoutId}/messages`, { text: 'E2E-START', idempotencyKey: randomUUID() })
