@@ -109,4 +109,65 @@ describe('model picker rows', () => {
     expect(summary(updates.at(-1)![1])).toEqual({ pending: 0, rows: ['Fast account:newer'] })
     expect(cachedModelPickerRows('local')?.map((row) => row.modelId)).toEqual(['newer'])
   })
+
+  it('shows a failure line for an account whose key was refused instead of its stale rows', async () => {
+    localStorage.setItem(
+      'chat.modelPicker.rows.v1:local',
+      JSON.stringify([{ providerId: 'slow', providerName: 'Slow account', modelId: 'cached-model' }])
+    )
+    const rejected = { outcome: 'rejected', status: 401, detail: 'Incorrect API key provided', checkedAt: 2 }
+    // The key changed since the last list: the first config has no check yet, the listing then records the refusal.
+    const configs = [
+      config,
+      {
+        providers: config.providers.map((provider) =>
+          provider.id === 'slow' ? { ...provider, keyCheck: rejected } : provider
+        ),
+      } as unknown as ChatConfig,
+    ]
+    let reads = 0
+    const updates: ModelPickerRowsUpdate[] = []
+    const api = {
+      chatConfig: async () => configs[Math.min(reads++, configs.length - 1)],
+      chatModels: async (providerId: string) => (providerId === 'fast' ? ['fast-model'] : []),
+    }
+
+    await loadModelPickerRows(api as never, 'local', (update) => updates.push(update))
+
+    expect(reads).toBe(2)
+    expect(updates[0].failures).toEqual([])
+    const last = updates.at(-1)!
+    expect(summary(last)).toEqual({ pending: 0, rows: ['Fast account:fast-model'] })
+    expect(last.failures).toEqual([{ providerId: 'slow', providerName: 'Slow account', status: 401 }])
+
+    // Once the config already knows, the stale rows never show, not even while the account answers.
+    const pending = deferred<string[]>()
+    const again: ModelPickerRowsUpdate[] = []
+    const known = {
+      chatConfig: async () => configs[1],
+      chatModels: (providerId: string) => (providerId === 'fast' ? Promise.resolve(['fast-model']) : pending.promise),
+    }
+    const loading = loadModelPickerRows(known as never, 'local', (update) => again.push(update))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(again.every((update) => update.rows.every((row) => row.providerId !== 'slow'))).toBe(true)
+    expect(again[0].failures.map((failure) => failure.providerId)).toEqual(['slow'])
+    // A list arriving after all (the provider accepted the key on a later check) replaces the failure.
+    pending.resolve(['slow-model'])
+    await loading
+    expect(again.at(-1)!.failures).toEqual([])
+    expect(summary(again.at(-1)!).rows).toContain('Slow account:slow-model')
+  })
+
+  it('does not read the config again when every API-key account listed models', async () => {
+    let reads = 0
+    const api = {
+      chatConfig: async () => {
+        reads += 1
+        return config
+      },
+      chatModels: async (providerId: string) => [`${providerId}-model`],
+    }
+    await loadModelPickerRows(api as never, 'local', () => {})
+    expect(reads).toBe(1)
+  })
 })

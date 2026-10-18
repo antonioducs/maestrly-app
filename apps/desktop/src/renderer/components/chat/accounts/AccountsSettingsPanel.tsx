@@ -170,8 +170,11 @@ export function AccountsSettingsPanel({
       group,
       summary,
       title: entry.provider.name,
-      meta: summary.connected ? baseUrlHost(entry.provider.baseURL) : t('settings.accountNoApiKey'),
-      metaTone: summary.connected ? 'muted' : 'warn',
+      ...(summary.health === 'error'
+        ? { meta: t('settings.accountKeyRejected'), metaTone: 'bad' as const }
+        : summary.connected
+          ? { meta: baseUrlHost(entry.provider.baseURL), metaTone: 'muted' as const }
+          : { meta: t('settings.accountNoApiKey'), metaTone: 'warn' as const }),
       rotation: false,
     }
   }

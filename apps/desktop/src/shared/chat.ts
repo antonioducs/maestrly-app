@@ -1661,6 +1661,28 @@ export interface ChatProviderInfo {
   accountId?: string | null
 
   accountLabel?: string
+
+  /** Last check of the saved API key against the provider; absent until one ran for this key. */
+  keyCheck?: ChatProviderKeyCheck
+}
+
+/**
+ * accepted: the provider answered the check. rejected: it refused the key (HTTP 401/403). unverified: the check could
+ * not tell (network failure, timeout, no `/models`, other HTTP errors); the key stays saved and usable.
+ */
+export type ChatProviderKeyCheckOutcome = 'accepted' | 'rejected' | 'unverified'
+
+export interface ChatProviderKeyCheck {
+  outcome: ChatProviderKeyCheckOutcome
+  /** HTTP status of the check when the provider answered. */
+  status?: number
+  /** Provider message, redacted: never contains the key. */
+  detail?: string
+  checkedAt: number
+}
+
+export function isChatProviderKeyRejected(provider: Pick<ChatProviderInfo, 'keyCheck'>): boolean {
+  return provider.keyCheck?.outcome === 'rejected'
 }
 
 export function isChatProviderConnected(provider: ChatProviderInfo): boolean {

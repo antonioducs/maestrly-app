@@ -113,7 +113,11 @@ chosen in a chat outside a workspace. New chats start from them when no default
 model is set; neither holds a credential. Each window keeps the last model lists
 of every host in its local storage under `chat.modelPicker.rows.v1:<host>` and
 shows them while the accounts answer; it is a rebuildable cache of model ids and
-account names.
+account names. `chat.apiKeyChecks` in `app_settings` keeps, per API-key account,
+the last answer of its model listing: whether the provider accepted the key,
+refused it (HTTP 401 or 403), or could not tell, with the HTTP status and the
+provider's message redacted. It is tied to a fingerprint of the key, never the
+key itself, and is forgotten when the key, endpoint or format changes.
 
 ## MCP configuration
 
