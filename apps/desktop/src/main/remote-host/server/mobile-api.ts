@@ -23,9 +23,13 @@ import {
   type MobileLists,
   type MobileResult,
   type MobileRuntime,
+  type MobileSubscriptionProviderKind,
+  type MobileSubscriptionUsageEntry,
+  type MobileSubscriptionUsageWindow,
 } from '@maestrly/bot-fleet-protocol'
 import {
   applyChatEvent,
+  CHAT_SUBSCRIPTION_USAGE_PROVIDER_KINDS,
   mergePendingChatQuestions,
   toolOutputImages,
   toolOutputText,
@@ -40,6 +44,9 @@ import {
   type ChatRuntimeState,
   type ChatSkillsState,
   type ChatStreamEvent,
+  type ChatSubscriptionUsage,
+  type ChatSubscriptionUsageProviderKind,
+  type ChatSubscriptionUsageWindow,
   type MessagePart,
 } from '../../../shared/chat'
 import type { Conversation, ConversationStatus } from '../../../shared/conversation'
@@ -137,6 +144,31 @@ function mobileConversation(conversation: Conversation, workspaceName: string | 
     lastActivityAt: iso(conversation.lastActivityAt || conversation.createdAt),
     pinned: conversation.pinnedAt !== null && conversation.pinnedAt !== undefined,
     experience: conversation.scope === 'project' && conversation.experience === 'maestro' ? 'maestro' : 'standard',
+  }
+}
+
+/** How a phone names each subscription that reports quota usage, as the host's Accounts settings do. */
+const USAGE_PROVIDERS: Record<
+  ChatSubscriptionUsageProviderKind,
+  { kind: MobileSubscriptionProviderKind; label: string }
+> = {
+  'codex-subscription': { kind: 'codex', label: 'ChatGPT' },
+  'claude-subscription': { kind: 'claude', label: 'Claude' },
+  'antigravity-subscription': { kind: 'google', label: 'Google AI' },
+}
+
+const usageTime = (value: number | null): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+
+function mobileUsageWindow(window: ChatSubscriptionUsageWindow): MobileSubscriptionUsageWindow {
+  const used = Number.isFinite(window.usedPercent) ? window.usedPercent : 0
+  return {
+    id: window.id.slice(0, 200),
+    kind: window.kind,
+    usedPercent: Math.min(100, Math.max(0, used)),
+    resetsAt: usageTime(window.resetsAt),
+    durationMins: usageTime(window.durationMins),
+    ...(window.label ? { label: window.label.slice(0, 200) } : {}),
   }
 }
 
@@ -259,6 +291,7 @@ export class MobileApi {
       models: () => this.models(),
       defaults: () => this.defaults(),
       setDefaults: (value) => this.setDefaults(value),
+      subscriptionUsage: (value) => this.subscriptionUsage(value.force === true),
       compact: async (value) => {
         const result = (await this.call('chat:compact', value.conversationId)) as {
           ok?: boolean
@@ -695,6 +728,54 @@ export class MobileApi {
       })
     )
     return { options: lists.flat(), defaultSelection }
+  }
+
+  /**
+   * The quota usage of each connected subscription account, read only, in the order the host's Accounts settings list
+   * them. The phone gets the account's label and an error code, never its email, plan or the provider's error text.
+   */
+  private async subscriptionUsage(force: boolean): Promise<MobileResult<'subscriptionUsage'>> {
+    const config = (await this.call('chat:config')) as ChatConfig | null
+    const providers = config?.providers ?? []
+    const accounts = CHAT_SUBSCRIPTION_USAGE_PROVIDER_KINDS.flatMap((kind) => {
+      const connected = providers.filter((provider) => provider.kind === kind && provider.connected === true)
+      // The default account first, then the others in the order they were added.
+      const ordered = [...connected.filter((item) => !item.accountId), ...connected.filter((item) => item.accountId)]
+      return ordered.map((provider) => ({ kind, provider }))
+    })
+    const entries = await Promise.all(
+      accounts.map(async ({ kind, provider }): Promise<MobileSubscriptionUsageEntry | null> => {
+        const base = {
+          providerId: provider.id,
+          providerKind: USAGE_PROVIDERS[kind].kind,
+          providerLabel: USAGE_PROVIDERS[kind].label,
+          ...(provider.accountLabel ? { accountLabel: provider.accountLabel.slice(0, 400) } : {}),
+        }
+        const failed = (error: NonNullable<MobileSubscriptionUsageEntry['error']>): MobileSubscriptionUsageEntry => ({
+          ...base,
+          state: 'error',
+          windows: [],
+          error,
+        })
+        const usage = (await this.call('chat:subscription-usage', {
+          providerKind: kind,
+          accountId: provider.accountId ?? null,
+          force,
+        }).catch(() => null)) as ChatSubscriptionUsage | null
+        if (!usage) return failed('failed')
+        if (usage.state === 'ready')
+          return {
+            ...base,
+            state: 'ready',
+            fetchedAt: usage.fetchedAt,
+            windows: usage.windows.slice(0, 50).map(mobileUsageWindow),
+          }
+        // A connected account whose provider reports no limits right now stays listed; another kind has no usage.
+        if (usage.state === 'unsupported') return usage.reason === 'unavailable' ? failed('unavailable') : null
+        return failed(usage.error === 'unknown-account' ? 'unknown-account' : 'failed')
+      })
+    )
+    return { entries: entries.filter((entry): entry is MobileSubscriptionUsageEntry => entry !== null) }
   }
 
   private async image(conversationId: string, id: string): Promise<MobileResult<'image'>> {

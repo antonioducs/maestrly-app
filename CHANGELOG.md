@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- The mobile app shows the subscription usage of the paired server in
+  **Settings → Subscription usage**: how much of each plan limit the connected
+  Claude, ChatGPT and Google AI subscriptions have used, one block per account
+  when a provider has several, with when each window resets. It only reads
+  them; the server needs this version to answer. See
+  [Mobile app](docs/mobile.md#what-it-does).
+
 ### Fixed
 
 - Moving a bot whose working folder holds a Git repository no longer fails

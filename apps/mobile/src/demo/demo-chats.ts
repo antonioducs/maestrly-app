@@ -28,6 +28,7 @@ import {
   DEMO_MODEL_INFO,
   DEMO_SKILLS,
   DEMO_WORKSPACES,
+  demoSubscriptionUsage,
   PLAN_REVISE,
   workspaceReply,
   type ChatStep,
@@ -725,6 +726,8 @@ export function createDemoChatsSource(
           fastMode: defaults.fastMode,
         }
       }
+      case 'subscriptionUsage':
+        return { entries: demoSubscriptionUsage(Date.now()) }
       case 'compact': {
         const current = chat()
         if (current.streaming) return { ok: false, error: 'busy' }

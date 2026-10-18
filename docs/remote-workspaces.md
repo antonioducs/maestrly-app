@@ -341,7 +341,8 @@ kept by the server: opening the conversation on one computer clears it on the ot
 
 The [mobile app](mobile.md) shows the same chats and workspaces of the server, and opens new chats on it. A phone uses
 a smaller, versioned API of the host instead of a computer's full access: it reads and writes chats, answers what
-they ask, and changes their setup, but it never reaches the server's files, terminals, accounts or settings. It does
+they ask, and changes their setup. It reads the quota usage of the connected subscriptions, but never signs in, changes
+accounts or reaches the server's files, terminals or settings. It does
 not need the same app version as the server, only the same mobile API, so it keeps working while the server updates.
 On a server with several workspaces environments, the phone shows the chats of one of them at a time, as the
 desktop's machine switcher does: choose it under the server in the app's menu, and the phone remembers the choice.

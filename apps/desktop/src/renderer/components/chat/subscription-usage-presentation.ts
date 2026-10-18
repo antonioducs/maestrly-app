@@ -1,14 +1,8 @@
-import type { ChatSubscriptionProviderKind, ChatSubscriptionUsageWindow } from '../../../shared/chat'
+import type { ChatSubscriptionUsageWindow } from '../../../shared/chat'
+
+export { supportsSubscriptionUsage } from '../../../shared/chat'
 
 export type SubscriptionUsageTone = 'normal' | 'high' | 'critical'
-
-export function supportsSubscriptionUsage(providerKind: ChatSubscriptionProviderKind): boolean {
-  return (
-    providerKind === 'codex-subscription' ||
-    providerKind === 'claude-subscription' ||
-    providerKind === 'antigravity-subscription'
-  )
-}
 
 export function subscriptionUsageTone(usedPercent: number): SubscriptionUsageTone {
   if (usedPercent > 90) return 'critical'
