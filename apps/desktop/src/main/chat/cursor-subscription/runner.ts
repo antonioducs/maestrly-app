@@ -26,6 +26,7 @@ import { deleteChatMessage, runnerContextHistory, upsertChatMessage } from '../c
 import { createDeltaCoalescer } from '../delta-coalescer'
 import { createBackgroundCompactionPrefixNotifier } from '../background-compaction/runner'
 import { droppedImageText, nativeSeedContextText } from '../message'
+import { harnessEnvironmentContext } from '../harness/host-contracts'
 import { describeEphemeralToolImage } from '../image-interpreter'
 import { resolveFileImageBytesSync } from '../attachment-artifacts'
 import { pdfFallbackText } from '../pdf-attachments'
@@ -755,7 +756,10 @@ async function runCursorSubscriptionChatInScope(
 
       const envelopeText = `# Maestrly harness\n${envelope.instructions}\n\n# Project\n${envelope.projectContext}\n\n${envelope.skillCatalog}\n${envelope.agentCatalog}\n\n${envelope.environment}`
       const input = currentUserInput(currentUser, seedTranscript, dropImages)
-      const sendText = compatible ? input.text : `${envelopeText}\n\n${input.text}`
+      // A resumed agent keeps its contract but not a stale environment: the date and git state come with the message.
+      const sendText = compatible
+        ? `${harnessEnvironmentContext(envelope.environment)}\n\n${input.text}`
+        : `${envelopeText}\n\n${input.text}`
 
       const run = await awaitCursorOperation(
         agent.send(

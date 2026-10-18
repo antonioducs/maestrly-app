@@ -141,6 +141,7 @@ export async function buildCursorHarnessContext(
   const notes = !isBotMode() && Boolean(conversation)
   const allowPlanReview = !isBotMode()
   const instructions = [
+    // The environment travels apart (`environment`): it changes between turns and must not alter the contract.
     buildHarnessPrompt({
       harness,
       cwd: args.cwd,
@@ -153,7 +154,7 @@ export async function buildCursorHarnessContext(
       agentsContext: agentContext,
       envContext: environment,
       generatedInterfaces: generatedInterfacesEnabled(),
-    }).instructions,
+    }).stablePrefix,
     'You are running inside Maestrly through the official Cursor Agent SDK runtime.',
     `Maestrly mode: ${args.mode}.`,
     'Use ONLY the custom tools offered to you; do not attempt tools you were not given.',
@@ -186,14 +187,19 @@ export async function buildCursorHarnessContext(
   }
 }
 
-export const CURSOR_HARNESS_ENVELOPE_VERSION = 1
+export const CURSOR_HARNESS_ENVELOPE_VERSION = 2
 
+/**
+ * Contract of a persisted agent. The environment (date, git state) is left out: it changes between turns without
+ * changing the contract, and a resumed agent receives the current one with each message instead.
+ */
 export function hashCursorHarnessEnvelope(envelope: CursorHarnessEnvelope): string {
+  const { environment: _environment, ...contract } = envelope
   return createHash('sha256')
     .update(
       JSON.stringify({
         version: CURSOR_HARNESS_ENVELOPE_VERSION,
-        ...envelope,
+        ...contract,
       })
     )
     .digest('hex')

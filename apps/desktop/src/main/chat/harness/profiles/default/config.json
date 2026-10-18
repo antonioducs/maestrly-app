@@ -52,6 +52,10 @@
       "overrides": { "identity": { "promptIdentity": "maestrly-openai-generic-v1" } }
     },
     {
+      "providerKind": "claude-subscription",
+      "overrides": { "prompts": { "environment": { "placement": "last-user-message", "transient": true } } }
+    },
+    {
       "providerKind": "cursor-subscription",
       "overrides": {
         "identity": {

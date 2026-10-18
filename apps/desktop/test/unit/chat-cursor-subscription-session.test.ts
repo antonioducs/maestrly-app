@@ -122,5 +122,12 @@ describe('seed / envelope', () => {
     expect(a).toBe(b)
     expect(a).not.toBe(c)
     expect(a).not.toBe(d)
+    // The date and git state change between turns; they must not retire a resumable agent.
+    expect(
+      hashCursorHarnessEnvelope({
+        ...base,
+        environment: "OS: macOS. Today's date: 2026-10-19. Git branch: main (uncommitted changes).",
+      })
+    ).toBe(a)
   })
 })

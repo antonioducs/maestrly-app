@@ -68,6 +68,15 @@ import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../../src/main/chat/tool-policy'
+
+/**
+ * Exactly the readers an Ask turn exposes, plus the conversation tools Ask offers in every turn. A turn the person did
+ * not type receives them without a runtime, so they refuse; they are offered anyway to keep the thread's tool set.
+ */
+const ASK_TOOL_NAMES = ['glob', 'grep', 'read', 'web_search', 'webfetch', ...PARENT_ONLY_CONVERSATION_TOOL_NAMES].sort()
+const toolNames = (start: unknown) =>
+  (start as { dynamicTools: Array<{ name: string }> }).dynamicTools.map((tool) => tool.name).sort()
 import { insertConversation, patchConvUiPrefs, setAppSetting, setAppFlag } from '../../src/main/store'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 
@@ -1972,15 +1981,9 @@ describe('Codex subscription runner', () => {
       },
       environments: [],
       ephemeral: false,
-      dynamicTools: [
-        expect.objectContaining({ name: 'glob' }),
-        expect.objectContaining({ name: 'grep' }),
-        expect.objectContaining({ name: 'read' }),
-        // Native search is disabled here, so the permission-gated host tool replaces it.
-        expect.objectContaining({ name: 'web_search' }),
-        expect.objectContaining({ name: 'webfetch' }),
-      ],
     })
+    // Native search is disabled here, so the permission-gated host `web_search` replaces it.
+    expect(toolNames(client.startThreadCalls[0])).toEqual(ASK_TOOL_NAMES)
     expect(
       (
         client.startThreadCalls[0] as {
@@ -2045,14 +2048,14 @@ describe('Codex subscription runner', () => {
       kind: 'codex-subscription-tools-profile',
       mode: 'ask',
       model: 'gpt-5.6-sol',
-      tools: expect.objectContaining({ total: 5, eager: 5, deferred: 0 }),
+      tools: expect.objectContaining({ total: ASK_TOOL_NAMES.length, eager: ASK_TOOL_NAMES.length, deferred: 0 }),
     })
     expect(chatDiagMock).toHaveBeenCalledWith({
       kind: 'codex-subscription-initial-context',
       mode: 'ask',
       model: 'gpt-5.6-sol',
       contextInput: 40,
-      tools: expect.objectContaining({ total: 5, eager: 5, deferred: 0 }),
+      tools: expect.objectContaining({ total: ASK_TOOL_NAMES.length, eager: ASK_TOOL_NAMES.length, deferred: 0 }),
     })
     expect(getCodexThreadBinding(conversation.id)).toEqual({
       conversationId: conversation.id,
@@ -2548,13 +2551,6 @@ describe('Codex subscription runner', () => {
       sandbox: 'read-only',
       approvalPolicy: 'untrusted',
       environments: [],
-      dynamicTools: [
-        expect.objectContaining({ name: 'glob' }),
-        expect.objectContaining({ name: 'grep' }),
-        expect.objectContaining({ name: 'read' }),
-        expect.objectContaining({ name: 'web_search' }),
-        expect.objectContaining({ name: 'webfetch' }),
-      ],
       config: {
         'features.shell_tool': false,
         'features.multi_agent': false,
@@ -2570,6 +2566,7 @@ describe('Codex subscription runner', () => {
       },
       developerInstructions: expect.stringContaining('read-only Maestrly readers'),
     })
+    expect(toolNames(client.startThreadCalls[0])).toEqual(ASK_TOOL_NAMES)
     expect(client.startTurnCalls[0]).toMatchObject({
       sandboxPolicy: { type: 'readOnly', networkAccess: false },
       approvalPolicy: 'untrusted',

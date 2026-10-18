@@ -52,7 +52,7 @@ import {
   type HumanTurnOrigin,
 } from '../../src/main/chat/conversation-dispatch-authorization'
 import { APP_TOOL_POLICY, CONVERSATION_DISPATCH_TOOL_NAMES } from '../../src/main/chat/tool-policy'
-import { interactiveTool } from '../../src/main/chat/autonomous'
+import { interactiveTool, registerAutonomousConversation } from '../../src/main/chat/autonomous'
 import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 import {
   conversationDispatchBranchSlug,
@@ -119,6 +119,37 @@ describe('conversation dispatch tool surface', () => {
     const restricted = builtinToolNamesForMode('plan')
     expect(enableConversationDispatchTools(restricted, 'source', 'plan')).toBeUndefined()
     expect(CONVERSATION_DISPATCH_TOOL_NAMES.some((name) => restricted.has(name))).toBe(false)
+  })
+
+  // A native session is resumed only while its tool set holds: hiding the names from host turns (an approved plan, a
+  // review loop, a seeded child) discarded the session at every switch. Those turns see the same names, and nothing
+  // acts without the runtime (see 'refuses without the main-turn runtime').
+  it('offers the same names to turns the person did not type, without a runtime', () => {
+    const host = builtinToolNamesForMode('agent')
+    expect(enableConversationDispatchTools(host, 'source', 'agent')).toBeUndefined()
+    humanTurn('Abra uma conversa para cada card.')
+    const typed = builtinToolNamesForMode('agent')
+    expect(enableConversationDispatchTools(typed, 'source', 'agent')).toBeDefined()
+    expect([...host].sort()).toEqual([...typed].sort())
+    for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) expect(host.has(name)).toBe(true)
+  })
+
+  it('leaves unattended executor turns without the names', () => {
+    const release = registerAutonomousConversation('source', {
+      cwd: '/repo',
+      allowCommands: true,
+      allowWeb: false,
+      allowAppTools: false,
+      allowMcp: false,
+      allowPush: false,
+    })
+    try {
+      const enabled = builtinToolNamesForMode('agent')
+      expect(enableConversationDispatchTools(enabled, 'source', 'agent')).toBeUndefined()
+      expect(CONVERSATION_DISPATCH_TOOL_NAMES.some((name) => enabled.has(name))).toBe(false)
+    } finally {
+      release()
+    }
   })
 
   it('adds only the handoff and project tools to Ask, never edits or commands', () => {

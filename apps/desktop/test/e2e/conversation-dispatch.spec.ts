@@ -153,7 +153,14 @@ test('starts persistent conversations on explicit or confirmed requests and hand
     if (lastUser.includes(PLAN_REQUEST)) {
       return call(res, 'plan-1', 'review_plan', { title: 'PROJ-4 plan', plan: '## Steps\n1. Original step' })
     }
-    if (lastUser.includes(SEED_MARKER)) return end(res, 'Working on the dispatched task.')
+    if (lastUser.includes(SEED_MARKER)) {
+      // A seeded child turn is host-generated: its recursive dispatch attempt must be refused.
+      if (!did('seed-rogue'))
+        return call(res, 'seed-rogue', 'start_conversations', {
+          tasks: [{ requestKey: 'PROJ-8', title: 'PROJ-8', prompt: 'Recursive work.' }],
+        })
+      return end(res, 'Working on the dispatched task.')
+    }
     if (lastUser.includes('<approved_plan>')) return end(res, 'Plan implemented in the new conversation.')
     end(res, 'OK')
   })
@@ -243,10 +250,14 @@ test('starts persistent conversations on explicit or confirmed requests and hand
     const replay = requests.find((request) => 'dispatch-2' in request.toolResults)!
     expect(JSON.parse(replay.toolResults['dispatch-2']).items.every((item: any) => item.replayed === true)).toBe(true)
 
-    // Seeded child turns are host-generated: they never receive the dispatch tools.
-    const seeds = requests.filter((request) => request.lastUser.includes(SEED_MARKER))
+    // Seeded child turns are host-generated: they are offered the same tools as a typed turn, so a native session
+    // survives the switch, but every recursive dispatch they try is refused (and PROJ-8 never appears above).
+    const seeds = requests.filter((request) => 'seed-rogue' in request.toolResults)
     expect(seeds.length).toBeGreaterThanOrEqual(2)
-    for (const seed of seeds) expect(seed.tools).not.toContain('start_conversations')
+    for (const seed of seeds) {
+      expect(JSON.parse(seed.toolResults['seed-rogue'])).toMatchObject({ ok: false, items: [] })
+      expect(seed.toolResults['seed-rogue']).toContain('only works in the main agent turn')
+    }
 
     // The result card links to the new conversation, which shows its origin.
     const card = page.getByTestId('conversation-dispatch-card').last()

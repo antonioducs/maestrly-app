@@ -92,6 +92,7 @@ import {
   buildClaudeSessionBinding,
   buildClaudeSessionPrompt,
   claudeSeedTranscript,
+  claudeSessionBindingMismatches,
   isClaudeSessionBindingCompatible,
   resolveClaudeSession,
 } from './session'
@@ -236,8 +237,9 @@ interface RunnerState {
   queryAbortController: AbortController | null
   toolJournal?: ClaudeToolJournal
   /**
-   * Publish the generated image part (generate_image). Only REAL turns define this; inspect/compact omit the tool
-   * because they have no assistant message to display the artifact.
+   * Publish the generated image part (generate_image). Only REAL turns define this; compact omits the tool because it
+   * has no assistant message to display the artifact. The session check sets a no-op so that it rebuilds the tool set
+   * of the real turn it checks for.
    */
   emitGeneratedImage?: (toolCallId: string, image: GeneratedImageEmission) => void
   onGeneratedImageUsage?: (usage: GeneratedImageUsage) => void
@@ -825,6 +827,8 @@ export async function inspectClaudeSessionCompatibility(args: InspectClaudeSessi
     runTask: null,
     queryAbortController: null,
     coordinator: new SubagentCoordinator({ onEvent: () => {} }),
+    // Never runs here (no query starts); present so generate_image is offered exactly as in the real turn.
+    emitGeneratedImage: () => {},
   }
   let runtime: PreparedRuntime | null = null
   try {
@@ -832,27 +836,34 @@ export async function inspectClaudeSessionCompatibility(args: InspectClaudeSessi
     args.manager.assertAccountIdentity(args.accountIdentity)
     runtime = await prepareRuntime(args, `claude_inspect_${randomUUID()}`, state)
     args.signal.throwIfAborted()
-    if (
-      !isClaudeSessionBindingCompatible(binding, {
-        modelId: args.resolvedModelId ?? args.selection.modelId,
-        reasoningEffort: args.reasoningEffort,
-        fastMode: args.fastMode,
-        cwd: args.cwd,
-        promptHash: runtime.promptHash,
-        toolSignature: runtime.bridge.toolSignature,
-        accountIdentity: args.accountIdentity,
-        accountId: args.manager.accountId,
-        harness: runtime.harness,
-      })
-    ) {
-      return false
-    }
+    const mismatches = claudeSessionBindingMismatches(binding, {
+      modelId: args.resolvedModelId ?? args.selection.modelId,
+      reasoningEffort: args.reasoningEffort,
+      fastMode: args.fastMode,
+      cwd: args.cwd,
+      promptHash: runtime.promptHash,
+      toolSignature: runtime.bridge.toolSignature,
+      accountIdentity: args.accountIdentity,
+      accountId: args.manager.accountId,
+      harness: runtime.harness,
+    })
     // Resume boundary = MAIN context (isolated rounds never move the conversation binding).
     const previousMessage = lastConversationContextMessage(args.conversationId)
-    if (binding.lastMessageId === previousMessage?.id) return true
-    if (!previousMessage) return false
-    const mapping = getClaudeMessageMapping(args.conversationId, previousMessage.id)
-    return Boolean(mapping?.sessionId === binding.sessionId && mapping.sdkAssistantUuid)
+    const mapping =
+      previousMessage && binding.lastMessageId !== previousMessage.id
+        ? getClaudeMessageMapping(args.conversationId, previousMessage.id)
+        : null
+    const boundary =
+      binding.lastMessageId === previousMessage?.id ||
+      Boolean(previousMessage && mapping?.sessionId === binding.sessionId && mapping.sdkAssistantUuid)
+    if (!boundary) mismatches.push('boundary')
+    chatDiag({
+      kind: 'claude-session-preflight',
+      conv: args.conversationId,
+      compatible: mismatches.length === 0,
+      ...(mismatches.length ? { mismatches } : {}),
+    })
+    return mismatches.length === 0
   } finally {
     await runtime?.close().catch(() => undefined)
   }
@@ -1295,19 +1306,21 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
 
     const previousMessage = history.at(-2) ?? null
     const existing = getClaudeSessionBinding(args.conversationId)
-    const compatible =
-      !args.ephemeralSession &&
-      isClaudeSessionBindingCompatible(existing, {
-        modelId: runtimeModelId,
-        reasoningEffort: args.reasoningEffort,
-        fastMode: args.fastMode,
-        cwd: args.cwd,
-        promptHash: runtime.promptHash,
-        toolSignature: runtime.bridge.toolSignature,
-        accountIdentity: args.accountIdentity,
-        accountId: args.manager.accountId,
-        harness: runtime.harness,
-      })
+    const mismatches =
+      existing && !args.ephemeralSession
+        ? claudeSessionBindingMismatches(existing, {
+            modelId: runtimeModelId,
+            reasoningEffort: args.reasoningEffort,
+            fastMode: args.fastMode,
+            cwd: args.cwd,
+            promptHash: runtime.promptHash,
+            toolSignature: runtime.bridge.toolSignature,
+            accountIdentity: args.accountIdentity,
+            accountId: args.manager.accountId,
+            harness: runtime.harness,
+          })
+        : []
+    const compatible = !args.ephemeralSession && !!existing && mismatches.length === 0
     const mapping = previousMessage ? getClaudeMessageMapping(args.conversationId, previousMessage.id) : null
     const resolution = resolveClaudeSession({
       binding: existing,
@@ -1335,6 +1348,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
               : resolution.resume
                 ? 'tip-resume'
                 : 'history-diverged',
+      ...(mismatches.length ? { mismatches } : {}),
     })
     if (resolution.retireExisting && existing && !args.ephemeralSession) {
       retireClaudeSessionBinding(args.conversationId, existing.sessionId)

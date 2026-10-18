@@ -30,7 +30,7 @@ import {
   putGitHubCopilotSessionBinding,
 } from '../../src/main/chat/github-copilot/session-store'
 import { closeDb, freshDb } from '../helpers/db'
-import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { makeConversation, makeStandaloneConversation, makeWorkspace } from '../helpers/factories'
 import { patchConvUiPrefs, setAppFlag } from '../../src/main/store'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 
@@ -764,6 +764,37 @@ describe('GitHub Copilot official runner', () => {
         resumed: true,
       })
     )
+  })
+
+  // A standalone session is signed with its system message, whose environment carried today's date: every midnight
+  // discarded the session and reseeded the whole transcript.
+  it('resumes a standalone session across a date change and sends the new date', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const conversation = makeStandaloneConversation({ cwd })
+      const manager = new FakeManager()
+      const standalone = () => ({ ...args(conversation.id, '', cwd, manager), projectId: null })
+      vi.setSystemTime(new Date('2026-10-18T23:58:00Z'))
+      persistUser(conversation.id, 'user-1', 'first question', 1)
+      manager.queue((onEvent) => {
+        onEvent(event('assistant.message', { messageId: 'answer-1', content: 'first' }))
+      })
+      await runGitHubCopilotChat(standalone())
+      expect(manager.createCalls[0].systemMessage?.content).toContain("Today's date: 2026-10-18")
+
+      vi.setSystemTime(new Date('2026-10-19T00:02:00Z'))
+      persistUser(conversation.id, 'user-2', 'second question', 3)
+      manager.queue((onEvent) => {
+        onEvent(event('assistant.message', { messageId: 'answer-2', content: 'second' }))
+      })
+      await runGitHubCopilotChat(standalone())
+
+      expect(manager.createCalls).toHaveLength(1)
+      expect(manager.resumeCalls).toHaveLength(1)
+      expect(manager.resumeCalls[0].config.systemMessage?.content).toContain("Today's date: 2026-10-19")
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reseeds visible transcripts after compatible resume failure', async () => {

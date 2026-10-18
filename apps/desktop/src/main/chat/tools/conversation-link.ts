@@ -78,8 +78,18 @@ async function confirmSend(askQuestion: AskQuestion, target: ConversationSummary
   }
 }
 
+/** Whether the conversation's turns get the tool names at all: never in Plan/Maestro, bots, unattended or web turns. */
+function conversationLinkToolsOffered(conversationId: string, mode: ChatBehavior): boolean {
+  return (
+    conversationLinkToolsAllowed(mode) &&
+    !isBotMode() &&
+    !autonomousPolicy(conversationId) &&
+    !remoteChatPolicy(conversationId)
+  )
+}
+
 /**
- * Runtime for the turn currently admitted in `conversationId`, or undefined when the tools must not be offered:
+ * Runtime for the turn currently admitted in `conversationId`, or undefined when the tools must not act:
  * Plan/Maestro, bots, unattended and Kanban web turns, and turns started neither by the person nor by another
  * conversation.
  */
@@ -87,8 +97,7 @@ export function conversationLinkRuntimeFor(
   conversationId: string,
   mode: ChatBehavior
 ): ConversationLinkToolRuntime | undefined {
-  if (!conversationLinkToolsAllowed(mode) || isBotMode()) return undefined
-  if (autonomousPolicy(conversationId) || remoteChatPolicy(conversationId)) return undefined
+  if (!conversationLinkToolsOffered(conversationId, mode)) return undefined
   const provenance = currentConversationTurnProvenance(conversationId)
   if (!provenance) return undefined
   const caller = {
@@ -138,17 +147,20 @@ export function isParentOnlyConversationToolName(name: string): boolean {
 }
 
 /**
- * Runner helper: when this turn may talk to other conversations, add the tool names to the enabled built-ins and
- * return the runtime to place ONLY in the main tool context.
+ * Runner helper: when the conversation offers them, add the tool names to the enabled built-ins, and return the
+ * runtime to place ONLY in the main tool context when this turn may talk to other conversations.
+ *
+ * Like the dispatch tools, the names do not depend on who started the turn, so a native session survives a switch
+ * between typed and host turns; without a runtime every tool refuses.
  */
 export function enableConversationLinkTools(
   enabled: Set<string>,
   conversationId: string,
   mode: ChatBehavior
 ): ConversationLinkToolRuntime | undefined {
-  const runtime = conversationLinkRuntimeFor(conversationId, mode)
-  if (runtime) for (const name of CONVERSATION_LINK_TOOL_NAMES) enabled.add(name)
-  return runtime
+  if (!conversationLinkToolsOffered(conversationId, mode)) return undefined
+  for (const name of CONVERSATION_LINK_TOOL_NAMES) enabled.add(name)
+  return conversationLinkRuntimeFor(conversationId, mode)
 }
 
 const UNAVAILABLE =

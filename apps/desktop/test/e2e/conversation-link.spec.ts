@@ -25,8 +25,8 @@ interface ModelRequest {
  * Conversations talking to each other through real chat turns against a scripted OpenAI-compatible model: a
  * confirmed request opens a review conversation whose final answer comes back to the source, a follow-up and the
  * child's report travel between the linked conversations until the hop limit stops them, and the first message to an
- * unrelated conversation waits for the person's confirmation. Turns started by another conversation never receive the
- * tools that start conversations or create projects.
+ * unrelated conversation waits for the person's confirmation. Turns started by another conversation are offered the
+ * tools that start conversations or create projects, and those tools refuse.
  */
 test('lets conversations message each other, bring results back and stop at the hop limit', async () => {
   test.setTimeout(240_000)
@@ -113,8 +113,15 @@ test('lets conversations message each other, bring results back and stop at the 
         })
       return end(res, 'Started REV-1.')
     }
-    // Child: its first turn ends with the review, which goes back to the source.
-    if (lastUser.includes(SEED)) return end(res, 'Review: README OK.')
+    // Child: its first turn ends with the review, which goes back to the source. Started by another conversation, its
+    // attempt to start one more is refused.
+    if (lastUser.includes(SEED)) {
+      if (!did('seed-rogue'))
+        return call(res, 'seed-rogue', 'start_conversations', {
+          tasks: [{ requestKey: 'REV-9', title: 'REV-9', prompt: 'Recursive review.' }],
+        })
+      return end(res, 'Review: README OK.')
+    }
     // Source: the result arrives as a new turn.
     if (lastUser.includes('Result of conversation') && lastUser.includes('Review: README OK.'))
       return end(res, 'Consolidated: README OK.')
@@ -142,7 +149,12 @@ test('lets conversations message each other, bring results back and stop at the 
         return call(res, 'notify-1', 'send_to_conversation', { conversationId: otherId, message: 'README changed.' })
       return end(res, 'Told Other.')
     }
-    if (lastUser.includes('README changed.')) return end(res, 'Noted the README change.')
+    if (lastUser.includes('README changed.')) {
+      // Started by another conversation's message: creating a project is refused.
+      if (!did('peer-rogue'))
+        return call(res, 'peer-rogue', 'create_workspace', { requestKey: 'rogue', name: 'rogue', source: { kind: 'new' } })
+      return end(res, 'Noted the README change.')
+    }
     end(res, 'OK')
   })
 
@@ -227,10 +239,7 @@ test('lets conversations message each other, bring results back and stop at the 
     await idle(childId)
     const seeds = linkedTurnsOffered(SEED)
     expect(seeds.length).toBeGreaterThanOrEqual(1)
-    for (const tools of seeds) {
-      expect(tools).toContain('report_to_source')
-      expect(tools).not.toContain('start_conversations')
-    }
+    for (const tools of seeds) expect(tools).toContain('report_to_source')
 
     // 2. A follow-up to the child and its report travel without confirmation, until the hop limit stops them.
     await typeAndSend(FOLLOW)
@@ -258,15 +267,17 @@ test('lets conversations message each other, bring results back and stop at the 
     await expect(page.getByTestId('conversation-message-origin').filter({ hasText: 'Message from Source' })).toBeVisible()
     await expect(page.getByText('Noted the README change.')).toBeVisible()
 
-    // Turns started by another conversation never start conversations or create projects.
+    // Turns started by another conversation are offered the same tools as typed turns, so a native session survives
+    // the switch, but they never start conversations or create projects: what they try is refused.
     for (const marker of [SEED, 'FIX ITEM 2', 'README changed.', 'Result of conversation', 'Fixed item 2.']) {
       const offered = linkedTurnsOffered(marker)
       expect(offered.length, marker).toBeGreaterThan(0)
-      for (const tools of offered) {
-        expect(tools).not.toContain('start_conversations')
-        expect(tools).not.toContain('create_workspace')
-      }
+      for (const tools of offered) expect(tools).toEqual(expect.arrayContaining(['start_conversations', 'create_workspace']))
     }
+    const result = (id: string) => requests.find((request) => id in request.toolResults)!.toolResults[id]
+    expect(JSON.parse(result('seed-rogue'))).toMatchObject({ ok: false, items: [] })
+    expect(result('seed-rogue')).toContain('only works in the main agent turn')
+    expect(JSON.parse(result('peer-rogue'))).toMatchObject({ ok: false, code: 'unavailable' })
     expect((await conversations(workspace.id)).map((item) => item.name).sort()).toEqual([
       'Other',
       'REV-1 · Review',
