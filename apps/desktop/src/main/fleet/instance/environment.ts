@@ -618,6 +618,7 @@ export class EnvironmentRuntime {
     const { botId, slot } = bot
     try {
       const display = await this.displays.startBot(botId, slot)
+      if (!display.browserArea) throw new Error('A bot display always has a tile.')
       await this.startDesktop(bot, display)
       return {
         display: display.display,

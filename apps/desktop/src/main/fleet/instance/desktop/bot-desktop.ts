@@ -79,9 +79,11 @@ export async function startBotDesktop(
   const env: Record<string, string> = { ...target.display.env }
   const t = tMain('main')
   const folder = path.dirname(env.MAESTRLY_DESKTOP_SOCKET)
+  const area = target.display.browserArea
+  if (!area) throw new Error('A bot display always has a tile.')
   const surfaces = electronPresenterDeps({
     conversationId: target.conversationId,
-    area: target.display.browserArea,
+    area,
     folder,
     icon: await loadPresenterIcon(path.dirname(folder)),
     log: (message) => log(`${target.botId}: ${message}`),

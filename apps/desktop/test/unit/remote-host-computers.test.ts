@@ -72,7 +72,7 @@ function setup(titles: Record<string, string | null> = {}) {
           GTK_THEME: 'Adwaita:dark',
           MAESTRLY_DESKTOP_SOCKET: `/home/bot/.cache/maestrly-desktops/${owner.key}/desktop.sock`,
         },
-        browserArea: fleetEnvironmentTile(owner.slot),
+        browserArea: owner.slot === null ? null : fleetEnvironmentTile(owner.slot),
       }
     }),
     stopBot: vi.fn(async (key: string) => {
