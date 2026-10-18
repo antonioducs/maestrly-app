@@ -8,6 +8,7 @@ import type {
   FleetHostInfo,
   FleetLoginAttempt,
   FleetGatewayEvent,
+  FleetResources,
   FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
@@ -92,7 +93,7 @@ import {
   isWorkspacesEnvironment,
   workspacesEnvironments,
 } from '../../src/renderer/lib/fleet/selectors'
-import { memorySegments } from '../../src/renderer/lib/fleet/format'
+import { memorySegments, outOfMemory, shownSwapBytes } from '../../src/renderer/lib/fleet/format'
 import {
   environmentJoinAvailability,
   environmentProvisioningKey,
@@ -117,7 +118,15 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
     kind: 'bots',
     lifecycle: 'running',
     setup: { step: 'ready', error: null, errorMessage: null },
-    resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
+    resources: {
+      memoryBytes: null,
+      memoryLimitBytes: null,
+      cpuPercent: null,
+      startedAt: null,
+      swapBytes: null,
+      oomKills: null,
+      limitOoms: null,
+    },
     memoryLimitBytes: null,
     cpuLimit: null,
     idleStopMinutes: null,
@@ -199,7 +208,7 @@ describe('environments in the Mac snapshot', () => {
     arch: 'x64',
     cpus: 4,
     cpuPercent: null,
-    memory: { totalBytes: 100, usedBytes: 20, botsBytes: 10 },
+    memory: { totalBytes: 100, usedBytes: 20, botsBytes: 10, swap: null },
     disk: { totalBytes: 100, usedBytes: 20 },
     uptimeSeconds: 100,
     gatewayVersion: '1',
@@ -1053,6 +1062,9 @@ describe('environment memory', () => {
     memoryLimitBytes: null,
     cpuPercent: null,
     startedAt: null,
+    swapBytes: null,
+    oomKills: null,
+    limitOoms: null,
   })
 
   it('shows one segment per environment without counting its bots again', () => {
@@ -1101,6 +1113,49 @@ describe('environment memory', () => {
       ['scout', 0.25],
       ['system', 0.375],
     ])
+  })
+
+  it("shows the swap the server keeps compressed in memory apart from the system's", () => {
+    const swapped = (compressedGib: number) =>
+      ({
+        memory: {
+          ...host.memory,
+          swap: { totalBytes: 8 * 1024 ** 3, usedBytes: 4 * 1024 ** 3, compressedBytes: compressedGib * 1024 ** 3 },
+        },
+      }) as FleetHostInfo
+    const environments = [environment('work', 'Work', { resources: resources(2) })]
+    expect(
+      memorySegments(swapped(1), [], environments).map((segment) => [segment.kind, segment.bytes / 1024 ** 3])
+    ).toEqual([
+      ['environment', 2],
+      ['swap', 1],
+      ['system', 2],
+    ])
+    // It never takes more than the memory no container counts, and none is shown without any.
+    expect(
+      memorySegments(swapped(9), [], environments).map((segment) => [segment.kind, segment.bytes / 1024 ** 3])
+    ).toEqual([
+      ['environment', 2],
+      ['swap', 3],
+      ['system', 0],
+    ])
+    expect(memorySegments(swapped(0), [], environments).map((segment) => segment.kind)).toEqual([
+      'environment',
+      'system',
+    ])
+  })
+
+  it('shows what an environment swapped and why the kernel ended its processes', () => {
+    const measured = (patch: Partial<FleetResources>) => ({ ...resources(1), ...patch })
+    expect(shownSwapBytes(measured({ swapBytes: 2 * 1024 ** 3 }))).toBe(2 * 1024 ** 3)
+    // Too little to show as GB, or not measured (an older gateway sends none).
+    expect(shownSwapBytes(measured({ swapBytes: 1024 ** 2 }))).toBeNull()
+    expect(shownSwapBytes(measured({ swapBytes: null }))).toBeNull()
+    expect(shownSwapBytes({ ...resources(1), swapBytes: undefined } as unknown as FleetResources)).toBeNull()
+    expect(outOfMemory(measured({ oomKills: 0, limitOoms: 0 }))).toBeNull()
+    expect(outOfMemory(measured({ oomKills: null }))).toBeNull()
+    expect(outOfMemory(measured({ oomKills: 17, limitOoms: 0 }))).toEqual({ kills: 17, cause: 'server' })
+    expect(outOfMemory(measured({ oomKills: 3, limitOoms: 2 }))).toEqual({ kills: 3, cause: 'limit' })
   })
 })
 

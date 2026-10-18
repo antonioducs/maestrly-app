@@ -981,6 +981,21 @@ describe('environments', () => {
     expect(f.lifecycle.environment('work')?.resources).toMatchObject({ memoryBytes: 300, memoryLimitBytes: 4000 })
     for (const id of [ads, scout]) expect(f.lifecycle.get(id)?.resources.memoryBytes).toBeNull()
     expect(f.lifecycle.get(cleo)?.resources).toMatchObject({ memoryBytes: 300, cpuPercent: 5 })
+    // Swap and out-of-memory kills come from each container's cgroup, measured with the rest.
+    expect(f.lifecycle.environment('work')?.resources).toMatchObject({ swapBytes: null, oomKills: null })
+    f.docker.cgroup = { swapBytes: 700, oomKills: 3, limitOoms: 1 }
+    await f.lifecycle.refreshStats()
+    expect(f.lifecycle.environment('work')?.resources).toMatchObject({ swapBytes: 700, oomKills: 3, limitOoms: 1 })
+    expect(f.lifecycle.get(cleo)?.resources).toMatchObject({ swapBytes: 700, oomKills: 3, limitOoms: 1 })
+    for (const id of [ads, scout]) expect(f.lifecycle.get(id)?.resources.oomKills).toBeNull()
+    // A container whose cgroup cannot be read still reports Docker's stats.
+    f.docker.cgroupFailure = new DockerError(409, 'Container is paused')
+    await f.lifecycle.refreshStats()
+    expect(f.lifecycle.environment('work')?.resources).toMatchObject({
+      memoryBytes: 300,
+      swapBytes: null,
+      oomKills: null,
+    })
     await f.lifecycle.stopEnvironment('home')
     expect(f.lifecycle.resources.has('home')).toBe(false)
   })

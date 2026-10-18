@@ -7,12 +7,13 @@ import {
   FLEET_WORKSPACES_HOST_FEATURE,
   type FleetBot,
   type FleetEnvironment,
+  type FleetResources,
 } from '@maestrly/bot-fleet-protocol'
-import { Plus } from 'lucide-react'
+import { AlertTriangle, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import { gb, memorySegments } from '@/lib/fleet/format'
+import { type FleetMemorySegment, gb, memorySegments, outOfMemory, shownSwapBytes } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import {
   botsWithDifferentVersion,
@@ -47,6 +48,31 @@ function ResourceBar({ label, fraction, value }: { label: string; fraction: numb
   )
 }
 
+/** What a container uses: its memory, what it swapped out, and a mark when the kernel ended processes in it. */
+function MemoryUse({ resources }: { resources: FleetResources }) {
+  const { t } = useTranslation('fleet')
+  if (resources.memoryBytes === null) return '—'
+  const swap = shownSwapBytes(resources)
+  const oom = outOfMemory(resources)
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1.5">
+      {`${gb(resources.memoryBytes)} GB`}
+      {swap !== null && (
+        <span className="text-xs text-muted-foreground">{t('server.inSwap', { value: gb(swap) })}</span>
+      )}
+      {oom && (
+        <span
+          role="img"
+          aria-label={t('server.outOfMemory', { count: oom.kills })}
+          title={t('server.outOfMemory', { count: oom.kills })}
+        >
+          <AlertTriangle aria-hidden="true" className="size-3.5 text-amber-300" />
+        </span>
+      )}
+    </span>
+  )
+}
+
 function Uptime({ startedAt }: { startedAt: string | null }) {
   const { t } = useTranslation('fleet')
   if (!startedAt) return '—'
@@ -72,7 +98,9 @@ function BotRow({
         </button>
       </td>
       <td className="p-3">{t(`status.${bot.status}`)}</td>
-      <td className="p-3">{bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`}</td>
+      <td className="p-3">
+        <MemoryUse resources={bot.resources} />
+      </td>
       <td className="p-3">{bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`}</td>
       <td className="p-3">
         <Uptime startedAt={bot.resources.startedAt} />
@@ -113,7 +141,7 @@ function EnvironmentRows({
   onAction: (action: 'restart' | 'stop' | 'start') => void
 }) {
   const { t } = useTranslation('fleet')
-  const { memoryBytes, cpuPercent, startedAt } = environment.resources
+  const { cpuPercent, startedAt } = environment.resources
   const running = environment.lifecycle === 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
   return (
@@ -132,7 +160,9 @@ function EnvironmentRows({
           </span>
         </td>
         <td className="p-3">{t(`environment.lifecycle.${environment.lifecycle}`)}</td>
-        <td className="p-3">{memoryBytes === null ? '—' : `${gb(memoryBytes)} GB`}</td>
+        <td className="p-3">
+          <MemoryUse resources={environment.resources} />
+        </td>
         <td className="p-3">{cpuPercent === null ? '—' : `${Math.round(cpuPercent)}%`}</td>
         <td className="p-3">
           <Uptime startedAt={startedAt} />
@@ -207,9 +237,8 @@ function WorkspacesRow({
         {t(`environment.lifecycle.${environment.lifecycle}`)}
       </span>
       <span className="text-xs text-muted-foreground">
-        {t('server.memory')}{' '}
-        {environment.resources.memoryBytes === null ? '—' : `${gb(environment.resources.memoryBytes)} GB`} ·{' '}
-        {t('server.uptime')} <Uptime startedAt={environment.resources.startedAt} />
+        {t('server.memory')} <MemoryUse resources={environment.resources} /> · {t('server.uptime')}{' '}
+        <Uptime startedAt={environment.resources.startedAt} />
       </span>
       {environment.isolation?.restartRequired && (
         <span className="text-xs text-amber-300">{t('workspaces.isolation.restartShort')}</span>
@@ -274,6 +303,8 @@ export function ServerView({
       .catch(() => {})
   }, [])
   const memory = memorySegments(host, bots, environments)
+  const segmentName = (segment: FleetMemorySegment) =>
+    segment.kind === 'system' ? t('server.system') : segment.kind === 'swap' ? t('server.compressedSwap') : segment.name
   const confirmNames = confirm
     ? formatNames(
         environmentBots(confirm.environment, bots).map((bot) => bot.name),
@@ -368,14 +399,25 @@ export function ServerView({
                     {gb(host.memory.usedBytes)} / {gb(host.memory.totalBytes)} GB
                   </span>
                 </div>
-                <p className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                <p className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
                   {memory.map((segment) => (
-                    <span key={`${segment.kind}:${segment.id}`}>
+                    <span
+                      key={`${segment.kind}:${segment.id}`}
+                      title={segment.kind === 'swap' ? t('server.compressedSwapNote') : undefined}
+                    >
                       <i className="mr-1 inline-block size-2 rounded-full" style={{ background: segment.tint }} />
-                      {segment.kind === 'system' ? t('server.system') : segment.name}
+                      {segmentName(segment)}
+                      <span className="ml-1.5 tabular-nums text-foreground/75">{gb(segment.bytes)} GB</span>
                     </span>
                   ))}
                 </p>
+                {host.memory.swap && host.memory.swap.totalBytes > 0 && (
+                  <ResourceBar
+                    label={t('server.swap')}
+                    fraction={host.memory.swap.usedBytes / host.memory.swap.totalBytes}
+                    value={`${gb(host.memory.swap.usedBytes)} / ${gb(host.memory.swap.totalBytes)} GB`}
+                  />
+                )}
                 <ResourceBar
                   label={t('server.cpu')}
                   fraction={(host.cpuPercent ?? 0) / 100}

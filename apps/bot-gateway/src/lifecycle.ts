@@ -34,12 +34,20 @@ import {
   type FleetInstanceStatus,
   type FleetLifecycle,
   type FleetPatchBotRequest,
+  type FleetResources,
   type FleetSelectionsResponse,
   type FleetTakeoverState,
 } from '@maestrly/bot-fleet-protocol'
 import { token, sha256 } from './auth.js'
 import type { GatewayConfig } from './config.js'
-import { type ContainerInfo, DockerError, type DockerDriver, type ContainerStats } from './docker.js'
+import {
+  type CgroupMemory,
+  type ContainerInfo,
+  DockerError,
+  type DockerDriver,
+  type ContainerStats,
+  NO_CGROUP_MEMORY,
+} from './docker.js'
 import { GatewayError } from './errors.js'
 import { findGatewayContainer, gatewayAlias } from './gateway-container.js'
 import { InstanceClient, InstanceUnreachableError, relayBotPackage } from './instance.js'
@@ -117,7 +125,16 @@ function failureCode(error: unknown): FleetErrorCode {
   return error instanceof DockerError && error.status === 404 ? 'IMAGE_MISSING' : 'DOCKER_UNAVAILABLE'
 }
 export type InstanceFactory = (environmentId: string, token: string, host: string) => InstanceClient
-type Resources = ContainerStats & { startedAt: string | null }
+type Resources = ContainerStats & CgroupMemory & { startedAt: string | null }
+const resourcesView = (resources: Resources | undefined): FleetResources => ({
+  memoryBytes: resources?.memoryBytes ?? null,
+  memoryLimitBytes: resources?.memoryLimitBytes ?? null,
+  cpuPercent: resources?.cpuPercent ?? null,
+  startedAt: resources?.startedAt ?? null,
+  swapBytes: resources?.swapBytes ?? null,
+  oomKills: resources?.oomKills ?? null,
+  limitOoms: resources?.limitOoms ?? null,
+})
 /** The bot whose own start, stop or restart acted on its environment: the activity is then recorded as the bot's. */
 type Via = { botId: string } | null
 export class Lifecycle {
@@ -514,12 +531,7 @@ export class Lifecycle {
     bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
-    bot.resources = {
-      memoryBytes: resources?.memoryBytes ?? null,
-      memoryLimitBytes: resources?.memoryLimitBytes ?? null,
-      cpuPercent: resources?.cpuPercent ?? null,
-      startedAt: resources?.startedAt ?? null,
-    }
+    bot.resources = resourcesView(resources)
     if (bot.lifecycle === 'stopped' || bot.lifecycle === 'archived' || bot.lifecycle === 'failed')
       bot.status = 'offline'
     else if (bot.lifecycle !== 'running' || !status?.ready) bot.status = 'starting'
@@ -554,12 +566,7 @@ export class Lifecycle {
       kind: environment.kind,
       lifecycle: environment.lifecycle,
       setup: environment.setup,
-      resources: {
-        memoryBytes: resources?.memoryBytes ?? null,
-        memoryLimitBytes: resources?.memoryLimitBytes ?? null,
-        cpuPercent: resources?.cpuPercent ?? null,
-        startedAt: resources?.startedAt ?? null,
-      },
+      resources: resourcesView(resources),
       memoryLimitBytes: environment.memoryLimitBytes,
       cpuLimit: environment.cpuLimit,
       idleStopMinutes: environment.idleStopMinutes,
@@ -861,7 +868,7 @@ export class Lifecycle {
       pendingCount: 0,
       accounts: { connected: false, providers: [] },
       takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
-      resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
+      resources: resourcesView(undefined),
       screen: { width: 1280, height: 800, display: ':0' },
       appVersion: null,
       capabilities: [],
@@ -2736,10 +2743,21 @@ export class Lifecycle {
       try {
         const container = await this.container(environment)
         if (!container) continue
-        this.resources.set(environment.id, {
-          ...(await this.docker.statsOnce(container.id)),
-          startedAt: container.startedAt,
-        })
+        const [stats, cgroup] = await Promise.all([
+          this.docker.statsOnce(container.id),
+          // A server whose containers do not report them (cgroup v1) shows no swap or out-of-memory figures.
+          this.docker.cgroupMemory(container.id).catch(() => NO_CGROUP_MEMORY),
+        ])
+        // The count starts over with the container; each rise is logged once.
+        const before = this.resources.get(environment.id)
+        const seen = before?.startedAt === container.startedAt ? (before.oomKills ?? 0) : 0
+        if ((cgroup.oomKills ?? 0) > seen)
+          this.logger.warn('Environment processes ended for lack of memory', {
+            environmentId: environment.id,
+            oomKills: cgroup.oomKills,
+            limitOoms: cgroup.limitOoms,
+          })
+        this.resources.set(environment.id, { ...stats, ...cgroup, startedAt: container.startedAt })
         this.emitEnvironment(environment.id, this.store.botsOfEnvironment(environment.id).length === 1)
       } catch {}
     }
