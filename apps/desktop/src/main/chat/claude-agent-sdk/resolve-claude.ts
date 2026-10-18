@@ -41,7 +41,10 @@ function candidates(): string[] {
   return bundled ? [bundled, ...system] : system
 }
 
-/** Resolve the executable used exclusively by the Claude Agent SDK provider. */
+/**
+ * Resolve the executable used exclusively by the Claude Agent SDK provider. Only an executable that was found is
+ * remembered: while none is, every call looks again, so Claude Code installed with the app open is picked up.
+ */
 export function resolveClaude(): string {
   if (cached) return cached
   for (const candidate of candidates()) {
@@ -53,10 +56,16 @@ export function resolveClaude(): string {
       // Next candidate.
     }
   }
-  cached = whichBin('claude') ?? 'claude'
-  return cached
+  const found = whichBin('claude')
+  if (found && path.isAbsolute(found)) {
+    cached = found
+    return found
+  }
+  // A bare name resolves through PATH at spawn time and fails with ENOENT when Claude Code is missing.
+  return 'claude'
 }
 
+/** Forget the resolved executable, so the next resolution looks again (an explicit status refresh). */
 export function clearClaudeCache(): void {
   cached = null
 }

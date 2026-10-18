@@ -17,7 +17,7 @@ import {
   type SpawnOptions as ClaudeSpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk'
 import { app } from 'electron'
-import { resolveClaude } from './resolve-claude'
+import { clearClaudeCache, resolveClaude } from './resolve-claude'
 import { botClaudeRuntime, type RetainedClaudeExecutable } from './runtime-selection'
 import { isBotMode } from '../../fleet/instance/config'
 import { spawnCli } from '../../platform'
@@ -77,6 +77,11 @@ export interface ClaudeSubscriptionStatus {
   sdkVersion: string
   error: string | null
   errorCode?: 'claude-authentication-required' | 'claude-code-not-installed' | 'claude-code-incompatible'
+  /**
+   * While Claude Code is missing or too old: the profile still holds the sign-in it cannot use now. It is used again
+   * once Claude Code is found, without signing in.
+   */
+  savedSignIn?: { email: string | null }
 }
 
 export interface ClaudeSubscriptionAccountIdentity {
@@ -123,6 +128,8 @@ export interface ClaudeSubscriptionManagerDependencies {
   getHomeDirectory: () => string
   getProcessEnvironment: () => NodeJS.ProcessEnv
   resolveExecutable: () => string
+  /** Forget the executable `resolveExecutable` remembered, so an explicit refresh looks for Claude Code again. */
+  forgetExecutable: () => void
   /**
    * The executable one query runs on, held until the query closes; null to use `resolveExecutable`. Bots use it so
    * a Claude Code update never replaces the binary under a running turn.
@@ -234,6 +241,10 @@ const DEFAULT_DEPENDENCIES: ClaudeSubscriptionManagerDependencies = {
   getHomeDirectory: () => os.homedir(),
   getProcessEnvironment: () => process.env,
   resolveExecutable: () => (isBotMode() ? botClaudeRuntime().current().path : resolveClaude()),
+  // A bot's selection keeps its own executable and is re-selected when the managed installation changes.
+  forgetExecutable: () => {
+    if (!isBotMode()) clearClaudeCache()
+  },
   retainExecutable: () => (isBotMode() ? botClaudeRuntime().retain() : null),
   ensureDirectory: ensurePrivateDirectory,
   removeDirectory: (directory) => rm(directory, { recursive: true, force: true }),
@@ -582,6 +593,38 @@ export class ClaudeSubscriptionManager {
     }
   }
 
+  /** Claude Code is missing or too old: unavailable, keeping word of a sign-in the profile still holds. */
+  private async claudeCodeSetupNeeded(
+    error: string,
+    cliVersion: string | null,
+    errorCode: 'claude-code-not-installed' | 'claude-code-incompatible'
+  ): Promise<ClaudeSubscriptionStatus> {
+    const status = this.unavailable(error, cliVersion, errorCode)
+    const savedSignIn = await this.savedSignIn()
+    return savedSignIn ? { ...status, savedSignIn } : status
+  }
+
+  /**
+   * The sign-in Claude Code left in the isolated profile, read without running it: the account it records in
+   * `.claude.json` (every system), or the credentials file it keeps outside the macOS Keychain. Never returns secrets.
+   */
+  private async savedSignIn(): Promise<{ email: string | null } | null> {
+    try {
+      const parsed = JSON.parse(await this.dependencies.readTextFile(path.join(this.configDirectory, '.claude.json')))
+      if (isRecord(parsed) && isRecord(parsed.oauthAccount)) {
+        return { email: nullableString(parsed.oauthAccount.emailAddress) }
+      }
+    } catch {
+      // No readable profile file: the credentials file may still be there.
+    }
+    try {
+      const credentials = await this.dependencies.readTextFile(path.join(this.configDirectory, '.credentials.json'))
+      return credentials.trim() ? { email: null } : null
+    } catch {
+      return null
+    }
+  }
+
   private authenticationRequiredStatus(): ClaudeSubscriptionStatus {
     return {
       state: 'error',
@@ -680,6 +723,9 @@ export class ClaudeSubscriptionManager {
       return this.cachedStatus
     }
     if (!options.refresh && this.cachedStatus) return this.cachedStatus
+    // A refresh ("Check again", the card's refresh) finds Claude Code installed or moved since the last probe.
+    // Running queries keep the executable they started with.
+    if (options.refresh) this.dependencies.forgetExecutable()
     let verifiedCliVersion: string | null = null
     try {
       await this.prepare()
@@ -692,7 +738,7 @@ export class ClaudeSubscriptionManager {
       })
       const cliVersion = parseVersion(versionResult.stdout || versionResult.stderr)
       if (!cliVersion) {
-        this.cachedStatus = this.unavailable(
+        this.cachedStatus = await this.claudeCodeSetupNeeded(
           'Claude Code is not installed or its version could not be read.',
           null,
           'claude-code-not-installed'
@@ -700,7 +746,7 @@ export class ClaudeSubscriptionManager {
         return this.cachedStatus
       }
       if (!isCompatibleClaudeCodeVersion(cliVersion)) {
-        this.cachedStatus = this.unavailable(
+        this.cachedStatus = await this.claudeCodeSetupNeeded(
           `Claude Code ${cliVersion} is incompatible. Version ${CLAUDE_CODE_COMPATIBLE_VERSION} or newer in the same major release is required.`,
           cliVersion,
           'claude-code-incompatible'
@@ -753,7 +799,9 @@ export class ClaudeSubscriptionManager {
             sdkVersion: CLAUDE_AGENT_SDK_VERSION,
             error: message,
           }
-        : this.unavailable(message, null, missing ? 'claude-code-not-installed' : undefined)
+        : missing
+          ? await this.claudeCodeSetupNeeded(message, null, 'claude-code-not-installed')
+          : this.unavailable(message)
       return this.cachedStatus
     }
   }

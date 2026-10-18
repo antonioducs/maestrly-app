@@ -1508,6 +1508,10 @@ export default {
     claudeCodeCopied: 'Copied',
     claudeCodeInstallDocs: 'Installation guide',
     claudeCodeCheckAgain: 'Check again',
+    claudeCodeSignInKept:
+      "You're still signed in as {{email}}. The account reconnects once Claude Code is ready, without signing in again.",
+    claudeCodeSignInKeptNoEmail:
+      "You're still signed in. The account reconnects once Claude Code is ready, without signing in again.",
     grokSubscriptionHeading: 'Grok with xAI subscription',
     grokSubscriptionDescription:
       'Use your eligible Grok / SuperGrok plan in Maestrly Chat via xAI OAuth. No API key required.',
@@ -1590,6 +1594,8 @@ export default {
     accountKeyVerified: 'Key verified',
     accountKeyChecking: 'Checking key…',
     accountKeyRejected: 'Key rejected',
+    accountClaudeCodeMissing: 'Claude Code not found',
+    accountClaudeCodeOutdated: 'Claude Code needs an update',
     accountKeyUnverified: 'Key saved · not verified',
     accountKeyRejectedHint:
       "The provider refused this key (HTTP {{status}}), so this account's models can't load. Paste a valid key above.",

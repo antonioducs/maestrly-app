@@ -17,10 +17,17 @@ Accounts** shows the official installer for your system:
 
 Homebrew, WinGet, npm and the apt, dnf and apk repositories work too; see
 Anthropic's [setup guide](https://code.claude.com/docs/en/setup). After
-installing, choose **Check again**: no restart is needed. Maestrly looks for
-Claude Code in `~/.local/bin`, Homebrew, npm's global directory, `/usr/bin`,
-`/snap/bin` and the `PATH`. A version older than the supported one shows
-`claude update` instead.
+installing, choose **Check again** or the card's refresh button: no restart is
+needed. Maestrly looks for Claude Code again each time, in `~/.local/bin`,
+Homebrew, npm's global directory, `/usr/bin`, `/snap/bin` and the `PATH`; on
+Windows, in `%USERPROFILE%\.local\bin`, npm's global directory,
+`%LOCALAPPDATA%\Programs`, `%ProgramFiles%` and the `PATH`. A version older than the supported one
+shows `claude update` instead.
+
+An account that was signed in stays in the account list while Claude Code is
+missing or too old. It counts as needing attention and shows its email with
+**Claude Code not found** or **Claude Code needs an update**. Once Claude Code is
+found, it reconnects without signing in again.
 
 ## Sign in
 

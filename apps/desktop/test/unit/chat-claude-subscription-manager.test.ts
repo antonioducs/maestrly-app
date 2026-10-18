@@ -52,6 +52,7 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
       AWS_SECRET_ACCESS_KEY: 'must-not-reach-claude',
     }),
     resolveExecutable: () => '/safe/bin/claude',
+    forgetExecutable: vi.fn(),
     retainExecutable: () => null,
     ensureDirectory: vi.fn(async () => {}),
     removeDirectory: vi.fn(async (directory) => {
