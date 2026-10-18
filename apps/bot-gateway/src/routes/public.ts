@@ -8,7 +8,11 @@ import {
   FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_PARALLEL_TURNS_FEATURE,
+  FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_CANCEL_CONVERSATION_QUERY,
+  fleetReaderWantsPeerThreads,
+  type FleetPeerThreadPatchRequest,
+  type FleetPeerThreadSettings,
   type FleetRoutineRunSettings,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
@@ -374,6 +378,48 @@ export async function publicRoute(
     case 'botRunSettings':
       requireBot(ctx, id)
       return { body: ctx.routines!.saveSettings(id, body as FleetRoutineRunSettings) }
+    // Threads between bots, each in a conversation of its own on both sides (`peer-conversations`).
+    case 'botPeerThreads':
+      requireBot(ctx, id)
+      return { body: { threads: ctx.peerThreads!.list(id) } }
+    case 'botPeerThreadGet':
+      requireBot(ctx, id)
+      return { body: ctx.peerThreads!.get(id, params.threadId) }
+    case 'botPeerThreadPatch':
+      requireBot(ctx, id)
+      return { body: await ctx.peerThreads!.patch(id, params.threadId, body as FleetPeerThreadPatchRequest) }
+    case 'botPeerThreadConversationDelete':
+      requireBot(ctx, id)
+      return { body: await ctx.peerThreads!.deleteConversation(id, params.threadId) }
+    case 'botPeerThreadTranscript':
+      requireBot(ctx, id)
+      return {
+        body: await ctx.peerThreads!.transcript(
+          id,
+          params.threadId,
+          url.searchParams.get('before') ?? undefined,
+          number(url.searchParams.get('limit'), 500, 200),
+          fleetReaderWantsReasoning(url.searchParams)
+        ),
+      }
+    case 'botPeerThreadMessageSend': {
+      requireBot(ctx, id)
+      const input = body as FleetSendMessageRequest
+      if (
+        input.attachments.some((attachment) => attachment.kind && attachment.kind !== 'image') &&
+        !ctx.lifecycle.statuses.get(id)?.capabilities.includes(FLEET_FILES_FEATURE)
+      )
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to send documents')
+      const hash = createHash('sha256')
+        .update(JSON.stringify({ threadId: params.threadId, ...input }))
+        .digest('hex')
+      return ownerMessage(ctx, id, 'botPeerThreadMessageSend:' + id, input.idempotencyKey, hash, () =>
+        ctx.peerThreads!.message(id, params.threadId, input)
+      )
+    }
+    case 'botPeerThreadSettings':
+      requireBot(ctx, id)
+      return { body: ctx.peerThreads!.saveSettings(id, body as FleetPeerThreadSettings) }
     case 'ownerMemoryList':
       return { body: ctx.ownerMemory!.list(url.searchParams.get('status') === 'active' ? 'active' : 'all') }
     case 'ownerMemoryCreate': {
@@ -431,6 +477,7 @@ export async function publicRoute(
             FLEET_MCP_TEST_DETAIL_FEATURE,
             FLEET_ROUTINE_CONVERSATIONS_FEATURE,
             FLEET_PARALLEL_TURNS_FEATURE,
+            FLEET_PEER_CONVERSATIONS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -942,6 +989,7 @@ export async function publicRoute(
         // A Mac that answers desktop calls says so; until it does, it is offline for the bots it linked.
         desktopBridge: url.searchParams.get(FLEET_DESKTOP_BRIDGE_QUERY) === '1',
         routineRuns: fleetReaderWantsRoutineRuns(url.searchParams),
+        peerThreads: fleetReaderWantsPeerThreads(url.searchParams),
       })
       return { stream: true }
     default:

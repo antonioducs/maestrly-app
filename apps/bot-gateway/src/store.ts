@@ -24,11 +24,70 @@ import {
   type FleetPeerMessage,
   type FleetRoutine,
   type FleetRoutineRunSettings,
+  type FleetRoutineRunKept,
+  type FleetPeerThreadSettings,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+  FLEET_PEER_THREAD_SETTINGS_DEFAULT,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
 export type StoredRoutineRun = FleetRoutineRun & { inputId: string }
+/** A message between bots, with the thread it continues (null from before threads). */
+export type StoredPeerMessage = FleetPeerMessage & { threadId: string | null }
+/** A thread between two bots (`peer-conversations`), as both share it. */
+export interface StoredPeerThread {
+  id: string
+  botA: string
+  botB: string
+  title: string
+  /** Messages between the bots in a row without one of the owner's. */
+  hops: number
+  messages: number
+  status: 'open' | 'paused'
+  /** The bot whose message the pause refused: it goes on once the owner lets the thread go on. */
+  blockedBot: string | null
+  createdAt: string
+  lastActivityAt: string
+}
+/** One bot's side of a thread: its conversation of it, and what it brought back to its owner. */
+export interface StoredPeerThreadSide {
+  threadId: string
+  botId: string
+  origin: 'primary' | 'side' | 'peer'
+  pinned: boolean
+  conversation: 'own' | 'deleted'
+  conversationDeletedAt: string | null
+  kept: FleetRoutineRunKept | null
+  report: string | null
+  reportAt: string | null
+}
+function peerThreadOf(row: Row): StoredPeerThread {
+  return {
+    id: String(row.id),
+    botA: String(row.bot_a),
+    botB: String(row.bot_b),
+    title: String(row.title),
+    hops: Number(row.hops),
+    messages: Number(row.messages),
+    status: row.status === 'paused' ? 'paused' : 'open',
+    blockedBot: row.blocked_bot ? String(row.blocked_bot) : null,
+    createdAt: String(row.created_at),
+    lastActivityAt: String(row.last_activity_at),
+  }
+}
+function peerThreadSideOf(row: Row): StoredPeerThreadSide {
+  return {
+    threadId: String(row.thread_id),
+    botId: String(row.bot_id),
+    origin: row.origin === 'primary' || row.origin === 'side' ? row.origin : 'peer',
+    pinned: Boolean(row.pinned),
+    conversation: row.conversation === 'deleted' ? 'deleted' : 'own',
+    conversationDeletedAt: row.conversation_deleted_at ? String(row.conversation_deleted_at) : null,
+    kept: row.kept_json ? (JSON.parse(String(row.kept_json)) as FleetRoutineRunKept) : null,
+    report: row.report ? String(row.report) : null,
+    reportAt: row.report_at ? String(row.report_at) : null,
+  }
+}
 
 type Row = Record<string, unknown>
 const DEVICE_KINDS = new Set<string>(['computer', 'phone'])
@@ -246,7 +305,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 18) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 19) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -378,6 +437,25 @@ export class Store {
       const bots = new Set((this.db.prepare('PRAGMA table_info(bots)').all() as Row[]).map((row) => row.name))
       if (!bots.has('run_settings_json')) this.db.exec('ALTER TABLE bots ADD COLUMN run_settings_json TEXT')
       this.db.prepare("UPDATE meta SET value='18' WHERE key='schema_version'").run()
+    }
+    if (version <= 18) {
+      // Schema 19: conversations between bots in threads of their own (`peer-conversations`). A thread is shared by
+      // its two bots, with how many messages they exchanged in a row without the owner; each bot has its own side,
+      // with its conversation, what it kept and what it brought back to its owner. Messages name their thread.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS peer_threads (id TEXT PRIMARY KEY, bot_a TEXT NOT NULL, bot_b TEXT NOT NULL, title TEXT NOT NULL, hops INTEGER NOT NULL DEFAULT 0, messages INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','paused')), blocked_bot TEXT, created_at TEXT NOT NULL, last_activity_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS peer_thread_sides (thread_id TEXT NOT NULL REFERENCES peer_threads(id) ON DELETE CASCADE, bot_id TEXT NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('primary','side','peer')), pinned INTEGER NOT NULL DEFAULT 0, conversation TEXT NOT NULL DEFAULT 'own' CHECK (conversation IN ('own','deleted')), conversation_deleted_at TEXT, kept_json TEXT, report TEXT, report_at TEXT, PRIMARY KEY (thread_id, bot_id));
+        CREATE INDEX IF NOT EXISTS idx_peer_thread_sides_bot ON peer_thread_sides(bot_id);
+      `)
+      const messages = new Set(
+        (this.db.prepare('PRAGMA table_info(peer_messages)').all() as Row[]).map((row) => row.name)
+      )
+      // A database without messages between bots has nothing to name a thread in.
+      if (messages.size && !messages.has('thread_id'))
+        this.db.exec('ALTER TABLE peer_messages ADD COLUMN thread_id TEXT')
+      const bots = new Set((this.db.prepare('PRAGMA table_info(bots)').all() as Row[]).map((row) => row.name))
+      if (!bots.has('peer_settings_json')) this.db.exec('ALTER TABLE bots ADD COLUMN peer_settings_json TEXT')
+      this.db.prepare("UPDATE meta SET value='19' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -1599,6 +1677,9 @@ export class Store {
       runSettings: row.run_settings_json
         ? (JSON.parse(String(row.run_settings_json)) as FleetRoutineRunSettings)
         : FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+      peerSettings: row.peer_settings_json
+        ? (JSON.parse(String(row.peer_settings_json)) as FleetPeerThreadSettings)
+        : FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       runningRun: null,
       turns: null,
     }
@@ -1641,6 +1722,9 @@ export class Store {
         )
         .run(id, id, id)
       this.db.prepare('DELETE FROM peer_messages WHERE from_bot=? OR to_bot=?').run(id, id)
+      // Its sides of threads go; a thread whose other bot keeps its conversation stays for that bot.
+      this.db.prepare('DELETE FROM peer_thread_sides WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM peer_threads WHERE id NOT IN (SELECT thread_id FROM peer_thread_sides)').run()
       this.db.prepare('DELETE FROM routine_runs WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM routines WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
@@ -1650,7 +1734,7 @@ export class Store {
       this.db.prepare('DELETE FROM bot_moves WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db
-        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?,?)')
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?,?,?)')
         .run(
           'botMessageSend:' + id,
           'botMessageEdit:' + id,
@@ -1658,7 +1742,8 @@ export class Store {
           'botRoutineCreate:' + id,
           'botOwnerMemorySave:' + id,
           'peer:' + id,
-          'botMove:' + id
+          'botMove:' + id,
+          'botPeerThreadMessageSend:' + id
         )
       this.db.prepare('DELETE FROM bot_secrets WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM bots WHERE id=?').run(id)
@@ -1758,16 +1843,17 @@ export class Store {
       delivered: Boolean(row.delivered),
     }))
   }
-  insertPeerMessage(message: FleetPeerMessage) {
+  insertPeerMessage(message: FleetPeerMessage, threadId: string | null = null) {
     this.db
-      .prepare('INSERT INTO peer_messages(id,at,from_bot,to_bot,text,delivered) VALUES(?,?,?,?,?,?)')
-      .run(message.id, message.at, message.from, message.to, message.text, Number(message.delivered))
+      .prepare('INSERT INTO peer_messages(id,at,from_bot,to_bot,text,delivered,thread_id) VALUES(?,?,?,?,?,?,?)')
+      .run(message.id, message.at, message.from, message.to, message.text, Number(message.delivered), threadId)
     if (!message.delivered)
       this.db
         .prepare('INSERT INTO pending_deliveries(message_id,to_bot,created_at) VALUES(?,?,?)')
         .run(message.id, message.to, message.at)
   }
-  pendingPeers(toBot?: string): FleetPeerMessage[] {
+  /** Messages waiting for their bot, with the thread each continues (null from before threads). */
+  pendingPeers(toBot?: string): StoredPeerMessage[] {
     const rows = toBot
       ? this.db
           .prepare(
@@ -1784,6 +1870,7 @@ export class Store {
       to: String(row.to_bot),
       text: String(row.text),
       delivered: false,
+      threadId: row.thread_id ? String(row.thread_id) : null,
     }))
   }
   markPeerDelivered(id: string) {
@@ -1837,6 +1924,110 @@ export class Store {
   }
   private pairKey(a: string, b: string) {
     return '|' + [a, b].sort().join('|') + '|'
+  }
+  // Threads between bots (`peer-conversations`).
+  /** Records a thread with its two sides; a thread already there (a retried send) stays as it is. */
+  insertPeerThread(thread: StoredPeerThread, sides: StoredPeerThreadSide[]) {
+    this.transaction(() => {
+      const inserted = this.db
+        .prepare(
+          'INSERT OR IGNORE INTO peer_threads(id,bot_a,bot_b,title,hops,messages,status,blocked_bot,created_at,last_activity_at) VALUES(?,?,?,?,?,?,?,?,?,?)'
+        )
+        .run(
+          thread.id,
+          thread.botA,
+          thread.botB,
+          thread.title,
+          thread.hops,
+          thread.messages,
+          thread.status,
+          thread.blockedBot,
+          thread.createdAt,
+          thread.lastActivityAt
+        )
+      if (!inserted.changes) return
+      for (const side of sides) this.savePeerThreadSide(side)
+    })
+  }
+  peerThread(id: string): StoredPeerThread | null {
+    const row = this.db.prepare('SELECT * FROM peer_threads WHERE id=?').get(id) as Row | undefined
+    return row ? peerThreadOf(row) : null
+  }
+  updatePeerThread(thread: StoredPeerThread) {
+    this.db
+      .prepare(
+        'UPDATE peer_threads SET title=?, hops=?, messages=?, status=?, blocked_bot=?, last_activity_at=? WHERE id=?'
+      )
+      .run(
+        thread.title,
+        thread.hops,
+        thread.messages,
+        thread.status,
+        thread.blockedBot,
+        thread.lastActivityAt,
+        thread.id
+      )
+  }
+  peerThreadSide(threadId: string, botId: string): StoredPeerThreadSide | null {
+    const row = this.db
+      .prepare('SELECT * FROM peer_thread_sides WHERE thread_id=? AND bot_id=?')
+      .get(threadId, botId) as Row | undefined
+    return row ? peerThreadSideOf(row) : null
+  }
+  savePeerThreadSide(side: StoredPeerThreadSide) {
+    this.db
+      .prepare(
+        `INSERT INTO peer_thread_sides(thread_id,bot_id,origin,pinned,conversation,conversation_deleted_at,kept_json,report,report_at)
+         VALUES(?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(thread_id,bot_id) DO UPDATE SET pinned=excluded.pinned, conversation=excluded.conversation,
+           conversation_deleted_at=excluded.conversation_deleted_at, kept_json=excluded.kept_json, report=excluded.report,
+           report_at=excluded.report_at`
+      )
+      .run(
+        side.threadId,
+        side.botId,
+        side.origin,
+        Number(side.pinned),
+        side.conversation,
+        side.conversationDeletedAt,
+        side.kept ? JSON.stringify(side.kept) : null,
+        side.report,
+        side.reportAt
+      )
+  }
+  /** A bot's sides of its threads with the threads themselves, the most recently active first. */
+  botPeerThreads(botId: string, limit: number): Array<{ thread: StoredPeerThread; side: StoredPeerThreadSide }> {
+    const rows = this.db
+      .prepare(
+        'SELECT t.*, s.thread_id, s.bot_id, s.origin, s.pinned, s.conversation, s.conversation_deleted_at, s.kept_json, s.report, s.report_at FROM peer_thread_sides s JOIN peer_threads t ON t.id=s.thread_id WHERE s.bot_id=? ORDER BY t.last_activity_at DESC, t.id LIMIT ?'
+      )
+      .all(botId, limit) as Row[]
+    return rows.map((row) => ({ thread: peerThreadOf(row), side: peerThreadSideOf(row) }))
+  }
+  /** Every side whose conversation the bot still has: retention looks at them. */
+  ownPeerThreadSides(): Array<{ thread: StoredPeerThread; side: StoredPeerThreadSide }> {
+    const rows = this.db
+      .prepare(
+        "SELECT t.*, s.thread_id, s.bot_id, s.origin, s.pinned, s.conversation, s.conversation_deleted_at, s.kept_json, s.report, s.report_at FROM peer_thread_sides s JOIN peer_threads t ON t.id=s.thread_id WHERE s.conversation='own' ORDER BY t.last_activity_at"
+      )
+      .all() as Row[]
+    return rows.map((row) => ({ thread: peerThreadOf(row), side: peerThreadSideOf(row) }))
+  }
+  /** Deletes a thread once neither of its bots has its conversation any more. */
+  deletePeerThreadIfGone(id: string): boolean {
+    const own = this.db
+      .prepare("SELECT COUNT(*) AS count FROM peer_thread_sides WHERE thread_id=? AND conversation='own'")
+      .get(id) as Row
+    if (Number(own.count) > 0) return false
+    this.db.prepare('DELETE FROM peer_threads WHERE id=?').run(id)
+    return true
+  }
+  peerSettings(botId: string): FleetPeerThreadSettings | null {
+    const row = this.db.prepare('SELECT peer_settings_json FROM bots WHERE id=?').get(botId) as Row | undefined
+    return row?.peer_settings_json ? (JSON.parse(String(row.peer_settings_json)) as FleetPeerThreadSettings) : null
+  }
+  savePeerSettings(botId: string, settings: FleetPeerThreadSettings) {
+    this.db.prepare('UPDATE bots SET peer_settings_json=? WHERE id=?').run(JSON.stringify(settings), botId)
   }
   private routine(row: Row): FleetRoutine {
     return {

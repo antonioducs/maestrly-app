@@ -27,6 +27,8 @@ import { HostMonitor } from '../src/host.js'
 import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
 import { createGatewayServers } from '../src/server.js'
+import { PeerThreads } from '../src/peer-threads.js'
+import { Peers } from '../src/peers.js'
 import { Store } from '../src/store.js'
 import { Routines } from '../src/routines.js'
 
@@ -540,6 +542,7 @@ export async function harness(
     onEnabledChange: () => lifecycle.refreshProfiles(),
   })
   lifecycle.artifactsEnabled = () => artifacts.settings().enabled
+  const peerThreads = new PeerThreads(store, lifecycle, now)
   const gateway = createGatewayServers({
     network,
     artifacts,
@@ -549,6 +552,8 @@ export async function harness(
     host: new HostMonitor(cfg, docker),
     lifecycle,
     routines: new Routines(store, lifecycle, now),
+    peerThreads,
+    peers: new Peers(store, lifecycle, now, peerThreads),
     store,
   })
   await gateway.listen()

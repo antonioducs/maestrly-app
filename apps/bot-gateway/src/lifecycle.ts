@@ -6,6 +6,7 @@ import {
   FLEET_BOT_ENV,
   FLEET_BOT_MOVE_FEATURE,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+  FLEET_PEER_THREAD_SETTINGS_DEFAULT,
   type FleetBotMove,
   type FleetBotMoveRequest,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -402,12 +403,19 @@ export class Lifecycle {
     if (event.type === 'status') this.updateStatus(id, event.status)
     else if (event.type === 'transcript.upsert')
       this.onEvent(
+        // A side conversation's item is a thread's (`peer-conversations`) or a routine run's.
         event.runId
-          ? { type: 'routine_run.transcript.upsert', at: now(), botId: id, runId: event.runId, item: event.item }
+          ? this.store.peerThreadSide(event.runId, id)
+            ? { type: 'peer_thread.transcript.upsert', at: now(), botId: id, threadId: event.runId, item: event.item }
+            : { type: 'routine_run.transcript.upsert', at: now(), botId: id, runId: event.runId, item: event.item }
           : { type: 'transcript.upsert', at: now(), botId: id, item: event.item }
       )
     else if (event.type === 'reset' && event.runId)
-      this.onEvent({ type: 'routine_run.transcript.reset', at: now(), botId: id, runId: event.runId })
+      this.onEvent(
+        this.store.peerThreadSide(event.runId, id)
+          ? { type: 'peer_thread.transcript.reset', at: now(), botId: id, threadId: event.runId }
+          : { type: 'routine_run.transcript.reset', at: now(), botId: id, runId: event.runId }
+      )
     else if (event.type === 'turn.finished') {
       const run =
         this.onTurnFinished?.(id, {
@@ -607,9 +615,9 @@ export class Lifecycle {
       }
       if (turn.runId === null) return [{ kind: 'primary', id: null, title: '', ...common }]
       const run = this.store.routineRunById(turn.runId)
-      return run && run.botId === botId
-        ? [{ kind: 'routine', id: run.id, title: run.routineTitle ?? '', ...common }]
-        : []
+      if (run && run.botId === botId) return [{ kind: 'routine', id: run.id, title: run.routineTitle ?? '', ...common }]
+      const thread = this.store.peerThreadSide(turn.runId, botId) ? this.store.peerThread(turn.runId) : null
+      return thread ? [{ kind: 'peer', id: thread.id, title: thread.title, ...common }] : []
     })
   }
   /** An active environment as devices see it, or null. */
@@ -943,6 +951,7 @@ export class Lifecycle {
       runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
       runningRun: null,
       turns: null,
+      peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       createdAt: at,
       updatedAt: at,
     }
