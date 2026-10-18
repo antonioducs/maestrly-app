@@ -89,8 +89,7 @@ import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failov
 import { runClaudeEphemeralWithFailover } from './subscription-failover/claude-ephemeral'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from './credentials'
-import { fetchModels, fetchModelWindow, invalidateModels } from './models'
-import { currentApiKeyCheck } from './api-key-check'
+import { currentApiKeyCheck, fetchModels, fetchModelWindow, invalidateModels } from './models'
 import { getContextLimit, setContextLimit, resolveContextWindow } from './context-limits'
 import { limitConversationContextWindow } from './conversation-context-limit'
 import {

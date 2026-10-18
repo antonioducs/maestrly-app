@@ -140,6 +140,7 @@ vi.mock('../../src/main/chat/credentials', () => ({
 }))
 
 vi.mock('../../src/main/chat/models', () => ({
+  currentApiKeyCheck: vi.fn(() => undefined),
   fetchModels: h.fetchModels,
   fetchModelWindow: vi.fn(),
   invalidateModels: vi.fn(),

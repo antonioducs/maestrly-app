@@ -17,8 +17,7 @@ vi.mock('../../src/main/store', () => ({
   getAppSetting: (name: string) => state.settings.get(name) ?? null,
   setAppSetting: (name: string, value: string) => void state.settings.set(name, value),
 }))
-import { currentApiKeyCheck } from '../../src/main/chat/api-key-check'
-import { fetchModels, invalidateModels } from '../../src/main/chat/models'
+import { currentApiKeyCheck, fetchModels, invalidateModels } from '../../src/main/chat/models'
 
 /** What OpenAI answers for a wrong key: its message echoes a masked key, and the request carried the whole one. */
 const OPENAI_401 = {

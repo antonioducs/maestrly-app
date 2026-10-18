@@ -9,9 +9,11 @@
  * whether the provider accepted the key (see api-key-check.ts), so a refused key is not mistaken for a missing list.
  */
 import { net } from 'electron'
+import { createHash } from 'node:crypto'
+import type { ChatProviderKeyCheck } from '../../shared/chat'
 import {
-  apiKeyFingerprint,
   clearApiKeyCheck,
+  getApiKeyCheck,
   keyCheckFromFailure,
   keyCheckFromResponse,
   recordApiKeyCheck,
@@ -36,6 +38,11 @@ const PERSIST_KEY = 'chat.modelsCache'
 const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<string[]>>() // Deduplicate concurrent refreshes per provider.
 let seeded = false
+
+/** Stable irreversible key fingerprint — safe to persist without exposing the secret. Empty string without a key. */
+function keyFp(apiKey: string): string {
+  return apiKey ? createHash('sha256').update(apiKey).digest('hex').slice(0, 16) : ''
+}
 
 /** Loads disk cache into memory (once, lazily). Tolerates missing/corrupt JSON. */
 function seedFromDisk(): void {
@@ -97,11 +104,11 @@ function refresh(
           signal: AbortSignal.timeout(15_000),
         })
       } catch (error) {
-        recordApiKeyCheck(providerId, apiKey, keyCheckFromFailure(error, apiKey))
+        recordApiKeyCheck(providerId, fp, keyCheckFromFailure(error, apiKey))
         throw error
       }
       const body = res.ok ? '' : await res.text().catch(() => '')
-      recordApiKeyCheck(providerId, apiKey, keyCheckFromResponse(url, res.status, body, { providerName, apiKey }))
+      recordApiKeyCheck(providerId, fp, keyCheckFromResponse(url, res.status, body, { providerName, apiKey }))
       if (!res.ok) throw new Error(`models HTTP ${res.status}`)
       const { models, windows } = extractCatalog(await res.json())
       cache.set(providerId, { fp, at: Date.now(), models, windows, status: 'available' })
@@ -192,7 +199,7 @@ export async function fetchModels(providerId: string, force = false): Promise<st
   const provider = getProvider(providerId)
   if (!provider) return []
   const apiKey = getApiKey(providerId) ?? ''
-  const fp = apiKeyFingerprint(apiKey)
+  const fp = keyFp(apiKey)
   const anthropic = getProviderKind(provider) === 'anthropic'
   const cached = cache.get(providerId)
 
@@ -218,6 +225,17 @@ export async function fetchModelWindow(providerId: string, modelId: string): Pro
   const w = cache.get(providerId)?.windows
   if (!w) return undefined
   return w[modelId] ?? w[modelId.split('/').pop() ?? ''] ?? undefined
+}
+
+/** The last check of the provider's saved key; undefined when unchecked or when the key cannot be read. */
+export function currentApiKeyCheck(providerId: string): ChatProviderKeyCheck | undefined {
+  let apiKey: string | null
+  try {
+    apiKey = getApiKey(providerId)
+  } catch {
+    return undefined
+  }
+  return getApiKeyCheck(providerId, keyFp(apiKey ?? ''))
 }
 
 /** Invalidates model cache after key change/removal or provider edit — memory AND disk. */
