@@ -14,6 +14,7 @@ import {
   type McpConnection,
   type UserMcpServer as McpServer,
 } from '../../../chat/mcp'
+import { McpStdioFailure } from '../../../chat/mcp-stdio-output'
 import { InstanceHttpError } from '../server'
 import { settingsRevision, withSettingsRevision } from './revisions'
 
@@ -104,14 +105,29 @@ async function testConnection(server: McpServer): Promise<FleetSettingsOutput<'t
   })()
   try {
     return { code: 'ok', toolCount: await Promise.race([work, timeout]) }
-  } catch {
-    return { code: expired ? 'timeout' : 'connection-failed', toolCount: 0 }
+  } catch (error) {
+    if (expired) return { code: 'timeout', toolCount: 0 }
+    return {
+      code: 'connection-failed',
+      toolCount: 0,
+      ...(error instanceof McpStdioFailure ? { detail: error.output.slice(0, 1000) } : {}),
+    }
   } finally {
     clearTimeout(timer)
     controller.abort()
     // Initiate cleanup even when a broken transport never resolves close().
     if (connection) void connection.close().catch(() => {})
   }
+}
+
+/** A test shared by several requests answers each as it asked: an older desktop refuses the detail. */
+function withDetail(
+  result: FleetSettingsOutput<'testMcpServer'>,
+  asked: boolean | undefined
+): FleetSettingsOutput<'testMcpServer'> {
+  if (asked || result.detail === undefined) return result
+  const { detail: _detail, ...rest } = result
+  return rest
 }
 
 type McpOperations =
@@ -185,13 +201,13 @@ export const mcpSettingsService: Pick<FleetEnvironmentSettingsService, McpOperat
     const server = findServer(input.id)
     const key = input.id + ':' + settingsRevision('mcp:' + input.id)
     const existing = connectionTests.get(key)
-    if (existing) return existing
+    if (existing) return withDetail(await existing, input.detail)
     if (connectionTests.size >= MAX_CONCURRENT_TESTS)
       throw new InstanceHttpError(409, 'CONFLICT', 'Connection tests are busy. Try again shortly.')
     const pending = testConnection(server)
     connectionTests.set(key, pending)
     try {
-      return await pending
+      return withDetail(await pending, input.detail)
     } finally {
       connectionTests.delete(key)
     }

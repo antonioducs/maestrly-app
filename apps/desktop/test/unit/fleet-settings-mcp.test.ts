@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as store from '../../src/main/store'
 import * as mcp from '../../src/main/chat/mcp'
+import { McpStdioFailure } from '../../src/main/chat/mcp-stdio-output'
 import { mcpSettingsService as service } from '../../src/main/fleet/instance/settings/mcp'
 import { freshDb, closeDb } from '../helpers/db'
 
@@ -139,6 +140,18 @@ it('tests only tool discovery, closes separately, and sanitizes failures', async
   connection.listTools.mockRejectedValue(new Error('raw-secret-stderr'))
   expect(await service.testMcpServer({ id: server.id })).toEqual({ code: 'connection-failed', toolCount: 0 })
   expect(connection.close).toHaveBeenCalledTimes(2)
+})
+it('says why a stdio server failed, from its masked error output, only to a test that asks', async () => {
+  const server = await service.createMcpServer({ name: 'Slack', transport: 'stdio', enabled: true, command: 'npx' })
+  const failure = new McpStdioFailure('MCP error -32000: Connection closed', 'Please set SLACK_BOT_TOKEN', null)
+  vi.spyOn(mcp, 'connectMcpServer').mockRejectedValue(failure)
+  expect(await service.testMcpServer({ id: server.id, detail: true })).toEqual({
+    code: 'connection-failed',
+    toolCount: 0,
+    detail: 'Please set SLACK_BOT_TOKEN',
+  })
+  // A desktop or gateway from before the field never asks, and refuses an answer that carries it.
+  expect(await service.testMcpServer({ id: server.id })).toEqual({ code: 'connection-failed', toolCount: 0 })
 })
 it('times out stalled discovery and closes the connection', async () => {
   const server = await service.createMcpServer(input)

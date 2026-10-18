@@ -85,7 +85,7 @@ export default {
       'entry-invalid': '{{subject}} é inválido e foi ignorado.',
       'transport-unsupported': 'O servidor MCP {{subject}} usa um transporte que a Maestrly não suporta.',
       'auth-publisher-client':
-        'O servidor MCP {{subject}} faz login com o cliente do próprio publisher; informe um token no lugar.',
+        'O servidor MCP {{subject}} usa o app do próprio publisher, que só funciona nos produtos dele: entre com o seu próprio cliente OAuth ou informe um token.',
       'auth-placeholder-client': 'O servidor MCP {{subject}} pode precisar do seu próprio cliente OAuth para entrar.',
       'symlink-skipped': 'O link {{subject}} não é instalado.',
       'submodule-skipped': 'O submódulo {{subject}} não é instalado.',
@@ -149,7 +149,7 @@ export default {
     agentDropped: 'Não incluído: {{tools}}',
     hooks: 'Hooks',
     hooksHint: 'Comandos que rodam automaticamente, com a sua aprovação, em conversas no modo Agent com todos os modelos.',
-    auth: { none: 'Sem login', oauth: 'Login OAuth', manual: 'Token necessário' },
+    auth: { none: 'Sem login', oauth: 'Login OAuth', manual: 'Cliente OAuth próprio ou token' },
     capabilities: 'Capacidades',
     endpoints: 'Endpoints externos',
     executables: 'Scripts e executáveis',
@@ -184,6 +184,9 @@ export default {
     required: 'Obrigatório',
     optional: 'Opcional',
     keepValue: 'Deixe vazio para manter o valor salvo',
+    accessToken: 'Token de acesso de {{server}}',
+    accessTokenHint:
+      'No lugar do login: enviado ao servidor como "Authorization: Bearer" e usado antes de qualquer conta conectada.',
     install: 'Instalar',
     installing: 'Instalando…',
     sourceChanged: 'A fonte mudou desde que você abriu. Revise o plugin de novo antes de instalar.',

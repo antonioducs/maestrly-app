@@ -324,6 +324,12 @@ export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'
  */
 export const FLEET_ENVIRONMENT_PLUGINS_FEATURE = 'environment-plugins-v1'
 /**
+ * Gateway feature (`moreFeatures` of `/v1/meta`) and instance capability: an MCP connection test (`testMcpServer`)
+ * that asks with `detail: true` hears why a failed connection failed. Older gateways and images refuse the field, so
+ * the desktop asks only when both have it.
+ */
+export const FLEET_MCP_TEST_DETAIL_FEATURE = 'mcp-test-detail'
+/**
  * Gateway feature (`/v1/meta`) and instance capability: an environment's settings read and set the order in which its
  * Claude and Codex subscription accounts take over a turn once one reaches its usage limit (`failover`,
  * `setFailoverRoute`). An older gateway or image has no such routes.

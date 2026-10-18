@@ -13,7 +13,7 @@ import { CompatibilityBadge } from './CompatibilityBadge'
 import { PluginLogo } from './PluginCard'
 import type { PluginsSource } from './plugins-source'
 import { normalizeSubagentProfileKey } from '../../../shared/subagent-profiles'
-import { errorText, HookList, reasonText, SectionTitle, shortCommit } from './plugin-ui'
+import { errorText, HookList, inputText, reasonText, SectionTitle, shortCommit } from './plugin-ui'
 
 const STATUS_CLASS: Record<PluginComponentDto['status'], string> = {
   supported: 'text-emerald-300',
@@ -399,15 +399,18 @@ export function PluginDetails({
       {inspection.inputs.length > 0 && (
         <Section title={t('details.inputs')}>
           <ul className="flex flex-col gap-0.5">
-            {inspection.inputs.map((input) => (
-              <li key={input.id} className="text-[12px]">
-                <span className="text-foreground">{input.label}</span>
-                <span className="ml-1.5 text-[11px] text-muted-foreground">
-                  {input.required ? t('install.required') : t('install.optional')}
-                </span>
-                {input.description && <span className="ml-1.5 text-muted-foreground">{input.description}</span>}
-              </li>
-            ))}
+            {inspection.inputs.map((input) => {
+              const { label, description } = inputText(t, input)
+              return (
+                <li key={input.id} className="text-[12px]">
+                  <span className="text-foreground">{label}</span>
+                  <span className="ml-1.5 text-[11px] text-muted-foreground">
+                    {input.required ? t('install.required') : t('install.optional')}
+                  </span>
+                  {description && <span className="ml-1.5 text-muted-foreground">{description}</span>}
+                </li>
+              )
+            })}
           </ul>
         </Section>
       )}

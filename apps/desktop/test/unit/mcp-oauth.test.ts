@@ -1,4 +1,5 @@
 import { mkdtempSync } from 'node:fs'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -30,6 +31,7 @@ import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
 import { pluginLayout } from '../../src/main/plugins/layout'
 import { installedDto } from '../../src/main/plugins/service'
 import { secureGet, secureSet } from '../../src/main/secure-store'
+import { MCP_OAUTH_OWN_CLIENT_PORTS, mcpOAuthOwnClientRedirectUri } from '../../src/shared/chat'
 import { remoteChannelRefusal } from '../../src/shared/host-channels'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeStandaloneConversation, makeWorkspace } from '../helpers/factories'
@@ -444,8 +446,16 @@ describe('signing in with an own client and several accounts', () => {
     })
     expect(setMcpOAuthClientChannel(added.id, { clientId: '' })).toEqual({ ok: false })
     expect(mcpOAuthDescriptor(added.id)?.client).toEqual({ clientId: 'own-client', clientSecret: 'own-secret' })
-    const result = await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: browser })
+    const redirects: string[] = []
+    const open = async (url: string) => {
+      redirects.push(new URL(url).searchParams.get('redirect_uri') ?? '')
+      await browser(url)
+    }
+    const result = await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: open })
     expect(result).toEqual({ ok: true, accountId: expect.stringMatching(/^acc_/) })
+    // The provider knows one redirect URL for the client, port included: every sign-in returns there.
+    await connectMcpOAuth(localMcpOAuthHostCalls, 'local', added.id, {}, { openExternal: open })
+    expect(redirects).toEqual([mcpOAuthOwnClientRedirectUri(added.id), mcpOAuthOwnClientRedirectUri(added.id)])
     expect(fake.state.registrations).toBe(0)
     expect(fake.state.authenticatedClients).toContain('own-client')
     const [server] = listMcpServers()
@@ -454,6 +464,35 @@ describe('signing in with an own client and several accounts', () => {
     const output = await connection.callTool('whoami')
     await connection.close()
     expect(JSON.stringify(output.content)).toContain('token:at-')
+  })
+
+  it('keeps the redirect URL of an own client within its port range, and says when another app holds the port', async () => {
+    for (const id of ['mcp_00000000-0000-0000-0000-000000000000', 'plg_0123456789abcdef0123']) {
+      const port = Number(new URL(mcpOAuthOwnClientRedirectUri(id)).port)
+      expect(port).toBeGreaterThanOrEqual(MCP_OAUTH_OWN_CLIENT_PORTS.first)
+      expect(port).toBeLessThan(MCP_OAUTH_OWN_CLIENT_PORTS.first + MCP_OAUTH_OWN_CLIENT_PORTS.count)
+    }
+    fake = await fakeOAuthServer({ registration: false, clients: { 'own-client': 'own-secret' } })
+    const added = userServer()
+    setMcpOAuthClientChannel(added.id, { clientId: 'own-client', clientSecret: 'own-secret' })
+    const taken = http.createServer()
+    await new Promise<void>((resolve) =>
+      taken.listen(Number(new URL(mcpOAuthOwnClientRedirectUri(added.id)).port), '127.0.0.1', resolve)
+    )
+    const opened: string[] = []
+    try {
+      const result = await connectMcpOAuth(
+        localMcpOAuthHostCalls,
+        'local',
+        added.id,
+        {},
+        { openExternal: async (url) => void opened.push(url) }
+      )
+      expect(result).toEqual({ ok: false, error: 'port-in-use' })
+      expect(opened).toEqual([])
+    } finally {
+      await new Promise((resolve) => taken.close(resolve))
+    }
   })
 
   it('adds one account per sign-in, labelled by e-mail, and lets each one connect with its own tokens', async () => {

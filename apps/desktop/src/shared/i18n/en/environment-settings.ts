@@ -60,6 +60,8 @@ export default {
     timeout: 'Connection timed out',
     'invalid-config': 'Invalid configuration',
   },
+  mcpTestOutput: 'The server says: {{detail}}',
+  mcpTestFirstStart: 'A server started with npx or uvx downloads itself the first time. Test again in a moment.',
   runtime: { 'claude-code': 'Claude Code', codex: 'Codex', 'antigravity-acp': 'Google AI (Antigravity ACP)' },
   runtimeState: { idle: 'Idle', checking: 'Checking', installing: 'Installing', ready: 'Ready', error: 'Error' },
   runtimeError: {

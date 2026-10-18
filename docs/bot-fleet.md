@@ -582,7 +582,11 @@ tab remains available for application interaction and browser sign-ins.
   omitted replacements preserve them. Header/environment keys have explicit
   removal controls. A test lists tools without invoking them and closes its
   separate connection. Tests are bounded and shared when the same server is
-  tested concurrently. Configuration changes let active tool calls finish
+  tested concurrently. When a stdio server stops at once, usually for a missing
+  token, the test shows what it said, with its environment values masked; this
+  needs a server and an image with `mcp-test-detail`. A server started with
+  `npx` or `uvx` downloads itself on its first start, so its first test may time
+  out. Configuration changes let active tool calls finish
   before retiring their old connection. A remote server that needs an OAuth
   sign-in shows **Needs sign-in**: **Sign in** opens the consent page in this
   computer's browser, and the environment keeps the sign-in and renews it. A

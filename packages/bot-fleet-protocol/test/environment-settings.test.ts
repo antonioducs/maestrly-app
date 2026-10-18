@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_ROUTES,
+  FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
   fleetSettingsMcpServerSchema,
 } from '../src/index.js'
@@ -54,6 +55,17 @@ describe('environment settings contract', () => {
         error: 'raw secret',
       }).success
     ).toBe(false)
+  })
+  it('asks why a connection test failed only explicitly, and bounds the answer', () => {
+    const { input, response } = FLEET_SETTINGS_OPERATIONS.testMcpServer
+    expect(input.parse({ id: 'm' })).toEqual({ id: 'm' })
+    expect(input.parse({ id: 'm', detail: true })).toEqual({ id: 'm', detail: true })
+    expect(input.safeParse({ id: 'm', detail: false }).success).toBe(false)
+    const failed = { code: 'connection-failed', toolCount: 0 }
+    expect(response.safeParse({ ...failed, detail: 'Please set SLACK_BOT_TOKEN' }).success).toBe(true)
+    expect(response.safeParse({ ...failed, detail: '' }).success).toBe(false)
+    expect(response.safeParse({ ...failed, detail: 'x'.repeat(1001) }).success).toBe(false)
+    expect(FLEET_MCP_TEST_DETAIL_FEATURE.length).toBeLessThanOrEqual(40)
   })
   it('preserves omitted MCP values and uses explicit replacements', () => {
     expect(

@@ -5,6 +5,7 @@ import {
   FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_PROTOCOL_HEADER,
 } from '@maestrly/bot-fleet-protocol'
 import { InstanceClient } from '../src/instance.js'
@@ -63,6 +64,29 @@ describe('environment settings routes', () => {
     expect(remove).not.toHaveBeenCalled()
   })
 
+  it('asks an environment why a connection test failed only when its image knows the field', async () => {
+    const { h, path } = await setup()
+    vi.spyOn(h.store, 'botsOfEnvironment').mockReturnValue([])
+    expect(await (await h.request('GET', '/v1/meta')).json()).toMatchObject({
+      moreFeatures: expect.arrayContaining([FLEET_MCP_TEST_DETAIL_FEATURE]),
+    })
+    const test = vi
+      .spyOn(InstanceClient.prototype, 'settingsTestMcpServer')
+      .mockResolvedValue({ code: 'connection-failed', toolCount: 0 })
+    const older = await h.request('POST', path + '/mcp-servers/m/test', { id: 'm', detail: true })
+    expect(older.status).toBe(200)
+    expect(test).toHaveBeenLastCalledWith({ id: 'm' })
+
+    const original = h.lifecycle.environment(h.bot.environmentId!)!
+    vi.mocked(h.lifecycle.environment).mockReturnValue({
+      ...original,
+      capabilities: [FLEET_ENVIRONMENT_SETTINGS_FEATURE, FLEET_MCP_TEST_DETAIL_FEATURE],
+    })
+    test.mockResolvedValue({ code: 'connection-failed', toolCount: 0, detail: 'Please set SLACK_BOT_TOKEN' })
+    const current = await h.request('POST', path + '/mcp-servers/m/test', { id: 'm', detail: true })
+    expect(await current.json()).toEqual({ code: 'connection-failed', toolCount: 0, detail: 'Please set SLACK_BOT_TOKEN' })
+    expect(test).toHaveBeenLastCalledWith({ id: 'm', detail: true })
+  })
   it('serves plugin operations only to environments that support them', async () => {
     const { h, path } = await setup()
     const forward = vi.spyOn(InstanceClient.prototype, 'settingsPluginOperation')

@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/client/auth.js'
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { mcpOAuthOwnClientPort } from '../../shared/chat'
 import { type McpOAuthBundle, type McpOAuthDescriptor, mcpOAuthClientMetadata } from './mcp-oauth'
 
 /** Why a sign-in did not finish. */
@@ -18,6 +19,7 @@ export type McpOAuthConnectError =
   | 'denied'
   | 'registration-unsupported'
   | 'discovery-failed'
+  | 'port-in-use'
   | 'failed'
 
 export class McpOAuthConnectFailure extends Error {
@@ -42,10 +44,13 @@ interface Callback {
 }
 
 /**
- * A loopback listener on 127.0.0.1 with a random port for one authorization response. It accepts only `GET /callback`
- * with the expected `state`; anything else gets 404 and is ignored.
+ * A loopback listener on 127.0.0.1 for one authorization response, on `port` (0: a random one). It accepts only
+ * `GET /callback` with the expected `state`; anything else gets 404 and is ignored.
  */
-async function listenForCallback(state: string): Promise<{
+async function listenForCallback(
+  state: string,
+  port = 0
+): Promise<{
   redirectUri: string
   result: Promise<Callback>
   close: () => void
@@ -74,12 +79,18 @@ async function listenForCallback(state: string): Promise<{
     }
   })
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => resolve())
+    server.once('error', (error: NodeJS.ErrnoException) =>
+      reject(
+        port && (error.code === 'EADDRINUSE' || error.code === 'EACCES')
+          ? new McpOAuthConnectFailure('port-in-use', `port ${port}`)
+          : error
+      )
+    )
+    server.listen(port, '127.0.0.1', () => resolve())
   })
-  const { port } = server.address() as AddressInfo
+  const bound = (server.address() as AddressInfo).port
   return {
-    redirectUri: `http://127.0.0.1:${port}/callback`,
+    redirectUri: `http://127.0.0.1:${bound}/callback`,
     result,
     close: () => {
       server.close()
@@ -166,7 +177,8 @@ export async function runMcpOAuthConnect(opts: {
     )
   if (signal.aborted) throw new McpOAuthConnectFailure('cancelled')
   const state = randomBytes(24).toString('base64url')
-  const callback = await listenForCallback(state)
+  // An own client is registered with its provider once, redirect URL included; a registered app takes any port.
+  const callback = await listenForCallback(state, descriptor.client ? mcpOAuthOwnClientPort(descriptor.serverId) : 0)
   let clientInformation: OAuthClientInformationMixed | undefined = descriptor.client
     ? {
         client_id: descriptor.client.clientId,

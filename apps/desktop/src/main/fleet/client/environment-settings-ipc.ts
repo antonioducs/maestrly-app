@@ -1,6 +1,7 @@
 import {
   FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
+  FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   fleetEnvironmentIdSchema,
@@ -310,9 +311,19 @@ export function registerFleetEnvironmentSettingsIpc(reg: IpcRegistrar, fleet: Se
   })
   reg.mhandle('fleet:settings:testMcpServer', async (_event, rawId: unknown, rawInput: unknown) => {
     const eid = target(rawId)
-    const input = FLEET_SETTINGS_OPERATIONS.testMcpServer.input.parse(rawInput ?? {})
+    const { detail: _asked, ...input } = FLEET_SETTINGS_OPERATIONS.testMcpServer.input.parse(rawInput ?? {})
+    // Why a test failed, from a gateway and an image that know the field; older ones refuse it.
+    const detail =
+      fleet.hasFeature(FLEET_MCP_TEST_DETAIL_FEATURE) &&
+      !!fleet
+        .getSnapshot()
+        .environments.find((value) => value.id === eid)
+        ?.capabilities.includes(FLEET_MCP_TEST_DETAIL_FEATURE)
     return FLEET_SETTINGS_OPERATIONS.testMcpServer.response.parse(
-      await fleet.call('settingsTestMcpServer', { params: { eid, id: input.id }, body: input })
+      await fleet.call('settingsTestMcpServer', {
+        params: { eid, id: input.id },
+        body: { ...input, ...(detail ? { detail: true as const } : {}) },
+      })
     )
   })
   reg.handle('fleet:settings:runtimes', async (_event, rawId: unknown, rawInput: unknown) => {

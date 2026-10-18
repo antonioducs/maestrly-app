@@ -202,7 +202,7 @@ describe('LazyMcpRuntime', () => {
     const remote = server({ transport: 'http', url: 'https://mcp.example.invalid/mcp', command: undefined })
     const connect = vi
       .fn()
-      .mockRejectedValueOnce(new McpNeedsAuthError(remote.id, remote.name))
+      .mockRejectedValueOnce(new McpNeedsAuthError(remote))
       .mockResolvedValue(connected)
     const runtime = createRuntime(connect)
 

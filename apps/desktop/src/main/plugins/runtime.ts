@@ -286,6 +286,11 @@ function validRemoteUrl(value: string): boolean {
   }
 }
 
+const oauthHints = (auth: { scopes?: string[]; resource?: string }): NonNullable<McpServer['oauth']> => ({
+  ...(auth.scopes?.length ? { scopes: auth.scopes } : {}),
+  ...(auth.resource ? { resource: auth.resource } : {}),
+})
+
 /**
  * Plugin MCP servers as `McpServer` entries, expanded for this host: `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` become the
  * installed version and its data directory, `${input:…}` the user's values (once, never recursively). A stdio server
@@ -340,14 +345,7 @@ export function listPluginMcpServers(
         ...(spec.startupTimeoutMs ? { startupTimeoutMs: spec.startupTimeoutMs } : {}),
         ...(spec.toolTimeoutMs ? { toolTimeoutMs: spec.toolTimeoutMs } : {}),
         ...(spec.toolFilter ? { toolFilter: spec.toolFilter } : {}),
-        ...(spec.auth.kind === 'oauth'
-          ? {
-              oauth: {
-                ...(spec.auth.scopes?.length ? { scopes: spec.auth.scopes } : {}),
-                ...(spec.auth.resource ? { resource: spec.auth.resource } : {}),
-              },
-            }
-          : {}),
+        ...(spec.auth.kind === 'oauth' ? { oauth: oauthHints(spec.auth) } : {}),
       }
       if (spec.transport === 'stdio') {
         try {
@@ -391,6 +389,9 @@ export function listPluginMcpServers(
         }
         if (!validRemoteUrl(url)) unavailable = true
         Object.assign(server, { url, headers })
+        // The publisher's own client is never used: without the person's token, the server signs in like any other.
+        if (spec.auth.kind === 'manual' && !Object.keys(headers).some((name) => name.toLowerCase() === 'authorization'))
+          server.oauth = oauthHints(spec.auth)
       }
       out.push(unavailable ? { ...server, unavailable: true } : server)
     }

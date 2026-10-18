@@ -84,7 +84,7 @@ export default {
       'entry-invalid': '{{subject}} is invalid and was skipped.',
       'transport-unsupported': 'MCP server {{subject}} uses a transport Maestrly does not support.',
       'auth-publisher-client':
-        'MCP server {{subject}} signs in with the publisher’s own client; enter a token instead.',
+        'MCP server {{subject}} names the publisher’s own app, which only works in its products: sign in with your own OAuth client, or enter a token.',
       'auth-placeholder-client': 'MCP server {{subject}} may need your own OAuth client to sign in.',
       'symlink-skipped': 'Link {{subject}} is not installed.',
       'submodule-skipped': 'Submodule {{subject}} is not installed.',
@@ -148,7 +148,7 @@ export default {
     agentDropped: 'Not included: {{tools}}',
     hooks: 'Hooks',
     hooksHint: 'Commands that run automatically, with your approval, during Agent conversations with every model.',
-    auth: { none: 'No sign-in', oauth: 'OAuth sign-in', manual: 'Token required' },
+    auth: { none: 'No sign-in', oauth: 'OAuth sign-in', manual: 'Own OAuth client or token' },
     capabilities: 'Capabilities',
     endpoints: 'External endpoints',
     executables: 'Scripts and executables',
@@ -183,6 +183,9 @@ export default {
     required: 'Required',
     optional: 'Optional',
     keepValue: 'Leave empty to keep the saved value',
+    accessToken: '{{server}} access token',
+    accessTokenHint:
+      'Instead of signing in: sent to the server as "Authorization: Bearer", and used before any signed-in account.',
     install: 'Install',
     installing: 'Installing…',
     sourceChanged: 'The source changed since you opened it. Review the plugin again before installing.',

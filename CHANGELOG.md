@@ -61,6 +61,25 @@ User-visible changes by version. Downloads are on
   sign-in is waiting for the browser or a pasted code: quitting cancels it.
 - A Claude sign-in left unfinished on Windows now gives up after 15 minutes, as
   it already did on macOS and Linux, instead of waiting indefinitely.
+- A plugin MCP server that names its publisher's own app, such as Slack in
+  OpenAI's catalog, now offers **Sign in** with your own OAuth client from the
+  start, or takes your access token under **Edit settings**, sent as
+  `Authorization: Bearer`. It used to show only "Token required", with nowhere
+  to enter one. Plugins installed before offer the token after the update. See
+  [Plugins](docs/plugins.md#mcp-servers-and-sign-in).
+- Signing in with your own OAuth client always returns to the same redirect
+  URL, `http://127.0.0.1:<port>/callback`, shown with **Copy** in the form and
+  under the server, so providers that accept only registered redirect URLs,
+  such as Slack, accept it. The port used to change on every sign-in. See
+  [Own OAuth client](docs/plugins.md#own-oauth-client).
+- A stdio MCP server that stops at once, for example for a missing token, now
+  says why: its error, with its environment values masked, reaches the model
+  and, in a bot environment on a current server and image, the **Test** button
+  of **Tools**. It used to say only "Connection closed".
+- A bot told to sign in to an MCP server now points to its environment's
+  settings in the app instead of **Settings → Maestrly Chat → Tools** on this
+  computer, names **Plugins** for a plugin's server, and asks for a new token
+  when the server rejected the one it has.
 
 ## [0.20.0] - 2026-10-16
 

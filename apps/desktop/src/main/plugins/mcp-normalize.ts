@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { pluginTokenInputId } from '../../shared/plugins'
 import { PLUGIN_LIMITS } from './limits'
 import { parsePluginRelativePath } from './paths'
 
@@ -12,11 +13,13 @@ import { parsePluginRelativePath } from './paths'
 /**
  * `placeholderClient`: the plugin names an OAuth client only its publisher fills in (`<GMAIL_PUBLIC_CLIENT_ID>`). The
  * server still signs in like any other: by dynamic registration when it offers it, otherwise with the person's own client.
+ * `manual`: the plugin names its publisher's real client, which is never used. The server signs in like a placeholder
+ * one, or takes the person's access token instead.
  */
 export type PluginMcpAuth =
   | { kind: 'none' }
   | { kind: 'oauth'; resource?: string; scopes?: string[]; placeholderClient?: true }
-  | { kind: 'manual'; reason: 'publisher-client' }
+  | { kind: 'manual'; reason: 'publisher-client'; resource?: string; scopes?: string[] }
 interface Common {
   key: string
   startupTimeoutMs?: number
@@ -331,9 +334,29 @@ function codexAuth(raw: Record<string, unknown>): PluginMcpAuth {
   // A placeholder is never sent anywhere, and neither is its secret.
   if (clientId && PLACEHOLDER_CLIENT.test(clientId)) return { kind: 'oauth', ...hints, placeholderClient: true }
   if (clientId || (oauth && typeof oauth.client_secret === 'string'))
-    return { kind: 'manual', reason: 'publisher-client' }
+    return { kind: 'manual', reason: 'publisher-client', ...hints }
   if (resource || scopes?.length || oauth) return { kind: 'oauth', ...hints }
   return { kind: 'none' }
+}
+
+/**
+ * A server whose plugin signs in only with its publisher's client may take the person's token instead of a sign-in, as
+ * a bearer `Authorization` header, unless its configuration already sets that header or asks for it.
+ */
+function addTokenInput(inputs: InputCollector, key: string, headers: Record<string, string>): void {
+  const isAuthorization = (name: string) => name.toLowerCase() === 'authorization'
+  if (Object.keys(headers).some(isAuthorization)) return
+  for (const input of inputs.inputs.values())
+    if (input.target.kind === 'header' && input.target.serverKey === key && isAuthorization(input.target.name)) return
+  inputs.add({
+    id: pluginTokenInputId(key),
+    label: `${key} access token`,
+    description: null,
+    sensitive: true,
+    required: false,
+    defaultValue: null,
+    target: { kind: 'header', serverKey: key, name: 'Authorization', prefix: 'Bearer ' },
+  })
 }
 
 function codexCommon(key: string, raw: Record<string, unknown>): Common {
@@ -406,12 +429,14 @@ export function normalizeCodexMcp(json: unknown): NormalizedMcp {
               target: { kind: 'header', serverKey: key, name: 'Authorization', prefix: 'Bearer ' },
             })
           }
+          const auth = codexAuth(raw)
+          if (auth.kind === 'manual') addTokenInput(inputs, key, headers)
           return {
             ...common,
             transport: type === 'sse' ? 'sse' : 'http',
             url: checkMcpUrl(raw.url),
             headers,
-            auth: codexAuth(raw),
+            auth,
           }
         }
         if (raw.command === undefined) return invalid('a server needs a url or a command')

@@ -219,6 +219,11 @@ export const fleetSettingsMcpTestSchema = z
   .object({
     code: z.enum(['ok', 'unavailable', 'connection-failed', 'timeout', 'invalid-config']),
     toolCount: z.number().int().nonnegative().max(100000),
+    /**
+     * Why a failed connection failed, when the server said so (a stdio server's error output), with its environment
+     * values masked. Sent only to a request that asks for it.
+     */
+    detail: z.string().min(1).max(1000).optional(),
   })
   .strict()
 export const fleetSettingsRuntimeIdSchema = z.enum(['claude-code', 'codex', 'antigravity-acp'])
@@ -386,7 +391,13 @@ export const FLEET_SETTINGS_OPERATIONS = {
   createMcpServer: operation('POST', '/mcp-servers', fleetSettingsMcpCreateSchema, fleetSettingsMcpServerSchema),
   patchMcpServer: operation('PATCH', '/mcp-servers/:id', fleetSettingsMcpPatchSchema, fleetSettingsMcpServerSchema),
   removeMcpServer: operation('DELETE', '/mcp-servers/:id', z.object({ id, ...expected }).strict(), removed),
-  testMcpServer: operation('POST', '/mcp-servers/:id/test', z.object({ id }).strict(), fleetSettingsMcpTestSchema),
+  testMcpServer: operation(
+    'POST',
+    '/mcp-servers/:id/test',
+    // `detail` only with `FLEET_MCP_TEST_DETAIL_FEATURE`: an older gateway or environment refuses unknown fields.
+    z.object({ id, detail: z.literal(true).optional() }).strict(),
+    fleetSettingsMcpTestSchema
+  ),
   runtimes: operation('GET', '/runtimes', empty, fleetSettingsRuntimesSchema),
   runtimeAction: operation(
     'POST',

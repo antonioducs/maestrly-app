@@ -3,6 +3,7 @@ import {
   FLEET_SETTINGS_OPERATIONS,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_MCP_TEST_DETAIL_FEATURE,
   fleetEnvironmentIdSchema,
   isFleetPluginSettingsOperation,
 } from '@maestrly/bot-fleet-protocol'
@@ -187,12 +188,16 @@ export async function environmentSettingsRoute(
           await client.settingsRemoveMcpServer(FLEET_SETTINGS_OPERATIONS.removeMcpServer.input.parse(body))
         ),
       }
-    case 'settingsTestMcpServer':
+    case 'settingsTestMcpServer': {
+      const { detail, ...input } = FLEET_SETTINGS_OPERATIONS.testMcpServer.input.parse(body)
+      // An image from before the field refuses it; its answers never carry a detail.
+      const asks = detail && environment.capabilities.includes(FLEET_MCP_TEST_DETAIL_FEATURE)
       return {
         body: FLEET_SETTINGS_OPERATIONS.testMcpServer.response.parse(
-          await client.settingsTestMcpServer(FLEET_SETTINGS_OPERATIONS.testMcpServer.input.parse(body))
+          await client.settingsTestMcpServer({ ...input, ...(asks ? { detail } : {}) })
         ),
       }
+    }
     case 'settingsRuntimes':
       return {
         body: FLEET_SETTINGS_OPERATIONS.runtimes.response.parse(

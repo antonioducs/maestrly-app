@@ -68,6 +68,40 @@ describe('Codex MCP normalization', () => {
     expect(r.issues).toEqual([])
   })
 
+  it("offers an access token in place of a publisher's OAuth client, unless the server already takes one", () => {
+    const publisher = { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { client_id: '1234.5678' } }
+    const r = normalizeCodexMcp({
+      mcpServers: {
+        chat: { ...publisher, scopes: ['search:read'] },
+        bearer: { ...publisher, bearer_token_env_var: 'CHAT_TOKEN' },
+        fixed: { ...publisher, http_headers: { authorization: 'Bearer public' } },
+        keyed: { ...publisher, env_http_headers: { Authorization: 'CHAT_AUTH' } },
+      },
+    })
+    expect(r.servers.map((s) => [s.key, s.auth.kind])).toEqual([
+      ['chat', 'manual'],
+      ['bearer', 'manual'],
+      ['fixed', 'manual'],
+      ['keyed', 'manual'],
+    ])
+    // Its sign-in with the person's own client asks for the scopes the plugin names.
+    expect(r.servers[0].auth).toEqual({ kind: 'manual', reason: 'publisher-client', scopes: ['search:read'] })
+    expect(r.inputs.filter((input) => input.target.kind === 'header')).toEqual([
+      {
+        id: 'token:chat',
+        label: 'chat access token',
+        description: null,
+        sensitive: true,
+        required: false,
+        defaultValue: null,
+        target: { kind: 'header', serverKey: 'chat', name: 'Authorization', prefix: 'Bearer ' },
+      },
+      expect.objectContaining({ id: 'header:bearer:Authorization', label: 'CHAT_TOKEN' }),
+      expect.objectContaining({ id: 'header:keyed:Authorization', label: 'CHAT_AUTH' }),
+    ])
+    expect(r.issues).toEqual([])
+  })
+
   it('accepts a bare map, keeps headers, filters and timeouts, and ignores informational keys', () => {
     const r = normalizeCodexMcp({
       api: {
