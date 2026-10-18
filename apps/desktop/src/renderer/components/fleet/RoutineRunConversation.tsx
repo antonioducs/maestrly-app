@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ArrowDown,
   ArrowLeft,
   ClipboardList,
   Clock,
@@ -20,20 +19,12 @@ import {
 } from 'lucide-react'
 import { FLEET_PARALLEL_TURNS_FEATURE, type FleetBot, type FleetRoutineRun } from '@maestrly/bot-fleet-protocol'
 import { ChatComposer } from '@/components/chat/ChatComposer'
-import { GenUiContext, type GenUiHost } from '@/genui/context'
-import { useAgentActivityMode } from '@/lib/agent-activity-preference'
-import { fleetActivitySegments, type FleetActivitySegment } from '@/lib/agent-activity'
-import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { fleetImageCache } from '@/lib/fleet/image-cache'
-import { latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
 import { runDuration, runExpiresInDays, runState, runTitle, runWorking, type RunState } from '@/lib/fleet/runs'
 import { emptyTranscript, runTranscriptKey } from '@/lib/fleet/state'
-import { transcriptSegmentKey } from '@/lib/fleet/transcript-search'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
-import { BotAgentActivity, TranscriptRow } from './BotConversation'
-import { BotTranscriptImages, FleetTranscriptRunContext } from './BotTranscriptImages'
+import { LaneTranscript } from './LaneTranscript'
 
 const pill: Record<RunState, string> = {
   running: 'border-sky-400/30 bg-sky-400/10 text-sky-300',
@@ -166,62 +157,10 @@ export function RoutineRunConversation({
     setError(null)
   }, [run.id])
 
-  // The transcript follows its end while the owner reads there, as the bot's conversation does.
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const atBottomRef = useRef(true)
-  const [atBottom, setAtBottom] = useState(true)
-  const oldHeightRef = useRef<number | null>(null)
-  const ownerWindow = useChatOwnerWindow()
-  useLayoutEffect(() => {
-    const node = scrollRef.current
-    if (!node || !visible) return
-    if (oldHeightRef.current !== null) {
-      node.scrollTop = node.scrollHeight - oldHeightRef.current
-      oldHeightRef.current = null
-    } else if (atBottomRef.current) node.scrollTop = node.scrollHeight
-  }, [transcript.items, visible])
-  useEffect(() => {
-    atBottomRef.current = true
-    setAtBottom(true)
-  }, [run.id])
-  useEffect(() => {
-    const node = scrollRef.current
-    const content = contentRef.current
-    if (!node || !content) return
-    const observer = new ResizeObserver(() => {
-      if (atBottomRef.current && node.clientHeight > 0) node.scrollTop = node.scrollHeight
-    })
-    observer.observe(node)
-    observer.observe(content)
-    return () => observer.disconnect()
-  }, [])
-  const holdReadingPosition = useCallback(() => {
-    atBottomRef.current = false
-    ownerWindow.requestAnimationFrame(() => {
-      const node = scrollRef.current
-      if (!node) return
-      atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
-      setAtBottom(atBottomRef.current)
-    })
-  }, [ownerWindow])
-
-  const compact = useAgentActivityMode() === 'compact'
-  const items = useMemo(() => visibleTranscriptItems(transcript.items), [transcript.items])
-  const segments = useMemo<FleetActivitySegment[]>(
-    () =>
-      compact
-        ? fleetActivitySegments(items, { working: state === 'running' })
-        : items.map((item) => ({ kind: 'item', item })),
-    [compact, items, state]
-  )
-  const latestTodoId = latestTodoItemId(items)
-  const host = useMemo<GenUiHost>(() => ({ live: state === 'running', send: undefined }), [state])
-  const removeQueued = useCallback(
-    async (inputId: string) => {
-      await window.api.fleetRemoveQueuedMessage(bot.id, inputId)
-      await loadRunTranscript(bot.id, run.id)
-    },
+  // After the owner writes, the transcript follows its end again.
+  const [follow, setFollow] = useState(0)
+  const load = useCallback(
+    (before?: string | null) => loadRunTranscript(bot.id, run.id, before),
     [bot.id, loadRunTranscript, run.id]
   )
 
@@ -233,7 +172,7 @@ export function RoutineRunConversation({
     try {
       await window.api.fleetSendRunMessage(bot.id, run.id, value)
       setDraft('')
-      atBottomRef.current = true
+      setFollow((value) => value + 1)
       await loadRunTranscript(bot.id, run.id).catch(() => {})
     } catch (cause) {
       setError(
@@ -408,123 +347,33 @@ export function RoutineRunConversation({
           </span>
         </div>
       )}
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          ref={scrollRef}
-          onScroll={(event) => {
-            const node = event.currentTarget
-            if (node.clientHeight === 0) return
-            atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
-            setAtBottom(atBottomRef.current)
-          }}
-          className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden"
-        >
-          <div ref={contentRef} className="mx-auto flex min-w-0 max-w-3xl flex-col gap-4 px-6 py-6">
-            {run.conversation === 'deleted' ? (
-              <DeletedRun bot={bot} run={run} />
-            ) : run.conversation === 'primary' ? (
-              <>
-                <p className="rounded-xl border border-dashed border-border-strong p-4 text-[13px] text-muted-foreground">
-                  {t('runs.detail.legacy', { name: bot.name })}
-                </p>
-                <RunReport run={run} />
-              </>
-            ) : (
-              <FleetTranscriptRunContext.Provider value={run.id}>
-                {transcript.error && (
-                  <div role="alert" className="text-center text-xs text-destructive">
-                    {t('runs.detail.transcriptFailed')}{' '}
-                    <button
-                      type="button"
-                      className="ml-2 text-primary underline"
-                      onClick={() => void loadRunTranscript(bot.id, run.id).catch(() => {})}
-                    >
-                      {t('runs.retry')}
-                    </button>
-                  </div>
-                )}
-                {transcript.before && (
-                  <button
-                    type="button"
-                    disabled={transcript.loading}
-                    className="self-center rounded-md border border-border px-3 py-1.5 text-xs"
-                    onClick={() => {
-                      oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
-                      void loadRunTranscript(bot.id, run.id, transcript.before).catch((cause) =>
-                        setError(fleetErrorMessage(cause))
-                      )
-                    }}
-                  >
-                    {t('transcript.loadOlder')}
-                  </button>
-                )}
-                {!transcript.loaded && transcript.loading && (
-                  <Loader2
-                    aria-hidden="true"
-                    className="mx-auto size-4 animate-spin text-muted-foreground motion-reduce:animate-none"
-                  />
-                )}
-                <GenUiContext.Provider value={host}>
-                  {segments.map((segment) => {
-                    const segmentKey = transcriptSegmentKey(segment)
-                    return (
-                      <div key={segmentKey} className="contents">
-                        {segment.kind === 'activity' ? (
-                          <BotAgentActivity
-                            bot={bot}
-                            segment={segment}
-                            imageCache={fleetImageCache}
-                            onShowOnComputer={onOpenScreen}
-                          />
-                        ) : segment.kind === 'images' ? (
-                          <BotTranscriptImages
-                            botId={bot.id}
-                            images={segment.item.images}
-                            cache={fleetImageCache}
-                            size="large"
-                          />
-                        ) : (
-                          <TranscriptRow
-                            bot={bot}
-                            item={segment.item}
-                            fleet={fleet}
-                            onOpenBot={onOpenBot}
-                            onOpenScreen={onOpenScreen}
-                            imageCache={fleetImageCache}
-                            latestTodoId={latestTodoId}
-                            routineSchedule={null}
-                            repeatedRoutine={false}
-                            onExpand={holdReadingPosition}
-                            removeQueuedMessage={removeQueued}
-                          />
-                        )}
-                      </div>
-                    )
-                  })}
-                </GenUiContext.Provider>
-                {!working && <RunReport run={run} />}
-              </FleetTranscriptRunContext.Provider>
-            )}
-          </div>
-        </div>
-        {!atBottom && segments.length > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              const node = scrollRef.current
-              if (!node) return
-              atBottomRef.current = true
-              setAtBottom(true)
-              node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
-            }}
-            title={t('chat:messages.goToBottom')}
-            aria-label={t('chat:messages.goToBottom')}
-            className="absolute bottom-3 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.1] bg-[#1a1a1f] text-foreground shadow-lg transition hover:bg-[#26262d]"
-          >
-            <ArrowDown className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+      <LaneTranscript
+        bot={bot}
+        fleet={fleet}
+        laneId={run.id}
+        transcript={transcript}
+        live={state === 'running'}
+        visible={visible}
+        follow={follow}
+        failedText={t('runs.detail.transcriptFailed')}
+        placeholder={
+          run.conversation === 'deleted' ? (
+            <DeletedRun bot={bot} run={run} />
+          ) : run.conversation === 'primary' ? (
+            <>
+              <p className="rounded-xl border border-dashed border-border-strong p-4 text-[13px] text-muted-foreground">
+                {t('runs.detail.legacy', { name: bot.name })}
+              </p>
+              <RunReport run={run} />
+            </>
+          ) : undefined
+        }
+        footer={!working && <RunReport run={run} />}
+        onLoad={load}
+        onOpenBot={onOpenBot}
+        onOpenScreen={onOpenScreen}
+        onError={(cause) => setError(fleetErrorMessage(cause))}
+      />
       {own && (
         <div className="border-t border-border px-4 py-3">
           <div className="mx-auto max-w-3xl">

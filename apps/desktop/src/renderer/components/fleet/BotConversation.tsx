@@ -11,7 +11,7 @@ import {
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { ownsTakeover, takeoverBlocksResume, UNKNOWN_BOT_TINT } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
 import { accountsExhaustedNotice, isComputerTool } from '@/lib/fleet/format'
 import {
@@ -31,6 +31,7 @@ import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 import { BotTranscriptFiles } from './BotTranscriptFiles'
 import { BotPeerMessage } from './BotPeerMessage'
+import { PeerThreadBridge } from './PeerThreadBridge'
 import { BotRoutineMessage } from './BotRoutineMessage'
 import { RoutineRunMarker, RunCitationChip } from './RoutineRunMarker'
 import { runTitle } from '@/lib/fleet/runs'
@@ -48,7 +49,6 @@ import { primaryWorking, runsInParallel, sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
 
 /** A bot this server no longer lists, or one in an environment this device cannot see. */
-const UNKNOWN_BOT_TINT = '#777'
 
 /** A bot's answer: each generated interface renders once its block is complete, and sends through the bot. */
 function BotAnswer({
@@ -198,6 +198,7 @@ export function TranscriptRow({
   repeatedRoutine,
   onExpand,
   onOpenRun,
+  onOpenThread,
   removeQueuedMessage,
 }: {
   bot: FleetBot
@@ -220,6 +221,8 @@ export function TranscriptRow({
   onExpand: () => void
   /** Opens the routine run an owner's message refers to. */
   onOpenRun?: (runId: string) => void
+  /** Opens the conversation with another bot that a message of the bot opened (`peer-conversations`). */
+  onOpenThread?: (threadId: string) => void
   /** Removes a queued message; a run's conversation removes its own. */
   removeQueuedMessage?: (inputId: string) => Promise<void>
 }) {
@@ -449,6 +452,20 @@ export function TranscriptRow({
     return <InteractionCard botId={bot.id} item={item} fleet={fleet} onOpenScreen={onOpenScreen} />
   if (item.kind === 'peer_out') {
     const peer = fleetBot(item.to.botId)
+    const threadId = item.thread?.id
+    if (threadId && onOpenThread) {
+      const threads = fleet.state.threads[bot.id]
+      return (
+        <PeerThreadBridge
+          bot={bot}
+          peer={{ name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+          text={item.text}
+          at={at}
+          thread={threads?.loaded ? (threads.threads.find((thread) => thread.id === threadId) ?? null) : undefined}
+          onOpen={() => onOpenThread(threadId)}
+        />
+      )
+    }
     return (
       <BotPeerMessage
         from={bot}
@@ -544,6 +561,7 @@ export function BotConversation({
   onOpenEnvironmentSettings,
   runMarkers = [],
   onOpenRun,
+  onOpenThread,
   citation = null,
   onClearCitation,
 }: {
@@ -560,6 +578,8 @@ export function BotConversation({
   /** Routine runs that finished, shown where they ended (`routine-conversations`); none before. */
   runMarkers?: FleetRoutineRun[]
   onOpenRun?: (runId: string) => void
+  /** Opens a conversation with another bot that this conversation opened (`peer-conversations`). */
+  onOpenThread?: (threadId: string) => void
   /** The run the owner's next message refers to, and how to drop it. */
   citation?: FleetRoutineRun | null
   onClearCitation?: () => void
@@ -974,6 +994,7 @@ export function BotConversation({
                         repeatedRoutine={repeatedRoutines.has(segment.item.id)}
                         onExpand={holdReadingPosition}
                         onOpenRun={onOpenRun}
+                        onOpenThread={onOpenThread}
                       />
                     )}
                   </div>,
