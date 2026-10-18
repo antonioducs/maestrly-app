@@ -50,6 +50,10 @@ User-visible changes by version. Downloads are on
   readable message, such as Gemini's, used to leave the response empty. A
   rejected key or exhausted credits now fail on the first request instead of
   being retried, and hovering the red status icon in the sidebar explains it.
+- Quitting Maestrly no longer hangs, leaving only its tray icon, while a Claude
+  sign-in is waiting for the browser or a pasted code: quitting cancels it.
+- A Claude sign-in left unfinished on Windows now gives up after 15 minutes, as
+  it already did on macOS and Linux, instead of waiting indefinitely.
 
 ## [0.20.0] - 2026-10-16
 

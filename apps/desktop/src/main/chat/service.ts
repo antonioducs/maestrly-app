@@ -6721,6 +6721,8 @@ function runClaudeDesktopLogin(
   })
   const transition = (async () => {
     await prepare()
+    // Quitting cancels the sign-ins already started and then awaits this transition: none may start after it.
+    if (chatDisposePromise) throw new Error('Chat service is shutting down')
     const login = await startClaudeDesktopLogin(manager)
     claudeDesktopLogins.set(providerId, login)
     announce(login)
@@ -11397,6 +11399,8 @@ export function disposeChat(): Promise<void> {
     abortAllCodexEphemeralAttempts()
     const claudeAttempts = listClaudeAttempts()
     for (const attempt of claudeAttempts) attempt.abort(new Error('Chat service is shutting down'))
+    // A sign-in ends only when its CLI exits; the identity transition awaited below waits for it.
+    for (const manager of listClaudeSubscriptionManagers()) manager.cancelLogin()
     for (const entry of internalTurns.values()) entry.cancel()
     const snapshot = [...active.entries()]
     const ids = new Set(snapshot.map(([id]) => id))

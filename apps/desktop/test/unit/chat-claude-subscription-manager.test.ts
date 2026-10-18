@@ -413,6 +413,28 @@ describe('Claude subscription manager', () => {
     expect(processCalls).not.toContainEqual(['auth', 'login', '--claudeai'])
   })
 
+  it('gives up a sign-in whose browser callback never arrives and frees the profile', async () => {
+    const { manager, dependencies } = fixture()
+    const runProcess = vi.mocked(dependencies.runProcess).getMockImplementation()!
+    let loginSignal: AbortSignal | undefined
+    vi.mocked(dependencies.runProcess).mockImplementation(async (executable, args, options) => {
+      if (args.join(' ') !== 'auth login --claudeai') return runProcess(executable, args, options)
+      loginSignal = options.signal
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        )
+      })
+    })
+
+    await expect(manager.login(undefined, { totalTimeoutMs: 20 })).resolves.toMatchObject({
+      ok: false,
+      error: 'Claude login did not complete.',
+    })
+    expect(loginSignal?.aborted).toBe(true)
+    await expect(manager.status({ refresh: true })).resolves.toMatchObject({ state: 'ready' })
+  })
+
   it('deletes sessions with an explicit isolated environment without mutating process.env', async () => {
     const ambient = process.env.CLAUDE_CONFIG_DIR
     const deleteSession = vi.fn(async (_sessionId, options) => {
