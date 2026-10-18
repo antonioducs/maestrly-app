@@ -59,3 +59,7 @@ export const FLEET_BOT_MOVE_UNSUPPORTED = 'FLEET_BOT_MOVE_UNSUPPORTED'
 export type FleetMoveBotInput = { environmentId: string } | { newEnvironment: { name: string } }
 /** Raised when the bot refuses an edit: it is busy, or the message is no longer its last one. */
 export const FLEET_EDIT_CONFLICT = 'FLEET_EDIT_CONFLICT'
+/** Raised when the gateway or the bot cannot keep routine runs in conversations of their own yet. */
+export const FLEET_RUNS_UNSUPPORTED = 'FLEET_RUNS_UNSUPPORTED'
+/** Raised when a routine run's conversation cannot change now: it is working, or it is gone. */
+export const FLEET_RUN_CONFLICT = 'FLEET_RUN_CONFLICT'

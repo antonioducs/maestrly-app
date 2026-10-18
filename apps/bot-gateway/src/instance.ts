@@ -19,6 +19,7 @@ import {
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
   FLEET_CHAT_ATTENTION_QUERY,
+  FLEET_ROUTINE_RUNS_QUERY,
   FLEET_REASONING_QUERY,
   fleetImageMediaTypeSchema,
   buildPath,
@@ -697,6 +698,20 @@ export class InstanceClient {
       { before, limit, [FLEET_REASONING_QUERY]: reasoning ? 1 : undefined }
     )
   }
+  /** A page of a routine run's own conversation (`routine-conversations`). */
+  runTranscript(runId: string, before?: string, limit = 200, reasoning = false) {
+    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to read its runs')
+    return this.call(
+      'botRunTranscript',
+      { botId: this.scope.botId, runId },
+      { before, limit, [FLEET_REASONING_QUERY]: reasoning ? 1 : undefined }
+    )
+  }
+  /** Deletes a routine run's conversation; the bot keeps its images and attachments in its folder. */
+  deleteRun(runId: string) {
+    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to delete runs')
+    return this.call('botRunDelete', { botId: this.scope.botId, runId }, undefined, undefined, 60000)
+  }
   async fileMeta(fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {
     if (!fleetFileIdSchema.safeParse(fileId).success || !this.scope)
       throw new GatewayError('INVALID_REQUEST', 'Invalid file request')
@@ -752,9 +767,14 @@ export class InstanceClient {
       throw new InstanceUnreachableError()
     }
   }
-  async image(imageId: string): Promise<Response> {
+  /** An image of the bot's conversation, or with `runId` of that routine run's (`routine-conversations`). */
+  async image(imageId: string, runId?: string | null): Promise<Response> {
     const path = this.scope?.environments
-      ? buildPath(FLEET_INSTANCE_ROUTES.botImage.path, { botId: this.scope.botId, imageId })
+      ? buildPath(
+          FLEET_INSTANCE_ROUTES.botImage.path,
+          { botId: this.scope.botId, imageId },
+          runId ? { run: runId } : undefined
+        )
       : buildPath(FLEET_INSTANCE_ROUTES.image.path, { imageId })
     try {
       const response = await fetch(this.origin + path, {
@@ -813,7 +833,13 @@ export class InstanceClient {
     let response: Response
     try {
       // The gateway reads `reasoning` items and passes them on only to devices that ask for them.
-      const query = { since, [FLEET_REASONING_QUERY]: 1, [FLEET_CHAT_ATTENTION_QUERY]: 1 }
+      // And the routine runs' own conversations, which it passes on as runs to devices that ask for them.
+      const query = {
+        since,
+        [FLEET_REASONING_QUERY]: 1,
+        [FLEET_CHAT_ATTENTION_QUERY]: 1,
+        [FLEET_ROUTINE_RUNS_QUERY]: 1,
+      }
       response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.events.path, {}, query), {
         headers: {
           [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),

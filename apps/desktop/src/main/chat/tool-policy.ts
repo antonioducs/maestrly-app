@@ -64,6 +64,7 @@ export const APP_TOOL_POLICY = {
   bot_routines_create: policy(false, false, false),
   bot_routines_update: policy(false, false, false),
   bot_routines_delete: policy(false, false, false),
+  bot_routines_runs: policy(true, true, false),
   // A fleet bot's reach into the owner's Macs: reads stay reads; changes pass the bot's own approval ceiling first,
   // then the grants and ceiling each Mac keeps for it.
   desktop_list_desktops: policy(true, true, false),

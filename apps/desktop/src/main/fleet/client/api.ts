@@ -197,10 +197,20 @@ export class FleetApiClient {
     }
   }
 
-  async getImage(botId: string, imageId: string): Promise<{ mediaType: string; data: Uint8Array }> {
+  /** An image of a bot's conversation, or with `runId` of that routine run's (`routine-conversations`). */
+  async getImage(
+    botId: string,
+    imageId: string,
+    runId?: string | null
+  ): Promise<{ mediaType: string; data: Uint8Array }> {
     let response: Response
+    const path = buildPath(
+      FLEET_GATEWAY_ROUTES.botImage.path,
+      { id: botId, imageId },
+      runId ? { run: runId } : undefined
+    )
     try {
-      response = await fetch(this.origin + buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }), {
+      response = await fetch(this.origin + path, {
         headers: this.headers(),
         signal: AbortSignal.timeout(15_000),
       })

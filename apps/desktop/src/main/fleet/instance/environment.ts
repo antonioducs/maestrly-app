@@ -109,6 +109,7 @@ import {
   writeInstalledBots,
 } from './registry'
 import { BotRuntime, loadFleetAccountOptions, visibleFleetModels, type BotRuntimeHost, type BotScreen } from './runtime'
+import { readRunConversationIds } from './routine-runs'
 import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
 import { SCREEN_ENCODER_PROGRAM } from './screen-encoder'
@@ -264,6 +265,8 @@ export class EnvironmentRuntime {
       capabilities: () => this.capabilities(),
       floatBrowser: (conversationId) => this.deps.floatBrowser(conversationId),
       present: (conversationId, request) => this.desktopOf(conversationId)?.present(request),
+      closeConversation: (conversationId) => this.deps.closeConversation(conversationId),
+      purgeConversation: (conversationId) => this.deps.purgeConversation(conversationId),
     }
   }
 
@@ -326,7 +329,7 @@ export class EnvironmentRuntime {
   /** The bot whose conversation this is, if any: tools, prompts and hooks of a conversation resolve their bot here. */
   botForConversation(conversationId: string | undefined): BotRuntime | null {
     if (!conversationId) return null
-    for (const bot of this.registry.values()) if (bot.primaryConversationId === conversationId) return bot
+    for (const bot of this.registry.values()) if (bot.ownsConversation(conversationId)) return bot
     return null
   }
   checkRuntimes(): void {
@@ -466,8 +469,8 @@ export class EnvironmentRuntime {
       this.registry.delete(botId)
       conversationId = bot.primaryConversationId
       await bot.cancel().catch((error: unknown) => log('error', errorMessage(error)))
-      if (conversationId)
-        await this.deps.closeConversation(conversationId).catch((error: unknown) => log('error', errorMessage(error)))
+      for (const id of [conversationId, ...bot.runs.list().map((record) => record.conversationId)])
+        if (id) await this.deps.closeConversation(id).catch((error: unknown) => log('error', errorMessage(error)))
       await bot.dispose({ uninstall: true })
       await this.stopScreens(botId)
     }
@@ -647,7 +650,8 @@ export class EnvironmentRuntime {
       const handle = await this.deps.desktop({
         botId: bot.botId,
         display,
-        conversationId: () => bot.primaryConversationId,
+        // The conversation the bot works in: a routine run's browser and terminals show while its turn runs.
+        conversationId: () => bot.activeConversationId,
         hold: () => bot.holdManager.state,
       })
       this.desktops.set(bot.botId, handle)
@@ -680,6 +684,11 @@ export class EnvironmentRuntime {
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */
   private async purge(botId: string, conversationId: string | null): Promise<void> {
+    // Its routine runs' conversations first: they work in its conversation's folder.
+    for (const runConversationId of await readRunConversationIds(
+      botPaths(this.deps.userData, this.deps.home, botId).runs
+    ))
+      await this.deps.purgeConversation(runConversationId)
     if (conversationId) {
       await this.deps.purgeConversation(conversationId)
       // A conversation an interrupted import left without its row still has its folder and files.

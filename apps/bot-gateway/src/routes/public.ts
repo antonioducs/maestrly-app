@@ -6,6 +6,8 @@ import {
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_HOST_DESKTOP_CALLS_FEATURE,
   FLEET_MCP_TEST_DETAIL_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  type FleetRoutineRunSettings,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
@@ -37,6 +39,7 @@ import {
   fleetHostConversationIdSchema,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
+  fleetReaderWantsRoutineRuns,
   normalizePairingCode,
   type FleetBotMoveRequest,
   type FleetCreateBotRequest,
@@ -321,6 +324,54 @@ export async function publicRoute(
     case 'botRoutineRuns':
       requireBot(ctx, id)
       return { body: { runs: ctx.routines!.runs(id, params.rid) } }
+    // Routine runs with conversations of their own (`routine-conversations`).
+    case 'botRuns':
+      requireBot(ctx, id)
+      return {
+        body: ctx.routines!.page(id, {
+          before: url.searchParams.get('before'),
+          limit: number(url.searchParams.get('limit'), 200, 100),
+          routineId: url.searchParams.get('routineId'),
+        }),
+      }
+    case 'botRunGet':
+      requireBot(ctx, id)
+      return { body: ctx.routines!.get(id, params.runId) }
+    case 'botRunPatch':
+      requireBot(ctx, id)
+      return { body: ctx.routines!.setPinned(id, params.runId, (body as { pinned: boolean }).pinned) }
+    case 'botRunConversationDelete':
+      requireBot(ctx, id)
+      return { body: await ctx.routines!.deleteConversation(id, params.runId) }
+    case 'botRunTranscript':
+      requireBot(ctx, id)
+      return {
+        body: await ctx.routines!.transcript(
+          id,
+          params.runId,
+          url.searchParams.get('before') ?? undefined,
+          number(url.searchParams.get('limit'), 500, 200),
+          fleetReaderWantsReasoning(url.searchParams)
+        ),
+      }
+    case 'botRunMessageSend': {
+      requireBot(ctx, id)
+      const input = body as FleetSendMessageRequest
+      if (
+        input.attachments.some((attachment) => attachment.kind && attachment.kind !== 'image') &&
+        !ctx.lifecycle.statuses.get(id)?.capabilities.includes(FLEET_FILES_FEATURE)
+      )
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to send documents')
+      const hash = createHash('sha256')
+        .update(JSON.stringify({ runId: params.runId, ...input }))
+        .digest('hex')
+      return ownerMessage(ctx, id, 'botRunMessageSend:' + id, input.idempotencyKey, hash, () =>
+        ctx.routines!.message(id, params.runId, input)
+      )
+    }
+    case 'botRunSettings':
+      requireBot(ctx, id)
+      return { body: ctx.routines!.saveSettings(id, body as FleetRoutineRunSettings) }
     case 'ownerMemoryList':
       return { body: ctx.ownerMemory!.list(url.searchParams.get('status') === 'active' ? 'active' : 'all') }
     case 'ownerMemoryCreate': {
@@ -376,6 +427,7 @@ export async function publicRoute(
             FLEET_HOST_DESKTOP_CALLS_FEATURE,
             FLEET_BOT_MOVE_FEATURE,
             FLEET_MCP_TEST_DETAIL_FEATURE,
+            FLEET_ROUTINE_CONVERSATIONS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -716,7 +768,8 @@ export async function publicRoute(
       }
     }
     case 'botImage': {
-      const response = await ctx.lifecycle.instanceFor(id).image(params.imageId)
+      const run = url.searchParams.get('run')
+      const response = await ctx.lifecycle.instanceFor(id).image(params.imageId, run)
       const mediaType = response.headers.get('content-type')!
       const expected = Number(response.headers.get('content-length'))
       res.writeHead(200, {
@@ -758,12 +811,17 @@ export async function publicRoute(
         }),
       }
       const hash = createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex')
+      // A message that refers to a run tells the bot which one, for it to read.
+      if (input.citation && !ctx.lifecycle.statuses.get(id)?.capabilities.includes(FLEET_ROUTINE_CONVERSATIONS_FEATURE))
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to refer to its routine runs')
+      const citation = input.citation ? ctx.routines!.citation(id, input.citation.runId) : undefined
       return ownerMessage(ctx, id, scope, input.idempotencyKey, hash, () =>
         ctx.lifecycle.instanceFor(id).postInput({
           text: input.text,
           attachments: input.attachments,
           idempotencyKey: input.idempotencyKey,
           source: 'owner',
+          ...(citation ? { citation } : {}),
         })
       )
     }
@@ -875,6 +933,7 @@ export async function publicRoute(
         reasoning: fleetReaderWantsReasoning(url.searchParams),
         // A Mac that answers desktop calls says so; until it does, it is offline for the bots it linked.
         desktopBridge: url.searchParams.get(FLEET_DESKTOP_BRIDGE_QUERY) === '1',
+        routineRuns: fleetReaderWantsRoutineRuns(url.searchParams),
       })
       return { stream: true }
     default:

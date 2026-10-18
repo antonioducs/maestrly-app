@@ -72,8 +72,11 @@ beforeEach(async () => {
       res
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ deviceId: 'device', token: 'valid' }))
-    } else if (req.url === '/v1/events?reasoning=1' || req.url === '/v1/events?reasoning=1&desktopBridge=1') {
-      // Only the stream that asks for `reasoning` transcript items is served: the app must always ask.
+    } else if (
+      req.url === '/v1/events?reasoning=1&routineRuns=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&desktopBridge=1'
+    ) {
+      // Only the stream that asks for `reasoning` transcript items and routine runs is served: the app must always ask.
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
       res.write(': ping\n\nevent: fleet\ndata: {"type":"hello","at":"2026-01-01T00:00:00Z","lastActivitySeq":2}\n\n')
       if (!holdEvents) setTimeout(() => res.end(), 20)
@@ -174,6 +177,9 @@ describe('fleet API and events', () => {
     })
     expect(requests.at(-1)).toMatchObject({ url: '/v1/bots/bot/images/t-png', auth: 'Bearer valid', protocol: '1' })
     await expect(api.getImage('bot', 'missing')).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 })
+    // A routine run's image is read from its own conversation.
+    await api.getImage('bot', 't-png', 'run-1').catch(() => {})
+    expect(requests.at(-1)).toMatchObject({ url: '/v1/bots/bot/images/t-png?run=run-1' })
   })
   it('uses allowed URLs and route schemas with protocol and authorization headers', async () => {
     expect(isAllowedFleetUrl(origin).ok).toBe(true)
@@ -262,7 +268,9 @@ describe('fleet API and events', () => {
     events.start()
     await vi.waitFor(() => expect(seen).toContain('hello'))
     events.stop()
-    expect(requests.some((request) => request.url === '/v1/events?reasoning=1&desktopBridge=1')).toBe(true)
+    expect(requests.some((request) => request.url === '/v1/events?reasoning=1&routineRuns=1&desktopBridge=1')).toBe(
+      true
+    )
   })
 
   it('parses SSE comments and frames and stops on 401 or 426', async () => {

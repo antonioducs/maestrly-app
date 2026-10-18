@@ -17,7 +17,7 @@ import {
   type StoredChatMessage,
 } from '../../chat/chat-store'
 import { imageId, type FleetImageStore } from './images'
-import type { InstanceInputQueue, QueuedInput } from './queue'
+import type { QueuedInput, TranscriptQueue } from './queue'
 import {
   projectMessages,
   transcriptPage,
@@ -61,7 +61,8 @@ export class LiveTranscript {
   constructor(
     private readonly options: {
       conversationId: () => string | null
-      queue: InstanceInputQueue
+      /** The inputs of this conversation. */
+      queue: TranscriptQueue
       extras: InstanceTranscriptExtras
       images: FleetImageStore
       publish: (item: FleetTranscriptItem) => void

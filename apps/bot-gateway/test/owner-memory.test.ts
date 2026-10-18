@@ -46,7 +46,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   // Schema 6 gives every bot an environment of one: bots and activity gain environment columns and the control token
   // and keyring password move from bot_secrets to environment_secrets. Schema 7 makes the bot's compaction model its
   // environment's default, which the bot then inherits. Schema 15 adds what kind of device each one is, unknown for
-  // these. Every other v4 value stays as it was.
+  // these, and schema 18 the bots' routine run settings, unset. Every other v4 value stays as it was.
   const migrated = {
     ...before,
     devices: before.devices.map((row) => ({ ...row, kind: null, platform: null })),
@@ -57,6 +57,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
       slot: 1,
       archived_with_environment: 0,
       publish_artifacts: 0,
+      run_settings_json: null,
     })),
     bot_secrets: before.bot_secrets.map((row) => ({
       bot_id: row.bot_id,
@@ -67,7 +68,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   }
   let store = new Store(dir)
   const version = () => store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()
-  expect(version()).toEqual({ value: '17' })
+  expect(version()).toEqual({ value: '18' })
   expect(snapshot(store.db)).toEqual(migrated)
   expect(store.getEnvironment('bot-1')?.compaction).toEqual({ enabled: true })
   expect(store.environmentSecrets('bot-1')).toEqual({
@@ -88,7 +89,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   const migratedMeta = store.db.prepare('SELECT * FROM meta ORDER BY key').all()
   store.close()
   store = new Store(dir)
-  expect(version()).toEqual({ value: '17' })
+  expect(version()).toEqual({ value: '18' })
   expect(snapshot(store.db)).toEqual(migrated)
   expect(store.db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(schema)
   expect(store.db.prepare('SELECT * FROM meta ORDER BY key').all()).toEqual(migratedMeta)

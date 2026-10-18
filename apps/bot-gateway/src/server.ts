@@ -172,9 +172,16 @@ export function createGatewayServers(ctx: GatewayContext) {
     hostEditor,
     revokeDevice,
   }
-  ctx.lifecycle.onTurnFinished = (id, event) => {
-    if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
-  }
+  ctx.lifecycle.onTurnFinished = (id, event) =>
+    event.inputId
+      ? routines.finishRun(id, {
+          inputId: event.inputId,
+          outcome: event.outcome,
+          text: event.text,
+          runId: event.runId,
+          media: event.media,
+        })
+      : undefined
   ctx.lifecycle.onReady = (id) => {
     void peers.retry(id)
   }
@@ -238,7 +245,10 @@ export function createGatewayServers(ctx: GatewayContext) {
                 ? FLEET_ARTIFACT_BODY_MAX
                 : !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
                   ? FLEET_SKILL_BODY_MAX
-                  : !internal && (match.key === 'botMessageSend' || match.key === 'botMessageEdit')
+                  : !internal &&
+                      (match.key === 'botMessageSend' ||
+                        match.key === 'botMessageEdit' ||
+                        match.key === 'botRunMessageSend')
                     ? FLEET_MESSAGE_BODY_MAX
                     : !internal && match.key === 'desktopCallResult'
                       ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
@@ -288,6 +298,18 @@ export function createGatewayServers(ctx: GatewayContext) {
             case 'routineDelete':
               routines.delete(caller!, match.params.rid, 'bot')
               status = 204
+              break
+            // A bot reads its own runs, as its conversations show them to the owner.
+            case 'routineRunsList':
+              result = routines.page(caller!, {
+                before: url.searchParams.get('before'),
+                limit: Number(url.searchParams.get('limit') ?? 10) || 10,
+                routineId: url.searchParams.get('routineId'),
+              })
+              break
+            case 'routineRunGet':
+              result = routines.get(caller!, match.params.runId)
+              break
           }
           send(res, status, match.route.response?.parse(result) ?? result)
         } else if (match.key.startsWith('ownerMemory')) {

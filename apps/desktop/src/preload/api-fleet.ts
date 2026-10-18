@@ -26,6 +26,8 @@ import type {
   FleetOwnerMemoryEntry,
   FleetOwnerMemoryPatchRequest,
   FleetRoutineRun,
+  FleetRoutineRunPage,
+  FleetRoutineRunSettings,
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
   FleetArchivedBot,
@@ -159,6 +161,8 @@ export type {
   FleetOwnerMemoryEntry,
   FleetOwnerMemoryPatchRequest,
   FleetRoutineRun,
+  FleetRoutineRunPage,
+  FleetRoutineRunSettings,
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
   FleetBot,
@@ -319,14 +323,47 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:remove-account', target, providerId),
   fleetGetTranscript: (botId: string, before?: string | null, limit?: number): Promise<FleetTranscriptPage> =>
     ipcRenderer.invoke('fleet:getTranscript', botId, before, limit),
+  /** With `citation`, the message refers to one of the bot's routine runs, which the bot reads to answer. */
   fleetSendMessage: (
     botId: string,
     text: string,
+    attachments: FleetOutgoingAttachment[] = [],
+    citation: string | null = null
+  ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
+    ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments, citation),
+  /** An image of the bot's conversation, or with `runId` of that routine run's. */
+  fleetGetImage: (botId: string, imageId: string, runId: string | null = null): Promise<FleetImageData> =>
+    ipcRenderer.invoke('fleet:getImage', botId, imageId, runId),
+  /** The bot's routine runs, newest first, a page at a time (`routine-conversations`). */
+  fleetListRuns: (
+    botId: string,
+    before: string | null = null,
+    routineId: string | null = null
+  ): Promise<FleetRoutineRunPage> => ipcRenderer.invoke('fleet:listRuns', botId, before, routineId),
+  fleetGetRun: (botId: string, runId: string): Promise<FleetRoutineRun> =>
+    ipcRenderer.invoke('fleet:getRun', botId, runId),
+  fleetGetRunTranscript: (
+    botId: string,
+    runId: string,
+    before?: string | null,
+    limit?: number
+  ): Promise<FleetTranscriptPage> => ipcRenderer.invoke('fleet:getRunTranscript', botId, runId, before, limit),
+  /** A run kept is never deleted on its own. */
+  fleetPinRun: (botId: string, runId: string, pinned: boolean): Promise<FleetRoutineRun> =>
+    ipcRenderer.invoke('fleet:pinRun', botId, runId, pinned),
+  /** Deletes the run's conversation; its report and files stay. Rejects with FLEET_RUN_CONFLICT while it works. */
+  fleetDeleteRunConversation: (botId: string, runId: string): Promise<FleetRoutineRun> =>
+    ipcRenderer.invoke('fleet:deleteRunConversation', botId, runId),
+  /** The owner's message in the run's conversation, which the bot answers there. */
+  fleetSendRunMessage: (
+    botId: string,
+    runId: string,
+    text: string,
     attachments: FleetOutgoingAttachment[] = []
   ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
-    ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
-  fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
-    ipcRenderer.invoke('fleet:getImage', botId, imageId),
+    ipcRenderer.invoke('fleet:sendRunMessage', botId, runId, text, attachments),
+  fleetSetRunSettings: (botId: string, settings: FleetRoutineRunSettings): Promise<FleetRoutineRunSettings> =>
+    ipcRenderer.invoke('fleet:setRunSettings', botId, settings),
   /** Resolves with a receipt; joins the transfer already running for the file instead of starting another. */
   fleetDownloadFile: (botId: string, fileId: string): Promise<string> =>
     ipcRenderer.invoke('fleet:downloadFile', botId, fileId),

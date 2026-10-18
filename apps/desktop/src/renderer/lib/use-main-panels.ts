@@ -18,7 +18,8 @@ import { memoryKeyFor, memoryTargetOf, type OpenMemoryRequest, personalMemoryKey
 import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
 
 export type FleetView =
-  | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
+  /** `runs` shows the bot's routine runs, `runId` one of them. */
+  | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' | 'runs'; runId?: string }
   | {
       kind: 'environment'
       environmentId: string

@@ -318,6 +318,35 @@ export const fleetBotMoveSchema = z.object({
 })
 export type FleetBotMove = z.infer<typeof fleetBotMoveSchema>
 
+/**
+ * How a bot keeps the conversations of its routine runs (`routine-conversations`). A finished run's conversation is
+ * deleted `retentionDays` after its last activity (never with null); with `capPerRoutine`, only a routine's newest
+ * `FLEET_ROUTINE_RUN_LIMITS.keepPerRoutine` runs stay; with `quietEarly`, a run that reported nothing new keeps its
+ * conversation `quietRetentionDays`. Kept runs (`pinned`) are never deleted on their own. `notify` says which finished
+ * runs the owner hears about: in the bot's conversation and by push.
+ */
+export const fleetRoutineRunSettingsSchema = z.object({
+  retentionDays: z.union([z.literal(30), z.literal(60), z.literal(90)]).nullable(),
+  capPerRoutine: z.boolean(),
+  quietEarly: z.boolean(),
+  notify: z.enum(['notable', 'all', 'none']),
+})
+export type FleetRoutineRunSettings = z.infer<typeof fleetRoutineRunSettingsSchema>
+export const FLEET_ROUTINE_RUN_SETTINGS_DEFAULT: FleetRoutineRunSettings = {
+  retentionDays: 30,
+  capPerRoutine: true,
+  quietEarly: true,
+  notify: 'notable',
+}
+/** The routine run a bot is working on now, in its own conversation. */
+export const fleetRunningRoutineRunSchema = z.object({
+  id: fleetIdSchema,
+  routineId: fleetIdSchema,
+  title: z.string(),
+  startedAt: fleetTimestampSchema.nullable(),
+})
+export type FleetRunningRoutineRun = z.infer<typeof fleetRunningRoutineRunSchema>
+
 export const fleetBotSchema = z.object({
   id: fleetBotIdSchema,
   name: fleetNameSchema,
@@ -364,6 +393,10 @@ export const fleetBotSchema = z.object({
   environmentId: fleetEnvironmentIdSchema.nullable().default(null),
   /** Its move to another environment while one runs; null otherwise, and from gateways without `bot-move`. */
   move: fleetBotMoveSchema.nullable().default(null),
+  /** How it keeps its routine runs' conversations; null from gateways without `routine-conversations`. */
+  runSettings: fleetRoutineRunSettingsSchema.nullable().default(null),
+  /** The routine run its turn works on now, in the run's own conversation; null otherwise. */
+  runningRun: fleetRunningRoutineRunSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -554,8 +587,34 @@ export const fleetRoutineRunReportSchema = z.object({
   summary: z.string().trim().min(1).max(FLEET_ROUTINE_RUN_LIMITS.summaryMax),
   pending: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.pendingMax).nullable(),
   notes: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.notesMax).nullable(),
+  /** The run found nothing new: its history groups it with the others like it, and the owner is not alerted. */
+  quiet: z.boolean().optional(),
 })
 export type FleetRoutineRunReport = z.infer<typeof fleetRoutineRunReportSchema>
+/** What a run's conversation produced that the owner sees: images, videos and other files. */
+export const fleetRoutineRunMediaSchema = z.object({
+  images: fleetNonNegativeIntSchema,
+  videos: fleetNonNegativeIntSchema,
+  files: fleetNonNegativeIntSchema,
+})
+export type FleetRoutineRunMedia = z.infer<typeof fleetRoutineRunMediaSchema>
+/**
+ * What stays of a run whose conversation was deleted, besides its report: the images and attachments copied to
+ * `folder` (relative to the bot's conversation folder) and the files the run had shared, which were already there.
+ */
+export const fleetRoutineRunKeptSchema = z.object({
+  folder: z.string().max(400),
+  files: z
+    .array(
+      z.object({
+        name: z.string().max(200),
+        kind: z.enum(['image', 'video', 'file']),
+        byteSize: fleetNonNegativeIntSchema.nullable(),
+      })
+    )
+    .max(FLEET_ROUTINE_RUN_LIMITS.keptFilesMax),
+})
+export type FleetRoutineRunKept = z.infer<typeof fleetRoutineRunKeptSchema>
 export const fleetRoutineRunSchema = z.object({
   id: fleetIdSchema,
   routineId: fleetIdSchema,
@@ -566,8 +625,35 @@ export const fleetRoutineRunSchema = z.object({
   finishedAt: fleetTimestampSchema.nullable(),
   report: fleetRoutineRunReportSchema.nullable(),
   finalText: z.string().max(FLEET_ROUTINE_RUN_LIMITS.finalTextMax).nullable(),
+  // From gateways with `routine-conversations`; the defaults describe a run in the bot's conversation.
+  /** The routine's title when it ran: a run outlives its routine. */
+  routineTitle: z.string().max(FLEET_ROUTINE_TITLE_MAX).nullable().default(null),
+  /**
+   * Where it ran: `primary`, the bot's conversation (runs before `routine-conversations`); `own`, a conversation of its
+   * own that the owner may read and continue; `deleted`, one that was deleted, its report and files kept.
+   */
+  conversation: z.enum(['primary', 'own', 'deleted']).default('primary'),
+  quiet: z.boolean().default(false),
+  /** The owner keeps it: its conversation is never deleted on its own. */
+  pinned: z.boolean().default(false),
+  /** The last turn in its conversation, or the owner's last message there; retention counts from it. */
+  lastActivityAt: fleetTimestampSchema.nullable().default(null),
+  /** When retention deletes its conversation; null while it runs, kept, deleted or kept forever. */
+  expiresAt: fleetTimestampSchema.nullable().default(null),
+  conversationDeletedAt: fleetTimestampSchema.nullable().default(null),
+  media: fleetRoutineRunMediaSchema.nullable().default(null),
+  kept: fleetRoutineRunKeptSchema.nullable().default(null),
+  /** Messages the owner sent in its conversation after it started. */
+  adjustments: fleetNonNegativeIntSchema.default(0),
 })
 export type FleetRoutineRun = z.infer<typeof fleetRoutineRunSchema>
+/** A routine run an owner's message refers to, as the bot's conversation shows it. */
+export const fleetRoutineRunCitationSchema = z.object({
+  runId: fleetIdSchema,
+  routineTitle: z.string().max(FLEET_ROUTINE_TITLE_MAX),
+  at: fleetTimestampSchema,
+})
+export type FleetRoutineRunCitation = z.infer<typeof fleetRoutineRunCitationSchema>
 export const fleetRoutinePreviousRunSchema = z.object({
   at: fleetTimestampSchema,
   status: fleetRoutineRunStatusSchema,
@@ -617,6 +703,8 @@ export const fleetUserTranscriptItemSchema = z.object({
     .default([]),
   images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
   files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
+  /** The routine run the owner's message refers to (`routine-conversations`). */
+  citation: fleetRoutineRunCitationSchema.optional(),
 })
 
 export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
@@ -711,6 +799,8 @@ export const fleetTranscriptPageSchema = z.object({
 })
 export type FleetTranscriptPage = z.infer<typeof fleetTranscriptPageSchema>
 
+/** The routine run whose conversation an interaction belongs to (`routine-conversations`); absent for the bot's own. */
+const interactionRun = { runId: fleetIdSchema.optional() }
 export const fleetPendingInteractionSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('permission'),
@@ -720,6 +810,7 @@ export const fleetPendingInteractionSchema = z.discriminatedUnion('kind', [
     detail: z.string().nullable(),
     tool: fleetPermissionToolSchema.nullable().default(null),
     itemId: fleetIdSchema,
+    ...interactionRun,
   }),
   z.object({
     kind: z.literal('question'),
@@ -727,6 +818,7 @@ export const fleetPendingInteractionSchema = z.discriminatedUnion('kind', [
     at: fleetTimestampSchema,
     questions: z.array(fleetQuestionSchema),
     itemId: fleetIdSchema,
+    ...interactionRun,
   }),
   z.object({
     kind: z.literal('help'),
@@ -734,6 +826,7 @@ export const fleetPendingInteractionSchema = z.discriminatedUnion('kind', [
     at: fleetTimestampSchema,
     reason: z.string(),
     itemId: fleetIdSchema,
+    ...interactionRun,
   }),
 ])
 export type FleetPendingInteraction = z.infer<typeof fleetPendingInteractionSchema>
@@ -1013,6 +1106,32 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
     at: fleetTimestampSchema,
     botId: fleetBotIdSchema,
     links: z.array(fleetDesktopLinkViewSchema).max(FLEET_DESKTOP_BRIDGE_LIMITS.linksPerBotMax),
+  }),
+  // Routine runs (`routine-conversations`): sent only to the streams that asked for them (`routineRuns=1`).
+  z.object({
+    type: z.literal('routine_run.updated'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    run: fleetRoutineRunSchema,
+  }),
+  z.object({
+    type: z.literal('routine_run.removed'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    runId: fleetIdSchema,
+  }),
+  z.object({
+    type: z.literal('routine_run.transcript.upsert'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    runId: fleetIdSchema,
+    item: fleetTranscriptItemSchema,
+  }),
+  z.object({
+    type: z.literal('routine_run.transcript.reset'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    runId: fleetIdSchema,
   }),
 ])
 export type FleetGatewayEvent = z.infer<typeof fleetGatewayEventSchema>

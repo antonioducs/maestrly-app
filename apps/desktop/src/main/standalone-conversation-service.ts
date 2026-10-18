@@ -5,7 +5,7 @@ import { app } from 'electron'
 import type { StandaloneConversation } from '../shared/conversation'
 import { createStandaloneConversationSchema } from '../shared/standalone-conversation'
 import { standaloneConversationRelPath } from './app-paths'
-import { insertConversation } from './store'
+import { getConversation, insertConversation } from './store'
 import { getMainLocale } from './i18n'
 import { initialStandaloneChatMode } from './chat/new-chat-defaults'
 
@@ -64,13 +64,65 @@ export async function createStandaloneConversation(payload: unknown): Promise<St
   return conversation
 }
 
+/**
+ * A standalone conversation that works in another one's managed folder, as a bot's routine run works in its bot's: the
+ * folder stays the owner's, so deleting this conversation leaves it. The owner works in its own folder.
+ */
+export async function createStandaloneConversationInFolderOf(
+  ownerId: string,
+  name: string
+): Promise<StandaloneConversation> {
+  const owner = getConversation(ownerId)
+  if (owner?.scope !== 'standalone') throw new Error('The folder owner is not a standalone chat.')
+  await managedRoot(true)
+  const cwd = await ownFolder(owner)
+  await assertDirectory(cwd)
+  const now = Date.now()
+  const conversation: StandaloneConversation = {
+    id: randomUUID(),
+    scope: 'standalone',
+    workspaceId: null,
+    branch: null,
+    mode: null,
+    experience: 'standard',
+    isMulti: 0,
+    cwd,
+    name: createStandaloneConversationSchema.parse({ name: name.trim().slice(0, 200) }).name!,
+    status: 'idle',
+    createdAt: now,
+    lastActivityAt: now,
+    archived: 0,
+    pinnedAt: null,
+    uiPrefs: { autoName: false, chat: { mode: initialStandaloneChatMode(), permMode: 'ask' } },
+    folderOwnerId: owner.id,
+  }
+  insertConversation(conversation)
+  return conversation
+}
+
+/** The managed folder of a conversation that owns one: named by its id, and never another's. */
+async function ownFolder(conversation: StandaloneConversation): Promise<string> {
+  const base = await fs.realpath(app.getPath('userData'))
+  const expected = standaloneConversationRelPath(base, conversation.id)
+  if (conversation.folderOwnerId || conversation.cwd !== expected) throw new Error('Unsafe standalone chat directory.')
+  return expected
+}
+
+/** The managed folder a conversation works in: its own, or its folder owner's while that owner is a standalone chat. */
+async function workingFolder(conversation: StandaloneConversation): Promise<string> {
+  if (!conversation.folderOwnerId) return ownFolder(conversation)
+  const owner = getConversation(conversation.folderOwnerId)
+  if (owner?.scope !== 'standalone') throw new Error('Unsafe standalone chat directory.')
+  const expected = await ownFolder(owner)
+  if (conversation.cwd !== expected) throw new Error('Unsafe standalone chat directory.')
+  return expected
+}
+
 /** Admission may recover missing artifacts, but never substitutes another execution directory. */
 export async function ensureStandaloneConversationDirectory(
   conversation: StandaloneConversation
 ): Promise<{ cwd: string; recreated: boolean }> {
-  const base = await fs.realpath(app.getPath('userData'))
-  const expected = standaloneConversationRelPath(base, conversation.id)
-  if (conversation.cwd !== expected) throw new Error('Unsafe standalone chat directory.')
+  const expected = await workingFolder(conversation)
   await managedRoot(true)
   let recreated = false
   try {
@@ -92,18 +144,16 @@ export async function ensureStandaloneConversationDirectory(
 
 /** Never trust a database cwd as a deletion target. A failed validation preserves the row. */
 export async function validateStandaloneConversationDirectory(conversation: StandaloneConversation): Promise<string> {
-  const base = await fs.realpath(app.getPath('userData'))
-  const expected = standaloneConversationRelPath(base, conversation.id)
-  if (conversation.cwd !== expected) throw new Error('Unsafe standalone chat directory.')
+  const expected = await workingFolder(conversation)
   await managedRoot(false)
   await assertDirectory(expected)
   return expected
 }
 
+/** Removes a conversation's own managed folder; one that works in another's folder has none and leaves it. */
 export async function removeStandaloneConversationDirectory(conversation: StandaloneConversation): Promise<void> {
-  const base = await fs.realpath(app.getPath('userData'))
-  const expected = standaloneConversationRelPath(base, conversation.id)
-  if (conversation.cwd !== expected) throw new Error('Unsafe standalone chat directory.')
+  if (conversation.folderOwnerId) return
+  const expected = await ownFolder(conversation)
   try {
     await validateStandaloneConversationDirectory(conversation)
   } catch (error) {

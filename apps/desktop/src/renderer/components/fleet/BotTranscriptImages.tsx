@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ImageOff, RotateCw } from 'lucide-react'
 import type { FleetImageRef } from '@maestrly/bot-fleet-protocol'
 import { ChatImageLightbox } from '@/components/chat/ChatImageLightbox'
 import { holdFleetImage, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { isImageNotFound } from '@/lib/fleet/errors'
+
+/** The routine run whose conversation a transcript shows: its images are read from there. */
+export const FleetTranscriptRunContext = createContext<string | null>(null)
 
 /** `tile`: a small square that opens the image. `large`: the image itself, for what the bot shared with the owner. */
 type ImageSize = 'tile' | 'large'
@@ -26,13 +29,19 @@ function ImageTile({
   const [failure, setFailure] = useState<'missing' | 'error' | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [open, setOpen] = useState(false)
+  const runId = useContext(FleetTranscriptRunContext)
   useEffect(() => {
     setUrl(null)
     setFailure(null)
-    return holdFleetImage(cache, botId, image.id, setUrl, (cause) =>
-      setFailure(isImageNotFound(cause) ? 'missing' : 'error')
+    return holdFleetImage(
+      cache,
+      botId,
+      image.id,
+      setUrl,
+      (cause) => setFailure(isImageNotFound(cause) ? 'missing' : 'error'),
+      runId
     )
-  }, [botId, image.id, cache, attempt])
+  }, [botId, image.id, cache, attempt, runId])
   if (failure)
     return (
       // Wider than a thumbnail so the explanation fits on two short lines.

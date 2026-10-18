@@ -122,6 +122,8 @@ describe('push notifications', () => {
     })
     h.notifier.observe(activity('atlas', 'turn_completed', { source: 'owner' }, 1))
     h.notifier.observe(activity('ledger', 'turn_completed', { source: 'routine' }, 2))
+    // A run that found nothing new, or that its bot keeps quiet, sends nothing.
+    h.notifier.observe(activity('ledger', 'turn_completed', { source: 'routine', runId: 'r', alert: false }, 6))
     h.notifier.observe(activity('ledger', 'turn_completed', { source: 'peer' }, 3))
     h.notifier.observe(activity('atlas', 'turn_failed', {}, 4))
     h.notifier.observe(activity('atlas', 'bot_failed', {}, 5))

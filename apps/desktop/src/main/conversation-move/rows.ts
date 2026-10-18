@@ -153,7 +153,11 @@ export function insertConversationRows(
  * Inserts a moved standalone conversation (a fleet bot's) with its own ids, working in `cwd`, its managed folder on
  * this host; in one transaction.
  */
-export function insertStandaloneConversationRows(rows: MoveRows, cwd: string): void {
+export function insertStandaloneConversationRows(
+  rows: MoveRows,
+  cwd: string,
+  options: { folderOwnerId?: string } = {}
+): void {
   const { conversation } = rows
   transaction(() => {
     if (getConversation(conversation.id))
@@ -174,6 +178,7 @@ export function insertStandaloneConversationRows(rows: MoveRows, cwd: string): v
       lastActivityAt: conversation.lastActivityAt,
       isMulti: 0,
       uiPrefs: conversation.uiPrefs,
+      ...(options.folderOwnerId ? { folderOwnerId: options.folderOwnerId } : {}),
     })
     insertConversationTables(rows)
   })

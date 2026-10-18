@@ -13,6 +13,8 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 import { requestOwnerHelp, botRuntimeForConversation } from '../../fleet/instance'
+import { runConversationText } from '../../fleet/instance/run-files'
+import { getConversation } from '../../store'
 import { gatewayRequest, keyForToolCall, type GatewayConfig } from '../../fleet/instance/gateway-client'
 import { OwnerMemoryClient } from '../../fleet/instance/owner-memory'
 import { isBotMode } from '../../fleet/instance/config'
@@ -174,7 +176,10 @@ export function registerBotInstanceTools(
       }
     }
   )
-  const routineDescription = `A routine runs on the server at its time as a new "Scheduled routine" message in this conversation, even while the owner's computer is off. Write a self-contained prompt. Each run is a full turn using the owner's model quota; intervals are at least ${FLEET_ROUTINE_LIMITS.intervalMinMinutes} minutes, so choose the longest that works. A run is skipped while its previous run is unfinished. The owner may need to approve this call. You may create at most ${FLEET_ROUTINE_LIMITS.botCreatedMax} routines. The owner sees routines marked as bot-created in Settings → Routines and can edit or delete any; you may change or delete only ones you created.`
+  const runsWhere = bot()?.routineConversations
+    ? 'in a conversation of its own, separate from this one: the owner reads it there, can ask you for changes in it afterwards, and you read past runs with bot_routines_runs'
+    : 'as a new "Scheduled routine" message in this conversation'
+  const routineDescription = `A routine runs on the server at its time ${runsWhere}, even while the owner's computer is off. Write a self-contained prompt. Each run is a full turn using the owner's model quota; intervals are at least ${FLEET_ROUTINE_LIMITS.intervalMinMinutes} minutes, so choose the longest that works. A run is skipped while its previous run is unfinished. The owner may need to approve this call. You may create at most ${FLEET_ROUTINE_LIMITS.botCreatedMax} routines. The owner sees routines marked as bot-created in Settings → Routines and can edit or delete any; you may change or delete only ones you created.`
   ctx.server.registerTool(
     'bot_routines_list',
     {
@@ -335,25 +340,98 @@ export function registerBotInstanceTools(
     'routine_report',
     {
       description:
-        'Record what this scheduled routine run did, what is still pending and notes for the next run. The next run receives this report. Call it once, before you finish a routine run.',
+        "Record what this scheduled routine run did, what is still pending and notes for the next run. The next run receives this report. Call it once, before you finish a routine run; in a run's own conversation, call it again when the owner's changes there change what the run did.",
       inputSchema: {
         summary: z.string().trim().min(1).max(FLEET_ROUTINE_RUN_LIMITS.summaryMax),
         pending: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.pendingMax).optional(),
         notes_for_next_run: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.notesMax).optional(),
+        nothing_new: z
+          .boolean()
+          .optional()
+          .describe(
+            "True when the run found nothing worth the owner's attention: it is grouped with others like it and the owner is not alerted."
+          ),
       },
       annotations: { readOnlyHint: false },
     },
-    async ({ summary, pending, notes_for_next_run }) => {
+    async ({ summary, pending, notes_for_next_run, nothing_new }) => {
       const routine = bot()?.currentInput()?.routine
       if (!routine?.runId) return err('routine_report works only while running a scheduled routine.')
       try {
         await gatewayRequest(
           gatewayFor(),
           'routineRunReport',
-          { summary, pending: pending || null, notes: notes_for_next_run || null },
+          {
+            summary,
+            pending: pending || null,
+            notes: notes_for_next_run || null,
+            ...(nothing_new !== undefined ? { quiet: nothing_new } : {}),
+          },
           { rid: routine.id, runId: routine.runId }
         )
         return ok(JSON.stringify({ reported: true, routineId: routine.id }))
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error))
+      }
+    }
+  )
+  if (!bot()?.routineConversations) return
+  ctx.server.registerTool(
+    'bot_routines_runs',
+    {
+      description:
+        "List your routine runs, newest first, or read one with run_id: its report, its final answer, what its conversation shows, and the files kept of it. Each run works in a conversation of its own that your conversation with the owner does not show: read a run here when the owner asks about it or refers to it. Files a run wrote are in your conversation folder; a deleted run's images and attachments are under the folder it names. To change what a run did, the owner asks in that run's conversation.",
+      inputSchema: {
+        run_id: fleetIdSchema.optional().describe('Read this run.'),
+        routine_id: fleetIdSchema.optional().describe('List only the runs of this routine.'),
+        limit: z.number().int().min(1).max(50).optional().describe('How many runs to list (default 10).'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ run_id, routine_id, limit }) => {
+      try {
+        if (!run_id) {
+          const page = await gatewayRequest(gatewayFor(), 'routineRunsList', undefined, {}, undefined, {
+            limit: limit ?? 10,
+            routineId: routine_id,
+          })
+          return ok(
+            JSON.stringify({
+              runs: page.runs.map((run) => ({
+                id: run.id,
+                routineId: run.routineId,
+                routine: run.routineTitle,
+                at: run.deliveredAt,
+                status: run.status,
+                nothingNew: run.quiet,
+                summary: run.report?.summary ?? null,
+                pending: run.report?.pending ?? null,
+                conversation: run.conversation,
+              })),
+              more: page.before !== null,
+            })
+          )
+        }
+        const run = await gatewayRequest(gatewayFor(), 'routineRunGet', undefined, { runId: run_id })
+        const record = bot()?.runs.get(run_id)
+        const conversation =
+          record && getConversation(record.conversationId) ? runConversationText(record.conversationId) : null
+        return ok(
+          JSON.stringify({
+            id: run.id,
+            routineId: run.routineId,
+            routine: run.routineTitle,
+            at: run.deliveredAt,
+            finishedAt: run.finishedAt,
+            status: run.status,
+            nothingNew: run.quiet,
+            report: run.report,
+            finalAnswer: run.finalText,
+            ownerChanges: run.adjustments,
+            conversation,
+            ...(run.kept ? { keptFolder: run.kept.folder || null, keptFiles: run.kept.files } : {}),
+          })
+        )
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
       }

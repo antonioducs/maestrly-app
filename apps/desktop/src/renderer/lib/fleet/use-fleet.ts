@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { FleetInteractionResolution } from '@maestrly/bot-fleet-protocol'
-import { emptyTranscript, fleetReducer, initialFleetState } from './state'
+import { emptyRuns, emptyTranscript, fleetReducer, initialFleetState, runTranscriptKey } from './state'
 import { fleetErrorMessage } from './errors'
 
 export function useFleet() {
@@ -20,6 +20,27 @@ export function useFleet() {
       dispatch({ type: 'transcript.page', botId, page, older: !!before })
     } catch (error) {
       dispatch({ type: 'transcript.error', botId, error: fleetErrorMessage(error) })
+      throw error
+    }
+  }, [])
+  /** A page of a bot's routine runs: the newest, or with `before` the ones before it. */
+  const loadRuns = useCallback(async (botId: string, before?: string | null) => {
+    dispatch({ type: 'runs.loading', botId })
+    try {
+      const page = await window.api.fleetListRuns(botId, before ?? null)
+      dispatch({ type: 'runs.page', botId, page, older: !!before })
+    } catch (error) {
+      dispatch({ type: 'runs.error', botId, error: fleetErrorMessage(error) })
+      throw error
+    }
+  }, [])
+  const loadRunTranscript = useCallback(async (botId: string, runId: string, before?: string | null) => {
+    dispatch({ type: 'runTranscript.loading', botId, runId })
+    try {
+      const page = await window.api.fleetGetRunTranscript(botId, runId, before)
+      dispatch({ type: 'runTranscript.page', botId, runId, page, older: !!before })
+    } catch (error) {
+      dispatch({ type: 'runTranscript.error', botId, runId, error: fleetErrorMessage(error) })
       throw error
     }
   }, [])
@@ -50,17 +71,42 @@ export function useFleet() {
           .catch(() => {})
     })
     const offEvent = window.api.onFleetEvent((event) => {
+      const before = stateRef.current
       dispatch({ type: 'event', value: event })
-      if (event.type === 'transcript.reset' && stateRef.current.transcripts[event.botId]?.loaded) {
+      if (event.type === 'transcript.reset' && before.transcripts[event.botId]?.loaded) {
         void loadTranscript(event.botId).catch(() => {})
+        // The bot restarted or its stream broke: what its runs did meanwhile is read again too.
+        if (before.runs[event.botId]?.loaded) void loadRuns(event.botId).catch(() => {})
+        for (const key of Object.keys(before.runTranscripts))
+          if (key.startsWith(runTranscriptKey(event.botId, '')) && before.runTranscripts[key].loaded)
+            void loadRunTranscript(event.botId, key.slice(runTranscriptKey(event.botId, '').length)).catch(() => {})
       }
+      if (
+        event.type === 'routine_run.transcript.reset' &&
+        before.runTranscripts[runTranscriptKey(event.botId, event.runId)]?.loaded
+      )
+        void loadRunTranscript(event.botId, event.runId).catch(() => {})
     })
     return () => {
       active = false
       offConnection()
       offEvent()
     }
-  }, [loadTranscript])
+  }, [loadRuns, loadRunTranscript, loadTranscript])
+  const ensureRuns = useCallback(
+    (botId: string) => {
+      const entry = stateRef.current.runs[botId] ?? emptyRuns
+      if (!entry.loaded && !entry.loading) void loadRuns(botId).catch(() => {})
+    },
+    [loadRuns]
+  )
+  const ensureRunTranscript = useCallback(
+    (botId: string, runId: string) => {
+      const entry = stateRef.current.runTranscripts[runTranscriptKey(botId, runId)] ?? emptyTranscript
+      if (!entry.loaded && !entry.loading) void loadRunTranscript(botId, runId).catch(() => {})
+    },
+    [loadRunTranscript]
+  )
   const ensureTranscript = useCallback(
     (botId: string) => {
       const entry = stateRef.current.transcripts[botId] ?? emptyTranscript
@@ -134,6 +180,10 @@ export function useFleet() {
     refresh,
     loadTranscript,
     ensureTranscript,
+    loadRuns,
+    ensureRuns,
+    loadRunTranscript,
+    ensureRunTranscript,
     botAction,
     environmentAction,
     updateEnvironment,

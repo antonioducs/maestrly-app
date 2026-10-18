@@ -2,17 +2,25 @@ import { mkdtemp, realpath, rm, stat, symlink, mkdir, writeFile, access } from '
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-const h = vi.hoisted(() => ({ base: '', insert: vi.fn(), settings: new Map<string, string>() }))
+const h = vi.hoisted(() => ({
+  base: '',
+  insert: vi.fn(),
+  settings: new Map<string, string>(),
+  conversations: new Map<string, unknown>(),
+}))
 vi.mock('electron', () => ({ app: { getPath: () => h.base } }))
 vi.mock('../../src/main/store', () => ({
   insertConversation: h.insert,
+  getConversation: (id: string) => h.conversations.get(id),
   getAppSetting: (key: string) => h.settings.get(key) ?? null,
   setAppSetting: (key: string, value: string) => h.settings.set(key, value),
 }))
 import {
   createStandaloneConversation,
+  createStandaloneConversationInFolderOf,
   removeStandaloneConversationDirectory,
   ensureStandaloneConversationDirectory,
+  validateStandaloneConversationDirectory,
 } from '../../src/main/standalone-conversation-service'
 import { setMainLocale } from '../../src/main/i18n'
 import { rememberStandaloneChatMode } from '../../src/main/chat/new-chat-defaults'
@@ -20,6 +28,7 @@ beforeEach(async () => {
   h.base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'standalone-')))
   h.insert.mockReset()
   h.settings.clear()
+  h.conversations.clear()
   setMainLocale('en')
 })
 afterEach(async () => {
@@ -103,4 +112,29 @@ it('cleans up newly allocated directories after insert failure', async () => {
   await expect(createStandaloneConversation({})).rejects.toThrow('db failed')
   const c = h.insert.mock.calls[0][0]
   await expect(access(c.cwd)).rejects.toThrow()
+})
+
+it("works a routine run in its bot's folder, and its deletion never removes that folder", async () => {
+  const owner = await createStandaloneConversation({ name: 'Atlas' })
+  h.conversations.set(owner.id, owner)
+  const run = await createStandaloneConversationInFolderOf(owner.id, '  Weekly post  ')
+  expect(run).toMatchObject({ scope: 'standalone', cwd: owner.cwd, folderOwnerId: owner.id, name: 'Weekly post' })
+  expect(h.insert).toHaveBeenLastCalledWith(run)
+  expect(await ensureStandaloneConversationDirectory(run)).toEqual({ cwd: owner.cwd, recreated: false })
+  expect(await validateStandaloneConversationDirectory(run)).toBe(owner.cwd)
+  await writeFile(path.join(owner.cwd, 'prices.csv'), 'a,b\n')
+  await removeStandaloneConversationDirectory(run)
+  await access(path.join(owner.cwd, 'prices.csv'))
+  // A row that names an owner but another folder, or an owner that is gone, is refused.
+  await expect(validateStandaloneConversationDirectory({ ...run, cwd: h.base })).rejects.toThrow()
+  h.conversations.delete(owner.id)
+  await expect(validateStandaloneConversationDirectory(run)).rejects.toThrow()
+})
+it('refuses a folder owner that is missing or works in another conversation folder itself', async () => {
+  await expect(createStandaloneConversationInFolderOf('missing', 'Run')).rejects.toThrow()
+  const owner = await createStandaloneConversation({})
+  h.conversations.set(owner.id, owner)
+  const run = await createStandaloneConversationInFolderOf(owner.id, 'Run')
+  h.conversations.set(run.id, run)
+  await expect(createStandaloneConversationInFolderOf(run.id, 'Nested')).rejects.toThrow()
 })

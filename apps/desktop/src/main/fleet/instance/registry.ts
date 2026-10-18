@@ -138,6 +138,9 @@ export interface BotPaths {
   folder: string
   inputs: string
   transcript: string
+  /** The routine runs that have conversations of their own, and each one's transcript extras under `runsFolder`. */
+  runs: string
+  runsFolder: string
   attachments: string
   images: string
   browserConfig: string
@@ -150,6 +153,8 @@ export function botPaths(userData: string, home: string, botId: string): BotPath
     folder,
     inputs: path.join(folder, 'inputs.json'),
     transcript: path.join(folder, 'transcript.json'),
+    runs: path.join(folder, 'runs.json'),
+    runsFolder: path.join(folder, 'runs'),
     attachments: path.join(userData, 'fleet-inputs', botId),
     images: path.join(userData, 'fleet-images', botId),
     browserConfig: path.join(home, '.config', 'maestrly-bots', botId),

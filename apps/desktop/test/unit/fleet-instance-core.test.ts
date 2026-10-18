@@ -5,6 +5,7 @@ import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { FLEET_REASONING_TEXT_MAX, FLEET_TODO_LIMITS, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, MessagePart } from '../../src/shared/chat'
+import { noRunConversations } from '../helpers/bot-runs'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
 import { InstanceHoldManager, gateInstanceAppTool, registerInstanceHoldGate } from '../../src/main/fleet/instance/gate'
@@ -1052,6 +1053,7 @@ describe('hold gate', () => {
     Object.assign(runtime, {
       holdManager: manager,
       help: { pending: () => [], resolveAll },
+      runs: noRunConversations(),
       input,
       system,
       changed: vi.fn(),
@@ -1303,6 +1305,7 @@ describe('fleet question items', () => {
         extras,
         live: { messageWithToolCall: (id: string) => (id === toolCallId ? message : null) },
         help: { pending: () => [] },
+        runs: noRunConversations(),
         changed: vi.fn(),
       })
       runtime.questionAsked({ conversationId, toolCallId })

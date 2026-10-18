@@ -5,6 +5,7 @@ import {
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
   FLEET_BOT_MOVE_FEATURE,
+  FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
   type FleetBotMove,
   type FleetBotMoveRequest,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -14,6 +15,7 @@ import {
   FLEET_PORTS,
   FLEET_WORKSPACES_HOST_FEATURE,
   type FleetActivityEntry,
+  type FleetRoutineRunMedia,
   type FleetArchivedBot,
   type FleetArchivedEnvironment,
   type FleetBot,
@@ -202,10 +204,17 @@ export class Lifecycle {
   onReady: (id: string) => void = () => {}
   /** A bot and every record of it are gone for good: whatever still points at it (desktop links, calls) goes too. */
   onBotPurged: (id: string) => void = () => {}
+  /** A turn ended: answers what the turn's activity should say of the routine run it belonged to, if any. */
   onTurnFinished?: (
     botId: string,
-    event: { outcome: 'completed' | 'cancelled' | 'failed'; inputId: string | null; text: string | null }
-  ) => void
+    event: {
+      outcome: 'completed' | 'cancelled' | 'failed'
+      inputId: string | null
+      text: string | null
+      runId?: string | null
+      media?: FleetRoutineRunMedia | null
+    }
+  ) => FleetActivityEntry['data'] | void
   onEvent: (event: FleetGatewayEvent) => void = () => {}
   /** A chat of the workspaces host needs the owner (`chat.attention`). */
   onChatAttention?: (environmentId: string, conversationId: string, name: string, kind: FleetChatAttentionKind) => void
@@ -239,6 +248,10 @@ export class Lifecycle {
   private emitBot(id: string) {
     const bot = this.get(id)
     if (bot) this.onEvent({ type: 'bot.updated', at: now(), bot })
+  }
+  /** Tells devices a bot changed outside its record's fields, such as its routine runs' settings. */
+  botChanged(id: string) {
+    this.emitBot(id)
   }
   /** Tells devices about an environment and, since their lifecycle follows it, about its bots. */
   private emitEnvironment(environmentId: string, bots = true) {
@@ -356,7 +369,8 @@ export class Lifecycle {
               () => {}
             )
           for await (const event of client.events(since, controller.signal)) {
-            if (event.type === 'reset' || event.seq <= since) {
+            // A run's own reset says only that run's transcript changed.
+            if ((event.type === 'reset' && !event.runId) || event.seq <= since) {
               since = await this.refreshStatuses(environmentId, client, event.seq, controller.signal)
               continue
             }
@@ -384,17 +398,29 @@ export class Lifecycle {
     if (!id) return
     if (event.type === 'status') this.updateStatus(id, event.status)
     else if (event.type === 'transcript.upsert')
-      this.onEvent({ type: 'transcript.upsert', at: now(), botId: id, item: event.item })
+      this.onEvent(
+        event.runId
+          ? { type: 'routine_run.transcript.upsert', at: now(), botId: id, runId: event.runId, item: event.item }
+          : { type: 'transcript.upsert', at: now(), botId: id, item: event.item }
+      )
+    else if (event.type === 'reset' && event.runId)
+      this.onEvent({ type: 'routine_run.transcript.reset', at: now(), botId: id, runId: event.runId })
     else if (event.type === 'turn.finished') {
-      this.onTurnFinished?.(id, { outcome: event.outcome, inputId: event.inputId, text: event.text })
+      const run =
+        this.onTurnFinished?.(id, {
+          outcome: event.outcome,
+          inputId: event.inputId,
+          text: event.text,
+          runId: event.runId,
+          media: event.media,
+        }) ?? {}
       // Devices sound an alert for the turns the owner asked for, and need who started it to leave out the others.
       if (event.outcome !== 'cancelled')
-        this.recordActivity(
-          id,
-          event.outcome === 'completed' ? 'turn_completed' : 'turn_failed',
-          event.summary,
-          event.source ? { source: event.source } : {}
-        )
+        this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary, {
+          ...(event.source ? { source: event.source } : {}),
+          ...(event.runId ? { runId: event.runId } : {}),
+          ...run,
+        })
     }
   }
   /**
@@ -532,6 +558,18 @@ export class Lifecycle {
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
     bot.resources = resourcesView(resources)
+    // The routine run whose own conversation its turn works in.
+    const runId = status && status.turn.state !== 'idle' ? status.turn.runId : null
+    const run = runId ? this.store.routineRunById(runId) : null
+    bot.runningRun =
+      run && run.botId === bot.id
+        ? {
+            id: run.id,
+            routineId: run.routineId,
+            title: run.routineTitle ?? '',
+            startedAt: status?.turn.startedAt ?? null,
+          }
+        : null
     if (bot.lifecycle === 'stopped' || bot.lifecycle === 'archived' || bot.lifecycle === 'failed')
       bot.status = 'offline'
     else if (bot.lifecycle !== 'running' || !status?.ready) bot.status = 'starting'
@@ -649,6 +687,8 @@ export class Lifecycle {
         artifactsEnabled: bot.publishArtifacts && this.artifactsEnabled(),
         // This gateway routes desktop calls; whether any Mac linked the bot is answered per call, never cached here.
         desktopBridgeEnabled: true,
+        // This gateway runs routines in conversations of their own whenever the bot's Maestrly can.
+        routineConversations: true,
       },
       tint: bot.tint,
     }
@@ -875,6 +915,8 @@ export class Lifecycle {
       usage: null,
       environmentId: null,
       move: null,
+      runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
+      runningRun: null,
       createdAt: at,
       updatedAt: at,
     }

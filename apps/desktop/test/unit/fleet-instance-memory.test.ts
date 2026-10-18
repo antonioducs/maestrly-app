@@ -11,6 +11,7 @@ import * as chatService from '../../src/main/chat/service'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { InstanceEvents } from '../../src/main/fleet/instance/server'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
+import { noRunConversations } from '../helpers/bot-runs'
 import { loadMemoryCoreExtras } from '../../src/main/memory/core'
 import { getOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
 import { botMemorySpaceId, memorySpaceForConversation } from '../../src/main/memory/spaces'
@@ -229,6 +230,7 @@ describe('runtime turn memory integration', () => {
       queue: idle,
       extras: idle,
       images: idle,
+      runs: noRunConversations(),
       usageTask: Promise.resolve(),
       turnSettled: Promise.resolve(),
     })
@@ -435,6 +437,7 @@ describe('runtime turn memory integration', () => {
       expect(system).toHaveBeenCalledWith(
         'turn_failed',
         `claude-accounts-exhausted until=${new Date(reset).toISOString()}`,
+        null,
         null
       )
       expect((events.replay(0) ?? []).filter((event) => event.type === 'turn.finished')).toHaveLength(1)

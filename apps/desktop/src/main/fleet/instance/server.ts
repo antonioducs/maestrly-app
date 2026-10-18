@@ -39,6 +39,7 @@ import {
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
@@ -50,6 +51,7 @@ import {
   fleetInstanceEventSchema,
   fleetReaderWantsChatAttention,
   fleetReaderWantsReasoning,
+  fleetReaderWantsRoutineRuns,
   fleetTranscriptItemReadable,
   fleetHostConversationIdSchema,
   fleetScreenSurfaceSchema,
@@ -76,6 +78,7 @@ import {
   type FleetInstanceHold,
   type FleetInstanceInput,
   type FleetInstanceReleaseRequest,
+  type FleetInstanceRunDeleted,
   type FleetInstanceStatus,
   type FleetInteractionResolution,
   type FleetLoginAttempt,
@@ -115,7 +118,8 @@ export class InstanceHttpError extends Error {
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
  * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
  * last message, streams its screens as video, moves its bots to other environments with everything that is theirs,
- * and says why an MCP connection test failed. Its health and every status advertise them.
+ * says why an MCP connection test failed, and runs routines in conversations of their own when the gateway asks.
+ * Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -133,6 +137,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_VIDEO_SCREENS_FEATURE,
   FLEET_BOT_MOVE_FEATURE,
   FLEET_MCP_TEST_DETAIL_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -154,7 +159,12 @@ export interface InstanceBot {
   deleteMemory(id: string): Promise<void>
   /** A page of the transcript; `reasoning` items only when the reader asked for them. */
   transcript(before: string | null, limit: number, reasoning: boolean): Promise<FleetTranscriptPage>
-  image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }>
+  /** A page of a routine run's own conversation (`routine-conversations`). */
+  runTranscript(runId: string, before: string | null, limit: number, reasoning: boolean): Promise<FleetTranscriptPage>
+  /** Deletes a routine run's conversation, keeping its images and attachments in the bot's folder. */
+  deleteRun(runId: string): Promise<FleetInstanceRunDeleted>
+  /** An image of the bot's conversation, or with `runId` of that routine run's. */
+  image(imageId: string, runId?: string | null): Promise<{ mediaType: string; bytes: Uint8Array }>
   fileMeta(fileId: string): Promise<FleetFileRef>
   file(fileId: string): Promise<InstanceFile>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
@@ -220,12 +230,14 @@ export interface InstanceEnvironment {
   checkRuntimes(): void
 }
 
-// `botId` defaults to null when the event is parsed: events of the environment itself name no bot.
+// `botId` defaults to null when the event is parsed: events of the environment itself name no bot. Fields with
+// defaults (a routine run's id, for one) may be left out.
+type EventInput = z.input<typeof fleetInstanceEventSchema>
 type EventPayload = {
-  [K in FleetInstanceEvent['type']]: Omit<Extract<FleetInstanceEvent, { type: K }>, 'seq' | 'at' | 'botId'> & {
+  [K in EventInput['type']]: Omit<Extract<EventInput, { type: K }>, 'seq' | 'at' | 'botId'> & {
     botId?: string | null
   }
-}[FleetInstanceEvent['type']]
+}[EventInput['type']]
 export class InstanceEvents {
   private seq = 0
   private ring: FleetInstanceEvent[] = []
@@ -403,10 +415,15 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   const reasoning = fleetReaderWantsReasoning(url.searchParams)
   // Nor `chat.attention` events, which only a gateway that asks for them knows.
   const chatAttention = fleetReaderWantsChatAttention(url.searchParams)
-  const readable = (event: FleetInstanceEvent) =>
-    event.type === 'transcript.upsert'
+  // Nor what happens in routine runs' own conversations: an older gateway would take it for the bot's conversation.
+  const routineRuns = fleetReaderWantsRoutineRuns(url.searchParams)
+  const readable = (event: FleetInstanceEvent) => {
+    if ((event.type === 'transcript.upsert' || event.type === 'reset' || event.type === 'turn.finished') && event.runId)
+      if (!routineRuns) return false
+    return event.type === 'transcript.upsert'
       ? fleetTranscriptItemReadable(event.item, reasoning)
       : event.type !== 'chat.attention' || chatAttention
+  }
   const replay = events.replay(since)
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -414,7 +431,9 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
     connection: 'keep-alive',
   })
   if (replay === null)
-    response.write(sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset', botId: null }))
+    response.write(
+      sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset', botId: null, runId: null })
+    )
   else for (const event of replay) if (readable(event)) response.write(sseFrame(event))
   const unsubscribe = events.subscribe((event) => {
     if (readable(event)) response.write(sseFrame(event))
@@ -732,7 +751,23 @@ export function createInstanceControlServer(
         throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid transcript limit.')
       return bot(params).transcript(url.searchParams.get('before'), limit, fleetReaderWantsReasoning(url.searchParams))
     },
-    botImage: ({ params }) => bot(params).image(params.imageId),
+    botRunTranscript: ({ params, url }) => {
+      const raw = url.searchParams.get('limit')
+      const limit = raw === null ? 200 : Number(raw)
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500)
+        throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid transcript limit.')
+      return bot(params).runTranscript(
+        params.runId,
+        url.searchParams.get('before'),
+        limit,
+        fleetReaderWantsReasoning(url.searchParams)
+      )
+    },
+    botRunDelete: ({ params }) => bot(params).deleteRun(params.runId),
+    botImage: ({ params, url }) => {
+      const run = url.searchParams.get('run')
+      return run ? bot(params).image(params.imageId, run) : bot(params).image(params.imageId)
+    },
     botFileMeta: ({ params }) => bot(params).fileMeta(fileIdOf(params.fileId)),
     botFile: ({ params }) => bot(params).file(fileIdOf(params.fileId)),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),

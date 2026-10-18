@@ -228,7 +228,9 @@ describe('fleet IPC validation', () => {
       ])
     ).toThrow()
     await invoke('fleet:getImage', 'bot', 't-valid')
-    expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid')
+    expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid', null)
+    await invoke('fleet:getImage', 'bot', 't-valid', 'run-1')
+    expect(mocks.getImage).toHaveBeenLastCalledWith('bot', 't-valid', 'run-1')
     expect(() => invoke('fleet:getImage', 'bot', '../bad')).toThrow()
   })
   it('gates documents on gateway and bot support and rejects corrupt binary text', async () => {

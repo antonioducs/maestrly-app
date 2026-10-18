@@ -28,8 +28,10 @@ import {
 import { botMemorySpaceId } from '../../memory/spaces'
 import { deleteLocalMemorySpace, getConversation, getDb, transaction } from '../../store'
 import { hashFile } from '../../transfer-io'
+import { readRunRecords, type RunRecord } from './routine-runs'
 import {
   assertBotId,
+  botPaths,
   deleteBotSettings,
   readBotPaused,
   readStoredProfile,
@@ -75,8 +77,17 @@ export const BOT_FOLDERS: readonly BotFolder[] = [
 export const botFolderPath = (folder: BotFolder, roots: BotRoots, botId: string): string =>
   path.join(roots[folder.base], ...folder.segments, assertBotId(botId))
 
-/** The kinds of files a package carries: the bot's folders, and its conversation's working folder and files. */
-export type BotMoveFileKind = Exclude<BotFolderKind, 'cache'> | 'workdir' | 'attachment' | 'generated-image'
+/**
+ * The kinds of files a package carries: the bot's folders, its conversation's working folder and files, and the files
+ * of its routine runs' conversations (`<conversation id>/<file>`), which work in that same folder.
+ */
+export type BotMoveFileKind =
+  | Exclude<BotFolderKind, 'cache'>
+  | 'workdir'
+  | 'attachment'
+  | 'generated-image'
+  | 'run-attachment'
+  | 'run-generated-image'
 const FILE_KINDS: readonly BotMoveFileKind[] = [
   'state',
   'inputs',
@@ -85,6 +96,8 @@ const FILE_KINDS: readonly BotMoveFileKind[] = [
   'workdir',
   'attachment',
   'generated-image',
+  'run-attachment',
+  'run-generated-image',
 ]
 /** Folders of a browser profile that Chromium fills again by itself: they never move. */
 const BROWSER_CACHES = new Set([
@@ -120,6 +133,8 @@ export interface BotMoveRows {
   stored: { profile: unknown; primaryConversationId: string | null }
   paused: boolean
   conversation: MoveRows | null
+  /** Its routine runs' conversations, with where memory extraction reached in each. */
+  runs?: Array<{ runId: string; conversation: MoveRows; extraction: Row | null }>
   memories: Row[]
   /** Where memory extraction reached in its conversation, and the consolidation state of its memory space. */
   extraction: Row | null
@@ -160,6 +175,20 @@ function conversationOf(botId: string): string | null {
   return id && getConversation(id) ? id : null
 }
 
+/** The routine runs of a bot whose conversations are here, in the order the bot keeps them. */
+async function runsOf(botId: string, roots: BotRoots): Promise<RunRecord[]> {
+  const records = await readRunRecords(botPaths(roots.userData, roots.home, botId).runs)
+  return records.filter((record) => getConversation(record.conversationId))
+}
+
+function extractionRow(conversationId: string): Row | null {
+  return (
+    (getDb().prepare('SELECT * FROM memory_extraction_state WHERE conversation_id = ?').get(conversationId) as
+      | Row
+      | undefined) ?? null
+  )
+}
+
 /** Every file that moves with a bot, from where it is now. */
 async function collectSources(botId: string, roots: BotRoots): Promise<Source[]> {
   const sources: Source[] = []
@@ -180,6 +209,15 @@ async function collectSources(botId: string, roots: BotRoots): Promise<Source[]>
     for (const [kind, dir] of folders)
       for (const relative of await regularFiles(dir, '', () => false))
         sources.push({ kind, relative, absolute: path.join(dir, relative) })
+    for (const run of await runsOf(botId, roots)) {
+      const runFolders: Array<[BotMoveFileKind, string]> = [
+        ['run-attachment', attachmentConversationDir(run.conversationId)],
+        ['run-generated-image', generatedImageConversationDir(run.conversationId)],
+      ]
+      for (const [kind, dir] of runFolders)
+        for (const relative of await regularFiles(dir, run.conversationId, () => false))
+          sources.push({ kind, relative, absolute: path.join(dir, relative.slice(run.conversationId.length + 1)) })
+    }
   }
   return sources
 }
@@ -211,9 +249,25 @@ async function filesDigest(sources: Source[]): Promise<{ files: number; filesSha
  */
 export async function botMoveDigest(botId: string, roots: BotRoots): Promise<FleetBotMoveDigest> {
   const conversationId = conversationOf(botId)
-  const messages = conversationId
+  let messages = conversationId
     ? messagesDigest(conversationId)
     : { conversationId: null, messages: 0, lastSeq: -1, messagesSha256: createHash('sha256').digest('hex') }
+  // Its routine runs' messages count too, folded into the one hash in the order of their conversations' ids.
+  const runs = conversationId
+    ? (await runsOf(botId, roots))
+        .map((run) => messagesDigest(run.conversationId))
+        .sort((a, b) => a.conversationId.localeCompare(b.conversationId))
+    : []
+  if (runs.length)
+    messages = {
+      ...messages,
+      messages: messages.messages + runs.reduce((sum, run) => sum + run.messages, 0),
+      messagesSha256: createHash('sha256')
+        .update(
+          [messages.messagesSha256, ...runs.map((run) => `${run.conversationId}:${run.messagesSha256}`)].join('\n')
+        )
+        .digest('hex'),
+    }
   return fleetBotMoveDigestSchema.parse({
     ...messages,
     ...memoriesDigest(botId),
@@ -265,12 +319,15 @@ export async function writeBotPackage(
     stored: { profile: stored.profile, primaryConversationId: conversationId },
     paused: readBotPaused(botId),
     conversation: conversationId ? readConversationRows(conversationId) : null,
+    runs: conversationId
+      ? (await runsOf(botId, roots)).map((run) => ({
+          runId: run.runId,
+          conversation: readConversationRows(run.conversationId),
+          extraction: extractionRow(run.conversationId),
+        }))
+      : [],
     memories: memoryRows(botId),
-    extraction: conversationId
-      ? ((getDb().prepare('SELECT * FROM memory_extraction_state WHERE conversation_id = ?').get(conversationId) as
-          | Row
-          | undefined) ?? null)
-      : null,
+    extraction: conversationId ? extractionRow(conversationId) : null,
     consolidation:
       (getDb().prepare('SELECT * FROM memory_consolidation_state WHERE space_id = ?').get(botMemorySpaceId(botId)) as
         | Row
@@ -441,6 +498,20 @@ const rowsSchema = z.object({
     })
     .passthrough()
     .nullable(),
+  runs: z
+    .array(
+      z.object({
+        runId: z.string().min(1),
+        conversation: z
+          .object({
+            conversation: z.object({ id: conversationIdSchema }).passthrough(),
+            tables: z.record(z.string(), z.unknown()),
+          })
+          .passthrough(),
+        extraction: z.record(z.string(), z.unknown()).nullable(),
+      })
+    )
+    .default([]),
   memories: z.array(z.record(z.string(), z.unknown())),
   extraction: z.record(z.string(), z.unknown()).nullable(),
   consolidation: z.record(z.string(), z.unknown()).nullable(),
@@ -491,6 +562,13 @@ async function readBotPackage(
         parsed.data.conversation.conversation.id !== parsed.data.stored.primaryConversationId
       )
         throw invalid('The rows of the bot name another conversation.')
+      const runIds = parsed.data.runs.map((run) => run.conversation.conversation.id)
+      if (
+        (parsed.data.runs.length && !parsed.data.conversation) ||
+        new Set(runIds).size !== runIds.length ||
+        runIds.includes(parsed.data.stored.primaryConversationId ?? '')
+      )
+        throw invalid('The routine runs of the bot are malformed.')
       read.rows = value as BotMoveRows
       return
     }
@@ -596,6 +674,15 @@ function insertMemoryRows(botId: string, rows: BotMoveRows): void {
         sqlRow(rows.extraction, 'memory_extraction_state', columnsOf('memory_extraction_state'))
       )
     }
+    for (const run of rows.runs ?? []) {
+      if (!run.extraction) continue
+      if (run.extraction.conversation_id !== run.conversation.conversation.id || run.extraction.space_id !== space)
+        throw invalid('The memory extraction state of a routine run is not its conversation.')
+      insertRow(
+        'memory_extraction_state',
+        sqlRow(run.extraction, 'memory_extraction_state', columnsOf('memory_extraction_state'))
+      )
+    }
     if (rows.consolidation) {
       if (rows.consolidation.space_id !== space) throw invalid('The memory state of the package is another space.')
       insertRow(
@@ -637,15 +724,27 @@ export async function importBotPackage(
   const { rows, files } = await readBotPackage(file, directory, { appVersion, botId })
   const conversationId = rows.stored.primaryConversationId
   let inserted = false
+  const insertedRuns: string[] = []
   try {
-    await restore(botId, roots, rows, files, () => {
-      inserted = true
-    })
+    await restore(
+      botId,
+      roots,
+      rows,
+      files,
+      () => {
+        inserted = true
+      },
+      (runConversationId) => insertedRuns.push(runConversationId)
+    )
   } catch (error) {
     // Each step goes on its own: what could not be deleted stays for the next import, which replaces it.
+    const runConversations = (rows.runs ?? []).map((run) => run.conversation.conversation.id)
     const steps: Array<() => unknown> = [
       () => deleteBotSettings(botId),
       () => deleteLocalMemorySpace(botMemorySpaceId(botId)),
+      // The runs' conversations first: they work in the bot conversation's folder.
+      ...insertedRuns.map((id) => () => deleteImportedConversationRows(id)),
+      ...runConversations.map((id) => () => removeConversationLeftovers(roots, id)),
       () => (conversationId && inserted ? deleteImportedConversationRows(conversationId) : undefined),
       () => (conversationId ? removeConversationLeftovers(roots, conversationId) : undefined),
       ...BOT_FOLDERS.map((folder) => () => removeBotFolder(roots[folder.base], folder.segments, botId)),
@@ -667,7 +766,8 @@ async function restore(
   roots: BotRoots,
   rows: BotMoveRows,
   files: Array<Entry & { absolute: string }>,
-  onInserted: () => void
+  onInserted: () => void,
+  onRunInserted: (conversationId: string) => void
 ): Promise<void> {
   const conversationId = rows.stored.primaryConversationId
   const folders = new Map(BOT_FOLDERS.filter((folder) => folder.moves).map((folder) => [folder.kind, folder]))
@@ -683,8 +783,32 @@ async function restore(
     insertStandaloneConversationRows(rows.conversation, workdir)
     onInserted()
   } else if (conversationId) throw invalid('The package names a conversation it does not hold.')
+  // The routine runs' conversations work in the bot conversation's folder, as they did where the bot was.
+  const runConversations = new Set<string>()
+  for (const run of rows.runs ?? []) {
+    const runConversationId = run.conversation.conversation.id
+    if (!conversationId || !workdir) throw invalid('The package holds routine runs without the bot conversation.')
+    if (getConversation(runConversationId))
+      throw new InstanceHttpError(409, 'CONFLICT', 'The conversation of a routine run of this bot is already here.')
+    await removeConversationLeftovers(roots, runConversationId)
+    insertStandaloneConversationRows(run.conversation, workdir, { folderOwnerId: conversationId })
+    onRunInserted(runConversationId)
+    runConversations.add(runConversationId)
+  }
   for (const entry of files) {
     let root: string
+    if (entry.kind === 'run-attachment' || entry.kind === 'run-generated-image') {
+      const [runConversationId, ...rest] = entry.relative.split('/')
+      if (!runConversations.has(runConversationId) || !rest.length)
+        throw invalid('The package holds files of a routine run it does not hold.')
+      root =
+        entry.kind === 'run-attachment'
+          ? attachmentConversationDir(runConversationId)
+          : generatedImageConversationDir(runConversationId)
+      await mkdir(root, { recursive: true, mode: 0o700 })
+      await placeFile(entry.absolute, root, rest.join('/'), entry.mode)
+      continue
+    }
     if (entry.kind === 'workdir' || entry.kind === 'attachment' || entry.kind === 'generated-image') {
       if (!conversationId || !workdir) throw invalid('The package holds conversation files without a conversation.')
       root =
