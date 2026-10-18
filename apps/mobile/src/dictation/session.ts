@@ -1,15 +1,33 @@
 /**
- * Dictation turns speech into text for the composer with the phone's own speech recognition (Apple's or Google's):
- * the audio never reaches Maestrly or the bot server, only the text the person then sends.
+ * Dictation turns speech into text for the composer. With the phone's own speech recognition (Apple's or Google's)
+ * the audio never reaches Maestrly or the bot server, only the text the person then sends. With the server engine
+ * the phone records the audio and the bot server transcribes it with its own speech-to-text key.
  */
+import type { DictationError } from '@maestrly/bot-fleet-protocol'
 import { detectLocale, type Locale } from '../i18n/translate'
 
-export type DictationIssue = 'denied' | 'unavailable' | 'noSpeech' | 'network' | 'language' | 'busy' | 'failed'
+export type DictationIssue =
+  | 'denied'
+  | 'unavailable'
+  | 'noSpeech'
+  | 'network'
+  | 'language'
+  | 'busy'
+  | 'failed'
+  | 'keyRejected'
+  | 'quota'
+  | 'serverBusy'
+  | 'notConfigured'
+  | 'transcribeFailed'
 
 export type DictationState =
-  | { phase: 'idle'; issue: DictationIssue | null }
+  /** `retry`: the recording was kept, and `Dictation.retry` sends it again. */
+  | { phase: 'idle'; issue: DictationIssue | null; retry?: true }
   | { phase: 'starting' }
-  | { phase: 'listening'; text: string }
+  /** `level`, from 0 to 1: how loud the recording is now, for engines that record rather than recognize. */
+  | { phase: 'listening'; text: string; level?: number }
+  /** The server engine's recording went to the server, which answers with its text. */
+  | { phase: 'transcribing' }
 
 export type SpeechResult = { final: boolean; transcript: string }
 export type SpeechError =
@@ -55,6 +73,8 @@ export interface Dictation {
   stop(): void
   /** Ends listening and drops what was heard. */
   cancel(): void
+  /** Sends a recording kept after a failed transcription again (`retry` in the idle state); otherwise nothing. */
+  retry(): void
   dispose(): void
 }
 
@@ -322,6 +342,8 @@ export function createDictation(engine: SpeechEngine, onText: (text: string) => 
       // Some recognizers say nothing after an abort.
       finish(null)
     },
+    // Recognizers keep no recording to send again.
+    retry() {},
     dispose() {
       if (current.phase === 'listening') {
         keep = false
@@ -329,6 +351,175 @@ export function createDictation(engine: SpeechEngine, onText: (text: string) => 
       }
       session += 1
       for (const unsubscribe of subscriptions) unsubscribe()
+      listeners.clear()
+    },
+  }
+}
+
+/** A recording on the phone, ready to send: its file and its loudest moment, in dBFS. */
+export interface Recording {
+  uri: string
+  peakDb: number
+}
+
+export type RecordedTranscription = { text: string } | { error: DictationError }
+
+/** An engine that records and then has the recording transcribed elsewhere: the bot server's. */
+export interface RecordingEngine {
+  available(): boolean
+  requestPermission(): Promise<boolean>
+  /** Starts recording; `onLevel` hears how loud it is now, from 0 to 1. */
+  start(onLevel: (level: number) => void): Promise<void>
+  /** Ends recording; null when there is nothing to send. */
+  stop(): Promise<Recording | null>
+  abort(): void
+  transcribe(recording: Recording, language: string | null): Promise<RecordedTranscription>
+  /** Deletes a recording no longer needed. */
+  discard(recording: Recording): void
+}
+
+/** The server's speech-to-text APIs take files of a few minutes; recording stops by itself at this length. */
+export const DICTATION_RECORDING_MAX_MS = 10 * 60_000
+/** A recording whose loudest moment stays under this is silence or room noise, which Whisper turns into words. */
+export const SILENCE_PEAK_DB = -45
+
+/** The two-letter language the server transcribes in, from the wanted tags (`pt-BR` → `pt`); null lets it detect. */
+export function transcriptionLanguage(wanted: readonly string[]): string | null {
+  const language = wanted[0]?.split(/[-_]/)[0]?.toLowerCase()
+  return language && /^[a-z]{2}$/.test(language) ? language : null
+}
+
+const API_ISSUES: Record<DictationError, DictationIssue> = {
+  'key-rejected': 'keyRejected',
+  quota: 'quota',
+  'too-long': 'transcribeFailed',
+  unavailable: 'transcribeFailed',
+  busy: 'serverBusy',
+  'not-configured': 'notConfigured',
+}
+
+/**
+ * Dictation through a recording: listening shows how loud the recording is, stopping sends it, and its text comes
+ * back at once, with no guess while speaking. A failed transcription keeps the recording until the next dictation,
+ * so the person can send it again without speaking again; one the server cannot take (no key) is dropped.
+ */
+export function createRecordedDictation(engine: RecordingEngine, onText: (text: string) => void): Dictation {
+  let current: DictationState = { phase: 'idle', issue: null }
+  let session = 0
+  let language: string | null = null
+  let kept: { recording: Recording; language: string | null } | null = null
+  let limit: ReturnType<typeof setTimeout> | undefined
+  const listeners = new Set<(state: DictationState) => void>()
+  // Read through a call: the state changes while the methods await, which narrowing would not see.
+  const phase = () => current.phase
+  const set = (next: DictationState) => {
+    current = next
+    for (const listener of listeners) listener(next)
+  }
+  const drop = () => {
+    if (kept) engine.discard(kept.recording)
+    kept = null
+  }
+  const clearLimit = () => {
+    if (limit !== undefined) clearTimeout(limit)
+    limit = undefined
+  }
+
+  const transcribe = async (mine: number) => {
+    if (!kept) return
+    const { recording, language: lang } = kept
+    set({ phase: 'transcribing' })
+    const outcome = await engine
+      .transcribe(recording, lang)
+      .catch((): RecordedTranscription => ({ error: 'unavailable' }))
+    if (mine !== session) return
+    if ('text' in outcome) {
+      drop()
+      const text = outcome.text.trim()
+      set({ phase: 'idle', issue: text ? null : 'noSpeech' })
+      if (text) onText(text)
+      return
+    }
+    if (outcome.error === 'not-configured') drop()
+    const issue = API_ISSUES[outcome.error]
+    set(kept ? { phase: 'idle', issue, retry: true } : { phase: 'idle', issue })
+  }
+
+  const stop = async () => {
+    if (current.phase === 'starting') {
+      session += 1
+      return set({ phase: 'idle', issue: null })
+    }
+    if (current.phase !== 'listening') return
+    clearLimit()
+    const mine = session
+    set({ phase: 'transcribing' })
+    const recording = await engine.stop().catch(() => null)
+    if (mine !== session) {
+      if (recording) engine.discard(recording)
+      return
+    }
+    if (!recording || recording.peakDb < SILENCE_PEAK_DB) {
+      if (recording) engine.discard(recording)
+      return set({ phase: 'idle', issue: 'noSpeech' })
+    }
+    kept = { recording, language }
+    await transcribe(mine)
+  }
+
+  const cancel = () => {
+    if (current.phase === 'idle') return
+    const recording = current.phase === 'listening'
+    clearLimit()
+    session += 1
+    if (recording) engine.abort()
+    drop()
+    set({ phase: 'idle', issue: null })
+  }
+
+  return {
+    state: () => current,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    available: () => engine.available(),
+    async start(...wanted) {
+      if (current.phase !== 'idle') return
+      drop()
+      const mine = ++session
+      set({ phase: 'starting' })
+      const granted = await engine.requestPermission().catch(() => false)
+      if (mine !== session) return
+      if (!granted) return set({ phase: 'idle', issue: 'denied' })
+      try {
+        await engine.start((level) => {
+          if (mine === session && phase() === 'listening') set({ phase: 'listening', text: '', level })
+        })
+      } catch {
+        if (mine !== session) return
+        session += 1
+        return set({ phase: 'idle', issue: 'unavailable' })
+      }
+      // Stopped, cancelled or gone while the recorder was starting.
+      if (mine !== session) return engine.abort()
+      language = transcriptionLanguage(wanted)
+      set({ phase: 'listening', text: '', level: 0 })
+      limit = setTimeout(() => {
+        if (mine === session) void stop()
+      }, DICTATION_RECORDING_MAX_MS)
+    },
+    stop: () => void stop(),
+    cancel,
+    retry() {
+      if (current.phase !== 'idle' || !kept) return
+      void transcribe(++session)
+    },
+    dispose() {
+      clearLimit()
+      if (current.phase === 'listening') engine.abort()
+      session += 1
+      drop()
       listeners.clear()
     },
   }
