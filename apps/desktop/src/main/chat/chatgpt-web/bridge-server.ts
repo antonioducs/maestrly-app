@@ -19,6 +19,7 @@ import { globToRegExp, shouldSkipSearchDir } from '../tools/grep'
 import { isBinaryExt, isProbablyBinary, resolveInside } from '../tools/util'
 import { buildRepositoryMap } from './repository-map'
 import type { ConversationFileScope } from '../../conversation-file-scope'
+import { retryWhenGitAppears } from '../../git-command'
 import type { RepositoryScope } from '../../repository-scope'
 import {
   CHATGPT_WEB_TOOL_CATALOG_META_KEY,
@@ -668,17 +669,20 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   const runGit =
     options.runGit ??
     ((args: string[], signal?: AbortSignal) =>
-      new Promise<string>((resolve, reject) => {
-        execFile(
-          'git',
-          args,
-          { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, encoding: 'utf8', signal },
-          (error, stdout) => {
-            if (error) reject(error instanceof Error ? error : new Error(String(error)))
-            else resolve(stdout)
-          }
-        )
-      }))
+      retryWhenGitAppears(
+        () =>
+          new Promise<string>((resolve, reject) => {
+            execFile(
+              'git',
+              args,
+              { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, encoding: 'utf8', signal },
+              (error, stdout) => {
+                if (error) reject(error instanceof Error ? error : new Error(String(error)))
+                else resolve(stdout)
+              }
+            )
+          })
+      ))
 
   const git = async (
     args: string[],

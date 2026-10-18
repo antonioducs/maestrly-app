@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { jsonSchema, tool, type Tool } from 'ai'
+import { retryWhenGitAppears } from '../../git-command'
 
 const execFileAsync = promisify(execFile)
 const GIT_TIMEOUT_MS = 20_000
@@ -34,14 +35,16 @@ function clip(value: string, limit = SECTION_LIMIT): { value: string; truncated:
 
 async function git(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<string> {
   if (signal?.aborted) throw new Error('git_diff was cancelled')
-  const { stdout } = await execFileAsync('git', ['-c', 'core.fsmonitor=false', ...args], {
-    cwd,
-    encoding: 'utf8',
-    timeout: GIT_TIMEOUT_MS,
-    maxBuffer: GIT_MAX_BUFFER,
-    signal,
-    windowsHide: true,
-  })
+  const { stdout } = await retryWhenGitAppears(() =>
+    execFileAsync('git', ['-c', 'core.fsmonitor=false', ...args], {
+      cwd,
+      encoding: 'utf8',
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
+      signal,
+      windowsHide: true,
+    })
+  )
   return stdout.trimEnd()
 }
 

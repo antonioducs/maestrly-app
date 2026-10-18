@@ -31,6 +31,12 @@ User-visible changes by version. Downloads are on
   browser**, and a **Copy code** button. If no browser opened, you can still
   finish signing in. The card shows and opens only
   `https://github.com/login/device`.
+- On Windows, Git installed while Maestrly is open is found without
+  restarting. After **Git was not found. Install Git and try again.**, trying
+  again after the install now adds the project, and project conversations,
+  their worktrees and diff reviews work too: when `git` does not start,
+  Maestrly rereads the `Path` that Windows keeps for new programs and also
+  looks in the folders where the Git for Windows installer puts it.
 
 ## [0.21.1] - 2026-10-18
 
