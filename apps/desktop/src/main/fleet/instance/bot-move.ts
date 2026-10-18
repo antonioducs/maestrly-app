@@ -226,15 +226,15 @@ async function insideLink(root: string, relative: string): Promise<Link | null> 
 const linkText = (root: string, link: Link): string => (link.rooted ? path.join(root, link.target) : link.target)
 
 /**
- * The regular files and symbolic links under `dir`, relative to it, in a stable order; other special files never
- * move. `skip` leaves files and folders out by name.
+ * The regular files, symbolic links and folders under `dir`, relative to it, in a stable order; other special files
+ * never move. `skip` leaves files and folders out by name.
  */
 async function walk(
   dir: string,
   prefix: string,
   skip: (name: string, directory: boolean) => boolean,
-  out: { files: string[]; links: string[] } = { files: [], links: [] }
-): Promise<{ files: string[]; links: string[] }> {
+  out: { files: string[]; links: string[]; directories: string[] } = { files: [], links: [], directories: [] }
+): Promise<{ files: string[]; links: string[]; directories: string[] }> {
   const entries = await readdir(dir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null
     throw error
@@ -245,7 +245,10 @@ async function walk(
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name
     if (entry.isFile()) out.files.push(relative)
     else if (entry.isSymbolicLink()) out.links.push(relative)
-    else if (entry.isDirectory()) await walk(path.join(dir, entry.name), relative, skip, out)
+    else if (entry.isDirectory()) {
+      out.directories.push(relative)
+      await walk(path.join(dir, entry.name), relative, skip, out)
+    }
   }
   return out
 }
@@ -279,10 +282,13 @@ function extractionRow(conversationId: string): Row | null {
 interface Sources {
   files: Source[]
   links: Link[]
+  /** The working folder's folders, empty ones too: a Git repository needs its empty `objects` and `refs`. */
+  directories: string[]
 }
 async function collectSources(botId: string, roots: BotRoots): Promise<Sources> {
   const files: Source[] = []
   const links: Link[] = []
+  let directories: string[] = []
   for (const folder of BOT_FOLDERS) {
     if (!folder.moves) continue
     const dir = botFolderPath(folder, roots, botId)
@@ -297,6 +303,7 @@ async function collectSources(botId: string, roots: BotRoots): Promise<Sources> 
   if (conversationId) {
     const workdir = await workdirOf(roots, conversationId)
     const found = await walk(workdir, '', skipNothing)
+    directories = found.directories
     for (const relative of found.files)
       files.push({ kind: 'workdir', relative, absolute: path.join(workdir, relative) })
     for (const relative of found.links) {
@@ -320,7 +327,7 @@ async function collectSources(botId: string, roots: BotRoots): Promise<Sources> 
           files.push({ kind, relative, absolute: path.join(dir, relative.slice(run.conversationId.length + 1)) })
     }
   }
-  return { files, links }
+  return { files, links, directories }
 }
 
 function memoryRows(botId: string): Row[] {
@@ -345,6 +352,7 @@ async function filesDigest(
   const read = hashes ?? (await mapLimit(sources.files, FILE_CONCURRENCY, (source) => hashFile(source.absolute)))
   const lines = sources.files.map((source, index) => `${source.kind}/${source.relative}:${read[index]}`)
   for (const link of sources.links) lines.push(`link:${JSON.stringify([link.relative, link.target, link.rooted])}`)
+  for (const directory of sources.directories) lines.push(`directory:${JSON.stringify(directory)}`)
   lines.sort()
   return { files: lines.length, filesSha256: createHash('sha256').update(lines.join('\n')).digest('hex') }
 }
@@ -408,6 +416,8 @@ const manifestSchema = z.object({
   ),
   /** The links of the working folder, made once its files are in place. */
   links: z.array(z.object({ relative: z.string(), target: z.string().max(4096), rooted: z.boolean() })),
+  /** The folders of the working folder, made before its files, so that the empty ones move too. */
+  directories: z.array(z.string()),
 })
 type Manifest = z.infer<typeof manifestSchema>
 const MANIFEST = 'manifest.json'
@@ -476,6 +486,7 @@ export async function writeBotPackage(
     rows: { size: rowsBytes.length, sha256: createHash('sha256').update(rowsBytes).digest('hex') },
     entries,
     links: sources.links,
+    directories: sources.directories,
   }
   const partial = `${destination}.${randomUUID()}.partial`
   const pack = tar.pack()
@@ -606,6 +617,12 @@ function parseManifest(bytes: Buffer, expected: { appVersion: string; botId: str
     )
       throw invalid(`Unsafe or duplicate package link: ${link.relative}`)
     links.add(link.relative)
+  }
+  const directories = new Set<string>()
+  for (const directory of manifest.directories) {
+    if (!packageRelative(directory) || directories.has(directory) || links.has(directory))
+      throw invalid(`Unsafe or duplicate package folder: ${directory}`)
+    directories.add(directory)
   }
   if (total > FLEET_BOT_MOVE_LIMITS.packageMaxBytes) throw invalid('The package is too large.')
   return manifest
@@ -874,7 +891,7 @@ export async function importBotPackage(
       roots,
       rows,
       files,
-      manifest.links,
+      manifest,
       () => {
         inserted = true
       },
@@ -910,7 +927,7 @@ async function restore(
   roots: BotRoots,
   rows: BotMoveRows,
   files: Array<Entry & { absolute: string }>,
-  links: readonly Link[],
+  tree: { links: readonly Link[]; directories: readonly string[] },
   onInserted: () => void,
   onRunInserted: (conversationId: string) => void
 ): Promise<void> {
@@ -939,6 +956,12 @@ async function restore(
     insertStandaloneConversationRows(run.conversation, workdir, { folderOwnerId: conversationId })
     onRunInserted(runConversationId)
     runConversations.add(runConversationId)
+  }
+  // The working folder's folders first, empty ones included; nothing in it is a link yet.
+  if (tree.directories.length) {
+    if (!workdir) throw invalid('The package holds folders without a conversation.')
+    for (const directory of tree.directories)
+      await mkdir(path.join(workdir, directory), { recursive: true, mode: 0o700 })
   }
   // Where each file goes, decided for all of them before any is placed.
   const placements = files.map((entry) => {
@@ -970,6 +993,7 @@ async function restore(
     placeFile(entry.absolute, root, relative, entry.mode)
   )
   // Links come last, so that no file is written through one.
+  const { links } = tree
   if (links.length) {
     if (!workdir) throw invalid('The package holds links without a conversation.')
     for (const link of links) await placeLink(workdir, link)

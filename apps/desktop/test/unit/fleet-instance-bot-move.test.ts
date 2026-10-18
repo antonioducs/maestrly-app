@@ -176,6 +176,9 @@ async function seededBot(env: Environment) {
     await writeFile(file, content)
   }
   await symlink('/etc/hostname', path.join(cwd, 'outside'))
+  // Empty folders: Git needs its own to know the repository; a project may expect its own.
+  for (const folder of [['site', '.git', 'refs', 'tags'], ['site', '.git', 'objects', 'pack'], ['uploads']])
+    await mkdir(path.join(cwd, ...folder), { recursive: true })
   if (process.platform !== 'win32') {
     // Links that lead inside the folder move: relative, absolute, or leading nowhere yet. One to another conversation
     // stays, as its target does.
@@ -302,6 +305,8 @@ describe('moving a bot between environments', () => {
     )
     expect(await readFile(path.join(conversation.cwd, 'site', '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n')
     expect(await readFile(path.join(conversation.cwd, 'draft.tmp'), 'utf8')).toBe('Draft\n')
+    for (const folder of [['site', '.git', 'refs', 'tags'], ['site', '.git', 'objects', 'pack'], ['uploads']])
+      expect((await stat(path.join(conversation.cwd, ...folder))).isDirectory(), folder.join('/')).toBe(true)
     if (process.platform !== 'win32') {
       const real = await realpath(conversation.cwd)
       const tool = path.join(conversation.cwd, 'site', 'node_modules', '.bin', 'tool')
@@ -395,38 +400,44 @@ describe('moving a bot between environments', () => {
       expect(await exists(folder), folder).toBe(false)
   })
 
-  it.skipIf(process.platform === 'win32')('refuses links that would lead out of the working folder', async () => {
-    const work = await environment('work')
-    await seededBot(work)
-    await work.request('POST', '/v1/bots/alpha/freeze')
-    const pkg = await exported(work, path.join(dir, 'alpha.tar.zst'))
-    await leave(work)
+  it.skipIf(process.platform === 'win32')(
+    'refuses links and folders that would lead out of the working folder',
+    async () => {
+      const work = await environment('work')
+      await seededBot(work)
+      await work.request('POST', '/v1/bots/alpha/freeze')
+      const pkg = await exported(work, path.join(dir, 'alpha.tar.zst'))
+      await leave(work)
 
-    const home = await environment('home')
-    // Next to the folder the bot's conversation would get: a link that resolves there leads out of it.
-    const chats = path.join(home.userData, 'standalone-chats')
-    await mkdir(chats, { recursive: true })
-    await writeFile(path.join(chats, 'secret'), 'secret')
-    const tampered: Array<Array<{ relative: string; target: string; rooted: boolean }>> = [
-      [{ relative: 'up', target: '../secret', rooted: false }],
-      [{ relative: 'up', target: '../secret', rooted: true }],
-      // Each reads as inside; through the first, the second resolves next to the folder.
-      [
-        { relative: 'here', target: '', rooted: true },
-        { relative: 'through', target: 'here/../secret', rooted: false },
-      ],
-    ]
-    for (const [index, links] of tampered.entries()) {
-      const changed = await repacked(pkg, path.join(dir, `tampered-${index}.tar.zst`), (manifest) => {
-        manifest.links = links
-      })
-      const response = await upload(home, changed)
-      expect(response.status, JSON.stringify(links)).toBe(400)
-      expect(getAppSetting('fleet.instance.bots.alpha.profile')).toBeNull()
-      expect(await readdir(chats)).toEqual(['secret'])
+      const home = await environment('home')
+      // Next to the folder the bot's conversation would get: a link that resolves there leads out of it.
+      const chats = path.join(home.userData, 'standalone-chats')
+      await mkdir(chats, { recursive: true })
+      await writeFile(path.join(chats, 'secret'), 'secret')
+      const tampered: Array<Record<string, unknown>> = [
+        { links: [{ relative: 'up', target: '../secret', rooted: false }] },
+        { links: [{ relative: 'up', target: '../secret', rooted: true }] },
+        // Each reads as inside; through the first, the second resolves next to the folder.
+        {
+          links: [
+            { relative: 'here', target: '', rooted: true },
+            { relative: 'through', target: 'here/../secret', rooted: false },
+          ],
+        },
+        { directories: ['../beside'] },
+      ]
+      for (const [index, change] of tampered.entries()) {
+        const changed = await repacked(pkg, path.join(dir, `tampered-${index}.tar.zst`), (manifest) => {
+          Object.assign(manifest, change)
+        })
+        const response = await upload(home, changed)
+        expect(response.status, JSON.stringify(change)).toBe(400)
+        expect(getAppSetting('fleet.instance.bots.alpha.profile')).toBeNull()
+        expect(await readdir(chats)).toEqual(['secret'])
+      }
+      expect((await upload(home, pkg, '')).status).toBe(200)
     }
-    expect((await upload(home, pkg, '')).status).toBe(200)
-  })
+  )
 
   it('deletes what an import wrote when it cannot finish, and leaves the rest of the environment alone', async () => {
     const work = await environment('work')
