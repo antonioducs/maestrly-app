@@ -15,7 +15,16 @@ const FIRST_VERSION = '0.1.0'
  * "Bug fixes and improved stability" in every language, so the listing refuses to load instead.
  */
 const RELEASE_NOTES = {
-  // '0.1.1': { 'en-US': '…', 'pt-BR': '…' },
+  '0.1.1': {
+    'en-US': `• Create bots from the phone in an environment your server already runs.
+• Paste images into a message, choose the branch of a new workspace chat and see chats grouped by branch.
+• On iOS 26, dictation uses Apple's newest speech recognition.
+• Approval cards show multi-line commands exactly as they will run.`,
+    'pt-BR': `• Crie bots pelo celular num ambiente que seu servidor já roda.
+• Cole imagens numa mensagem, escolha a branch de um novo chat de workspace e veja os chats agrupados por branch.
+• No iOS 26, o ditado usa o reconhecimento de voz mais recente da Apple.
+• Os cartões de aprovação mostram comandos de várias linhas exatamente como vão rodar.`,
+  },
 }
 const notes = RELEASE_NOTES[version]
 if (version !== FIRST_VERSION && !(notes?.['en-US']?.trim() && notes?.['pt-BR']?.trim())) {
