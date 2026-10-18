@@ -4,11 +4,16 @@ import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
-import type { McpOAuthAccountDto, McpOAuthConnectOptions, McpOAuthSummaryDto } from '../../../shared/chat'
+import {
+  type McpOAuthAccountDto,
+  type McpOAuthConnectOptions,
+  type McpOAuthSummaryDto,
+  mcpOAuthOwnClientRedirectUri,
+} from '../../../shared/chat'
 import type { PluginScope } from '../../../shared/plugins'
 import { PluginScopePicker, scopeIsComplete } from '../plugins/PluginScopePicker'
 import { type McpAccountActions, validLabel } from './mcp-account-actions'
-import { McpOwnClientForm } from './McpOwnClientForm'
+import { McpOwnClientForm, McpRedirectUrl } from './McpOwnClientForm'
 
 export type { McpAccountActions } from './mcp-account-actions'
 
@@ -65,6 +70,7 @@ export function McpAccounts({
 
   if (!oauth && !waiting && !ownClient) return null
   const accounts = oauth?.accounts ?? []
+  const redirectUri = mcpOAuthOwnClientRedirectUri(serverId)
 
   const connect = async (options: McpOAuthConnectOptions = {}) => {
     setWaiting(true)
@@ -254,23 +260,29 @@ export function McpAccounts({
         </div>
       ))}
       {oauth?.client && !ownClient && (
-        <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-          <span className="font-mono">{t('mcp.accounts.ownClient.current', { clientId: oauth.client.clientId })}</span>
-          <button type="button" className={linkCls} onClick={() => setOwnClient({ retry: {} })}>
-            {t('mcp.accounts.change')}
-          </button>
-          <button
-            type="button"
-            className={linkCls}
-            onClick={() => void actions.setClient(serverId, null).then(onChanged)}
-          >
-            {t('mcp.accounts.ownClient.remove')}
-          </button>
+        <div className="flex flex-col gap-1 text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono">
+              {t('mcp.accounts.ownClient.current', { clientId: oauth.client.clientId })}
+            </span>
+            <button type="button" className={linkCls} onClick={() => setOwnClient({ retry: {} })}>
+              {t('mcp.accounts.change')}
+            </button>
+            <button
+              type="button"
+              className={linkCls}
+              onClick={() => void actions.setClient(serverId, null).then(onChanged)}
+            >
+              {t('mcp.accounts.ownClient.remove')}
+            </button>
+          </div>
+          <McpRedirectUrl url={redirectUri} label={t('mcp.accounts.ownClient.redirect')} />
         </div>
       )}
       {ownClient && (
         <McpOwnClientForm
           issuer={ownClient.issuer}
+          redirectUri={redirectUri}
           busy={savingClient || waiting}
           onSave={(client) => void saveClient(client)}
           onCancel={() => setOwnClient(null)}

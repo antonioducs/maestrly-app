@@ -34,7 +34,10 @@ export default {
       ownClient: {
         current: 'Cliente OAuth próprio: {{clientId}}',
         heading: 'Seu próprio cliente OAuth',
-        help: 'Este servidor não registra apps automaticamente. Crie um cliente OAuth no provedor dele, do tipo app desktop ou nativo, com redirecionamento loopback, e informe aqui.',
+        help: 'Este servidor não registra apps automaticamente. Crie um cliente OAuth no provedor dele, do tipo app desktop ou nativo, adicione esta URL de redirecionamento a ele e informe aqui.',
+        redirect: 'URL de redirecionamento',
+        copy: 'Copiar',
+        copied: 'Copiado',
         clientId: 'Client ID',
         clientSecret: 'Client secret (opcional)',
         secretKept: 'O secret fica criptografado no host que roda o servidor e nunca é mostrado de novo.',
@@ -59,6 +62,8 @@ export default {
         storage: 'O armazenamento seguro não está disponível, então o login não pôde ser salvo.',
         failed: 'O login falhou. Tente de novo.',
         'label-taken': 'Outra conta deste servidor já tem esse nome.',
+        'port-in-use':
+          'Outro app deste computador usa a porta da URL de redirecionamento, então o login não consegue terminar. Feche-o e tente de novo.',
       },
     },
   },

@@ -30,7 +30,10 @@ export default {
       ownClient: {
         current: 'Own OAuth client: {{clientId}}',
         heading: 'Your own OAuth client',
-        help: 'This server does not register apps automatically. Create an OAuth client with its provider, of the desktop or native-app type, with a loopback redirect, then enter it here.',
+        help: 'This server does not register apps automatically. Create an OAuth client with its provider, of the desktop or native-app type, add this redirect URL to it, then enter it here.',
+        redirect: 'Redirect URL',
+        copy: 'Copy',
+        copied: 'Copied',
         clientId: 'Client ID',
         clientSecret: 'Client secret (optional)',
         secretKept: 'The secret is kept encrypted on the host that runs the server and is never shown again.',
@@ -53,6 +56,8 @@ export default {
         storage: 'Secure storage is unavailable, so the sign-in could not be saved.',
         failed: 'Sign-in failed. Try again.',
         'label-taken': 'Another account of this server already has this name.',
+        'port-in-use':
+          'Another app on this computer uses the port of the redirect URL, so the sign-in cannot finish. Close it and try again.',
       },
     },
   },

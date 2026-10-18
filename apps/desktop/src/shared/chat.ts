@@ -1724,9 +1724,29 @@ export type McpOAuthConnectResult =
         | 'storage'
         | 'failed'
         | 'label-taken'
+        | 'port-in-use'
       /** With `registration-unsupported`: the authorization server, where the person registers their own client. */
       issuer?: string
     }
+
+/** The loopback ports of sign-ins with the person's own OAuth client: one per server, in this range. */
+export const MCP_OAUTH_OWN_CLIENT_PORTS = { first: 41_000, count: 1_000 } as const
+
+/**
+ * The redirect URL of every sign-in to a server with the person's own OAuth client, so it is registered once with the
+ * client's provider: some, such as Slack, accept only the redirect URLs they know, port included. It depends only on
+ * the server's id, so this computer and the window that shows it agree. Sign-ins that register an app get a random
+ * port instead.
+ */
+export function mcpOAuthOwnClientRedirectUri(serverId: string): string {
+  return `http://127.0.0.1:${mcpOAuthOwnClientPort(serverId)}/callback`
+}
+
+export function mcpOAuthOwnClientPort(serverId: string): number {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < serverId.length; i++) hash = Math.imul(hash ^ serverId.charCodeAt(i), 0x01000193) >>> 0
+  return MCP_OAUTH_OWN_CLIENT_PORTS.first + (hash % MCP_OAUTH_OWN_CLIENT_PORTS.count)
+}
 
 /** A new account (optionally labelled and scoped), or with `accountId` an account signed in again. */
 export interface McpOAuthConnectOptions {

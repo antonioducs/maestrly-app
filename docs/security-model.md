@@ -177,7 +177,12 @@ MCP connection diagnostics can start a configured stdio process or connect to it
 HTTP endpoint inside the environment. They list tools without executing them,
 use an isolated connection with a deadline, deduplicate concurrent diagnostics
 of one revision, and allow at most four active diagnostics. Reconfiguring a
-server retires its pooled connection after existing calls finish. Global skill
+server retires its pooled connection after existing calls finish. Maestrly
+reads a stdio server's error output while it runs and keeps only its last
+16 KiB. When the server fails to start, the connection error carries a few of
+those lines, with the server's environment values, its arguments other than
+bare flag names, and common token shapes masked; a diagnostic returns that
+summary only to a desktop that asks for it (`mcp-test-detail`). Global skill
 editing accepts a managed skill name and bounded Markdown, never a caller's
 filesystem path. Writes validate containment, reject unsafe symlinks, preserve
 bundled resources, and replace the manifest atomically.
@@ -717,8 +722,12 @@ computer, whichever host runs the server:
 - It discovers the authorization server (RFC 9728 and RFC 8414) before anything
   else. Without dynamic client registration and without an own client, it stops
   before the browser opens and asks for an own client.
-- It listens for the authorization response on `127.0.0.1` with a random port and
-  accepts only the request that carries the expected `state`. It registers a
+- It listens for the authorization response on `127.0.0.1` and accepts only the
+  request that carries the expected `state`. The port is random, except with an
+  own client: then it is fixed per server (41000 to 41999, derived from the
+  server's id), so the redirect URL can be registered with the client's
+  provider; when another program holds that port, the sign-in stops before the
+  browser opens. It registers a
   public client dynamically, or uses the own client, and uses PKCE (S256). The
   consent page opens in your browser, and only when its URL is HTTPS, or HTTP on
   this computer's loopback: an authorization endpoint with any other scheme or
@@ -733,8 +742,10 @@ computer, whichever host runs the server:
 
 The host refreshes tokens itself. Chat turns never open a browser and never
 register a client: when an account needs a new sign-in, its tools fail with a
-message that names the account and says to connect it in Settings; the other
-accounts keep working. A server's accounts and own client are bound to its URL,
+message that names the account and where to connect it (Settings on this
+computer, or the environment's settings in the app for a bot); the other
+accounts keep working. A server whose configured `Authorization` header is
+rejected asks for a new token instead; the message never contains it. A server's accounts and own client are bound to its URL,
 and are deleted on sign-out, when the server is removed, and when a plugin
 update removes the server.
 
@@ -804,7 +815,9 @@ line, scripts and executables, and every component with its support status.
   stored only through secure storage and never returned to the renderer;
   without secure storage they are refused. Publisher-embedded OAuth clients are
   never reused: plugin servers sign in like any other server (see
-  [MCP OAuth sign-in](#mcp-oauth-sign-in)).
+  [MCP OAuth sign-in](#mcp-oauth-sign-in)), or, for a server that names its
+  publisher's client, with the person's access token, an optional sensitive
+  setting sent as `Authorization: Bearer`.
 - **Hosts.** A plugin's stdio servers run on the host that installed it: this
   computer, a remote workspaces host, or a bot environment.
 - **Bot environments.** An environment fetches, checks, and installs plugins

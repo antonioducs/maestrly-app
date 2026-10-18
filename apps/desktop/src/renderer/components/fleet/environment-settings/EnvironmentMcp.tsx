@@ -124,10 +124,20 @@ function McpPanel({ environment, fleet, onDirtyChange }: EnvironmentSettingsSect
             </Button>
           </div>
           {results[server.id] && (
-            <p role="status" className="text-xs text-muted-foreground">
-              {t(`environmentSettings.mcpTest.${results[server.id].code}`)} ·{' '}
-              {t('environmentSettings.toolCount', { count: results[server.id].toolCount })}
-            </p>
+            <div role="status" className="space-y-0.5 text-xs text-muted-foreground">
+              <p>
+                {t(`environmentSettings.mcpTest.${results[server.id].code}`)} ·{' '}
+                {t('environmentSettings.toolCount', { count: results[server.id].toolCount })}
+              </p>
+              {results[server.id].detail && (
+                <p className="break-words font-mono text-[11px] text-amber-200/90" data-testid="mcp-test-detail">
+                  {t('environmentSettings.mcpTestOutput', { detail: results[server.id].detail })}
+                </p>
+              )}
+              {results[server.id].code === 'timeout' && server.transport === 'stdio' && (
+                <p>{t('environmentSettings.mcpTestFirstStart')}</p>
+              )}
+            </div>
           )}
           {server.unavailable && (
             <p className="text-xs text-muted-foreground">{t('environmentSettings.mcpTest.unavailable')}</p>

@@ -164,11 +164,10 @@ A server that uses OAuth shows **Needs sign-in**. Choose **Sign in** next to it,
 and finish in your browser. The sign-in is kept on the host that runs the server, which renews it as needed. Servers
 that take a token instead ask for it as a setting.
 
-Some plugins sign in only with their publisher's own app, which works only in the publisher's products: Slack in
-OpenAI's catalog is one. Maestrly never uses that app. Such a server asks for an **access token** instead, under **Edit
-settings**, and stays off until you enter one; Maestrly sends it as `Authorization: Bearer <token>`. Get the token from
-the service, for example from an app you create in your own Slack workspace. If the server rejects the token, the
-model tells you to replace it.
+Some plugins name their publisher's own app, which works only in the publisher's products: Slack in OpenAI's catalog is
+one. Maestrly never uses that app. Such a server signs in with [your own OAuth client](#own-oauth-client) instead, or
+takes an **access token** under **Edit settings**, which Maestrly sends as `Authorization: Bearer <token>` and uses
+before any signed-in account. If the server rejects the token, the model tells you to replace it.
 
 ### Several accounts
 
@@ -187,10 +186,16 @@ single account, nothing changes: calls use it.
 
 ### Own OAuth client
 
-Some servers do not register apps automatically, such as Google's. Signing in to one shows a form for your own OAuth
-client: create a client with the server's provider, of the desktop or native-app type, with a loopback redirect, and
-enter its client ID and, if it has one, its secret. The secret is kept encrypted on the host that runs the server and
-is never shown again; **Own OAuth client** under the server lets you change or remove the client.
+Some servers do not register apps automatically, such as Google's and Slack's. Signing in to one shows a form for your
+own OAuth client: create a client with the server's provider, of the desktop or native-app type, add the **Redirect
+URL** the form shows to it, and enter its client ID and, if it has one, its secret. The secret is kept encrypted on the
+host that runs the server and is never shown again; **Own OAuth client** under the server lets you change or remove the
+client.
+
+The redirect URL, `http://127.0.0.1:<port>/callback`, is the same for every sign-in to that server, port included, so
+providers that accept only the URLs they know, such as Slack, accept it. It is shown again under the server, and
+changes only when the server is removed and added again. If another app on this computer uses its port, signing in
+says so; close that app and try again.
 
 With Google:
 
@@ -199,7 +204,15 @@ With Google:
 3. On the OAuth consent screen, add your accounts as test users. While the app is in **Testing** mode, Google ends
    each sign-in after 7 days, so you sign in again weekly.
 
-A plugin whose server declares only a client its publisher fills in signs in this way too.
+With Slack:
+
+1. At [api.slack.com/apps](https://api.slack.com/apps), create an app in your workspace. Only apps internal to a
+   workspace or listed in the Slack Marketplace can use Slack's MCP server; a workspace admin may need to approve it.
+2. Under **OAuth & Permissions**, add the redirect URL the form shows, and the user token scopes of the tools you use.
+3. Enter the client ID and client secret from the app's **Basic Information**.
+
+A plugin whose server declares only a client its publisher fills in, or names its publisher's own client, signs in
+this way too.
 
 ## Manage installed plugins
 

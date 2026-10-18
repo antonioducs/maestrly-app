@@ -64,6 +64,8 @@ export default {
     timeout: 'Tempo de conexão esgotado',
     'invalid-config': 'Configuração inválida',
   },
+  mcpTestOutput: 'O servidor diz: {{detail}}',
+  mcpTestFirstStart: 'Um servidor iniciado com npx ou uvx se baixa na primeira vez. Teste de novo daqui a pouco.',
   runtime: { 'claude-code': 'Claude Code', codex: 'Codex', 'antigravity-acp': 'Google AI (Antigravity ACP)' },
   runtimeState: { idle: 'Ocioso', checking: 'Verificando', installing: 'Instalando', ready: 'Pronto', error: 'Erro' },
   runtimeError: {

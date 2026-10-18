@@ -55,6 +55,7 @@ import {
 } from './mcp-catalog'
 import { LazyMcpRuntime, type LazyMcpDiagnostic } from './mcp-lazy-runtime'
 import { isMcpNeedsAuthError, McpNeedsAuthError } from './mcp-auth-errors'
+import { collectMcpStdioOutput, mcpStdioSecrets, withMcpStdioOutput } from './mcp-stdio-output'
 import {
   activeMcpOAuthAccounts,
   forgetMcpOAuth,
@@ -365,9 +366,16 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
         args: server.args ?? [],
         env: server.env,
         ...(server.cwd ? { cwd: server.cwd } : {}),
-        stderr: 'ignore',
+        stderr: 'pipe',
       })
-      await client.connect(transport, options)
+      // A server that stops at once says why only there, usually a missing token: "Connection closed" says nothing.
+      const output = collectMcpStdioOutput(transport.stderr)
+      try {
+        await client.connect(transport, options)
+      } catch (error) {
+        if (options.signal?.aborted) throw error
+        throw await withMcpStdioOutput(error, output, mcpStdioSecrets(server))
+      }
     }
     return connectionFromClient(client)
   } catch (error) {

@@ -13,12 +13,13 @@ import { parsePluginRelativePath } from './paths'
 /**
  * `placeholderClient`: the plugin names an OAuth client only its publisher fills in (`<GMAIL_PUBLIC_CLIENT_ID>`). The
  * server still signs in like any other: by dynamic registration when it offers it, otherwise with the person's own client.
- * `manual`: the plugin names its publisher's real client, which is never used; the server takes the person's access token.
+ * `manual`: the plugin names its publisher's real client, which is never used. The server signs in like a placeholder
+ * one, or takes the person's access token instead.
  */
 export type PluginMcpAuth =
   | { kind: 'none' }
   | { kind: 'oauth'; resource?: string; scopes?: string[]; placeholderClient?: true }
-  | { kind: 'manual'; reason: 'publisher-client' }
+  | { kind: 'manual'; reason: 'publisher-client'; resource?: string; scopes?: string[] }
 interface Common {
   key: string
   startupTimeoutMs?: number
@@ -333,14 +334,14 @@ function codexAuth(raw: Record<string, unknown>): PluginMcpAuth {
   // A placeholder is never sent anywhere, and neither is its secret.
   if (clientId && PLACEHOLDER_CLIENT.test(clientId)) return { kind: 'oauth', ...hints, placeholderClient: true }
   if (clientId || (oauth && typeof oauth.client_secret === 'string'))
-    return { kind: 'manual', reason: 'publisher-client' }
+    return { kind: 'manual', reason: 'publisher-client', ...hints }
   if (resource || scopes?.length || oauth) return { kind: 'oauth', ...hints }
   return { kind: 'none' }
 }
 
 /**
- * A server whose plugin signs in only with its publisher's client takes the person's token instead, as a bearer
- * `Authorization` header, unless its configuration already sets that header or asks for it.
+ * A server whose plugin signs in only with its publisher's client may take the person's token instead of a sign-in, as
+ * a bearer `Authorization` header, unless its configuration already sets that header or asks for it.
  */
 function addTokenInput(inputs: InputCollector, key: string, headers: Record<string, string>): void {
   const isAuthorization = (name: string) => name.toLowerCase() === 'authorization'
@@ -352,7 +353,7 @@ function addTokenInput(inputs: InputCollector, key: string, headers: Record<stri
     label: `${key} access token`,
     description: null,
     sensitive: true,
-    required: true,
+    required: false,
     defaultValue: null,
     target: { kind: 'header', serverKey: key, name: 'Authorization', prefix: 'Bearer ' },
   })

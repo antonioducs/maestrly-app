@@ -499,6 +499,7 @@ describe('bot environment registry', () => {
       'message-edit',
       'video-screens',
       'bot-move',
+      'mcp-test-detail',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -518,6 +519,7 @@ describe('bot environment registry', () => {
         'message-edit',
         'video-screens',
         'bot-move',
+        'mcp-test-detail',
       ],
     })
   })
@@ -1283,6 +1285,7 @@ describe('bot environment registry', () => {
           'message-edit',
           'video-screens',
           'bot-move',
+          'mcp-test-detail',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1302,6 +1305,7 @@ describe('bot environment registry', () => {
           'message-edit',
           'video-screens',
           'bot-move',
+          'mcp-test-detail',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1325,6 +1329,7 @@ describe('bot environment registry', () => {
           'message-edit',
           'video-screens',
           'bot-move',
+          'mcp-test-detail',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

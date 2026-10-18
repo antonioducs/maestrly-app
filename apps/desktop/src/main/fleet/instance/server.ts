@@ -2,6 +2,7 @@ import {
   FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_PLUGIN_SETTINGS_OPERATIONS,
   FLEET_SETTINGS_OPERATIONS,
   fleetSettingsRouteKey,
@@ -113,8 +114,8 @@ export class InstanceHttpError extends Error {
  * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
  * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
- * last message, streams its screens as video, and moves its bots to other environments with everything that is
- * theirs. Its health and every status advertise them.
+ * last message, streams its screens as video, moves its bots to other environments with everything that is theirs,
+ * and says why an MCP connection test failed. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -131,6 +132,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_VIDEO_SCREENS_FEATURE,
   FLEET_BOT_MOVE_FEATURE,
+  FLEET_MCP_TEST_DETAIL_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'

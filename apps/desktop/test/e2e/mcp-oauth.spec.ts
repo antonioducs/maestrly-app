@@ -312,6 +312,8 @@ test('MCP OAuth: an own client and two accounts, chosen by the model and turned 
     const form = page.getByTestId('mcp-own-client')
     await expect(form).toBeVisible({ timeout: 30_000 })
     expect(await openedIn(app)).toEqual([])
+    // The redirect URL to register with the client's provider: the same port on every sign-in.
+    await expect(form.getByTestId('mcp-redirect-url')).toContainText(/http:\/\/127\.0\.0\.1:41\d{3}\/callback/)
     await form.getByLabel('Client ID').fill('own-client')
     await form.getByLabel('Client secret (optional)').fill('own-secret')
     await form.getByRole('button', { name: 'Save and sign in', exact: true }).click()
