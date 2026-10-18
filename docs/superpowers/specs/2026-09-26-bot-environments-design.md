@@ -31,7 +31,8 @@ every new bot.
 | Owner memory | Global plus per environment. Entries the owner writes are global by default. Entries a bot saves belong to its environment. The owner can make an environment entry global. Existing entries stay global. |
 | Existing bots | Each becomes an environment with one bot, keeping its container, home volume, conversation and data. |
 | Limits | At most 8 bots per environment. The environment memory limit defaults to the gateway's (4 GB) and can be changed per environment. |
-| Out of scope | Moving a bot between environments; per-bot memory and CPU figures; separate site logins per bot inside an environment; separate Linux users per bot; GUI programs for Copilot and Cursor runtimes (their runtimes have no `DISPLAY` today either). |
+| Moving a bot | Added later (`bot-move`): a bot moves to another bots environment of its server, or to a new one, under its own id, with its conversation, queue, files, images, memory, settings and browser profile. What its former environment shares (accounts, skills, MCP servers, the home folder) stays there. See [Move a bot to another environment](../../bot-fleet.md#move-a-bot-to-another-environment). |
+| Out of scope | Per-bot memory and CPU figures; separate site logins per bot inside an environment; separate Linux users per bot; GUI programs for Copilot and Cursor runtimes (their runtimes have no `DISPLAY` today either). |
 
 ## Measurements (2026-09-26, dev image `0.9.3`)
 

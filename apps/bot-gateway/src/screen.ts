@@ -64,7 +64,8 @@ export class ScreenProxy {
   ticket(botId: string, deviceId: string, mode: Mode, surface: FleetScreenSurface = 'browser') {
     const bot = this.lifecycle.get(botId)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
-    if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
+    // A moving bot has no screen until it runs again.
+    if (bot.lifecycle !== 'running' || bot.move) throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
     const environmentId = bot.environmentId!
     if (!this.videoCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
     if (mode === 'control' && (bot.takeover.state !== 'human' || bot.takeover.deviceId !== deviceId))

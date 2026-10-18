@@ -457,6 +457,7 @@ describe('instance control HTTP', () => {
       'desktop-bridge',
       'message-edit',
       'video-screens',
+      'bot-move',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

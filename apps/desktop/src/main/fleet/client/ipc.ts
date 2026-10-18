@@ -4,6 +4,7 @@ import { validateAttachmentBytes } from '../instance/incoming-attachments'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
+  FLEET_BOT_MOVE_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_DEVICES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -24,6 +25,7 @@ import {
   fleetBotMemoryPatchRequestSchema,
   fleetConversationOpSchema,
   fleetConversationCallRequestSchema,
+  fleetBotMoveRequestSchema,
   fleetCreateBotRequestSchema,
   fleetCreateRoutineRequestSchema,
   fleetInteractionResolutionSchema,
@@ -46,6 +48,7 @@ import { FleetClientError } from './api'
 import { setAttendedFleetFiles } from './download-notices'
 import { fleetClientService as fleet } from './service'
 import {
+  FLEET_BOT_MOVE_UNSUPPORTED,
   FLEET_DEVICES_UNSUPPORTED,
   FLEET_EDIT_CONFLICT,
   FLEET_EDIT_UNSUPPORTED,
@@ -104,6 +107,13 @@ const connectInput = z
   .strict()
 // A refined schema cannot `.omit()` the key: the renderer's fields are checked with the key the main process picks.
 const createBotInput = z.record(z.string(), z.unknown())
+/** Where a bot moves: an existing environment or a new one by its name; the request schema checks it is one of them. */
+const moveInput = z
+  .object({
+    environmentId: environmentId.optional(),
+    newEnvironment: z.object({ name: fleetNameSchema }).strict().optional(),
+  })
+  .strict()
 const createRoutine = fleetCreateRoutineRequestSchema.omit({ idempotencyKey: true })
 const action = z.enum(['start', 'stop', 'restart', 'archive', 'pause', 'resume', 'cancel'])
 const actionRoute = {
@@ -171,6 +181,16 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:botAction', (_event, botId: unknown, rawAction: unknown) =>
     fleet.call(actionRoute[action.parse(rawAction)], { params: { id: id.parse(botId) } })
   )
+  // The gateway answers at once; the move's progress arrives in the bot's `move`, through the events already followed.
+  reg.mhandle('fleet:moveBot', (_event, botId: unknown, input: unknown) => {
+    if (!fleet.hasFeature(FLEET_BOT_MOVE_FEATURE)) throw new Error(FLEET_BOT_MOVE_UNSUPPORTED)
+    const body = fleetBotMoveRequestSchema.parse({ ...moveInput.parse(input), idempotencyKey: fleet.idempotencyKey() })
+    return fleet.call('botMove', { params: { id: id.parse(botId) }, body })
+  })
+  reg.handle('fleet:botMove', (_event, botId: unknown) => {
+    if (!fleet.hasFeature(FLEET_BOT_MOVE_FEATURE)) throw new Error(FLEET_BOT_MOVE_UNSUPPORTED)
+    return fleet.call('botMoveGet', { params: { id: id.parse(botId) } })
+  })
   reg.handle('fleet:listArchivedBots', () => fleet.call('archivedBotsList', { query: { separateEnvironments: 1 } }))
   reg.mhandle('fleet:restoreArchivedBot', (_event, botId: unknown) =>
     fleet.call('archivedBotRestore', { params: { id: id.parse(botId) } })

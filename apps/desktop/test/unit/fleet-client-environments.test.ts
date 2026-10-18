@@ -82,6 +82,7 @@ import {
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_RESTART_REQUIRED,
   FLEET_SCREEN_UPDATE_REQUIRED,
+  FLEET_BOT_MOVE_UNSUPPORTED,
   fleetTargetKey,
 } from '../../src/shared/fleet-targets'
 import { fleetReducer, initialFleetState, type FleetState } from '../../src/renderer/lib/fleet/state'
@@ -449,6 +450,31 @@ describe('environment IPC', () => {
       ['botsCreate', { body: { ...base, environmentId: 'work', idempotencyKey: KEY } }],
       ['botsCreate', { body: { ...base, environment: { name: 'Work', memoryLimitBytes: null }, idempotencyKey: KEY } }],
       ['botsCreate', { body: { ...base, idempotencyKey: KEY } }],
+    ])
+  })
+
+  it('moves a bot only through a gateway that moves bots, to an existing environment or a named new one', async () => {
+    const ipc = register()
+    expect(() => ipc.mutate('fleet:moveBot', 'scout', { environmentId: 'home' })).toThrow(FLEET_BOT_MOVE_UNSUPPORTED)
+    expect(() => ipc.read('fleet:botMove', 'scout')).toThrow(FLEET_BOT_MOVE_UNSUPPORTED)
+    features.list = ['environments', 'bot-move']
+    for (const input of [
+      {},
+      { environmentId: 'home', newEnvironment: { name: 'Lab' } },
+      { environmentId: '../home' },
+      { newEnvironment: { name: '' } },
+      { environmentId: 'home', slot: 2 },
+    ])
+      expect(() => ipc.mutate('fleet:moveBot', 'scout', input), JSON.stringify(input)).toThrow()
+    expect(() => ipc.mutate('fleet:moveBot', '../scout', { environmentId: 'home' })).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+    await ipc.mutate('fleet:moveBot', 'scout', { environmentId: 'home' })
+    await ipc.mutate('fleet:moveBot', 'scout', { newEnvironment: { name: 'Lab' } })
+    await ipc.read('fleet:botMove', 'scout')
+    expect(calls()).toEqual([
+      ['botMove', { params: { id: 'scout' }, body: { environmentId: 'home', idempotencyKey: KEY } }],
+      ['botMove', { params: { id: 'scout' }, body: { newEnvironment: { name: 'Lab' }, idempotencyKey: KEY } }],
+      ['botMoveGet', { params: { id: 'scout' } }],
     ])
   })
 

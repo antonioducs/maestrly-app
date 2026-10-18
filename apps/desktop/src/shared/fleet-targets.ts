@@ -53,5 +53,9 @@ export const FLEET_SCREEN_OFFLINE = 'FLEET_SCREEN_OFFLINE'
 export const FLEET_DEVICES_UNSUPPORTED = 'FLEET_DEVICES_UNSUPPORTED'
 /** Raised when the gateway or the bot cannot edit messages yet (`message-edit`). */
 export const FLEET_EDIT_UNSUPPORTED = 'FLEET_EDIT_UNSUPPORTED'
+/** Raised when the gateway cannot move bots between environments yet (`bot-move`). */
+export const FLEET_BOT_MOVE_UNSUPPORTED = 'FLEET_BOT_MOVE_UNSUPPORTED'
+/** Where the renderer asks to move a bot: an existing bots environment, or a new one by its name. */
+export type FleetMoveBotInput = { environmentId: string } | { newEnvironment: { name: string } }
 /** Raised when the bot refuses an edit: it is busy, or the message is no longer its last one. */
 export const FLEET_EDIT_CONFLICT = 'FLEET_EDIT_CONFLICT'

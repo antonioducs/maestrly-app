@@ -377,3 +377,15 @@ export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
 
 /** A gateway reading an environment's events with this query set to 1 also gets `chat.attention` events. */
 export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'
+
+/**
+ * Gateway feature (`moreFeatures` of `/v1/meta`) and instance capability: a bot moves to another bots environment of
+ * its server under its own id, with everything that is its own (conversation, queue, files, images, memory, settings
+ * and browser profile). The gateway moves it only between environments whose Maestrly has the capability, and streams
+ * its package from one to the other; the accounts, skills and MCP servers of each environment stay where they are.
+ */
+export const FLEET_BOT_MOVE_FEATURE = 'bot-move'
+/** The largest package a bot moves in, and how long one leg of its transfer (export or import) may take. */
+export const FLEET_BOT_MOVE_LIMITS = { packageMaxBytes: 32 * 1024 ** 3, transferTimeoutMs: 2 * 60 * 60_000 } as const
+/** The header that carries a bot move package's SHA-256 (hex) with its bytes, on both legs of its transfer. */
+export const FLEET_BOT_MOVE_SHA256_HEADER = 'X-Maestrly-Package-Sha256'

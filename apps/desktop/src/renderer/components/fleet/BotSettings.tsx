@@ -26,6 +26,7 @@ import {
   FLEET_NAME_MAX,
   FLEET_ROLE_MAX,
   FLEET_COMPACTION_LIMITS,
+  FLEET_BOT_MOVE_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   type FleetBot,
   type FleetSelectionOption,
@@ -57,7 +58,9 @@ import { BotPeerPicker } from './BotPeerPicker'
 import { BotRoutinesSection } from './BotRoutinesSection'
 import { BotSaveBar, LeaveSettingsDialog } from './BotSaveBar'
 import { CompactionFields } from './CompactionFields'
+import { MoveBotDialog } from './MoveBotDialog'
 import { SettingsCard, SettingsSection } from './SettingsSection'
+import { botMoveAvailability } from '@/lib/fleet/move'
 
 /** Asked before the settings are left: runs `proceed` at once, or once the owner saved or discarded their changes. */
 export type SettingsLeaveGuard = (proceed: () => void) => void
@@ -218,6 +221,10 @@ export function BotSettings({
   const [leaving, setLeaving] = useState<(() => void) | null>(null)
   const [archiving, setArchiving] = useState(false)
   const [archiveBusy, setArchiveBusy] = useState(false)
+  const [moving, setMoving] = useState(false)
+  // A server that moves bots offers it; why this bot cannot move now is shown beside the action.
+  const canMove = shared && fleet.state.connection.features.includes(FLEET_BOT_MOVE_FEATURE)
+  const moveAvailability = botMoveAvailability(fleet, bot)
   const [error, setError] = useState('')
   const [screenBusy, setScreenBusy] = useState(false)
   const [screenError, setScreenError] = useState('')
@@ -846,7 +853,24 @@ export function BotSettings({
                         {t('botSettings.openEnvironment')}
                       </Button>
                     )}
+                    {canMove && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={moveAvailability !== 'ready'}
+                        aria-describedby={moveAvailability !== 'ready' ? 'fleet-settings-move-hint' : undefined}
+                        title={t('move.actionHint')}
+                        onClick={() => setMoving(true)}
+                      >
+                        {bot.move ? t('move.moving') : t('move.action')}
+                      </Button>
+                    )}
                   </div>
+                  {canMove && moveAvailability !== 'ready' && moveAvailability !== 'moving' && (
+                    <p id="fleet-settings-move-hint" className="text-[12.5px] text-muted-foreground">
+                      {t(`move.unavailable.${moveAvailability}`)}
+                    </p>
+                  )}
                   {inheritable && (
                     <p className="text-[12.5px] text-muted-foreground">
                       {environmentCompaction
@@ -949,6 +973,21 @@ export function BotSettings({
               proceed()
             })
           }}
+        />
+      )}
+      {moving && (
+        <MoveBotDialog
+          bot={bot}
+          fleet={fleet}
+          onClose={() => setMoving(false)}
+          onOpenEnvironment={
+            onOpenEnvironment
+              ? () => {
+                  setMoving(false)
+                  onOpenEnvironment()
+                }
+              : undefined
+          }
         />
       )}
       {archiving && (

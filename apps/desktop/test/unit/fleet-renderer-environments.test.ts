@@ -350,6 +350,7 @@ describe('environment UI wiring', () => {
     'ScreenFrame',
     'ArchivedEnvironments',
     'ApiKeyAccountForm',
+    'MoveBotDialog',
   ]
   const touched = [
     ...newComponents,
@@ -608,6 +609,7 @@ describe('environment translations', () => {
       'components/fleet/BotAccountsSection.tsx',
       'components/fleet/BotSkillsMcpSection.tsx',
       'components/fleet/CreateBotDialog.tsx',
+      'components/fleet/MoveBotDialog.tsx',
       'components/fleet/FleetSidebarPanel.tsx',
       'components/fleet/OwnerMemoryView.tsx',
       'components/fleet/ServerView.tsx',

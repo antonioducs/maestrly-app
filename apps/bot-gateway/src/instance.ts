@@ -7,8 +7,12 @@ import {
   fleetSettingsRouteKey,
 } from '@maestrly/bot-fleet-protocol'
 import {
+  FLEET_BOT_MOVE_LIMITS,
+  FLEET_BOT_MOVE_SHA256_HEADER,
   FLEET_INSTANCE_ROUTES,
   FLEET_FILE_LIMITS,
+  type FleetInstanceBotFreeze,
+  type FleetInstanceBotImport,
   fleetFileIdSchema,
   type FleetFileRef,
   FLEET_PROTOCOL_HEADER,
@@ -40,9 +44,63 @@ import {
   type FleetDesktopCallResult,
   type FleetHostDesktopCallRequest,
 } from '@maestrly/bot-fleet-protocol'
+import { createHash } from 'node:crypto'
+import http from 'node:http'
+import { type Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { GatewayError } from './errors.js'
 
 type Routes = typeof FLEET_INSTANCE_ROUTES
+/** How long freezing a bot, or packing it before its first byte streams, may take. */
+const BOT_MOVE_STEP_MS = 10 * 60_000
+
+/**
+ * Streams a frozen bot's package from the environment it leaves to the one it joins, through the gateway and never
+ * whole in its memory. The gateway counts and hashes the bytes on their way: a package larger than its environment
+ * announced is cut, and one that ends short or hashes otherwise fails the upload, which the receiving environment
+ * then discards. `onImporting` runs once the first leg answered and the second starts.
+ */
+export async function relayBotPackage(
+  source: InstanceClient,
+  target: InstanceClient,
+  botId: string,
+  onImporting: () => void
+): Promise<FleetInstanceBotImport> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FLEET_BOT_MOVE_LIMITS.transferTimeoutMs)
+  try {
+    const exported = await source.botExport(botId, controller.signal)
+    onImporting()
+    const hash = createHash('sha256')
+    let size = 0
+    const checking = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        size += chunk.length
+        if (size > exported.size)
+          return callback(new GatewayError('INSTANCE_UNAVAILABLE', 'The bot package is larger than announced'))
+        hash.update(chunk)
+        callback(null, chunk)
+      },
+      flush(callback) {
+        callback(
+          size === exported.size && hash.digest('hex') === exported.sha256
+            ? null
+            : new GatewayError('INSTANCE_UNAVAILABLE', 'The bot package did not arrive whole')
+        )
+      },
+    })
+    exported.body.on('error', (error) => checking.destroy(error))
+    return await target.botImport(
+      botId,
+      exported.body.pipe(checking),
+      { size: exported.size, sha256: exported.sha256 },
+      controller.signal
+    )
+  } finally {
+    clearTimeout(timer)
+    controller.abort()
+  }
+}
 /**
  * An instance that could not be reached, or did not answer in time: its whole environment is unavailable. An instance
  * that answers, even with an error or an unusable answer about one bot, is reachable.
@@ -53,6 +111,26 @@ export class InstanceUnreachableError extends GatewayError {
   }
 }
 const invalidResponse = () => new GatewayError('INSTANCE_UNAVAILABLE', 'Invalid bot instance response')
+/** What an instance answered with an error, as the gateway passes it on: its own code when the gateway knows it. */
+function instanceError(text: string): GatewayError {
+  let code = 'INSTANCE_UNAVAILABLE'
+  let message = 'Bot instance request failed'
+  try {
+    const value = JSON.parse(text) as { code?: string; message?: string }
+    if (value.code) code = value.code
+    if (typeof value.message === 'string') message = value.message
+  } catch {}
+  return new GatewayError(
+    code === 'CONFLICT'
+      ? 'CONFLICT'
+      : code === 'INVALID_REQUEST'
+        ? 'INVALID_REQUEST'
+        : code === 'NOT_FOUND'
+          ? 'NOT_FOUND'
+          : 'INSTANCE_UNAVAILABLE',
+    message
+  )
+}
 /**
  * The bot a client speaks for. An instance with the `environments` capability serves each bot under
  * `/v1/bots/:botId`; an older one runs a single bot on the unprefixed routes.
@@ -124,25 +202,7 @@ export class InstanceClient {
     } finally {
       clearTimeout(timer)
     }
-    if (!response.ok) {
-      let code = 'INSTANCE_UNAVAILABLE'
-      let message = 'Bot instance request failed'
-      try {
-        const value = JSON.parse(text) as { code?: string; message?: string }
-        if (value.code) code = value.code
-        if (typeof value.message === 'string') message = value.message
-      } catch {}
-      throw new GatewayError(
-        code === 'CONFLICT'
-          ? 'CONFLICT'
-          : code === 'INVALID_REQUEST'
-            ? 'INVALID_REQUEST'
-            : code === 'NOT_FOUND'
-              ? 'NOT_FOUND'
-              : 'INSTANCE_UNAVAILABLE',
-        message
-      )
-    }
+    if (!response.ok) throw instanceError(text)
     // A route that answers with a body is never taken to have succeeded without one.
     if (response.status === 204) {
       if (route.response) throw invalidResponse()
@@ -459,6 +519,123 @@ export class InstanceClient {
   /** Uninstalls a bot and keeps its data, or with `purge` deletes its conversation, memory space and folders too. */
   botUninstall(botId: string, purge: boolean): Promise<void> {
     return this.call('botUninstall', { botId }, purge ? { purge: 1 } : undefined)
+  }
+  /** Freezes a bot for its move (`bot-move`); hashing what it moves with may take a while. */
+  botFreeze(botId: string): Promise<FleetInstanceBotFreeze> {
+    return this.call('botFreeze', { botId }, undefined, undefined, BOT_MOVE_STEP_MS)
+  }
+  /**
+   * A frozen bot's package as it streams from its environment, with the size and SHA-256 it announced. The
+   * environment packs the bot before its first byte, which may take a while; the stream then lasts as long as
+   * `signal` allows.
+   */
+  botExport(botId: string, signal: AbortSignal): Promise<{ body: Readable; size: number; sha256: string }> {
+    const url = new URL(this.origin + buildPath(FLEET_INSTANCE_ROUTES.botExport.path, { botId }))
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        clearTimeout(packing)
+        request.destroy()
+        reject(error instanceof GatewayError ? error : new InstanceUnreachableError())
+      }
+      const request = http.get(url, {
+        signal,
+        headers: {
+          [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
+          Authorization: 'Bearer ' + this.controlToken,
+        },
+      })
+      // Only until the first byte: the stream itself lasts as long as `signal` allows.
+      const packing = setTimeout(() => fail(new InstanceUnreachableError()), BOT_MOVE_STEP_MS)
+      request.on('error', fail)
+      request.on('response', (response) => {
+        clearTimeout(packing)
+        if ((response.statusCode ?? 500) !== 200) {
+          const chunks: Buffer[] = []
+          response.on('data', (chunk: Buffer) => {
+            if (chunks.length < 64) chunks.push(chunk)
+          })
+          response.on('end', () => fail(instanceError(Buffer.concat(chunks).toString('utf8'))))
+          response.on('error', fail)
+          return
+        }
+        const length = response.headers['content-length']
+        const sha256 = response.headers[FLEET_BOT_MOVE_SHA256_HEADER.toLowerCase()]
+        if (
+          !length ||
+          !/^\d+$/.test(length) ||
+          Number(length) > FLEET_BOT_MOVE_LIMITS.packageMaxBytes ||
+          typeof sha256 !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(sha256)
+        )
+          return fail(invalidResponse())
+        settled = true
+        resolve({ body: response, size: Number(length), sha256 })
+      })
+    })
+  }
+  /**
+   * Sends a bot's package to the environment it joins, which imports it without installing it, in place of whatever
+   * an earlier move left of it. Answers once the import finished, with the digest of what it holds.
+   */
+  botImport(
+    botId: string,
+    body: Readable,
+    expected: { size: number; sha256: string },
+    signal: AbortSignal
+  ): Promise<FleetInstanceBotImport> {
+    const url = new URL(this.origin + buildPath(FLEET_INSTANCE_ROUTES.botImport.path, { botId }, { replace: 1 }))
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        request.destroy()
+        reject(error instanceof GatewayError ? error : new InstanceUnreachableError())
+      }
+      const request = http.request(url, {
+        method: 'PUT',
+        signal,
+        headers: {
+          [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
+          Authorization: 'Bearer ' + this.controlToken,
+          'Content-Type': 'application/zstd',
+          'Content-Length': String(expected.size),
+          [FLEET_BOT_MOVE_SHA256_HEADER]: expected.sha256,
+        },
+      })
+      request.on('error', fail)
+      request.on('response', (response) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        response.on('data', (chunk: Buffer) => {
+          size += chunk.length
+          if (size > 64 * 1024) return fail(invalidResponse())
+          chunks.push(chunk)
+        })
+        response.on('error', fail)
+        response.on('end', () => {
+          if (settled) return
+          const text = Buffer.concat(chunks).toString('utf8')
+          if ((response.statusCode ?? 500) >= 400) return fail(instanceError(text))
+          let value: unknown
+          try {
+            value = JSON.parse(text)
+          } catch {
+            return fail(invalidResponse())
+          }
+          const parsed = FLEET_INSTANCE_ROUTES.botImport.response.safeParse(value)
+          if (!parsed.success) return fail(invalidResponse())
+          settled = true
+          resolve(parsed.data)
+        })
+      })
+      // A package that fails on its way (it differs from what was announced) aborts the upload: the environment
+      // receiving it deletes the part it received.
+      pipeline(body, request).catch(fail)
+    })
   }
   selections() {
     return this.botCall('selections', 'botSelections')

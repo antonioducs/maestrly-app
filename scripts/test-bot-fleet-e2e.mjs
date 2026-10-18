@@ -2812,6 +2812,71 @@ async function main() {
       afterUpdate.id.slice(0, 12) +
       ') on the new image with both conversations kept'
   )
+
+  // Partner moves to a new environment with what is its own: its conversation and memory go, its copy in Scout's
+  // environment goes once it runs there, and Scout keeps running in the same container meanwhile.
+  const partnerHistoryBeforeMove = await historyIds(partnerId)
+  const partnerMemoriesBeforeMove = (await request('GET', '/v1/bots/' + partnerId + '/memories?status=all')).memories
+    .map((item) => item.id)
+    .sort()
+  const scoutContainerBeforeMove = await containerState(containers[1])
+  const moveStarted = Date.now()
+  const moveStart = await request('POST', '/v1/bots/' + partnerId + '/move', {
+    newEnvironment: { name: 'E2E Lab ' + suffix },
+    idempotencyKey: randomUUID(),
+  })
+  assert.deepEqual(
+    [moveStart.state, moveStart.newEnvironment, moveStart.fromEnvironmentId],
+    ['running', true, scoutEnvId]
+  )
+  const labId = moveStart.toEnvironmentId
+  const moved = await poll(
+    'Partner moved to its new environment',
+    async () => {
+      const value = await request('GET', '/v1/bots/' + partnerId + '/move')
+      if (value.state === 'failed') throw new Error('The move failed: ' + JSON.stringify(value.error))
+      return value.phase === 'completed' ? value : null
+    },
+    300000
+  )
+  timings.botMoveMs = Date.now() - moveStarted
+  assert.equal(moved.state, 'completed')
+  await poll('Partner installed in its new environment', async () => {
+    const value = await bot(partnerId)
+    return value.environmentId === labId && value.lifecycle === 'running' && value.move === null
+  })
+  assert.deepEqual((await request('GET', '/v1/environments/' + labId)).botIds, [partnerId])
+  assert.deepEqual((await request('GET', environmentRoute)).botIds, [scoutId])
+  const labContainer = environmentContainer(labId)
+  assert.deepEqual(slots(await instanceStatus(labContainer)), [[partnerId, 1]])
+  assert.deepEqual(slots(await instanceStatus(containers[1])), [[scoutId, 1]])
+  const historyAfterMove = new Set(await historyIds(partnerId))
+  assert.ok(
+    partnerHistoryBeforeMove.every((id) => historyAfterMove.has(id)),
+    'Partner lost its conversation in the move'
+  )
+  assert.deepEqual(
+    (await request('GET', '/v1/bots/' + partnerId + '/memories?status=all')).memories.map((item) => item.id).sort(),
+    partnerMemoriesBeforeMove
+  )
+  assert.deepEqual(await botFolders(containers[1], partnerId), [])
+  const scoutContainerAfterMove = await containerState(containers[1])
+  assert.deepEqual(
+    [scoutContainerAfterMove.id, scoutContainerAfterMove.startedAt],
+    [scoutContainerBeforeMove.id, scoutContainerBeforeMove.startedAt]
+  )
+  const movedTag = randomUUID().slice(0, 8)
+  await answer(await send(scoutId, 'E2E-ALIVE tag=' + movedTag), 'E2E-ALIVE-OK tag=' + movedTag, {
+    noPermission: true,
+  })
+  pass(
+    'move a bot to a new environment',
+    'conversation and memory in ' +
+      labContainer +
+      ", its copy gone from Scout's container, Scout answering in the same container (" +
+      timings.botMoveMs +
+      ' ms)'
+  )
   for (const name of containers) {
     const stat = await docker(['stats', '--no-stream', '--format', '{{.MemUsage}}', name], { allowFailure: true })
     if (stat.code === 0) timings[name + 'Memory'] = stat.stdout.trim()

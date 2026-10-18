@@ -7,6 +7,7 @@ import type {
 import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
 import type {
   FleetCreateWorkspacesInput,
+  FleetMoveBotInput,
   FleetProvisioningTargetInput,
   FleetScreenTargetInput,
 } from '../shared/fleet-targets'
@@ -30,6 +31,7 @@ import type {
   FleetArchivedBot,
   FleetArchivedEnvironment,
   FleetBot,
+  FleetBotMove,
   FleetCreateBotRequest,
   FleetEnvironment,
   FleetPatchEnvironmentRequest,
@@ -244,6 +246,14 @@ export const fleetApi = {
     botId: string,
     action: 'start' | 'stop' | 'restart' | 'archive' | 'pause' | 'resume' | 'cancel'
   ): Promise<FleetBot | void> => ipcRenderer.invoke('fleet:botAction', botId, action),
+  /**
+   * Moves a bot to another environment of its server, or to a new one, with everything that is its own (`bot-move`).
+   * Answers at once with the move; its progress arrives in the bot's `move`.
+   */
+  fleetMoveBot: (botId: string, input: FleetMoveBotInput): Promise<FleetBotMove> =>
+    ipcRenderer.invoke('fleet:moveBot', botId, input),
+  /** The bot's last move, running or finished, with why it failed. */
+  fleetGetBotMove: (botId: string): Promise<FleetBotMove> => ipcRenderer.invoke('fleet:botMove', botId),
   fleetListArchivedBots: (): Promise<{ bots: FleetArchivedBot[] }> => ipcRenderer.invoke('fleet:listArchivedBots'),
   /** Recreates an archived bot's container on its kept files; it comes back as `creating`. */
   fleetRestoreArchivedBot: (botId: string): Promise<FleetBot> => ipcRenderer.invoke('fleet:restoreArchivedBot', botId),

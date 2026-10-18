@@ -17,10 +17,14 @@ import {
   type FleetHostDesktopLinksChanged,
 } from '@maestrly/bot-fleet-protocol'
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { Transform, type Duplex, type Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import {
+  FLEET_BOT_MOVE_FEATURE,
+  FLEET_BOT_MOVE_LIMITS,
+  FLEET_BOT_MOVE_SHA256_HEADER,
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_DESKTOP_BRIDGE_FEATURE,
   FLEET_FILES_FEATURE,
@@ -63,6 +67,8 @@ import {
   type FleetFileRef,
   type FleetImportResults,
   type FleetInputReceipt,
+  type FleetInstanceBotFreeze,
+  type FleetInstanceBotImport,
   type FleetInstanceBotInstall,
   type FleetInstanceEnvironmentStatus,
   type FleetInstanceEvent,
@@ -107,7 +113,8 @@ export class InstanceHttpError extends Error {
  * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
  * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
- * last message, and streams its screens as video. Its health and every status advertise them.
+ * last message, streams its screens as video, and moves its bots to other environments with everything that is
+ * theirs. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -123,6 +130,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_DESKTOP_BRIDGE_FEATURE,
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_VIDEO_SCREENS_FEATURE,
+  FLEET_BOT_MOVE_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -179,6 +187,14 @@ export interface InstanceEnvironment {
   bot(botId: string): InstanceBot
   installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus>
   uninstallBot(botId: string, options: { purge: boolean }): Promise<void>
+  /** A bot's move (`bot-move`): an environment without these refuses its routes as unknown. */
+  freezeBot?(botId: string): Promise<FleetInstanceBotFreeze>
+  exportBot?(botId: string): Promise<{ file: string; size: number; sha256: string; release(): Promise<void> }>
+  importBot?(
+    botId: string,
+    body: Readable,
+    expected: { size: number; sha256: string; replace: boolean }
+  ): Promise<FleetInstanceBotImport>
   /** The stream of a screen surface; the tunnel gives its lease back when it ends or fails. */
   acquireScreen(surface: InstanceScreenSurface, mode: ScreenMode): Promise<ScreenLease>
   startLogin(request: FleetLoginStartRequest): Promise<FleetLoginAttempt>
@@ -294,8 +310,17 @@ const SCREEN_ROUTES: ReadonlySet<RouteKey> = new Set<RouteKey>([
   'conversationScreenView',
   'conversationScreenControl',
 ])
-/** Bot routes that also serve a bot that is not installed: installing it, and uninstalling it again. */
-const WITHOUT_INSTALLED_BOT: ReadonlySet<RouteKey> = new Set<RouteKey>(['botInstall', 'botUninstall'])
+/**
+ * Bot routes that also serve a bot that is not installed: installing it and uninstalling it again, and freezing,
+ * exporting and importing it for a move.
+ */
+const WITHOUT_INSTALLED_BOT: ReadonlySet<RouteKey> = new Set<RouteKey>([
+  'botInstall',
+  'botUninstall',
+  'botFreeze',
+  'botExport',
+  'botImport',
+])
 const COMPILED_ROUTES = (Object.keys(FLEET_INSTANCE_ROUTES) as RouteKey[]).map((key) => {
   const route = FLEET_INSTANCE_ROUTES[key]
   const names: string[] = []
@@ -358,11 +383,11 @@ function screenFor(pathname: string): { surface: InstanceScreenSurface; mode: Sc
     mode: match.key === 'botScreenView' ? 'view' : 'control',
   }
 }
-function parsePurge(url: URL): boolean {
-  const raw = url.searchParams.get('purge')
+function parseFlag(url: URL, name: 'purge' | 'replace'): boolean {
+  const raw = url.searchParams.get(name)
   if (raw === null || raw === '0' || raw === 'false') return false
   if (raw === '1' || raw === 'true') return true
-  throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid purge flag.')
+  throw new InstanceHttpError(400, 'INVALID_REQUEST', `Invalid ${name} flag.`)
 }
 function sseFrame(event: FleetInstanceEvent): string {
   return `id: ${event.seq}\nevent: fleet\ndata: ${JSON.stringify(event)}\n\n`
@@ -526,6 +551,48 @@ export function createInstanceControlServer(
     if (!isBotId(params.botId)) throw botNotFound()
     return environment.bot(params.botId)
   }
+  /** A bot's move, which only an environment of bots serves. */
+  const moves = () => {
+    const { freezeBot, exportBot, importBot } = environment
+    if (!freezeBot || !exportBot || !importBot) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+    return {
+      freezeBot: freezeBot.bind(environment),
+      exportBot: exportBot.bind(environment),
+      importBot: importBot.bind(environment),
+    }
+  }
+  /** Streams a frozen bot's package, then lets its staging folder go, whether the stream finished or not. */
+  const sendBotPackage = async (botId: string, response: ServerResponse): Promise<void> => {
+    const exported = await moves().exportBot(botId)
+    try {
+      response.writeHead(200, {
+        'Content-Type': 'application/zstd',
+        'Content-Length': exported.size,
+        [FLEET_BOT_MOVE_SHA256_HEADER]: exported.sha256,
+        'Cache-Control': 'no-store',
+      })
+      await pipeline(createReadStream(exported.file), response)
+    } finally {
+      await exported.release()
+    }
+  }
+  const receiveBotPackage = async (
+    botId: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL
+  ): Promise<void> => {
+    const length = request.headers['content-length']
+    const sha256 = request.headers[FLEET_BOT_MOVE_SHA256_HEADER.toLowerCase()]
+    if (!length || !/^\d+$/.test(length) || typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256))
+      throw new InstanceHttpError(400, 'INVALID_REQUEST', 'A bot package needs its size and SHA-256.')
+    const imported = await moves().importBot(botId, request, {
+      size: Number(length),
+      sha256,
+      replace: parseFlag(url, 'replace'),
+    })
+    writeJson(response, 200, FLEET_INSTANCE_ROUTES.botImport.response.parse(imported))
+  }
 
   const handlers: Partial<Record<RouteKey, Handler>> = {
     settingsAccounts: () => settings().accounts(FLEET_SETTINGS_OPERATIONS.accounts.input.parse({})),
@@ -632,9 +699,16 @@ export function createInstanceControlServer(
       return status
     },
     botUninstall: async ({ params, url }) => {
-      const purge = parsePurge(url)
+      const purge = parseFlag(url, 'purge')
       try {
         await environment.uninstallBot(params.botId, { purge })
+      } finally {
+        endWhere((tunnel) => tunnel.botId === params.botId)
+      }
+    },
+    botFreeze: async ({ params }) => {
+      try {
+        return await moves().freezeBot(params.botId)
       } finally {
         endWhere((tunnel) => tunnel.botId === params.botId)
       }
@@ -714,6 +788,13 @@ export function createInstanceControlServer(
       if (match.key === 'hostFileContent') return await hostFiles().content(request, response, url)
       if (match.key === 'hostFileUploadChunk')
         return await hostFiles().uploadChunk(request, response, match.params.uploadId, url)
+      // A bot's package streams both ways as raw bytes.
+      if (match.key === 'botExport' || match.key === 'botImport') {
+        if (!isBotId(match.params.botId)) throw botNotFound()
+        return match.key === 'botExport'
+          ? await sendBotPackage(match.params.botId, response)
+          : await receiveBotPackage(match.params.botId, request, response, url)
+      }
       // Routes of an instance that hosted a single bot, such as `/v1/status`, are gone: bots are addressed by id.
       const handler = handlers[match.key]
       if (!handler) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
@@ -787,6 +868,8 @@ export function createInstanceControlServer(
       writeJson(response, known.status, { code: known.code || errorStatus(known.status), message: known.message })
     }
   })
+  // A bot's package arrives in one request, which may take longer than Node's default of five minutes.
+  server.requestTimeout = FLEET_BOT_MOVE_LIMITS.transferTimeoutMs
 
   // A status of a bot whose takeover ended closes that bot's controls, and only its own. The status is only a
   // signal: the bot's current hold decides, so a late status never ends a control that a new takeover allows.
