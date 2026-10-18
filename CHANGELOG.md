@@ -7,6 +7,13 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
+- A bot moves to another environment of its server, or to a new one, with its
+  conversation and history, memory, files, images, routines and browser profile,
+  under its own id: choose **Move to…** in its settings' **Environment** tab, or
+  drag it onto another environment in the sidebar, and confirm. The accounts,
+  skills and MCP servers of its former environment stay there. It needs a bot
+  server and bot images on this version. See
+  [Move a bot to another environment](docs/bot-fleet.md#move-a-bot-to-another-environment).
 - The mobile app's dictation listens in the language chosen in **Settings →
   Language**; with **System**, it follows the phone. See
   [Mobile app](docs/mobile.md#what-it-does).

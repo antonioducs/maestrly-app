@@ -277,6 +277,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'desktop-bridge',
     'message-edit',
     'video-screens',
+    'bot-move',
   ])
 })
 

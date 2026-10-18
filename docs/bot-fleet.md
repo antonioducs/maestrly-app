@@ -433,6 +433,42 @@ When the gateway is updated, it moves its database to schema 8 and turns every e
 
 Until you restart an environment onto the updated bot image, its one bot keeps running as before. Adding a bot, the **Apps** screen, and the environment screen ask you to restart (update) the environment first. On its first start with the updated image, Maestrly adopts the existing bot's data as the bot in slot 1; see [bot environment data](local-data.md#bot-environment-data).
 
+### Move a bot to another environment
+
+A bot can move to another environment of its server, or to a new one created for it, for example to group bots by
+company. Open the bot's settings, choose **Environment**, then **Move to…**; or drag the bot in the sidebar onto
+another environment. Either way a dialog asks where it goes and says what goes with it and what stays; nothing moves
+until you choose **Move**.
+
+| Goes with the bot | Stays in its former environment |
+| --- | --- |
+| Its conversation and history, with the files of its working folder, attachments, and generated images | Model accounts: API keys and subscription sign-ins |
+| Its queue, transcript extras, published files, and images | Skills and MCP servers |
+| Its bot memory | The home folder and the files the bots there share |
+| Its settings, pause, routines, peers, links to computers and workspaces environments, and activity, which keep its id | The site logins of the browser the bots drive with `browser_*` |
+| The browser profile of its **Apps** desktop, with the site sign-ins made there; caches are left behind | |
+
+The bot keeps its id, so everything that names it (routines, peers, desktop links, activity) follows without change.
+The owner memories it wrote in its former environment move to the new one. In its new environment it uses that
+environment's accounts, skills, MCP servers, and default compaction model; set them up there if they differ.
+
+The move runs on the server and continues if you close the dialog or this computer goes offline; the bot shows
+**Moving…** meanwhile, and its conversation is read-only. The gateway pauses the bot (its turn stops, its windows
+close, it is uninstalled from its environment), streams a package of its data from one environment to the other,
+checking its size and SHA-256 on the way, and installs it in the new environment once that environment holds the same
+conversation, memories, and files. Until then any failure puts everything back: the new environment deletes what it
+received, a new environment created for the move is removed, and the bot is installed again where it was. The dialog
+then says why it failed, and **Try again** starts over. If the gateway restarts during a move, a move that had not
+reached its new environment fails the same way when the gateway starts again; one that had is completed.
+
+Once the bot runs in its new environment, its former environment deletes its copy. If that environment is stopped or
+does not answer, the copy waits and is deleted when the environment next starts; the bot is not held back meanwhile.
+
+Both environments must be running, run the same version of the bot image with move support, and the new one must have
+a free slot. A bot cannot move while you control its screen. The gateway API is `POST /v1/bots/:id/move` with
+`environmentId` or `newEnvironment` (feature `bot-move`), and `GET /v1/bots/:id/move` reads the bot's last move; see
+[bot environment data](local-data.md#bot-environment-data) for what an environment keeps of each bot.
+
 ## Bot conversation controls
 
 The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the skills installed in the bot's environment and expand when the bot sends the turn.

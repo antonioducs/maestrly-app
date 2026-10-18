@@ -498,6 +498,7 @@ describe('bot environment registry', () => {
       'desktop-bridge',
       'message-edit',
       'video-screens',
+      'bot-move',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -516,6 +517,7 @@ describe('bot environment registry', () => {
         'desktop-bridge',
         'message-edit',
         'video-screens',
+        'bot-move',
       ],
     })
   })
@@ -1280,6 +1282,7 @@ describe('bot environment registry', () => {
           'desktop-bridge',
           'message-edit',
           'video-screens',
+          'bot-move',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1298,6 +1301,7 @@ describe('bot environment registry', () => {
           'desktop-bridge',
           'message-edit',
           'video-screens',
+          'bot-move',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1320,6 +1324,7 @@ describe('bot environment registry', () => {
           'desktop-bridge',
           'message-edit',
           'video-screens',
+          'bot-move',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

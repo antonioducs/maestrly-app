@@ -44,6 +44,7 @@ import {
   fleetArchivedBotSchema,
   fleetArchivedEnvironmentSchema,
   fleetBotIdSchema,
+  fleetBotMoveSchema,
   fleetBotSchema,
   fleetBotStatusSchema,
   fleetCeilingSchema,
@@ -387,6 +388,22 @@ export const fleetCreateBotRequestSchema = z
     path: ['environment'],
   })
 export type FleetCreateBotRequest = z.infer<typeof fleetCreateBotRequestSchema>
+/**
+ * Moves a bot to another bots environment of its server (`environmentId`) or to a new one (`newEnvironment`), never
+ * both (`bot-move`). The gateway answers at once with the move, which then runs on the server.
+ */
+export const fleetBotMoveRequestSchema = z
+  .object({
+    environmentId: fleetEnvironmentIdSchema.optional(),
+    newEnvironment: z.object({ name: fleetNameSchema }).strict().optional(),
+    idempotencyKey: fleetIdempotencyKeySchema,
+  })
+  .strict()
+  .refine((value) => (value.environmentId === undefined) !== (value.newEnvironment === undefined), {
+    message: 'Choose an existing environment or a new one',
+    path: ['environmentId'],
+  })
+export type FleetBotMoveRequest = z.infer<typeof fleetBotMoveRequestSchema>
 export const fleetPatchBotRequestSchema = z.object({
   name: fleetNameSchema.optional(),
   instructions: fleetInstructionsSchema.optional(),
@@ -854,6 +871,30 @@ export const fleetInstanceBotInstallSchema = z.object({
   takeover: z.boolean().optional(),
 })
 export type FleetInstanceBotInstall = z.infer<typeof fleetInstanceBotInstallSchema>
+const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
+/**
+ * What a bot moves with, reduced to counts and hashes that the environment it leaves and the one it joins compute on
+ * their own (`bot-move`): its conversation's messages in order, its memories, and every file that moves.
+ */
+export const fleetBotMoveDigestSchema = z
+  .object({
+    conversationId: fleetIdSchema.nullable(),
+    messages: fleetNonNegativeIntSchema,
+    lastSeq: z.number().int(),
+    messagesSha256: sha256Hex,
+    memories: fleetNonNegativeIntSchema,
+    memoriesSha256: sha256Hex,
+    files: fleetNonNegativeIntSchema,
+    filesSha256: sha256Hex,
+  })
+  .strict()
+export type FleetBotMoveDigest = z.infer<typeof fleetBotMoveDigestSchema>
+/** A frozen bot: no longer installed, its data kept as it is now, which is what its digest describes. */
+export const fleetInstanceBotFreezeSchema = z.object({ digest: fleetBotMoveDigestSchema })
+export type FleetInstanceBotFreeze = z.infer<typeof fleetInstanceBotFreezeSchema>
+/** A bot's package, imported but not installed: the digest of what the environment now holds of it. */
+export const fleetInstanceBotImportSchema = z.object({ digest: fleetBotMoveDigestSchema })
+export type FleetInstanceBotImport = z.infer<typeof fleetInstanceBotImportSchema>
 export const fleetInstanceHoldSchema = z.object({
   state: z.enum(['none', 'holding', 'held']),
   reason: z.enum(['takeover', 'paused']).nullable(),
@@ -1379,6 +1420,10 @@ export const FLEET_GATEWAY_ROUTES = {
   botStop: { method: 'POST', path: '/v1/bots/:id/stop', body: null, response: fleetBotSchema },
   botRestart: { method: 'POST', path: '/v1/bots/:id/restart', body: null, response: fleetBotSchema },
   botArchive: { method: 'POST', path: '/v1/bots/:id/archive', body: null, response: fleetBotSchema },
+  /** `bot-move`: starts the bot's move and answers at once; its progress arrives in the bot's `move`. */
+  botMove: { method: 'POST', path: '/v1/bots/:id/move', body: fleetBotMoveRequestSchema, response: fleetBotMoveSchema },
+  /** The bot's last move, running or finished. */
+  botMoveGet: { method: 'GET', path: '/v1/bots/:id/move', body: null, response: fleetBotMoveSchema },
   // A separate collection: `/v1/bots/archived` would collide with a bot whose id is `archived`.
   // `separateEnvironments=1` lists only individually archived bots. Older clients also see archived environments of one.
   archivedBotsList: {
@@ -2335,6 +2380,21 @@ export const FLEET_INSTANCE_ROUTES = {
   },
   /** `?purge=1` also deletes the bot's conversation, memory space and folders. */
   botUninstall: { method: 'DELETE', path: '/v1/bots/:botId', body: null, response: null },
+  /**
+   * Capability `bot-move`: uninstalls the bot and keeps its data as it is, for it to move; `botInstall` brings a frozen
+   * bot back, as it does an archived one. Freezing a frozen bot again changes nothing.
+   */
+  botFreeze: { method: 'POST', path: '/v1/bots/:botId/freeze', body: null, response: fleetInstanceBotFreezeSchema },
+  /**
+   * Binary: a frozen bot's package (a zstd-compressed tar), with its SHA-256 in `X-Maestrly-Package-Sha256` and its
+   * size in `Content-Length`.
+   */
+  botExport: { method: 'GET', path: '/v1/bots/:botId/export', body: null, response: null },
+  /**
+   * Binary body: a bot's package, with the same two headers. Imports the bot without installing it, in place of
+   * whatever an earlier move left of it (`?replace=1`); a bot installed here is refused.
+   */
+  botImport: { method: 'PUT', path: '/v1/bots/:botId/import', body: null, response: fleetInstanceBotImportSchema },
   botStatus: { method: 'GET', path: '/v1/bots/:botId/status', body: null, response: fleetInstanceStatusSchema },
   botSelections: {
     method: 'GET',

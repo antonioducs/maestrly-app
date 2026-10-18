@@ -276,6 +276,39 @@ export const fleetResourcesSchema = z.object({
 })
 export type FleetResources = z.infer<typeof fleetResourcesSchema>
 
+/** The steps of a bot's move to another environment, in order. */
+export const FLEET_BOT_MOVE_PHASES = [
+  'prepared',
+  'freezing',
+  'exporting',
+  'importing',
+  'verifying',
+  'committing',
+  'releasing-source',
+  'completed',
+] as const
+export const fleetBotMovePhaseSchema = z.enum(FLEET_BOT_MOVE_PHASES)
+export type FleetBotMovePhase = z.infer<typeof fleetBotMovePhaseSchema>
+/**
+ * A bot's move to another environment. It is `running` until the bot runs there (`completed`), or until it failed and
+ * the bot runs where it was (`failed`, with why). A completed move may still be at `releasing-source`: its former
+ * environment deletes the bot's copy as soon as it can.
+ */
+export const fleetBotMoveSchema = z.object({
+  id: fleetIdSchema,
+  botId: fleetBotIdSchema,
+  fromEnvironmentId: fleetEnvironmentIdSchema,
+  toEnvironmentId: fleetEnvironmentIdSchema,
+  /** The destination was created for this move. */
+  newEnvironment: z.boolean(),
+  phase: fleetBotMovePhaseSchema,
+  state: z.enum(['running', 'completed', 'failed']),
+  error: z.object({ code: fleetErrorCodeSchema, message: z.string().max(500) }).nullable(),
+  startedAt: fleetTimestampSchema,
+  updatedAt: fleetTimestampSchema,
+})
+export type FleetBotMove = z.infer<typeof fleetBotMoveSchema>
+
 export const fleetBotSchema = z.object({
   id: fleetBotIdSchema,
   name: fleetNameSchema,
@@ -320,6 +353,8 @@ export const fleetBotSchema = z.object({
   compactionState: fleetCompactionStateSchema.nullable().default(null),
   /** The environment the bot runs in; null from gateways that predate environments. */
   environmentId: fleetEnvironmentIdSchema.nullable().default(null),
+  /** Its move to another environment while one runs; null otherwise, and from gateways without `bot-move`. */
+  move: fleetBotMoveSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })

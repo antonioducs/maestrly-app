@@ -1,6 +1,7 @@
 import { environmentSettingsRoute } from './environment-settings.js'
 import {
   FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_BOT_MOVE_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_HOST_DESKTOP_CALLS_FEATURE,
@@ -36,6 +37,7 @@ import {
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
   normalizePairingCode,
+  type FleetBotMoveRequest,
   type FleetCreateBotRequest,
   type FleetCreateEnvironmentRequest,
   type FleetEnvironmentUpdateRequest,
@@ -371,6 +373,7 @@ export async function publicRoute(
             FLEET_ENVIRONMENT_PLUGINS_FEATURE,
             FLEET_HOST_FILES_FOLDERS_FEATURE,
             FLEET_HOST_DESKTOP_CALLS_FEATURE,
+            FLEET_BOT_MOVE_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -571,6 +574,21 @@ export async function publicRoute(
       return { body: await ctx.lifecycle.restart(id) }
     case 'botArchive':
       return { body: await ctx.lifecycle.archive(id) }
+    case 'botMove': {
+      const input = body as FleetBotMoveRequest
+      const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex')
+      const result = ctx.store.idempotent('botMove:' + id, input.idempotencyKey, hash, () => ({
+        response: ctx.lifecycle.moveBot(id, input),
+        status: 202,
+      }))
+      return { body: result.response, status: result.status }
+    }
+    case 'botMoveGet': {
+      requireBotRecord(ctx, id)
+      const move = ctx.lifecycle.latestMove(id)
+      if (!move) throw new GatewayError('NOT_FOUND', 'This bot has not moved')
+      return { body: move }
+    }
     case 'archivedBotsList': {
       const bots = await ctx.lifecycle.archivedList()
       if (url.searchParams.get('separateEnvironments') !== '1') {

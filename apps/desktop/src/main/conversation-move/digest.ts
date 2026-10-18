@@ -13,6 +13,27 @@ export async function computeMoveDigest(
   files: Array<{ kind: MoveFileKind; relative: string; sha256: string }>,
   git: { headOid: string; indexTree: string; worktreeTree: string }
 ): Promise<MoveDigest> {
+  const owned = files
+    .filter((file) => OWNED_FILE_KINDS.has(file.kind))
+    .map((file) => `${file.kind}/${file.relative}:${file.sha256}`)
+    .sort()
+  return {
+    ...messagesDigest(conversationId),
+    files: owned.length,
+    filesSha256: createHash('sha256').update(owned.join('\n')).digest('hex'),
+    headOid: git.headOid,
+    indexTree: git.indexTree,
+    worktreeTree: git.worktreeTree,
+  }
+}
+
+/** A conversation's transcript in order, reduced to its count, its last seq and one hash. */
+export function messagesDigest(conversationId: string): {
+  conversationId: string
+  messages: number
+  lastSeq: number
+  messagesSha256: string
+} {
   const messages = getDb()
     .prepare(
       'SELECT id, role, seq, created_at, parts_json, meta_json FROM chat_messages WHERE conversation_id = ? ORDER BY seq'
@@ -31,19 +52,10 @@ export async function computeMoveDigest(
       `${JSON.stringify([row.id, row.role, Number(row.seq), Number(row.created_at), row.parts_json, row.meta_json])}\n`
     )
   }
-  const owned = files
-    .filter((file) => OWNED_FILE_KINDS.has(file.kind))
-    .map((file) => `${file.kind}/${file.relative}:${file.sha256}`)
-    .sort()
   return {
     conversationId,
     messages: messages.length,
     lastSeq: messages.length ? Number(messages[messages.length - 1].seq) : -1,
     messagesSha256: messageHash.digest('hex'),
-    files: owned.length,
-    filesSha256: createHash('sha256').update(owned.join('\n')).digest('hex'),
-    headOid: git.headOid,
-    indexTree: git.indexTree,
-    worktreeTree: git.worktreeTree,
   }
 }

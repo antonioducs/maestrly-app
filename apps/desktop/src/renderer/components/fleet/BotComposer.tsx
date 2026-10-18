@@ -123,7 +123,8 @@ export function BotComposer({
         : botSource,
     [botSource, environmentId]
   )
-  const locked = ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
+  // A moving bot runs nowhere until it arrives: its conversation is read-only meanwhile.
+  const locked = !!bot.move || ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
 
   const reloadCommands = useCallback(() => {
     void source
@@ -317,9 +318,11 @@ export function BotComposer({
         disabled={locked || busy}
         disabledPlaceholder={
           locked
-            ? bot.status === 'setup' && bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
-              ? t('composer.setupCompaction')
-              : t(`composer.${bot.status}`)
+            ? bot.move
+              ? t('composer.moving')
+              : bot.status === 'setup' && bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
+                ? t('composer.setupCompaction')
+                : t(`composer.${bot.status}`)
             : undefined
         }
         placeholder={t('composer.placeholder', { name: bot.name })}

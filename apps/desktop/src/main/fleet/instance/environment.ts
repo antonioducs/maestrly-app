@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { PassThrough } from 'node:stream'
+import { PassThrough, type Readable } from 'node:stream'
 import { app } from 'electron'
 import {
   FLEET_ENVIRONMENT_LIMITS,
@@ -18,6 +18,8 @@ import {
   type FleetBotMcpServers,
   type FleetBotSkills,
   type FleetImportResults,
+  type FleetInstanceBotFreeze,
+  type FleetInstanceBotImport,
   type FleetInstanceBotInstall,
   type FleetInstanceEnvironmentStatus,
   type FleetInstanceHold,
@@ -59,6 +61,18 @@ import { botMemorySpaceId } from '../../memory/spaces'
 import type { ScreenFocusOwner } from '../../screen-focus'
 import { deleteLocalMemorySpace, getAppSetting, getLocale, setAppSetting, transaction } from '../../store'
 import { adoptLegacyBot } from './adoption'
+import {
+  BOT_FOLDERS,
+  botMoveDigest,
+  botMoveStaging,
+  holdsBot,
+  importBotPackage,
+  receiveBotPackage,
+  removeConversationLeftovers,
+  sweepBotMoveStaging,
+  writeBotPackage,
+  type BotRoots,
+} from './bot-move'
 import type { EnvironmentInstanceConfig } from './config'
 import { paintWallpaper } from './desktop/paint-wallpaper'
 import {
@@ -257,6 +271,7 @@ export class EnvironmentRuntime {
   async start(): Promise<void> {
     if (current && current !== this) throw new Error('Another environment runtime is running.')
     await adoptLegacyBot({ userData: this.deps.userData })
+    await sweepBotMoveStaging(this.roots).catch((error: unknown) => log('error', errorMessage(error)))
     current = this
     this.wireBrokers()
     for (const member of readInstalledBots()) {
@@ -365,33 +380,107 @@ export class EnvironmentRuntime {
    */
   async uninstallBot(botId: string, options: { purge: boolean }): Promise<void> {
     if (!isBotId(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
-    await this.serialize(async () => {
-      const members = readInstalledBots()
-      if (members.some((member) => member.botId === botId))
-        writeInstalledBots(members.filter((member) => member.botId !== botId))
-      const bot = this.registry.get(botId)
-      let conversationId: string | null = null
-      if (bot) {
-        bot.deactivate()
-        this.registry.delete(botId)
-        conversationId = bot.primaryConversationId
-        await bot.cancel().catch((error: unknown) => log('error', errorMessage(error)))
-        if (conversationId)
-          await this.deps.closeConversation(conversationId).catch((error: unknown) => log('error', errorMessage(error)))
-        await bot.dispose({ uninstall: true })
-        await this.stopScreens(botId)
-      }
-      clearGatewayToken(botId)
-      if (!options.purge) return
-      if (!conversationId) {
-        try {
-          conversationId = readStoredProfile(botId)?.primaryConversationId ?? null
-        } catch {
-          conversationId = null
-        }
-      }
-      await this.purge(botId, conversationId)
+    await this.serialize(() => this.remove(botId, options.purge))
+  }
+
+  /**
+   * Freezes a bot for its move to another environment (`bot-move`): it is uninstalled, as for archiving, so its turn
+   * stops, its windows close, its background work ends and it does not come back when the environment restarts; its
+   * data stays as it is, which the digest describes. An install brings it back. A frozen bot freezes again unchanged.
+   */
+  async freezeBot(botId: string): Promise<FleetInstanceBotFreeze> {
+    if (!isBotId(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+    return this.serialize(async () => {
+      if (this.installed(botId)) await this.remove(botId, false)
+      if (!readStoredProfile(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+      return { digest: await botMoveDigest(botId, this.roots) }
     })
+  }
+  /**
+   * Packs a frozen bot for its move. The caller streams the package, then releases it: its staging folder goes.
+   */
+  async exportBot(botId: string): Promise<{ file: string; size: number; sha256: string; release(): Promise<void> }> {
+    if (!isBotId(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+    return this.serialize(async () => {
+      this.assertOpen()
+      if (this.installed(botId)) throw new InstanceHttpError(409, 'CONFLICT', 'Freeze the bot before moving it.')
+      if (!readStoredProfile(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+      const staging = await botMoveStaging(this.roots)
+      const release = () => fs.rm(staging, { recursive: true, force: true })
+      try {
+        const file = path.join(staging, 'bot.tar.zst')
+        const written = await writeBotPackage(botId, this.roots, file, app.getVersion())
+        return { file, size: written.size, sha256: written.sha256, release }
+      } catch (error) {
+        await release()
+        throw error
+      }
+    })
+  }
+  /**
+   * Imports a bot's package arriving from the environment it leaves, without installing it: the gateway installs it
+   * once the move commits, and purges it if the move fails. A bot installed here is refused; what an earlier move left
+   * of the bot is replaced with `replace`, and refused without it. Answers the digest of what this environment holds.
+   */
+  async importBot(
+    botId: string,
+    body: Readable,
+    expected: { size: number; sha256: string; replace: boolean }
+  ): Promise<FleetInstanceBotImport> {
+    if (!isBotId(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+    return this.serialize(async () => {
+      this.assertOpen()
+      if (this.installed(botId)) throw new InstanceHttpError(409, 'CONFLICT', 'This bot is already installed here.')
+      if (await holdsBot(botId, this.roots)) {
+        if (!expected.replace) throw new InstanceHttpError(409, 'CONFLICT', 'This environment holds this bot already.')
+        await this.remove(botId, true)
+      }
+      const staging = await botMoveStaging(this.roots)
+      try {
+        const file = path.join(staging, 'bot.tar.zst')
+        await receiveBotPackage(body, file, expected)
+        await importBotPackage(botId, this.roots, file, path.join(staging, 'extracted'), app.getVersion())
+        log('info', `Imported bot ${botId}.`)
+        return { digest: await botMoveDigest(botId, this.roots) }
+      } finally {
+        body.resume()
+        await fs.rm(staging, { recursive: true, force: true })
+      }
+    })
+  }
+  private get roots(): BotRoots {
+    return { userData: this.deps.userData, home: this.deps.home }
+  }
+  private installed(botId: string): boolean {
+    return this.registry.has(botId) || readInstalledBots().some((member) => member.botId === botId)
+  }
+  /** Uninstalls a bot, and with `purge` deletes its data; the lifecycle must be serialized. */
+  private async remove(botId: string, purge: boolean): Promise<void> {
+    const members = readInstalledBots()
+    if (members.some((member) => member.botId === botId))
+      writeInstalledBots(members.filter((member) => member.botId !== botId))
+    const bot = this.registry.get(botId)
+    let conversationId: string | null = null
+    if (bot) {
+      bot.deactivate()
+      this.registry.delete(botId)
+      conversationId = bot.primaryConversationId
+      await bot.cancel().catch((error: unknown) => log('error', errorMessage(error)))
+      if (conversationId)
+        await this.deps.closeConversation(conversationId).catch((error: unknown) => log('error', errorMessage(error)))
+      await bot.dispose({ uninstall: true })
+      await this.stopScreens(botId)
+    }
+    clearGatewayToken(botId)
+    if (!purge) return
+    if (!conversationId) {
+      try {
+        conversationId = readStoredProfile(botId)?.primaryConversationId ?? null
+      } catch {
+        conversationId = null
+      }
+    }
+    await this.purge(botId, conversationId)
   }
 
   /**
@@ -591,14 +680,14 @@ export class EnvironmentRuntime {
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */
   private async purge(botId: string, conversationId: string | null): Promise<void> {
-    if (conversationId) await this.deps.purgeConversation(conversationId)
+    if (conversationId) {
+      await this.deps.purgeConversation(conversationId)
+      // A conversation an interrupted import left without its row still has its folder and files.
+      await removeConversationLeftovers(this.roots, conversationId)
+    }
     deleteLocalMemorySpace(botMemorySpaceId(botId))
-    const { userData, home } = this.deps
-    await removeBotFolder(userData, ['fleet-instance', 'bots'], botId)
-    await removeBotFolder(userData, ['fleet-inputs'], botId)
-    await removeBotFolder(userData, ['fleet-images'], botId)
-    await removeBotFolder(home, ['.config', 'maestrly-bots'], botId)
-    await removeBotFolder(home, ['.cache', 'maestrly-bots'], botId)
+    // The folders a move carries, and its cache, which it does not.
+    for (const folder of BOT_FOLDERS) await removeBotFolder(this.roots[folder.base], folder.segments, botId)
     deleteBotSettings(botId)
     log('info', `Deleted the data of bot ${botId}.`)
   }

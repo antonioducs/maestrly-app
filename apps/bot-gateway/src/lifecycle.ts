@@ -1,8 +1,12 @@
+import { randomUUID } from 'node:crypto'
 import {
   type FleetChatAttentionKind,
   deriveBotId,
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
+  FLEET_BOT_MOVE_FEATURE,
+  type FleetBotMove,
+  type FleetBotMoveRequest,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
@@ -38,9 +42,9 @@ import type { GatewayConfig } from './config.js'
 import { type ContainerInfo, DockerError, type DockerDriver, type ContainerStats } from './docker.js'
 import { GatewayError } from './errors.js'
 import { findGatewayContainer, gatewayAlias } from './gateway-container.js'
-import { InstanceClient, InstanceUnreachableError } from './instance.js'
+import { InstanceClient, InstanceUnreachableError, relayBotPackage } from './instance.js'
 import { Logger } from './logger.js'
-import type { EnvironmentChanges, Store, StoredEnvironment } from './store.js'
+import type { EnvironmentChanges, Store, StoredBotMove, StoredEnvironment } from './store.js'
 
 const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
@@ -78,6 +82,13 @@ export const SHARED_ENVIRONMENT = 'This bot shares its environment. Restart the 
 export const RESTORE_ENVIRONMENT_FIRST = 'Restore its environment first'
 export const START_ENVIRONMENT_FIRST = 'Start its environment first'
 export const SLOT_IN_USE = 'Its display slot is still in use. Start the bot again to retry.'
+export const BOT_MOVING = 'This bot is moving to another environment.'
+export const MOVE_NEEDS_UPDATE = 'Restart both environments to update them before moving bots between them.'
+export const MOVE_NEEDS_SAME_VERSION = 'Update both environments to the same version before moving the bot.'
+export const MOVE_NEEDS_RUNNING = 'Start both environments before moving the bot.'
+export const MOVE_NEEDS_SCREEN = 'Give back the screen before moving the bot.'
+export const MOVE_DIFFERS = 'The bot arrived different from how it left. It stays where it was.'
+export const MOVE_INTERRUPTED = 'The server restarted during the move. The bot stays where it was.'
 const botSetup = (step: FleetBotSetup['step']): FleetBotSetup => ({ step, error: null, errorMessage: null })
 const environmentSetup = (step: FleetEnvironmentSetup['step']): FleetEnvironmentSetup => ({
   step,
@@ -487,6 +498,8 @@ export class Lifecycle {
     bot.setup = state.setup
     bot.compactionSource = bot.compaction ? 'bot' : environment?.compaction ? 'environment' : null
     bot.compaction = this.effectiveCompaction(bot, environment)
+    const move = this.store.runningBotMove(bot.id)
+    bot.move = move ? this.moveView(move) : null
     const status = this.statuses.get(bot.id)
     // Resources are measured per environment: a bot reports them only when it is alone in it, so that devices that
     // add up bots do not count shared memory twice.
@@ -854,6 +867,7 @@ export class Lifecycle {
       capabilities: [],
       usage: null,
       environmentId: null,
+      move: null,
       createdAt: at,
       updatedAt: at,
     }
@@ -1180,7 +1194,8 @@ export class Lifecycle {
     for (const bot of this.store.botsOfEnvironment(environmentId))
       if (this.get(bot.id)?.lifecycle === 'running') this.onReady(bot.id)
     this.startLink(environmentId)
-    if (lingering) this.scheduleReconcile(environmentId, 1000)
+    const unreleased = await this.releasePendingMoves(environmentId)
+    if (lingering || unreleased) this.scheduleReconcile(environmentId, 1000)
   }
   /**
    * Installs the environment's active bots (all of them, or those named) in the slots the gateway recorded. Bots the
@@ -1858,6 +1873,7 @@ export class Lifecycle {
   private activeEnvironment(id: string): string {
     const bot = this.store.getBot(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
     return this.store.botPlacement(id)!.environmentId
   }
   /** A bot's own start, stop and restart act on its environment, which only a bot alone in it may do. */
@@ -1898,6 +1914,7 @@ export class Lifecycle {
   async archive(id: string): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
     const environmentId = bot.environmentId!
     this.clearTakeover(id, 4002)
     this.removeStatus(id)
@@ -2054,6 +2071,7 @@ export class Lifecycle {
   async pause(id: string): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
     if (bot.lifecycle === 'running') {
       const hold = await this.botClient(id).hold({ reason: 'paused' })
       const status = this.statuses.get(id)
@@ -2066,6 +2084,7 @@ export class Lifecycle {
   async resume(id: string): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
     if (this.takeovers.get(id)?.state && this.takeovers.get(id)?.state !== 'none')
       throw new GatewayError('CONFLICT', 'Give back the screen before resuming the bot')
     if (bot.lifecycle === 'running') {
@@ -2084,6 +2103,7 @@ export class Lifecycle {
   async patch(id: string, input: FleetPatchBotRequest): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
     if (input.talksTo) this.validatePeers(id, input.talksTo)
     const environmentId = bot.environmentId!
     const { compaction } = input
@@ -2182,7 +2202,285 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
+    // A moving bot runs nowhere until its move commits or fails.
+    if (bot.move) throw new GatewayError('BOT_NOT_RUNNING', BOT_MOVING)
     return this.botClient(id)
+  }
+
+  /** A bot's move as devices see it, without the slots the gateway keeps. */
+  private moveView(move: StoredBotMove): FleetBotMove {
+    const { fromSlot: _from, toSlot: _to, ...view } = move
+    return view
+  }
+  /** The bot's last move, running or finished. */
+  latestMove(id: string): FleetBotMove | null {
+    const move = this.store.latestBotMove(id)
+    return move ? this.moveView(move) : null
+  }
+  /** Nothing changes a bot while it moves. */
+  private requireSettled(id: string) {
+    if (this.store.runningBotMove(id)) throw new GatewayError('CONFLICT', BOT_MOVING)
+  }
+  /** Both ends of a move must run an image that moves bots, as an environment of several bots. */
+  private requireMovable(environmentId: string) {
+    if (!this.capable(environmentId) || !this.environmentCapabilities(environmentId).includes(FLEET_BOT_MOVE_FEATURE))
+      throw new GatewayError('CONFLICT', MOVE_NEEDS_UPDATE)
+  }
+  /** A package is read by the same Maestrly that wrote it: the schema of its rows is that version's. */
+  private requireSameVersion(from: string, to: string) {
+    const version = this.instances.get(from)?.appVersion
+    if (!version || version !== this.instances.get(to)?.appVersion)
+      throw new GatewayError('CONFLICT', MOVE_NEEDS_SAME_VERSION)
+  }
+  private advanceMove(moveId: string, phase: FleetBotMove['phase']) {
+    const move = this.store.updateBotMove(moveId, { phase })
+    this.emitBot(move.botId)
+  }
+
+  /**
+   * Moves a running bot to another running bots environment (`environmentId`) or to a new one (`newEnvironment`), with
+   * everything that is its own and under its own id, so its routines, peers, links and activity still name it. It
+   * answers at once with the move, which holds a slot in the destination; the move then runs in the turn of both
+   * environments (see `moveLocked`), and devices follow it in the bot's `move`.
+   */
+  moveBot(id: string, request: FleetBotMoveRequest): FleetBotMove {
+    const bot = this.get(id)
+    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
+    const source = this.store.botPlacement(id)!.environmentId
+    if (bot.lifecycle !== 'running' || this.store.getEnvironment(source)?.lifecycle !== 'running')
+      throw new GatewayError('CONFLICT', MOVE_NEEDS_RUNNING)
+    const takeover = this.takeovers.get(id)?.state
+    if (takeover && takeover !== 'none') throw new GatewayError('CONFLICT', MOVE_NEEDS_SCREEN)
+    this.requireMovable(source)
+    if (request.environmentId !== undefined) {
+      const target = this.requireEnvironment(request.environmentId)
+      if (target.kind === 'workspaces') throw new GatewayError('CONFLICT', 'Workspaces environments hold no bots.')
+      if (target.id === source) throw new GatewayError('CONFLICT', 'The bot is already there.')
+      if (target.lifecycle !== 'running') throw new GatewayError('CONFLICT', MOVE_NEEDS_RUNNING)
+      this.requireMovable(target.id)
+      this.requireSameVersion(source, target.id)
+    }
+    const move = this.store.transaction(() =>
+      this.store.beginBotMove({
+        id: randomUUID(),
+        botId: id,
+        toEnvironmentId:
+          request.environmentId ?? this.insertEnvironment(request.newEnvironment!.name, null, now(), 'bots'),
+        newEnvironment: request.environmentId === undefined,
+      })
+    )
+    if (move.newEnvironment) {
+      this.recordEnvironmentActivity(move.toEnvironmentId, 'environment_created')
+      this.emitEnvironment(move.toEnvironmentId, false)
+    }
+    this.emitBot(id)
+    this.logger.info('Bot move started', { botId: id, from: source, to: move.toEnvironmentId })
+    // After the request's transaction commits: the move it started is in the journal by then.
+    setImmediate(() => void this.runMove(move.id))
+    return this.moveView(move)
+  }
+  /** Runs a move in the turn of both its environments, always taken in the same order so two moves never wait on each other. */
+  private async runMove(moveId: string) {
+    const move = this.store.botMove(moveId)
+    if (move?.state !== 'running') return
+    const [first, second] = [move.fromEnvironmentId, move.toEnvironmentId].sort()
+    try {
+      await this.exclusive(first, () => this.exclusive(second, () => this.moveLocked(moveId)))
+    } catch (error) {
+      this.logger.warn('Bot move stopped', { moveId, failure: failureCode(error) })
+    }
+  }
+  /**
+   * The steps of a move; both environments are exclusive. Until it is verified, a failure puts everything back: the
+   * destination deletes what it received, the bot is installed again where it was, and a destination created for the
+   * move goes. Once it commits, the bot belongs to its destination and the move only goes forward: the copy left in
+   * the former environment is deleted then, or once that environment runs again.
+   */
+  private async moveLocked(moveId: string) {
+    const move = this.store.botMove(moveId)
+    if (move?.state !== 'running') return
+    const id = move.botId,
+      source = move.fromEnvironmentId,
+      target = move.toEnvironmentId
+    const reached = { freeze: false, send: false }
+    try {
+      const destination = this.store.getEnvironment(target)
+      if (!destination || destination.archivedAt) throw new GatewayError('NOT_FOUND', 'Environment not found')
+      if (destination.lifecycle !== 'running') {
+        if (!move.newEnvironment) throw new GatewayError('CONFLICT', MOVE_NEEDS_RUNNING)
+        // A new destination gets its container and desktop first, as a new bot's environment does.
+        try {
+          await this.provision(target)
+        } catch (error) {
+          this.failEnvironment(target, error)
+          throw error
+        }
+      }
+      const bot = this.get(id)
+      if (bot?.lifecycle !== 'running' || this.store.getEnvironment(source)?.lifecycle !== 'running')
+        throw new GatewayError('CONFLICT', MOVE_NEEDS_RUNNING)
+      this.requireMovable(source)
+      this.requireMovable(target)
+      this.requireSameVersion(source, target)
+      this.advanceMove(moveId, 'freezing')
+      const from = this.client(source)
+      this.clearTakeover(id, 4002)
+      reached.freeze = true
+      const frozen = await from.botFreeze(id)
+      this.removeStatus(id)
+      this.advanceMove(moveId, 'exporting')
+      reached.send = true
+      const imported = await relayBotPackage(from, this.client(target), id, () => this.advanceMove(moveId, 'importing'))
+      this.advanceMove(moveId, 'verifying')
+      if (JSON.stringify(imported.digest) !== JSON.stringify(frozen.digest))
+        throw new GatewayError('INTERNAL', MOVE_DIFFERS)
+    } catch (error) {
+      await this.rollbackMove(moveId, error, reached)
+      return
+    }
+    this.advanceMove(moveId, 'committing')
+    const { ownerMemoriesMoved } = this.store.commitBotMove(moveId)
+    if (ownerMemoriesMoved)
+      this.onEvent({ type: 'owner_memory.updated', at: now(), revision: this.store.ownerMemoryRevision() })
+    this.emitEnvironment(source, false)
+    this.emitEnvironment(target, false)
+    this.emitBot(id)
+    // An installation that fails now fails the bot in its destination, which starting it tries again.
+    await this.installOne(this.client(target), id, move.toSlot, false)
+    // The bot is in place: what is left is deleting its former copy, which does not hold it back.
+    this.store.updateBotMove(moveId, { state: 'completed' })
+    this.emitBot(id)
+    if (this.get(id)?.lifecycle === 'running') this.onReady(id)
+    if (!(await this.releaseSource(moveId))) this.scheduleReconcile(source, 1000)
+    this.logger.info('Bot moved', { botId: id, from: source, to: target })
+  }
+  private async rollbackMove(moveId: string, error: unknown, reached: { freeze: boolean; send: boolean }) {
+    const move = this.store.botMove(moveId)!
+    const id = move.botId
+    // Docker is the gateway's only other dependency: anything else that failed is the gateway's own.
+    const code = error instanceof GatewayError || error instanceof DockerError ? failureCode(error) : 'INTERNAL'
+    this.logger.warn('Bot move failed', { botId: id, phase: move.phase, failure: code })
+    if (reached.send) await this.discardImport(move)
+    // A bot that was frozen is installed again where it was, as an archived bot comes back, before the move counts as
+    // failed; one whose environment no longer runs comes back when it starts.
+    const back = reached.freeze && this.store.getEnvironment(move.fromEnvironmentId)?.lifecycle === 'running'
+    if (back) await this.installOne(this.client(move.fromEnvironmentId), id, move.fromSlot, false)
+    this.store.updateBotMove(moveId, {
+      state: 'failed',
+      error: {
+        code,
+        message: (error instanceof GatewayError ? error.message : 'The bot could not be moved.').slice(0, 500),
+      },
+    })
+    this.emitBot(id)
+    if (back && this.get(id)?.lifecycle === 'running') this.onReady(id)
+    if (move.newEnvironment) await this.discardEnvironment(move.toEnvironmentId)
+  }
+  /** Deletes what a destination received of a bot that does not belong to it; a failure leaves it for a later move. */
+  private async discardImport(move: StoredBotMove) {
+    const environment = this.store.getEnvironment(move.toEnvironmentId)
+    if (environment?.lifecycle !== 'running' || !this.capable(environment.id)) return
+    if (this.store.botPlacement(move.botId)?.environmentId === environment.id) return
+    try {
+      await this.uninstall(this.client(environment.id), move.botId, true)
+    } catch (error) {
+      this.logger.warn('A moved bot was not deleted from its destination', {
+        botId: move.botId,
+        environmentId: environment.id,
+        failure: failureCode(error),
+      })
+    }
+  }
+  /** Removes an environment created for a move that failed, with its container and files, while it holds no bot. */
+  private async discardEnvironment(environmentId: string) {
+    const environment = this.store.getEnvironment(environmentId)
+    if (!environment || this.store.botsOfEnvironment(environmentId, true).length) return
+    try {
+      this.cancelReconcile(environmentId)
+      this.stopLink(environmentId)
+      await this.removeFiles(environment, 'environment')
+      this.store.purgeEnvironment(environmentId)
+    } catch (error) {
+      this.logger.warn('The environment of a failed move was not removed', {
+        environmentId,
+        failure: failureCode(error),
+      })
+      return
+    }
+    this.forgetEnvironment(environmentId)
+    this.recordEnvironmentActivity(environmentId, 'environment_deleted', {}, environment.name)
+    this.onEvent({ type: 'environment.removed', at: now(), environmentId })
+  }
+  /**
+   * Deletes the copy a moved bot left in its former environment, which must be exclusive. A copy that cannot go now
+   * (the environment does not run, or did not answer) waits for that environment's next start or reconcile; the move
+   * is complete meanwhile. Nothing is deleted from an environment the bot belongs to again. True when it went.
+   */
+  private async releaseSource(moveId: string): Promise<boolean> {
+    const move = this.store.botMove(moveId)
+    if (move?.phase !== 'releasing-source') return true
+    const done = () => {
+      this.store.updateBotMove(moveId, { phase: 'completed', state: 'completed' })
+      this.emitBot(move.botId)
+      return true
+    }
+    const wait = () => {
+      if (this.store.botMove(moveId)?.state === 'running') {
+        this.store.updateBotMove(moveId, { state: 'completed' })
+        this.emitBot(move.botId)
+      }
+      return false
+    }
+    if (this.store.botPlacement(move.botId)?.environmentId === move.fromEnvironmentId) return done()
+    const environment = this.store.getEnvironment(move.fromEnvironmentId)
+    // Its files went with it.
+    if (!environment) return done()
+    if (environment.archivedAt || environment.lifecycle !== 'running' || !this.capable(environment.id)) return wait()
+    try {
+      await this.uninstall(this.client(environment.id), move.botId, true)
+    } catch (error) {
+      this.logger.warn('A moved bot is still in its former environment', {
+        botId: move.botId,
+        environmentId: environment.id,
+        failure: failureCode(error),
+      })
+      return wait()
+    }
+    return done()
+  }
+  /** Deletes what moved bots left in a running environment; the environment must be exclusive. True when some stays. */
+  private async releasePendingMoves(environmentId: string): Promise<boolean> {
+    let pending = false
+    for (const move of this.store.pendingReleases(environmentId))
+      if (!(await this.releaseSource(move.id))) pending = true
+    return pending
+  }
+  /**
+   * After the gateway restarted: a move that committed is complete (its destination installs the bot, its former
+   * environment deletes the copy when it runs), one that did not failed, and its bot comes back where it was with its
+   * environment's reconcile. Returns the failed ones, whose destination may hold part of the bot.
+   */
+  private recoverMoves(): StoredBotMove[] {
+    const failed: StoredBotMove[] = []
+    for (const move of this.store.runningBotMoves()) {
+      if (this.store.botPlacement(move.botId)?.environmentId === move.toEnvironmentId)
+        this.store.updateBotMove(move.id, { phase: 'releasing-source', state: 'completed' })
+      else {
+        this.store.updateBotMove(move.id, { state: 'failed', error: { code: 'INTERNAL', message: MOVE_INTERRUPTED } })
+        failed.push(move)
+      }
+      this.logger.info('Bot move recovered', { botId: move.botId, phase: move.phase })
+    }
+    return failed
+  }
+  /**
+   * What a move the restart failed left in its destination: the part of the bot it received, and the destination
+   * itself when the move created it and it holds no bot.
+   */
+  private async discardInterrupted(move: StoredBotMove) {
+    if (['exporting', 'importing', 'verifying', 'committing'].includes(move.phase)) await this.discardImport(move)
+    if (move.newEnvironment) await this.discardEnvironment(move.toEnvironmentId)
   }
   /** The environment's own API (accounts, skills, MCP servers, sign-ins, its settings window) while it runs. */
   environmentInstance(id: string): InstanceClient {
@@ -2278,6 +2576,8 @@ export class Lifecycle {
    * from before environments, their bot label; running ones get their bots installed again.
    */
   async reconcile() {
+    // Moves first: a failed one's bot is then an ordinary member of its environment, which installs it below.
+    const interrupted = this.recoverMoves()
     const containers = await this.docker.list(managed + '=true')
     const found = new Map<string, ContainerInfo>()
     for (const container of containers) {
@@ -2317,6 +2617,7 @@ export class Lifecycle {
         }
       } else this.updateEnvironment(id, { lifecycle: 'stopped' })
     }
+    for (const move of interrupted) void this.exclusive(move.toEnvironmentId, () => this.discardInterrupted(move))
     if (this.store.listEnvironments().some((environment) => environment.updateRequestedAt)) this.armUpdateChecks()
     this.armIdleChecks()
   }
@@ -2342,7 +2643,9 @@ export class Lifecycle {
     for (const bot of this.store.botsOfEnvironment(id))
       if (this.get(bot.id)?.lifecycle === 'running') this.onReady(bot.id)
     this.startLink(id)
-    return lingering
+    // What bots that moved away left here goes now; what cannot is tried again with the next reconcile.
+    const unreleased = await this.releasePendingMoves(id)
+    return lingering || unreleased
   }
   private cancelReconcile(environmentId: string) {
     const timer = this.reconcileTimers.get(environmentId)

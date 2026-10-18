@@ -14,6 +14,7 @@ import {
   type FleetActivityEntry,
   type FleetActivityKind,
   type FleetBot,
+  type FleetBotMove,
   type FleetBotSetup,
   type FleetCompactionConfig,
   type FleetEnvironmentKind,
@@ -125,9 +126,14 @@ export type StoredEnvironmentDesktopLink = {
 export type StoredDesktopTarget =
   | { kind: 'device'; link: StoredDesktopLink }
   | { kind: 'environment'; link: StoredEnvironmentDesktopLink }
+/** A bot's move between environments as the gateway journals it, with the slot it leaves and the one it holds. */
+export type StoredBotMove = FleetBotMove & { fromSlot: number; toSlot: number }
+export type BotMoveChanges = Partial<Pick<FleetBotMove, 'phase' | 'state' | 'error'>>
 
 const now = () => new Date().toISOString()
 const SLOTS = FLEET_ENVIRONMENT_LIMITS.botsMax
+/** A running move holds its slot in its destination until it commits; the bot holds it from then on. */
+const RESERVING = "state='running' AND phase NOT IN ('releasing-source','completed')"
 /** The names of a bot's container and home volume before environments; its migrated environment keeps them. */
 export const legacyContainerName = (botId: string) => 'maestrly-bot-' + botId
 export const legacyVolumeName = (botId: string) => legacyContainerName(botId) + '-home'
@@ -238,7 +244,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 16) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 17) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -334,6 +340,17 @@ export class Store {
         CREATE INDEX IF NOT EXISTS idx_environment_desktop_links_environment ON environment_desktop_links(environment_id);
       `)
       this.db.prepare("UPDATE meta SET value='16' WHERE key='schema_version'").run()
+    }
+    if (version <= 16) {
+      // Schema 17: the journal of bots' moves between environments. A running move holds its slot in the destination;
+      // a move whose bot left a copy behind stays at `releasing-source` until its former environment deletes it.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS bot_moves (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, from_environment_id TEXT NOT NULL, to_environment_id TEXT NOT NULL, from_slot INTEGER NOT NULL CHECK (from_slot BETWEEN 1 AND 8), to_slot INTEGER NOT NULL CHECK (to_slot BETWEEN 1 AND 8), new_environment INTEGER NOT NULL DEFAULT 0 CHECK (new_environment IN (0, 1)), phase TEXT NOT NULL CHECK (phase IN ('prepared','freezing','exporting','importing','verifying','committing','releasing-source','completed')), state TEXT NOT NULL CHECK (state IN ('running','completed','failed')), error_code TEXT, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK (from_environment_id <> to_environment_id));
+        CREATE INDEX IF NOT EXISTS idx_bot_moves_bot ON bot_moves(bot_id, created_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_moves_running ON bot_moves(bot_id) WHERE state='running';
+        CREATE INDEX IF NOT EXISTS idx_bot_moves_release ON bot_moves(from_environment_id) WHERE phase='releasing-source';
+      `)
+      this.db.prepare("UPDATE meta SET value='17' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -1095,13 +1112,18 @@ export class Store {
         .all(environmentId) as Row[]
     ).map((row) => this.bot(row))
   }
-  /** The lowest slot (1 to 8) no active bot of the environment uses; null when it is full. */
+  /**
+   * The lowest slot (1 to 8) that no active bot of the environment uses and no bot moving there holds; null when it is
+   * full.
+   */
   freeSlot(environmentId: string): number | null {
     const used = new Set(
       (
         this.db
-          .prepare('SELECT slot FROM bots WHERE environment_id=? AND archived_at IS NULL')
-          .all(environmentId) as Row[]
+          .prepare(
+            `SELECT slot FROM bots WHERE environment_id=? AND archived_at IS NULL UNION SELECT to_slot AS slot FROM bot_moves WHERE to_environment_id=? AND ${RESERVING}`
+          )
+          .all(environmentId, environmentId) as Row[]
       ).map((row) => Number(row.slot))
     )
     for (let slot = 1; slot <= SLOTS; slot++) if (!used.has(slot)) return slot
@@ -1109,8 +1131,10 @@ export class Store {
   }
   private slotTaken(environmentId: string, slot: number): boolean {
     return !!this.db
-      .prepare('SELECT 1 FROM bots WHERE environment_id=? AND slot=? AND archived_at IS NULL')
-      .get(environmentId, slot)
+      .prepare(
+        `SELECT 1 FROM bots WHERE environment_id=? AND slot=? AND archived_at IS NULL UNION SELECT 1 FROM bot_moves WHERE to_environment_id=? AND to_slot=? AND ${RESERVING}`
+      )
+      .get(environmentId, slot, environmentId, slot)
   }
   /** The requested slot if free; otherwise the previous one if free, else the lowest free one. */
   private claimSlot(environmentId: string, slot: number | undefined, previous?: number): number {
@@ -1277,6 +1301,126 @@ export class Store {
       return this.getBot(id)!
     })
   }
+  private botMoveRow(row: Row): StoredBotMove {
+    return {
+      id: String(row.id),
+      botId: String(row.bot_id),
+      fromEnvironmentId: String(row.from_environment_id),
+      toEnvironmentId: String(row.to_environment_id),
+      fromSlot: Number(row.from_slot),
+      toSlot: Number(row.to_slot),
+      newEnvironment: Boolean(row.new_environment),
+      phase: row.phase as FleetBotMove['phase'],
+      state: row.state as FleetBotMove['state'],
+      error:
+        row.error_code === null || row.error_code === undefined
+          ? null
+          : { code: row.error_code as NonNullable<FleetBotMove['error']>['code'], message: String(row.error_message) },
+      startedAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+  /**
+   * Starts a bot's move to an active bots environment, holding the lowest free slot there: refused for a bot that is
+   * archived, already moving, or already in that environment, and for a destination that is full.
+   */
+  beginBotMove(input: { id: string; botId: string; toEnvironmentId: string; newEnvironment: boolean }, at = now()) {
+    return this.transaction(() => {
+      const bot = this.getBot(input.botId)
+      const placement = this.botPlacement(input.botId)
+      if (!bot || !placement || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+      if (this.runningBotMove(input.botId)) throw new GatewayError('CONFLICT', 'This bot is already moving.')
+      const target = this.activeEnvironment(input.toEnvironmentId)
+      if (target.kind === 'workspaces') throw new GatewayError('CONFLICT', 'Workspaces environments hold no bots.')
+      if (target.id === placement.environmentId) throw new GatewayError('CONFLICT', 'The bot is already there.')
+      const slot = this.claimSlot(target.id, undefined)
+      this.db
+        .prepare(
+          "INSERT INTO bot_moves(id,bot_id,from_environment_id,to_environment_id,from_slot,to_slot,new_environment,phase,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'prepared','running',?,?)"
+        )
+        .run(
+          input.id,
+          input.botId,
+          placement.environmentId,
+          target.id,
+          placement.slot,
+          slot,
+          Number(input.newEnvironment),
+          at,
+          at
+        )
+      return this.botMove(input.id)!
+    })
+  }
+  botMove(id: string): StoredBotMove | null {
+    const row = this.db.prepare('SELECT * FROM bot_moves WHERE id=?').get(id) as Row | undefined
+    return row ? this.botMoveRow(row) : null
+  }
+  /** The bot's last move, running or finished. */
+  latestBotMove(botId: string): StoredBotMove | null {
+    const row = this.db
+      .prepare('SELECT * FROM bot_moves WHERE bot_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+      .get(botId) as Row | undefined
+    return row ? this.botMoveRow(row) : null
+  }
+  runningBotMove(botId: string): StoredBotMove | null {
+    const row = this.db.prepare("SELECT * FROM bot_moves WHERE bot_id=? AND state='running'").get(botId) as
+      | Row
+      | undefined
+    return row ? this.botMoveRow(row) : null
+  }
+  runningBotMoves(): StoredBotMove[] {
+    return (this.db.prepare("SELECT * FROM bot_moves WHERE state='running' ORDER BY created_at").all() as Row[]).map(
+      (row) => this.botMoveRow(row)
+    )
+  }
+  /** The moves whose bot left a copy in this environment, still to delete. */
+  pendingReleases(environmentId: string): StoredBotMove[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM bot_moves WHERE from_environment_id=? AND phase='releasing-source' ORDER BY created_at")
+        .all(environmentId) as Row[]
+    ).map((row) => this.botMoveRow(row))
+  }
+  updateBotMove(id: string, changes: BotMoveChanges, at = now()): StoredBotMove {
+    const current = this.botMove(id)
+    if (!current) throw new GatewayError('NOT_FOUND', 'Move not found')
+    const next = { ...current, ...changes }
+    this.db
+      .prepare('UPDATE bot_moves SET phase=?, state=?, error_code=?, error_message=?, updated_at=? WHERE id=?')
+      .run(next.phase, next.state, next.error?.code ?? null, next.error?.message ?? null, at, id)
+    return this.botMove(id)!
+  }
+  /**
+   * The commit point of a move: the bot belongs to its destination, in the slot the move held, and the owner memories
+   * it wrote in the environment it leaves go with it. What an earlier move left of the bot in the destination was
+   * replaced by its import, so no release deletes it any more. Returns how many owner memories moved.
+   */
+  commitBotMove(id: string, at = now()): { ownerMemoriesMoved: number } {
+    return this.transaction(() => {
+      const move = this.botMove(id)
+      if (move?.state !== 'running' || move.phase !== 'committing')
+        throw new GatewayError('CONFLICT', 'The move cannot commit')
+      this.db
+        .prepare('UPDATE bots SET environment_id=?, slot=?, updated_at=? WHERE id=?')
+        .run(move.toEnvironmentId, move.toSlot, at, move.botId)
+      const ownerMemoriesMoved = Number(
+        this.db
+          .prepare(
+            "UPDATE owner_memories SET environment_id=?, updated_at=? WHERE author_kind='bot' AND author_bot_id=? AND environment_id=?"
+          )
+          .run(move.toEnvironmentId, at, move.botId, move.fromEnvironmentId).changes
+      )
+      if (ownerMemoriesMoved) this.bumpOwnerMemoryRevision()
+      this.db
+        .prepare(
+          "UPDATE bot_moves SET phase='completed', updated_at=? WHERE bot_id=? AND from_environment_id=? AND phase='releasing-source'"
+        )
+        .run(at, move.botId, move.toEnvironmentId)
+      this.updateBotMove(id, { phase: 'releasing-source' }, at)
+      return { ownerMemoriesMoved }
+    })
+  }
   private bot(row: Row): FleetBot {
     return {
       id: String(row.id),
@@ -1308,6 +1452,7 @@ export class Store {
       appVersion: null,
       capabilities: [],
       environmentId: String(row.environment_id),
+      move: null,
     }
   }
   getBot(id: string): FleetBot | null {
@@ -1354,16 +1499,18 @@ export class Store {
       this.db.prepare('DELETE FROM desktop_links WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM environment_desktop_links WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM bot_moves WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db
-        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?)')
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?,?,?,?)')
         .run(
           'botMessageSend:' + id,
           'botMessageEdit:' + id,
           'routineCreate:' + id,
           'botRoutineCreate:' + id,
           'botOwnerMemorySave:' + id,
-          'peer:' + id
+          'peer:' + id,
+          'botMove:' + id
         )
       this.db.prepare('DELETE FROM bot_secrets WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM bots WHERE id=?').run(id)

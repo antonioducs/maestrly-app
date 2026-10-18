@@ -10,6 +10,7 @@ import {
   FLEET_SCREEN_UPDATE_REQUIRED,
   FLEET_EDIT_CONFLICT,
   FLEET_EDIT_UNSUPPORTED,
+  FLEET_BOT_MOVE_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
 
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
@@ -137,6 +138,30 @@ const KNOWN_REFUSALS: KnownRefusal[] = [
   },
   { matches: exactly('Environment not running'), key: 'errors.environmentNotRunning' },
   { matches: exactly('Bot not running'), key: 'errors.botNotRunning' },
+  // A bot's move: the gateway's refusals before it starts, and why one failed.
+  { matches: marked(FLEET_BOT_MOVE_UNSUPPORTED), key: 'move.error.unsupported' },
+  { matches: exactly('This bot is moving to another environment.'), key: 'move.error.moving' },
+  { matches: exactly('This bot is already moving.'), key: 'move.error.alreadyMoving' },
+  {
+    matches: exactly('Restart both environments to update them before moving bots between them.'),
+    key: 'move.error.update',
+  },
+  {
+    matches: exactly('Update both environments to the same version before moving the bot.'),
+    key: 'move.error.version',
+  },
+  { matches: exactly('Start both environments before moving the bot.'), key: 'move.error.running' },
+  { matches: exactly('Give back the screen before moving the bot.'), key: 'move.error.screen' },
+  {
+    matches: exactly('The bot arrived different from how it left. It stays where it was.'),
+    key: 'move.error.differs',
+  },
+  {
+    matches: exactly('The server restarted during the move. The bot stays where it was.'),
+    key: 'move.error.interrupted',
+  },
+  { matches: exactly('This bot has too many files to move.'), key: 'move.error.tooLarge' },
+  { matches: exactly('The bot is already there.'), key: 'move.error.alreadyThere' },
 ]
 
 /** The text the Bots UI shows for a failure: a localized hint for a known refusal, else the failure's own message. */

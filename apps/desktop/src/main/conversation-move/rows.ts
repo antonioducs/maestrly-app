@@ -144,36 +144,73 @@ export function insertConversationRows(
       isMulti: 0,
       uiPrefs: conversation.uiPrefs,
     })
-    const db = getDb()
-    for (const table of MOVE_TABLES) {
-      const tableRows = rows.tables[table] ?? []
-      if (!Array.isArray(tableRows)) throw new MoveError('package-invalid', `Rows of ${table} are malformed.`)
-      if (tableRows.length === 0) continue
-      const columns = new Set(
-        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name)
-      )
-      const values = tableRows.map((row) => {
-        if (!row || typeof row !== 'object') throw new MoveError('package-invalid', `A row of ${table} is malformed.`)
-        const unknown = Object.keys(row).find((name) => !columns.has(name))
-        if (unknown) throw new MoveError('package-invalid', `Schema mismatch: ${table}.${unknown}.`)
-        if (OWNED_BY_CONVERSATION.has(table) && row.conversation_id !== conversation.id)
-          throw new MoveError('package-invalid', `A row of ${table} belongs to another conversation.`)
-        return Object.fromEntries(Object.entries(row).map(([name, value]) => [name, sqlValue(value, table, name)]))
-      })
-      // Messages go through the chat store, which keeps what it derives from them coherent.
-      if (table === 'chat_messages') {
-        insertMovedChatMessages(conversation.id, values)
-        continue
-      }
-      for (const row of values) {
-        const names = Object.keys(row)
-        db.prepare(`INSERT INTO ${table} (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`).run(
-          ...names.map((name) => row[name])
-        )
-      }
-    }
+    insertConversationTables(rows)
   })
   forgetChatStoreCaches()
+}
+
+/**
+ * Inserts a moved standalone conversation (a fleet bot's) with its own ids, working in `cwd`, its managed folder on
+ * this host; in one transaction.
+ */
+export function insertStandaloneConversationRows(rows: MoveRows, cwd: string): void {
+  const { conversation } = rows
+  transaction(() => {
+    if (getConversation(conversation.id))
+      throw new MoveError('conversation-exists', 'The conversation already exists on this host.')
+    insertConversation({
+      scope: 'standalone',
+      id: conversation.id,
+      workspaceId: null,
+      name: conversation.name,
+      branch: null,
+      mode: null,
+      experience: 'standard',
+      cwd,
+      status: 'idle',
+      createdAt: conversation.createdAt,
+      archived: 0,
+      pinnedAt: conversation.pinnedAt,
+      lastActivityAt: conversation.lastActivityAt,
+      isMulti: 0,
+      uiPrefs: conversation.uiPrefs,
+    })
+    insertConversationTables(rows)
+  })
+  forgetChatStoreCaches()
+}
+
+/** The conversation's own tables, once its row is in place; the caller's transaction holds them together. */
+function insertConversationTables(rows: MoveRows): void {
+  const { conversation } = rows
+  const db = getDb()
+  for (const table of MOVE_TABLES) {
+    const tableRows = rows.tables[table] ?? []
+    if (!Array.isArray(tableRows)) throw new MoveError('package-invalid', `Rows of ${table} are malformed.`)
+    if (tableRows.length === 0) continue
+    const columns = new Set(
+      (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name)
+    )
+    const values = tableRows.map((row) => {
+      if (!row || typeof row !== 'object') throw new MoveError('package-invalid', `A row of ${table} is malformed.`)
+      const unknown = Object.keys(row).find((name) => !columns.has(name))
+      if (unknown) throw new MoveError('package-invalid', `Schema mismatch: ${table}.${unknown}.`)
+      if (OWNED_BY_CONVERSATION.has(table) && row.conversation_id !== conversation.id)
+        throw new MoveError('package-invalid', `A row of ${table} belongs to another conversation.`)
+      return Object.fromEntries(Object.entries(row).map(([name, value]) => [name, sqlValue(value, table, name)]))
+    })
+    // Messages go through the chat store, which keeps what it derives from them coherent.
+    if (table === 'chat_messages') {
+      insertMovedChatMessages(conversation.id, values)
+      continue
+    }
+    for (const row of values) {
+      const names = Object.keys(row)
+      db.prepare(`INSERT INTO ${table} (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`).run(
+        ...names.map((name) => row[name])
+      )
+    }
+  }
 }
 
 /** Removes a conversation an import inserted; its rows cascade with it. */
