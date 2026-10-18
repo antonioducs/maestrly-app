@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateCommit } from './check-commits.mjs'
@@ -85,6 +85,28 @@ export function assertCleanHead(cwd, head) {
   }
 }
 
+/** The checked-out commit when no tracked or untracked file differs from it, otherwise null. */
+export function cleanHead(cwd) {
+  return git(['status', '--porcelain', '--untracked-files=all'], cwd) ? null : git(['rev-parse', 'HEAD'], cwd)
+}
+
+// A run that passes on a clean tree records its commit, so pushing that exact commit does not repeat the checks.
+function verifiedRecord(cwd) {
+  return path.resolve(cwd, git(['rev-parse', '--git-path', 'maestrly-verified-head'], cwd))
+}
+
+export function recordVerified(cwd, head) {
+  writeFileSync(verifiedRecord(cwd), `${head}\n`)
+}
+
+export function wasVerified(cwd, head) {
+  try {
+    return readFileSync(verifiedRecord(cwd), 'utf8').trim() === head
+  } catch {
+    return false
+  }
+}
+
 export function preparePush(input, cwd = root) {
   const updates = input
     .split(/\r?\n/)
@@ -155,15 +177,21 @@ function main() {
     console.log('[verify:pr] No commits to push; nothing to verify.')
     return
   }
+  if (head && wasVerified(root, head)) {
+    console.log(`[verify:pr] ${head.slice(0, 12)} already passed verification on a clean tree; not repeating it.`)
+    return
+  }
   const steps = verificationSteps(options)
   if (options.plan) {
     for (const step of steps) console.log(`${step.command} ${step.args.join(' ')}`)
     console.log('[verify:pr] Plan only; no checks were executed.')
     return
   }
+  const verified = head ?? cleanHead(root)
   const started = Date.now()
   runSteps(steps)
   if (head) assertCleanHead(root, head)
+  if (verified && cleanHead(root) === verified) recordVerified(root, verified)
   console.log(
     `\n[verify:pr] Local validation passed in ${((Date.now() - started) / 1000).toFixed(1)}s. GitHub platform checks still need to pass.`
   )

@@ -30,12 +30,26 @@ The baseline validates repository history, the supplied title, policy tests,
 documentation links, and `npm run check` across all workspaces. `--title` is
 optional for manual iteration; supply the real title before creating or updating
 a PR. Even documentation-only changes require the baseline. There is no
-changed-file selection or caching. This baseline may still take minutes;
-the verifier prints elapsed times for each step and the complete run. It sets
-`CI=true` and clears external test-target overrides so local E2E does not reuse
-another worktree's server or a previously packaged application.
+changed-file selection. This baseline may still take minutes; the verifier
+prints elapsed times for each step and the complete run. It sets `CI=true` and
+clears external test-target overrides so local E2E does not reuse another
+worktree's server or a previously packaged application. A run that passes with
+no pending tracked or untracked files records its commit, and the pre-push hook
+does not repeat the checks for that exact commit: commit before verifying so
+they run once.
 
-For application changes, add `--full`:
+CI runs the slower suites on every pull request: desktop E2E and the mobile
+app's web flows on Linux, and the required dependency audit and Gitleaks history
+scan. Pull requests run only the unit tests on macOS and Windows; `main` runs
+every suite there, including E2E. For changes that depend on macOS or Windows
+behavior, such as paths, shells, native APIs, or packaging, run the complete
+matrix on the branch and wait for it before merging:
+
+```sh
+gh workflow run ci.yml --ref <branch>
+```
+
+To reproduce the slower suites locally, add `--full`:
 
 ```sh
 npm run verify:pr -- --title "fix(desktop): handle failed startup" --full
@@ -49,12 +63,11 @@ passing. The full suite needs Go and Playwright Chromium installed for the deskt
 workspace. Headless Linux also needs Xvfb and Electron system libraries, as
 configured in the CI workflows.
 
-Changes to dependencies or lockfiles require dependency auditing. Changes to
-native modules, runtimes, dependencies, icons, signing, or packaging also require
-`--package` alongside `--full`:
+Changes to native modules, runtimes, dependencies, icons, signing, or packaging
+also require `--package`:
 
 ```sh
-npm run verify:pr -- --title "build(desktop): update native runtime" --full --package
+npm run verify:pr -- --title "build(desktop): update native runtime" --package
 ```
 
 `--package` adds the current native platform's package command: `package:linux`
@@ -76,16 +89,20 @@ Manual verification supports dirty working trees for iteration. The pre-push
 hook requires a clean tracked and untracked working tree (ignored build outputs
 are allowed), because it must validate the actual pushed tree. It verifies only
 the checked-out `HEAD`; check out any other ref before pushing it. Branch deletion
-does not run tests. The hook runs the baseline; run the required full and package
-checks separately before pushing.
+does not run tests. The hook runs the baseline unless that commit already passed
+it; run the required package checks separately before pushing.
 
 Fix failures before pushing. Do not bypass hooks or use `--no-verify` unless the
 user explicitly authorizes it; do not remove tests or weaken CI to get green.
-After an authorized push or PR creation/update, run `gh pr checks --watch`,
-confirm the checks cover the latest pushed head SHA, and inspect failures with
+Enable auto-merge on pull requests that do not need review first
+(`gh pr merge --auto --squash`): GitHub squash-merges them once the required
+checks pass, so nobody has to wait on CI. Otherwise, after an authorized push or
+PR creation/update, run `gh pr checks --watch`, confirm the checks cover the
+latest pushed head SHA, and inspect failures with
 `gh run view <run-id> --log-failed`. Resolve failures within scope and report
 remote or environment blockers accurately. Pending or blocked checks are not
-green.
+green. A failed run on `main`, where macOS and Windows run their E2E, needs a
+prompt fix or revert.
 
 Use temporary profiles and synthetic repositories. Standard tests must not need
 personal credentials or user data; live provider checks must be explicitly opt-in.
