@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  antigravityModelEntriesFromSession,
   antigravityModelMeta,
   parseAntigravityModelOptions,
   resolveAntigravityModelValue,
@@ -61,6 +62,56 @@ describe('Antigravity model catalog', () => {
     expect(resolveAntigravityModelValue(parseAntigravityModelOptions([{ value: 'solo', name: 'Solo' }]), 'solo')).toBe(
       'solo'
     )
+  })
+
+  it('reads concrete variants from the superseded models field when the model option lists families (ACP 1.4)', () => {
+    const session = {
+      sessionId: 's',
+      configOptions: [
+        {
+          id: 'model',
+          category: 'model',
+          type: 'select' as const,
+          currentValue: 'gemini-4-argon',
+          options: [
+            { value: 'gemini-4-argon', name: 'Gemini 4 Argon' },
+            { value: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro' },
+          ],
+        },
+        {
+          id: 'thinking_level',
+          category: 'thought_level',
+          type: 'select' as const,
+          currentValue: 'high',
+          options: [
+            { value: 'low', name: 'Low' },
+            { value: 'medium', name: 'Medium' },
+            { value: 'high', name: 'High' },
+          ],
+        },
+      ],
+      models: {
+        currentModelId: 'gemini-4-argon-high',
+        availableModels: [
+          { modelId: 'gemini-4-argon-high', name: 'Gemini 4 Argon (High)' },
+          { modelId: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)' },
+          { modelId: 'gemini-4-argon-low', name: 'Gemini 4 Argon (Low)' },
+          { modelId: 'gemini-pro-agent', name: 'Gemini 3.1 Pro (High)' },
+          { modelId: 'gemini-3.1-pro-low', name: 'Gemini 3.1 Pro (Low)' },
+        ],
+      },
+    }
+    const parsed = antigravityModelEntriesFromSession(session)
+    expect(parsed.map((entry) => entry.id)).toEqual(['gemini-4-argon', 'gemini-3.1-pro'])
+    expect(antigravityModelMeta(parsed[0]).reasoningEfforts).toEqual(['low', 'medium', 'high'])
+    expect(resolveAntigravityModelValue(parsed, 'gemini-4-argon', 'low')).toBe('gemini-4-argon-low')
+  })
+
+  it('falls back to the model option when the server sends no models field', () => {
+    const parsed = antigravityModelEntriesFromSession({
+      configOptions: [{ id: 'model', type: 'select', currentValue: 'gemini-pro-agent', options: SPIKE_OPTIONS }],
+    })
+    expect(parsed).toEqual(entries)
   })
 
   it('advertises only the efforts a model really offers', () => {

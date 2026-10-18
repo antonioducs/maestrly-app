@@ -1,5 +1,5 @@
 import type { ChatModelMeta } from '../../../shared/chat'
-import type { AcpConfigSelectOption } from '../acp/protocol'
+import type { AcpConfigSelectOption, AcpSessionSetupResult } from '../acp/protocol'
 
 export type AntigravityEffort = 'low' | 'medium' | 'high'
 
@@ -49,6 +49,23 @@ export function parseAntigravityModelOptions(options: readonly AcpConfigSelectOp
     if (defaultEffort) entry.defaultEffort = defaultEffort
   }
   return entries
+}
+
+/**
+ * The model catalog of a `session/new` response. Since ACP server 1.4 the `model` option lists one value per family
+ * ("Gemini 4 Argon") and the level moves to a `thought_level` option that describes only the selected family. The
+ * superseded `models` field still lists every concrete variant ("Gemini 4 Argon (High)"), which the server keeps
+ * accepting as a `model` value, so it is preferred and the `model` option remains the fallback for older servers.
+ */
+export function antigravityModelEntriesFromSession(session: AcpSessionSetupResult): AntigravityModelEntry[] {
+  const concrete = (session.models?.availableModels ?? []).flatMap((model) =>
+    model && typeof model.modelId === 'string' && model.modelId
+      ? [{ value: model.modelId, name: typeof model.name === 'string' ? model.name : model.modelId }]
+      : []
+  )
+  if (concrete.length) return parseAntigravityModelOptions(concrete)
+  const option = session.configOptions?.find((candidate) => candidate.id === 'model')
+  return parseAntigravityModelOptions(option?.options ?? [])
 }
 
 /** ACP option value for a model and requested effort; unsupported or absent efforts fall back to the default. */
