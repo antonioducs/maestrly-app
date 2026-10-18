@@ -5,6 +5,8 @@ import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   FLEET_BOT_MOVE_FEATURE,
+  FLEET_CANCEL_CONVERSATION_QUERY,
+  FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_DEVICES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -121,6 +123,8 @@ const moveInput = z
   .strict()
 const createRoutine = fleetCreateRoutineRequestSchema.omit({ idempotencyKey: true })
 const action = z.enum(['start', 'stop', 'restart', 'archive', 'pause', 'resume', 'cancel'])
+/** The conversation whose turn a cancel stops: the bot's own, or a side conversation's id. */
+const cancelConversation = z.union([z.literal('primary'), z.string().regex(/^[A-Za-z0-9-]{1,80}$/)])
 const actionRoute = {
   start: 'botStart',
   stop: 'botStop',
@@ -185,6 +189,16 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   )
   reg.mhandle('fleet:botAction', (_event, botId: unknown, rawAction: unknown) =>
     fleet.call(actionRoute[action.parse(rawAction)], { params: { id: id.parse(botId) } })
+  )
+  // One conversation's turn (`parallel-turns`): `primary` for the bot's own, or a side conversation's id. A gateway
+  // that predates them stops the bot's only turn.
+  reg.mhandle('fleet:cancelTurn', (_event, botId: unknown, conversation: unknown) =>
+    fleet.call('botCancel', {
+      params: { id: id.parse(botId) },
+      ...(fleet.hasFeature(FLEET_PARALLEL_TURNS_FEATURE)
+        ? { query: { [FLEET_CANCEL_CONVERSATION_QUERY]: cancelConversation.parse(conversation) } }
+        : {}),
+    })
   )
   // The gateway answers at once; the move's progress arrives in the bot's `move`, through the events already followed.
   reg.mhandle('fleet:moveBot', (_event, botId: unknown, input: unknown) => {

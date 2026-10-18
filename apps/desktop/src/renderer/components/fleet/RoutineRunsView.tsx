@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  fleetLaneTurn,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_ROUTINE_RUN_RETENTION_DAYS,
   type FleetBot,
@@ -285,7 +286,9 @@ function RunRow({
   const state = pendingDelete ? 'deleted' : runState(run, bot)
   const { icon: Icon, className } = STATE_ICON[state]
   const time = new Date(run.deliveredAt).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })
-  const activity = bot.activity?.kind === 'tool' ? bot.activity.tool : null
+  // The run's own turn's tool; from a gateway that predates turns, the bot's one activity is the run's.
+  const turn = fleetLaneTurn({ turns: bot.turns ?? null, runningRun: bot.runningRun }, run.id)
+  const activity = bot.turns ? (turn?.tool ?? null) : bot.activity?.kind === 'tool' ? bot.activity.tool : null
   const summary =
     state === 'running'
       ? activity

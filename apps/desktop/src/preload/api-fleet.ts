@@ -250,6 +250,9 @@ export const fleetApi = {
     botId: string,
     action: 'start' | 'stop' | 'restart' | 'archive' | 'pause' | 'resume' | 'cancel'
   ): Promise<FleetBot | void> => ipcRenderer.invoke('fleet:botAction', botId, action),
+  /** Stops one conversation's turn: `primary` for the bot's own, or a routine run's or a peer thread's id. */
+  fleetCancelTurn: (botId: string, conversation: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:cancelTurn', botId, conversation),
   /**
    * Moves a bot to another environment of its server, or to a new one, with everything that is its own (`bot-move`).
    * Answers at once with the move; its progress arrives in the bot's `move`.

@@ -358,6 +358,8 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/bot/chat')).toContain('Track updates.')
     expect(botIdentityPrompt('/bot/chat')).toContain('Plan review is unavailable')
     expect(botIdentityPrompt('/bot/chat')).toContain('present it directly in the conversation')
+    // Its conversations work at once, in the same folder.
+    expect(botIdentityPrompt('/bot/chat')).toContain('may be working at the same time in the same folder')
     expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 24')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')

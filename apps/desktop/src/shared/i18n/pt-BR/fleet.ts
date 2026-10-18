@@ -1757,6 +1757,7 @@ export default {
     newCount_one: '{{count}} execução nova',
     newCount_other: '{{count}} execuções novas',
     runningChip: 'Rodando {{title}}',
+    moreRunning: 'Trabalhando agora: {{titles}}',
     runningMany: '{{count}} execuções trabalhando',
     title: 'Execuções',
     all: 'Todas',
@@ -1884,6 +1885,7 @@ export default {
     },
     waiting: '{{name}} está rodando {{title}}. Sua mensagem entra quando ela terminar.',
     waitingOpen: 'Abrir execução',
+    alsoWorking: '{{name}} também está rodando {{title}}, numa conversa à parte.',
     cite: {
       chip: 'Citando {{title}} · {{when}}',
       remove: 'Remover citação',

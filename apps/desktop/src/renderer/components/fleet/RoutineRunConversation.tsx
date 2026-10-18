@@ -18,7 +18,7 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import type { FleetBot, FleetRoutineRun } from '@maestrly/bot-fleet-protocol'
+import { FLEET_PARALLEL_TURNS_FEATURE, type FleetBot, type FleetRoutineRun } from '@maestrly/bot-fleet-protocol'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
@@ -333,7 +333,12 @@ export function RoutineRunConversation({
               type="button"
               className={cn(action, 'border border-border-strong text-foreground')}
               onClick={() =>
-                void window.api.fleetBotAction(bot.id, 'cancel').catch((cause) => setError(fleetErrorMessage(cause)))
+                // The run's own turn stops; the bot's conversation and its other runs keep working.
+                void (
+                  fleet.state.connection.features.includes(FLEET_PARALLEL_TURNS_FEATURE)
+                    ? window.api.fleetCancelTurn(bot.id, run.id)
+                    : window.api.fleetBotAction(bot.id, 'cancel')
+                ).catch((cause) => setError(fleetErrorMessage(cause)))
               }
             >
               <Square aria-hidden="true" className="size-3" />

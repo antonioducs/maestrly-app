@@ -7,6 +7,7 @@ import { ChatWindowButton } from '@/components/chat/ChatWindowHost'
 import { startBot } from '@/lib/fleet/environments'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
 import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 
@@ -123,6 +124,9 @@ export function BotChatHeader({
 }) {
   const { t } = useTranslation('fleet')
   const host = fleet.state.snapshot.host?.hostname ?? t('view.server')
+  // The routine runs working now, each in a conversation of its own, beside the bot's own conversation.
+  const running = sideTurns(bot).filter((turn) => turn.kind === 'routine')
+  const routineLabel = t('transcript.routine.label')
   return (
     <header className="@container flex h-[52px] shrink-0 items-center gap-2.5 pl-4 pr-3">
       <BotIdentity bot={bot}>
@@ -182,16 +186,25 @@ export function BotChatHeader({
         </div>
       )}
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {runs && bot.runningRun && (
+        {runs && running[0] && (
           <button
             type="button"
-            onClick={() => runs.onOpenRun(bot.runningRun!.id)}
-            title={t('runs.runningChip', { title: bot.runningRun.title || t('transcript.routine.label') })}
+            onClick={() => runs.onOpenRun(running[0].id)}
+            title={
+              running.length > 1
+                ? t('runs.moreRunning', { titles: running.map((turn) => turn.title || routineLabel).join(', ') })
+                : t('runs.runningChip', { title: running[0].title || routineLabel })
+            }
             className="mr-1 hidden h-7 max-w-64 items-center gap-1.5 rounded-full border border-sky-400/30 bg-sky-400/[0.08] pl-2 pr-2.5 text-xs text-sky-300 hover:bg-sky-400/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring @lg:inline-flex"
           >
             <Loader2 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
-            <span className="truncate">{bot.runningRun.title || t('transcript.routine.label')}</span>
-            <RunElapsed since={bot.runningRun.startedAt} />
+            <span className="truncate">{running[0].title || routineLabel}</span>
+            <RunElapsed since={running[0].startedAt} />
+            {running.length > 1 && (
+              <span className="shrink-0 rounded-full bg-sky-400/20 px-1.5 text-[10.5px] font-semibold tabular-nums">
+                +{running.length - 1}
+              </span>
+            )}
           </button>
         )}
         {narrow && <BotPaneSwitch active={activePane} onChange={onShowPane} />}

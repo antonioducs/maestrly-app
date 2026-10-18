@@ -1747,6 +1747,7 @@ export default {
     newCount_one: '{{count}} new run',
     newCount_other: '{{count}} new runs',
     runningChip: 'Running {{title}}',
+    moreRunning: 'Working now: {{titles}}',
     runningMany: '{{count}} runs working',
     title: 'Runs',
     all: 'All',
@@ -1874,6 +1875,7 @@ export default {
     },
     waiting: '{{name}} is running {{title}}. Your message goes in when it ends.',
     waitingOpen: 'Open run',
+    alsoWorking: '{{name}} is also running {{title}}, in a conversation of its own.',
     cite: {
       chip: 'Citing {{title}} · {{when}}',
       remove: 'Remove citation',

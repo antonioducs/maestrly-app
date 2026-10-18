@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FLEET_FILES_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { FLEET_FILES_FEATURE, FLEET_PARALLEL_TURNS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import type { FleetBot, FleetSelection, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
 import type { FleetOutgoingAttachment } from '../../../preload/api-fleet'
 import type { ChatSlashCommand } from '../../../shared/chat'
@@ -33,6 +33,7 @@ import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
 import { environmentOf } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { primaryWorking } from '@/lib/fleet/turns'
 
 type PendingImage = { file: File; attachment: UIAttachment }
 
@@ -319,8 +320,8 @@ export function BotComposer({
       <ChatComposer
         value={draft}
         onChange={setDraft}
-        // While a routine run works in its own conversation, messages here wait for it; it is stopped from there.
-        streaming={bot.status === 'working' && !bot.runningRun}
+        // Only this conversation's own turn streams here; a routine run's is stopped from its own conversation.
+        streaming={primaryWorking(bot)}
         sendWhileStreaming
         disabled={locked || busy}
         disabledPlaceholder={
@@ -335,7 +336,12 @@ export function BotComposer({
         placeholder={t('composer.placeholder', { name: bot.name })}
         onSend={({ text }) => void send(text)}
         onStop={() =>
-          void window.api.fleetBotAction(bot.id, 'cancel').catch((cause) => setError(fleetErrorMessage(cause)))
+          // Only this conversation's turn stops: the bot's routine runs and other conversations keep working.
+          void (
+            fleet.state.connection.features.includes(FLEET_PARALLEL_TURNS_FEATURE)
+              ? window.api.fleetCancelTurn(bot.id, 'primary')
+              : window.api.fleetBotAction(bot.id, 'cancel')
+          ).catch((cause) => setError(fleetErrorMessage(cause)))
         }
         attachments={images.map((image) => image.attachment)}
         onAddFiles={addFiles}

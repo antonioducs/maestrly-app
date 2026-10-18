@@ -5,6 +5,7 @@ import { botRecord, environmentRecord } from '../src/fleet/factories'
 import { fleetReducer, initialFleetState } from '../src/fleet/state'
 import {
   botStatusLine,
+  botWorksHere,
   botsByEnvironment,
   interactionForItem,
   isComposerLocked,
@@ -113,6 +114,36 @@ describe('fleet selectors', () => {
     })
     expect(statusLineText(shell, botStatusLine(shell, text))).toBe('$ npm test')
     expect(statusLineText(read, botStatusLine(read, text))).toBe('read a.md')
+  })
+
+  it("tells when the bot's own conversation works, and not a routine run working beside it", () => {
+    const startedAt = at(1)
+    const routineOnly = botRecord({
+      id: 'b',
+      name: 'B',
+      status: 'working',
+      turns: [{ kind: 'routine', id: 'run-1', title: 'Prices', startedAt, tool: null, cancelling: false }],
+    })
+    expect(botWorksHere(routineOnly)).toBe(false)
+    const both = botRecord({
+      id: 'b',
+      name: 'B',
+      status: 'working',
+      turns: [
+        { kind: 'primary', id: null, title: '', startedAt, tool: null, cancelling: false },
+        { kind: 'routine', id: 'run-1', title: 'Prices', startedAt, tool: null, cancelling: false },
+      ],
+    })
+    expect(botWorksHere(both)).toBe(true)
+    // A server that predates turns: working means the bot's own conversation, unless it works on a routine run.
+    expect(botWorksHere(botRecord({ id: 'b', name: 'B', status: 'working' }))).toBe(true)
+    const legacyRun = botRecord({
+      id: 'b',
+      name: 'B',
+      status: 'working',
+      runningRun: { id: 'run-1', routineId: 'r', title: 'Prices', startedAt },
+    })
+    expect(botWorksHere(legacyRun)).toBe(false)
   })
 
   it('locks the composer while the bot cannot take messages from the phone', () => {

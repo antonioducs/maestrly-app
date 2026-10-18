@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { expect, test, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import {
   FLEET_GATEWAY_ROUTES,
+  FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   fleetBotSchema,
   fleetGatewayEventSchema,
@@ -38,11 +39,13 @@ type Fixture = {
   deletes: string[]
   settings: FleetRoutineRunSettings[]
   imageReads: string[]
+  /** The query of each turn cancel the app sent, such as `?conversation=primary`. */
+  cancels: string[]
   screenshot: (name: string) => Promise<void>
 }
 
 /** A bot whose routine runs work in conversations of their own, behind a gateway that keeps them. */
-async function withRuns(run: (fixture: Fixture) => Promise<void>) {
+async function withRuns(run: (fixture: Fixture) => Promise<void>, options: { parallel?: boolean } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-routine-runs-'))
   const now = Date.now()
   const startOfToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime()
@@ -204,6 +207,7 @@ async function withRuns(run: (fixture: Fixture) => Promise<void>) {
   const deletes: string[] = []
   const settings: FleetRoutineRunSettings[] = []
   const imageReads: string[] = []
+  const cancels: string[] = []
   const failures: string[] = []
   const streams = new Set<ServerResponse>()
   const emit = (event: unknown) => {
@@ -248,7 +252,10 @@ async function withRuns(run: (fixture: Fixture) => Promise<void>) {
             gatewayVersion: '0.21.0',
             botImage: 'fixture',
             botImageVersion: null,
-            features: [FLEET_ROUTINE_CONVERSATIONS_FEATURE],
+            features: [
+              FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+              ...(options.parallel ? [FLEET_PARALLEL_TURNS_FEATURE] : []),
+            ],
           }
           break
         case 'pair':
@@ -333,6 +340,11 @@ async function withRuns(run: (fixture: Fixture) => Promise<void>) {
           setBot({ runSettings: body })
           value = body
           break
+        case 'botCancel':
+          cancels.push(url.search)
+          response.writeHead(204)
+          response.end()
+          return
         case 'botMessageSend':
           sent.push(fleetSendMessageRequestSchema.parse(body))
           value = { inputId: randomUUID(), itemId: randomUUID(), queued: false }
@@ -420,6 +432,7 @@ async function withRuns(run: (fixture: Fixture) => Promise<void>) {
       deletes,
       settings,
       imageReads,
+      cancels,
       screenshot: async (name) => {
         const dir = process.env.MAESTRLY_E2E_SCREENSHOTS
         if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`), animations: 'disabled' })
@@ -569,5 +582,53 @@ test('routine runs: history, a run in progress, its conversation, a citation, de
       await dialog.getByRole('button', { name: 'Close', exact: true }).first().click()
       await expect(page.getByRole('button', { name: 'Delete after 60 days' })).toBeVisible()
     }
+  )
+})
+
+test('routine runs: a run and the bot conversation work at once, and each stops on its own', async () => {
+  await withRuns(
+    async ({ page, emit, bot, setBot, runs, cancels }) => {
+      const startedAt = new Date().toISOString()
+      const live = fleetRoutineRunSchema.parse({
+        ...runs.get('r-new'),
+        id: 'r-live',
+        deliveredAt: startedAt,
+        finishedAt: null,
+        status: 'delivered',
+        report: null,
+        media: null,
+        expiresAt: null,
+      })
+      runs.set(live.id, live)
+      emit({ type: 'routine_run.updated', at: startedAt, botId: bot().id, run: live })
+      const turn = (kind: 'primary' | 'routine', id: string | null) => ({
+        kind,
+        id,
+        title: kind === 'routine' ? 'Inbox triage' : '',
+        startedAt,
+        tool: null,
+        cancelling: false,
+      })
+      setBot({
+        status: 'working',
+        runningRun: { id: 'r-live', routineId: 'routine-inbox', title: 'Inbox triage', startedAt },
+        turns: [turn('primary', null), turn('routine', 'r-live')],
+      })
+      // The run works beside the bot's own conversation: this one works too, and a message here does not wait.
+      await expect(page.getByText('Run Bot is also running Inbox triage, in a conversation of its own.')).toBeVisible()
+      await expect(page.getByTitle('Running Inbox triage')).toBeVisible()
+      // Stopping here stops this conversation's turn only.
+      await page.getByTitle('Stop', { exact: true }).click()
+      await expect.poll(() => cancels).toEqual(['?conversation=primary'])
+      // The run's own conversation stops the run's turn only.
+      await page.getByRole('tab', { name: /^Runs/ }).click()
+      await page
+        .getByRole('button', { name: /Inbox triage/ })
+        .first()
+        .click()
+      await page.getByRole('button', { name: 'Stop', exact: true }).click()
+      await expect.poll(() => cancels).toEqual(['?conversation=primary', '?conversation=r-live'])
+    },
+    { parallel: true }
   )
 })
