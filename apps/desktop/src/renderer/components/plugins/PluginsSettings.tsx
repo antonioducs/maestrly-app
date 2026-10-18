@@ -3,9 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { PluginInspectionDto } from '../../../shared/plugins'
+import type { InstalledPluginDto, PluginInspectionDto } from '../../../shared/plugins'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
-import { InstalledPlugins } from './InstalledPlugins'
+import { InstalledPlugins, UninstallPluginDialog } from './InstalledPlugins'
 import { PluginCatalog } from './PluginCatalog'
 import { PluginDetails } from './PluginDetails'
 import { BringPluginsDialog } from './BringPluginsDialog'
@@ -31,6 +31,7 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
   const [selected, setSelected] = useState<string | null>(null)
   const [details, setDetails] = useState<{ marketplaceId: string; name: string } | null>(null)
   const [installing, setInstalling] = useState<PluginInspectionDto | null>(null)
+  const [uninstalling, setUninstalling] = useState<InstalledPluginDto | null>(null)
   const [bringing, setBringing] = useState(false)
   const [revision, setRevision] = useState(0)
   const [detailsRevision, setDetailsRevision] = useState(0)
@@ -86,6 +87,10 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
           marketplaces={marketplaces}
           onBack={() => setDetails(null)}
           onInstall={setInstalling}
+          installedPlugin={state?.installed.find(
+            (plugin) => plugin.marketplaceId === details.marketplaceId && plugin.name === details.name
+          )}
+          onUninstall={setUninstalling}
         />
       ) : (
         <>
@@ -186,6 +191,18 @@ export function PluginsSettings({ source: providedSource }: { source?: PluginsSo
           installedThere={new Set(state.installed.map((plugin) => plugin.key))}
           onClose={() => setBringing(false)}
           onBrought={changed}
+        />
+      )}
+      {uninstalling && (
+        <UninstallPluginDialog
+          source={source}
+          plugin={uninstalling}
+          onClose={() => setUninstalling(null)}
+          onDone={() => {
+            setUninstalling(null)
+            setDetailsRevision((value) => value + 1)
+            changed()
+          }}
         />
       )}
       {installing && (

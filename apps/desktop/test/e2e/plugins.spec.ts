@@ -402,6 +402,19 @@ test('plugins: a remote workspaces host installs and serves its own plugins', as
     await expect(page.locator('[data-settings-host]').getByRole('combobox')).toContainText(server)
     const reopened = page.getByTestId('plugins-settings')
     await expect(reopened.getByRole('tab', { name: /^Installed · 1/ })).toBeVisible()
+
+    // An installed plugin's details uninstall it too, and then offer to install it again.
+    await reopened.getByRole('tab', { name: /^Installed · 1/ }).click()
+    await reopened.getByRole('button', { name: /^Details: / }).click()
+    const details = reopened.getByTestId('plugin-details')
+    await details.getByRole('button', { name: 'Uninstall', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: /^Uninstall / })
+      .getByRole('button', { name: 'Uninstall', exact: true })
+      .click()
+    await expect.poll(async () => (await remote('pluginsState')).installed.length).toBe(0)
+    await expect(details.getByRole('button', { name: 'Install', exact: true })).toBeEnabled()
+    await expect(details.getByRole('button', { name: 'Uninstall', exact: true })).toHaveCount(0)
   } finally {
     await client?.close().catch(() => undefined)
     await host?.close().catch(() => undefined)

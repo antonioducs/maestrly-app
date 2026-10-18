@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronLeft, Download, ExternalLink, Loader2 } from 'lucide-react'
+import { ChevronLeft, Download, ExternalLink, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   isBlockingReason,
+  type InstalledPluginDto,
   type PluginComponentDto,
   type PluginInspectionDto,
   type PluginMarketplaceDto,
@@ -42,6 +43,8 @@ export function PluginDetails({
   name,
   onBack,
   onInstall,
+  installedPlugin,
+  onUninstall,
   reloadSignal,
   marketplaces,
 }: {
@@ -50,6 +53,9 @@ export function PluginDetails({
   name: string
   onBack: () => void
   onInstall: (inspection: PluginInspectionDto) => void
+  /** This plugin as installed here, when it is: it can be uninstalled from its details too. */
+  installedPlugin?: InstalledPluginDto
+  onUninstall?: (plugin: InstalledPluginDto) => void
   reloadSignal?: number
   /** Sources of the host, to say whether this plugin comes from a suggested source or from a third party. */
   marketplaces?: PluginMarketplaceDto[]
@@ -168,15 +174,27 @@ export function PluginDetails({
               </p>
             ))}
         </div>
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => onInstall(inspection)}
-          disabled={unavailable || inspection.installed}
-          className="shrink-0"
-        >
-          <Download /> {inspection.installed ? t('browse.installed') : t('details.install')}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {inspection.installed && installedPlugin && onUninstall && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => onUninstall(installedPlugin)}
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 /> {t('installed.uninstall')}
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => onInstall(inspection)}
+            disabled={unavailable || inspection.installed}
+          >
+            <Download /> {inspection.installed ? t('browse.installed') : t('details.install')}
+          </Button>
+        </div>
       </header>
 
       <Section title={t('details.compatibility')}>

@@ -54,7 +54,6 @@ export function InstalledPlugins({
   )
   const [updating, setUpdating] = useState<{ plugin: InstalledPluginDto; inspection: PluginInspectionDto } | null>(null)
   const [removing, setRemoving] = useState<InstalledPluginDto | null>(null)
-  const [deleteData, setDeleteData] = useState(false)
 
   const run = async (key: string, operation: () => Promise<{ ok: boolean; error?: string }>): Promise<boolean> => {
     setBusy(key)
@@ -221,10 +220,7 @@ export function InstalledPlugins({
                 )}
                 <button
                   type="button"
-                  onClick={() => {
-                    setDeleteData(false)
-                    setRemoving(plugin)
-                  }}
+                  onClick={() => setRemoving(plugin)}
                   className="text-muted-foreground hover:text-destructive"
                   title={t('installed.uninstall')}
                   aria-label={`${t('installed.uninstall')}: ${plugin.displayName}`}
@@ -454,45 +450,81 @@ export function InstalledPlugins({
       )}
 
       {removing && (
-        <Dialog open onOpenChange={(open) => !open && busy === null && setRemoving(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle>{t('uninstall.title', { name: removing.displayName })}</DialogTitle>
-              <DialogDescription>{t('uninstall.message')}</DialogDescription>
-            </DialogHeader>
-            <label className="flex items-center gap-2 text-[12px] text-foreground">
-              <input type="checkbox" checked={deleteData} onChange={(event) => setDeleteData(event.target.checked)} />
-              {t('uninstall.deleteData')}
-            </label>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setRemoving(null)}
-                disabled={busy !== null}
-              >
-                {t('installed.cancel')}
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                disabled={busy !== null}
-                onClick={() => {
-                  const plugin = removing
-                  void run(plugin.key, () => source.pluginsUninstall({ key: plugin.key, deleteData })).then(() =>
-                    setRemoving(null)
-                  )
-                }}
-              >
-                {busy !== null && <Loader2 className="animate-spin" />}
-                {t('uninstall.confirm')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <UninstallPluginDialog
+          source={source}
+          plugin={removing}
+          onClose={() => setRemoving(null)}
+          onDone={() => {
+            setRemoving(null)
+            onChanged()
+          }}
+        />
       )}
     </div>
+  )
+}
+
+/** Confirms uninstalling a plugin. A failure keeps the dialog open with its error, so it is not missed. */
+export function UninstallPluginDialog({
+  source,
+  plugin,
+  onClose,
+  onDone,
+}: {
+  source: PluginsSource
+  plugin: InstalledPluginDto
+  onClose: () => void
+  onDone: () => void
+}) {
+  const { t } = useTranslation('plugins')
+  const [deleteData, setDeleteData] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const confirm = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await source.pluginsUninstall({ key: plugin.key, deleteData })
+      if (!result.ok) {
+        setError(errorText(t, result.error))
+        return
+      }
+      source.notifyChanged()
+      onDone()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('uninstall.title', { name: plugin.displayName })}</DialogTitle>
+          <DialogDescription>{t('uninstall.message')}</DialogDescription>
+        </DialogHeader>
+        <label className="flex items-center gap-2 text-[12px] text-foreground">
+          <input type="checkbox" checked={deleteData} onChange={(event) => setDeleteData(event.target.checked)} />
+          {t('uninstall.deleteData')}
+        </label>
+        {error && (
+          <p role="alert" className="text-[12px] text-destructive">
+            {error}
+          </p>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+            {t('installed.cancel')}
+          </Button>
+          <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => void confirm()}>
+            {busy && <Loader2 className="animate-spin" />}
+            {t('uninstall.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
