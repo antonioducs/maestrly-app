@@ -134,7 +134,8 @@ export default {
     },
     defaultModel: {
       title: 'Modelo padrão',
-      description: 'Usado em toda conversa nova. Cada conversa pode trocar no composer.',
+      description:
+        'Usado em toda conversa nova. Sem ele, a conversa nova usa o último modelo que você escolheu. Cada conversa pode trocar no composer.',
       noProviders: 'Conecte uma conta para escolher modelos.',
       openAccounts: 'Abrir Contas',
     },

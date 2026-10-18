@@ -137,7 +137,7 @@ describe('chat composer data sources', () => {
 
   it('labels a closed bot model chip with the provider label and never shows local models', () => {
     const chip = sourceFile('chat/ChatModelChip.tsx')
-    expect(chip).toContain('source?.bot ? [] : (rowsCache.get(hostId) ?? [])')
+    expect(chip).toContain('source?.bot ? [] : (cachedModelPickerRows(hostId) ?? [])')
     expect(chip).toMatch(/if \(!botSource\) return[\s\S]*loadBotRows\(botSource, conversationId\)/)
     expect(chip).toContain('providerName: option.providerLabel')
   })

@@ -382,6 +382,8 @@ import {
   getModelMeta,
   getProviderModelMeta,
 } from './model-meta'
+import { collapseClaudeModelAliases } from './claude-agent-sdk/model-catalog'
+import { rememberChatSelection, rememberStandaloneChatMode, rememberedChatSelection } from './new-chat-defaults'
 import { currentAsrSupport, transcribe, warmAsr } from '../asr-service'
 import { asrLanguage } from '../../shared/asr'
 import { findMentions, type MentionMatch } from '../../shared/chat-mentions'
@@ -1946,11 +1948,10 @@ function makeSafeSend(wc: WebContents): SafeSend {
 function defaultSelection(): ChatModelRef | null {
   const providers = listAvailableChatProviders()
   if (providers.length === 0) return null
+  const configured = configuredDefaultSelection(providers)
+  if (configured) return configured
   const savedP = getAppSetting(CHAT_DEFAULT_PROVIDER_KEY)
   const savedM = getAppSetting(CHAT_DEFAULT_MODEL_KEY)
-  if (savedP && savedM && providers.some((p) => p.id === savedP)) {
-    return { providerId: savedP, modelId: savedM }
-  }
   // Fallback: first provider with a key (or any first provider); empty modelId = user picks in the chip / auto-pick on send.
   const provider =
     providers.find((p) =>
@@ -1976,6 +1977,26 @@ function defaultSelection(): ChatModelRef | null {
   return { providerId: provider.id, modelId }
 }
 
+/** The default model chosen in Settings, while its account still exists. */
+function configuredDefaultSelection(providers: readonly { id: string }[]): ChatModelRef | null {
+  const savedP = getAppSetting(CHAT_DEFAULT_PROVIDER_KEY)
+  const savedM = getAppSetting(CHAT_DEFAULT_MODEL_KEY)
+  return savedP && savedM && providers.some((p) => p.id === savedP) ? { providerId: savedP, modelId: savedM } : null
+}
+
+/**
+ * Selection of a conversation that has not chosen one: the default model from Settings, else the model the person
+ * last picked in any conversation (while its account exists), else the first connected account with no model yet.
+ */
+function inheritedSelection(): ChatModelRef | null {
+  const providers = listAvailableChatProviders()
+  const configured = configuredDefaultSelection(providers)
+  if (configured) return configured
+  const last = rememberedChatSelection()
+  if (last && !isChatGptWebProvider(last.providerId) && providers.some((p) => p.id === last.providerId)) return last
+  return defaultSelection()
+}
+
 /** Effective global profile inherited by the Maestro parent and captured by named strategies. */
 export function getGlobalMaestroOrchestratorProfile(): MaestroOrchestratorProfileV1 | null {
   const selection = defaultSelection()
@@ -1987,18 +2008,24 @@ export function getGlobalMaestroOrchestratorProfile(): MaestroOrchestratorProfil
   }
 }
 
-/** Effective conversation selection: conversation prefs (if the provider still exists) → global default. */
+/** A chat the person drives here, whose mode and model become the defaults of their next one; never a bot's. */
+function choicesCarryToNewChats(conversationId: string): boolean {
+  const conversation = getConversation(conversationId)
+  return !!conversation && !conversation.botOrigin && !isBotMode()
+}
+
+/** Effective conversation selection: conversation prefs (if the provider still exists) → inherited selection. */
 function selectionFor(conversationId: string): ChatModelRef | null {
   const prefs = getConvUiPrefs(conversationId).chat
   if (isChatGptWebProvider(prefs?.providerId)) {
-    const fallback = defaultSelection()
+    const fallback = inheritedSelection()
     if (fallback) patchConvChat(conversationId, { providerId: fallback.providerId, modelId: fallback.modelId })
     return fallback
   }
   if (prefs?.providerId && getProvider(prefs.providerId)) {
     return { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
   }
-  return defaultSelection()
+  return inheritedSelection()
 }
 
 /**
@@ -3832,6 +3859,10 @@ async function startSend(
   // Compound operations may reserve the slot before switching provider/model.
   // From here, the label must reflect the provider that will actually start for account boundaries.
   operation.providerId = selection.providerId
+  // An inherited model follows the last one picked anywhere; once a turn runs on it, the conversation keeps it.
+  if (!internalLoop && !opts?.botAdmission && selection.modelId && !getConvUiPrefs(conversationId).chat?.modelId) {
+    patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+  }
   if (!opts?.internal && !internalLoop) {
     operation.pendingMessage = {
       id: opts?.botAdmission ? `bot-${opts.botAdmission.commandId}` : randomUUID(),
@@ -9158,7 +9189,7 @@ function conversationReviewSelection(conversationId: string): ReviewModelChoice 
   const chosen =
     prefs?.providerId && getProvider(prefs.providerId) && !isChatGptWebProvider(prefs.providerId)
       ? { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
-      : defaultSelection()
+      : inheritedSelection()
   if (!chosen?.providerId || !chosen.modelId) return null
   return { ...chosen, reasoning: prefs?.reasoning || 'off', fastMode: prefs?.fastMode === true }
 }
@@ -11263,6 +11294,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
           modelId: sel.modelId,
           ...(changed ? { imagesUnsupported: false } : {}),
         })
+        if (choicesCarryToNewChats(conversationId)) rememberChatSelection(sel)
       } finally {
         releaseConversationOperation(conversationId, operation)
       }
@@ -11297,6 +11329,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     }
     if (!isChatMode(mode)) return { ok: false, error: 'invalid-mode' }
     patchConvChat(conversationId, { mode })
+    // Project conversations keep starting in Agent; only standalone chats carry the mode over.
+    if (getConversation(conversationId)?.scope === 'standalone' && choicesCarryToNewChats(conversationId)) {
+      rememberStandaloneChatMode(mode)
+    }
     return { ok: true }
   })
 
@@ -11463,11 +11499,12 @@ export function disposeChat(): Promise<void> {
 
 /**
  * Usable models of one provider/account slot, honoring authentication and the user's hidden-model filter unless
- * `includeHidden`. Shared by the model picker IPC and conversation dispatch validation.
+ * `includeHidden`. Shared by the model picker IPC and conversation dispatch validation. Pickers get one row per Claude
+ * model; `includeAliases` keeps every id the account accepts, for callers that check whether a named id exists.
  */
 export async function listChatProviderModels(
   providerId: string,
-  options: { force?: boolean; includeHidden?: boolean } = {}
+  options: { force?: boolean; includeHidden?: boolean; includeAliases?: boolean } = {}
 ): Promise<string[]> {
   const force = options.force === true
   const includeHidden = options.includeHidden === true
@@ -11499,8 +11536,9 @@ export async function listChatProviderModels(
     const status = await claudeAuthStatus(force, accountId)
     if (!status.authenticated) return []
     try {
+      const models = await getClaudeSubscriptionManager(accountId).listModels(undefined, force)
       return visible(
-        (await getClaudeSubscriptionManager(accountId).listModels(undefined, force)).map((model) => model.value)
+        (options.includeAliases === true ? models : collapseClaudeModelAliases(models)).map((model) => model.value)
       )
     } catch (error) {
       throw new Error(claudeSubscriptionErrorMessage(error))
@@ -11587,7 +11625,7 @@ export async function describeChatModelForDispatch(
     return { available: false, reasoning: false, reasoningEfforts: [], nativeUltraMode: false, fastMode: false }
   }
   const models = await bestEffortWithin(
-    listChatProviderModels(providerId, { includeHidden: true }).catch(() => [] as string[]),
+    listChatProviderModels(providerId, { includeHidden: true, includeAliases: true }).catch(() => [] as string[]),
     10_000,
     [] as string[]
   )

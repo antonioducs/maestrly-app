@@ -128,7 +128,8 @@ export default {
     },
     defaultModel: {
       title: 'Default model',
-      description: 'Used by every new conversation. Each conversation can change it in the composer.',
+      description:
+        'Used by every new conversation. Without one, a new conversation uses the last model you picked. Each conversation can change it in the composer.',
       noProviders: 'Connect an account to choose models.',
       openAccounts: 'Open Accounts',
     },

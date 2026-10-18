@@ -6,10 +6,11 @@ const source = (path: string): string => readFileSync(new URL(`../../${path}`, i
 describe('multi-account selection surfaces', () => {
   it('keeps the exact provider slot in every chat model picker', () => {
     const chip = source('src/renderer/components/chat/ChatModelChip.tsx')
+    const rows = source('src/renderer/components/chat/model-picker-rows.ts')
     const settings = source('src/renderer/components/chat/model-settings/SelectionBodies.tsx')
     const candidate = source('src/renderer/components/chat/subagent-profiles/CandidateFields.tsx')
 
-    expect(chip).toContain('providerId: p.id, providerName: p.name')
+    expect(rows).toContain('providerId: provider.id, providerName: provider.name')
     expect(chip).toMatch(/key=\{`\$\{r\.providerId\}::\$\{r\.modelId\}`\}/)
     // The default model and the image interpreter pick an account slot, not a provider kind.
     expect(settings).toContain('options={providers.map((provider) => ({ id: provider.id, label: provider.name }))}')

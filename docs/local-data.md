@@ -104,6 +104,16 @@ gateway binary refuses a database newer than its supported schema; an older
 gateway cannot open v7 unless it supports v7. Downgrade by restoring a matching
 backup.
 
+## Model picker
+
+`chat.lastSelection` in `app_settings` holds the account and model last picked
+in a conversation's model picker, and `chat.lastStandaloneMode` the mode last
+chosen in a chat outside a workspace. New chats start from them when no default
+model is set; neither holds a credential. Each window keeps the last model lists
+of every host in its local storage under `chat.modelPicker.rows.v1:<host>` and
+shows them while the accounts answer; it is a rebuildable cache of model ids and
+account names.
+
 ## MCP configuration
 
 On every desktop, `chat.mcpServers` in `app_settings` keeps the MCP identities

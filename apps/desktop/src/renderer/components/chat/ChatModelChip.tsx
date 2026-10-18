@@ -14,11 +14,12 @@ import { ChevronDown, Check, Loader2, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
-import type { HostApi } from '../../../preload'
 import type { HostId } from '../../../shared/host-key'
 import { isChatProviderConnected } from '../../../shared/chat'
 import type { ChatConfig, ChatModelRef } from '../../../shared/chat'
 import type { ChatComposerSource } from './chat-composer-source'
+import { modelDisplayName, providerSearchTerms, searchModelRows } from './model-search'
+import { cachedModelPickerRows, loadModelPickerRows, type ModelPickerRow as Row } from './model-picker-rows'
 
 interface Props {
   conversationId?: string
@@ -39,13 +40,7 @@ export interface ChatModelChipHandle {
   open(): void
 }
 
-interface Row {
-  providerId: string
-  providerName: string
-  modelId: string
-}
-
-const rowsCache = new Map<HostId, Row[]>()
+const hiddenCache = new Map<HostId, Record<string, string[]>>()
 
 /** A bot's models, already filtered by the models its own accounts enable. */
 async function loadBotRows(bot: NonNullable<ChatComposerSource['bot']>, botId: string | undefined): Promise<Row[]> {
@@ -55,22 +50,6 @@ async function loadBotRows(bot: NonNullable<ChatComposerSource['bot']>, botId: s
     providerName: option.providerLabel,
     modelId: option.modelId,
   }))
-}
-
-async function fetchRows(api: HostApi, hostId: HostId): Promise<{ config: ChatConfig; rows: Row[] }> {
-  const config = await api.chatConfig()
-  const connected = config.providers.filter(isChatProviderConnected)
-  const lists = await Promise.all(
-    connected.map((p) =>
-      api
-        .chatModels(p.id)
-        .then((models) => models.map((m) => ({ providerId: p.id, providerName: p.name, modelId: m })))
-        .catch(() => [] as Row[])
-    )
-  )
-  const rows = lists.flat()
-  rowsCache.set(hostId, rows)
-  return { config, rows }
 }
 
 export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function ChatModelChip(
@@ -101,7 +80,8 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   // The module cache holds each host's models; a bot's list comes from the bot only.
-  const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (rowsCache.get(hostId) ?? [])))
+  const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (cachedModelPickerRows(hostId) ?? [])))
+  // A bot's list arrives at once; a host's arrives account by account, and `loading` stays on until the last one.
   const [loading, setLoading] = useState(false)
   const [hiddenModels, setHiddenModels] = useState<Record<string, string[]> | null>(null)
   const [choosingKey, setChoosingKey] = useState<string | null>(null)
@@ -145,14 +125,13 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
       source?.bot
         ? () => {}
         : api.onChatModelsCatalogChanged(() => {
-            rowsCache.delete(hostId)
             if (!open) return
-            void fetchRows(api, hostId)
-              .then(({ config: nextConfig, rows: nextRows }) => {
-                setConfig(nextConfig)
-                setRows(nextRows)
-              })
-              .catch(() => undefined)
+            // Supersedes the fetch the opening started, so it also owns the loading line from here.
+            void loadModelPickerRows(api, hostId, (update) => {
+              setConfig(update.config)
+              setRows(update.rows)
+              setLoading(update.pending > 0)
+            }).catch(() => setLoading(false))
           }),
     [api, hostId, open]
   )
@@ -177,30 +156,22 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
         alive = false
       }
     }
-    const hadCache = rowsCache.has(hostId)
-    if (hadCache) setRows(rowsCache.get(hostId)!)
-    setHiddenModels(null)
+    setRows(cachedModelPickerRows(hostId) ?? [])
+    setHiddenModels(hiddenCache.get(hostId) ?? null)
     setLoading(true)
     void api
       .chatHiddenModels()
+      .catch((): Record<string, string[]> => ({}))
       .then((hidden) => {
-        if (!alive) return
-        setHiddenModels(hidden)
-        if (hadCache) setLoading(false)
+        hiddenCache.set(hostId, hidden)
+        if (alive) setHiddenModels(hidden)
       })
-      .catch(() => {
-        if (!alive) return
-        setHiddenModels({})
-        if (hadCache) setLoading(false)
-      })
-    fetchRows(api, hostId)
-      .then(({ config: cfg, rows: next }) => {
-        if (!alive) return
-        setConfig(cfg)
-        setRows(next)
-        setLoading(false)
-      })
-      .catch(() => alive && setLoading(false))
+    loadModelPickerRows(api, hostId, (update) => {
+      if (!alive) return
+      setConfig(update.config)
+      setRows(update.rows)
+      setLoading(update.pending > 0)
+    }).catch(() => alive && setLoading(false))
     focusSearch()
     return () => {
       alive = false
@@ -251,21 +222,29 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const connectedProviderIds = useMemo(() => new Set(connectedProviders.map((candidate) => candidate.id)), [config])
   const botRow = source?.bot && rows.find((row) => row.providerId === sel?.providerId && row.modelId === sel?.modelId)
   const label = sel?.modelId
-    ? `${botRow?.providerName ?? provider?.name ?? sel.providerId} · ${sel.modelId}`
+    ? `${botRow?.providerName ?? provider?.name ?? sel.providerId} · ${modelDisplayName(sel.modelId)}`
     : (defaultLabel ?? t('modelChip.choosePlaceholder'))
   const modelShortcut = window.api.platformInfo.os === 'mac' ? '⌘⇧M' : 'Ctrl+Shift+M'
+  const loadingLine = (
+    <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-muted-foreground">
+      <Loader2 className="h-3 w-3 animate-spin" /> {t('modelChip.loading')}
+    </div>
+  )
 
+  const providerTerms = useMemo(
+    () => new Map((config?.providers ?? []).map((candidate) => [candidate.id, providerSearchTerms(candidate)])),
+    [config]
+  )
   const filtered = useMemo(() => {
     if (!hiddenModels) return []
-    const q = query.trim().toLowerCase()
-    return rows.filter(
+    const offered = rows.filter(
       (r) =>
         (source?.bot || connectedProviderIds.has(r.providerId)) &&
         !(hiddenModels[r.providerId] ?? []).includes(r.modelId) &&
-        (!providerFilter || providerFilter(r.providerId)) &&
-        (!q || `${r.providerName} ${r.modelId}`.toLowerCase().includes(q))
+        (!providerFilter || providerFilter(r.providerId))
     )
-  }, [rows, query, connectedProviderIds, hiddenModels, providerFilter, source?.bot])
+    return searchModelRows(offered, query, (providerId) => providerTerms.get(providerId) ?? [])
+  }, [rows, query, connectedProviderIds, hiddenModels, providerFilter, providerTerms, source?.bot])
 
   useEffect(() => {
     setActiveIndex((index) => (filtered.length > 0 ? Math.min(index, filtered.length - 1) : 0))
@@ -378,11 +357,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                 {t('modelChip.noProviders')}
               </div>
             )}
-            {loading && (
-              <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> {t('modelChip.loading')}
-              </div>
-            )}
+            {loading && source?.bot && loadingLine}
             {!loading && source?.bot && (
               <button
                 type="button"
@@ -396,7 +371,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                 {defaultLabel ?? t('modelChip.choosePlaceholder')}
               </button>
             )}
-            {!loading &&
+            {(!loading || !source?.bot) &&
               filtered.map((r, index) => {
                 const active = sel?.providerId === r.providerId && sel?.modelId === r.modelId
                 const highlighted = index === activeIndex
@@ -421,11 +396,17 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                     ) : (
                       <Check className={cn('h-3.5 w-3.5 shrink-0', active ? 'opacity-100' : 'opacity-0')} />
                     )}
-                    <span className="flex-1 truncate text-[13px] text-foreground">{r.modelId}</span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">{r.providerName}</span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-foreground" title={r.modelId}>
+                      {modelDisplayName(r.modelId)}
+                    </span>
+                    <span className="max-w-[40%] shrink-0 truncate text-[11px] text-muted-foreground">
+                      {r.providerName}
+                    </span>
                   </button>
                 )
               })}
+            {/* Accounts answer one by one: their rows show as they arrive, and this line until the last one. */}
+            {loading && !source?.bot && loadingLine}
             {!source?.bot && !loading && filtered.length === 0 && connectedProviders.length > 0 && (
               <button
                 type="button"
