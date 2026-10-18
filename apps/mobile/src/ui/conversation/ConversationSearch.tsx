@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef } from 'react'
-import { ActivityIndicator, TextInput, View } from 'react-native'
+import { ActivityIndicator, TextInput, type TextInputInstance, View } from 'react-native'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
@@ -38,7 +38,7 @@ export function ConversationSearchBar({
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
-  const input = useRef<TextInput>(null)
+  const input = useRef<TextInputInstance>(null)
   useEffect(() => {
     const timer = setTimeout(() => input.current?.focus(), 50)
     return () => clearTimeout(timer)

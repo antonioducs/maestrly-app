@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   TextInput,
+  type TextInputInstance,
   useWindowDimensions,
   View,
 } from 'react-native'
@@ -73,7 +74,7 @@ export function ComposerShell({
   onStop: () => Promise<unknown>
   onSend: (text: string, attachments: OutboxAttachment[]) => Promise<unknown>
   disabled?: boolean
-  inputRef?: Ref<TextInput>
+  inputRef?: Ref<TextInputInstance>
   initialText?: string
   /** A message being edited: its text fills the field, and sending replaces the message with it. */
   editing?: { itemId: string; text: string } | null
@@ -98,8 +99,8 @@ export function ComposerShell({
 
   const latestText = useRef(text)
   latestText.current = text
-  const field = useRef<TextInput>(null)
-  useImperativeHandle(inputRef, () => field.current as TextInput)
+  const field = useRef<TextInputInstance>(null)
+  useImperativeHandle(inputRef, () => field.current as TextInputInstance)
   const editingId = editing?.itemId ?? null
   const editingRef = useRef(editingId)
   editingRef.current = editingId
@@ -434,7 +435,7 @@ export function Composer({
   onCancelEdit,
 }: {
   bot: FleetBot
-  inputRef?: Ref<TextInput>
+  inputRef?: Ref<TextInputInstance>
   editing?: { itemId: string; text: string } | null
   onEdit?: (text: string) => Promise<unknown>
   onCancelEdit?: () => void

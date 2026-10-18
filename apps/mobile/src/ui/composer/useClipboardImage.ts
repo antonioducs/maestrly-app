@@ -6,12 +6,12 @@ import { AppState, Platform } from 'react-native'
 import type { OutboxAttachment } from '../../fleet/attachments'
 
 /** Saves a pasted image in the app's cache, where attachments are read from when their message is sent. */
-function savePasted(image: Clipboard.ClipboardImage): OutboxAttachment {
+async function savePasted(image: Clipboard.ClipboardImage): Promise<OutboxAttachment> {
   const base64 = image.data.replace(/^data:[^;]+;base64,/, '')
   const name = `pasted-${new Date().toISOString().replace(/[:.]/g, '-')}.jpg`
   const file = new File(Paths.cache, 'pasted', `${randomUUID()}.jpg`)
   file.create({ intermediates: true, overwrite: true })
-  file.write(base64, { encoding: 'base64' })
+  await file.write(base64, { encoding: 'base64' })
   return { name, kind: 'image', mediaType: 'image/jpeg', uri: file.uri, byteSize: file.size ?? 0 }
 }
 
@@ -57,7 +57,7 @@ export function useClipboardImage(enabled: boolean) {
     const image = await Clipboard.getImageAsync({ format: 'jpeg', jpegQuality: 0.8 })
     used.current = true
     setAvailable(false)
-    return image ? savePasted(image) : null
+    return image ? await savePasted(image) : null
   }, [])
 
   return { available, check, paste }

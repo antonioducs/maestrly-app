@@ -4,7 +4,7 @@ import {
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AccessibilityInfo, Pressable, type TextInput, View } from 'react-native'
+import { AccessibilityInfo, Pressable, type TextInputInstance, View } from 'react-native'
 import { useChats, useChatsController } from '../../chats/react'
 import { allConversations, type ChatsState } from '../../chats/state'
 import { editableItemId } from '../../fleet/transcript-search'
@@ -77,7 +77,7 @@ export function ChatConversation({ conversationId }: { conversationId: string })
     )
   )
   const setup = useChats(useCallback((state: ChatsState) => state.setups[conversationId] ?? null, [conversationId]))
-  const input = useRef<TextInput>(null)
+  const input = useRef<TextInputInstance>(null)
   const conversation = view?.conversation ?? listed
   const runtime = view?.runtime ?? null
   const busy = !!runtime && (runtime.streaming || runtime.compacting)

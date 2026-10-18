@@ -211,6 +211,8 @@ try {
     // The web build cannot get push notifications, and says so.
     await page.getByText('Notifications aren’t available here').waitFor()
     await button('Done').click()
+    // The router navigates after the press commits, so the settings are still on screen right after it.
+    await page.getByText('Notifications aren’t available here').waitFor({ state: 'hidden' })
   })
 
   await step('remove a paired device', async () => {

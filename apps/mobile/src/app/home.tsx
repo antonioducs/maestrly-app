@@ -1,7 +1,7 @@
 import { FLEET_MESSAGE_EDIT_FEATURE, type FleetBot, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { Redirect, router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { KeyboardAvoidingView, type TextInput, View } from 'react-native'
+import { KeyboardAvoidingView, type TextInputInstance, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats } from '../chats/react'
 import { waitingChats } from '../chats/selectors'
@@ -67,7 +67,7 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   const inbox = useFleet(
     useCallback((state: FleetState) => state.inbox.filter((item) => item.botId === bot.id), [bot.id])
   )
-  const input = useRef<TextInput>(null)
+  const input = useRef<TextInputInstance>(null)
   const focusComposer = useCallback(() => input.current?.focus(), [])
   const { t } = useI18n()
   const serverEdits = useFleet(selectEditFeature)

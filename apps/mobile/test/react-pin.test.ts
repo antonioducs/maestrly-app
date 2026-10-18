@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url)
 const app = path.resolve(import.meta.dirname, '..')
 
 describe('React for the native renderer', () => {
-  it('installs the React version Expo SDK 57 renders with', () => {
+  it('installs the React version the Expo SDK renders with', () => {
     const bundled = require(require.resolve('expo/bundledNativeModules.json', { paths: [app] }))
     const react = require(require.resolve('react/package.json', { paths: [app] }))
     expect(react.version).toBe(bundled.react)

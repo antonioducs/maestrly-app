@@ -1,7 +1,7 @@
 import { FLEET_ENVIRONMENTS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Pressable, ScrollView, TextInput, View } from 'react-native'
+import { Pressable, ScrollView, type ScrollViewInstance, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats, useChatsController } from '../../chats/react'
 import { isWaitingChat, searchChats, waitingChats, workspaceGroups, workspaceResultCount } from '../../chats/selectors'
@@ -83,7 +83,7 @@ export function DrawerPanel({
   const hosted = chatState.hosted
   const [tab, setTab] = useState<TabId>(() => tabOf(current, hosted))
   const [now, setNow] = useState(Date.now())
-  const scroll = useRef<ScrollView>(null)
+  const scroll = useRef<ScrollViewInstance>(null)
   const groupY = useRef(new Map<string, number>())
   const botY = useRef(new Map<string, { groupId: string; y: number }>())
   // The drawer well sits on the drawer itself: in light mode the surface color is nearly the drawer's.

@@ -10,6 +10,16 @@ updates:
       # vitest and its plugins require the exact same version, so they must move together.
       vitest:
         patterns: ["vitest", "@vitest/*"]
+      # Patches within the mobile app's Expo SDK, which `npx expo install --fix` accepts, move together.
+      expo-sdk:
+        patterns:
+          - "expo"
+          - "expo-*"
+          - "@expo/*"
+          - "react-native-safe-area-context"
+          - "react-native-screens"
+          - "react-native-web"
+        update-types: [patch]
       npm-minor-and-patch:
         update-types: [minor, patch]
     ignore:
@@ -25,6 +35,30 @@ updates:
       # electron-vite declares the Vite majors it supports; wait for it before moving Vite.
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
+      # The mobile app's Expo SDK pins React Native and the native modules it was built with
+      # (expo/bundledNativeModules.json). Minors and majors move only with the next SDK (docs/mobile.md).
+      - dependency-name: "expo"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "expo-*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@expo/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native-safe-area-context"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native-screens"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "react-native-web"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # The SDK pins these to exact versions; reanimated and worklets are also root overrides. React must be the
+      # version React Native's renderer was built with, and the desktop app shares it.
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-reanimated"
+      - dependency-name: "react-native-worklets"
+      - dependency-name: "react-native-svg"
+      - dependency-name: "react-native-webview"
+      - dependency-name: "@react-native-async-storage/async-storage"
 
   - package-ecosystem: github-actions
     directory: /

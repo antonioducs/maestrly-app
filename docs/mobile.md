@@ -222,10 +222,18 @@ notifications, install a `preview` build from EAS (see [Release](#release)).
   animation the first time the app opens, the logo alone afterwards, and a still
   logo while the system reduces motion. It fades into the app once the app is
   ready.
-- **React version:** the app uses the React version Expo SDK 57 renders with,
-  which differs from the desktop app's. `metro.config.cjs` resolves
+- **React version:** the app uses the React version its Expo SDK renders with,
+  which can differ from the desktop app's. `metro.config.cjs` resolves
   `react` and `react-dom` from the app wherever npm hoisted `react-native`;
   `test/react-pin.test.ts` checks both.
+- **Expo SDK upgrades:** the app is on Expo SDK 58. Each SDK pins React, React
+  Native and the native modules it was built with, so they move together: run
+  `npx expo install expo@^<next> --fix` in `apps/mobile`, pin the exact versions
+  it installed in `package.json`, update the `react-native-reanimated` and
+  `react-native-worklets` overrides in the root `package.json`, and check the
+  app with `npx expo-doctor@latest`. Dependabot only proposes patches within the
+  current SDK (`.github/dependabot.yml`). An upgrade reaches phones with the next
+  store build.
 
 ## Release
 
