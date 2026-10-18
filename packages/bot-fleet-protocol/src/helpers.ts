@@ -4,6 +4,7 @@ import {
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_RUNS_QUERY,
+  FLEET_PEER_THREADS_QUERY,
   FLEET_UPDATE_BUSY_STATUSES,
 } from './constants.js'
 import type {
@@ -212,6 +213,19 @@ export function fleetReaderWantsRoutineRuns(search: URLSearchParams): boolean {
 /** Whether a gateway event is about routine runs, sent only to readers that asked for them. */
 export function isFleetRoutineRunEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
   return event.type.startsWith('routine_run.')
+}
+
+/**
+ * Whether a reader of events asked for the threads between bots (`peer-conversations`): their records and the
+ * transcripts of their conversations. An older reader would fail on them.
+ */
+export function fleetReaderWantsPeerThreads(search: URLSearchParams): boolean {
+  return search.get(FLEET_PEER_THREADS_QUERY) === '1'
+}
+
+/** Whether a gateway event is about threads between bots, sent only to readers that asked for them. */
+export function isFleetPeerThreadEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
+  return event.type.startsWith('peer_thread.')
 }
 
 /**

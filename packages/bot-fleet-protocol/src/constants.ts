@@ -194,6 +194,29 @@ export const FLEET_PARALLEL_TURNS_FEATURE = 'parallel-turns'
 export const FLEET_BOT_SIDE_TURNS_MAX = 4
 /** Query of a turn cancel: `primary`, or the id of a side conversation (a routine run or a peer thread). */
 export const FLEET_CANCEL_CONVERSATION_QUERY = 'conversation'
+/**
+ * Gateway feature and instance capability: each conversation between two bots is a thread with a conversation of its
+ * own on both sides, apart from each bot's conversation with its owner. Messages between the bots carry the thread
+ * (`thread` on the instance input); readers of events get thread events only when they ask with `peerThreads=1`.
+ */
+export const FLEET_PEER_CONVERSATIONS_FEATURE = 'peer-conversations'
+/** The query parameter a reader of events sets to `1` to receive the threads between bots and their transcripts. */
+export const FLEET_PEER_THREADS_QUERY = 'peerThreads'
+/** The folder of a bot's conversation where a deleted thread's images and attachments are kept. */
+export const FLEET_PEER_THREAD_KEPT_FOLDER = 'bots'
+export const FLEET_PEER_THREAD_LIMITS = {
+  /** Messages between the bots in a row without one of the owner's, after which a thread pauses. */
+  hopLimits: [4, 8, 16] as const,
+  /** A thread's subject, as the bot that opens it names it. */
+  topicMax: 80,
+  titleMax: 120,
+  /** What a bot brings back to its owner's conversation from a thread it opened there. */
+  reportMax: 2000,
+  /** What a bot sent to open a thread from another conversation, given to the thread's first answer. */
+  contextMax: 4000,
+  /** Threads of a bot listed at once, the most recent first. */
+  listMax: 200,
+} as const
 /** How many days a finished run keeps its conversation after its last activity; null keeps it until deleted. */
 export const FLEET_ROUTINE_RUN_RETENTION_DAYS = [30, 60, 90] as const
 /** The folder of a bot's conversation where a deleted run's images and attachments are kept. */
