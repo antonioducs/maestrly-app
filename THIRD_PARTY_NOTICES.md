@@ -36,6 +36,16 @@ The other upstream texts are
 [`novnc-BSD-3-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-3-Clause.txt),
 and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
 
+## ELK
+
+The desktop app draws Mermaid diagrams with [Mermaid](https://github.com/mermaid-js/mermaid)
+12, which lays out flowcharts and other diagrams with
+[elkjs](https://github.com/kieler/elkjs) 0.9.3, the JavaScript build of the
+[Eclipse Layout Kernel](https://github.com/eclipse/elk). elkjs is licensed under
+the Eclipse Public License 2.0, and its source code is available from those
+repositories. The license is distributed in
+[`elkjs-EPL-2.0.txt`](apps/desktop/resources/licenses/elkjs-EPL-2.0.txt).
+
 ## Bot screen encoder
 
 The bot server's environment image runs `maestrly-screen-encoder`, a separate

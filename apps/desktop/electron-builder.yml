@@ -19,6 +19,9 @@ files:
   - "!node_modules/@huggingface/jinja/**"
   - "!node_modules/onnxruntime-{node,common,web}/**"
   - "!node_modules/sharp/**"
+  # The renderer bundles Mermaid (src/renderer/lib/mermaid.ts); its packaged copies keep only their licenses.
+  - "!node_modules/mermaid/dist/**"
+  - "!node_modules/@mermaid-js/parser/dist/**"
   - package.json
 
 extraResources:
