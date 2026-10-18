@@ -1,11 +1,12 @@
-import type {
-  FleetBot,
-  FleetEnvironment,
-  FleetQuestion,
-  FleetRoutine,
-  FleetSelectionOption,
-  FleetTodo,
-  FleetTranscriptItem,
+import {
+  FLEET_ENVIRONMENTS_FEATURE,
+  type FleetBot,
+  type FleetEnvironment,
+  type FleetQuestion,
+  type FleetRoutine,
+  type FleetSelectionOption,
+  type FleetTodo,
+  type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { botRecord, environmentRecord } from '../fleet/factories'
 
@@ -96,8 +97,19 @@ export function demoWorld(now: number): DemoWorld {
     updatedAt: at(1),
   })
   const environments = [
-    environmentRecord({ id: 'studio', name: 'studio', botIds: ['juno', 'atlas', 'pixel'] }),
-    environmentRecord({ id: 'research', name: 'research', botIds: ['ledger', 'scout'] }),
+    // Their images host several bots, so a bot made on the phone can join either.
+    environmentRecord({
+      id: 'studio',
+      name: 'studio',
+      botIds: ['juno', 'atlas', 'pixel'],
+      capabilities: [FLEET_ENVIRONMENTS_FEATURE],
+    }),
+    environmentRecord({
+      id: 'research',
+      name: 'research',
+      botIds: ['ledger', 'scout'],
+      capabilities: [FLEET_ENVIRONMENTS_FEATURE],
+    }),
     // The server's chats and workspaces run here (the demo's are in demo-chats), one environment per scope of work.
     environmentRecord({
       id: 'personal',

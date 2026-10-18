@@ -1,5 +1,5 @@
 import { FLEET_MESSAGE_EDIT_FEATURE, type FleetBot, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
-import { Redirect } from 'expo-router'
+import { Redirect, router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, type TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -206,6 +206,11 @@ function HomeScreen() {
     },
     [setCurrent]
   )
+  // The new bot opens here once created, so the menu closes under the sheet.
+  const newBot = useCallback((environmentId: string | null) => {
+    setOpen(false)
+    router.push({ pathname: '/new-bot', params: environmentId ? { environment: environmentId } : {} })
+  }, [])
   // A chat in a workspace starts its next chat there; anything else starts a chat with no workspace.
   const newChat = hosted
     ? () =>
@@ -238,7 +243,11 @@ function HomeScreen() {
   }
 
   return (
-    <Drawer open={open} onOpenChange={setOpen} panel={<DrawerPanel open={open} current={current} onOpen={go} />}>
+    <Drawer
+      open={open}
+      onOpenChange={setOpen}
+      panel={<DrawerPanel open={open} current={current} onOpen={go} onNewBot={newBot} />}
+    >
       <KeyboardAvoidingView
         // Android draws the app edge to edge, so its window no longer shrinks for the keyboard either.
         behavior="padding"

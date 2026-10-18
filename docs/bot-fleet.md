@@ -474,7 +474,7 @@ Create a bot with **+**. Give it a **Name** and **What it does**, then choose **
 
 Then choose how far it goes without asking, which lists what the bot does on its own and what it asks you about, and the bots it can talk to: search by bot or environment name, check the ones to allow, and remove any from the chips under the field. The footer sums up what will be created.
 
-**New bot in this environment** in an environment view opens the same dialog with that environment chosen. Creation continues on the server if you close the dialog. Set the bot's **Role** later in its **Settings**.
+**New bot in this environment** in an environment view opens the same dialog with that environment chosen. Creation continues on the server if you close the dialog. Set the bot's **Role** later in its **Settings**. The [mobile app](mobile.md#what-it-does) also creates bots, in existing environments only.
 
 The environment view is laid out like a bot's: its overview and, beside it, its screen, with its settings in a panel over both. Its header shows the environment's state and server, **Restart** and **Stop** (or **Start environment** when it is stopped), **Environment settings** (the gear), and **Screen** while the screen is closed. In a window narrower than about 840 pixels, an **Overview | Screen** switch shows one at a time. **Restart**, **Stop**, and archiving each ask for confirmation and name every bot they affect.
 

@@ -35,6 +35,14 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
 - **Requests:** approve or deny a command, answer a question, or mark a request
   for help as resolved; in a chat, also review a plan and confirm the
   conversations an agent wants to start.
+- **New bots:** **New bot** at the end of the **Bots** tab, or **+** beside an
+  environment, creates a bot in an environment that already exists. Give it a
+  name and what it does, choose where it runs, its permissions and the bots it
+  can talk to. It uses that environment's accounts, skills, MCP servers and
+  site logins, so it is ready once it sets up its profile, and its conversation
+  opens. Full, stopped and older-image environments cannot be chosen; the list
+  says why. A new environment, with its own accounts from your computer, is
+  created from Maestrly on your computer.
 - **Setup:** change a bot's model, reasoning effort, Fast and permissions; start,
   pause, resume, restart or stop a bot; run a routine now; compact a bot's
   conversation. New chats start with the defaults you choose in **Settings →

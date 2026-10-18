@@ -9,6 +9,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { KeyValueStore } from '../servers/registry'
 import { sentMediaType, type OutboxAttachment } from './attachments'
+import type { NewBotRequest } from './create-bot'
 import { afterSendFailure, MissingFileError, nextToSend, outboxEntriesSchema, type OutboxEntry } from './outbox'
 import type { EventHandlers, FleetSource } from './source'
 import { fleetReducer, initialFleetState, type FleetAction, type FleetState } from './state'
@@ -66,6 +67,8 @@ export function createFleetController(
   let hellos = 0
   const loadedAtHello = new Map<string, number>()
   let stopped = false
+  // The last create request the server has not confirmed, with the idempotency key it was sent with.
+  let unconfirmedCreate: { body: string; key: string } | null = null
   /**
    * What events said while a list or a page was loading, which the loaded copy may predate: removals and the inbox
    * for a refresh, transcript items for a bot's latest page.
@@ -345,6 +348,19 @@ export function createFleetController(
     },
     async patchBot(botId: string, patch: FleetPatchBotRequest) {
       applyBot(await source.call('botPatch', { params: { id: botId }, body: patch }))
+    },
+    /**
+     * Creates a bot in an existing environment. The same request tried again after a failure keeps its idempotency
+     * key: when the server created the bot and only its answer was lost, it answers with that bot rather than another.
+     */
+    async createBot(request: NewBotRequest): Promise<FleetBot> {
+      const body = JSON.stringify(request)
+      const key = unconfirmedCreate?.body === body ? unconfirmedCreate.key : uuid()
+      unconfirmedCreate = { body, key }
+      const bot = await source.call('botsCreate', { body: { ...request, idempotencyKey: key } })
+      unconfirmedCreate = null
+      applyBot(bot)
+      return bot
     },
     /**
      * Summarizes the bot's conversation with its compaction model. The bot answers at once; progress shows in its

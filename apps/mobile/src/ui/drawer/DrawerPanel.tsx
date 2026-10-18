@@ -1,3 +1,4 @@
+import { FLEET_ENVIRONMENTS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, TextInput, View } from 'react-native'
@@ -5,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats, useChatsController } from '../../chats/react'
 import { isWaitingChat, searchChats, waitingChats, workspaceGroups, workspaceResultCount } from '../../chats/selectors'
 import type { ChatsState } from '../../chats/state'
+import { environmentChoices } from '../../fleet/create-bot'
 import { useFleet } from '../../fleet/react'
 import { botsByEnvironment, waitingItems } from '../../fleet/selectors'
 import type { FleetState } from '../../fleet/state'
@@ -61,10 +63,13 @@ export function DrawerPanel({
   open,
   current,
   onOpen,
+  onNewBot,
 }: {
   open: boolean
   current: Current | null
   onOpen: (target: Current) => void
+  /** Creates a bot, in the given environment when one was chosen. */
+  onNewBot: (environmentId: string | null) => void
 }) {
   const { palette } = useTheme()
   const { t, plural } = useI18n()
@@ -192,20 +197,40 @@ export function DrawerPanel({
     </AppText>
   )
 
+  // The phone adds bots to the server's existing environments only, so it needs a server that has them.
+  const canCreateBot =
+    fleet.features.includes(FLEET_ENVIRONMENTS_FEATURE) && environmentChoices(fleet.environments).length > 0
+  const newBotButton = (
+    <Button label={t('drawer.newBot')} icon="plus" variant="secondary" size="sm" onPress={() => onNewBot(null)} />
+  )
+
   let list: ReactNode
   if (tab === 'bots') {
     list = groups.length ? (
-      <BotList
-        groups={groups}
-        currentBotId={currentBotId}
-        onOpen={(id) => onOpen({ kind: 'bot', id })}
-        onGroupLayout={(id, y) => groupY.current.set(id, y)}
-        onBotLayout={(id, groupId, y) => botY.current.set(id, { groupId, y })}
-      />
+      <View>
+        <BotList
+          groups={groups}
+          currentBotId={currentBotId}
+          onOpen={(id) => onOpen({ kind: 'bot', id })}
+          onNew={canCreateBot ? onNewBot : undefined}
+          onGroupLayout={(id, y) => groupY.current.set(id, y)}
+          onBotLayout={(id, groupId, y) => botY.current.set(id, { groupId, y })}
+        />
+        {canCreateBot && !q ? (
+          <View style={{ paddingHorizontal: 10, paddingTop: 14, alignItems: 'flex-start' }}>{newBotButton}</View>
+        ) : null}
+      </View>
     ) : q ? (
       muted(
         cross?.length ? t('drawer.noMatchIn', { tab: labels.bots, query: q }) : t('drawer.nothingMatches', { query: q })
       )
+    ) : canCreateBot ? (
+      <View style={{ paddingHorizontal: 10, paddingVertical: 14, gap: 12, alignItems: 'flex-start' }}>
+        <AppText variant="sub" tone="muted" style={{ fontSize: 13.5, lineHeight: 19 }}>
+          {t('drawer.noBotsYet')}
+        </AppText>
+        {newBotButton}
+      </View>
     ) : (
       muted(fleet.loaded ? t('drawer.noBots') : t('common.loading'))
     )

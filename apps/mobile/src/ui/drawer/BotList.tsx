@@ -7,6 +7,7 @@ import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { BotAvatar } from '../Avatar'
+import { IconButton } from '../primitives/IconButton'
 import { AppText } from '../primitives/Text'
 
 const BotRow = memo(function BotRow({
@@ -65,12 +66,15 @@ export function BotList({
   groups,
   currentBotId,
   onOpen,
+  onNew,
   onGroupLayout,
   onBotLayout,
 }: {
   groups: EnvironmentGroup[]
   currentBotId: string | null
   onOpen: (botId: string) => void
+  /** Creates a bot in an environment; absent when the server cannot add one from the phone. */
+  onNew?: (environmentId: string) => void
   /** Where each group and row sits, so the drawer can scroll to the open bot. */
   onGroupLayout: (groupId: string, y: number) => void
   onBotLayout: (botId: string, groupId: string, y: number) => void
@@ -83,24 +87,42 @@ export function BotList({
           <View
             style={{
               flexDirection: 'row',
-              alignItems: 'baseline',
+              alignItems: 'center',
               gap: 6,
               paddingTop: index === 0 ? 10 : 16,
               paddingBottom: 6,
               paddingHorizontal: 10,
             }}
           >
-            <AppText variant="label" tone="muted" accessibilityRole="header">
-              {group.name}
-            </AppText>
-            <AppText variant="small" tone="faint">
-              {[
-                plural('bots.count', group.bots.length),
-                group.working ? t('bots.working', { count: group.working }) : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </AppText>
+            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+              <AppText
+                variant="label"
+                tone="muted"
+                accessibilityRole="header"
+                numberOfLines={1}
+                style={{ flexShrink: 1 }}
+              >
+                {group.name}
+              </AppText>
+              <AppText variant="small" tone="faint" numberOfLines={1}>
+                {[
+                  plural('bots.count', group.bots.length),
+                  group.working ? t('bots.working', { count: group.working }) : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </AppText>
+            </View>
+            {onNew && group.id ? (
+              // The full-size target overlaps the header's padding rather than making the header taller.
+              <IconButton
+                icon="plus"
+                size={18}
+                label={t('drawer.newBotIn', { name: group.name })}
+                onPress={() => onNew(group.id)}
+                style={{ marginVertical: -13, marginRight: -10 }}
+              />
+            ) : null}
           </View>
           {group.bots.map((bot) => (
             <BotRow

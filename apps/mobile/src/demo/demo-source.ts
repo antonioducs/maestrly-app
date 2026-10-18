@@ -1,5 +1,6 @@
 import {
   compareFleetTranscriptItems,
+  deriveBotId,
   FLEET_DEVICES_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -8,6 +9,7 @@ import {
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   summarizeText,
   type FleetBot,
+  type FleetCreateBotRequest,
   type FleetDevice,
   type FleetGatewayEvent,
   type FleetInboxItem,
@@ -17,6 +19,8 @@ import {
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError, type CallOptions, type GatewayClient, type RouteKey } from '../gateway/client'
+import { joinAvailability } from '../fleet/create-bot'
+import { botRecord } from '../fleet/factories'
 import type { EventHandlers, FleetSource } from '../fleet/source'
 import type { PairedServer } from '../servers/registry'
 import { DEMO_OPTIONS, DEMO_SCRIPTS, demoWorld, pixelAnswered, REPLY_SCRIPT, type AskSpec, type Step } from './fixtures'
@@ -92,6 +96,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
   const listeners = new Set<EventHandlers>()
   const pending = new Map<string, Pending>()
   const receipts = new Map<string, { hash: string; receipt: { inputId: string; itemId: string; queued: boolean } }>()
+  const createdBots = new Map<string, string>()
   const runs = new Map<string, number>()
   const queue = new Map<string, string[]>()
   let inbox: FleetInboxItem[] = []
@@ -440,6 +445,50 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     return starting
   }
 
+  /** A bot joins an existing environment, as the phone asks: it sets up its profile, then is ready. */
+  function createBot(request: FleetCreateBotRequest): FleetBot {
+    const existing = createdBots.get(request.idempotencyKey)
+    if (existing) return requireBot(existing)
+    const index = world.environments.findIndex((item) => item.id === request.environmentId && item.kind === 'bots')
+    if (index < 0) throw new GatewayError('NOT_FOUND', 404, 'Environment not found')
+    const environment = world.environments[index]
+    if (joinAvailability(environment) === 'full')
+      throw new GatewayError('CONFLICT', 409, 'This environment already has its most bots.')
+    if (request.talksTo.some((peer) => !bots.has(peer))) throw new GatewayError('NOT_FOUND', 404, 'Peer bot not found')
+    const at = stamp()
+    const bot = botRecord({
+      id: deriveBotId(request.name, bots.keys()),
+      name: request.name,
+      instructions: request.instructions,
+      ceiling: request.ceiling,
+      talksTo: request.talksTo,
+      tint: ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5'][bots.size % 6],
+      lifecycle: 'creating',
+      setup: { step: 'profile', error: null, errorMessage: null },
+      status: 'starting',
+      environmentId: environment.id,
+      createdAt: at,
+      updatedAt: at,
+    })
+    bots.set(bot.id, bot)
+    order.push(bot.id)
+    transcripts[bot.id] = []
+    createdBots.set(request.idempotencyKey, bot.id)
+    world.environments[index] = { ...environment, botIds: [...environment.botIds, bot.id], updatedAt: at }
+    emit({ type: 'environment.updated', at, environment: world.environments[index] })
+    emit({ type: 'bot.updated', at, bot })
+    setTimeout(
+      () =>
+        updateBot(bot.id, {
+          lifecycle: 'running',
+          setup: { step: 'ready', error: null, errorMessage: null },
+          status: 'idle',
+        }),
+      2400 * scale
+    )
+    return bot
+  }
+
   const call = (async (key: RouteKey, o: CallOptions<RouteKey> = {}) => {
     const route = FLEET_GATEWAY_ROUTES[key]
     // Bodies are checked as the gateway would, so a mistake in the app shows here too.
@@ -452,6 +501,8 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
         return { bots: order.map((botId) => bots.get(botId)).filter(Boolean) }
       case 'botGet':
         return requireBot(id)
+      case 'botsCreate':
+        return createBot(body as FleetCreateBotRequest)
       case 'environmentsList':
         return { environments: world.environments }
       case 'inbox':
