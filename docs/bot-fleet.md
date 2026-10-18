@@ -442,13 +442,16 @@ until you choose **Move**.
 
 | Goes with the bot | Stays in its former environment |
 | --- | --- |
-| Its conversation and history, with the files of its working folder, attachments, and generated images | Model accounts: API keys and subscription sign-ins |
+| Its conversation and history, with its whole working folder (Git repositories and installed packages included), attachments, and generated images | Model accounts: API keys and subscription sign-ins |
 | Its queue, transcript extras, published files, and images | Skills and MCP servers |
 | Its bot memory | The home folder and the files the bots there share |
 | Its settings, pause, routines, peers, links to computers and workspaces environments, and activity, which keep its id | The site logins of the browser the bots drive with `browser_*` |
 | The browser profile of its **Apps** desktop, with the site sign-ins made there; caches are left behind | |
 
 The bot keeps its id, so everything that names it (routines, peers, desktop links, activity) follows without change.
+Symbolic links in its working folder move when they lead inside that folder; one that leads elsewhere (another
+conversation's folder, a file of the environment) stays behind, since what it leads to does not move. Files that other
+bots of its former environment could change move as they are.
 The owner memories it wrote in its former environment move to the new one. In its new environment it uses that
 environment's accounts, skills, MCP servers, and default compaction model; set them up there if they differ.
 
