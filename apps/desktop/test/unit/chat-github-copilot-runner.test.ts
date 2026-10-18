@@ -33,6 +33,7 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeStandaloneConversation, makeWorkspace } from '../helpers/factories'
 import { patchConvUiPrefs, setAppFlag } from '../../src/main/store'
 import { harnessFor } from '../../src/main/chat/harness/execution'
+import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
 
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: vi.fn() }))
 
@@ -781,6 +782,7 @@ describe('GitHub Copilot official runner', () => {
       })
       await runGitHubCopilotChat(standalone())
       expect(manager.createCalls[0].systemMessage?.content).toContain("Today's date: 2026-10-18")
+      expect(manager.createCalls[0].systemMessage?.content).toContain(commandShellEnvironment())
 
       vi.setSystemTime(new Date('2026-10-19T00:02:00Z'))
       persistUser(conversation.id, 'user-2', 'second question', 3)

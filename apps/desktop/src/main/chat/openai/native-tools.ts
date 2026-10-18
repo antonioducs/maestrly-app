@@ -3,7 +3,7 @@ import path from 'node:path'
 import { openai } from '@ai-sdk/openai'
 import type { ToolSet } from 'ai'
 import type { ChatHarnessCapabilities } from '../harness/adapters/responses'
-import { bashTool } from '../tools/bash'
+import { bashTool, runSystemShellCommand } from '../tools/bash'
 import {
   boundText,
   detectEnding,
@@ -171,7 +171,8 @@ async function executeLocalShell(
     ...(timeout != null ? { timeout } : {}),
     description: 'OpenAI local_shell command',
   }
-  const result = await bashTool.execute(args, makeCtx(toolCallId, signal))
+  // The argv is quoted for cmd.exe on Windows, so it runs there rather than in the `bash` tool's PowerShell.
+  const result = await runSystemShellCommand(args, makeCtx(toolCallId, signal))
   signal.throwIfAborted()
   return { output: boundText(bashTool.toModelText(args, result), toolCallId) }
 }

@@ -7,6 +7,17 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- On Windows, the agent's commands run in Windows PowerShell 5.1 instead of
+  `cmd.exe`, and every model is told which shell that is. Before, nothing said
+  the commands ran in `cmd.exe`: models sent PowerShell pipelines that failed
+  with "is not recognized as an internal or external command" and concluded
+  PowerShell was missing, or wrote bash syntax. The `bash` tool keeps its name,
+  so saved permission rules still apply; its description and the environment
+  line of each conversation now name the shell, and on Windows explain how to
+  run a `cmd.exe` command. Output is UTF-8 and the exit code is the
+  command's own. On macOS and Linux commands still run in `/bin/sh`. Plugin
+  hooks still run in `cmd.exe` on Windows.
+  See [Plugins](docs/plugins.md#hooks).
 - Moving a bot whose working folder holds a Git repository no longer fails
   while its data is packed. Its whole working folder now moves, `.git` folders,
   empty folders, files ending in `.tmp`, and the links that lead inside it (such

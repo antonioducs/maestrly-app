@@ -79,6 +79,7 @@ const toolNames = (start: unknown) =>
   (start as { dynamicTools: Array<{ name: string }> }).dynamicTools.map((tool) => tool.name).sort()
 import { insertConversation, patchConvUiPrefs, setAppSetting, setAppFlag } from '../../src/main/store'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
+import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
 
 interface HostMcpToolSpec {
   name: string
@@ -2637,6 +2638,7 @@ describe('Codex subscription runner', () => {
         config: Record<string, unknown>
         dynamicTools: Array<{ name: string }>
         environments?: unknown
+        developerInstructions: string
       }
       expect(threadStart).toMatchObject({
         sandbox: 'read-only',
@@ -2644,6 +2646,7 @@ describe('Codex subscription runner', () => {
         config: { 'features.shell_tool': false },
       })
       expect(threadStart.dynamicTools.map((tool) => tool.name)).toContain('bash')
+      expect(threadStart.developerInstructions).toContain(commandShellEnvironment())
       expect(threadStart.environments).toBeUndefined()
 
       const sandboxPolicy =
@@ -2682,6 +2685,7 @@ describe('Codex subscription runner', () => {
       config: Record<string, unknown>
       dynamicTools: Array<{ name: string }>
       environments?: unknown
+      developerInstructions: string
     }
     expect(threadStart).toMatchObject({
       sandbox: 'read-only',
@@ -2689,6 +2693,7 @@ describe('Codex subscription runner', () => {
     })
     expect(threadStart.config).not.toHaveProperty('features.shell_tool')
     expect(threadStart.dynamicTools.map((tool) => tool.name)).not.toContain('bash')
+    expect(threadStart.developerInstructions).not.toContain(commandShellEnvironment())
     expect(threadStart.environments).toBeUndefined()
     expect(client.startTurnCalls[0]).toMatchObject({
       approvalPolicy: 'never',

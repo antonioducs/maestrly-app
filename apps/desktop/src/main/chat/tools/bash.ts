@@ -4,6 +4,14 @@ import fs from 'node:fs/promises'
 import { z } from 'zod'
 import { trackCommandGroup } from '../../process-ownership/owned-groups'
 import { conversationShellEnv } from '../conversation-env'
+import {
+  agentCommandShell,
+  bashToolDescription,
+  type CommandDialect,
+  type CommandShell,
+  POWERSHELL_ARGS,
+  systemCommandShell,
+} from './command-shell'
 import { defineTool, resolveInside, type ToolContext } from './util'
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -23,7 +31,7 @@ const params = z.object({
   description: z.string().optional().describe('Short description of what the command does.'),
 })
 
-interface BashResult {
+export interface BashResult {
   command: string
   cwd: string
   exitCode?: number
@@ -83,13 +91,120 @@ export function bashPermissionSavePattern(command: string): string {
   return `${prefix} *`
 }
 
+/** Quote characters PowerShell accepts: the ASCII ones plus the typographic variants it treats the same way. */
+const PS_SINGLE_QUOTES = new Set(["'", '‘', '’', '‚', '‛'])
+const PS_DOUBLE_QUOTES = new Set(['"', '“', '”', '„'])
+
+/**
+ * PowerShell syntax: the backtick escapes, a backslash is a plain character, typographic quotes open and close strings,
+ * and a here-string runs from `@"`/`@'` at the end of a line to `"@`/`'@` at the start of one. Reading it with the sh
+ * rules could take a separator that runs as code for part of a string and join two commands into one resource.
+ */
+function powerShellSegments(command: string): string[] {
+  return scanPowerShell(command, 0, false).segs
+}
+
+/** Scans from `start`; `nested` stops at the `)` that closes a `$(` and returns its index as `end`. */
+function scanPowerShell(command: string, start: number, nested: boolean): { segs: string[]; end: number } {
+  const segs: string[] = []
+  let cur = ''
+  let single = false
+  let double = false
+  let depth = 0
+  const push = () => {
+    const t = cur.trim()
+    if (t) segs.push(t)
+    cur = ''
+  }
+  // A `$(` runs its contents as commands, inside double quotes too: they become resources of their own.
+  const subexpression = (at: number): number => {
+    const inner = scanPowerShell(command, at + 2, true)
+    for (const s of inner.segs) segs.push(s)
+    return inner.end
+  }
+  let i = start
+  for (; i < command.length; i++) {
+    const ch = command[i]
+    if (single) {
+      cur += ch
+      if (PS_SINGLE_QUOTES.has(ch)) single = false
+      continue
+    }
+    if (ch === '`') {
+      cur += command.slice(i, i + 2)
+      i++
+      continue
+    }
+    if (!double && ch === '@') {
+      const opener = /^@(["'‘’‚‛“”„])[ \t]*\r?\n/.exec(command.slice(i))
+      if (opener) {
+        const expands = PS_DOUBLE_QUOTES.has(opener[1])
+        const quotes = expands ? PS_DOUBLE_QUOTES : PS_SINGLE_QUOTES
+        let j = i + opener[0].length - 1
+        for (; j < command.length; j++) {
+          if (command[j] === '\n' && quotes.has(command[j + 1] ?? '') && command[j + 2] === '@') {
+            j += 2
+            break
+          }
+          if (!expands) continue
+          if (command[j] === '`') j++
+          else if (command.startsWith('$(', j)) j = subexpression(j)
+        }
+        cur += command.slice(i, j + 1)
+        i = j
+        continue
+      }
+    }
+    if (!double && PS_SINGLE_QUOTES.has(ch)) {
+      single = true
+      cur += ch
+      continue
+    }
+    if (PS_DOUBLE_QUOTES.has(ch)) {
+      double = !double
+      cur += ch
+      continue
+    }
+    if (command.startsWith('$(', i)) {
+      const close = subexpression(i)
+      cur += command.slice(i, close + 1)
+      i = close
+      continue
+    }
+    if (!double) {
+      if (nested && ch === '(') depth++
+      if (nested && ch === ')') {
+        if (depth === 0) {
+          push()
+          return { segs, end: i }
+        }
+        depth--
+      }
+      if ((ch === '&' || ch === '|') && command[i + 1] === ch) {
+        push()
+        i++
+        continue
+      }
+      if (ch === '|' || ch === ';' || ch === '&' || ch === '\n' || ch === '\r') {
+        push()
+        continue
+      }
+    }
+    cur += ch
+  }
+  push()
+  return { segs, end: i }
+}
+
 /**
  * Splits top-level SUBCOMMANDS (&&, ||, ;, |, &, newline — outside quotes), including command
  * substitution contents (dollar-parenthesis and backticks) as extra segments. Each segment becomes a
  * gate resource: a saved "npm test *" rule must NOT authorize "npm test && rm -rf /" — the broker requires
  * allow for ALL resources. Otherwise, the prefix wildcard would match the entire chained command.
+ * `dialect` follows the shell that runs the command: PowerShell for the `bash` tool on Windows, sh rules otherwise.
  */
-export function commandSegments(command: string): string[] {
+export function commandSegments(command: string, dialect: CommandDialect = agentCommandShell().dialect): string[] {
+  if (dialect === 'powershell') return powerShellSegments(command)
   // Heredoc body is stdin (arbitrary lines) — a simple parser cannot segment it; gate the literal command.
   if (/<<-?\s*["']?\w/.test(command)) return [command.trim()]
   const segs: string[] = []
@@ -179,34 +294,31 @@ export function commandSegments(command: string): string[] {
   return segs
 }
 
-/** The shell commands run in: `/bin/sh`, or `COMSPEC` (cmd.exe) on Windows. Plugin hooks use the same one. */
-export function commandShell(): string {
-  return process.platform === 'win32' ? (process.env.COMSPEC ?? 'cmd.exe') : '/bin/sh'
-}
-
-async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<BashResult> {
+async function run(args: z.infer<typeof params>, ctx: ToolContext, shell: CommandShell): Promise<BashResult> {
   const { abs: cwd, external } = resolveInside(ctx.cwd, args.workdir ?? '.')
   const stat = await fs.stat(cwd).catch(() => null)
   if (!stat?.isDirectory()) throw new Error(`Invalid directory: ${cwd}`)
   if (external) await ctx.ask('external_directory', [cwd], [cwd])
   // Chained command → one resource PER subcommand (all need allow); "always" saves each prefix.
-  const segments = commandSegments(args.command)
+  const segments = commandSegments(args.command, shell.dialect)
   const resources = segments.length > 1 ? segments : [args.command]
   await ctx.ask('bash', resources, [...new Set(resources.map(bashPermissionSavePattern))], args.command)
 
   const isWin = process.platform === 'win32'
-  const shell = commandShell()
+  const powershell = shell.kind === 'powershell'
   const timeout = args.timeout ?? DEFAULT_TIMEOUT_MS
 
   return await new Promise<BashResult>((resolve, reject) => {
-    const child = spawn(args.command, [], {
-      cwd,
-      shell,
-      // A fleet bot's commands open programs on its own display, session bus and browser.
-      env: { ...process.env, ...conversationShellEnv(ctx.conversationId) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: !isWin,
-    })
+    // A fleet bot's commands open programs on its own display, session bus and browser.
+    const env = { ...process.env, ...conversationShellEnv(ctx.conversationId) }
+    const child = powershell
+      ? spawn(shell.file, [...POWERSHELL_ARGS], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      : spawn(args.command, [], { cwd, shell: shell.file, env, stdio: ['ignore', 'pipe', 'pipe'], detached: !isWin })
+    if (powershell) {
+      // The command's own programs then read an empty stdin, as they do from the null device on other shells.
+      child.stdin?.on('error', () => undefined)
+      child.stdin?.end(args.command, 'utf8')
+    }
     // `server &` returns at once and leaves the server in this group; it is ended with the conversation. Windows has
     // no process group to follow, so what a command leaves running there is not tracked.
     if (!isWin) trackCommandGroup(ctx.conversationId, child)
@@ -294,15 +406,22 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Bash
   })
 }
 
+function toModelText(_args: z.infer<typeof params>, r: BashResult): string {
+  if (r.timedOut) return r.output
+  const warn = r.truncated ? '\n\n(output truncated)' : ''
+  return `${r.output}${warn}\n\nCommand exited with code ${r.exitCode ?? 'unknown'}.`
+}
+
 export const bashTool = defineTool({
   name: 'bash',
-  description:
-    'Runs a shell command in the conversation directory and returns stdout/stderr. Use it for builds, tests, git and inspecting the project.',
+  // The name stays `bash` on every platform: saved permission rules and transcripts refer to it.
+  description: bashToolDescription(),
   parameters: params,
-  execute: run,
-  toModelText: (_args, r) => {
-    if (r.timedOut) return r.output
-    const warn = r.truncated ? '\n\n(output truncated)' : ''
-    return `${r.output}${warn}\n\nCommand exited with code ${r.exitCode ?? 'unknown'}.`
-  },
+  execute: (args, ctx) => run(args, ctx, agentCommandShell()),
+  toModelText,
 })
+
+/** Runs a command in the system shell (cmd.exe on Windows) with the `bash` tool's permission gate and limits. */
+export function runSystemShellCommand(args: z.infer<typeof params>, ctx: ToolContext): Promise<BashResult> {
+  return run(args, ctx, systemCommandShell())
+}

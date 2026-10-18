@@ -20,6 +20,7 @@ import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-t
 import { droppedImageText, nativeSeedContextText, renderNativeSeedTranscript } from '../message'
 import { pdfFallbackText } from '../pdf-attachments'
 import { buildProjectContext } from '../project-context'
+import { commandShellEnvironment } from '../tools/command-shell'
 import { effectiveSkills } from '../skill-state'
 import { type ChatSkill, skillCatalogLine } from '../skills'
 import { listEffectiveAgents } from '../virtual-subagents'
@@ -126,6 +127,8 @@ export async function buildAntigravityInstructions(
     `Maestrly mode: ${args.mode}.`,
     `The user's project is ${args.cwd}; your own working directory is a private scratch folder, so always use absolute project paths with Maestrly's tools.`,
     'Use ONLY the tools listed in <maestrly_tools>; built-in Antigravity tools are disabled.',
+    // The default layout leaves the environment line out, so the stable OS and shell facts travel here.
+    `OS: ${platform}. ${commandShellEnvironment()}`,
     ...(allowPlanReview
       ? ['The `review_plan` tool presents a plan for user approval; when the user approves, a new turn executes it.']
       : []),
