@@ -124,6 +124,8 @@ async function bot() {
     retries: new Map(),
     quotaRetryAt: 0,
     reportedStartFailure: null,
+    interrupted: new Set(),
+    releaseKeys: new Map(),
     floatTimers: new Set(),
     permissionTools: new Map(),
     permissionAt: new Map(),
@@ -335,6 +337,76 @@ describe('turns of the bot conversations at the same time', () => {
     expect(edited).toMatchObject({ queued: true })
     started[1].finish()
     await run
+  })
+
+  it('takes the screen from every working conversation, and continues each in its own once given back', async () => {
+    const { runtime, queue } = await bot()
+    const { started } = heldTurns()
+    const stop = vi.spyOn(chatService, 'stopChatAndWait').mockResolvedValue(undefined as never)
+    await runtime.input(ownerInput('Plan the week'))
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const both = turn(runtime)
+    await vi.waitFor(() => expect(started).toHaveLength(2))
+    const conversations = started.map((entry) => entry.conversationId)
+    const state = await runtime.hold('takeover')
+    expect(state).toMatchObject({ state: 'held', interruptedTurn: true })
+    expect(stop.mock.calls.map(([id]) => id).sort()).toEqual([...conversations].sort())
+    for (const entry of started) entry.finish()
+    await both
+    // A release that fails half way is retried with the same continuations.
+    const system = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined)
+    Object.assign(runtime, { system })
+    const request = { note: null, durationMs: 60_000, continue: true }
+    await expect(runtime.release(request)).rejects.toThrow('disk full')
+    expect(await runtime.release(request)).toMatchObject({ state: 'none' })
+    const continuations = queue.list().filter((item) => item.input.source === 'continuation')
+    expect(continuations.map((item) => item.input.run?.id ?? null).sort()).toEqual([null, runId].sort())
+  })
+
+  it('continues every conversation that asked for help when the owner gives the screen back', async () => {
+    const { runtime, queue } = await bot()
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const lane = await (
+      runtime as unknown as { runLane(id: string): Promise<{ help: InstanceType<typeof InstanceHelpStore> }> }
+    ).runLane(runId)
+    await lane.help.requestHelp('Log in to the photo site')
+    await runtime.help.requestHelp('Approve the payment')
+    Object.assign(runtime, { system: vi.fn(async () => {}) })
+    await runtime.hold('takeover')
+    await runtime.release({ note: 'Done', durationMs: 30_000, continue: true })
+    const continuations = queue.list().filter((item) => item.input.source === 'continuation')
+    expect(continuations.map((item) => item.input.run?.id ?? null).sort()).toEqual([null, runId].sort())
+    expect(lane.help.pending()).toEqual([])
+    expect(runtime.help.pending()).toEqual([])
+  })
+
+  it("stops one conversation's turn, or every turn", async () => {
+    const { runtime, primary, runs } = await bot()
+    const { started } = heldTurns()
+    const stop = vi.spyOn(chatService, 'stopChatAndWait').mockResolvedValue(undefined as never)
+    await runtime.input(ownerInput('Plan the week'))
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const both = turn(runtime)
+    await vi.waitFor(() => expect(started).toHaveLength(2))
+    const record = runs.get(runId)!
+    await runtime.cancel(runId)
+    expect(stop.mock.calls.map(([id]) => id)).toEqual([record.conversationId])
+    expect((await runtime.status()).turns.map((entry) => [entry.runId, entry.state])).toEqual([
+      [null, 'running'],
+      [runId, 'cancelling'],
+    ])
+    await runtime.cancel()
+    expect(
+      stop.mock.calls
+        .map(([id]) => id)
+        .slice(1)
+        .sort()
+    ).toEqual([primary.id, record.conversationId].sort())
+    for (const entry of started) entry.finish()
+    await both
   })
 
   it('answers currentInput for each conversation', async () => {

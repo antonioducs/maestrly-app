@@ -1101,6 +1101,8 @@ describe('hold gate', () => {
       holdManager: manager,
       help: { pending: () => [], resolveAll },
       runs: noRunConversations(),
+      interrupted: new Set(),
+      releaseKeys: new Map(),
       input,
       system,
       changed: vi.fn(),

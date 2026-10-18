@@ -803,7 +803,10 @@ describe('bot routes', () => {
       args: ['in-1', { idempotencyKey: editKey, text: 'Edited' }],
       status: 200,
     },
-    { method: 'POST', path: 'turn/cancel', call: 'cancel', args: [], status: 204 },
+    // Without a conversation, every turn stops, as callers that predate parallel turns mean.
+    { method: 'POST', path: 'turn/cancel', call: 'cancel', args: [undefined], status: 204 },
+    { method: 'POST', path: 'turn/cancel?conversation=primary', call: 'cancel', args: [null], status: 204 },
+    { method: 'POST', path: 'turn/cancel?conversation=run-1', call: 'cancel', args: ['run-1'], status: 204 },
     {
       method: 'POST',
       path: 'interactions/i-1/resolve',

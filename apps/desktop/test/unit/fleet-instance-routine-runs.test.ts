@@ -122,6 +122,8 @@ async function bot() {
     retries: new Map(),
     quotaRetryAt: 0,
     reportedStartFailure: null,
+    interrupted: new Set(),
+    releaseKeys: new Map(),
     floatTimers: new Set(),
     permissionTools: new Map(),
     permissionAt: new Map(),

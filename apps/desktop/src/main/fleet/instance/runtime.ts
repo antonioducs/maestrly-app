@@ -371,9 +371,10 @@ export class BotRuntime {
   private ready = false
   /** The turns running now, one per conversation: the bot's own (`null`) and its side conversations' (by run id). */
   private readonly turns = new Map<string | null, ActiveTurn>()
-  private releaseContinuationKey: string | null = null
-  /** The run whose turn a hold interrupted: its continuation goes back to it. */
-  private interruptedRunId: string | null = null
+  /** The conversations whose turns a hold interrupted (null for the bot's own): each continues where it stopped. */
+  private interrupted = new Set<string | null>()
+  /** The idempotency key of each conversation's continuation, kept while a release is retried. */
+  private readonly releaseKeys = new Map<string | null, string>()
   /** Per conversation, the turns that could not start in a row and when the next one may. */
   private readonly retries = new Map<string | null, { at: number; failures: number }>()
   /** A usage limit of the bot's accounts: no conversation starts a turn before it. */
@@ -455,8 +456,19 @@ export class BotRuntime {
         else if (this.holdManager.state.state === 'none') writeBotPaused(this.botId, false)
         this.changed()
       },
-      () => this.foregroundConversationId
+      () => this.screenConversationIds()
     )
+  }
+  /** The conversations whose screen actions a hold stops: the one the bot's desktop shows, and every one working. */
+  private screenConversationIds(): string[] {
+    const ids = new Set<string>()
+    const foreground = this.foregroundConversationId
+    if (foreground) ids.add(foreground)
+    for (const turn of this.turns.values()) {
+      const id = this.conversationOfTurn(turn)
+      if (id) ids.add(id)
+    }
+    return [...ids]
   }
   get primaryConversationId(): string | null {
     return this.stored?.primaryConversationId ?? null
@@ -1958,11 +1970,11 @@ export class BotRuntime {
   }
   async hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold> {
     const wasHeld = this.holdManager.state.state !== 'none'
-    const running = this.turns.size > 0
-    const interrupted = running ? (this.turns.has(null) ? null : ([...this.turns.keys()][0] ?? null)) : null
-    const state = await this.holdManager.hold(reason, running, () => this.cancel())
+    // Taking the screen or pausing stops every conversation's turn; each continues in its own once released.
+    const interrupted = new Set(this.turns.keys())
+    const state = await this.holdManager.hold(reason, interrupted.size > 0, () => this.cancel())
     if (!wasHeld) {
-      this.interruptedRunId = interrupted
+      this.interrupted = interrupted
       await this.system(reason === 'takeover' ? 'takeover' : 'paused', null, null)
     }
     return state
@@ -1975,28 +1987,36 @@ export class BotRuntime {
       this.changed()
       return result
     }
-    // The conversation the bot was working in, or one that asked for help, continues: a routine run's goes on there.
-    const helped = this.runs.loadedLanes().find((lane) => lane.help.pending().length > 0)
-    const runId = previous.interruptedTurn
-      ? this.interruptedRunId
-      : this.help.pending().length > 0
-        ? null
-        : (helped?.runId ?? null)
-    const needsContinuation = value.continue && (previous.interruptedTurn || this.help.pending().length > 0 || !!helped)
-    if (needsContinuation)
-      await this.input({
-        source: 'continuation',
-        text: continuationText(previous.reason ?? 'takeover', value.durationMs, value.note),
-        attachments: [],
-        idempotencyKey: (this.releaseContinuationKey ??= randomUUID()),
-        ...(runId && this.runs.get(runId) ? { run: { id: runId } } : {}),
-      })
+    // Every conversation the hold interrupted, and every one that asked for help, continues where it stopped. A hold
+    // whose interrupted conversations are unknown (taken before they were recorded) continues the bot's own.
+    const continuing = new Set<string | null>()
+    if (previous.interruptedTurn)
+      for (const key of this.interrupted.size ? this.interrupted : [null]) continuing.add(key)
+    if (this.help.pending().length > 0) continuing.add(null)
+    for (const lane of this.runs.loadedLanes()) if (lane.help.pending().length > 0) continuing.add(lane.runId)
+    if (value.continue)
+      for (const key of continuing) {
+        if (key !== null && !this.runs.get(key)) continue
+        let idempotencyKey = this.releaseKeys.get(key)
+        if (!idempotencyKey) {
+          idempotencyKey = randomUUID()
+          this.releaseKeys.set(key, idempotencyKey)
+        }
+        await this.input({
+          source: 'continuation',
+          text: continuationText(previous.reason ?? 'takeover', value.durationMs, value.note),
+          attachments: [],
+          idempotencyKey,
+          ...(key !== null ? { run: { id: key } } : {}),
+        })
+      }
     await this.help.resolveAll(value.note)
     for (const lane of this.runs.loadedLanes()) await lane.help.resolveAll(value.note)
-    this.interruptedRunId = null
     await this.system(releaseSystemCode(previous.reason), value.note, value.durationMs)
     const result = this.holdManager.release()
-    this.releaseContinuationKey = null
+    // Kept until the release went through: a retried release continues the same conversations with the same keys.
+    this.interrupted = new Set()
+    this.releaseKeys.clear()
     this.changed()
     void this.tick()
     return result
