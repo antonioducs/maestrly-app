@@ -6,7 +6,11 @@ import { addProvider } from '../../src/main/chat/catalog'
 import { setApiKey } from '../../src/main/chat/credentials'
 import { resolveLanguageModel } from '../../src/main/chat/provider'
 import { closeDb, freshDb } from '../helpers/db'
-import { openAIHarnessProviderOptions } from '../../src/main/chat/harness/adapters/responses'
+import {
+  OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH,
+  openAIHarnessProviderOptions,
+  openAIPromptCacheKey,
+} from '../../src/main/chat/harness/adapters/responses'
 import { resolveChatHarness as resolveExecution } from '../../src/main/chat/harness/execution'
 import type { ChatProviderKind } from '../../src/shared/chat'
 
@@ -331,9 +335,11 @@ describe('OpenAI Responses harness wire contract', () => {
       }),
     })
     const resolution = resolveChatHarness('openai-responses', 'gpt-5.4')
+    // The production key, not a short fixture: OpenAI rejects a prompt_cache_key over 64 characters.
+    const promptCacheKey = openAIPromptCacheKey('conversation', 'You are a coding agent.', ['read'])
     const providerOptions = {
       openai: openAIHarnessProviderOptions(resolution, {
-        promptCacheKey: 'maestrly:test-wire-contract',
+        promptCacheKey,
         reasoningEnabled: true,
         compactionThreshold: 180_000,
       }),
@@ -365,7 +371,7 @@ describe('OpenAI Responses harness wire contract', () => {
       store: false,
       include: ['reasoning.encrypted_content'],
       parallel_tool_calls: true,
-      prompt_cache_key: 'maestrly:test-wire-contract',
+      prompt_cache_key: promptCacheKey,
       context_management: [{ type: 'compaction', compact_threshold: 180_000 }],
       truncation: 'disabled',
       stream: true,
@@ -383,6 +389,7 @@ describe('OpenAI Responses harness wire contract', () => {
         },
       ],
     })
+    expect(String(requests[0]?.prompt_cache_key).length).toBeLessThanOrEqual(OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH)
     expect(ledger.entries).toMatchObject([
       {
         type: 'assistant-reasoning',

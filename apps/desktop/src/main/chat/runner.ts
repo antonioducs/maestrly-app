@@ -8,7 +8,7 @@ import { autonomousPolicy, interactiveTool, governAutonomousTools, AUTONOMOUS_IN
  * `fullStream` parts into model events → fold into assistant message → persist (throttled) →
  * emit to renderer. Permissions are gated INSIDE each tool execute (see tools + permission.ts).
  */
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { streamText, stepCountIs, tool, jsonSchema, type ToolSet, type ModelMessage, type StopCondition } from 'ai'
 import type { SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { ChatBehavior } from '../../shared/conversation-experience'
@@ -126,7 +126,7 @@ export { isRetryableStreamError } from './retry-policy'
 import { gitEnvInfo } from '../git-service'
 import { stagePlan } from '../plan-broker'
 import type { PermissionBroker } from './permission'
-import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
+import { isOpenAIHarnessActive, openAIHarnessProviderOptions, openAIPromptCacheKey } from './harness/adapters/responses'
 import { buildHarnessPrompt } from './harness/prompt-builder'
 import { buildMaestrlyBasePrompt, harnessUltraGuidance } from './harness/host-contracts'
 import { generatedInterfacesEnabled } from './generated-interfaces'
@@ -1464,11 +1464,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       promptStablePrefix = prompt.stablePrefix
       sourceCommit = prompt.provenance?.commit.slice(0, 12)
     }
-    const promptCacheKey = `maestrly:${createHash('sha256')
-      .update(promptStablePrefix)
-      .update('\0')
-      .update(Object.keys(allTools).sort().join('\0'))
-      .digest('hex')}`
+    const promptCacheKey = openAIPromptCacheKey('conversation', promptStablePrefix, Object.keys(allTools))
     const currentOpenAI = providerOptions?.openai ?? {}
     providerOptions = {
       ...providerOptions,

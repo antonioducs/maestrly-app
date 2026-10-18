@@ -4,6 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { generateText, type ModelMessage } from 'ai'
 import { getProvider, getProviderKind } from '../catalog'
 import { getApiKey } from '../credentials'
+import { isValidOpenAIPromptCacheKey } from '../harness/adapters/responses'
 import { buildOpenAIProviderFingerprint, ChatConfigError } from '../provider'
 import { toOpenAILedgerValue } from './ledger'
 import { prependOpenAIRawResponseItems } from './raw-input'
@@ -214,7 +215,7 @@ export async function compactOpenAIResponses(args: {
   const body: OpenAILedgerObject = {
     model: args.modelId,
     input: [...args.input],
-    ...(args.promptCacheKey ? { prompt_cache_key: args.promptCacheKey } : {}),
+    ...(isValidOpenAIPromptCacheKey(args.promptCacheKey) ? { prompt_cache_key: args.promptCacheKey } : {}),
   }
   let response: Response
   try {

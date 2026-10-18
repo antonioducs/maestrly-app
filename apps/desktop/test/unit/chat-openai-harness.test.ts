@@ -4,7 +4,10 @@ import {
   bypassLegacyAutoCompaction,
   isOpenAIHarnessActive,
   isOpenAIResponsesHarness,
+  isValidOpenAIPromptCacheKey,
+  OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH,
   openAIHarnessProviderOptions,
+  openAIPromptCacheKey,
 } from '../../src/main/chat/harness/adapters/responses'
 import { resolveChatHarness as resolveExecution } from '../../src/main/chat/harness/execution'
 import type { ChatProviderKind } from '../../src/shared/chat'
@@ -172,6 +175,34 @@ describe('OpenAI harness profile', () => {
       reasoningContext: 'all_turns',
       contextManagement: [{ type: 'compaction', compactThreshold: 900_000 }],
     })
+  })
+
+  it('derives deterministic, scoped prompt cache keys within the OpenAI limit', () => {
+    const prefix = 'stable prefix '.repeat(2_000)
+    const tools = ['read', 'bash', 'edit']
+    const conversation = openAIPromptCacheKey('conversation', prefix, tools)
+    const subagent = openAIPromptCacheKey('subagent', prefix, tools)
+
+    expect(OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).toBe(64)
+    for (const key of [conversation, subagent]) {
+      expect(key.length).toBeLessThanOrEqual(OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH)
+      expect(isValidOpenAIPromptCacheKey(key)).toBe(true)
+    }
+    expect(conversation).toMatch(/^maestrly:[A-Za-z0-9_-]{43}$/)
+    expect(subagent).toMatch(/^maestrly:sub:[A-Za-z0-9_-]{43}$/)
+    expect(subagent).not.toBe(conversation)
+    expect(openAIPromptCacheKey('conversation', prefix, [...tools].reverse())).toBe(conversation)
+    expect(openAIPromptCacheKey('conversation', `${prefix}!`, tools)).not.toBe(conversation)
+    expect(openAIPromptCacheKey('conversation', prefix, [...tools, 'write'])).not.toBe(conversation)
+  })
+
+  it('omits a prompt cache key that OpenAI would reject', () => {
+    const resolved = resolveChatHarness('openai-responses', 'gpt-5.6')
+    const tooLong = `maestrly:${'a'.repeat(64)}`
+    expect(isValidOpenAIPromptCacheKey(tooLong)).toBe(false)
+    expect(
+      openAIHarnessProviderOptions(resolved, { promptCacheKey: tooLong, reasoningEnabled: false })
+    ).not.toHaveProperty('promptCacheKey')
   })
 
   it('applies the exact Astra BYOK profile without advertising synchronous-only controls', () => {
