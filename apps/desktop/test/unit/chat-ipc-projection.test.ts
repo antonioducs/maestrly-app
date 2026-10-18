@@ -242,7 +242,6 @@ describe('remote web access policy', () => {
     allowWeb: true,
     allowAppTools: false,
     allowMcp: false,
-    allowPush: false,
   }
 
   it('treats web search like webfetch', () => {
@@ -253,6 +252,22 @@ describe('remote web access policy', () => {
         /web access/
       )
     }
+  })
+
+  it('lets git push follow the permission level the person chose', () => {
+    const commands = { ...policy, allowCommands: true }
+    for (const push of ['git push origin HEAD', 'git -C . push --force origin feature', 'git push origin :old'])
+      for (const [permMode, effect] of [
+        ['ask', 'ask'],
+        ['auto', 'ask'],
+        ['full', 'read'],
+      ] as const)
+        expect(assertRemoteChatPermission({ ...commands, permMode }, { action: 'bash', resources: [push] })).toBe(
+          effect
+        )
+    expect(() =>
+      assertRemoteChatPermission({ ...commands, mode: 'ask' }, { action: 'bash', resources: ['git push'] })
+    ).toThrow(/commands/)
   })
 })
 
@@ -270,7 +285,6 @@ describe('bot permission replies', () => {
       allowWeb: true,
       allowAppTools: true,
       allowMcp: false,
-      allowPush: false,
     })
     const handler = register().get('chat:permission-respond')!
     const broker = getChatPermissionBroker()

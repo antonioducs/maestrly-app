@@ -64,7 +64,6 @@ export class NativeBotChatHost implements BotNativeHost {
       allowWeb: true,
       allowAppTools: true,
       allowMcp: false,
-      allowPush: false,
     }
     const release = registerRemoteChatPolicy(policy)
     try {

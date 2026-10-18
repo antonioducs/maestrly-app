@@ -14,7 +14,6 @@ export interface RemoteChatPolicy {
   allowWeb: boolean
   allowAppTools: boolean
   allowMcp: boolean
-  allowPush: boolean
 }
 const active = new Map<string, RemoteChatPolicy>(),
   context = new AsyncLocalStorage<RemoteChatPolicy>()
@@ -59,7 +58,7 @@ export function assertRemoteChatPermission(
   }
   if (input.action === 'bash') {
     if (!policy.allowCommands || readOnly) deny('commands')
-    if (!policy.allowPush && input.resources.some((r) => /\bgit\s+(?:-[^\s]+\s+)*push\b/.test(r))) deny('git push')
+    // git push included: an unattended pipeline has to publish its branch, so the person's level governs it too.
     return policy.permMode === 'full' ? 'read' : 'ask'
   }
   if (input.action === 'webfetch' || input.action === 'web_search') {
