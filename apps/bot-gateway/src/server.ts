@@ -13,6 +13,7 @@ import {
   FLEET_ARTIFACT_BODY_MAX,
   FLEET_SKILL_BODY_MAX,
   FLEET_DESKTOP_BRIDGE_LIMITS,
+  FLEET_DICTATION_BODY_MAX,
   parseFleetGatewayEditorPath,
   type FleetInternalDesktopCallRequest,
   type FleetDesktopLinkRequest,
@@ -34,6 +35,7 @@ import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
 import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
+import { DictationService } from './dictation.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge, lifecycleDesktopHosts } from './desktop-bridge.js'
 
@@ -127,6 +129,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       serverName: () => ctx.config.displayName ?? ctx.config.publicHost,
       log: (message) => console.error(JSON.stringify({ component: 'push', level: 'warn', message })),
     })
+  const dictation = ctx.dictation ?? new DictationService(ctx.store)
   const observePush = (event: FleetGatewayEvent) => push.observe(event)
   ctx.events.observers.add(observePush)
   ctx.lifecycle.onChatAttention = (environmentId, conversationId, name, kind) =>
@@ -164,6 +167,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   const activeCtx: GatewayContext = {
     ...ctx,
     push,
+    dictation,
     ownerMemory,
     peers,
     peerThreads,
@@ -261,7 +265,9 @@ export function createGatewayServers(ctx: GatewayContext) {
                     ? FLEET_MESSAGE_BODY_MAX
                     : !internal && match.key === 'desktopCallResult'
                       ? FLEET_DESKTOP_BRIDGE_LIMITS.resultBytesMax
-                      : 1024 * 1024
+                      : !internal && match.key === 'dictationTranscribe'
+                        ? FLEET_DICTATION_BODY_MAX
+                        : 1024 * 1024
             )
           )
         : undefined

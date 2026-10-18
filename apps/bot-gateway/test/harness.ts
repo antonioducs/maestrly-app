@@ -29,6 +29,7 @@ import { Lifecycle } from '../src/lifecycle.js'
 import { createGatewayServers } from '../src/server.js'
 import { PeerThreads } from '../src/peer-threads.js'
 import { Peers } from '../src/peers.js'
+import { DictationService } from '../src/dictation.js'
 import { Store } from '../src/store.js'
 import { Routines } from '../src/routines.js'
 
@@ -496,6 +497,8 @@ export async function harness(
     messageEdit?: boolean
     videoScreens?: boolean
     pushOff?: boolean
+    /** What the gateway's dictation calls instead of the providers. */
+    dictationFetch?: typeof fetch
   } = {}
 ) {
   const instance = await fake(
@@ -555,6 +558,7 @@ export async function harness(
     peerThreads,
     peers: new Peers(store, lifecycle, now, peerThreads),
     store,
+    dictation: new DictationService(store, { fetch: options.dictationFetch, log: () => {} }),
   })
   await gateway.listen()
   const origin = 'http://127.0.0.1:' + (gateway.publicServer.address() as { port: number }).port

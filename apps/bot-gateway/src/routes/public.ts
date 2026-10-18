@@ -13,6 +13,9 @@ import {
   fleetReaderWantsPeerThreads,
   type FleetPeerThreadPatchRequest,
   type FleetPeerThreadSettings,
+  FLEET_DICTATION_FEATURE,
+  type FleetDictationKeyRequest,
+  type FleetDictationTranscribeRequest,
   type FleetRoutineRunSettings,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
@@ -118,6 +121,11 @@ const PROVISIONING = new Set([
   'McpServersImport',
   'McpServerRemove',
 ])
+/** The servers build one for every request; only a context made without `createGatewayServers` lacks it. */
+function requireDictation(ctx: GatewayContext) {
+  if (!ctx.dictation) throw new GatewayError('NOT_FOUND', 'Route not found')
+  return ctx.dictation
+}
 function requireBot(ctx: GatewayContext, id: string) {
   const bot = ctx.lifecycle.get(id)
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
@@ -478,6 +486,7 @@ export async function publicRoute(
             FLEET_ROUTINE_CONVERSATIONS_FEATURE,
             FLEET_PARALLEL_TURNS_FEATURE,
             FLEET_PEER_CONVERSATIONS_FEATURE,
+            FLEET_DICTATION_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -513,6 +522,19 @@ export async function publicRoute(
       await ctx.push.test(device.id)
       return { body: { sent: true } }
     }
+    case 'dictationGet':
+      return { body: requireDictation(ctx).status() }
+    case 'dictationKeySet': {
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      const input = body as FleetDictationKeyRequest
+      return { body: await requireDictation(ctx).setKey(input.provider, input.key, device.name) }
+    }
+    case 'dictationKeyDelete': {
+      requireDictation(ctx).removeKey(ctx.auth.device(res.req?.headers.authorization).name)
+      return { status: 204 }
+    }
+    case 'dictationTranscribe':
+      return { body: await requireDictation(ctx).transcribe(body as FleetDictationTranscribeRequest) }
     case 'devicesSelfDelete': {
       const device = ctx.auth.device(res.req?.headers.authorization)
       ctx.store.revokeDevice(device.id)
