@@ -13,9 +13,16 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
-import { DockerEngineDriver, FakeDockerDriver, parseDockerStats } from '../src/docker.js'
+import {
+  DockerEngineDriver,
+  FakeDockerDriver,
+  NO_CGROUP_MEMORY,
+  execStdout,
+  parseCgroupMemory,
+  parseDockerStats,
+} from '../src/docker.js'
 import { EventHub } from '../src/events.js'
-import { HostMonitor, cpuPercent, parseMeminfo, parseProcStat } from '../src/host.js'
+import { HostMonitor, cpuPercent, parseMeminfo, parseProcStat, parseZramMemory, zramSwaps } from '../src/host.js'
 import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
 import { run } from '../src/main.js'
@@ -379,19 +386,81 @@ describe('Docker and host parsers', () => {
     expect(parseMeminfo('MemTotal: 1000 kB\nMemAvailable: 250 kB\n')).toEqual({
       totalBytes: 1024000,
       usedBytes: 768000,
+      swapTotalBytes: 0,
+      swapUsedBytes: 0,
     })
+    expect(
+      parseMeminfo('MemTotal: 1000 kB\nMemAvailable: 250 kB\nSwapTotal:   400 kB\nSwapFree:   100 kB\n')
+    ).toMatchObject({ swapTotalBytes: 409600, swapUsedBytes: 307200 })
     expect(cpuPercent(parseProcStat('cpu  100 0 0 100 0\n'), parseProcStat('cpu  200 0 0 100 0\n'))).toBe(100)
+  })
+  it('finds the memory zram swap takes', () => {
+    expect(
+      zramSwaps(
+        'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n' +
+          '/dev/zram0                              partition\t12304484\t6995532\t\t32767\n' +
+          '/dev/vdc                                partition\t1048572\t\t734080\t\t1\n' +
+          '/swapfile                               file\t\t1048572\t\t0\t\t-2\n'
+      )
+    ).toEqual(['zram0'])
+    expect(zramSwaps('Filename\tType\tSize\tUsed\tPriority\n')).toEqual([])
+    expect(
+      parseZramMemory('6938148864 3461058323 3506941952        0 5738307584    33731 11194171   399527  5412975\n')
+    ).toBe(3506941952)
+    expect(parseZramMemory('')).toBeNull()
+    expect(parseZramMemory('1 2 -3')).toBeNull()
+  })
+  it("reads a container's swap and out-of-memory kills from its cgroup, trusting only whole numbers", () => {
+    const events = 'low 0\nhigh 0\nmax 4\noom 2\noom_kill 26\noom_group_kill 0\nsock_throttled 0\n'
+    expect(parseCgroupMemory('3090366464\n' + events)).toEqual({ swapBytes: 3090366464, oomKills: 26, limitOoms: 2 })
+    // No swap accounting: only the events file is there.
+    expect(parseCgroupMemory(events)).toEqual({ swapBytes: null, oomKills: 26, limitOoms: 2 })
+    // cgroup v1: neither file exists.
+    expect(parseCgroupMemory('')).toEqual(NO_CGROUP_MEMORY)
+    // The container writes this output: the first value of each figure counts, and unsafe numbers count as none.
+    expect(parseCgroupMemory('10\n20\noom_kill 1\noom_kill 9\noom 99999999999999999999\n')).toEqual({
+      swapBytes: 10,
+      oomKills: 1,
+      limitOoms: null,
+    })
+  })
+  it('keeps only the standard output of a command run in a container', () => {
+    const frame = (stream: number, text: string) => {
+      const payload = Buffer.from(text)
+      const header = Buffer.alloc(8)
+      header[0] = stream
+      header.writeUInt32BE(payload.length, 4)
+      return Buffer.concat([header, payload])
+    }
+    expect(
+      execStdout(Buffer.concat([frame(1, '12\n'), frame(2, 'cat: missing\n'), frame(1, 'oom 0\n')])).toString()
+    ).toBe('12\noom 0\n')
+    // A frame cut short keeps what arrived; a header cut short is dropped.
+    expect(execStdout(Buffer.concat([frame(1, 'abc'), frame(1, 'defgh').subarray(0, 10)])).toString()).toBe('abcde')
+    expect(execStdout(Buffer.concat([frame(1, 'abc'), Buffer.from([1, 0, 0])])).toString()).toBe('abc')
   })
   it('calls Docker Engine through a unix socket', async () => {
     const dir = temp(),
       socket = dockerSocketPath(dir),
       calls: string[] = []
-    let created: any
+    let created: any, exec: any
     const server = http.createServer(async (req, res) => {
       calls.push(req.method + ' ' + req.url)
       res.setHeader('Content-Type', 'application/json')
       if (req.url === '/version') res.end(JSON.stringify({ ApiVersion: '1.45', Version: '28.0' }))
-      else if (req.url?.includes('/images/missing/json')) {
+      else if (req.url?.endsWith('/containers/abc/exec')) {
+        const chunks: Buffer[] = []
+        for await (const chunk of req) chunks.push(Buffer.from(chunk))
+        exec = JSON.parse(Buffer.concat(chunks).toString())
+        res.end(JSON.stringify({ Id: 'exec-1' }))
+      } else if (req.url?.endsWith('/exec/exec-1/start')) {
+        const stdout = Buffer.from('2048\noom 1\noom_kill 3\n')
+        const header = Buffer.alloc(8)
+        header[0] = 1
+        header.writeUInt32BE(stdout.length, 4)
+        res.setHeader('Content-Type', 'application/vnd.docker.raw-stream')
+        res.end(Buffer.concat([header, stdout]))
+      } else if (req.url?.includes('/images/missing/json')) {
         res.writeHead(404)
         res.end(JSON.stringify({ message: 'No such image' }))
       } else if (req.url?.includes('/images/image/json'))
@@ -468,6 +537,14 @@ describe('Docker and host parsers', () => {
     expect((await docker.inspect('abc')).imageId).toBe('sha256:engine-image')
     expect((await docker.list())[0]?.imageId).toBe('sha256:engine-image')
     expect((await docker.statsOnce('abc')).memoryBytes).toBe(0)
+    expect(await docker.cgroupMemory('abc')).toEqual({ swapBytes: 2048, oomKills: 3, limitOoms: 1 })
+    expect(exec).toEqual({
+      AttachStdin: false,
+      AttachStdout: true,
+      AttachStderr: false,
+      Tty: false,
+      Cmd: ['cat', '/sys/fs/cgroup/memory.swap.current', '/sys/fs/cgroup/memory.events'],
+    })
     await docker.remove('abc', true)
     expect(calls.some((call) => call.includes('/v1.45/containers/create'))).toBe(true)
     expect(created).toMatchObject({

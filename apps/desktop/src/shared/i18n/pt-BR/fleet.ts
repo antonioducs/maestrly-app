@@ -371,6 +371,13 @@ export default {
     versionLabel: 'Versão',
     memoryUsedLabel: 'Memória usada',
     memoryOf: '{{used}} de {{limit}} GB',
+    swapLabel: 'Swap',
+    outOfMemory_one: 'O sistema encerrou {{count}} processo deste ambiente por falta de memória desde que ele iniciou.',
+    outOfMemory_other:
+      'O sistema encerrou {{count}} processos deste ambiente por falta de memória desde que ele iniciou.',
+    outOfMemoryLimit: 'Ele esgotou o limite de memória. Aumente o limite abaixo ou rode menos coisas ao mesmo tempo.',
+    outOfMemoryServer:
+      'O servidor ficou sem memória. Dê mais memória a ele (no Docker Desktop ou no OrbStack, nas configurações) ou reduza os limites dos ambientes.',
     lifecycle: {
       creating: 'criando',
       starting: 'iniciando',
@@ -859,6 +866,12 @@ export default {
       'Os bots rodam em ambientes no servidor. Um ambiente é um contêiner, com o desktop Linux, as contas, os arquivos e os logins de sites que os bots dele compartilham; cada bot tem o próprio navegador e a própria tela de apps lá. Este computador é só o controle remoto.',
     title: 'Servidor de bots',
     system: 'Sistema',
+    compressedSwap: 'Swap comprimido',
+    compressedSwapNote: 'Memória que os ambientes mandaram para o swap, guardada comprimida na memória do servidor',
+    swap: 'Swap',
+    inSwap: '+{{value}} GB em swap',
+    outOfMemory_one: '{{count}} processo encerrado por falta de memória',
+    outOfMemory_other: '{{count}} processos encerrados por falta de memória',
     cpu: 'CPU',
     memory: 'Memória',
     disk: 'Disco',

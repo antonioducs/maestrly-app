@@ -267,12 +267,21 @@ export type FleetScreenSurface = z.infer<typeof fleetScreenSurfaceSchema>
 /** A conversation's id on a workspaces host (a UUID today), as it appears in screen routes and tickets. */
 export const fleetHostConversationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/)
 
-/** Container resources, measured per environment. */
+/**
+ * Container resources, measured per environment. Swap and out-of-memory figures are null when the server does not
+ * measure them (cgroup v1, or a gateway that predates them).
+ */
 export const fleetResourcesSchema = z.object({
   memoryBytes: fleetNonNegativeNumberSchema.nullable(),
   memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
   cpuPercent: fleetNonNegativeNumberSchema.nullable(),
   startedAt: fleetTimestampSchema.nullable(),
+  /** The container's memory moved out to swap, which `memoryBytes` leaves out. */
+  swapBytes: fleetNonNegativeNumberSchema.nullable().default(null),
+  /** Processes of the container the kernel ended for lack of memory since the container started. */
+  oomKills: fleetNonNegativeIntSchema.nullable().default(null),
+  /** How many times since then the container's own memory limit ran out; with none, the whole server did. */
+  limitOoms: fleetNonNegativeIntSchema.nullable().default(null),
 })
 export type FleetResources = z.infer<typeof fleetResourcesSchema>
 
@@ -797,6 +806,16 @@ export const fleetHostInfoSchema = z.object({
     totalBytes: fleetNonNegativeNumberSchema,
     usedBytes: fleetNonNegativeNumberSchema,
     botsBytes: fleetNonNegativeNumberSchema,
+    /** The server's swap; null from gateways that predate it. */
+    swap: z
+      .object({
+        totalBytes: fleetNonNegativeNumberSchema,
+        usedBytes: fleetNonNegativeNumberSchema,
+        /** Memory that swap compressed in memory (zram) takes, part of `usedBytes` above it and of no container. */
+        compressedBytes: fleetNonNegativeNumberSchema,
+      })
+      .nullable()
+      .default(null),
   }),
   disk: z.object({ totalBytes: fleetNonNegativeNumberSchema, usedBytes: fleetNonNegativeNumberSchema }),
   uptimeSeconds: fleetNonNegativeNumberSchema,

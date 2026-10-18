@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check } from 'lucide-react'
+import { AlertTriangle, Check } from 'lucide-react'
 import {
   FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   type FleetEnvironment,
@@ -21,7 +21,7 @@ import {
 } from '@/lib/fleet/environments'
 import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { fleetErrorText } from '@/lib/fleet/errors'
-import { gb } from '@/lib/fleet/format'
+import { gb, outOfMemory, shownSwapBytes } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
@@ -45,6 +45,8 @@ export function EnvironmentResources({
   // The limit Docker reports for the running container; the owner's choice until it reports one.
   const limitBytes = environment.resources.memoryLimitBytes ?? environment.memoryLimitBytes
   const share = memoryBytes !== null && limitBytes ? Math.min(1, memoryBytes / limitBytes) : null
+  const swapBytes = shownSwapBytes(environment.resources)
+  const oom = outOfMemory(environment.resources)
   const uptime = startedAt ? formatUptime(Date.now() - Date.parse(startedAt)) : null
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -112,7 +114,26 @@ export function EnvironmentResources({
               : t('environment.memoryUsed', { used })}
           </span>
         </div>
+        {oom && (
+          <p
+            role="status"
+            data-testid="environment-out-of-memory"
+            className="flex items-start gap-2 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3.5 py-3 text-[13px]"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-300" aria-hidden="true" />
+            <span>
+              {t('environment.outOfMemory', { count: oom.kills })}{' '}
+              {t(oom.cause === 'limit' ? 'environment.outOfMemoryLimit' : 'environment.outOfMemoryServer')}
+            </span>
+          </p>
+        )}
         <p className="flex flex-wrap gap-x-5 gap-y-1.5 text-[12.5px] text-muted-foreground">
+          {swapBytes !== null && (
+            <span>
+              {t('environment.swapLabel')}
+              <b className="ml-1.5 font-mono font-medium tabular-nums text-foreground/75">{gb(swapBytes)} GB</b>
+            </span>
+          )}
           <span>
             {t('server.cpu')}
             <b className="ml-1.5 font-mono font-medium tabular-nums text-foreground/75">

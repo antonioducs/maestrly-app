@@ -43,6 +43,9 @@ export type ContainerInfo = {
   labels: Record<string, string>
 }
 export type ContainerStats = { memoryBytes: number; memoryLimitBytes: number; cpuPercent: number }
+/** What a container's cgroup reports beyond Docker's stats; a figure the server does not provide is null. */
+export type CgroupMemory = { swapBytes: number | null; oomKills: number | null; limitOoms: number | null }
+export const NO_CGROUP_MEMORY: CgroupMemory = { swapBytes: null, oomKills: null, limitOoms: null }
 export type ImageInfo = { id: string; version?: string | null }
 /** A fleet network subnet and its bridge gateway address (the host side of the bridge). */
 export type FleetNetworkSubnet = { subnet: string; gateway: string | null }
@@ -78,6 +81,8 @@ export interface DockerDriver {
   inspect(id: string): Promise<ContainerInfo>
   list(label?: string): Promise<ContainerInfo[]>
   statsOnce(id: string): Promise<ContainerStats>
+  /** The swap and out-of-memory kills of a running container, which Docker's stats leave out on cgroup v2. */
+  cgroupMemory(id: string): Promise<CgroupMemory>
 }
 export class DockerError extends Error {
   constructor(
@@ -98,13 +103,48 @@ export function parseDockerStats(raw: any): ContainerStats {
   const cache = raw.memory_stats?.stats?.inactive_file ?? 0
   return { memoryBytes: Math.max(0, usage - cache), memoryLimitBytes: raw.memory_stats?.limit ?? 0, cpuPercent }
 }
+/**
+ * Reads what `cat memory.swap.current memory.events` printed in a container (cgroup v2): the swap is the bare number,
+ * the events are `name count` lines. The container writes this output, so only whole safe numbers count, and a file it
+ * lacks leaves its figures null.
+ */
+export function parseCgroupMemory(text: string): CgroupMemory {
+  let swapBytes: number | null = null
+  const events = new Map<string, number>()
+  for (const line of text.split('\n')) {
+    const value = line.trim()
+    if (/^\d+$/.test(value)) swapBytes ??= Number(value)
+    const event = /^([a-z_]+) (\d+)$/.exec(value)
+    if (event && !events.has(event[1])) events.set(event[1], Number(event[2]))
+  }
+  const safe = (value: number | null | undefined) => (value !== undefined && Number.isSafeInteger(value) ? value : null)
+  return { swapBytes: safe(swapBytes), oomKills: safe(events.get('oom_kill')), limitOoms: safe(events.get('oom')) }
+}
+/** The standard output of a command run without a terminal, which Docker frames as [stream, 0, 0, 0, size (4 bytes)]. */
+export function execStdout(raw: Buffer): Buffer {
+  const parts: Buffer[] = []
+  let offset = 0
+  while (offset + 8 <= raw.length) {
+    const end = offset + 8 + raw.readUInt32BE(offset + 4)
+    if (raw[offset] === 1) parts.push(raw.subarray(offset + 8, Math.min(end, raw.length)))
+    offset = end
+  }
+  return Buffer.concat(parts)
+}
 export class DockerEngineDriver implements DockerDriver {
   private api: string | null = null
   constructor(
     readonly socketPath: string,
     readonly timeoutMs = 10000
   ) {}
-  private request(method: string, route: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<any> {
+  /** One call to the Engine API: its status and raw body, which may hold at most `maxBytes`. */
+  private send(
+    method: string,
+    route: string,
+    body: unknown,
+    timeoutMs: number,
+    maxBytes = Infinity
+  ): Promise<{ status: number; body: Buffer }> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body)
       const req = http.request(
@@ -117,19 +157,18 @@ export class DockerEngineDriver implements DockerDriver {
         },
         (res) => {
           const chunks: Buffer[] = []
-          res.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
-          res.on('end', () => {
-            const raw = Buffer.concat(chunks).toString()
-            let parsed: any
-            try {
-              parsed = raw ? JSON.parse(raw) : null
-            } catch {
-              parsed = null
+          let size = 0
+          res.on('data', (chunk) => {
+            size += chunk.length
+            if (size <= maxBytes) chunks.push(Buffer.from(chunk))
+            else {
+              res.destroy()
+              reject(new GatewayError('DOCKER_UNAVAILABLE', 'Docker answer too large'))
             }
-            if ((res.statusCode ?? 500) >= 400)
-              reject(new DockerError(res.statusCode ?? 500, String(parsed?.message ?? 'Docker request failed')))
-            else resolve(parsed)
           })
+          // A socket that closes or times out once the answer started fails the answer, not the request.
+          res.on('error', () => reject(new GatewayError('DOCKER_UNAVAILABLE', 'Docker unavailable')))
+          res.on('end', () => resolve({ status: res.statusCode ?? 500, body: Buffer.concat(chunks) }))
         }
       )
       req.on('timeout', () => req.destroy(new GatewayError('DOCKER_UNAVAILABLE', 'Docker timed out')))
@@ -138,6 +177,35 @@ export class DockerEngineDriver implements DockerDriver {
       )
       req.end(payload)
     })
+  }
+  private async request(method: string, route: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<any> {
+    const { status, body: raw } = await this.send(method, route, body, timeoutMs)
+    let parsed: any
+    try {
+      parsed = raw.length ? JSON.parse(raw.toString()) : null
+    } catch {
+      parsed = null
+    }
+    if (status >= 400) throw new DockerError(status, String(parsed?.message ?? 'Docker request failed'))
+    return parsed
+  }
+  /** Runs a short command in a running container, as its user, and returns what it wrote to its standard output. */
+  private async execOutput(id: string, command: string[], timeoutMs = 5000): Promise<string> {
+    const created = await this.request(
+      'POST',
+      await this.route('/containers/' + encodeURIComponent(id) + '/exec'),
+      { AttachStdin: false, AttachStdout: true, AttachStderr: false, Tty: false, Cmd: command },
+      timeoutMs
+    )
+    const { status, body } = await this.send(
+      'POST',
+      await this.route('/exec/' + encodeURIComponent(String(created?.Id ?? '')) + '/start'),
+      { Detach: false, Tty: false },
+      timeoutMs,
+      64 * 1024
+    )
+    if (status >= 400) throw new DockerError(status, 'Docker could not run the command')
+    return execStdout(body).toString('utf8')
   }
   async version(): Promise<string> {
     const result = await this.request('GET', '/version')
@@ -371,6 +439,11 @@ export class DockerEngineDriver implements DockerDriver {
       await this.request('GET', await this.route('/containers/' + encodeURIComponent(id) + '/stats?stream=false'))
     )
   }
+  async cgroupMemory(id: string): Promise<CgroupMemory> {
+    return parseCgroupMemory(
+      await this.execOutput(id, ['cat', '/sys/fs/cgroup/memory.swap.current', '/sys/fs/cgroup/memory.events'])
+    )
+  }
 }
 export class FakeDockerDriver implements DockerDriver {
   readonly images = new Set<string>()
@@ -394,6 +467,9 @@ export class FakeDockerDriver implements DockerDriver {
   networkCreateFailure: DockerError | null = null
   startLatencyMs = 0
   stats: ContainerStats = { memoryBytes: 0, memoryLimitBytes: 0, cpuPercent: 0 }
+  cgroup: CgroupMemory = NO_CGROUP_MEMORY
+  /** Fails reading cgroups, as a container without `cat` or a paused one does. */
+  cgroupFailure: DockerError | null = null
   async version() {
     return '28.0.0'
   }
@@ -519,6 +595,11 @@ export class FakeDockerDriver implements DockerDriver {
   async statsOnce(id: string) {
     await this.lookup(id)
     return this.stats
+  }
+  async cgroupMemory(id: string) {
+    await this.lookup(id)
+    if (this.cgroupFailure) throw this.cgroupFailure
+    return this.cgroup
   }
   private async lookup(id: string) {
     const item = this.containers.get(id) ?? [...this.containers.values()].find((item) => item.name === id)

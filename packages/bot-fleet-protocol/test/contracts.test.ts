@@ -309,6 +309,22 @@ describe('domain contracts', () => {
     expect(FLEET_ERROR_STATUS.PROTOCOL_INCOMPATIBLE).toBe(426)
   })
 
+  it('carries swap and out-of-memory kills, and reads gateways that predate them as unmeasured', () => {
+    // An older gateway sends neither the server's swap nor a container's.
+    expect(fleetHostInfoSchema.parse(host).memory.swap).toBeNull()
+    expect(fleetResourcesSchema.parse(bot.resources)).toMatchObject({
+      swapBytes: null,
+      oomKills: null,
+      limitOoms: null,
+    })
+    const swap = { totalBytes: 13_000, usedBytes: 7_700, compressedBytes: 3_500 }
+    expect(fleetHostInfoSchema.parse({ ...host, memory: { ...host.memory, swap } }).memory.swap).toEqual(swap)
+    const measured = { ...bot.resources, swapBytes: 2_500, oomKills: 17, limitOoms: 0 }
+    expect(fleetResourcesSchema.parse(measured)).toEqual(measured)
+    expect(fleetResourcesSchema.safeParse({ ...measured, oomKills: 1.5 }).success).toBe(false)
+    expect(fleetResourcesSchema.safeParse({ ...measured, swapBytes: -1 }).success).toBe(false)
+  })
+
   it('accepts transcript variants and rejects wrong discriminants or oversized output', () => {
     expect(fleetTranscriptItemSchema.parse(transcript).kind).toBe('user')
     expect(
@@ -1020,7 +1036,7 @@ describe('environment contracts', () => {
   it('accepts environments with defaults for older peers and at most eight bots', () => {
     const parsed = fleetEnvironmentSchema.parse(environment)
     expect(parsed.capabilities).toEqual([])
-    expect(parsed.resources).toEqual(environment.resources)
+    expect(parsed.resources).toEqual({ ...environment.resources, swapBytes: null, oomKills: null, limitOoms: null })
     expect(fleetBotSchema.shape.resources).toBe(fleetResourcesSchema)
     expect(fleetEnvironmentsResponseSchema.parse({ environments: [environment] }).environments).toHaveLength(1)
     const ids = Array.from({ length: 9 }, (_, index) => 'bot-' + index)

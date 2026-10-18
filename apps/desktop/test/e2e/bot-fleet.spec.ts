@@ -3237,10 +3237,42 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     // The server lists each environment once with its resources, and its bots under it without counting them again.
     await expect(page.getByRole('row').filter({ hasText: 'Acme' }).first()).toContainText('1.0 GB')
     await expect(page.getByRole('row').filter({ hasText: 'Scout' })).toContainText('—')
+    // What environments swapped out, the swap the server keeps compressed in memory, and processes the kernel ended
+    // for lack of memory show where memory went instead of leaving it all to the system.
+    await expect(page.getByRole('meter', { name: 'Swap', exact: true })).toHaveCount(0)
+    const home = environments.find((item) => item.id === 'home')!
+    upsertEnvironment(
+      fleetEnvironmentSchema.parse({
+        ...home,
+        resources: { ...home.resources, swapBytes: 2 * GB, oomKills: 17, limitOoms: 0 },
+      })
+    )
+    emit({
+      type: 'host.updated',
+      at: now(),
+      host: {
+        ...host,
+        memory: { ...host.memory, swap: { totalBytes: 8 * GB, usedBytes: 3 * GB, compressedBytes: GB } },
+      },
+    })
+    const homeRow = page.getByRole('row').filter({ hasText: 'Home' }).first()
+    await expect(homeRow).toContainText('+2.0 GB em swap')
+    await expect(homeRow.getByRole('img', { name: '17 processos encerrados por falta de memória' })).toBeVisible()
+    await expect(page.getByRole('meter', { name: 'Swap', exact: true })).toHaveAttribute('aria-valuenow', '38')
+    await expect(page.getByText('3.0 / 8.0 GB', { exact: true })).toBeVisible()
+    const legend = page.getByTitle(
+      'Memória que os ambientes mandaram para o swap, guardada comprimida na memória do servidor'
+    )
+    await expect(legend).toHaveText('Swap comprimido1.0 GB')
+    await expect(header('Home')).toHaveAccessibleName(/· 17 processos encerrados por falta de memória$/)
 
     // Archiving an environment archives its bots with it; restoring brings them back.
     // Archiving is the last tab of the environment's settings.
     await header('Home').click()
+    await expect(page.getByTestId('environment-out-of-memory')).toHaveText(
+      'O sistema encerrou 17 processos deste ambiente por falta de memória desde que ele iniciou. O servidor ficou sem memória. Dê mais memória a ele (no Docker Desktop ou no OrbStack, nas configurações) ou reduza os limites dos ambientes.'
+    )
+    await expect(page.getByRole('region', { name: 'Recursos', exact: true })).toContainText('Swap2.0 GB')
     await page.getByRole('button', { name: 'Configurações do ambiente', exact: true }).click()
     const homeSettings = page.getByRole('dialog', { name: 'Configurações de Home', exact: true })
     await homeSettings.getByRole('tab', { name: 'Arquivar', exact: true }).click()

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
-import { BrainCircuit, CircleArrowUp, Clock, Server } from 'lucide-react'
+import { AlertTriangle, BrainCircuit, CircleArrowUp, Clock, Server } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { activityLabel, gb, memorySegments } from '@/lib/fleet/format'
+import { activityLabel, gb, memorySegments, outOfMemory } from '@/lib/fleet/format'
 import { environmentUpdateState, type EnvironmentUpdateState } from '@/lib/fleet/updates'
 import { BotUpdateBanner } from './BotUpdateBanner'
 import {
@@ -251,6 +251,8 @@ function EnvironmentHeader({
   const memory = environment.resources.memoryBytes
   const updateLabel =
     update === 'available' ? t('updates.available') : update === 'pending' ? t('updates.pendingShort') : null
+  const oom = outOfMemory(environment.resources)
+  const oomLabel = oom ? t('server.outOfMemory', { count: oom.kills }) : null
   const label = t('sidebar.environmentLabel', {
     name: environment.name,
     status: t(`environment.lifecycle.${environment.lifecycle}`),
@@ -261,7 +263,7 @@ function EnvironmentHeader({
       type="button"
       onClick={onOpen}
       aria-current={selected ? 'page' : undefined}
-      aria-label={updateLabel ? `${label} · ${updateLabel}` : label}
+      aria-label={[label, updateLabel, oomLabel].filter(Boolean).join(' · ')}
       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-accent' : ''}`}
     >
       <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${dotClass[environmentDot(environment)]}`} />
@@ -273,6 +275,11 @@ function EnvironmentHeader({
           ) : (
             <CircleArrowUp aria-hidden="true" className="size-3.5" />
           )}
+        </span>
+      )}
+      {oomLabel && (
+        <span title={oomLabel} className="shrink-0 text-amber-300">
+          <AlertTriangle aria-hidden="true" className="size-3.5" />
         </span>
       )}
       <span className="shrink-0 text-muted-foreground">

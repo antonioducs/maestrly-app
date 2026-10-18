@@ -7,14 +7,44 @@ import type { DockerDriver } from './docker.js'
 export function parseMeminfo(text: string): {
   totalBytes: number
   usedBytes: number
+  swapTotalBytes: number
+  swapUsedBytes: number
 } {
   const values = Object.fromEntries(
-    [...text.matchAll(/^(MemTotal|MemAvailable):\s+(\d+) kB$/gm)].map((match) => [match[1], Number(match[2]) * 1024])
+    [...text.matchAll(/^(MemTotal|MemAvailable|SwapTotal|SwapFree):\s+(\d+) kB$/gm)].map((match) => [
+      match[1],
+      Number(match[2]) * 1024,
+    ])
   )
   return {
     totalBytes: values.MemTotal ?? 0,
     usedBytes: Math.max(0, (values.MemTotal ?? 0) - (values.MemAvailable ?? 0)),
+    swapTotalBytes: values.SwapTotal ?? 0,
+    swapUsedBytes: Math.max(0, (values.SwapTotal ?? 0) - (values.SwapFree ?? 0)),
   }
+}
+/** The zram devices the server swaps to, as listed in `/proc/swaps`. */
+export function zramSwaps(text: string): string[] {
+  return [...text.matchAll(/^\/dev\/(zram\d+)\s/gm)].map((match) => match[1])
+}
+/** The memory a zram device takes: `mem_used_total`, the third field of its `mm_stat`; null when unreadable. */
+export function parseZramMemory(text: string): number | null {
+  const value = Number(text.trim().split(/\s+/)[2])
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+/**
+ * The memory compressed swap takes on a Linux server. Swapped pages leave their container's count, but zram keeps them
+ * in memory, compressed, charged to no container: without this, they would show as the system's.
+ */
+function compressedSwapBytes(): number {
+  let total = 0
+  try {
+    for (const device of zramSwaps(readFileSync('/proc/swaps', 'utf8')))
+      try {
+        total += parseZramMemory(readFileSync('/sys/block/' + device + '/mm_stat', 'utf8')) ?? 0
+      } catch {}
+  } catch {}
+  return total
 }
 export function parseProcStat(text: string): { idle: number; total: number } {
   const line = text.split('\n').find((line) => line.startsWith('cpu ')) ?? ''
@@ -58,6 +88,8 @@ export class HostMonitor {
         : {
             totalBytes: os.totalmem(),
             usedBytes: os.totalmem() - os.freemem(),
+            swapTotalBytes: null,
+            swapUsedBytes: null,
           }
     const current =
       process.platform === 'linux' ? parseProcStat(readFileSync('/proc/stat', 'utf8')) : { idle: 0, total: 0 }
@@ -83,6 +115,10 @@ export class HostMonitor {
         totalBytes: mem.totalBytes,
         usedBytes: mem.usedBytes,
         botsBytes,
+        swap:
+          mem.swapTotalBytes === null
+            ? null
+            : { totalBytes: mem.swapTotalBytes, usedBytes: mem.swapUsedBytes, compressedBytes: compressedSwapBytes() },
       },
       disk: {
         totalBytes: fs.blocks * fs.bsize,

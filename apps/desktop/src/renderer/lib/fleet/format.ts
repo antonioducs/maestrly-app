@@ -1,4 +1,10 @@
-import type { FleetActivity, FleetBot, FleetEnvironment, FleetHostInfo } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetActivity,
+  FleetBot,
+  FleetEnvironment,
+  FleetHostInfo,
+  FleetResources,
+} from '@maestrly/bot-fleet-protocol'
 import { compareByName } from './selectors'
 import { baseToolName } from '../agent-activity'
 
@@ -49,15 +55,20 @@ export function activityLabel(
 }
 
 export type FleetMemorySegment = {
-  kind: 'environment' | 'bot' | 'system'
+  kind: 'environment' | 'bot' | 'swap' | 'system'
   id: string
   name: string
+  bytes: number
   fraction: number
   tint: string
 }
+/** Compressed swap is memory of the containers, kept apart: muted like the system's, striped. */
+export const COMPRESSED_SWAP_TINT =
+  'repeating-linear-gradient(135deg, var(--muted-foreground) 0 2px, color-mix(in srgb, var(--muted-foreground) 35%, transparent) 2px 4px)'
 /**
  * The host memory bar: one segment per environment (its bots share its container, so their memory counts once, with
- * the tint of its first bot), one per bot of no listed environment (gateways without environments), and the rest.
+ * the tint of its first bot), one per bot of no listed environment (gateways without environments), the swap the
+ * server keeps compressed in memory (zram: pages the containers swapped out, which no container counts), and the rest.
  */
 export function memorySegments(
   host: FleetHostInfo | null,
@@ -91,11 +102,49 @@ export function memorySegments(
       })),
   ].filter((item) => item.bytes > 0)
   const counted = active.reduce((sum, item) => sum + item.bytes, 0)
-  const system = Math.max(0, (host?.memory.usedBytes ?? 0) - counted)
+  const rest = Math.max(0, (host?.memory.usedBytes ?? 0) - counted)
+  const compressed = Math.min(rest, host?.memory.swap?.compressedBytes ?? 0)
+  const system = rest - compressed
   return [
-    ...active.map(({ bytes, ...item }) => ({ ...item, fraction: bytes / total })),
-    { kind: 'system', id: 'system', name: '', fraction: system / total, tint: 'var(--muted-foreground)' },
+    ...active.map((item) => ({ ...item, fraction: item.bytes / total })),
+    ...(compressed > 0
+      ? [
+          {
+            kind: 'swap' as const,
+            id: 'swap',
+            name: '',
+            bytes: compressed,
+            fraction: compressed / total,
+            tint: COMPRESSED_SWAP_TINT,
+          },
+        ]
+      : []),
+    {
+      kind: 'system',
+      id: 'system',
+      name: '',
+      bytes: system,
+      fraction: system / total,
+      tint: 'var(--muted-foreground)',
+    },
   ]
+}
+
+/** From this much swap on, an environment shows what it swapped: less rounds to 0.0 GB. */
+const SHOWN_SWAP_BYTES = 0.05 * 1024 ** 3
+/** The memory a container moved out to swap, when there is enough to show; null otherwise. */
+export function shownSwapBytes(resources: FleetResources): number | null {
+  const swap = resources.swapBytes ?? null
+  return swap !== null && swap >= SHOWN_SWAP_BYTES ? swap : null
+}
+
+/**
+ * Processes of a container the kernel ended for lack of memory since it started, and what ran out: the container's own
+ * limit, or the whole server's memory. Null when none were, or the server does not report them.
+ */
+export function outOfMemory(resources: FleetResources): { kills: number; cause: 'limit' | 'server' } | null {
+  const kills = resources.oomKills ?? 0
+  return kills > 0 ? { kills, cause: (resources.limitOoms ?? 0) > 0 ? 'limit' : 'server' } : null
 }
 
 export function gb(bytes: number): string {
