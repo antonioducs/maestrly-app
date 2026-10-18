@@ -25,6 +25,7 @@ export function DictationModelCard({
   preparing,
   onInfo,
   onClose,
+  onUseApi,
   boundary,
 }: {
   info: RuntimeAssetInfo | null
@@ -32,6 +33,8 @@ export function DictationModelCard({
   /** Receives the final snapshot an operation returns, in case the throttled change event lags behind. */
   onInfo: (info: RuntimeAssetInfo) => void
   onClose: () => void
+  /** Offers dictation through an API key instead of downloading the model. */
+  onUseApi?: () => void
   /** Clicks inside this element (the microphone control) do not close the card. */
   boundary?: RefObject<HTMLElement | null>
 }) {
@@ -157,6 +160,13 @@ export function DictationModelCard({
       <p className="text-[13px] font-medium text-foreground">{t('mic.modelTitle')}</p>
       <p className="mb-2.5 mt-1 text-[12px] leading-snug text-muted-foreground">{t('mic.modelBody', { size })}</p>
       {body}
+      {onUseApi && state !== 'ready' && (
+        <div className="mt-2 flex justify-end">
+          <button type="button" onClick={onUseApi} className={secondaryCls}>
+            {t('mic.modelUseApi')}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

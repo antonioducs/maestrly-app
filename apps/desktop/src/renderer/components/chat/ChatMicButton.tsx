@@ -3,10 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUp, Check, Loader2, Mic, MicOff, SlidersHorizontal, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { dictationLanguage, type AsrSupport, type DictationLanguageMode } from '../../../shared/asr'
+import { dictationLanguage, type AsrLanguage, type AsrSupport, type DictationLanguageMode } from '../../../shared/asr'
+import { DICTATION_API_MAX_MS, type DictationApiProvider, type DictationConfig } from '../../../shared/dictation'
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
 import { MIC_LANGUAGE_KEY, readLanguageMode } from '@/lib/dictation'
+import { useSettings } from '@/lib/use-settings'
 import { DictationModelCard } from './DictationModelCard'
+import { DictationNoticeCard, type DictationNoticeAction } from './DictationNoticeCard'
 import { DictationLevels, RecordingClock } from './DictationMeter'
 import { dictationShortcut, useComposerDictation, WorkingRing, type DictationFinish } from './composer-dictation'
 import { hostApi } from '@/lib/hosts/host-context'
@@ -18,6 +21,10 @@ const localApi = hostApi(LOCAL_HOST_ID)
 
 type Status = 'idle' | 'recording' | 'transcribing' | 'silent' | 'error'
 type StartedBy = 'click' | 'hold' | 'shortcut'
+/** A missing API key, or a transcription that failed with its recording kept for Try again. */
+type Notice =
+  | { kind: 'key-missing'; provider: DictationApiProvider }
+  | { kind: 'failed'; error: 'key-rejected' | 'quota' | 'too-long' | 'unavailable' }
 
 const DEVICE_KEY = 'chat.mic.deviceId'
 const HOLD_KEY = 'chat.mic.hold'
@@ -100,6 +107,13 @@ export function ChatMicButton({
   const [model, setModel] = useState<RuntimeAssetInfo | null>(null)
   const [cardOpen, setCardOpen] = useState(false)
   const [preparing, setPreparing] = useState(false)
+  const [config, setConfig] = useState<DictationConfig | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
+  const { openSettings } = useSettings()
+  // The last recording, kept after a failed transcription so Try again sends it without speaking again.
+  const lastAudioRef = useRef<{ pcm: Float32Array; language: AsrLanguage } | null>(null)
+  // An API engine stops recording at its length limit.
+  const limitRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const recRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -120,8 +134,8 @@ export function ChatMicButton({
   const holdingRef = useRef(false)
   const holdSessionRef = useRef(false)
   // rec.onstop runs the finish() captured when recording started, so it reads the latest props and choices here.
-  const latest = useRef({ onTranscribed, onSendDictation, languageMode, model, support, cardOpen })
-  latest.current = { onTranscribed, onSendDictation, languageMode, model, support, cardOpen }
+  const latest = useRef({ onTranscribed, onSendDictation, languageMode, model, support, cardOpen, config })
+  latest.current = { onTranscribed, onSendDictation, languageMode, model, support, cardOpen, config }
 
   const flashStatus = useCallback((next: 'silent' | 'error', ms: number) => {
     setStatus(next)
@@ -131,10 +145,21 @@ export function ChatMicButton({
 
   useEffect(() => {
     let alive = true
-    void window.api
-      .chatAsrSupport()
-      .then((next) => alive && setSupport(next))
-      .catch(() => {})
+    // The engine can change in Settings while this composer stays open, so it is read again when the window
+    // regains focus.
+    const refreshEngine = () => {
+      void window.api
+        .chatAsrSupport()
+        .then((next) => alive && setSupport(next))
+        .catch(() => {})
+      void window.api
+        .chatDictationConfig()
+        .then((next) => alive && setConfig(next))
+        .catch(() => {})
+    }
+    refreshEngine()
+    const view = ownerDocument.defaultView
+    view?.addEventListener('focus', refreshEngine)
     void localApi
       .runtimeAssetStatus('whisper-model')
       .then((next) => alive && setModel(next))
@@ -145,8 +170,9 @@ export function ChatMicButton({
     return () => {
       alive = false
       unsubscribe()
+      view?.removeEventListener('focus', refreshEngine)
     }
-  }, [])
+  }, [ownerDocument])
 
   // Right after the model finishes installing from the card, load it so the first dictation is fast; the first
   // load on macOS also compiles the Metal shaders.
@@ -216,8 +242,44 @@ export function ChatMicButton({
     streamRef.current = null
   }
 
+  /** Keeps the error shown, without the timer that clears it, while its recording waits for Try again. */
+  const fail = useCallback((error: Extract<Notice, { kind: 'failed' }>['error']) => {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current)
+    setStatus('error')
+    setNotice({ kind: 'failed', error })
+  }, [])
+
+  /** Sends one recording to the engine and hands its text over; a failure keeps the recording for Try again. */
+  const deliver = useCallback(
+    async (pcm: Float32Array, language: AsrLanguage, id: number) => {
+      const res = await window.api.chatTranscribe(pcm, { language })
+      if (id !== transcriptionRef.current) return
+      const text = res?.text?.trim()
+      const error = res?.error
+      if (text) {
+        lastAudioRef.current = null
+        const { onSendDictation: send, onTranscribed: insert } = latest.current
+        if (!(finishRef.current === 'send' && send?.(text))) insert(text)
+      } else if (error === 'silent') {
+        lastAudioRef.current = null
+        flashStatus('silent', 4000)
+      } else if (error === 'model-missing') {
+        setCardOpen(true)
+      } else if (error === 'key-missing') {
+        setNotice({ kind: 'key-missing', provider: latest.current.config?.engine === 'groq' ? 'groq' : 'openai' })
+      } else if (error) {
+        fail(error)
+      }
+    },
+    [fail, flashStatus]
+  )
+
   const finish = useCallback(async () => {
     holdSessionRef.current = false
+    if (limitRef.current) {
+      clearTimeout(limitRef.current)
+      limitRef.current = null
+    }
     const rec = recRef.current
     const blob = new Blob(chunksRef.current, { type: rec?.mimeType || 'audio/webm' })
     chunksRef.current = []
@@ -233,43 +295,65 @@ export function ChatMicButton({
     try {
       const pcm = await decodeTo16kMono(await blob.arrayBuffer())
       if (id !== transcriptionRef.current) return
-      const res = await window.api.chatTranscribe(pcm, {
-        language: dictationLanguage(latest.current.languageMode, i18n.resolvedLanguage || i18n.language),
-      })
-      if (id !== transcriptionRef.current) return
-      const text = res?.text?.trim()
-      if (text) {
-        const { onSendDictation: send, onTranscribed: insert } = latest.current
-        if (!(finishRef.current === 'send' && send?.(text))) insert(text)
-      } else if (res?.error === 'silent') {
-        flashStatus('silent', 4000)
-      } else if (res?.error === 'model-missing') {
-        setCardOpen(true)
-      } else if (res?.error) {
-        flashStatus('error', 6000)
-      }
+      const language = dictationLanguage(latest.current.languageMode, i18n.resolvedLanguage || i18n.language)
+      lastAudioRef.current = { pcm, language }
+      await deliver(pcm, language, id)
     } catch (error) {
       if (id !== transcriptionRef.current) return
       console.error('[mic] dictation failed', error)
-      flashStatus('error', 6000)
+      if (lastAudioRef.current) fail('unavailable')
+      else flashStatus('error', 6000)
     } finally {
       if (id === transcriptionRef.current) setStatus((s) => (s === 'transcribing' ? 'idle' : s))
     }
-  }, [flashStatus, i18n])
+  }, [deliver, fail, flashStatus, i18n])
+
+  /** Sends the kept recording again, into the draft. */
+  const retry = useCallback(async () => {
+    const kept = lastAudioRef.current
+    if (!kept) return
+    setNotice(null)
+    finishRef.current = 'insert'
+    const id = ++transcriptionRef.current
+    setPending('insert')
+    setStatus('transcribing')
+    try {
+      await deliver(kept.pcm, kept.language, id)
+    } catch (error) {
+      if (id !== transcriptionRef.current) return
+      console.error('[mic] dictation failed', error)
+      fail('unavailable')
+    } finally {
+      if (id === transcriptionRef.current) setStatus((s) => (s === 'transcribing' ? 'idle' : s))
+    }
+  }, [deliver, fail])
 
   const start = useCallback(
     async (by: StartedBy) => {
       if (startingRef.current || (recRef.current && recRef.current.state !== 'inactive')) return
-      const { support: currentSupport, model: currentModel } = latest.current
+      const { support: currentSupport, model: currentModel, config: currentConfig } = latest.current
       if (currentSupport?.supported === false) return
       setMenuOpen(false)
-      if (currentModel?.status.state !== 'ready') {
-        setCardOpen(true)
-        return
+      // A new recording replaces the one kept for Try again.
+      setNotice(null)
+      lastAudioRef.current = null
+      setStatus((s) => (s === 'error' ? 'idle' : s))
+      const engine = currentConfig?.engine ?? 'local'
+      if (engine === 'local') {
+        if (currentModel?.status.state !== 'ready') {
+          setCardOpen(true)
+          return
+        }
+        setCardOpen(false)
+        // Load the engine while the user speaks; it is a no-op once loaded.
+        void window.api.chatAsrWarm().catch(() => false)
+      } else {
+        setCardOpen(false)
+        if (!currentConfig?.keys[engine]) {
+          setNotice({ kind: 'key-missing', provider: engine })
+          return
+        }
       }
-      setCardOpen(false)
-      // Load the engine while the user speaks; it is a no-op once loaded.
-      void window.api.chatAsrWarm().catch(() => false)
       startingRef.current = true
       try {
         await window.api.chatEnsureMicAccess().catch(() => {})
@@ -296,6 +380,11 @@ export function ChatMicButton({
         }
         recRef.current = rec
         rec.start()
+        // Stops at the API's length limit and transcribes what was said, as stopping by hand does.
+        if (engine !== 'local')
+          limitRef.current = setTimeout(() => {
+            if (rec.state !== 'inactive') rec.stop()
+          }, DICTATION_API_MAX_MS)
         setStatus('recording')
         setSession({ stream, startedAt: Date.now() })
         // The microphone button gives way to the recording bar; the editor keeps Enter and Esc working.
@@ -358,6 +447,8 @@ export function ChatMicButton({
     () => () => {
       transcriptionRef.current++
       if (statusTimerRef.current) clearTimeout(statusTimerRef.current)
+      if (limitRef.current) clearTimeout(limitRef.current)
+      lastAudioRef.current = null
       const rec = recRef.current
       if (rec && rec.state !== 'inactive') {
         finishRef.current = 'discard'
@@ -428,6 +519,29 @@ export function ChatMicButton({
     localStorage.setItem(MIC_LANGUAGE_KEY, mode)
   }
   const closeCard = useCallback(() => setCardOpen(false), [])
+  // Closing a failure drops its recording: the microphone then starts a new one.
+  const closeNotice = useCallback(() => {
+    setNotice(null)
+    lastAudioRef.current = null
+    setStatus((s) => (s === 'error' ? 'idle' : s))
+  }, [])
+  const openDictationSettings = useCallback(() => {
+    closeNotice()
+    setCardOpen(false)
+    openSettings('chat', { chatTab: 'tools' })
+  }, [closeNotice, openSettings])
+  const providerLabel = (provider: DictationApiProvider) => t(`settings.dictationEngine.${provider}`)
+  const apiProvider: DictationApiProvider = config?.engine === 'groq' ? 'groq' : 'openai'
+  const noticeActions = (current: Notice): DictationNoticeAction[] =>
+    current.kind === 'key-missing'
+      ? [{ label: t('mic.openSettings'), onClick: openDictationSettings, primary: true }]
+      : [
+          ...(current.error === 'key-rejected'
+            ? [{ label: t('mic.openSettings'), onClick: openDictationSettings }]
+            : []),
+          { label: t('view.dismiss'), onClick: closeNotice },
+          { label: t('mic.retry'), onClick: () => void retry(), primary: true },
+        ]
 
   const title = unsupported
     ? t(support.reason === 'os-version' ? 'mic.unsupportedOs' : 'mic.unsupportedPlatform')
@@ -549,12 +663,32 @@ export function ChatMicButton({
           preparing={preparing}
           onInfo={setModel}
           onClose={closeCard}
+          onUseApi={openDictationSettings}
+          boundary={wrapRef}
+        />
+      )}
+
+      {notice && !active && (
+        <DictationNoticeCard
+          title={notice.kind === 'key-missing' ? t('mic.keyMissingTitle') : t('mic.errorTitle')}
+          body={
+            notice.kind === 'key-missing'
+              ? t('mic.keyMissingBody', { provider: providerLabel(notice.provider) })
+              : t(`mic.error.${notice.error}`, { provider: providerLabel(apiProvider) })
+          }
+          actions={noticeActions(notice)}
+          onClose={closeNotice}
+          dismissOnOutsideClick={notice.kind === 'key-missing'}
           boundary={wrapRef}
         />
       )}
 
       {menuOpen && (
         <div className="absolute bottom-full right-0 z-50 mb-1 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl">
+          <div className="truncate px-2.5 py-1.5 text-[12px] text-muted-foreground">
+            {t('mic.engine', { engine: t(`settings.dictationEngine.${config?.engine ?? 'local'}`) })}
+          </div>
+          <div className="my-1 border-t border-white/[0.08]" />
           <div className="px-2.5 py-1 text-[11px] uppercase tracking-wide text-muted-foreground/70">
             {t('mic.microphone')}
           </div>
