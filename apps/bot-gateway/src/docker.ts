@@ -131,6 +131,15 @@ export function execStdout(raw: Buffer): Buffer {
   }
   return Buffer.concat(parts)
 }
+/**
+ * How long Docker may take to create, start, stop or remove a container. It answers only once the work is done, which
+ * on a busy server (several environments updating at once, a large container layer to delete) takes far longer than a
+ * query. Giving up sooner leaves the work half done: an update could remove an environment's container and never
+ * start its new one.
+ */
+export const CONTAINER_CHANGE_TIMEOUT_MS = 120_000
+/** The seconds Docker waits for a container it stops or restarts before killing it. */
+const STOP_GRACE_SECONDS = 10
 export class DockerEngineDriver implements DockerDriver {
   private api: string | null = null
   constructor(
@@ -376,25 +385,46 @@ export class DockerEngineDriver implements DockerDriver {
           SecurityOpt: spec.securityOpt,
           ...(spec.capAdd.length ? { CapAdd: spec.capAdd } : {}),
         },
-      }
+      },
+      CONTAINER_CHANGE_TIMEOUT_MS
     )
     return String(response.Id)
   }
   async start(id: string) {
-    await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/start'))
+    await this.request(
+      'POST',
+      await this.route('/containers/' + encodeURIComponent(id) + '/start'),
+      undefined,
+      CONTAINER_CHANGE_TIMEOUT_MS
+    )
   }
-  async stop(id: string, timeoutSec = 10) {
+  async stop(id: string, timeoutSec = STOP_GRACE_SECONDS) {
     try {
-      await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/stop?t=' + timeoutSec))
+      await this.request(
+        'POST',
+        await this.route('/containers/' + encodeURIComponent(id) + '/stop?t=' + timeoutSec),
+        undefined,
+        timeoutSec * 1000 + CONTAINER_CHANGE_TIMEOUT_MS
+      )
     } catch (error) {
       if (!(error instanceof DockerError && error.status === 304)) throw error
     }
   }
   async restart(id: string) {
-    await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/restart'))
+    await this.request(
+      'POST',
+      await this.route('/containers/' + encodeURIComponent(id) + '/restart'),
+      undefined,
+      STOP_GRACE_SECONDS * 1000 + CONTAINER_CHANGE_TIMEOUT_MS
+    )
   }
   async remove(id: string, force = false) {
-    await this.request('DELETE', await this.route('/containers/' + encodeURIComponent(id) + '?force=' + force))
+    await this.request(
+      'DELETE',
+      await this.route('/containers/' + encodeURIComponent(id) + '?force=' + force),
+      undefined,
+      CONTAINER_CHANGE_TIMEOUT_MS
+    )
   }
   async updateMemory(id: string, bytes: number) {
     // Docker refuses a memory limit above the swap limit already set, so both change together.

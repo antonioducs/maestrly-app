@@ -298,34 +298,36 @@ describe('Claude subscription service integration', () => {
     })
   })
 
-  it('lists one row per Claude model while every id stays selectable and dispatchable', async () => {
+  it('keeps a Claude id visible when the filter hides the alias that resolves to it', async () => {
     const catalogRow = (value: string) => ({ value, resolvedModel: value, displayName: value, description: '' })
     h.state.models = [
       ...h.state.models,
+      { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus', description: 'Most capable' },
+      catalogRow('claude-opus-5-5'),
       { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku', description: 'Fast' },
       catalogRow('claude-haiku-4-5'),
       catalogRow('claude-haiku-4-5-20251001'),
-      catalogRow('claude-opus-4-6'),
     ] as any[]
     const { handlers } = register()
+    const every = ['sonnet', 'opus', 'claude-opus-5-5', 'haiku', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001']
 
+    await expect(handlers.get('chat:models')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, true)).resolves.toEqual(every)
+    expect(handlers.get('chat:hidden-models:set')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, ['opus', 'haiku'])).toEqual({
+      ok: true,
+    })
     await expect(handlers.get('chat:models')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, true)).resolves.toEqual([
       'sonnet',
-      'haiku',
-      'claude-opus-4-6',
-    ])
-    await expect(handlers.get('chat:models')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, false, true)).resolves.toEqual([
-      'sonnet',
-      'haiku',
-      'claude-opus-4-6',
-    ])
-    await expect(listChatProviderModels(CLAUDE_SUBSCRIPTION_PROVIDER_ID, { includeAliases: true })).resolves.toEqual([
-      'sonnet',
-      'haiku',
+      'claude-opus-5-5',
       'claude-haiku-4-5',
       'claude-haiku-4-5-20251001',
-      'claude-opus-4-6',
     ])
+    // The filter screen lists every id, including the ones it hides.
+    await expect(handlers.get('chat:models')?.({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, false, true)).resolves.toEqual(
+      every
+    )
+    await expect(listChatProviderModels(CLAUDE_SUBSCRIPTION_PROVIDER_ID, { includeHidden: true })).resolves.toEqual(
+      every
+    )
     await expect(
       describeChatModelForDispatch(CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'claude-haiku-4-5')
     ).resolves.toMatchObject({ available: true })

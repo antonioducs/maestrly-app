@@ -5,6 +5,24 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-18
+
+### Fixed
+
+- The model picker and the account's model filter list every Claude model
+  again: an alias such as `opus` and the model it points to, such as
+  `claude-opus-5-5`, are separate rows. Since 0.21.0, a model whose alias the
+  filter hid, such as Opus 5.5, was missing from both.
+- An environment whose update failed after its old container was removed starts
+  again: **Start environment** and **Restart environment** create a new
+  container on its home volume instead of failing with "Environment container
+  missing". It needs a bot server on this version. See
+  [Update, disconnect, and remove](docs/bot-fleet.md#update-disconnect-and-remove).
+- The bot server waits up to two minutes for Docker to create, start, stop or
+  remove an environment's container, instead of 10 seconds. On a busy server,
+  updating several environments at once could leave one without a container
+  and another stopped.
+
 ## [0.21.0] - 2026-10-18
 
 ### Added

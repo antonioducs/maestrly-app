@@ -382,7 +382,6 @@ import {
   getModelMeta,
   getProviderModelMeta,
 } from './model-meta'
-import { collapseClaudeModelAliases } from './claude-agent-sdk/model-catalog'
 import { rememberChatSelection, rememberStandaloneChatMode, rememberedChatSelection } from './new-chat-defaults'
 import { currentAsrSupport, transcribe, warmAsr } from '../asr-service'
 import { asrLanguage } from '../../shared/asr'
@@ -11542,12 +11541,13 @@ export function disposeChat(): Promise<void> {
 
 /**
  * Usable models of one provider/account slot, honoring authentication and the user's hidden-model filter unless
- * `includeHidden`. Shared by the model picker IPC and conversation dispatch validation. Pickers get one row per Claude
- * model; `includeAliases` keeps every id the account accepts, for callers that check whether a named id exists.
+ * `includeHidden`. Shared by the model picker IPC and conversation dispatch validation. Claude aliases (`opus`) and
+ * the ids they resolve to (`claude-opus-5-5`) are separate rows: an alias follows the runtime, an id stays pinned, and
+ * the hidden-model filter names each one.
  */
 export async function listChatProviderModels(
   providerId: string,
-  options: { force?: boolean; includeHidden?: boolean; includeAliases?: boolean } = {}
+  options: { force?: boolean; includeHidden?: boolean } = {}
 ): Promise<string[]> {
   const force = options.force === true
   const includeHidden = options.includeHidden === true
@@ -11580,9 +11580,7 @@ export async function listChatProviderModels(
     if (!status.authenticated) return []
     try {
       const models = await getClaudeSubscriptionManager(accountId).listModels(undefined, force)
-      return visible(
-        (options.includeAliases === true ? models : collapseClaudeModelAliases(models)).map((model) => model.value)
-      )
+      return visible(models.map((model) => model.value))
     } catch (error) {
       throw new Error(claudeSubscriptionErrorMessage(error))
     }
@@ -11668,7 +11666,7 @@ export async function describeChatModelForDispatch(
     return { available: false, reasoning: false, reasoningEfforts: [], nativeUltraMode: false, fastMode: false }
   }
   const models = await bestEffortWithin(
-    listChatProviderModels(providerId, { includeHidden: true, includeAliases: true }).catch(() => [] as string[]),
+    listChatProviderModels(providerId, { includeHidden: true }).catch(() => [] as string[]),
     10_000,
     [] as string[]
   )
