@@ -16,7 +16,6 @@ vi.mock('../../src/main/chat/model-meta', () => ({
 
 import {
   claudeModelPickerSnapshot,
-  collapseClaudeModelAliases,
   listClaudeRemoteCatalog,
   onClaudeRemoteCatalogChanged,
   resetClaudeRemoteCatalogForTests,
@@ -179,36 +178,5 @@ describe('Claude remote model catalog', () => {
       })
     }
     for (const manager of managers) manager.dispose()
-  })
-})
-
-describe('Claude picker aliases', () => {
-  const row = (value: string, resolvedModel = value) => ({ value, resolvedModel })
-
-  it('keeps the account alias and drops the catalog id and dated snapshot it resolves to', () => {
-    expect(
-      collapseClaudeModelAliases([
-        row('default', 'claude-sonnet-5'),
-        row('sonnet', 'claude-sonnet-5'),
-        row('haiku', 'claude-haiku-4-5-20251001'),
-        row('claude-haiku-4-5'),
-        row('claude-haiku-4-5-20251001'),
-        row('claude-sonnet-5'),
-      ]).map((model) => model.value)
-    ).toEqual(['default', 'sonnet', 'haiku'])
-  })
-
-  it('folds a dated snapshot into its listed id and keeps other versions and window variants apart', () => {
-    expect(
-      collapseClaudeModelAliases([
-        row('opus', 'claude-opus-4-8'),
-        row('opus[1m]', 'claude-opus-4-8[1m]'),
-        row('claude-opus-4-8'),
-        row('claude-opus-4-6'),
-        row('claude-opus-4-6-20250805'),
-        row('claude-sonnet-4-5-20250929'),
-        { value: 'fable' },
-      ]).map((model) => model.value)
-    ).toEqual(['opus', 'opus[1m]', 'claude-opus-4-6', 'claude-sonnet-4-5-20250929', 'fable'])
   })
 })

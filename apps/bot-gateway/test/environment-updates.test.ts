@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { GatewayError } from '../src/errors.js'
 import { Lifecycle } from '../src/lifecycle.js'
 import { harness } from './harness.js'
@@ -155,6 +155,37 @@ describe('environment updates', () => {
     await h.lifecycle.scheduleUpdate(environmentId)
     await h.lifecycle.archiveEnvironment(environmentId)
     expect(h.store.getEnvironment(environmentId)?.updateRequestedAt).toBeNull()
+  })
+
+  it('starts an environment again in a new container after an update that removed the old one and failed', async () => {
+    const { h, environmentId } = await setup()
+    const volume = containerOf(h, environmentId)!.spec.volume
+    outdate(h)
+    const create = vi
+      .spyOn(h.docker, 'containerCreate')
+      .mockRejectedValueOnce(new GatewayError('DOCKER_UNAVAILABLE', 'Docker timed out'))
+    await h.lifecycle.restartEnvironment(environmentId)
+    expect(create).toHaveBeenCalledOnce()
+    expect(containerOf(h, environmentId)).toBeUndefined()
+    expect(h.store.getEnvironment(environmentId)).toMatchObject({
+      lifecycle: 'failed',
+      setup: { step: 'failed', error: 'DOCKER_UNAVAILABLE' },
+    })
+
+    expect((await h.lifecycle.startEnvironment(environmentId)).lifecycle).toBe('running')
+    expect(containerOf(h, environmentId)).toMatchObject({ state: 'running', imageId: NEW_IMAGE })
+    expect(containerOf(h, environmentId)!.spec.volume).toBe(volume)
+    expect(h.lifecycle.get(h.bot.id)?.lifecycle).toBe('running')
+  })
+
+  it('restarts an environment whose container is gone in a new one on the same volume', async () => {
+    const { h, environmentId } = await setup()
+    const before = containerOf(h, environmentId)!
+    h.docker.containers.delete(before.id)
+    expect((await h.lifecycle.restartEnvironment(environmentId)).lifecycle).toBe('running')
+    expect(containerOf(h, environmentId)).toMatchObject({ state: 'running' })
+    expect(containerOf(h, environmentId)!.spec.volume).toBe(before.spec.volume)
+    expect(h.lifecycle.get(h.bot.id)?.lifecycle).toBe('running')
   })
 
   it('keeps a waiting update across a gateway restart, and drops one that no longer has an update', async () => {

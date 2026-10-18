@@ -1102,6 +1102,48 @@ describe('environments', () => {
     })
     await expect(docker.updateMemory('refused', 2 * GiB)).rejects.toMatchObject({ status: 409 })
   })
+
+  it('waits for Docker to finish changing a container longer than for a query', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-engine-'))
+    dirs.push(dir)
+    const socket = dockerSocketPath(dir)
+    // A busy server: every answer but the API version takes longer than the driver waits for a query.
+    const server = http.createServer((req, res) => {
+      req.resume()
+      res.setHeader('Content-Type', 'application/json')
+      if (req.url === '/version') return res.end(JSON.stringify({ ApiVersion: '1.45', Version: '28.0' }))
+      setTimeout(() => {
+        if (req.url?.includes('/containers/create')) return res.end(JSON.stringify({ Id: 'replacement' }))
+        if (req.method === 'DELETE' || req.url?.endsWith('/start') || req.url?.includes('/stop')) {
+          res.writeHead(204)
+          return res.end()
+        }
+        res.end(JSON.stringify({ Id: 'replacement', State: { Status: 'running' }, Config: { Labels: {} } }))
+      }, 300)
+    })
+    await new Promise<void>((resolve) => server.listen(socket, resolve))
+    closers.push(() => new Promise<void>((resolve) => server.close(() => resolve())))
+    const docker = new DockerEngineDriver(socket, 100)
+    await expect(docker.inspect('replacement')).rejects.toMatchObject({ code: 'DOCKER_UNAVAILABLE' })
+    await docker.stop('old')
+    await docker.remove('old')
+    const id = await docker.containerCreate({
+      name: 'maestrly-env-work',
+      image: 'bot',
+      hostname: 'work',
+      labels: {},
+      env: [],
+      network: 'maestrly-bots',
+      volume: 'maestrly-env-work-home',
+      memory: GiB,
+      shmSize: GiB,
+      securityOpt: [],
+      user: '1000',
+      capAdd: [],
+    })
+    expect(id).toBe('replacement')
+    await docker.start(id)
+  })
 })
 
 describe('installation failures', () => {

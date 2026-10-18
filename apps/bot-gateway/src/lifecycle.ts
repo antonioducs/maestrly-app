@@ -1481,10 +1481,10 @@ export class Lifecycle {
       if (environment.lifecycle !== 'running') {
         this.clearUpdate(id)
         const container = await this.container(environment)
-        if (!container)
-          throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
         try {
-          await this.startWithCurrentImage(id, container, false, via)
+          // An update that failed after removing the old container leaves none: a new one is created on its volume.
+          if (container) await this.startWithCurrentImage(id, container, false, via)
+          else await this.provision(id)
           this.lifecycleActivity(id, via, 'started')
         } catch (error) {
           this.failEnvironment(id, error)
@@ -1527,7 +1527,6 @@ export class Lifecycle {
   private async restartLocked(id: string, via: Via): Promise<FleetEnvironment> {
     const environment = this.requireEnvironment(id)
     const container = await this.container(environment)
-    if (!container) throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
     this.updateEnvironment(id, { lifecycle: 'restarting', updateRequestedAt: null })
     this.cancelReconcile(id)
     this.stopLink(id)
@@ -1535,7 +1534,11 @@ export class Lifecycle {
     this.onCloseEnvironmentScreens(id, 4002)
     this.onCloseEnvironmentBridges(id)
     try {
-      if (!(await this.startWithCurrentImage(id, container, true, via))) this.lifecycleActivity(id, via, 'restarted')
+      if (!container) {
+        await this.provision(id)
+        this.lifecycleActivity(id, via, 'restarted')
+      } else if (!(await this.startWithCurrentImage(id, container, true, via)))
+        this.lifecycleActivity(id, via, 'restarted')
     } catch (error) {
       this.failEnvironment(id, error)
     }
