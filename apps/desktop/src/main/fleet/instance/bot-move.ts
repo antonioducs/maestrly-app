@@ -1,6 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants as fsConstants, createReadStream, createWriteStream } from 'node:fs'
-import { chmod, copyFile, lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  link as hardLink,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  symlink,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { type Readable, Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -17,7 +30,6 @@ import { standaloneConversationRelPath } from '../../app-paths'
 import { attachmentConversationDir } from '../../chat/attachment-artifacts'
 import { generatedImageConversationDir } from '../../chat/generated-images'
 import { messagesDigest } from '../../conversation-move/digest'
-import { exactRelative } from '../../conversation-move/package'
 import { MoveError } from '../../conversation-move/errors'
 import {
   deleteImportedConversationRows,
@@ -144,22 +156,96 @@ export interface BotMoveRows {
 /** A standalone chat's id, as its managed folder is named (`standaloneConversationRelPath`). */
 const conversationIdSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 const invalid = (message: string): InstanceHttpError => new InstanceHttpError(400, 'INVALID_REQUEST', message)
-const isPartial = (name: string): boolean => name.endsWith('.tmp') || name.endsWith('.partial')
+/** How many files a move reads or places at once: a bot's folder may hold tens of thousands of small ones. */
+const FILE_CONCURRENCY = 16
+/** Runs `task` on each item, `limit` at a time, answering in their order; the first failure stops the rest. */
+async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  let failed = false
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const index = next++
+      try {
+        out[index] = await task(items[index])
+      } catch (error) {
+        failed = true
+        throw error
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
 
-/** Regular files under `dir`, relative to it, in a stable order; links and special files never move. */
-async function regularFiles(dir: string, prefix: string, skip: (name: string) => boolean): Promise<string[]> {
+/** What the app leaves while it writes a file of its own folders; such a file never moves. */
+const isPartial = (name: string): boolean => name.endsWith('.tmp') || name.endsWith('.partial')
+/** The app's own folders leave out partial files; a working folder moves whole. */
+const skipPartial = (name: string, directory: boolean): boolean => !directory && isPartial(name)
+const skipNothing = (): boolean => false
+
+/**
+ * A path inside one of the bot's folders: relative, with no empty, `.` or `..` segment, backslash or NUL. A bot carries
+ * its working folder whole, its Git folders too, where a conversation moving between computers takes its repository
+ * as a bundle and refuses `.git` among its files.
+ */
+function packageRelative(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw || raw.includes('\0') || raw.includes('\\') || path.posix.isAbsolute(raw))
+    return null
+  return raw.split('/').some((segment) => !segment || segment === '.' || segment === '..') ? null : raw
+}
+const within = (root: string, target: string): boolean => target === root || target.startsWith(root + path.sep)
+
+/**
+ * A symbolic link of a bot's working folder: it moves as a link. A relative one keeps its target as written; an
+ * absolute one (`rooted`) keeps it relative to the working folder, and leads into that folder where the bot arrives.
+ */
+interface Link {
+  relative: string
+  target: string
+  rooted: boolean
+}
+/**
+ * A link of the working folder `root` (a real path) that moves: one that leads inside it, as written and, when it
+ * leads somewhere, as resolved. One that leads out (to another conversation, or a file of the environment) stays: its
+ * target does not move, and where the bot arrives it would lead to that environment's files.
+ */
+async function insideLink(root: string, relative: string): Promise<Link | null> {
+  const absolute = path.join(root, relative)
+  const target = await readlink(absolute).catch(() => null)
+  if (!target || target.length > 4096) return null
+  const resolved = path.resolve(path.dirname(absolute), target)
+  if (!within(root, resolved)) return null
+  const real = await realpath(absolute).catch(() => null)
+  if (real !== null && !within(root, real)) return null
+  return path.isAbsolute(target)
+    ? { relative, target: path.relative(root, resolved).split(path.sep).join('/'), rooted: true }
+    : { relative, target, rooted: false }
+}
+/** What a link reads where its working folder is `root`. */
+const linkText = (root: string, link: Link): string => (link.rooted ? path.join(root, link.target) : link.target)
+
+/**
+ * The regular files and symbolic links under `dir`, relative to it, in a stable order; other special files never
+ * move. `skip` leaves files and folders out by name.
+ */
+async function walk(
+  dir: string,
+  prefix: string,
+  skip: (name: string, directory: boolean) => boolean,
+  out: { files: string[]; links: string[] } = { files: [], links: [] }
+): Promise<{ files: string[]; links: string[] }> {
   const entries = await readdir(dir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null
     throw error
   })
-  if (!entries) return []
-  const out: string[] = []
+  if (!entries) return out
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (skip(entry.name)) continue
+    if (skip(entry.name, entry.isDirectory())) continue
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.isFile()) {
-      if (!isPartial(entry.name)) out.push(relative)
-    } else if (entry.isDirectory()) out.push(...(await regularFiles(path.join(dir, entry.name), relative, skip)))
+    if (entry.isFile()) out.files.push(relative)
+    else if (entry.isSymbolicLink()) out.links.push(relative)
+    else if (entry.isDirectory()) await walk(path.join(dir, entry.name), relative, skip, out)
   }
   return out
 }
@@ -189,37 +275,52 @@ function extractionRow(conversationId: string): Row | null {
   )
 }
 
-/** Every file that moves with a bot, from where it is now. */
-async function collectSources(botId: string, roots: BotRoots): Promise<Source[]> {
-  const sources: Source[] = []
+/** Everything that moves with a bot, from where it is now: its files, and the links of its working folder. */
+interface Sources {
+  files: Source[]
+  links: Link[]
+}
+async function collectSources(botId: string, roots: BotRoots): Promise<Sources> {
+  const files: Source[] = []
+  const links: Link[] = []
   for (const folder of BOT_FOLDERS) {
     if (!folder.moves) continue
     const dir = botFolderPath(folder, roots, botId)
-    const skip = folder.kind === 'browser' ? (name: string) => BROWSER_CACHES.has(name) : () => false
-    for (const relative of await regularFiles(dir, '', skip))
-      sources.push({ kind: folder.kind as BotMoveFileKind, relative, absolute: path.join(dir, relative) })
+    const skip =
+      folder.kind === 'browser'
+        ? (name: string, directory: boolean) => BROWSER_CACHES.has(name) || skipPartial(name, directory)
+        : skipPartial
+    for (const relative of (await walk(dir, '', skip)).files)
+      files.push({ kind: folder.kind as BotMoveFileKind, relative, absolute: path.join(dir, relative) })
   }
   const conversationId = conversationOf(botId)
   if (conversationId) {
+    const workdir = await workdirOf(roots, conversationId)
+    const found = await walk(workdir, '', skipNothing)
+    for (const relative of found.files)
+      files.push({ kind: 'workdir', relative, absolute: path.join(workdir, relative) })
+    for (const relative of found.links) {
+      const link = await insideLink(workdir, relative)
+      if (link) links.push(link)
+    }
     const folders: Array<[BotMoveFileKind, string]> = [
-      ['workdir', await workdirOf(roots, conversationId)],
       ['attachment', attachmentConversationDir(conversationId)],
       ['generated-image', generatedImageConversationDir(conversationId)],
     ]
     for (const [kind, dir] of folders)
-      for (const relative of await regularFiles(dir, '', () => false))
-        sources.push({ kind, relative, absolute: path.join(dir, relative) })
+      for (const relative of (await walk(dir, '', skipPartial)).files)
+        files.push({ kind, relative, absolute: path.join(dir, relative) })
     for (const run of await runsOf(botId, roots)) {
       const runFolders: Array<[BotMoveFileKind, string]> = [
         ['run-attachment', attachmentConversationDir(run.conversationId)],
         ['run-generated-image', generatedImageConversationDir(run.conversationId)],
       ]
       for (const [kind, dir] of runFolders)
-        for (const relative of await regularFiles(dir, run.conversationId, () => false))
-          sources.push({ kind, relative, absolute: path.join(dir, relative.slice(run.conversationId.length + 1)) })
+        for (const relative of (await walk(dir, run.conversationId, skipPartial)).files)
+          files.push({ kind, relative, absolute: path.join(dir, relative.slice(run.conversationId.length + 1)) })
     }
   }
-  return sources
+  return { files, links }
 }
 
 function memoryRows(botId: string): Row[] {
@@ -236,18 +337,28 @@ function memoriesDigest(botId: string): { memories: number; memoriesSha256: stri
     )
   return { memories: rows.length, memoriesSha256: hash.digest('hex') }
 }
-async function filesDigest(sources: Source[]): Promise<{ files: number; filesSha256: string }> {
-  const lines: string[] = []
-  for (const source of sources) lines.push(`${source.kind}/${source.relative}:${await hashFile(source.absolute)}`)
+/** The bot's files and links in one hash; `hashes` holds the SHA-256 of the files when they were just read. */
+async function filesDigest(
+  sources: Sources,
+  hashes?: readonly string[]
+): Promise<{ files: number; filesSha256: string }> {
+  const read = hashes ?? (await mapLimit(sources.files, FILE_CONCURRENCY, (source) => hashFile(source.absolute)))
+  const lines = sources.files.map((source, index) => `${source.kind}/${source.relative}:${read[index]}`)
+  for (const link of sources.links) lines.push(`link:${JSON.stringify([link.relative, link.target, link.rooted])}`)
   lines.sort()
   return { files: lines.length, filesSha256: createHash('sha256').update(lines.join('\n')).digest('hex') }
 }
 
 /**
  * What this environment holds of a bot, reduced to counts and hashes: the environment it leaves computes it when it
- * freezes the bot, the one it joins once it imported it, and both must agree.
+ * freezes the bot, the one it joins once it imported it, and both must agree. A package being written passes what it
+ * read, so its files are not read once more.
  */
-export async function botMoveDigest(botId: string, roots: BotRoots): Promise<FleetBotMoveDigest> {
+export async function botMoveDigest(
+  botId: string,
+  roots: BotRoots,
+  read?: { sources: Sources; hashes: readonly string[] }
+): Promise<FleetBotMoveDigest> {
   const conversationId = conversationOf(botId)
   let messages = conversationId
     ? messagesDigest(conversationId)
@@ -271,7 +382,7 @@ export async function botMoveDigest(botId: string, roots: BotRoots): Promise<Fle
   return fleetBotMoveDigestSchema.parse({
     ...messages,
     ...memoriesDigest(botId),
-    ...(await filesDigest(await collectSources(botId, roots))),
+    ...(await filesDigest(read?.sources ?? (await collectSources(botId, roots)), read?.hashes)),
   })
 }
 
@@ -295,6 +406,8 @@ const manifestSchema = z.object({
       mode: z.number().int().min(0).max(0o7777),
     })
   ),
+  /** The links of the working folder, made once its files are in place. */
+  links: z.array(z.object({ relative: z.string(), target: z.string().max(4096), rooted: z.boolean() })),
 })
 type Manifest = z.infer<typeof manifestSchema>
 const MANIFEST = 'manifest.json'
@@ -335,26 +448,24 @@ export async function writeBotPackage(
   }
   const rowsBytes = Buffer.from(JSON.stringify(rows))
   const sources = await collectSources(botId, roots)
-  const entries: Entry[] = []
-  let total = rowsBytes.length
-  for (const source of sources) {
-    const relative = exactRelative(source.relative)
-    if (!relative) throw invalid(`Unsafe package path: ${source.relative}`)
+  for (const item of [...sources.files, ...sources.links])
+    if (!packageRelative(item.relative)) throw invalid(`Unsafe package path: ${item.relative}`)
+  const entries = await mapLimit(sources.files, FILE_CONCURRENCY, async (source): Promise<Entry> => {
     const info = await lstat(source.absolute)
     if (!info.isFile()) throw invalid('A file of the bot changed while it was packed.')
-    total += info.size
-    entries.push({
-      path: entryPath(source.kind, relative),
+    return {
+      path: entryPath(source.kind, source.relative),
       kind: source.kind,
-      relative,
+      relative: source.relative,
       size: info.size,
       sha256: await hashFile(source.absolute),
       mode: info.mode & 0o777,
-    })
-  }
+    }
+  })
+  const total = entries.reduce((sum, entry) => sum + entry.size, rowsBytes.length)
   if (total > FLEET_BOT_MOVE_LIMITS.packageMaxBytes)
     throw new InstanceHttpError(409, 'CONFLICT', 'This bot has too many files to move.')
-  const digest = await botMoveDigest(botId, roots)
+  const digest = await botMoveDigest(botId, roots, { sources, hashes: entries.map((entry) => entry.sha256) })
   const manifest: Manifest = {
     format: BOT_MOVE_PACKAGE_FORMAT,
     version: BOT_MOVE_PACKAGE_VERSION,
@@ -364,6 +475,7 @@ export async function writeBotPackage(
     digest,
     rows: { size: rowsBytes.length, sha256: createHash('sha256').update(rowsBytes).digest('hex') },
     entries,
+    links: sources.links,
   }
   const partial = `${destination}.${randomUUID()}.partial`
   const pack = tar.pack()
@@ -387,7 +499,7 @@ export async function writeBotPackage(
             callback(null, chunk)
           },
         })
-        pipeline(createReadStream(sources[index].absolute), hashing, sink).catch(reject)
+        pipeline(createReadStream(sources.files[index].absolute), hashing, sink).catch(reject)
       })
       // The bot is frozen while it is packed; a change here means something wrote to its files anyway.
       if (hash.digest('hex') !== entry.sha256) throw invalid('A file of the bot changed while it was packed.')
@@ -478,11 +590,22 @@ function parseManifest(bytes: Buffer, expected: { appVersion: string; botId: str
   let total = manifest.rows.size
   const paths = new Set<string>()
   for (const entry of manifest.entries) {
-    const relative = exactRelative(entry.relative)
+    const relative = packageRelative(entry.relative)
     if (!relative || entry.path !== entryPath(entry.kind, relative) || paths.has(entry.path))
       throw invalid(`Unsafe or duplicate package entry: ${entry.path}`)
     paths.add(entry.path)
     total += entry.size
+  }
+  const links = new Set<string>()
+  for (const link of manifest.links) {
+    if (
+      !packageRelative(link.relative) ||
+      link.target.includes('\0') ||
+      (!link.rooted && (!link.target || path.posix.isAbsolute(link.target))) ||
+      links.has(link.relative)
+    )
+      throw invalid(`Unsafe or duplicate package link: ${link.relative}`)
+    links.add(link.relative)
   }
   if (total > FLEET_BOT_MOVE_LIMITS.packageMaxBytes) throw invalid('The package is too large.')
   return manifest
@@ -693,7 +816,10 @@ function insertMemoryRows(botId: string, rows: BotMoveRows): void {
   })
 }
 
-/** Copies one extracted file to its place, never through a link and never over an existing file. */
+/**
+ * Puts one extracted file in its place, never through a link and never over an existing file. The extracted copy is
+ * deleted with its staging folder, so the file is linked there when both are on one file system, and copied otherwise.
+ */
 async function placeFile(from: string, root: string, relative: string, mode: number): Promise<void> {
   const target = path.join(root, relative)
   await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
@@ -701,12 +827,29 @@ async function placeFile(from: string, root: string, relative: string, mode: num
   if (realParent !== realRoot && !realParent.startsWith(realRoot + path.sep))
     throw invalid(`${relative} would be written outside its folder.`)
   try {
-    await copyFile(from, target, fsConstants.COPYFILE_EXCL)
+    await hardLink(from, target).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'EEXIST') throw error
+      return copyFile(from, target, fsConstants.COPYFILE_EXCL)
+    })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw invalid(`${relative} is already here.`)
     throw error
   }
   await chmod(target, mode & 0o777)
+}
+/** Makes a link of the working folder `root` (a real path) as it was, refusing one that leads out of it as written. */
+async function placeLink(root: string, link: Link): Promise<void> {
+  const target = path.join(root, link.relative)
+  const text = linkText(root, link)
+  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
+  if (!within(root, await realpath(path.dirname(target))) || !within(root, path.resolve(path.dirname(target), text)))
+    throw invalid(`${link.relative} would lead outside its folder.`)
+  try {
+    await symlink(text, target)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw invalid(`${link.relative} is already here.`)
+    throw error
+  }
 }
 
 /**
@@ -721,7 +864,7 @@ export async function importBotPackage(
   directory: string,
   appVersion: string
 ): Promise<void> {
-  const { rows, files } = await readBotPackage(file, directory, { appVersion, botId })
+  const { manifest, rows, files } = await readBotPackage(file, directory, { appVersion, botId })
   const conversationId = rows.stored.primaryConversationId
   let inserted = false
   const insertedRuns: string[] = []
@@ -731,6 +874,7 @@ export async function importBotPackage(
       roots,
       rows,
       files,
+      manifest.links,
       () => {
         inserted = true
       },
@@ -766,6 +910,7 @@ async function restore(
   roots: BotRoots,
   rows: BotMoveRows,
   files: Array<Entry & { absolute: string }>,
+  links: readonly Link[],
   onInserted: () => void,
   onRunInserted: (conversationId: string) => void
 ): Promise<void> {
@@ -795,31 +940,42 @@ async function restore(
     onRunInserted(runConversationId)
     runConversations.add(runConversationId)
   }
-  for (const entry of files) {
-    let root: string
+  // Where each file goes, decided for all of them before any is placed.
+  const placements = files.map((entry) => {
     if (entry.kind === 'run-attachment' || entry.kind === 'run-generated-image') {
       const [runConversationId, ...rest] = entry.relative.split('/')
       if (!runConversations.has(runConversationId) || !rest.length)
         throw invalid('The package holds files of a routine run it does not hold.')
-      root =
+      const root =
         entry.kind === 'run-attachment'
           ? attachmentConversationDir(runConversationId)
           : generatedImageConversationDir(runConversationId)
-      await mkdir(root, { recursive: true, mode: 0o700 })
-      await placeFile(entry.absolute, root, rest.join('/'), entry.mode)
-      continue
+      return { entry, root, relative: rest.join('/') }
     }
     if (entry.kind === 'workdir' || entry.kind === 'attachment' || entry.kind === 'generated-image') {
       if (!conversationId || !workdir) throw invalid('The package holds conversation files without a conversation.')
-      root =
+      const root =
         entry.kind === 'workdir'
           ? workdir
           : entry.kind === 'attachment'
             ? attachmentConversationDir(conversationId)
             : generatedImageConversationDir(conversationId)
-    } else root = botFolderPath(folders.get(entry.kind)!, roots, botId)
+      return { entry, root, relative: entry.relative }
+    }
+    return { entry, root: botFolderPath(folders.get(entry.kind)!, roots, botId), relative: entry.relative }
+  })
+  for (const root of new Set(placements.map((placement) => placement.root)))
     await mkdir(root, { recursive: true, mode: 0o700 })
-    await placeFile(entry.absolute, root, entry.relative, entry.mode)
+  await mapLimit(placements, FILE_CONCURRENCY, ({ entry, root, relative }) =>
+    placeFile(entry.absolute, root, relative, entry.mode)
+  )
+  // Links come last, so that no file is written through one.
+  if (links.length) {
+    if (!workdir) throw invalid('The package holds links without a conversation.')
+    for (const link of links) await placeLink(workdir, link)
+    // A link may lead through another: resolved, none may lead out of the working folder.
+    for (const link of links)
+      if (!(await insideLink(workdir, link.relative))) throw invalid(`${link.relative} would lead outside its folder.`)
   }
   insertMemoryRows(botId, rows)
   writeBotPaused(botId, rows.paused)
