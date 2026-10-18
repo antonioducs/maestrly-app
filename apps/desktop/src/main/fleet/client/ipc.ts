@@ -7,6 +7,7 @@ import {
   FLEET_BOT_MOVE_FEATURE,
   FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_PARALLEL_TURNS_FEATURE,
+  FLEET_DICTATION_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_DEVICES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -55,6 +56,7 @@ import { FLEET_ATTENDED_FILES_MAX } from '../../../shared/fleet-downloads'
 import { FleetClientError } from './api'
 import { setAttendedFleetFiles } from './download-notices'
 import { fleetClientService as fleet } from './service'
+import { getDictationEngine, getDictationKey } from '../../dictation/settings'
 import {
   FLEET_BOT_MOVE_UNSUPPORTED,
   FLEET_DEVICES_UNSUPPORTED,
@@ -174,6 +176,24 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:revokeDevice', (_event, deviceId: unknown) => {
     if (!fleet.hasFeature(FLEET_DEVICES_FEATURE)) throw new Error(FLEET_DEVICES_UNSUPPORTED)
     return fleet.call('deviceRevoke', { params: { deviceId: deviceIdSchema.parse(deviceId) } })
+  })
+  // The server's speech-to-text key, which its phones dictate through; null from servers that predate it.
+  const requireDictation = () => {
+    if (!fleet.hasFeature(FLEET_DICTATION_FEATURE))
+      throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Update the bot server to dictate from the phone')
+  }
+  reg.handle('fleet:dictation', () => (fleet.hasFeature(FLEET_DICTATION_FEATURE) ? fleet.call('dictationGet') : null))
+  // Sends this computer's dictation engine and key, so phones dictate with the same one.
+  reg.mhandle('fleet:dictationUseLocal', () => {
+    requireDictation()
+    const engine = getDictationEngine()
+    const key = engine === 'local' ? null : getDictationKey(engine)
+    if (engine === 'local' || !key) throw new Error('No dictation key on this computer')
+    return fleet.call('dictationKeySet', { body: { provider: engine, key } })
+  })
+  reg.mhandle('fleet:dictationRemove', () => {
+    requireDictation()
+    return fleet.call('dictationKeyDelete')
   })
   reg.handle('fleet:getSnapshot', () => fleet.getSnapshot())
   reg.mhandle('fleet:refresh', () => fleet.refresh())

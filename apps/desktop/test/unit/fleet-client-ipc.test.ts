@@ -20,8 +20,14 @@ const mocks = vi.hoisted(() => ({
   getDownload: vi.fn(async () => null),
   prepareMedia: vi.fn(async () => 'maestrly-media://fleet/bot/f-file/' + '0'.repeat(32)),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
+  dictationEngine: vi.fn((): string => 'local'),
+  dictationKey: vi.fn((_provider: string): string | null => null),
 }))
 vi.mock('../../src/main/fleet/client/download-notices', () => ({ setAttendedFleetFiles: mocks.attend }))
+vi.mock('../../src/main/dictation/settings', () => ({
+  getDictationEngine: mocks.dictationEngine,
+  getDictationKey: mocks.dictationKey,
+}))
 vi.mock('../../src/main/fleet/client/service', () => ({
   fleetClientService: {
     start: vi.fn(),
@@ -477,5 +483,75 @@ describe('fleet IPC validation', () => {
     expect(gateway).toContain(`export const RESTART_TO_OPEN_SCREEN = '${GATEWAY_RESTART_TO_OPEN_SCREEN}'`)
     expect(gateway).toContain("throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')")
     expect(gateway).toContain("throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')")
+  })
+})
+
+describe('fleet dictation IPC', () => {
+  afterEach(() => {
+    mocks.hasFeature.mockImplementation(() => false)
+    mocks.dictationEngine.mockImplementation(() => 'local')
+    mocks.dictationKey.mockImplementation(() => null)
+  })
+  const register = () => {
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    return { mutations, reads }
+  }
+
+  it('reads nothing from a server that lacks dictation', async () => {
+    mocks.hasFeature.mockImplementation(() => false)
+    const { reads } = register()
+    expect(await reads.get('fleet:dictation')!({})).toBeNull()
+    expect(mocks.call).not.toHaveBeenCalled()
+  })
+
+  it("reads the server's dictation state", async () => {
+    mocks.hasFeature.mockImplementation((feature) => feature === 'dictation')
+    mocks.call.mockResolvedValueOnce({ configured: false, provider: null, keyHint: null })
+    const { reads } = register()
+    expect(await reads.get('fleet:dictation')!({})).toEqual({ configured: false, provider: null, keyHint: null })
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('dictationGet')
+  })
+
+  it("sends this computer's engine and key to the server", async () => {
+    mocks.hasFeature.mockImplementation((feature) => feature === 'dictation')
+    mocks.dictationEngine.mockReturnValue('openai')
+    mocks.dictationKey.mockImplementation((provider) => (provider === 'openai' ? 'sk-x' : null))
+    const { mutations } = register()
+    await mutations.get('fleet:dictationUseLocal')!({})
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('dictationKeySet', {
+      body: { provider: 'openai', key: 'sk-x' },
+    })
+  })
+
+  it('sends nothing without a key on this computer', async () => {
+    mocks.hasFeature.mockImplementation((feature) => feature === 'dictation')
+    const { mutations } = register()
+    mocks.dictationEngine.mockReturnValue('local')
+    mocks.dictationKey.mockReturnValue('sk-x')
+    await expect(async () => mutations.get('fleet:dictationUseLocal')!({})).rejects.toThrow(
+      'No dictation key on this computer'
+    )
+    mocks.dictationEngine.mockReturnValue('groq')
+    mocks.dictationKey.mockReturnValue(null)
+    await expect(async () => mutations.get('fleet:dictationUseLocal')!({})).rejects.toThrow(
+      'No dictation key on this computer'
+    )
+    expect(mocks.call).not.toHaveBeenCalled()
+  })
+
+  it("removes the server's key, and refuses on a server without dictation", async () => {
+    mocks.hasFeature.mockImplementation((feature) => feature === 'dictation')
+    const { mutations } = register()
+    await mutations.get('fleet:dictationRemove')!({})
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('dictationKeyDelete')
+    mocks.hasFeature.mockImplementation(() => false)
+    await expect(async () => mutations.get('fleet:dictationRemove')!({})).rejects.toThrow(
+      'Update the bot server to dictate from the phone'
+    )
   })
 })
