@@ -16,6 +16,7 @@ import {
   fleetFileIdSchema,
   type FleetFileRef,
   FLEET_PROTOCOL_HEADER,
+  FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
   FLEET_CHAT_ATTENTION_QUERY,
@@ -811,8 +812,14 @@ export class InstanceClient {
   editInput(inputId: string, body: FleetEditMessageRequest) {
     return this.botCall('inputEdit', 'botInputEdit', { inputId }, undefined, body, 30000)
   }
-  cancelTurn() {
-    return this.botCall('turnCancel', 'botTurnCancel')
+  /** Stops a turn: every one without `conversation`, else `primary` or a side conversation's (`parallel-turns`). */
+  cancelTurn(conversation?: string) {
+    return this.botCall(
+      'turnCancel',
+      'botTurnCancel',
+      {},
+      conversation === undefined ? undefined : { [FLEET_CANCEL_CONVERSATION_QUERY]: conversation }
+    )
   }
   resolveInteraction(id: string, body: FleetInteractionResolution) {
     return this.botCall('interactionResolve', 'botInteractionResolve', { id }, undefined, body)

@@ -100,6 +100,7 @@ function botRecord(id: string, overrides: Partial<FleetBot> = {}): FleetBot {
     move: null,
     runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
     runningRun: null,
+    turns: null,
     createdAt: at(20),
     updatedAt: at(20),
     ...overrides,

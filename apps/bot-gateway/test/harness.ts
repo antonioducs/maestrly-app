@@ -422,6 +422,10 @@ async function fake(
         receipts.set(input.idempotencyKey, receipt)
         return send(200, receipt)
       }
+      if (url.pathname === '/v1/turn/cancel' && req.method === 'POST') {
+        res.writeHead(204)
+        return res.end()
+      }
       const run = /^\/v1\/runs\/([^/]+)(\/transcript)?$/.exec(url.pathname)
       if (run) {
         const runId = decodeURIComponent(run[1])

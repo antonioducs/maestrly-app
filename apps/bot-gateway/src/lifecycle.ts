@@ -34,6 +34,9 @@ import {
   type FleetInstanceEvent,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
+  type FleetInstanceTurn,
+  type FleetBotTurn,
+  fleetInstanceTurns,
   type FleetLifecycle,
   type FleetPatchBotRequest,
   type FleetResources,
@@ -558,16 +561,18 @@ export class Lifecycle {
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
     bot.resources = resourcesView(resources)
-    // The routine run whose own conversation its turn works in.
-    const runId = status && status.turn.state !== 'idle' ? status.turn.runId : null
-    const run = runId ? this.store.routineRunById(runId) : null
+    // Every turn it runs now, one per conversation (`parallel-turns`), and for older readers the routine run one of
+    // them works on, in the run's own conversation.
+    bot.turns = status ? this.botTurns(bot.id, fleetInstanceTurns(status)) : null
+    const routineTurn = bot.turns?.find((turn) => turn.kind === 'routine') ?? null
+    const run = routineTurn?.id ? this.store.routineRunById(routineTurn.id) : null
     bot.runningRun =
-      run && run.botId === bot.id
+      run && routineTurn
         ? {
             id: run.id,
             routineId: run.routineId,
             title: run.routineTitle ?? '',
-            startedAt: status?.turn.startedAt ?? null,
+            startedAt: routineTurn.startedAt,
           }
         : null
     if (bot.lifecycle === 'stopped' || bot.lifecycle === 'archived' || bot.lifecycle === 'failed')
@@ -578,7 +583,9 @@ export class Lifecycle {
     else if (status.pending.length) bot.status = 'waiting'
     else if (!status.accounts.connected || bot.compactionState?.configured === false) bot.status = 'setup'
     else if (
+      // `turn` is the bot's own conversation's turn, else the oldest: any turn of an instance of any age.
       status.turn.state !== 'idle' ||
+      fleetInstanceTurns(status).length ||
       status.queue.length ||
       bot.compactionState?.progress?.status === 'running' ||
       bot.compactionState?.progress?.status === 'retrying'
@@ -586,6 +593,24 @@ export class Lifecycle {
       bot.status = 'working'
     else bot.status = 'idle'
     return bot
+  }
+  /**
+   * A bot's turns as devices see them: its own conversation's, and each side conversation's with the routine whose
+   * run it is. A turn in a conversation the gateway does not know (a run it never recorded) is left out.
+   */
+  private botTurns(botId: string, turns: FleetInstanceTurn[]): FleetBotTurn[] {
+    return turns.flatMap((turn): FleetBotTurn[] => {
+      const common = {
+        startedAt: turn.startedAt,
+        tool: turn.tool?.tool ?? null,
+        cancelling: turn.state === 'cancelling',
+      }
+      if (turn.runId === null) return [{ kind: 'primary', id: null, title: '', ...common }]
+      const run = this.store.routineRunById(turn.runId)
+      return run && run.botId === botId
+        ? [{ kind: 'routine', id: run.id, title: run.routineTitle ?? '', ...common }]
+        : []
+    })
   }
   /** An active environment as devices see it, or null. */
   environment(id: string): FleetEnvironment | null {
@@ -917,6 +942,7 @@ export class Lifecycle {
       move: null,
       runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
       runningRun: null,
+      turns: null,
       createdAt: at,
       updatedAt: at,
     }

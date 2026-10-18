@@ -7,6 +7,8 @@ import {
   FLEET_HOST_DESKTOP_CALLS_FEATURE,
   FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  FLEET_PARALLEL_TURNS_FEATURE,
+  FLEET_CANCEL_CONVERSATION_QUERY,
   type FleetRoutineRunSettings,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
@@ -428,6 +430,7 @@ export async function publicRoute(
             FLEET_BOT_MOVE_FEATURE,
             FLEET_MCP_TEST_DETAIL_FEATURE,
             FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+            FLEET_PARALLEL_TURNS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -687,9 +690,14 @@ export async function publicRoute(
       return { body: await ctx.lifecycle.pause(id) }
     case 'botResume':
       return { body: await ctx.lifecycle.resume(id) }
-    case 'botCancel':
-      await ctx.lifecycle.instanceFor(id).cancelTurn()
+    case 'botCancel': {
+      // One conversation's turn (`parallel-turns`), or every turn as callers that predate them mean.
+      const conversation = url.searchParams.get(FLEET_CANCEL_CONVERSATION_QUERY)
+      if (conversation !== null && !/^(primary|[A-Za-z0-9-]{1,80})$/.test(conversation))
+        throw new GatewayError('INVALID_REQUEST', 'Invalid conversation')
+      await ctx.lifecycle.instanceFor(id).cancelTurn(conversation ?? undefined)
       return { status: 204 }
+    }
     case 'botSelections':
       return { body: await ctx.lifecycle.instanceFor(id).selections() }
     case 'botApiKeyAccountAdd':

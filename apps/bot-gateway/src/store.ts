@@ -1600,6 +1600,7 @@ export class Store {
         ? (JSON.parse(String(row.run_settings_json)) as FleetRoutineRunSettings)
         : FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
       runningRun: null,
+      turns: null,
     }
   }
   getBot(id: string): FleetBot | null {
