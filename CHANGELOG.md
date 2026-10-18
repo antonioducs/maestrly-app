@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-18
+
 ### Added
 
 - A bot moves to another environment of its server, or to a new one, with its
@@ -39,6 +41,69 @@ User-visible changes by version. Downloads are on
   always in **Ask**; permissions still start at **Ask for approval**. Without a
   default model in **Settings → Maestrly Chat → Models & agents**, any new chat
   starts on the last model you picked and keeps it once it has answered.
+- Let a bot work in the projects of a workspaces environment of its own server,
+  not only on the computers you paired, so it keeps working while every
+  computer is off. In the bot's settings, the **This computer** tab is now
+  **Projects**, with a **Workspaces on the server** section that has a card for
+  each environment. Update the desktop app, the bot server and the environment
+  image. See
+  [work in the projects of your computers](docs/bot-fleet.md#work-in-the-projects-of-your-computers).
+- Keep each routine run in a conversation of its own. A **Runs** tab next to
+  **Conversation** in the bot's header lists the runs by day and counts those
+  that ended with something new. Open a run to read everything it did, ask for
+  changes, stop it, keep it, or cite it in the bot's conversation. Per bot,
+  choose how long run conversations are kept and which runs notify you. It
+  needs a bot server and environment image on this version; the others keep
+  running routines in the bot's conversation. See
+  [routine runs](docs/bot-fleet.md#routine-runs).
+- Create a bot from the mobile app, in an existing environment of the paired
+  server: **New bot** at the end of the menu's **Bots** tab, or **+** beside an
+  environment. See [Mobile app](docs/mobile.md).
+- Uninstall a plugin from its details page, next to **Installed**, on this
+  computer, on workspaces hosts and in bot environments. If uninstalling fails,
+  the confirmation stays open and shows the error.
+- Show the plan and weekly usage of a connected Google AI account, as the cards
+  of ChatGPT, Claude and Cursor do, when its runtime reports them.
+- Show how to install Claude Code when it is missing or too old: the Claude card
+  gives the official installer for your system with a copy button, a link to
+  Anthropic's setup guide and **Check again**. See [Claude](docs/claude.md).
+
+### Changed
+
+- A bot's access to a computer now starts at the **Full access** ceiling,
+  since the work is already delegated to the bot; the warning still shows, the
+  stricter ceilings stay available, and saved connections keep their ceiling. A
+  bot also no longer waits for a free slot: it used to run at most eight
+  commands at once on a computer, and an answer to a question waited behind
+  them.
+- A bot's `git push` follows the permission level of its connection to your
+  computer. With **Full access** it runs directly, and with the other levels it
+  asks for your approval, instead of always being refused.
+- Dictation takes over the composer's action bar while it records. **Insert**
+  adds the transcription to the draft, and **↑** stops the recording and sends
+  the draft followed by it, so a click on Send no longer leaves the microphone
+  recording. **Send automatically** is removed, and ⌘D (Ctrl+D) toggles
+  dictation in the editor. While an agent works, one button stops it, or queues
+  or sends your text, and Esc stops it. See
+  [voice dictation](docs/chat-context.md#voice-dictation).
+- Dictate on iOS 26 and later with Apple's newer on-device transcriber, which
+  punctuates by itself and handles long messages better. A language's model
+  downloads in the background, and that dictation uses the previous recognizer.
+  See [Mobile app](docs/mobile.md).
+- Show a routine run in a bot's conversation as one line with the routine's
+  title, time and schedule, with **Instructions** to unfold the prompt, and show
+  messages between bots with their sender and recipient, rendered as Markdown,
+  folded when long, with **Open bot**.
+- Draw diagrams with Mermaid 12 and its new dark look. The ELK layout library it
+  bundles (EPL-2.0) is listed in the third-party notices.
+- Show compressed swap on the **Server** page apart from **System** memory, and
+  mark an environment whose processes were ended for lack of memory with a
+  warning in its row and in the sidebar. It needs a bot server on this version
+  and a server with cgroup v2.
+- The bot gateway database moves to schema 18 to keep bot moves and routine run
+  conversations. Older gateways cannot open it, so back up the gateway volume
+  before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
 
 ### Fixed
 
@@ -95,6 +160,45 @@ User-visible changes by version. Downloads are on
   settings in the app instead of **Settings → Maestrly Chat → Tools** on this
   computer, names **Plugins** for a plugin's server, and asks for a new token
   when the server rejected the one it has.
+- Resume Claude, Cursor and GitHub Copilot sessions across turns. They were
+  discarded and the whole transcript was resent as text on almost every turn,
+  which spent many more tokens than needed. Each existing conversation rebuilds
+  its session once on its next turn, then resumes normally.
+- Sign in to Claude on Linux: the page now opens in your browser and the card
+  has a field for the authorization code, instead of waiting forever for a code
+  that had nowhere to be entered. See [Claude](docs/claude.md#sign-in).
+- Choosing a Google AI model no longer starts dozens of sessions that stayed
+  alive until Maestrly quit and froze the model picker. On macOS and Linux its
+  sign-in opens in your browser, and the card shows the link with **Copy link**
+  and **Open in browser**.
+- Show **context unknown** in the context meter for Google AI and Cursor when
+  the runtime reports no measurement, instead of a few hundred tokens of
+  transcript. Google AI shows its measured context when the server sends it.
+- Sign in to Google AI, Claude, Codex or Grok from the **Accounts** tab of a
+  workspaces host through its environment. It used to open the page on the
+  server, or call back to a port of this computer that nothing listened on.
+- Open the **Code** tab of a cloud workspaces chat behind a reverse proxy such as
+  Tailscale Serve, where the editor's Explorer kept loading. The desktop app and
+  the workspaces environment image both need this version.
+- Render web pages in the Browser tab with the white background of other
+  browsers instead of black, which made dark text on pages without a background
+  unreadable.
+- Show a multi-line command exactly in the approval prompt, in the desktop app,
+  the bot views and the mobile app, instead of its segments joined on one
+  truncated line.
+- Polish provider copy: lists no longer name only some subscriptions, the
+  composer hint says Ctrl+V on Linux and Windows, ChatGPT plans show a name
+  instead of the raw code, and the Codex and Google AI runtime cards show
+  "Latest version" before the first install, then the version to be installed
+  with its estimated size.
+- Start the Linux `.deb` on a minimal desktop: it now depends on the ALSA and
+  GBM libraries it needs, and failed with `libasound.so.2` missing.
+- Quit without a confirmation unless an agent, a terminal command or a
+  background command is running. Closing the session, shutting down and
+  `SIGTERM` never ask, and a failed load of the main window no longer aborts
+  startup.
+- Wrap long links and words in bot conversations instead of giving them a
+  horizontal scrollbar.
 
 ## [0.20.0] - 2026-10-16
 
