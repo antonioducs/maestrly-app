@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- While signing in to GitHub Copilot, the account card shows the GitHub
+  device page next to the one-time code, with **Copy link** and **Open in
+  browser**, and a **Copy code** button. If no browser opened, you can still
+  finish signing in. The card shows and opens only
+  `https://github.com/login/device`.
+
 ## [0.21.1] - 2026-10-18
 
 ### Fixed

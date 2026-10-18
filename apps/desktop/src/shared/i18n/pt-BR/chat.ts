@@ -1245,6 +1245,8 @@ export default {
     subscriptionLoginLinkCopy: 'Copiar link',
     subscriptionLoginLinkCopied: 'Copiado',
     subscriptionLoginLinkOpen: 'Abrir no navegador',
+    subscriptionDeviceCodeCopy: 'Copiar código',
+    subscriptionDeviceLinkHint: 'Se nenhum navegador abriu, abra esta página e digite o código nela:',
     cursorSubscriptionHeading: 'Cursor com assinatura',
     cursorSubscriptionDescription:
       'Use seu plano Cursor no Maestrly Chat via o Agent SDK oficial. Entre com a conta Cursor no navegador.',

@@ -13,7 +13,7 @@ describe('subscription sign-in link contract', () => {
   it('shows the pending sign-in page only while signing in, with copy and open actions', () => {
     expect(subscriptionAccount).toContain('const pendingLoginUrl = signingIn ? status?.authUrl : undefined')
     expect(subscriptionAccount).toContain('{pendingLoginUrl && (')
-    expect(subscriptionAccount).toContain('navigator.clipboard.writeText(url)')
+    expect(subscriptionAccount).toContain('navigator.clipboard.writeText(text)')
     expect(subscriptionAccount).toContain('window.api.openExternalUrl(pendingLoginUrl)')
     expect(subscriptionAccount).toContain("t('settings.subscriptionLoginLinkHint')")
   })
