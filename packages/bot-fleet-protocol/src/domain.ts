@@ -346,6 +346,20 @@ export const fleetRunningRoutineRunSchema = z.object({
   startedAt: fleetTimestampSchema.nullable(),
 })
 export type FleetRunningRoutineRun = z.infer<typeof fleetRunningRoutineRunSchema>
+/** A turn a bot runs now in one of its conversations (`parallel-turns`). */
+export const fleetBotTurnSchema = z.object({
+  /** Its own conversation, a routine run's or a conversation with another bot. */
+  kind: z.enum(['primary', 'routine', 'peer']),
+  /** The run or thread id; null for the bot's own conversation. */
+  id: fleetIdSchema.nullable(),
+  /** The routine's title or the thread's subject; empty for the bot's own conversation. */
+  title: z.string(),
+  startedAt: fleetTimestampSchema,
+  /** The tool it uses now, if any. */
+  tool: z.string().nullable(),
+  cancelling: z.boolean(),
+})
+export type FleetBotTurn = z.infer<typeof fleetBotTurnSchema>
 
 export const fleetBotSchema = z.object({
   id: fleetBotIdSchema,
@@ -397,6 +411,11 @@ export const fleetBotSchema = z.object({
   runSettings: fleetRoutineRunSettingsSchema.nullable().default(null),
   /** The routine run its turn works on now, in the run's own conversation; null otherwise. */
   runningRun: fleetRunningRoutineRunSchema.nullable().default(null),
+  /**
+   * Every turn it runs now, one per conversation (`parallel-turns`); null from gateways that predate them, whose
+   * `status` and `runningRun` tell the same for one turn at a time. Read with `fleetPrimaryWorking`/`fleetLaneTurn`.
+   */
+  turns: z.array(fleetBotTurnSchema).nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })

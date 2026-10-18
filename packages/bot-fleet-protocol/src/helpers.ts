@@ -1,4 +1,4 @@
-import type { FleetLoginKind } from './api.js'
+import type { FleetInstanceStatus, FleetInstanceTurn, FleetLoginKind } from './api.js'
 import {
   FLEET_CHAT_ATTENTION_QUERY,
   FLEET_ENVIRONMENT_DISPLAY,
@@ -8,6 +8,7 @@ import {
 } from './constants.js'
 import type {
   FleetBot,
+  FleetBotTurn,
   FleetGatewayEvent,
   FleetSelection,
   FleetSelectionOption,
@@ -211,6 +212,34 @@ export function fleetReaderWantsRoutineRuns(search: URLSearchParams): boolean {
 /** Whether a gateway event is about routine runs, sent only to readers that asked for them. */
 export function isFleetRoutineRunEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
   return event.type.startsWith('routine_run.')
+}
+
+/**
+ * The turns an instance runs now, one per conversation: its `turns` (`parallel-turns`), or from an instance that
+ * predates them its single `turn`, when it names the input it answers.
+ */
+export function fleetInstanceTurns(status: Pick<FleetInstanceStatus, 'turn' | 'turns'>): FleetInstanceTurn[] {
+  if (status.turns?.length) return status.turns
+  const { turn } = status
+  if (turn.state === 'idle' || !turn.inputId || !turn.startedAt) return []
+  return [{ state: turn.state, startedAt: turn.startedAt, inputId: turn.inputId, runId: turn.runId, tool: null }]
+}
+
+/**
+ * Whether the bot's own conversation has a turn running: from its `turns`, or from a gateway that predates them, a
+ * working bot that works on no routine run.
+ */
+export function fleetPrimaryWorking(bot: Pick<FleetBot, 'turns' | 'status' | 'runningRun'>): boolean {
+  return bot.turns ? bot.turns.some((turn) => turn.kind === 'primary') : bot.status === 'working' && !bot.runningRun
+}
+
+/** The turn running in one of the bot's side conversations (a routine run or a peer thread), if any. */
+export function fleetLaneTurn(bot: Pick<FleetBot, 'turns' | 'runningRun'>, id: string): FleetBotTurn | null {
+  if (bot.turns) return bot.turns.find((turn) => turn.id === id) ?? null
+  const run = bot.runningRun
+  return run?.id === id && run.startedAt
+    ? { kind: 'routine', id: run.id, title: run.title, startedAt: run.startedAt, tool: null, cancelling: false }
+    : null
 }
 
 /** Whether a transcript item may go to a reader: `reasoning` items only to one that asked for them. */

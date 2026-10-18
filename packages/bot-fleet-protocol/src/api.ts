@@ -20,6 +20,7 @@ import {
 } from './host-files.js'
 import { z } from 'zod'
 import {
+  FLEET_BOT_SIDE_TURNS_MAX,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROVISIONING_LIMITS,
   FLEET_OWNER_MEMORY_LIMITS,
@@ -924,6 +925,16 @@ export const fleetInstanceHoldSchema = z.object({
   interruptedTurn: z.boolean(),
 })
 export type FleetInstanceHold = z.infer<typeof fleetInstanceHoldSchema>
+/** A turn running in one of the bot's conversations (`parallel-turns`). */
+export const fleetInstanceTurnSchema = z.object({
+  state: z.enum(['running', 'cancelling']),
+  startedAt: fleetTimestampSchema,
+  inputId: fleetIdSchema,
+  /** The side conversation it works in (a routine run or a peer thread); null for the bot's own. */
+  runId: fleetIdSchema.nullable(),
+  tool: z.object({ tool: z.string(), target: z.string().nullable() }).nullable(),
+})
+export type FleetInstanceTurn = z.infer<typeof fleetInstanceTurnSchema>
 export const fleetInstanceStatusSchema = z.object({
   capabilities: fleetFeaturesSchema,
   appVersion: z.string(),
@@ -945,6 +956,14 @@ export const fleetInstanceStatusSchema = z.object({
     /** The routine run whose own conversation the turn works in (`routine-conversations`); null for the bot's own. */
     runId: fleetIdSchema.nullable().default(null),
   }),
+  /**
+   * Every turn running now, one per conversation (`parallel-turns`); `turn` stays the bot's own conversation's, else
+   * the oldest, for older readers. Empty from an instance that predates it: read both with `fleetInstanceTurns`.
+   */
+  turns: z
+    .array(fleetInstanceTurnSchema)
+    .max(FLEET_BOT_SIDE_TURNS_MAX + 1)
+    .default([]),
   hold: fleetInstanceHoldSchema,
   queue: z.array(
     z.object({

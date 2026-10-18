@@ -184,6 +184,16 @@ export const FLEET_ROUTINE_RUN_LIMITS = {
 export const FLEET_ROUTINE_CONVERSATIONS_FEATURE = 'routine-conversations'
 /** The query parameter a reader of events sets to `1` to receive the transcripts and records of routine runs. */
 export const FLEET_ROUTINE_RUNS_QUERY = 'routineRuns'
+/**
+ * Gateway feature and instance capability: a bot runs turns in several of its conversations at once (its own, its
+ * routine runs' and its conversations with other bots), one turn per conversation. Statuses list them all (`turns`);
+ * a turn is cancelled per conversation (`FLEET_CANCEL_CONVERSATION_QUERY`).
+ */
+export const FLEET_PARALLEL_TURNS_FEATURE = 'parallel-turns'
+/** Turns a bot runs at once besides its own conversation's: its own conversation always gets one. */
+export const FLEET_BOT_SIDE_TURNS_MAX = 4
+/** Query of a turn cancel: `primary`, or the id of a side conversation (a routine run or a peer thread). */
+export const FLEET_CANCEL_CONVERSATION_QUERY = 'conversation'
 /** How many days a finished run keeps its conversation after its last activity; null keeps it until deleted. */
 export const FLEET_ROUTINE_RUN_RETENTION_DAYS = [30, 60, 90] as const
 /** The folder of a bot's conversation where a deleted run's images and attachments are kept. */
