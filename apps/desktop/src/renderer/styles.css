@@ -621,6 +621,9 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
   display: flex;
   justify-content: center;
   padding: 0.75rem 0.5rem;
+  /* Mermaid sizes its labels outside the chat, where long words do not break; wrap them the same way inside it. */
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .mermaid-preview svg {
   max-width: 100%;

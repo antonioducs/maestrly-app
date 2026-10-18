@@ -4,7 +4,12 @@ let mermaidSeq = 0
 export function getMermaid() {
   if (!mermaidPromise) {
     mermaidPromise = import('mermaid').then((m) => {
-      m.default.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark', fontFamily: 'inherit' })
+      m.default.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: 'redux-dark-color',
+        fontFamily: 'inherit',
+      })
       return m.default
     })
   }
