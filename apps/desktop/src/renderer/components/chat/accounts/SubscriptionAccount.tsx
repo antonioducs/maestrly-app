@@ -53,6 +53,8 @@ import { FailoverRouteEditor } from './FailoverRouteEditor'
 import { ProviderModelFilter } from './ProviderModelFilter'
 import { ClaudeCodeSetupNotice, ClaudeManualSignIn } from './ClaudeSubscriptionHelp'
 import { claudeCodeSetupNeed } from './claude-code-setup'
+import { DeviceCodeSignIn } from './DeviceCodeSignIn'
+import { deviceSignInUrl } from './device-sign-in'
 
 export const PROVIDER_RUNTIME_ASSET: Partial<Record<ChatSubscriptionProviderKind, RuntimeAssetId>> = {
   'codex-subscription': 'codex-runtime',
@@ -126,7 +128,7 @@ export function SubscriptionAccount({
   const [usage, setUsage] = useState<ChatSubscriptionUsage | null>(null)
   const [usageBusy, setUsageBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [loginLinkCopied, setLoginLinkCopied] = useState(false)
+  const [copiedLoginText, setCopiedLoginText] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const runtimeId = PROVIDER_RUNTIME_ASSET[providerKind]
   const [runtime, setRuntime] = useState<RuntimeAssetInfo | null>(null)
@@ -302,7 +304,7 @@ export function SubscriptionAccount({
           ? current
           : (result.status ?? { state: 'signing-in', authenticated: false })
       )
-      const loginUrl = result.authUrl ?? result.verificationUrl
+      const loginUrl = result.authUrl ?? deviceSignInUrl(providerKind, result.verificationUrl)
       if (loginUrl) window.api.openExternalUrl(loginUrl)
       onChanged()
     } catch (error) {
@@ -375,18 +377,20 @@ export function SubscriptionAccount({
   const notConfigured = status?.errorCode === 'subscription-provider-not-configured'
   const claudeSetup = providerKind === 'claude-subscription' ? claudeCodeSetupNeed(status) : null
 
-  useEffect(() => {
-    if (!loginLinkCopied) return
-    const timer = setTimeout(() => setLoginLinkCopied(false), 2_000)
-    return () => clearTimeout(timer)
-  }, [loginLinkCopied])
+  const deviceLoginUrl = signingIn ? deviceSignInUrl(providerKind, loginInstructions?.verificationUrl) : null
 
-  const copyLoginLink = async (url: string) => {
+  useEffect(() => {
+    if (copiedLoginText === null) return
+    const timer = setTimeout(() => setCopiedLoginText(null), 2_000)
+    return () => clearTimeout(timer)
+  }, [copiedLoginText])
+
+  const copyLoginText = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(url)
-      setLoginLinkCopied(true)
+      await navigator.clipboard.writeText(text)
+      setCopiedLoginText(text)
     } catch {
-      // The URL stays selectable for a manual copy.
+      // The text stays selectable for a manual copy.
     }
   }
   const runtimeActive =
@@ -648,9 +652,15 @@ export function SubscriptionAccount({
             {pendingLoginUrl}
           </code>
           <div className="mt-2 flex flex-wrap gap-1.5">
-            <button type="button" className={secondaryButtonCls} onClick={() => void copyLoginLink(pendingLoginUrl)}>
-              {loginLinkCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {loginLinkCopied ? t('settings.subscriptionLoginLinkCopied') : t('settings.subscriptionLoginLinkCopy')}
+            <button type="button" className={secondaryButtonCls} onClick={() => void copyLoginText(pendingLoginUrl)}>
+              {copiedLoginText === pendingLoginUrl ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+              {copiedLoginText === pendingLoginUrl
+                ? t('settings.subscriptionLoginLinkCopied')
+                : t('settings.subscriptionLoginLinkCopy')}
             </button>
             <button
               type="button"
@@ -664,12 +674,15 @@ export function SubscriptionAccount({
         </div>
       )}
       {signingIn && loginInstructions?.userCode && (
-        <div className="mt-3 rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-3 py-2.5">
-          <p className="text-[12px] text-amber-100">{t(copyKey('DeviceCodeHint'))}</p>
-          <code className="mt-1 block select-all font-mono text-[15px] font-semibold tracking-[0.18em] text-foreground">
-            {loginInstructions.userCode}
-          </code>
-        </div>
+        <DeviceCodeSignIn
+          hint={t(copyKey('DeviceCodeHint'))}
+          userCode={loginInstructions.userCode}
+          verificationUrl={deviceLoginUrl}
+          copied={copiedLoginText}
+          onCopy={(text) => void copyLoginText(text)}
+          onOpen={(url) => window.api.openExternalUrl(url)}
+          buttonClassName={secondaryButtonCls}
+        />
       )}
       {(actionError || (status?.error && !claudeSetup)) && (
         <p className="mt-2 text-[12px] text-destructive">{actionError || statusErrorText(status)}</p>

@@ -26,6 +26,11 @@ User-visible changes by version. Downloads are on
   Every first request failed with HTTP 400 "Invalid 'prompt_cache_key': string
   too long", because the prompt cache key had more than the 64 characters
   OpenAI accepts. Subagents had the same problem.
+- While signing in to GitHub Copilot, the account card shows the GitHub
+  device page next to the one-time code, with **Copy link** and **Open in
+  browser**, and a **Copy code** button. If no browser opened, you can still
+  finish signing in. The card shows and opens only
+  `https://github.com/login/device`.
 
 ## [0.21.1] - 2026-10-18
 
