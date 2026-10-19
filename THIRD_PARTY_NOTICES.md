@@ -96,6 +96,15 @@ computers, with its dependency [noble-hashes](https://github.com/paulmillr/noble
 The complete licenses are distributed with the packages in
 `node_modules/@noble/curves/LICENSE` and `node_modules/@noble/hashes/LICENSE`.
 
+## node-forge
+
+The desktop app includes [node-forge](https://github.com/digitalbazaar/forge)
+1.4.0 to sign the self-signed certificate a computer presents to the owner's
+other computers. It is dual-licensed under the BSD-3-Clause License and the GNU
+GPL 2.0; Maestrly uses it under the BSD-3-Clause License, Copyright (c) 2010,
+Digital Bazaar, Inc. The complete license is distributed with the package in
+`node_modules/node-forge/LICENSE`.
+
 ## uqr
 
 The desktop app includes [uqr](https://github.com/unjs/uqr) 0.1.3 to draw the QR
