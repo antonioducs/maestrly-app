@@ -1363,7 +1363,7 @@ export default {
     keepAwakeOff: 'Prevent sleep: off',
     usage: 'Usage',
     usageTitle: 'Subscription usage',
-    usageDescription: 'Current health of your connected Claude and ChatGPT plan limits.',
+    usageDescription: 'Current health of your connected Claude, ChatGPT and Google AI plan limits.',
     usageRefresh: 'Refresh subscription usage',
     usageUnavailable: 'Usage details are unavailable for this account.',
     settingsTitle: 'Settings — installed CLIs, YOLO mode',
