@@ -712,6 +712,7 @@ export class Lifecycle {
       ceiling: bot.ceiling,
       selection: bot.selection,
       compaction: this.effectiveCompaction(bot, environment),
+      ...(bot.delegation ? { delegation: bot.delegation } : {}),
       ...(environment && this.environmentCapabilities(environment.id).includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
         ? { compactionInherited: !bot.compaction && !!environment.compaction }
         : {}),
