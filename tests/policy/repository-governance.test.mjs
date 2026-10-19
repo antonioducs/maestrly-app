@@ -227,18 +227,44 @@ test('CI is read-only and exposes stable platform names', () => {
   const suites = read('.github/workflows/ci-desktop.yml')
   for (const workflow of [source, suites]) assert.match(workflow, /^permissions:\n {2}contents: read$/m)
   assert.match(suites, /^ {2}workflow_call:$/m)
-  for (const [job, label, os] of [
-    ['linux', 'Linux', 'ubuntu-24.04'],
-    ['macos', 'macOS', 'macos-15'],
-    ['windows', 'Windows', 'windows-2025'],
+  // Pull requests run every Linux suite; main and manual runs run every suite on every platform.
+  const onlyPullRequestsSkip = String.raw`\$\{\{ github\.event_name != 'pull_request' \}\}`
+  for (const [job, label, os, complete] of [
+    ['linux', 'Linux', 'ubuntu-24.04', 'true'],
+    ['macos', 'macOS', 'macos-15', onlyPullRequestsSkip],
+    ['windows', 'Windows', 'windows-2025', onlyPullRequestsSkip],
   ]) {
-    // Every platform runs both suites, and its required check passes only when they all passed.
-    assert.match(source, new RegExp(`^ {2}${job}:\\n.*\\n {4}uses: \\./\\.github/workflows/ci-desktop\\.yml\\n {4}with:\\n {6}os: ${os}$`, 'm'))
+    // A platform's required check passes only when every suite it ran passed.
+    const call = `^ {2}${job}:\\n.*\\n {4}uses: \\./\\.github/workflows/ci-desktop\\.yml\\n {4}with:\\n {6}os: ${os}\\n {6}complete: ${complete}$`
+    assert.match(source, new RegExp(call, 'm'), label)
     const result = new RegExp(`^ {2}${job}-result:\\n {4}name: ${label}\\n {4}needs: ${job}\\n {4}if: \\$\\{\\{ always\\(\\) \\}\\}\\n`, 'm')
     assert.match(source, result, label)
     assert.match(source, new RegExp(`RESULT: \\$\\{\\{ needs\\.${job}\\.result \\}\\}\\n {8}run: test "\\$RESULT" = success`))
   }
   assert.equal((source.match(/^ {4}name: (Linux|macOS|Windows)$/gm) ?? []).length, 3)
+  // Only main runs the complete macOS and Windows suites, so a newer merge must not cancel them.
+  assert.match(source, /^ {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m)
+  assert.match(suites, /^ {6}complete:\n {8}description: .+\n {8}required: true\n {8}type: boolean$/m)
+  for (const job of ['checks', 'e2e']) assert.match(suites, new RegExp(`^ {2}${job}:\\n {4}name: .+\\n {4}if: inputs\\.complete$`, 'm'))
+
+  // Without the complete suites, two runners still cover every unit test of every workspace and the policy tests.
+  const units = suites.slice(suites.indexOf('\n  units:'))
+  assert.match(units, /^ {4}if: \$\{\{ !inputs\.complete \}\}$/m)
+  assert.match(units, /^ {6}fail-fast: false\n {6}matrix:\n {8}shard: \[1, 2\]$/m)
+  const desktop = JSON.parse(read('apps/desktop/package.json')).scripts
+  assert.equal(desktop['test:unit'], 'npm run test:unit:suite && npm run test:unit:codex')
+  assert.match(units, /run: npm run test:unit:suite --workspace @maestrly\/desktop -- --shard=\$\{\{ matrix\.shard \}\}\/2$/m)
+  assert.match(units, /if: matrix\.shard == 1\n {8}run: npm run test:unit:codex --workspace @maestrly\/desktop$/m)
+  const others = /if: matrix\.shard == 2\n {8}run: npm test (.+) && npm run test:policy$/m.exec(units)?.[1] ?? ''
+  const tested = [...others.matchAll(/--workspace (\S+)/g)].map((match) => match[1]).sort()
+  const workspaces = ['apps', 'packages']
+    .flatMap((dir) => readdirSync(path.join(root, dir)).map((name) => path.join(dir, name, 'package.json')))
+    .filter((file) => existsSync(path.join(root, file)))
+    .map((file) => JSON.parse(read(file)))
+    .filter((manifest) => manifest.scripts?.test && manifest.name !== '@maestrly/desktop')
+    .map((manifest) => manifest.name)
+    .sort()
+  assert.deepEqual(tested, workspaces)
   assert.match(suites, /check-commits\.mjs --subject-env PR_TITLE/)
   assert.match(suites, /run: npm run test:policy && npm run test:docs/)
   assert.match(suites, /run: npm run check$/m)

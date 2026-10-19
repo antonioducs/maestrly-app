@@ -262,7 +262,8 @@ tests enforce local-only boundaries, commit format, dependency exceptions,
 workflow pinning, governance, and documentation links.
 
 Electron tests launch the built application with isolated profiles and synthetic
-repositories. CI runs the complete check and Electron suite on Linux, macOS, and
-Windows. A separate scheduled workflow builds native packages and executes the
+repositories. On pull requests, CI runs the complete check and Electron suite on
+Linux and the unit tests on macOS and Windows; on `main` it runs every suite on
+all three. A separate scheduled workflow builds native packages and executes the
 packaged desktop and Local ML smokes. See [Development](development.md) and
 [Contribution guidelines](../CONTRIBUTING.md).

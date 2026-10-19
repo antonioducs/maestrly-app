@@ -1,7 +1,9 @@
 name: CI suites
 
-# The suites of one platform, called by ci.yml. Checks and Electron E2E run in parallel on separate runners, so the
-# slower one bounds the platform's time and a failed one can be re-run alone.
+# The suites of one platform, called by ci.yml. Complete suites run the checks and Electron E2E in parallel on
+# separate runners, so the slower one bounds the platform's time and a failed one can be re-run alone. Otherwise only
+# the unit tests run, split across two runners: type checks, builds and documentation do not depend on the platform,
+# and Linux runs them on every pull request.
 on:
   workflow_call:
     inputs:
@@ -9,6 +11,10 @@ on:
         description: Runner image
         required: true
         type: string
+      complete:
+        description: Run the checks and Electron E2E instead of the unit tests alone
+        required: true
+        type: boolean
 
 permissions:
   contents: read
@@ -16,6 +22,7 @@ permissions:
 jobs:
   checks:
     name: Checks
+    if: inputs.complete
     runs-on: ${{ inputs.os }}
     timeout-minutes: 30
     steps:
@@ -45,6 +52,7 @@ jobs:
 
   e2e:
     name: E2E
+    if: inputs.complete
     runs-on: ${{ inputs.os }}
     timeout-minutes: 30
     steps:
@@ -78,3 +86,37 @@ jobs:
       - name: Test the mobile app's web build
         if: runner.os == 'Linux'
         run: npm run test:e2e:mobile
+
+  units:
+    name: Unit tests ${{ matrix.shard }}/2
+    if: ${{ !inputs.complete }}
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build shared packages
+        run: npm run build:protocol && npm run build:fleet-protocol && npm run build:artifact-host
+      # The desktop suite is the long one, slowest on Windows, where it runs on two workers to bound memory.
+      - name: Test desktop units
+        run: npm run test:unit:suite --workspace @maestrly/desktop -- --shard=${{ matrix.shard }}/2
+      - name: Test the Codex runtime integration
+        if: matrix.shard == 1
+        run: npm run test:unit:codex --workspace @maestrly/desktop
+      - name: Test the other workspaces and repository policies
+        if: matrix.shard == 2
+        run: npm test --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/artifact-host --workspace @maestrly/bot-gateway --workspace @maestrly/mobile && npm run test:policy

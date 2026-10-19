@@ -12,26 +12,33 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer commit supersedes a pull request's run. On main a running validation always finishes, because only main
+  # runs the complete macOS and Windows suites.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Pull requests run every Linux suite and only the unit tests on macOS and Windows; main and manual runs, which can
+# target a pull request's branch, run every suite on every platform.
 jobs:
   linux:
     name: Linux suites
     uses: ./.github/workflows/ci-desktop.yml
     with:
       os: ubuntu-24.04
+      complete: true
   macos:
     name: macOS suites
     uses: ./.github/workflows/ci-desktop.yml
     with:
       os: macos-15
+      complete: ${{ github.event_name != 'pull_request' }}
   windows:
     name: Windows suites
     uses: ./.github/workflows/ci-desktop.yml
     with:
       os: windows-2025
+      complete: ${{ github.event_name != 'pull_request' }}
 
-  # The stable check names the main ruleset requires: each passes only when every suite of its platform passed.
+  # The stable check names the main ruleset requires: each passes only when every suite its platform ran passed.
   linux-result:
     name: Linux
     needs: linux

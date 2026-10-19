@@ -158,7 +158,7 @@ test('push rejects staged/unstaged changes, non-HEAD commits, mixed refs and cha
   assert.throws(() => preparePush('invalid input', cwd), /Invalid/)
 })
 
-test('installed hook blocks a real local push on check failure and permits it after correction', (t) => {
+function installVerifier(t, check) {
   const { cwd, git } = repository(t)
   const root = path.resolve(import.meta.dirname, '../..')
   mkdirSync(path.join(cwd, 'scripts'))
@@ -179,16 +179,23 @@ test('installed hook blocks a real local push on check failure and permits it af
       'check:history': 'node scripts/check-commits.mjs',
       'test:policy': 'node -e "process.exit(0)"',
       'test:docs': 'node -e "process.exit(0)"',
-      check: 'node -e "process.exit(1)"',
+      check,
     },
   }
   writeFileSync(path.join(cwd, 'package.json'), JSON.stringify(manifest))
+  writeFileSync(path.join(cwd, '.gitignore'), 'fail.marker\n')
   git('add', '.')
   git('commit', '-m', 'test: install verifier')
   git('config', 'core.hooksPath', '.githooks')
   const remote = path.join(cwd, '.git', 'test-remote.git')
   git('init', '--bare', remote)
   const push = () => spawnSync('git', ['push', remote, 'HEAD:refs/heads/topic'], { cwd, encoding: 'utf8' })
+  const verify = () => spawnSync(process.execPath, ['scripts/verify-pr.mjs'], { cwd, encoding: 'utf8' })
+  return { cwd, git, manifest, remote, push, verify }
+}
+
+test('installed hook blocks a real local push on check failure and permits it after correction', (t) => {
+  const { cwd, git, manifest, remote, push } = installVerifier(t, 'node -e "process.exit(1)"')
   const failed = push()
   assert.notEqual(failed.status, 0)
   assert.match(failed.stdout + failed.stderr, /npm run check failed/)
@@ -200,4 +207,38 @@ test('installed hook blocks a real local push on check failure and permits it af
   const passed = push()
   assert.equal(passed.status, 0, passed.stdout + passed.stderr)
   assert.equal(git('--git-dir', remote, 'rev-parse', 'refs/heads/topic'), git('rev-parse', 'HEAD'))
+})
+
+test('hook does not repeat checks the exact clean commit already passed, and only for that commit', (t) => {
+  // An ignored marker fails the check without changing the commit or dirtying the tree.
+  const { cwd, git, remote, push, verify } = installVerifier(
+    t,
+    `node -e "process.exit(require('node:fs').existsSync('fail.marker') ? 1 : 0)"`
+  )
+  const marker = path.join(cwd, 'fail.marker')
+  const draft = path.join(cwd, 'draft.txt')
+
+  // A pass with pending files says nothing about the commit, so the hook still runs the checks.
+  writeFileSync(draft, 'pending')
+  assert.equal(verify().status, 0)
+  rmSync(draft)
+  writeFileSync(marker, '')
+  const unverified = push()
+  assert.notEqual(unverified.status, 0)
+  assert.match(unverified.stdout + unverified.stderr, /npm run check failed/)
+
+  rmSync(marker)
+  const manual = verify()
+  assert.equal(manual.status, 0, manual.stdout + manual.stderr)
+  writeFileSync(marker, '')
+  const repeated = push()
+  assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr)
+  assert.match(repeated.stdout + repeated.stderr, /already passed verification on a clean tree/)
+  assert.equal(git('--git-dir', remote, 'rev-parse', 'refs/heads/topic'), git('rev-parse', 'HEAD'))
+
+  writeFileSync(path.join(cwd, 'file.txt'), 'next')
+  git('commit', '-am', 'test: change after verification')
+  const next = push()
+  assert.notEqual(next.status, 0)
+  assert.match(next.stdout + next.stderr, /npm run check failed/)
 })
