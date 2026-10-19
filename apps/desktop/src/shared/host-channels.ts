@@ -30,6 +30,11 @@ const LOCAL_ONLY_CHANNELS = new Set([
   'chat:transcribe',
   'chat:asr-warm',
   'chat:asr-support',
+  // This computer's dictation engine and keys, used by its microphone whichever host the chat runs on.
+  'chat:dictation-config',
+  'chat:set-dictation-engine',
+  'chat:set-dictation-key',
+  'chat:clear-dictation-key',
   'drawer:suppress-views',
   'drawer:layout',
   'drawer:capture-slot',
