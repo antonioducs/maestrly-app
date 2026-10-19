@@ -29,6 +29,7 @@ import {
 } from './account-entries'
 import { inputCls, primaryButtonCls, ProviderMark, type ProviderMarkKind, UsageGauge } from './account-ui'
 import { AddAccountDialog, type AddAccountIntent } from './AddAccountDialog'
+import { claudeCodeSetupNeed } from './claude-code-setup'
 import { ApiKeyAccount, kindLabelKey } from './ApiKeyAccount'
 import { SubscriptionAccount, subscriptionProviderCopy, useSubscriptionAccountTitle } from './SubscriptionAccount'
 
@@ -125,6 +126,14 @@ export function AccountsSettingsPanel({
             : status.error || t(copyKey('Disconnected')),
         metaTone: 'bad',
       }
+    }
+    if (status.state === 'unavailable' && status.savedSignIn) {
+      const fix = t(
+        claudeCodeSetupNeed(status) === 'update'
+          ? 'settings.accountClaudeCodeOutdated'
+          : 'settings.accountClaudeCodeMissing'
+      )
+      return { meta: [status.email, fix].filter(Boolean).join(' · '), metaTone: 'warn' }
     }
     if (status.state === 'unavailable') {
       return status.errorCode === 'subscription-provider-not-configured'

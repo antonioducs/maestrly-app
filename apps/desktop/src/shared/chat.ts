@@ -1546,6 +1546,11 @@ export interface ChatSubscriptionAuthStatus {
   enterpriseUrl?: string | null
   /** While `signing-in`: the provider's sign-in page, offered for copying when no browser opened. */
   authUrl?: string
+  /**
+   * While `unavailable` because the runtime the account needs is missing or too old: the slot still holds a sign-in,
+   * used again once that is fixed. `email` names it when known.
+   */
+  savedSignIn?: boolean
   error?: string
   errorCode?: ChatErrorCode
 }

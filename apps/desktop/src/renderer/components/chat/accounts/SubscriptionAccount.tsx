@@ -633,6 +633,7 @@ export function SubscriptionAccount({
           need={claudeSetup}
           host={host}
           checking={busy === 'refresh'}
+          savedSignIn={status?.savedSignIn ? { email: status.email ?? null } : null}
           onCheckAgain={() => void refreshAll()}
         />
       )}

@@ -40,6 +40,15 @@ User-visible changes by version. Downloads are on
   browser**, and a **Copy code** button. If no browser opened, you can still
   finish signing in. The card shows and opens only
   `https://github.com/login/device`.
+- Claude Code installed while the app is open is found: **Check again** and
+  the refresh button on the Claude account look for it again, so a signed-in
+  account reconnects without restarting Maestrly. Before, on Windows, the card
+  stayed on **Claude Code unavailable** until a restart. While Claude Code is
+  missing or too old, a signed-in Claude account no longer moves to
+  **Available to connect**: it keeps its row in **Settings → Accounts** with
+  its email and **Claude Code not found** or **Claude Code needs an update**,
+  and counts as needing attention.
+  See [Install Claude Code](docs/claude.md#install-claude-code).
 
 ## [0.21.1] - 2026-10-18
 

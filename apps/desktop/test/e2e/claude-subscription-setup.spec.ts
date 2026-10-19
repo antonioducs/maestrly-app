@@ -171,3 +171,92 @@ test('shows how to install Claude Code and signs in with a pasted code when no b
   await expect(manual).toHaveCount(0)
   expect((await e2e()).codes).toEqual(['wrong', 'good#e2e'])
 })
+
+test('keeps a signed-in Claude account listed while Claude Code is missing and reconnects it on "Check again"', async ({
+  browserName: _browserName,
+}, testInfo) => {
+  app = await electron.launch({
+    args: [mainEntry],
+    env: {
+      ...process.env,
+      AGENTS_E2E: '1',
+      AGENTS_CHANNEL: 'dev',
+      AGENTS_INSTANCE: `claude-setup-saved-${Date.now()}`,
+      AGENTS_USERDATA: userDataDir,
+      AGENTS_LOCALE: 'en',
+      ELECTRON_RENDERER_URL: '',
+    },
+  })
+  const win = await app.firstWindow()
+  await win.waitForFunction(() => typeof window.api !== 'undefined')
+  await win.evaluate(() => window.api.setOnboardingDone(true))
+  const skip = win.getByRole('button', { name: 'Skip', exact: true })
+  if (await skip.isVisible().catch(() => false)) await skip.click()
+  const config = await win.evaluate(() => window.api.chatConfig())
+  // Claude Code was removed while the app was closed; the account's sign-in is still in its profile.
+  await app.evaluate(
+    ({ BrowserWindow, ipcMain }, { config }) => {
+      const e2e: ClaudeE2E = { installed: false, codes: [], opened: [] }
+      Object.assign(globalThis, { __claudeE2E: e2e })
+      config.providers = config.providers.filter((provider) => provider.kind !== 'claude-subscription')
+      config.providers.push({
+        id: 'builtin_claude_subscription',
+        name: 'Claude',
+        kind: 'claude-subscription',
+        baseURL: 'claude://subscription',
+        apiKeyPresent: false,
+        builtIn: true,
+        connected: false,
+      })
+      ipcMain.removeHandler('chat:config')
+      ipcMain.handle('chat:config', () => config)
+      ipcMain.removeHandler('chat:claude-subscription:status')
+      ipcMain.handle('chat:claude-subscription:status', (_event, payload?: { refresh?: boolean }) =>
+        e2e.installed && payload?.refresh
+          ? { state: 'signed-in', authenticated: true, email: 'owner@example.com', planType: 'max' }
+          : {
+              state: 'unavailable',
+              authenticated: false,
+              savedSignIn: true,
+              email: 'owner@example.com',
+              error: 'Claude Code is not installed.',
+              errorCode: 'claude-code-not-installed',
+            }
+      )
+      ipcMain.removeHandler('chat:subscription-usage')
+      ipcMain.handle('chat:subscription-usage', () => ({
+        state: 'unsupported',
+        providerKind: 'claude-subscription',
+        accountId: null,
+      }))
+      BrowserWindow.getAllWindows()[0]?.setSize(1280, 960)
+    },
+    { config }
+  )
+
+  await win.getByRole('button', { name: 'Settings', exact: true }).click()
+  const row = win.locator('[data-account-entry="builtin_claude_subscription"]')
+  await expect(row).toContainText('owner@example.com · Claude Code not found')
+  await expect(win.locator('[data-account-chip="claude-subscription"]')).toHaveCount(0)
+  await expect(win.getByText('1 needs attention', { exact: true })).toBeVisible()
+
+  await row.click()
+  const card = win.locator('[data-subscription-provider="claude-subscription"][data-subscription-account="default"]')
+  const setup = card.locator('[data-claude-code-setup="install"]')
+  await expect(setup.locator('[data-claude-code-sign-in-kept]')).toHaveText(
+    "You're still signed in as owner@example.com. The account reconnects once Claude Code is ready, without signing in again."
+  )
+  const savedShot = testInfo.outputPath('claude-code-missing-signed-in.png')
+  await win.screenshot({ path: savedShot, animations: 'disabled' })
+  await testInfo.attach('Signed-in Claude account without Claude Code', { path: savedShot, contentType: 'image/png' })
+
+  // The person installs Claude Code again with the app open; checking again reconnects without signing in.
+  await app.evaluate(() => {
+    ;(globalThis as unknown as { __claudeE2E: ClaudeE2E }).__claudeE2E.installed = true
+  })
+  await setup.getByRole('button', { name: 'Check again' }).click()
+  await expect(setup).toHaveCount(0)
+  await expect(card.getByText('owner@example.com · Max', { exact: true })).toBeVisible()
+  await expect(row).toContainText('owner@example.com · Max')
+  await expect(win.getByText('1 needs attention', { exact: true })).toHaveCount(0)
+})

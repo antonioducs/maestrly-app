@@ -1523,6 +1523,10 @@ export default {
     claudeCodeCopied: 'Copiado',
     claudeCodeInstallDocs: 'Guia de instalação',
     claudeCodeCheckAgain: 'Verificar de novo',
+    claudeCodeSignInKept:
+      'Você continua conectado como {{email}}. A conta volta assim que o Claude Code estiver pronto, sem entrar de novo.',
+    claudeCodeSignInKeptNoEmail:
+      'Você continua conectado. A conta volta assim que o Claude Code estiver pronto, sem entrar de novo.',
     grokSubscriptionHeading: 'Grok com assinatura xAI',
     grokSubscriptionDescription:
       'Use seu plano Grok / SuperGrok elegível no Maestrly Chat via OAuth da xAI. Não precisa de chave de API.',
@@ -1606,6 +1610,8 @@ export default {
     accountKeyVerified: 'Chave verificada',
     accountKeyChecking: 'Verificando chave…',
     accountKeyRejected: 'Chave recusada',
+    accountClaudeCodeMissing: 'Claude Code não encontrado',
+    accountClaudeCodeOutdated: 'Claude Code precisa de atualização',
     accountKeyUnverified: 'Chave salva · não verificada',
     accountKeyRejectedHint:
       'O provedor recusou esta chave (HTTP {{status}}), então os modelos desta conta não carregam. Cole uma chave válida acima.',
