@@ -1726,8 +1726,8 @@ export function ChatView({
     return subscribeSubagentProfilesChanged(reloadSubagents)
   }, [reloadSubagents, visible])
 
-  // A file of a server opens in an editor nobody sees: there, a mention stays a reference.
-  const opensFiles = useHostInfo().desktopEffects
+  // A file chip opens the file in the conversation's editor: this computer's, or a remote host's when it serves one.
+  const opensFiles = useHostInfo().editor
   const openMention = useCallback(
     (relPath: string, startLine?: number, endLine?: number) => {
       if (!opensFiles) return
