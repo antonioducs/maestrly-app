@@ -97,6 +97,7 @@ or the next free port, recorded and advertised), started while hosting is on and
 | `POST /v1/peer/pairings` | none | Ask to pair (section 3). |
 | `POST /v1/peer/pairings/:id/exchange` | none | SPAKE2 exchange and key confirmation. |
 | `POST /v1/peer/pairings/:id/confirm` | none | The client's confirmation; tokens are exchanged under the pairing key. |
+| `POST /v1/peer/pairings/:id/abort` | none | The client ends a pairing (the code did not match, or the owner cancelled). |
 | `DELETE /v1/peer/self` | token | The caller removed this computer. |
 | `GET /v1/bridge` (upgrade) | token | The remote UI hub. |
 | `/v1/editor/…` | token | The host editor (`remote-host/server/host-editor.ts`). |
