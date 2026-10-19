@@ -5,7 +5,8 @@ export type SystemItem = Extract<FleetTranscriptItem, { kind: 'system' | 'compac
 
 /**
  * What a system line says, and the detail under it. A message that opened a conversation with another bot
- * (`peer-conversations`) says so: that conversation goes on apart, and only the desktop app shows it.
+ * (`peer-conversations`) says so: that conversation goes on apart, and where the phone keeps the bot's conversations
+ * with bots in a tab of their own, a card leads there instead of this line.
  */
 export function systemLineText(item: SystemItem, t: Translate): { text: string; detail: string | null } {
   if (item.kind === 'compaction') return { text: t('system.compaction'), detail: null }

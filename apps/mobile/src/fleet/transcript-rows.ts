@@ -96,6 +96,29 @@ function flushTurn(turn: Entry[], rows: TranscriptRow[]): void {
   rows.push({ kind: 'activity', id: turn[first].item.id, steps })
 }
 
+/**
+ * The rows with what a conversation adds to them, in conversation order: one with `at` (a notice, such as a routine
+ * run that ended) goes before the first message from the owner, a routine or a bot that came after it, so it never
+ * splits a turn; the others (messages still on the phone) go last.
+ */
+export function withExtras<T extends { at?: string }>(
+  rows: TranscriptRow[],
+  extras: T[]
+): Array<TranscriptRow | { kind: 'extra'; row: T }> {
+  const timed = extras.filter((extra) => extra.at).sort((a, b) => ((a.at ?? '') < (b.at ?? '') ? -1 : 1))
+  const out: Array<TranscriptRow | { kind: 'extra'; row: T }> = []
+  let next = 0
+  for (const row of rows) {
+    if (row.kind === 'item' && row.item.kind === 'user')
+      while (next < timed.length && (timed[next].at ?? '') < row.item.at)
+        out.push({ kind: 'extra', row: timed[next++] })
+    out.push(row)
+  }
+  for (; next < timed.length; next++) out.push({ kind: 'extra', row: timed[next] })
+  for (const extra of extras) if (!extra.at) out.push({ kind: 'extra', row: extra })
+  return out
+}
+
 /** The tools among an activity's steps. */
 export const activityTools = (steps: ActivityStep[]): ToolItem[] =>
   steps.flatMap((step) => (step.kind === 'tool' ? [step.tool] : []))

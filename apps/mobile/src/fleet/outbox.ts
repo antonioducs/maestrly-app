@@ -23,6 +23,8 @@ export type OutboxEntry = {
   state: 'waiting' | 'sending' | 'failed'
   error: OutboxErrorKey | null
   attempts: number
+  /** The routine run the message refers to (`routine-conversations`); absent for most messages. */
+  citation?: string | null
 }
 
 export const outboxEntriesSchema = z.array(
@@ -46,6 +48,7 @@ export const outboxEntriesSchema = z.array(
       .enum(['server', 'botStopped', 'filesUnsupported', 'invalid', 'botGone', 'conflict', 'missingFile', 'generic'])
       .nullable(),
     attempts: z.number(),
+    citation: z.string().min(1).nullable().optional(),
   })
 )
 

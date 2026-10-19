@@ -7,6 +7,7 @@ import { useChats } from '../chats/react'
 import { waitingChats } from '../chats/selectors'
 import { allConversations, type ChatsState } from '../chats/state'
 import { DEMO_SERVER } from '../demo/demo-source'
+import { lanesSupported, threadState, unseenRuns, unseenThreads } from '../fleet/lanes'
 import { useFleet, useFleetController } from '../fleet/react'
 import { isComposerLocked } from '../fleet/selectors'
 import type { FleetState } from '../fleet/state'
@@ -21,16 +22,23 @@ import { Composer } from '../ui/composer/Composer'
 import { LockedNotice } from '../ui/composer/LockedNotice'
 import { ConnectionBanner } from '../ui/ConnectionBanner'
 import { BotTitle, ChatTitle, ConversationHeader, NewChatTitle } from '../ui/conversation/ConversationHeader'
-import { ConversationContext, type ConversationContextValue } from '../ui/conversation/CueCard'
-import { ConversationSearchContext } from '../ui/conversation/ConversationSearch'
+import { ConversationContext, type ConversationContextValue, type LanesAccess } from '../ui/conversation/CueCard'
+import { ConversationSearchContext, useConversationSearch } from '../ui/conversation/ConversationSearch'
 import { Transcript } from '../ui/conversation/Transcript'
 import { Drawer } from '../ui/drawer/Drawer'
 import { DrawerPanel } from '../ui/drawer/DrawerPanel'
 import { Icon } from '../ui/icons'
+import { citationKey, setCitation, useCitation } from '../ui/lanes/citations'
+import { LaneBar, type LanePane } from '../ui/lanes/LaneBar'
+import { openLaneScreen } from '../ui/lanes/LaneView'
+import { RunsPane } from '../ui/lanes/RunsPane'
+import { ThreadsPane } from '../ui/lanes/ThreadsPane'
 import { AppText } from '../ui/primitives/Text'
 
 const selectOnline = (state: FleetState) => state.connection === 'open'
 const selectEditFeature = (state: FleetState) => state.features.includes(FLEET_MESSAGE_EDIT_FEATURE)
+const selectFeatures = (state: FleetState) => state.features
+const selectSeen = (state: FleetState) => state.seen
 
 function EmptyState({ chats }: { chats: boolean }) {
   const { palette } = useTheme()
@@ -86,6 +94,61 @@ function BotConversation({ bot }: { bot: FleetBot }) {
     () => (editableId ? { itemId: editableId, start: startEdit } : undefined),
     [editableId, startEdit]
   )
+  // --- Its side conversations: routine runs and conversations with other bots, each in a tab of its own. ---
+  const features = useFleet(selectFeatures)
+  const { runs: runsApart, threads: threadsApart } = lanesSupported(features, bot)
+  const [pane, setPane] = useState<LanePane>('conversation')
+  const search = useConversationSearch()
+  const citeKey = citationKey(controller.source.serverId, bot.id)
+  const citation = useCitation(citeKey)
+  const openLane = useCallback(
+    (kind: 'run' | 'thread', laneId: string) => openLaneScreen(bot.id, { kind, id: laneId }),
+    [bot.id]
+  )
+  const lanes = useMemo<LanesAccess | undefined>(
+    () =>
+      runsApart || threadsApart
+        ? {
+            runs: runsApart,
+            threads: threadsApart,
+            openRun: (runId) => openLane('run', runId),
+            openThread: (threadId) => openLane('thread', threadId),
+            cite: (run) => setCitation(citeKey, run),
+          }
+        : undefined,
+    [runsApart, threadsApart, openLane, citeKey]
+  )
+  // Its runs and threads are read once its conversation opens: its tabs count what is new, its notices need them.
+  useEffect(() => {
+    if (runsApart) controller.ensureRuns(bot.id)
+    if (threadsApart) controller.ensureThreads(bot.id)
+  }, [controller, bot.id, runsApart, threadsApart])
+  const runs = useFleet(useCallback((state: FleetState) => state.runs[bot.id]?.runs ?? null, [bot.id]))
+  const threads = useFleet(useCallback((state: FleetState) => state.threads[bot.id]?.threads ?? null, [bot.id]))
+  const seen = useFleet(selectSeen)
+  const counts = useMemo(() => {
+    const seenRuns = seen.runs[bot.id]
+    const seenThreads = seen.threads[bot.id]
+    const fresh = threads && seenThreads ? unseenThreads(threads, new Map(Object.entries(seenThreads))) : []
+    return {
+      runs: runs && seenRuns ? unseenRuns(runs, new Set(seenRuns), bot).length : 0,
+      threads: fresh.length,
+      waiting: fresh.filter((thread) => threadState(thread, bot) === 'paused').length,
+    }
+  }, [bot, runs, threads, seen])
+  // A citation chosen in a run's conversation brings the composer it goes to.
+  useEffect(() => {
+    if (citation) setPane('conversation')
+  }, [citation])
+  // Search looks through the bot's own conversation, which it brings back.
+  useEffect(() => {
+    if (search.open) setPane('conversation')
+  }, [search.open])
+  const choosePane = (next: LanePane) => {
+    if (next !== 'conversation') search.setOpen(false)
+    setPane(next)
+  }
+
   const context = useMemo<ConversationContextValue>(
     () => ({
       bot,
@@ -107,8 +170,9 @@ function BotConversation({ bot }: { bot: FleetBot }) {
         check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
       },
       ...(edit ? { edit } : {}),
+      ...(lanes ? { lanes } : {}),
     }),
-    [bot, online, focusComposer, inbox, controller, active?.id, edit]
+    [bot, online, focusComposer, inbox, controller, active?.id, edit, lanes]
   )
 
   useEffect(() => {
@@ -118,32 +182,62 @@ function BotConversation({ bot }: { bot: FleetBot }) {
 
   return (
     <ConversationContext.Provider value={context}>
-      <Transcript bot={bot} />
-      {isComposerLocked(bot) ? (
-        <LockedNotice bot={bot} />
-      ) : (
-        <Composer
-          key={bot.id}
+      {lanes ? (
+        <LaneBar
           bot={bot}
-          inputRef={input}
-          editing={editing}
-          onCancelEdit={() => setEditing(null)}
-          onEdit={async (text) => {
-            if (!editing) return
-            try {
-              await controller.edit(bot.id, editing.itemId, text)
-            } catch (cause) {
-              throw new Error(
-                cause instanceof GatewayError && cause.code === 'PROTOCOL_INCOMPATIBLE'
-                  ? t('edit.error.outdated')
-                  : cause instanceof GatewayError && cause.status === 409
-                    ? t('edit.error.busy')
-                    : t('edit.error.failed')
-              )
-            }
-            setEditing(null)
-          }}
+          pane={pane}
+          onPane={choosePane}
+          runs={runsApart}
+          threads={threadsApart}
+          newRuns={counts.runs}
+          newThreads={counts.threads}
+          waitingThreads={counts.waiting}
+          onOpenTurn={(turn) => openLane(turn.kind === 'routine' ? 'run' : 'thread', turn.id)}
         />
+      ) : null}
+      {pane === 'runs' && runsApart ? (
+        <RunsPane bot={bot} onOpen={(run) => openLane('run', run.id)} />
+      ) : pane === 'threads' && threadsApart ? (
+        <ThreadsPane bot={bot} onOpen={(thread) => openLane('thread', thread.id)} />
+      ) : (
+        <>
+          <Transcript bot={bot} />
+          {isComposerLocked(bot) ? (
+            <LockedNotice bot={bot} />
+          ) : (
+            <Composer
+              key={bot.id}
+              bot={bot}
+              inputRef={input}
+              citation={
+                citation && runsApart
+                  ? {
+                      run: citation,
+                      onOpen: () => openLane('run', citation.id),
+                      onClear: () => setCitation(citeKey, null),
+                    }
+                  : null
+              }
+              editing={editing}
+              onCancelEdit={() => setEditing(null)}
+              onEdit={async (text) => {
+                if (!editing) return
+                try {
+                  await controller.edit(bot.id, editing.itemId, text)
+                } catch (cause) {
+                  throw new Error(
+                    cause instanceof GatewayError && cause.code === 'PROTOCOL_INCOMPATIBLE'
+                      ? t('edit.error.outdated')
+                      : cause instanceof GatewayError && cause.status === 409
+                        ? t('edit.error.busy')
+                        : t('edit.error.failed')
+                  )
+                }
+                setEditing(null)
+              }}
+            />
+          )}
+        </>
       )}
     </ConversationContext.Provider>
   )

@@ -6,6 +6,8 @@ import {
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_FILES_FEATURE,
   FLEET_GATEWAY_ROUTES,
+  FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   summarizeText,
   type FleetBot,
@@ -23,6 +25,7 @@ import { joinAvailability } from '../fleet/create-bot'
 import { botRecord } from '../fleet/factories'
 import type { EventHandlers, FleetSource } from '../fleet/source'
 import type { PairedServer } from '../servers/registry'
+import { createDemoLanes, DEMO_LANES_BOT, demoLaneWorld } from './demo-lanes'
 import { DEMO_OPTIONS, DEMO_SCRIPTS, demoWorld, pixelAnswered, REPLY_SCRIPT, type AskSpec, type Step } from './fixtures'
 
 export const DEMO_FEATURES = [
@@ -31,6 +34,8 @@ export const DEMO_FEATURES = [
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_DEVICES_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  FLEET_PEER_CONVERSATIONS_FEATURE,
 ]
 
 /** The demo server as a paired server: it never leaves the phone. */
@@ -90,6 +95,14 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       notifications: true,
     },
   ]
+  // Atlas keeps its routine runs and its conversations with other bots apart, as current bots do.
+  const laneWorld = demoLaneWorld(Date.now())
+  for (const bot of world.bots)
+    if (bot.id === DEMO_LANES_BOT)
+      bot.capabilities = [...bot.capabilities, FLEET_ROUTINE_CONVERSATIONS_FEATURE, FLEET_PEER_CONVERSATIONS_FEATURE]
+  world.transcripts[DEMO_LANES_BOT] = [...laneWorld.conversation, ...world.transcripts[DEMO_LANES_BOT]].sort(
+    compareFleetTranscriptItems
+  )
   const bots = new Map(world.bots.map((bot) => [bot.id, bot]))
   const transcripts = world.transcripts
   const routines = world.routines
@@ -139,6 +152,8 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     inbox = items
     emit({ type: 'inbox.updated', at: stamp(), items })
   }
+  // Atlas's routine runs and conversations with other bots, apart from its own conversation.
+  const lanes = createDemoLanes(laneWorld, { emit, stamp, nextId, sleep, requireBot, updateBot })
 
   // The prototype's two waiting bots start with their requests open.
   for (const item of [...transcripts.atlas, ...transcripts.pixel]) {
@@ -400,6 +415,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
         mediaType: attachment.mediaType,
         byteSize: Math.floor((attachment.dataBase64.length * 3) / 4),
       }))
+    const citation = body.citation ? lanes.citation(body.citation.runId) : null
     upsert(botId, {
       id: itemId,
       at: stamp(),
@@ -410,6 +426,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       memories: [],
       images,
       ...(files.length ? { files } : {}),
+      ...(citation ? { citation } : {}),
     })
     const receipt = { inputId: `in-${itemId}`, itemId, queued }
     receipts.set(body.idempotencyKey, { hash, receipt })
@@ -494,6 +511,8 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     // Bodies are checked as the gateway would, so a mistake in the app shows here too.
     const body = route.body ? route.body.parse(o.body) : undefined
     const id = String(o.params?.id ?? '')
+    const lane = lanes.call(key, o, body)
+    if (lane !== undefined) return lane
     switch (key) {
       case 'meta':
         return { protocol: 1, gatewayVersion: 'demo', botImage: 'demo', botImageVersion: null, features: DEMO_FEATURES }

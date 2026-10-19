@@ -1,4 +1,9 @@
-import { FLEET_FILES_FEATURE, FLEET_MESSAGE_TEXT_MAX, type FleetBot } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_FILES_FEATURE,
+  FLEET_MESSAGE_TEXT_MAX,
+  type FleetBot,
+  type FleetRoutineRun,
+} from '@maestrly/bot-fleet-protocol'
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react'
 import {
   AccessibilityInfo,
@@ -25,6 +30,7 @@ import { useServers } from '../../servers/ServersProvider'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { Icon } from '../icons'
+import { CitationChip } from '../lanes/RunMarker'
 import { IconButton } from '../primitives/IconButton'
 import { AppText } from '../primitives/Text'
 import { AttachmentChips } from './AttachmentChips'
@@ -66,11 +72,14 @@ export function ComposerShell({
   editing = null,
   onEdit,
   onCancelEdit,
+  above,
 }: {
   draftKey: string
   placeholder: string
   filesEnabled: boolean
   setup: ReactNode
+  /** What the next message carries besides its text, shown over the field: such as the routine run it cites. */
+  above?: ReactNode
   /** Set while a turn runs: an empty field turns the send button into a stop button. */
   stopLabel: string | null
   onStop: () => Promise<unknown>
@@ -256,6 +265,7 @@ export function ComposerShell({
           ) : null}
         </View>
       ) : null}
+      {above && !editingId ? <View style={{ marginHorizontal: 4, marginBottom: 6 }}>{above}</View> : null}
       {editingId ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 8, marginBottom: 6 }}>
           <Icon name="pencil" size={14} color={palette.brass} />
@@ -464,28 +474,49 @@ export function Composer({
   editing,
   onEdit,
   onCancelEdit,
+  citation = null,
 }: {
   bot: FleetBot
   inputRef?: Ref<TextInputInstance>
   editing?: { itemId: string; text: string } | null
   onEdit?: (text: string) => Promise<unknown>
   onCancelEdit?: () => void
+  /** The routine run the next message refers to, cleared once it is sent. */
+  citation?: { run: FleetRoutineRun; onOpen: () => void; onClear: () => void } | null
 }) {
   const { t } = useI18n()
   const { active } = useServers()
   const controller = useFleetController()
   const serverFiles = useFleet(selectFiles)
   const online = useFleet(selectOnline)
+  const cited = citation?.run ?? null
+  const citedTitle = cited ? cited.routineTitle || t('lanes.routine') : ''
   return (
     <ComposerShell
       draftKey={`${active?.id ?? ''}:bot:${bot.id}`}
-      placeholder={t('composer.placeholder', { name: bot.name })}
+      placeholder={
+        cited
+          ? t('runs.cite.placeholder', { name: bot.name, title: citedTitle })
+          : t('composer.placeholder', { name: bot.name })
+      }
       filesEnabled={serverFiles && bot.capabilities.includes(FLEET_FILES_FEATURE)}
       setup={<SetupPill bot={bot} />}
+      above={
+        citation && cited ? (
+          <CitationChip
+            title={citedTitle}
+            at={cited.finishedAt ?? cited.deliveredAt}
+            pending
+            onOpen={citation.onOpen}
+            onRemove={citation.onClear}
+          />
+        ) : null
+      }
       stopLabel={botWorksHere(bot) ? t('composer.stop', { name: bot.name }) : null}
       onStop={() => controller.action(bot.id, 'cancel')}
       onSend={async (text, files) => {
-        await controller.send(bot.id, text, files)
+        await controller.send(bot.id, text, files, cited?.id ?? null)
+        citation?.onClear()
         AccessibilityInfo.announceForAccessibility(online ? t('announce.sent') : t('announce.queuedOffline'))
       }}
       inputRef={inputRef}

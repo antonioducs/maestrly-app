@@ -21,6 +21,37 @@ export function formatDateTime(iso: string, locale: string): string {
   }
 }
 
+/** A time of day in the app's language, such as when a routine run ended. */
+export function formatTime(iso: string, locale: string): string {
+  const date = new Date(iso)
+  try {
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  }
+}
+
+/** A time, or its date when it was not today: a list of conversations shows each one's last activity this way. */
+export function formatWhen(iso: string, locale: string, now: number): string {
+  const date = new Date(iso)
+  if (now - date.getTime() < 86_400_000 && new Date(now).getDate() === date.getDate()) return formatTime(iso, locale)
+  try {
+    return date.toLocaleDateString(locale, { day: 'numeric', month: 'short' })
+  } catch {
+    return date.toISOString().slice(5, 10)
+  }
+}
+
+/** A day of a history that is neither today nor yesterday: its weekday and date. */
+export function formatDay(day: number, locale: string): string {
+  try {
+    const text = new Date(day).toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'short' })
+    return text.charAt(0).toUpperCase() + text.slice(1)
+  } catch {
+    return new Date(day).toISOString().slice(0, 10)
+  }
+}
+
 /** File sizes in binary units, as the desktop shows them: 512 B, 1.5 KB, 4.0 MB. */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`

@@ -17,9 +17,9 @@ describe('system lines', () => {
       delivered: true,
     }
     expect(systemLineText(sent, t)).toEqual({ text: 'Sent to Nina', detail: 'Hi' })
-    // The conversation it opened goes on apart, where only the desktop app shows it.
+    // The conversation it opened goes on apart; where the phone can open it, a card leads there instead of this line.
     expect(systemLineText({ ...sent, thread: { id: 'thread-1' } }, t)).toEqual({
-      text: 'Opened a conversation with Nina, apart from this one. The desktop app shows it.',
+      text: 'Opened a conversation with Nina, apart from this one.',
       detail: 'Hi',
     })
   })

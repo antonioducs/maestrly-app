@@ -27,6 +27,15 @@ User-visible changes by version. Downloads are on
   Shift for a floating window), or with the drawer's **Open in a floating
   window** button. The shortcut can be changed in **Settings → Tools & drawer**.
   See [remote workspaces](docs/remote-workspaces.md#computer).
+- The mobile app shows a bot's routine runs and its conversations with other
+  bots apart from your conversation with it, as the desktop does: **Runs** and
+  **Bots** tabs under the bot's name count what is new or waits for you, each
+  run or conversation opens with everything it did, and you can write there,
+  let a paused conversation between bots go on, keep or delete one, and cite a
+  run in your next message. Your conversation shows where a run ended and the
+  conversations the bot opened with other bots. It needs a bot server and
+  environment image that keep them apart. See
+  [Mobile app](docs/mobile.md#what-it-does).
 
 ### Fixed
 

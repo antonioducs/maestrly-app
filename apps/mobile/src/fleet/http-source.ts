@@ -4,7 +4,7 @@ import { File } from 'expo-file-system'
 import { createGatewayClient, type FetchLike } from '../gateway/client'
 import { openEventStream, type StreamingFetch } from '../gateway/event-stream'
 import type { PairedServer } from '../servers/registry'
-import type { FleetSource } from './source'
+import { eventsQuery, type FleetSource } from './source'
 
 /** Expo's fetch streams response bodies (the event stream needs it) and, being native, sends no Origin header. */
 export const nativeFetch = expoFetch as unknown as FetchLike
@@ -23,14 +23,16 @@ export function createHttpSource(server: PairedServer, token: string): FleetSour
     call: client.call,
     openEvents: (handlers) =>
       openEventStream({
-        url: server.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, reasoning ? { reasoning: 1 } : undefined),
+        url: server.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, eventsQuery(reasoning)),
         headers: client.headers(),
         fetch: expoFetch as unknown as StreamingFetch,
         createDecoder: () => new TextDecoder(),
         ...handlers,
       }),
-    imageSource: (botId, imageId) => ({
-      uri: server.origin + buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }),
+    imageSource: (botId, imageId, laneId) => ({
+      uri:
+        server.origin +
+        buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }, laneId ? { run: laneId } : undefined),
       headers: client.headers(),
     }),
     fileSource: (botId, fileId) => ({

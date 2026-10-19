@@ -16,7 +16,7 @@ import { ChatsProvider } from '../chats/react'
 import { noChatsSource } from '../chats/source'
 import { createDemoChatsSource } from '../demo/demo-chats'
 import { createDemoSource, DEMO_SERVER } from '../demo/demo-source'
-import { createFleetController, type FleetController } from '../fleet/controller'
+import { createFleetController, lanesSeenKey, type FleetController } from '../fleet/controller'
 import { createHttpSource, gatewayClientFor, nativeFetch } from '../fleet/http-source'
 import { FleetProvider } from '../fleet/react'
 import { FLEET_DICTATION_FEATURE, type FleetDictationStatus } from '@maestrly/bot-fleet-protocol'
@@ -287,6 +287,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       }
       await registry.remove(id)
       await kv.delete(`outbox.${id}`).catch(() => {})
+      await kv.delete(lanesSeenKey(id)).catch(() => {})
       await kv.delete(dictationChoiceKey(id)).catch(() => {})
       await forgetServerChats(kv, id)
       await reload()

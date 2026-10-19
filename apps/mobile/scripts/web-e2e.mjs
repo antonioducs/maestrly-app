@@ -154,6 +154,32 @@ try {
     await page.getByText('Allowed', { exact: true }).waitFor()
   })
 
+  await step('follow a bot’s routine runs and its conversations with other bots', async () => {
+    // Atlas keeps them apart: its conversation tells when a run ended, and leads to the one it opened with Pixel.
+    await page.getByText('Release readiness check finished').waitFor()
+    await button(/^Conversation with Pixel/).waitFor()
+    await page.getByRole('tab', { name: 'Runs' }).click()
+    await button(/^Staging health check, 4 with nothing new/).click()
+    await button(/^Staging health check, Nothing new/).first().waitFor()
+    await button(/^Release readiness check, Done/).click()
+    await page.getByText('Run report').waitFor()
+    await button('More actions').click()
+    await button(/^Cite in your conversation/).click()
+    // Back in Atlas's conversation, the next message cites the run.
+    const field = page.getByRole('textbox', { name: 'Ask Atlas about Release readiness check' })
+    await field.fill('Is anything still blocking rc.2?')
+    await button('Send message').click()
+    await page.getByRole('link', { name: /^Release readiness check · / }).waitFor()
+    await page.getByRole('tab', { name: /^Conversations with other bots/ }).click()
+    await button(/^Pricing hero for rc\.2/).click()
+    await page.getByText('Paused after 8 messages without you').waitFor()
+    await button('Let them go on for 8 more').click()
+    await page.getByText(/let’s get Stacked ready/).waitFor()
+    await button('Back').click()
+    await button(/^Pricing hero for rc\.2, Atlas and Pixel, Open/).waitFor()
+    await page.getByRole('tab', { name: 'Conversation', exact: true }).click()
+  })
+
   await step('create a bot in an environment', async () => {
     await openMenu()
     await page.getByRole('tab', { name: /^Bots/ }).click()

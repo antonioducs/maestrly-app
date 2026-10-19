@@ -33,10 +33,22 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   size. A video downloads to the phone and plays in the conversation; any other
   file downloads and opens the system's share sheet.
 - **A bot's other conversations:** a bot's routine runs and its conversations
-  with other bots work apart from its conversation with you, at the same time;
-  Maestrly on your computer shows them. A message that opened a conversation
-  with another bot says so, and **Stop** stops only the conversation you see.
-  See [Conversations at once](bot-fleet.md#conversations-at-once).
+  with other bots work apart from its conversation with you, at the same time.
+  Tabs under the bot's name switch between **Conversation**, **Runs** and
+  **Bots**, and count the runs that ended with something new and the
+  conversations with news or waiting for you; while one works, a line under
+  them names it and opens it. **Runs** lists the runs by day, folds a routine's
+  runs that found nothing new into one line, and filters by routine. **Bots**
+  lists the conversations that paused after their messages without you first.
+  Open one to read everything it did, with its report or what the bot brought
+  back, and write there: ask a run for a change, or guide a conversation
+  between bots, which resets its count, or let it go on. **More actions** keeps
+  or deletes it and cites a run: your next message to the bot refers to it.
+  Your conversation shows a notice where a run ended, with **Cite** and
+  **Open**, and a card for each conversation the bot opened with another bot.
+  Each tab opens its settings. **Stop** stops only the conversation you see.
+  See [Routine runs](bot-fleet.md#routine-runs) and
+  [Conversations with other bots](bot-fleet.md#conversations-with-other-bots).
 - **Requests:** approve or deny a command, answer a question, or mark a request
   for help as resolved; in a chat, also review a plan and confirm the
   conversations an agent wants to start.
@@ -199,7 +211,8 @@ phone also removes its push registration from the server.
 - The device token for each server is in the iOS Keychain or the Android
   Keystore, readable after the first unlock and never moved to another device.
 - The list of paired servers, your theme, language and notification choices, the
-  defaults for new chats, and messages not yet sent are kept in the app's
+  defaults for new chats, messages not yet sent, and which routine runs and
+  conversations between bots you have already seen are kept in the app's
   storage. Photos, pasted images and files waiting to be sent stay in the app's
   cache until they are. The app checks whether the clipboard holds an image
   without reading it, and reads it only when you choose **Paste image**.
