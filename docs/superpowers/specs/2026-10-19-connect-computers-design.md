@@ -21,7 +21,7 @@ terminals, Notes, Plan, Review, Files, Code, the agent's **Browser**, and the pr
 | --- | --- |
 | What a peer is | A **peer host**: another computer's Maestrly desktop, in its normal mode, reached through the same bridge, host API, and machine switcher as a workspaces host ([remote hosts design](2026-09-29-remote-hosts-design.md)). Every computer can be a host and a client at once. |
 | Transport | **Direct**: this computer dials the peer's **peer server** over HTTPS and a WebSocket. Same network or Tailscale; no relay through the bot server. |
-| Encryption and identity | Each profile has a **peer identity**: a device id, a P-256 key, and a self-signed certificate. A client pins the peer's certificate fingerprint at pairing and refuses any other certificate. |
+| Encryption and identity | Each profile has a **peer identity**: a device id, a 2048-bit RSA key, and a self-signed certificate. A client pins the peer's certificate at pairing and refuses any other certificate. |
 | Pairing | Once per pair of computers. On B, choose A (found on the network, on Tailscale, or typed) and **Connect**. A shows a 6-digit code, which the owner types on B. A **PAKE** (SPAKE2, RFC 9382, P-256) keyed by the code and bound to both certificate fingerprints authenticates both sides and resists a man in the middle on the network. One pairing covers both directions. |
 | Authentication after pairing | A per-device bearer token over the pinned TLS connection. A stores only its SHA-256 hash, as the gateway does for devices. |
 | Who may connect | Off by default. **Let my other computers use this computer**, in Settings → Computers, turns the peer server on. Only paired computers that have not been removed can connect. |
@@ -76,13 +76,13 @@ flowchart LR
 ### 1. Peer identity and store
 
 - Created the first time the owner turns hosting on or connects to a computer. The device id is a UUID v4, and the
-  name defaults to the bot-server device name or the OS host name. The certificate is self-signed, has the device id
-  as its common name, and is valid for ten years.
-- The private key, the tokens this computer uses to reach its peers, and the hashes of the tokens it issued are kept
-  with `secure-store` (OS keyring). Without a keyring, hosting and pairing are unavailable and Settings says why; no
-  secret is stored in plain text.
-- Each peer record holds `{ deviceId, name, os, fingerprint, port, addresses, tint, pairedAt, lastSeenAt, token,
-  issuedTokenHash }`. `addresses` lists where it was last reached, newest first, at most 8.
+  name defaults to the bot-server device name or the OS host name. The key is generated with Node's `crypto`. The
+  certificate is self-signed with `node-forge`, has the device id as its common name, and is valid for ten years.
+- The private key and the tokens this computer uses to reach its peers are kept with `secure-store` (OS keyring).
+  Without a keyring, hosting and pairing are unavailable and Settings says why; no secret is stored in plain text.
+- Each peer record holds `{ deviceId, name, os, certPem, fingerprint, port, addresses, tint, pairedAt, lastSeenAt,
+  issuedTokenHash }`, and its token lives in `secure-store`. `addresses` lists where it was last reached, newest
+  first, at most 8. `issuedTokenHash` is the SHA-256 of the token this computer gave the peer.
 - Removing a peer deletes its record on this side and asks the peer to forget this computer too
   (`DELETE /v1/peer/self`, best effort).
 
@@ -129,14 +129,16 @@ B already knows A's address and has its `hello` (with the fingerprint `fpA` seen
    off, while another pairing is pending, during a cooldown, or on a version mismatch. Otherwise it makes a 6-digit
    code (valid 2 minutes) and shows **"<B> wants to connect to this computer. Type this code on <B>: 482 913"** with
    **Cancel**, plus a system notification when its window is hidden or not focused. It answers `{ pairingId }`.
-2. The owner types the code on B. B computes SPAKE2 message `X` with the code as the password, and sends
-   `exchange { X }`. A computes `Y` and the shared key `K`, and answers `{ Y, confirmA }`, where
-   `confirmA = HMAC(K, "maestrly-peer A" ‖ transcript)` and the transcript holds both device ids, `fpA`, `fpB`, `X`,
-   and `Y`, each as the TLS session saw it.
-3. B checks `confirmA`. A wrong code or a man in the middle fails here, and B says the code did not match. Otherwise B
-   sends `confirm { confirmB, sealed }`, where `sealed` is AES-256-GCM under a key derived from `K` (HKDF) holding the
-   token A will use to reach B and B's port and addresses. A checks `confirmB`, stores B with the pinned `fpB`, and
-   answers with its own sealed token for B. B stores A with the pinned `fpA`.
+2. The owner types the code on B. In SPAKE2 terms the client B is party A and the host A is party B, with the device
+   ids as identities. The password is the code, stretched with scrypt and salted with the pairing id. The additional
+   data (`AAD`) is `"maestrly-peer-pairing-v1"`, then `fpA` as B's TLS session saw it, then `fpB`. B sends
+   `exchange { X }`. A computes `Y`, the transcript `TT`, and the keys `Ke`, `KcA`, and `KcB`, and answers
+   `{ Y, confirm: HMAC(KcB, TT) }`.
+3. B checks A's confirmation. A wrong code or a man in the middle fails here: B tells A (`abort`) and says the code did
+   not match. Otherwise B sends `confirm { confirm: HMAC(KcA, TT), sealed }`, where `sealed` is AES-256-GCM under a
+   key derived from `Ke` (HKDF). It holds the token A will use to reach B, and B's port and addresses. A checks B's
+   confirmation, stores B with `fpB` pinned, and answers with its own sealed token for B. B stores A with the
+   certificate of its TLS session (`fpA`) pinned.
 
 - Each code allows **one** exchange. A failed exchange ends the pairing on both sides, and A's dialog says the code did
   not match on B. After three failed pairings in 10 minutes, A refuses new requests for 10 minutes.
@@ -270,6 +272,7 @@ the bridge as JPEG (the video transport needs the environment display, so a peer
   audited in phase 2. Ones a peer triggers must not take over A's screen beyond showing what happens.
 - **Browser presentation** on Linux desktops and the macOS transparent window (section 6).
 - **New dependencies**: `@noble/curves` (SPAKE2), `bonjour-service` (mDNS advertising and browsing), and
-  `node-forge` (the self-signed certificate; already in the lockfile, becomes a direct dependency). They need
+  `node-forge` (signing the self-signed certificate, which it supports only for RSA keys; already in the lockfile,
+  becomes a direct dependency). They need
   `THIRD_PARTY_NOTICES.md` and a `--package` run.
 - **Networks that block LAN peers** (client isolation, corporate Wi-Fi): Tailscale is the documented answer.
