@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import type { Conversation, WorkspaceWithConversations } from '../../src/preload'
 import {
@@ -108,5 +109,24 @@ describe('shell keys', () => {
     expect(active).toMatchObject({ id: `${HOST}#c1`, name: 'renamed' })
     set((mine) => (mine?.id === 'c1' ? null : mine))
     expect(active).toBeNull()
+  })
+
+  it("hands a remote host's own conversation id to bot manual-chat and management controls", () => {
+    const manualChat = readFileSync(
+      new URL('../../src/renderer/components/bot/BotManualChatControl.tsx', import.meta.url),
+      'utf8'
+    )
+    const badge = readFileSync(
+      new URL('../../src/renderer/components/bot/BotConversationBadge.tsx', import.meta.url),
+      'utf8'
+    )
+    const desktopApp = readFileSync(new URL('../../src/renderer/DesktopApp.tsx', import.meta.url), 'utf8')
+
+    expect(manualChat).toContain('api.botSetManualChatEnabled(rawId(conversation.id), enabled)')
+    expect(badge).toContain("api.botSetManagement(rawId(conversation.id), active ? 'paused' : 'active')")
+    expect(desktopApp).toContain('<BotManagementControls conversation={hostConversation(active)} />')
+    expect(desktopApp).toContain(
+      'botConversation={\n                                  currentConversation.botOrigin ? hostConversation(currentConversation) : undefined\n                                }'
+    )
   })
 })

@@ -59,7 +59,15 @@ import { hostApi, HostProvider } from '@/lib/hosts/host-context'
 import { ReviewHeaderButton } from '@/components/chat/review/ReviewHeaderButton'
 import { useHosts } from '@/lib/hosts/use-hosts'
 import { type RemoteHostShell, RemoteHostRuntime, remoteConversationLabels } from '@/lib/hosts/remote-host-runtime'
-import { hostOfKey, hostTarget, hostWorkspace, isRemoteKey, rawId, shellConversation } from '@/lib/hosts/shell-keys'
+import {
+  hostConversation,
+  hostOfKey,
+  hostTarget,
+  hostWorkspace,
+  isRemoteKey,
+  rawId,
+  shellConversation,
+} from '@/lib/hosts/shell-keys'
 import { HostUnavailableOverlay } from '@/components/HostUnavailableOverlay'
 import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import type { HostView } from '../shared/hosts'
@@ -1080,7 +1088,11 @@ export function DesktopApp() {
                   </div>
                   <div className="no-drag flex min-w-0 items-center gap-2">
                     {active && !activeRemote && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
-                    {active?.botOrigin && <BotManagementControls conversation={active} />}
+                    {active?.botOrigin && (
+                      <HostProvider hostId={activeHostId}>
+                        <BotManagementControls conversation={hostConversation(active)} />
+                      </HostProvider>
+                    )}
                     {active?.scope === 'project' && active.archived === 0 && !active.isMulti && !active.botOrigin && (
                       <HostProvider hostId={activeHostId}>
                         <ReviewHeaderButton conversationId={rawId(active.id)} hostId={activeHostId} />
@@ -1127,9 +1139,13 @@ export function DesktopApp() {
                                 workspaceId={c.workspaceId === null ? null : rawId(c.workspaceId)}
                                 cwd={c.cwd}
                                 experience={c.experience}
-                                botManaged={!!c.botOrigin && c.botManagementState === 'active'}
-                                botConversation={c.botOrigin ? c : undefined}
-                                botName={c.botOrigin?.botName}
+                                botManaged={
+                                  !!currentConversation.botOrigin && currentConversation.botManagementState === 'active'
+                                }
+                                botConversation={
+                                  currentConversation.botOrigin ? hostConversation(currentConversation) : undefined
+                                }
+                                botName={currentConversation.botOrigin?.botName}
                                 onExperienceChange={(id, experience) =>
                                   handleConversationExperienceChange(hostKey(chatHostId, id), experience)
                                 }
@@ -1188,9 +1204,11 @@ export function DesktopApp() {
                                 workspaceId={c.workspaceId}
                                 cwd={c.cwd}
                                 experience={c.experience}
-                                botManaged={!!c.botOrigin && c.botManagementState === 'active'}
-                                botConversation={c.botOrigin ? c : undefined}
-                                botName={c.botOrigin?.botName}
+                                botManaged={
+                                  !!currentConversation.botOrigin && currentConversation.botManagementState === 'active'
+                                }
+                                botConversation={currentConversation.botOrigin ? currentConversation : undefined}
+                                botName={currentConversation.botOrigin?.botName}
                                 onExperienceChange={handleConversationExperienceChange}
                                 visible={detached || (active?.id === c.id && !mainOverride)}
                                 status={statuses[c.id] ?? c.status}

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Lock, Unlock } from 'lucide-react'
 import type { Conversation } from '../../../shared/conversation'
 import { useHostApi } from '../../lib/hosts/host-context'
+import { rawId } from '../../lib/hosts/shell-keys'
 import { Button } from '../ui/button'
 import { ConfirmDialog } from '../ui/confirm-dialog'
 
@@ -28,7 +29,7 @@ export function BotManualChatControl({ conversation }: { conversation: Conversat
     setError('')
     try {
       // The composer follows the conversation this writes, never this click.
-      await api.botSetManualChatEnabled(conversation.id, enabled)
+      await api.botSetManualChatEnabled(rawId(conversation.id), enabled)
       setConfirming(false)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('bots.releaseFailed'))

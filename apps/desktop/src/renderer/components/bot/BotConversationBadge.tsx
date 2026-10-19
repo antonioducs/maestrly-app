@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Bot, Pause, Play } from 'lucide-react'
 import type { Conversation } from '../../../shared/conversation'
 import { useHostApi } from '../../lib/hosts/host-context'
+import { rawId } from '../../lib/hosts/shell-keys'
 import { Button } from '../ui/button'
 
 export function BotConversationBadge({
@@ -57,7 +58,7 @@ export function BotManagementControls({ conversation }: { conversation: Conversa
           setBusy(true)
           setError('')
           try {
-            await api.botSetManagement(conversation.id, active ? 'paused' : 'active')
+            await api.botSetManagement(rawId(conversation.id), active ? 'paused' : 'active')
           } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught))
           } finally {
