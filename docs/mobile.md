@@ -40,6 +40,18 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
 - **Requests:** approve or deny a command, answer a question, or mark a request
   for help as resolved; in a chat, also review a plan and confirm the
   conversations an agent wants to start.
+- **Plans:** a chat in Plan mode shows its plan as a card with its steps, never
+  the whole text. **Read and review** opens the plan in a sheet, as the Plan tab
+  does on your computer: comment on a part of it with **+**, **Edit** its
+  Markdown, and, for a revision, see its **Changes** since the last version. At
+  the bottom you approve it, request changes with your comments, discard it, or
+  build it in a new conversation: **With Maestro** (choose a strategy) or **In a
+  new conversation** (choose the model, effort, Fast, and the same checkout or a
+  new worktree). A review of the plan on your computer holds it until you hand it
+  off or discard it. Starting a plan review is done on the computer. What you
+  write stays on the phone while the app runs. A server that predates this
+  keeps the phone to approving, discarding and a general comment, with line
+  comments written into it.
 - **New bots:** **New bot** at the end of the **Bots** tab, or **+** beside an
   environment, creates a bot in an environment that already exists. Give it a
   name and what it does, choose where it runs, its permissions and the bots it

@@ -651,6 +651,66 @@ describe('demo chats', () => {
     connection.close()
   })
 
+  it('revises a plan from line comments, shows what changed, and builds it in a new conversation', async () => {
+    const source = createDemoChatsSource({ stepMs: 1 })
+    const connection = source.connect({ onEvent: () => {}, onState: () => {}, onReady: () => {} })
+    const plan = async () => (await connection.invoke('open', { conversationId: 'c-flaky' })).runtime.plan
+    await connection.invoke('setSetup', { conversationId: 'c-flaky', patch: { mode: 'plan' } })
+    await connection.invoke('send', {
+      conversationId: 'c-flaky',
+      text: 'Add the push sender',
+      attachments: [],
+      clientId: '550e8400-e29b-41d4-a716-446655440003',
+    })
+    await vi.waitFor(async () => expect((await plan())?.version).toBe(1))
+    const first = await plan()
+    expect(await connection.invoke('planOptions', { conversationId: 'c-flaky' })).toMatchObject({
+      newConversation: true,
+      maestro: { lastUsedId: 'global' },
+      review: null,
+    })
+    expect(
+      await connection.invoke('plan', {
+        conversationId: 'c-flaky',
+        action: 'revise',
+        lineComments: [{ line: 1, text: 'Retry only twice' }],
+      })
+    ).toEqual({ ok: true })
+    await vi.waitFor(async () => expect((await plan())?.version).toBe(2), { timeout: 5000 })
+    const second = await plan()
+    expect(second?.previousText).toBe(first?.text)
+    expect(second?.text).toContain('Retry only twice')
+
+    // A strategy with no orchestrator cannot start; a new standard conversation can.
+    expect(
+      await connection.invoke('plan', {
+        conversationId: 'c-flaky',
+        action: 'approve',
+        implementation: { target: 'maestro', profileId: 'custom-frontend' },
+      })
+    ).toMatchObject({ ok: false })
+    const built = await connection.invoke('plan', {
+      conversationId: 'c-flaky',
+      action: 'approve',
+      editedPlan: 'Only the sender, no retries.',
+      implementation: {
+        target: 'standard',
+        settings: { providerId: 'claude', modelId: 'claude-opus-5-5', reasoning: 'off', fastMode: false },
+        placement: 'worktree',
+      },
+    })
+    expect(built).toMatchObject({ ok: true, conversationId: expect.any(String) })
+    expect(await plan()).toBeNull()
+    const opened = await connection.invoke('open', { conversationId: built.conversationId! })
+    expect(opened.sourceConversationId).toBe('c-flaky')
+    expect(opened.page.items.find((item) => item.kind === 'user')).toMatchObject({
+      text: 'Only the sender, no retries.',
+    })
+    // The chat that planned keeps its mode.
+    expect((await connection.invoke('setup', { conversationId: 'c-flaky' })).mode).toBe('plan')
+    connection.close()
+  })
+
   it('starts a chat in a workspace when a chat is asked to send work there', async () => {
     const source = createDemoChatsSource({ stepMs: 1 })
     const connection = source.connect({ onEvent: () => {}, onState: () => {}, onReady: () => {} })

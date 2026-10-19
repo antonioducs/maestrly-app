@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibilityInfo, Pressable, type TextInputInstance, View } from 'react-native'
 import { useChats, useChatsController } from '../../chats/react'
 import { allConversations, type ChatsState } from '../../chats/state'
+import type { PlanDecisionArgs } from '../../chats/plan-review'
 import { editableItemId } from '../../fleet/transcript-search'
 import { useI18n } from '../../i18n'
 import { useServers } from '../../servers/ServersProvider'
@@ -21,6 +22,7 @@ import { AppText } from '../primitives/Text'
 import { ChatHostBanner } from './ChatHostBanner'
 import { ChatSetupPill } from './ChatSetupPill'
 import { PlanCard } from './PlanCard'
+import { PlanSheet } from './PlanSheet'
 
 const selectOpen = (state: ChatsState) => state.bridge === 'open'
 
@@ -171,17 +173,24 @@ export function ChatConversation({ conversationId }: { conversationId: string })
     ]
   )
 
+  // A plan opens in a sheet of its own, kept here rather than in its card: the list may unmount a row it scrolls away.
+  const [planOpen, setPlanOpen] = useState(false)
+  const plan = runtime?.plan ?? null
+  const planDraftKey = `${active?.id ?? ''}:${conversationId}`
+  const decidePlan = useCallback(
+    (decision: PlanDecisionArgs) => chats.decidePlan(conversationId, decision),
+    [chats, conversationId]
+  )
+  useEffect(() => {
+    if (!plan) setPlanOpen(false)
+  }, [plan])
+
   const extras = useMemo<ExtraRow[]>(() => {
     const rows: ExtraRow[] = []
-    if (runtime?.plan)
+    if (plan)
       rows.push({
-        key: `plan:${runtime.plan.version}`,
-        node: (
-          <PlanCard
-            plan={runtime.plan}
-            onDecide={(action, feedback) => chats.decidePlan(conversationId, action, feedback)}
-          />
-        ),
+        key: `plan:${plan.version}`,
+        node: <PlanCard plan={plan} draftKey={planDraftKey} onOpen={() => setPlanOpen(true)} onDecide={decidePlan} />,
       })
     for (const entry of outbox)
       rows.push({
@@ -197,7 +206,7 @@ export function ChatConversation({ conversationId }: { conversationId: string })
         ),
       })
     return rows
-  }, [runtime?.plan, outbox, online, busy, chats, conversationId, t])
+  }, [plan, planDraftKey, decidePlan, outbox, online, busy, chats, t])
 
   const thinking =
     !!runtime?.streaming &&
@@ -267,6 +276,17 @@ export function ChatConversation({ conversationId }: { conversationId: string })
           setEditing(null)
         }}
       />
+      {plan && planOpen ? (
+        <PlanSheet
+          key={`plan:${plan.version}`}
+          conversation={{ id: conversationId }}
+          plan={plan}
+          draftKey={planDraftKey}
+          onClose={() => setPlanOpen(false)}
+          onDecide={decidePlan}
+          onBuiltElsewhere={openChat}
+        />
+      ) : null}
     </ConversationContext.Provider>
   )
 }

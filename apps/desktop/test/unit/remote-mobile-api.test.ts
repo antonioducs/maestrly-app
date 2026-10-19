@@ -72,6 +72,12 @@ function setup() {
     /** Subscription accounts `chat:config` lists, and what `chat:subscription-usage` answers for each account id. */
     subscriptions: [] as unknown[],
     usage: {} as Record<string, unknown>,
+    /** The pending plan `plan:get` hands out, what `plan:decide` answers, and the review `chat:review:status` reports. */
+    plan: null as Record<string, unknown> | null,
+    decided: { ok: true } as Record<string, unknown> | undefined,
+    review: null as Record<string, unknown> | null,
+    /** More chats of the workspace, beyond the ones every test sees. */
+    workspaceChats: [] as unknown[],
   }
   const handle = (channel: string, fn: (...args: unknown[]) => unknown, kind: 'invoke' | 'send' = 'invoke') =>
     table.record(channel, kind, (event: { sender: typeof sender }, ...args: unknown[]) => {
@@ -93,6 +99,7 @@ function setup() {
           experience: 'maestro',
         }),
         conversation('old', { scope: 'project', workspaceId: 'w1', branch: 'x', archived: 1 }),
+        ...state.workspaceChats,
       ],
     },
   ])
@@ -131,7 +138,35 @@ function setup() {
   )
   handle('chat:runtime', () => state.runtime)
   handle('conversation:attention-clear', () => undefined)
-  handle('plan:get', () => null)
+  handle('plan:get', () => state.plan)
+  handle('plan:decide', () => state.decided)
+  handle('chat:review:status', () => state.review)
+  handle('chat:maestro:strategy-profiles:list', () => ({
+    lastUsedId: 'builtin:fast',
+    items: [
+      {
+        id: 'global',
+        name: 'Global',
+        source: 'global',
+        config: { version: 1, strategy: 'balanced', pool: [{ label: 'Implementer', enabled: true }] },
+        orchestrator: { providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: false },
+      },
+      {
+        id: 'builtin:fast',
+        name: 'Fast',
+        source: 'builtin',
+        config: {
+          version: 1,
+          strategy: 'fast',
+          pool: [
+            { label: 'Implementer', enabled: true },
+            { label: 'Reviewer', enabled: false },
+          ],
+        },
+        orchestrator: null,
+      },
+    ],
+  }))
   handle('conversation-dispatch:status', () => ({ sourceConversationId: 'c9' }))
   handle('chat:send', () => state.send)
   handle('chat:resend', () => state.send)
@@ -990,6 +1025,119 @@ describe('mobile API of a workspaces host', () => {
     await expect(
       h.invoke('mobile:v1:subscription-usage', { force: true, accountId: 'acc_work' })
     ).rejects.toMatchObject({ code: 'invalid' })
+  })
+
+  it('decides plans as the Plan tab does, and tells the phone where else they can be built', async () => {
+    const h = setup()
+    h.state.plan = { agentId: 'c1', plan: '## Steps\n1. Two', title: 'Ship', version: 2, previousPlan: '1. One' }
+    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as {
+      runtime: { plan: unknown }
+    }
+    expect(opened.runtime.plan).toEqual({ version: 2, title: 'Ship', text: '## Steps\n1. Two', previousText: '1. One' })
+    // A first version shows no changes, even when the broker kept an older cycle's plan.
+    sendToRemoteMains('plan:received', { agentId: 'c1', plan: 'Fresh', version: 1, previousPlan: 'stale' })
+    await settle()
+    expect(h.events.filter(([channel]) => channel === 'mobile:v1:runtime').at(-1)?.[1]).toMatchObject({
+      runtime: { plan: { version: 1, text: 'Fresh', previousText: null } },
+    })
+
+    // Edits and line comments go through the same handler; so do the Maestro and new-conversation hand-offs.
+    expect(
+      await h.invoke('mobile:v1:plan', {
+        conversationId: 'c1',
+        action: 'revise',
+        feedback: 'Tighter',
+        editedPlan: '## Steps\n1. Two, edited',
+        lineComments: [{ line: 2, text: 'Split it' }],
+      })
+    ).toEqual({ ok: true })
+    h.state.decided = { ok: true, conversationId: 'c-maestro' }
+    expect(
+      await h.invoke('mobile:v1:plan', {
+        conversationId: 'c1',
+        action: 'approve',
+        implementation: { target: 'maestro', profileId: 'global' },
+      })
+    ).toEqual({ ok: true, conversationId: 'c-maestro' })
+    await h.invoke('mobile:v1:plan', {
+      conversationId: 'c1',
+      action: 'approve',
+      implementation: {
+        target: 'standard',
+        settings: { providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: true },
+        placement: 'worktree',
+      },
+    })
+    expect(h.called('plan:decide').map(([, args]) => args)).toEqual([
+      [
+        'c1',
+        {
+          action: 'revise',
+          feedback: 'Tighter',
+          editedPlan: '## Steps\n1. Two, edited',
+          lineComments: [{ line: 2, text: 'Split it' }],
+        },
+      ],
+      ['c1', { action: 'approve', implementationTarget: 'maestro', maestroStrategyProfileId: 'global' }],
+      [
+        'c1',
+        {
+          action: 'approve',
+          implementationTarget: 'standard',
+          standardHandoff: {
+            settings: { providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: true },
+            placement: 'worktree',
+          },
+        },
+      ],
+    ])
+    h.state.decided = { ok: false, error: 'review-active' }
+    expect(await h.invoke('mobile:v1:plan', { conversationId: 'c1', action: 'approve' })).toEqual({
+      ok: false,
+      error: 'review-active',
+    })
+
+    // A chat with no workspace builds its plan only in itself; a Maestro chat cannot hand it to Maestro.
+    expect(await h.invoke('mobile:v1:plan:options', { conversationId: 'c1' })).toEqual({
+      newConversation: false,
+      maestro: null,
+      review: null,
+    })
+    expect(await h.invoke('mobile:v1:plan:options', { conversationId: 'c2' })).toMatchObject({
+      newConversation: true,
+      maestro: null,
+    })
+    h.state.workspaceChats = [conversation('c3', { scope: 'project', workspaceId: 'w1', branch: 'task/plan' })]
+    h.state.review = { kind: 'review', target: 'plan', status: 'ready' }
+    expect(await h.invoke('mobile:v1:plan:options', { conversationId: 'c3' })).toEqual({
+      newConversation: true,
+      maestro: {
+        lastUsedId: 'builtin:fast',
+        profiles: [
+          {
+            id: 'global',
+            source: 'global',
+            name: 'Global',
+            strategy: 'balanced',
+            orchestrator: { modelId: 'opus', reasoning: 'high' },
+            agents: ['Implementer'],
+          },
+          {
+            id: 'builtin:fast',
+            source: 'builtin',
+            name: 'Fast',
+            strategy: 'fast',
+            orchestrator: null,
+            agents: ['Implementer'],
+          },
+        ],
+      },
+      review: { target: 'plan', stage: 'ready' },
+    })
+    // A finished review no longer holds the plan.
+    h.state.review = { kind: 'review', target: 'plan', status: 'completed' }
+    expect(await h.invoke('mobile:v1:plan:options', { conversationId: 'c3' })).toMatchObject({ review: null })
+    h.api.dispose()
   })
 
   it('refuses unknown channels and stops hearing the host once disposed', async () => {

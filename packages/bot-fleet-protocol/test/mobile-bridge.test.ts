@@ -350,4 +350,85 @@ describe('mobile bridge client', () => {
     ).toBe(false)
     expect(args.safeParse({ workspaceId: 'w', branch: { kind: 'new', name: '  ' } }).success).toBe(false)
   })
+
+  it('decides a plan as the Plan tab does, while a bare decision still suits hosts that predate it', () => {
+    const args = MOBILE_CHANNELS.plan.args
+    expect(args.safeParse({ conversationId: 'c', action: 'revise', feedback: 'Shorter' }).success).toBe(true)
+    expect(
+      args.safeParse({
+        conversationId: 'c',
+        action: 'revise',
+        editedPlan: '## Steps\n1. One',
+        lineComments: [{ line: 2, text: 'Split this step' }],
+      }).success
+    ).toBe(true)
+    expect(
+      args.safeParse({
+        conversationId: 'c',
+        action: 'approve',
+        implementation: { target: 'maestro', profileId: 'global' },
+      }).success
+    ).toBe(true)
+    const standard = {
+      target: 'standard',
+      settings: { providerId: 'claude', modelId: 'opus', reasoning: 'off', fastMode: false },
+      placement: 'worktree',
+    }
+    expect(args.safeParse({ conversationId: 'c', action: 'approve', implementation: standard }).success).toBe(true)
+    // Comments sit on real lines with words in them; a handoff names complete settings and a known placement.
+    expect(
+      args.safeParse({ conversationId: 'c', action: 'revise', lineComments: [{ line: 0, text: 'x' }] }).success
+    ).toBe(false)
+    expect(
+      args.safeParse({ conversationId: 'c', action: 'revise', lineComments: [{ line: 1, text: ' ' }] }).success
+    ).toBe(false)
+    expect(
+      args.safeParse({ conversationId: 'c', action: 'approve', implementation: { ...standard, placement: 'remote' } })
+        .success
+    ).toBe(false)
+    expect(
+      args.safeParse({
+        conversationId: 'c',
+        action: 'approve',
+        implementation: {
+          target: 'standard',
+          settings: { providerId: 'claude', modelId: 'opus' },
+          placement: 'shared',
+        },
+      }).success
+    ).toBe(false)
+    expect(MOBILE_CHANNELS.plan.result.parse({ ok: true, conversationId: 'c2' })).toEqual({
+      ok: true,
+      conversationId: 'c2',
+    })
+  })
+
+  it('reads plans and plan options from older and newer hosts alike', () => {
+    const runtime = { streaming: false, compacting: false, context: null }
+    const plan = (value: unknown) => MOBILE_CHANNELS.open.result.shape.runtime.parse({ ...runtime, plan: value }).plan
+    expect(plan({ version: 1, title: null, text: 'One' })).toEqual({ version: 1, title: null, text: 'One' })
+    expect(plan({ version: 2, title: 'T', text: 'Two', previousText: 'One' })?.previousText).toBe('One')
+
+    const options = MOBILE_CHANNELS.planOptions.result
+    const profile = {
+      id: 'builtin:fast',
+      source: 'builtin',
+      name: 'Fast',
+      strategy: 'fast',
+      orchestrator: { modelId: 'opus', reasoning: 'high' },
+      agents: ['Implementer'],
+    }
+    // A strategy kind or a review stage this app does not know reads as one it does.
+    expect(
+      options.parse({
+        newConversation: true,
+        maestro: { profiles: [{ ...profile, source: 'team' }], lastUsedId: null },
+        review: { target: 'tests', stage: 'paused' },
+      })
+    ).toEqual({
+      newConversation: true,
+      maestro: { profiles: [{ ...profile, source: 'custom' }], lastUsedId: null },
+      review: { target: 'code', stage: 'running' },
+    })
+  })
 })

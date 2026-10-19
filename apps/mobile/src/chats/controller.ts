@@ -231,7 +231,7 @@ export function createChatsController(
     retryTimer = listsTimer = null
   }
 
-  const assertOk = (result: { ok: boolean; error?: string }) => {
+  const assertOk = <R extends { ok: boolean; error?: string }>(result: R): R => {
     if (!result.ok) throw new MobileBridgeError(result.error ?? 'failed', result.error ?? 'The host refused it')
     return result
   }
@@ -350,9 +350,17 @@ export function createChatsController(
     answerQuestion(conversationId: string, toolCallId: string, answers: string[][]) {
       return invoke('question', { conversationId, toolCallId, answers })
     },
-    async decidePlan(conversationId: string, action: 'approve' | 'revise' | 'discard', feedback?: string) {
-      return assertOk(await invoke('plan', { conversationId, action, ...(feedback ? { feedback } : {}) }))
+    /** Resolves with the chat that builds an approved plan, when it is another one. */
+    async decidePlan(conversationId: string, decision: Omit<MobileArgs<'plan'>, 'conversationId'>) {
+      const result = assertOk(await invoke('plan', { conversationId, ...decision }))
+      if (result.conversationId) scheduleLists()
+      return result
     },
+    /**
+     * Where the chat's plan can be built besides the chat, and whether a review holds it. Rejects with
+     * `unknown-channel` on hosts that predate it: those take only the action and a general comment.
+     */
+    planOptions: (conversationId: string) => invoke('planOptions', { conversationId }),
     loadSetup,
     async patchSetup(conversationId: string, patch: MobileChatSetupPatch) {
       const setup = await invoke('setSetup', { conversationId, patch })
