@@ -4,6 +4,7 @@ import type {
   MobileChatItem,
   MobileChatMode,
   MobileExperience,
+  MobileMaestroProfile,
   MobilePermMode,
   MobileSubscriptionUsageEntry,
   MobileSubscriptionUsageWindow,
@@ -713,5 +714,33 @@ export function chatReply(text: string, modelLabel: string): ChatStep[] {
 export const PLAN_REVISE: ChatStep[] = [
   { think: 500 },
   { say: 'Okay. Tell me what to change and I will update the plan.' },
+]
+
+/** The Maestro strategies the demo computer offers to build a plan with. */
+export const DEMO_MAESTRO_PROFILES: MobileMaestroProfile[] = [
+  {
+    id: 'global',
+    source: 'global',
+    name: 'Global default',
+    strategy: 'balanced',
+    orchestrator: { modelId: 'claude-opus-5-5', reasoning: 'high' },
+    agents: ['Explorer', 'Implementer', 'Tester', 'Reviewer'],
+  },
+  {
+    id: 'builtin:best-quality',
+    source: 'builtin',
+    name: 'Best quality',
+    strategy: 'best-quality',
+    orchestrator: { modelId: 'claude-opus-5-5', reasoning: 'max' },
+    agents: ['Explorer', 'Implementer', 'Tester', 'Reviewer', 'Verifier'],
+  },
+  {
+    id: 'custom-frontend',
+    source: 'custom',
+    name: 'Frontend, careful',
+    strategy: 'balanced',
+    orchestrator: null,
+    agents: ['Designer', 'Implementer'],
+  },
 ]
 export const PLAN_DISCARD: ChatStep[] = [{ say: 'Okay, I dropped the plan. Nothing changed.' }]

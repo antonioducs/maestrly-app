@@ -139,8 +139,77 @@ export const mobileChatPageSchema = z.object({ items: z.array(mobileChatItemSche
 export type MobileChatPage = z.infer<typeof mobileChatPageSchema>
 
 /** A plan the agent wrote in Plan mode, waiting for a decision. */
-export const mobilePlanSchema = z.object({ version: z.number().int(), title: z.string().nullable(), text: z.string() })
+export const mobilePlanSchema = z.object({
+  version: z.number().int(),
+  title: z.string().nullable(),
+  text: z.string(),
+  /** The version this one revises, to show what changed; null for a first version, absent from older hosts. */
+  previousText: z.string().nullable().optional(),
+})
 export type MobilePlan = z.infer<typeof mobilePlanSchema>
+
+/** A comment on one line of the plan (1-based), as the desktop's Plan tab leaves them. */
+export const mobilePlanLineCommentSchema = z
+  .object({ line: z.number().int().positive().max(100_000), text: z.string().trim().min(1).max(4000) })
+  .strict()
+export type MobilePlanLineComment = z.infer<typeof mobilePlanLineCommentSchema>
+
+/** Where an approved plan is built when not in its own chat: a new Maestro chat, or a new standard one. */
+export const mobilePlanImplementationSchema = z.discriminatedUnion('target', [
+  z.object({ target: z.literal('maestro'), profileId: z.string().trim().min(1).max(120) }).strict(),
+  z
+    .object({
+      target: z.literal('standard'),
+      settings: z
+        .object({
+          providerId: z.string().trim().min(1).max(300),
+          modelId: z.string().trim().min(1).max(300),
+          /** `off` uses the model's own default. */
+          reasoning: z.string().trim().min(1).max(40),
+          fastMode: z.boolean(),
+        })
+        .strict(),
+      /** `shared` works in this chat's checkout; `worktree` on a branch of its own from the current commit. */
+      placement: z.enum(['shared', 'worktree']),
+    })
+    .strict(),
+])
+export type MobilePlanImplementation = z.infer<typeof mobilePlanImplementationSchema>
+
+/** A Maestro strategy the host offers to build a plan with. */
+export const mobileMaestroProfileSchema = z.object({
+  id: z.string().min(1).max(200),
+  /** The app names `global` and `builtin` strategies itself (`strategy`); `custom` ones go by `name`. */
+  source: z.enum(['global', 'builtin', 'custom']).catch('custom'),
+  name,
+  strategy: z.string().max(60),
+  /** The model that orchestrates; null when the strategy has none, and then it cannot start. */
+  orchestrator: z.object({ modelId: z.string().max(300), reasoning: z.string().max(40) }).nullable(),
+  /** The labels of the Pool's enabled agents. */
+  agents: z.array(name).max(100),
+})
+export type MobileMaestroProfile = z.infer<typeof mobileMaestroProfileSchema>
+
+/** What a plan can be decided with on the host, beyond approving, revising and discarding it in its chat. */
+export const mobilePlanOptionsSchema = z.object({
+  /** A new standard chat of the workspace can build it; false for a chat with no workspace. */
+  newConversation: z.boolean(),
+  /** The strategies a new Maestro chat can build it with; null where Maestro cannot (no workspace, a Maestro chat). */
+  maestro: z
+    .object({ profiles: z.array(mobileMaestroProfileSchema).max(200), lastUsedId: z.string().max(200).nullable() })
+    .nullable(),
+  /**
+   * A review on the computer holds the chat: the plan is decided there, once the review is handed off or discarded.
+   * `ready`: it waits for the person's decisions; `checking`: the verifier checks what a review sent.
+   */
+  review: z
+    .object({
+      target: z.enum(['plan', 'code']).catch('code'),
+      stage: z.enum(['running', 'ready', 'checking']).catch('running'),
+    })
+    .nullable(),
+})
+export type MobilePlanOptions = z.infer<typeof mobilePlanOptionsSchema>
 
 export const mobileRuntimeSchema = z.object({
   streaming: z.boolean(),
@@ -381,15 +450,30 @@ export const MOBILE_CHANNELS = {
   },
   plan: {
     channel: 'mobile:v1:plan',
+    /**
+     * Beyond the action and a general comment, only sent to hosts that answered `planOptions`: older ones refuse
+     * arguments they do not know.
+     */
     args: z
       .object({
         conversationId: id,
         action: z.enum(['approve', 'revise', 'discard']),
         feedback: z.string().max(10_000).optional(),
+        /** The plan as the person edited it: approved as edited, or sent back with the feedback. */
+        editedPlan: z.string().trim().min(1).max(500_000).optional(),
+        lineComments: z.array(mobilePlanLineCommentSchema).max(500).optional(),
+        /** Approval only; omitted, the plan is built in its own chat, which turns to Agent mode. */
+        implementation: mobilePlanImplementationSchema.optional(),
       })
       .strict(),
-    result: ok,
+    /** `conversationId`: the chat that builds it, when it is another one. */
+    result: ok.extend({ conversationId: id.optional() }),
   },
+  /**
+   * Where the chat's plan can be built besides the chat itself, and whether a review holds it. A host that predates it
+   * answers `unknown-channel`, and its `plan` takes only the action and a general comment.
+   */
+  planOptions: { channel: 'mobile:v1:plan:options', args: conversationArgs, result: mobilePlanOptionsSchema },
   setup: { channel: 'mobile:v1:setup', args: conversationArgs, result: mobileChatSetupSchema },
   setSetup: {
     channel: 'mobile:v1:setup:set',

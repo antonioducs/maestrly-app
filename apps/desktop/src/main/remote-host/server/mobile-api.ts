@@ -21,6 +21,7 @@ import {
   type MobileEventKey,
   type MobileEventPayload,
   type MobileLists,
+  type MobilePlan,
   type MobileResult,
   type MobileRuntime,
   type MobileSubscriptionProviderKind,
@@ -50,6 +51,8 @@ import {
   type MessagePart,
 } from '../../../shared/chat'
 import type { Conversation, ConversationStatus } from '../../../shared/conversation'
+import type { MaestroStrategyProfileCatalog } from '../../../shared/maestro'
+import { reviewLocksConversation, type ReviewJobInfo } from '../../../shared/review'
 import { permissionExtraResources } from '../../../shared/permission-preview'
 import {
   conversationDispatchBranchSlug,
@@ -175,6 +178,21 @@ function mobileUsageWindow(window: ChatSubscriptionUsageWindow): MobileSubscript
 /** The conversations a phone may see: active ones, never a bot's. */
 const visible = (conversation: Conversation): boolean => !conversation.archived && !conversation.botOrigin
 
+/** A plan as the broker hands it out (`plan:get`, `plan:received`). */
+type HostPlan = { plan?: string; title?: string; version?: number; previousPlan?: string | null }
+
+function mobilePlan(plan: HostPlan | null | undefined): MobilePlan | null {
+  if (!plan?.plan) return null
+  const version = plan.version ?? 1
+  return {
+    version,
+    title: plan.title ?? null,
+    text: plan.plan,
+    // As the Plan tab shows it: a revision shows what changed since the version it revises.
+    previousText: version > 1 && plan.previousPlan ? plan.previousPlan : null,
+  }
+}
+
 /** One conversation a phone has open: its latest messages, live, and what it was last sent of them. */
 class OpenConversation {
   messages: ChatMessage[] = []
@@ -286,6 +304,7 @@ export class MobileApi {
         return null
       },
       plan: (value) => this.decidePlan(value),
+      planOptions: (value) => this.planOptions(value.conversationId),
       setup: (value) => this.setup(value.conversationId),
       setSetup: (value) => this.setSetup(value),
       models: () => this.models(),
@@ -432,11 +451,7 @@ export class MobileApi {
     const [page, runtime, plan, dispatch] = await Promise.all([
       this.call('chat:history:page', id, { limit: MOBILE_BRIDGE_LIMITS.pageSize }) as Promise<ChatHistoryPage>,
       this.call('chat:runtime', id) as Promise<ChatRuntimeState>,
-      this.call('plan:get', id).catch(() => null) as Promise<{
-        plan?: string
-        title?: string
-        version?: number
-      } | null>,
+      this.call('plan:get', id).catch(() => null) as Promise<HostPlan | null>,
       this.call('conversation-dispatch:status', id).catch(() => null) as Promise<{
         sourceConversationId?: string | null
       } | null>,
@@ -447,7 +462,7 @@ export class MobileApi {
     open.before = page?.hasMore && page.earliestSeq !== null ? `seq-${page.earliestSeq}` : null
     open.streaming = runtime?.streaming === true
     open.compacting = runtime?.compacting === true
-    open.plan = plan?.plan ? { version: plan.version ?? 1, title: plan.title ?? null, text: plan.plan } : null
+    open.plan = mobilePlan(plan)
     open.permissions.clear()
     for (const request of runtime?.pendingPermissions ?? []) this.addPermission(open, request)
     const items = this.items(open)
@@ -559,14 +574,70 @@ export class MobileApi {
     return null
   }
 
+  /** Decides the plan as the desktop's Plan tab does, through the same handler and its checks. */
   private async decidePlan(args: MobileArgs<'plan'>): Promise<MobileResult<'plan'>> {
+    const implementation = args.implementation
     const result = (await this.call('plan:decide', args.conversationId, {
       action: args.action,
       ...(args.feedback ? { feedback: args.feedback } : {}),
-    })) as { ok?: boolean; error?: string } | null | undefined
+      ...(args.editedPlan ? { editedPlan: args.editedPlan } : {}),
+      ...(args.lineComments?.length ? { lineComments: args.lineComments } : {}),
+      ...(implementation?.target === 'maestro'
+        ? { implementationTarget: 'maestro', maestroStrategyProfileId: implementation.profileId }
+        : implementation?.target === 'standard'
+          ? {
+              implementationTarget: 'standard',
+              standardHandoff: { settings: implementation.settings, placement: implementation.placement },
+            }
+          : {}),
+    })) as { ok?: boolean; error?: string; conversationId?: unknown } | null | undefined
     // The broker answers nothing when there was no plan left to decide.
-    if (result && result.ok === false) return { ok: false, error: String(result.error ?? 'plan-failed') }
-    return { ok: true }
+    if (result && result.ok === false) return { ok: false, error: String(result.error ?? 'plan-failed').slice(0, 500) }
+    const conversationId = typeof result?.conversationId === 'string' ? result.conversationId : undefined
+    if (conversationId) this.listsChanged()
+    return { ok: true, ...(conversationId ? { conversationId } : {}) }
+  }
+
+  private async planOptions(id: string): Promise<MobileResult<'planOptions'>> {
+    const conversation = await this.findConversation(id)
+    // As on the computer: another conversation builds a plan only in a workspace, and Maestro only from a standard one.
+    const inWorkspace = conversation.workspaceId !== null
+    const [catalog, review] = await Promise.all([
+      inWorkspace && conversation.experience === 'standard'
+        ? (this.call('chat:maestro:strategy-profiles:list').catch(
+            () => null
+          ) as Promise<MaestroStrategyProfileCatalog | null>)
+        : null,
+      this.call('chat:review:status', id).catch(() => null) as Promise<ReviewJobInfo | null>,
+    ])
+    return {
+      newConversation: inWorkspace,
+      maestro: catalog
+        ? {
+            profiles: catalog.items.slice(0, 200).map((item) => ({
+              id: item.id,
+              source: item.source,
+              name: item.name.slice(0, 400),
+              strategy: item.config.strategy,
+              orchestrator: item.orchestrator
+                ? { modelId: item.orchestrator.modelId, reasoning: item.orchestrator.reasoning }
+                : null,
+              agents: item.config.pool
+                .filter((resource) => resource.enabled)
+                .slice(0, 100)
+                .map((resource) => resource.label.slice(0, 400)),
+            })),
+            lastUsedId: catalog.lastUsedId || null,
+          }
+        : null,
+      review:
+        review && reviewLocksConversation(review)
+          ? {
+              target: review.target,
+              stage: review.kind === 'check' ? 'checking' : review.status === 'ready' ? 'ready' : 'running',
+            }
+          : null,
+    }
   }
 
   // ---- Setup ----
@@ -1009,13 +1080,10 @@ export class MobileApi {
     )
       return this.listsChanged()
     if (channel === 'plan:received' || channel === 'plan:cleared') {
-      const value = payload as { agentId?: string; plan?: string; title?: string; version?: number } | null
+      const value = payload as (HostPlan & { agentId?: string }) | null
       const open = value?.agentId ? this.open.get(value.agentId) : undefined
       if (!open) return
-      open.plan =
-        channel === 'plan:received' && value?.plan
-          ? { version: value.version ?? 1, title: value.title ?? null, text: value.plan }
-          : null
+      open.plan = channel === 'plan:received' ? mobilePlan(value) : null
       return this.schedule(open)
     }
     for (const prefix of ['chat:settings:', 'chat:mode:'])

@@ -29,6 +29,7 @@ import {
   DEMO_SKILLS,
   DEMO_WORKSPACES,
   demoSubscriptionUsage,
+  DEMO_MAESTRO_PROFILES,
   PLAN_REVISE,
   workspaceReply,
   type ChatStep,
@@ -56,7 +57,9 @@ type Chat = {
   usedTokens: number
   streaming: boolean
   compacting: boolean
-  plan: { version: number; title: string; text: string; build: ChatStep[] } | null
+  plan: { version: number; title: string; text: string; previous: string | null; build: ChatStep[] } | null
+  /** The plan sent back for changes, which the next version revises. */
+  revised: { version: number; title: string; text: string; build: ChatStep[] } | null
   pending: Map<string, Pending>
   run: number
   sent: string[]
@@ -129,6 +132,7 @@ export function createDemoChatsSource(
       streaming: false,
       compacting: false,
       plan: null,
+      revised: null,
       pending: new Map(),
       run: 0,
       sent: [],
@@ -153,7 +157,9 @@ export function createDemoChatsSource(
     return {
       streaming: chat.streaming,
       compacting: chat.compacting,
-      plan: chat.plan ? { version: chat.plan.version, title: chat.plan.title, text: chat.plan.text } : null,
+      plan: chat.plan
+        ? { version: chat.plan.version, title: chat.plan.title, text: chat.plan.text, previousText: chat.plan.previous }
+        : null,
       context: {
         usedTokens: chat.usedTokens,
         windowTokens: DEMO_MODEL_INFO[`${selection.providerId}::${selection.modelId}`]?.window ?? null,
@@ -333,7 +339,9 @@ export function createDemoChatsSource(
         setStatus(chat, 'asking')
         return
       } else if ('plan' in step) {
-        chat.plan = { version: (chat.plan?.version ?? 0) + 1, ...step.plan }
+        const before = chat.plan ?? chat.revised
+        chat.plan = { version: (before?.version ?? 0) + 1, ...step.plan, previous: before?.text ?? null }
+        chat.revised = null
         await stream(chat, 'The plan is ready for you to review.', alive)
         finish(chat, 'ready')
         return
@@ -402,6 +410,7 @@ export function createDemoChatsSource(
       streaming: false,
       compacting: false,
       plan: null,
+      revised: null,
       pending: new Map(),
       run: 0,
       sent: [],
@@ -648,27 +657,96 @@ export function createDemoChatsSource(
         const current = chat()
         const plan = current.plan
         if (!plan) return { ok: false, error: 'No plan to decide' }
+        const decision = a as MobileArgs<'plan'>
+        const implementation = decision.implementation
+        const text = decision.editedPlan ?? plan.text
+        if (implementation && decision.action === 'approve') {
+          if (!current.conversation.workspaceId) return { ok: false, error: 'project-required' }
+          if (implementation.target === 'maestro') {
+            const profile = DEMO_MAESTRO_PROFILES.find((item) => item.id === implementation.profileId)
+            if (current.conversation.experience !== 'standard' || !profile?.orchestrator)
+              return { ok: false, error: 'plan-maestro-strategy-profile-invalid' }
+          }
+          // As the computer does: a new chat of the workspace builds it, and this one keeps its mode.
+          const created = createChat(
+            current.conversation.workspaceId,
+            `${current.conversation.name} · ${implementation.target === 'maestro' ? 'Maestro' : plan.title}`,
+            implementation.target === 'maestro' ? 'maestro' : 'standard',
+            implementation.target === 'standard'
+              ? { ...current.setup, ...implementation.settings, mode: 'agent' }
+              : { ...current.setup, mode: 'agent' }
+          )
+          created.sourceConversationId = current.conversation.id
+          created.named = true
+          upsert(created, {
+            id: nextId(created.conversation.id),
+            at: stamp(),
+            kind: 'user',
+            text,
+            source: 'owner',
+            queued: false,
+            memories: [],
+            images: [],
+          })
+          current.plan = null
+          sendRuntime(current)
+          emit('lists', {})
+          void run(created, plan.build)
+          return { ok: true, conversationId: created.conversation.id }
+        }
         current.plan = null
         sendRuntime(current)
-        if (a.action === 'approve') {
+        if (decision.action === 'approve') {
           current.setup = { ...current.setup, mode: 'agent' }
           emit('setup', { conversationId: current.conversation.id })
           void run(current, plan.build)
-        } else if (a.action === 'revise') {
-          if (a.feedback)
+        } else if (decision.action === 'revise') {
+          const lines = plan.text.split('\n')
+          const notes = [
+            ...(decision.feedback ? [decision.feedback] : []),
+            ...(decision.lineComments ?? []).map(
+              (comment) => `On “${lines[comment.line - 1]?.trim() ?? comment.line}”: ${comment.text}`
+            ),
+          ]
+          if (notes.length || decision.editedPlan)
             upsert(current, {
               id: nextId(current.conversation.id),
               at: stamp(),
               kind: 'user',
-              text: String(a.feedback),
+              text: notes.join('\n\n') || 'I edited the plan.',
               source: 'owner',
               queued: false,
               memories: [],
               images: [],
             })
-          void run(current, PLAN_REVISE)
+          if (!notes.length && !decision.editedPlan) {
+            void run(current, PLAN_REVISE)
+            return { ok: true }
+          }
+          current.revised = plan
+          // The demo revises by taking the edit, and by adding each comment as a step to address.
+          const revised = notes.length
+            ? `${text}\n\n## From your review\n${notes.map((note) => `- ${note.replace(/\s+/g, ' ')}`).join('\n')}`
+            : text
+          void run(current, [
+            { think: 700 },
+            { say: 'I updated the plan with your comments.' },
+            { plan: { title: plan.title, text: revised, build: plan.build } },
+          ])
         }
         return { ok: true }
+      }
+      case 'planOptions': {
+        const current = chat()
+        const inWorkspace = current.conversation.workspaceId !== null
+        return {
+          newConversation: inWorkspace,
+          maestro:
+            inWorkspace && current.conversation.experience === 'standard'
+              ? { profiles: DEMO_MAESTRO_PROFILES, lastUsedId: 'global' }
+              : null,
+          review: null,
+        }
       }
       case 'setup':
         return setupOf(chat())
