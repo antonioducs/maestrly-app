@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-19
+
 ### Added
 
 - The mobile app shows the subscription usage of the paired server in
@@ -13,6 +15,46 @@ User-visible changes by version. Downloads are on
   when a provider has several, with when each window resets. It only reads
   them; the server needs this version to answer. See
   [Mobile app](docs/mobile.md#what-it-does).
+
+- Let a bot run its conversations at once. Its own conversation always answers,
+  and up to four side conversations, routine runs and threads with other bots,
+  run beside it, so a long routine or an exchange with another bot no longer
+  holds your messages. A side conversation that uses a computer gets a desktop
+  of its own, freed after a minute idle, and the desktop app and the mobile app
+  show and stop each conversation on its own. It needs a bot server, a bot
+  environment image and a desktop app on this version; the others keep running
+  one turn at a time. See
+  [conversations at once](docs/bot-fleet.md#conversations-at-once).
+- Keep each conversation between two bots as a thread of its own, with a **Bots**
+  tab beside **Conversation** and **Runs** to read it and write in it, instead of
+  landing in your conversation with the bot. A thread pauses after 4, 8 or 16
+  messages in a row without you (8 by default) and asks for your attention, and
+  a side is deleted 30, 60 or 90 days after its last message unless you keep it.
+  The new `bot_peers_report` tool brings a thread's answer back to your
+  conversation as a card, without starting a turn there. Messages between bots
+  from before belong to no thread. See
+  [conversations with other bots](docs/bot-fleet.md#conversations-with-other-bots).
+- Dictate through OpenAI (`gpt-4o-transcribe`) or Groq (`whisper-large-v3-turbo`)
+  on the desktop and on the phone, which handle mixed Portuguese and English
+  technical speech better than the phone's own recognizer. On the desktop,
+  choose the engine in **Settings › Maestrly Chat › Tools › Dictation**;
+  **This computer (Whisper)** stays the default and keeps speech on the
+  computer. With an API engine each recording goes to the provider under your
+  key, stops by itself after 10 minutes, skips silence, and **Try again** sends
+  a failed one again. **Use on my phone too** stores the engine and key on your
+  bot server, which keeps the key unencrypted in its database like its other
+  secrets, and a phone then dictates through it from **Settings → Dictation →
+  Server**. The phone needs the updated app and a bot server on this version;
+  without them it keeps its own recognizer. See
+  [voice dictation](docs/chat-context.md#voice-dictation) and
+  [Mobile app](docs/mobile.md).
+
+### Changed
+
+- The bot gateway database moves to schema 20 to keep the conversations between
+  bots and the server's dictation key. Older gateways cannot open it, so back up
+  the gateway volume before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
 
 ### Security
 
@@ -90,6 +132,9 @@ User-visible changes by version. Downloads are on
   looks in the folders where the Git for Windows installer puts it. Plugin
   sources do the same: adding or updating one after installing Git no longer
   fails with **Git is not installed or cannot run.**
+- List the reasoning efforts of Google AI models again, in the model picker and
+  in subagent profiles, which showed **No configurable effort** for every Gemini
+  model with Antigravity ACP 1.4.
 
 ## [0.21.1] - 2026-10-18
 
