@@ -132,6 +132,7 @@ vi.mock('../../src/main/chat/git-service', () => ({ gitEnvInfo: async () => null
 import { buildMaestrlyBasePrompt } from '../../src/main/chat/harness/host-contracts'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 import type { ChatBehavior } from '../../src/shared/conversation-experience'
+import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
 
 /** Host base prompt for an unspecialized model: the declarative equivalent of the legacy SYSTEM_PROMPT. */
 const SYSTEM_PROMPT = (
@@ -1075,6 +1076,7 @@ describe('runtime tool-image capability learning', () => {
       expect(request.system).not.toContain("Today's date:")
       expect(request.system).not.toContain('finish with a critical review of your own changes')
       expect(JSON.stringify(request.messages)).toContain('# Current environment')
+      expect(JSON.stringify(request.messages)).toContain(JSON.stringify(commandShellEnvironment()).slice(1, -1))
       expect(request.providerOptions).toEqual({ anthropic: { effort: effort === 'high' ? 'high' : 'max' } })
       expect(request.maxOutputTokens).toBe(128_000)
       expect(JSON.stringify(listChatMessages('c'))).not.toContain('# Current environment')

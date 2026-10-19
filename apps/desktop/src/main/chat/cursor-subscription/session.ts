@@ -18,6 +18,7 @@ import { skillCatalogLine } from '../skills'
 import type { ChatAgent } from '../agents'
 import { effectiveSkills } from '../skill-state'
 import { buildProjectContext } from '../project-context'
+import { commandShellEnvironment } from '../tools/command-shell'
 import { listEffectiveAgents } from '../virtual-subagents'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-delegation'
@@ -128,7 +129,7 @@ export async function buildCursorHarnessContext(
   const platform = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
   const git = await gitEnvInfo(args.cwd).catch(() => null)
   const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
-  const environment = `OS: ${platform}. Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${args.cwd}.${gitLine}`
+  const environment = `OS: ${platform}. ${commandShellEnvironment()} Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${args.cwd}.${gitLine}`
   const harness = args.harness ?? resolveCursorHarness(args.modelId)
   const ultra = args.maestrlyUltra
     ? args.mode === 'maestro'

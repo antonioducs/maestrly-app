@@ -120,6 +120,7 @@ import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import type { ClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 import { harnessUltraGuidance } from '../../src/main/chat/harness/host-contracts'
+import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
 
 const opusUltraGuidance = (mode: Parameters<typeof harnessUltraGuidance>[1]) =>
   harnessUltraGuidance(harnessFor('claude-subscription', 'claude-opus-5'), mode)!
@@ -1794,6 +1795,7 @@ describe('Claude official chat runner', () => {
       expect(clean.binding?.promptHash).toBe(dirty.binding?.promptHash)
       expect(clean.options.systemPrompt).not.toContain('# Environment')
       expect(clean.prompt).toContain('# Current environment')
+      expect(clean.prompt).toContain(commandShellEnvironment())
       expect(clean.prompt).toContain('Git branch: main (clean)')
       expect(dirty.prompt).toContain('Git branch: main (uncommitted changes)')
       if (family === 'fable') {

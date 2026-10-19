@@ -59,6 +59,7 @@ import {
   type InterleavedReplayStats,
 } from './reasoning-replay'
 import { buildTools, builtinToolNamesForMode, isSubagentReadOnly, selectSubagentToolNames } from './tools'
+import { commandShellEnvironment } from './tools/command-shell'
 import { enableConversationDispatchTools } from './tools/conversation-dispatch'
 import { enableConversationLinkTools } from './tools/conversation-link'
 import {
@@ -1373,7 +1374,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const plat = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
   const git = projectId === null ? null : await gitEnvInfo(cwd).catch(() => null)
   const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
-  const envDetails = `OS: ${plat}. Today's date: ${new Date().toISOString().slice(0, 10)}. ${projectId === null ? 'Private working directory' : 'Project directory'}: ${cwd}.${gitLine}`
+  // local_shell (which replaces `bash` for some OpenAI models) takes argv, not a shell command line.
+  const shellLine = allTools[OPENAI_LOCAL_SHELL_TOOL_NAME] ? '' : ` ${commandShellEnvironment()}`
+  const envDetails = `OS: ${plat}.${shellLine} Today's date: ${new Date().toISOString().slice(0, 10)}. ${projectId === null ? 'Private working directory' : 'Project directory'}: ${cwd}.${gitLine}`
   const envContext = `\n\n# Environment\n${envDetails}`
   // Profile-declared extended-reasoning guidance; the synthetic host blocks below stay with the runner.
   const profileUltra = harnessUltraGuidance(harness, mode)

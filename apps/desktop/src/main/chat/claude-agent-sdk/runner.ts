@@ -62,6 +62,7 @@ import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-cata
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 import { builtinToolNamesForMode, buildTools } from '../tools'
+import { commandShellEnvironment } from '../tools/command-shell'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
@@ -734,6 +735,7 @@ async function prepareRuntime(
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
     const env = [
       `OS: ${platform}.`,
+      commandShellEnvironment(),
       `Today's date: ${new Date().toISOString().slice(0, 10)}.`,
       `${args.projectId === null ? 'Private working directory' : 'Project directory'}: ${args.cwd}.`,
       git ? `Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : '',

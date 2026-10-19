@@ -66,6 +66,7 @@ import {
 } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 import { builtinToolNamesForMode, buildTools, isSubagentReadOnly, selectSubagentToolNames } from '../tools'
+import { commandShellEnvironment } from '../tools/command-shell'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
@@ -697,7 +698,7 @@ async function prepareRuntime(
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
     const git = args.projectId === null ? null : await gitEnvInfo(args.cwd).catch(() => null)
     const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
-    const env = `OS: ${platform}. Today's date: ${new Date().toISOString().slice(0, 10)}. ${args.projectId === null ? 'Private working directory' : 'Project directory'}: ${args.cwd}.${gitLine}`
+    const env = `OS: ${platform}. ${commandShellEnvironment()} Today's date: ${new Date().toISOString().slice(0, 10)}. ${args.projectId === null ? 'Private working directory' : 'Project directory'}: ${args.cwd}.${gitLine}`
     const ultra = args.maestrlyUltra
       ? args.mode === 'maestro'
         ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'

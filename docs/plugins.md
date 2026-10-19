@@ -141,10 +141,11 @@ every model.
 - **Messages.** A hook's `systemMessage`, failure, or timeout shows above the composer and is not stored in the
   conversation. Context from a hook reaches the model as hidden parts of your message. When a hook blocks a message,
   the message comes back to the composer.
-- **Running.** A hook gets its input as JSON on standard input, and `CLAUDE_PROJECT_DIR`, `CLAUDE_PLUGIN_ROOT`,
-  `CLAUDE_PLUGIN_DATA`, `PLUGIN_ROOT`, and `PLUGIN_DATA` in its environment. It has 60 seconds unless it sets another
-  timeout, up to 10 minutes; **Stop** ends it. Its `transcript_path` is a temporary copy of the conversation's text,
-  deleted when the turn ends.
+- **Running.** A hook command runs in `/bin/sh`, or in `cmd.exe` on Windows, not in the Windows PowerShell that the
+  agent's `bash` commands use there. It gets its input as JSON on standard input, and `CLAUDE_PROJECT_DIR`,
+  `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`, `PLUGIN_ROOT`, and `PLUGIN_DATA` in its environment. It has 60 seconds
+  unless it sets another timeout, up to 10 minutes; **Stop** ends it. Its `transcript_path` is a temporary copy of the
+  conversation's text, deleted when the turn ends.
 - **While the agent works.** With `UserPromptSubmit` hooks, a message you send during a turn waits for a turn of its
   own instead of steering the current one, so the hooks see it.
 - **Other senders.** Messages from a bot, from the [mobile app](mobile.md), or from the agent of another conversation

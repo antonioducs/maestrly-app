@@ -136,6 +136,7 @@ import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
+import { commandShellEnvironment } from '../tools/command-shell'
 import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
@@ -2681,6 +2682,8 @@ export async function runCodexSubscriptionChat(
       .map((spec) => ({ name: `mcp:${CODEX_HOST_MCP_SERVER_NAME}/${spec.name}` })),
   ])
   const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
+  // Codex describes its own native shell; this names the shell of Maestrly's `bash` tool when it is bridged.
+  const shellContext = specs.some((spec) => spec.name === 'bash') ? `\n\n# Shell\n${commandShellEnvironment()}` : ''
   const developerInstructionsFor = (profile: CodexThreadHarness): string => {
     if (args.projectId === null) {
       const standalone =
@@ -2699,7 +2702,9 @@ export async function runCodexSubscriptionChat(
       return (
         buildHarnessDeveloperInstructions(standalone, profile.harness, {
           asyncTools: profile.asyncQuestionGuidance,
-        }) + projectContext
+        }) +
+        projectContext +
+        shellContext
       )
     }
     const base = profile.usesNativeOperatingPrompt
@@ -2716,6 +2721,7 @@ export async function runCodexSubscriptionChat(
     return (
       buildHarnessDeveloperInstructions(base, profile.harness, { asyncTools: profile.asyncQuestionGuidance }) +
       projectContext +
+      shellContext +
       (autonomousPolicy(args.conversationId) ? '\n\n' + AUTONOMOUS_INSTRUCTIONS : '')
     )
   }

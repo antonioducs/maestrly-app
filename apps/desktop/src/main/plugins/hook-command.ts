@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { commandShell } from '../chat/tools/bash'
+import { systemCommandShell } from '../chat/tools/command-shell'
 
 const MAX_CAPTURE_BYTES = 1024 * 1024
 const KILL_GRACE_MS = 2_000
@@ -12,8 +12,9 @@ export interface HookCommandResult {
 }
 
 /**
- * Runs one plugin hook command: the shell the `bash` tool uses, the hook's input as JSON on stdin, stdout and stderr
- * captured up to 1 MiB each. A timeout or an abort stops the whole process group (SIGTERM, then SIGKILL).
+ * Runs one plugin hook command: `/bin/sh`, or cmd.exe on Windows (not the `bash` tool's PowerShell), the hook's
+ * input as JSON on stdin, stdout and stderr captured up to 1 MiB each. A timeout or an abort stops the whole process
+ * group (SIGTERM, then SIGKILL).
  */
 export function runHookCommand(args: {
   command: string
@@ -27,7 +28,7 @@ export function runHookCommand(args: {
   return new Promise((resolve) => {
     const child = spawn(args.command, [], {
       cwd: args.cwd,
-      shell: commandShell(),
+      shell: systemCommandShell().file,
       env: { ...process.env, ...args.env },
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: !isWin,

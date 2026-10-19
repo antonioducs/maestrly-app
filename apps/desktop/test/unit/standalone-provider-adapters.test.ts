@@ -10,6 +10,8 @@ import { runClaudeChat } from '../../src/main/chat/claude-agent-sdk/runner'
 import { runGitHubCopilotChat } from '../../src/main/chat/github-copilot/runner'
 import { runCodexSubscriptionChat } from '../../src/main/chat/codex-subscription/runner'
 import { buildCursorHarnessContext } from '../../src/main/chat/cursor-subscription/session'
+import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
+import { buildAntigravityInstructions } from '../../src/main/chat/antigravity-subscription/session'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 import type { ChatStreamEvent } from '../../src/shared/chat'
 const h = vi.hoisted(() => ({
@@ -296,4 +298,16 @@ it('builds standalone Cursor context without project material', async () => {
   expect(envelope.projectContext).toBe('')
   expect(envelope.skillCatalog).not.toContain('Project skills')
   expect(envelope.environment).toContain(cwd)
+  expect(envelope.environment).toContain(commandShellEnvironment())
+})
+it('tells an Antigravity session which shell runs its commands', async () => {
+  h.git.mockResolvedValue(null)
+  const { instructions } = await buildAntigravityInstructions({
+    projectId: null,
+    cwd,
+    conversationId: 'fork',
+    mode: 'agent',
+    modelId: 'antigravity-model',
+  })
+  expect(instructions).toContain(commandShellEnvironment())
 })
