@@ -641,6 +641,68 @@ describe('transcript projection', () => {
       { kind: 'user', text: '', images: [{ id: imageId('a', 'm', 'p'), name: 'photo.png' }] },
     ])
   })
+  it('shows what a task is, which model runs it and what it is doing', () => {
+    const profile = {
+      version: 1 as const,
+      agentName: 'general-purpose',
+      effective: {
+        providerId: 'builtin_claude_subscription',
+        modelId: 'haiku',
+        configuredEffort: 'low',
+        sentEffort: 'low',
+        source: 'bot-delegation' as const,
+        ruleKey: 'simple',
+        candidateIndex: 0,
+      },
+      attempts: [],
+      delegation: { complexity: 'simple' as const, declared: true, tier: 'fast' as const, upgraded: false },
+    }
+    const task = (id: string, state: Extract<MessagePart, { type: 'tool' }>['state']): MessagePart => ({
+      type: 'tool',
+      id,
+      toolCallId: id,
+      toolName: 'task',
+      input: {
+        agent: 'general-purpose',
+        prompt: '\nTranscribe EP14\nSave it to transcript.md',
+        complexity: 'simple',
+      },
+      state,
+    })
+    const message = (parts: MessagePart[]): ChatMessage => ({
+      id: 'assistant-' + parts.length,
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      parts,
+    })
+    const [running] = projectChatMessages([
+      message([task('t1', { status: 'running', sub: { profile, phase: 'Downloading the recording' } })]),
+    ])
+    expect(running).toMatchObject({
+      kind: 'tool',
+      name: 'task',
+      target: 'Transcribe EP14',
+      task: {
+        agent: 'general-purpose',
+        model: 'haiku',
+        activity: 'Downloading the recording',
+        delegation: { complexity: 'simple', declared: true, tier: 'fast', upgraded: false },
+      },
+    })
+    const [done, bare] = projectChatMessages([
+      {
+        ...message([
+          task('t2', { status: 'completed', output: 'done', sub: { profile } }),
+          task('t3', { status: 'completed', output: 'done' }),
+        ]),
+        finishReason: 'stop',
+      },
+    ])
+    expect(done).toMatchObject({ task: { activity: null, model: 'haiku' } })
+    expect(bare).toMatchObject({ task: { model: null, activity: null } })
+    expect((bare as { task: object }).task).not.toHaveProperty('delegation')
+  })
   it('sends a tool output with images as its text only: the images travel as refs, never as JSON', () => {
     const tool = (id: string, output: unknown): MessagePart => ({
       type: 'tool',
