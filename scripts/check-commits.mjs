@@ -6,7 +6,7 @@ export function validateCommit(message) {
   const [subject = ''] = message.replace(/\r\n?/g, '\n').split('\n')
   if (!subject) return 'Provide a non-empty commit subject.'
   if (subject !== subject.trim()) return 'Do not surround the commit subject with whitespace.'
-  if (subject.length > 100) return 'Keep the commit subject within 100 characters.'
+  if (subject.replace(/ \(#\d+\)$/, '').length > 100) return 'Keep the commit subject within 100 characters.'
   if (!/^(feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9-]+\))?!?: [a-z][^\r\n]+$/.test(subject)) {
     return 'Use a Conventional Commit subject: type(scope): lowercase description.'
   }

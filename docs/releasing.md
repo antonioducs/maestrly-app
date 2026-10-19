@@ -23,6 +23,32 @@ Validate installation, startup, native terminal, Local ML, and uninstall on clea
 target machines. Include profile upgrade/rollback checks when storage changes.
 CI smoke checks do not replace those tests.
 
+## QA builds
+
+[QA build](../.github/workflows/qa-build.yml) packages Linux x64 (`.AppImage`,
+`.deb`) and Windows x64 (`.exe`) installers from any branch, tag, or commit SHA
+for manual QA on clean machines without cutting a tag, bumping `package.json`,
+or publishing a release.
+
+Trigger a run for a specific ref (defaults to `main`):
+
+```sh
+gh workflow run qa-build.yml -f ref=main
+```
+
+Download the staged artifact for the target OS using the 7-character commit SHA:
+
+```sh
+gh run download <run-id> -n qa-build-linux-<sha7>
+gh run download <run-id> -n qa-build-windows-<sha7>
+```
+
+Each artifact is retained for 7 days and contains the staged installer(s),
+`SHA256SUMS.txt`, and `qa-build.txt` (full commit SHA, requested ref,
+`package.json` version, UTC build timestamp, and workflow run ID). QA build
+packages are unsigned, are never published to GitHub Releases, and do not go
+through auto-update.
+
 ## Signing setup
 
 The GitHub `release` environment must allow `v*` tags and contain:
