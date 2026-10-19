@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { ProjectSetupErrorCode, ProjectSetupProgress, ProjectSetupPhase } from '../../shared/project-setup'
+import { retryWhenGitAppears } from '../git-command'
 
 const MAX_CAPTURE_BYTES = 64 * 1024
 const DEFAULT_GIT_TIMEOUT_MS = 30_000
@@ -118,6 +119,18 @@ export function terminateTree(child: ChildProcess): Promise<boolean> {
 }
 
 function runGitProcess(options: RunGitOptions): Promise<CommandResult> {
+  // Git missing never started a process, so retrying after Windows finds a fresh install has no side effects.
+  return retryWhenGitAppears(
+    () => spawnGitProcess(options),
+    (error) =>
+      error instanceof ProjectSetupGitError &&
+      error.code === 'git-not-found' &&
+      !error.canceled &&
+      !options.signal?.aborted
+  )
+}
+
+function spawnGitProcess(options: RunGitOptions): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
       reject(new ProjectSetupGitError(options.errorCode, true))

@@ -49,6 +49,12 @@ User-visible changes by version. Downloads are on
   its email and **Claude Code not found** or **Claude Code needs an update**,
   and counts as needing attention.
   See [Install Claude Code](docs/claude.md#install-claude-code).
+- On Windows, Git installed while Maestrly is open is found without
+  restarting. After **Git was not found. Install Git and try again.**, trying
+  again after the install now adds the project, and project conversations,
+  their worktrees and diff reviews work too: when `git` does not start,
+  Maestrly rereads the `Path` that Windows keeps for new programs and also
+  looks in the folders where the Git for Windows installer puts it.
 
 ## [0.21.1] - 2026-10-18
 
