@@ -2,7 +2,8 @@ import { once } from 'node:events'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { FLEET_HOST_FILE_ERRORS, FLEET_HOST_FILE_GATEWAY_ERRORS } from '@maestrly/bot-fleet-protocol'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { HostFilesRoutes } from '../../src/main/fleet/instance/host-files-http'
 import {
   classifyTransferError,
   HostFilesHttpError,
@@ -10,9 +11,13 @@ import {
   TransferFailure,
   TransientFailure,
 } from '../../src/main/host-transfers/endpoint'
+import type { HostPairings } from '../../src/main/peer/pairing-host'
+import { createPeerServer } from '../../src/main/peer/server'
+import { issueToken, newPeerRecord, PeerStore } from '../../src/main/peer/store'
 import type { HostView } from '../../src/shared/hosts'
+import { memoryPeerStorage, testIdentity } from './peer-helpers'
 
-const servers: http.Server[] = []
+const servers: Array<http.Server | ReturnType<typeof createPeerServer>> = []
 afterEach(async () => {
   for (const server of servers.splice(0)) {
     server.closeAllConnections()
@@ -219,5 +224,90 @@ describe('host files endpoint', () => {
     })
     expect(classifyTransferError(new TransferFailure('local-missing')).reason).toBe('local-missing')
     expect(classifyTransferError(new Error('odd'))).toEqual({ transient: false, reason: 'unknown', message: 'odd' })
+  })
+})
+
+describe("a paired computer's files", () => {
+  const A = testIdentity('A')
+  const B = testIdentity('B')
+  const PEER = `peer/${A.deviceId}`
+
+  async function peerServer() {
+    const store = new PeerStore(memoryPeerStorage())
+    const token = issueToken()
+    store.save(
+      newPeerRecord({
+        deviceId: B.deviceId,
+        name: 'B',
+        os: 'mac',
+        certPem: B.certPem,
+        port: 7690,
+        addresses: [],
+        issuedToken: token,
+        now: Date.now(),
+      }),
+      issueToken()
+    )
+    const stat = vi.fn(async () => STAT)
+    const server = createPeerServer({
+      identity: A,
+      appVersion: '1.2.3',
+      os: 'mac',
+      store,
+      pairings: {
+        accepting: () => false,
+        request: vi.fn(),
+        exchange: vi.fn(),
+        confirm: vi.fn(),
+        abort: vi.fn(),
+      } as unknown as HostPairings,
+      bridge: { handleUpgrade: (_request, socket) => socket.destroy() },
+      hostFiles: { stat } as unknown as HostFilesRoutes,
+      editor: null,
+      now: Date.now,
+    })
+    servers.push(server)
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const port = (server.address() as AddressInfo).port
+    return {
+      stat,
+      endpoint: {
+        origin: `https://127.0.0.1:${port}`,
+        headers: () => ({ 'X-Maestrly-Fleet-Protocol': '1', Authorization: `Bearer ${token}` }),
+        certPem: A.certPem,
+      },
+    }
+  }
+
+  it('moves over the certificate pinned at pairing', async () => {
+    const peer = await peerServer()
+    const endpoint = resolveHostFilesEndpoint(PEER, {
+      registry: { list: () => [], directHost: () => null, peerEndpoint: () => peer.endpoint },
+      fleet: fleet('https://gateway.invalid'),
+    })
+    await expect(endpoint.json('hostFileStat', { body: { path: '/srv/a.csv' } })).resolves.toEqual(STAT)
+    expect(peer.stat).toHaveBeenCalledWith({ path: '/srv/a.csv' })
+    const impostor = resolveHostFilesEndpoint(PEER, {
+      registry: {
+        list: () => [],
+        directHost: () => null,
+        peerEndpoint: () => ({ ...peer.endpoint, certPem: B.certPem }),
+      },
+      fleet: fleet('https://gateway.invalid'),
+    })
+    await expect(impostor.json('hostFileStat', { body: { path: '/srv/a.csv' } })).rejects.toBeInstanceOf(
+      TransientFailure
+    )
+  })
+
+  it('is unknown while the computer is not paired', () => {
+    const run = () =>
+      resolveHostFilesEndpoint(PEER, {
+        registry: { list: () => [], directHost: () => null, peerEndpoint: () => null },
+        fleet: fleet('https://gateway.invalid'),
+      })
+    expect(failureOf(run)).toBeInstanceOf(TransferFailure)
+    expect(failureOf(run)).toMatchObject({ reason: 'unknown-host' })
   })
 })
