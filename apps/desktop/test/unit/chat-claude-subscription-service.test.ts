@@ -960,6 +960,33 @@ describe('Claude subscription service integration', () => {
     })
   })
 
+  it('applies the manual context limit to Claude metadata and to the window the turn compacts at', async () => {
+    h.manager.getObservedModelContextWindow.mockReturnValue(200_000)
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    patchConvUiPrefs(conversation.id, {
+      chat: { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'sonnet', mode: 'agent', permMode: 'ask' },
+    })
+    const { handlers } = register()
+
+    const meta = () => handlers.get('chat:model-meta')!({}, 'sonnet', CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await expect(meta()).resolves.toMatchObject({ contextWindow: 200_000 })
+    expect(await meta()).not.toHaveProperty('contextLimitEditable', false)
+    expect(handlers.get('chat:context-limit:set')!({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'sonnet', 100_000)).toEqual({
+      ok: true,
+    })
+    await expect(meta()).resolves.toMatchObject({ contextWindow: 100_000, contextLimit: 100_000 })
+    await expect(
+      handlers.get('chat:context-limit:get')!({}, CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'sonnet')
+    ).resolves.toEqual({ limit: 100_000, providerWindow: 200_000, catalogWindow: null, effective: 100_000 })
+
+    await expect(
+      handlers.get('chat:send')?.({ sender: h.webContents }, { conversationId: conversation.id, text: 'Hello.' })
+    ).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+    expect(h.runClaude).toHaveBeenCalledWith(expect.objectContaining({ contextWindow: 100_000 }))
+  })
+
   it('uses an explicit identity barrier for login/logout and only wipes managed sessions', async () => {
     const { handlers } = register()
     h.state.status = {

@@ -388,6 +388,58 @@ test('an unmeasured runtime shows unknown context until it reports a measurement
   await expect(unknown).toHaveCount(0)
 })
 
+interface ContextLimitState {
+  saved: number | null
+  fail: boolean
+}
+
+test('a manual limit explains when it applies, reports a failed save and caps the runtime ceiling', async () => {
+  const { page } = await openChat({ providerId: 'builtin_claude_subscription', modelId: 'claude-opus-4-6' })
+  await app!.evaluate(({ ipcMain }) => {
+    const state: ContextLimitState = { saved: null, fail: true }
+    ;(globalThis as typeof globalThis & { __contextLimit: ContextLimitState }).__contextLimit = state
+    const replace = (channel: string, handler: Parameters<typeof ipcMain.handle>[1]) => {
+      ipcMain.removeHandler(channel)
+      ipcMain.handle(channel, handler)
+    }
+    replace('chat:model-meta', () => ({
+      contextWindow: state.saved ?? 200_000,
+      ...(state.saved ? { contextLimit: state.saved } : {}),
+      contextLimitBetweenTurns: true,
+    }))
+    replace('chat:context-limit:get', () => ({
+      limit: state.saved,
+      providerWindow: 200_000,
+      catalogWindow: null,
+      effective: state.saved ?? 200_000,
+    }))
+    replace('chat:context-limit:set', (_event, _providerId, _modelId, value: number | null) => {
+      if (state.fail) return { ok: false, error: 'unsupported' }
+      state.saved = value
+      return { ok: true }
+    })
+  })
+  await page.reload()
+  await page.locator('li.conv-item:visible').filter({ hasText: 'Context progress fixture' }).click()
+
+  await page.getByRole('button', { name: '~4.0k/200.0k 2.0%', exact: true }).click()
+  const input = page.getByPlaceholder('no limit', { exact: true })
+  const popover = input.locator('..')
+  await expect(popover.getByText(/compacts the conversation between turns/)).toBeVisible()
+  await input.fill('100k')
+  await popover.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(popover.getByRole('alert')).toHaveText('Could not save the limit. Try again.')
+  await expect(input).toBeVisible()
+
+  await app!.evaluate(() => {
+    ;(globalThis as typeof globalThis & { __contextLimit: ContextLimitState }).__contextLimit.fail = false
+  })
+  await popover.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(input).toBeHidden()
+  // The runtime's own ceiling (200k in the projection) gives way to the limit that compaction now uses.
+  await expect(page.getByRole('button', { name: '~4.0k/100.0k 4.0%', exact: true })).toBeVisible()
+})
+
 interface ManualCompactQueueState {
   calls: string[]
   compactStarted: boolean

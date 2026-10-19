@@ -2990,6 +2990,30 @@ async function readMentionPart(cwd: string, m: Mention): Promise<MessagePart | n
 }
 
 /**
+ * The manual limit in effect, already applied to `contextWindow`. Runtimes that report their real ceiling during a
+ * turn (Claude, Copilot) would otherwise replace it as the meter's denominator, so the meter caps them with it.
+ */
+function manualContextLimitMeta(
+  limit: number | undefined,
+  effective: number | undefined
+): Pick<ChatModelMeta, 'contextLimit'> {
+  return limit && effective ? { contextLimit: effective } : {}
+}
+
+/**
+ * Claude's window comes from its runtime target, which ignores the manual limit of the logical model. Apply it so
+ * the preflight and the turn compact at the same budget the meter shows. `null` (window not observed yet) stays
+ * `null` without a limit: callers distinguish it from `undefined`.
+ */
+function claudeWindowWithManualLimit(selection: ChatModelRef, window: number | null | undefined): number | null {
+  const limited = resolveContextWindow({
+    limit: getContextLimit(selection.providerId, selection.modelId),
+    providerWindow: window ?? undefined,
+  })
+  return limited ?? null
+}
+
+/**
  * Model metadata with the EFFECTIVE WINDOW resolved by precedence: `clamp(userLimit, ceiling)`, where
  * `ceiling = providerWindow (/models/runtime) ?? modelsDevWindow`. Pricing requires an exact host→provider models.dev match;
  * custom/proxy retains capabilities but has unknown pricing. No providerId → canonical metadata (compat). Also powers
@@ -3086,7 +3110,8 @@ export async function effectiveModelMeta(
     ).find((model) => model.id === modelId)
     const catalogWindow = canonical?.contextWindow
     const providerWindow = copilotModel?.capabilities.limits.max_context_window_tokens || undefined
-    const effective = resolveContextWindow({ providerWindow })
+    const limit = getContextLimit(providerId, modelId)
+    const effective = resolveContextWindow({ limit, providerWindow })
     const canonicalFields = canonical ? { ...canonical } : {}
     delete canonicalFields.contextWindow
     const reasoningEfforts = copilotModel?.supportedReasoningEfforts ?? []
@@ -3095,6 +3120,7 @@ export async function effectiveModelMeta(
         ? {
             ...canonicalFields,
             ...(effective ? { contextWindow: effective } : {}),
+            ...manualContextLimitMeta(limit, effective),
             ...(copilotModel
               ? {
                   reasoning: copilotModel.capabilities.supports.reasoningEffort,
@@ -3103,12 +3129,11 @@ export async function effectiveModelMeta(
                   chatCapable: true,
                   fastModeCapability: false,
                   nativeUltraMode: false,
-                  contextLimitEditable: false,
                 }
               : {}),
           }
         : null
-    return { meta, providerWindow, catalogWindow }
+    return { meta, providerWindow, catalogWindow, ...(limit ? { limit } : {}) }
   }
 
   if (isClaudeSubscriptionProvider(providerId)) {
@@ -3123,7 +3148,8 @@ export async function effectiveModelMeta(
     const providerWindow =
       manager.getObservedModelContextWindow(modelId) ??
       (claudeModel?.resolvedModel ? manager.getObservedModelContextWindow(claudeModel.resolvedModel) : undefined)
-    const effective = resolveContextWindow({ providerWindow, catalogWindow })
+    const limit = getContextLimit(providerId, modelId)
+    const effective = resolveContextWindow({ limit, providerWindow, catalogWindow })
     const canonicalFields = canonical ? { ...canonical } : {}
     delete canonicalFields.contextWindow
     // The harness reports ALIASES (`opus[1m]`, `fable`), while models.dev indexes concrete IDs → canonical metadata lacks
@@ -3150,6 +3176,7 @@ export async function effectiveModelMeta(
             ...canonicalFields,
             ...pricingFields,
             ...(effective ? { contextWindow: effective } : {}),
+            ...manualContextLimitMeta(limit, effective),
             ...(claudeModel
               ? {
                   reasoning:
@@ -3161,12 +3188,11 @@ export async function effectiveModelMeta(
                   chatCapable: true,
                   fastModeCapability: claudeModel.supportsFastMode === true,
                   nativeUltraMode: false,
-                  contextLimitEditable: false,
                 }
               : {}),
           }
         : null
-    return { meta, providerWindow, catalogWindow }
+    return { meta, providerWindow, catalogWindow, ...(limit ? { limit } : {}) }
   }
 
   if (isGrokSubscriptionProvider(providerId)) {
@@ -3177,7 +3203,8 @@ export async function effectiveModelMeta(
     ).find((model) => model.id === modelId)
     const catalogWindow = canonical?.contextWindow
     const providerWindow = grokModel?.contextWindow
-    const effective = resolveContextWindow({ providerWindow, catalogWindow })
+    const limit = getContextLimit(providerId, modelId)
+    const effective = resolveContextWindow({ limit, providerWindow, catalogWindow })
     const canonicalFields = canonical ? { ...canonical } : {}
     delete canonicalFields.contextWindow
     const reasoningFields = grokReasoningMeta(modelId, canonical)
@@ -3187,17 +3214,17 @@ export async function effectiveModelMeta(
             ...canonicalFields,
             ...reasoningFields,
             ...(effective ? { contextWindow: effective } : {}),
+            ...manualContextLimitMeta(limit, effective),
             ...(grokModel
               ? {
                   chatCapable: true,
                   // xAI Priority Processing (`service_tier: "priority"`) — opt-in via toggle Fast.
                   fastModeCapability: true,
-                  contextLimitEditable: false,
                 }
               : {}),
           }
         : null
-    return { meta, providerWindow, catalogWindow }
+    return { meta, providerWindow, catalogWindow, ...(limit ? { limit } : {}) }
   }
 
   if (isCursorSubscriptionProvider(providerId)) {
@@ -3207,7 +3234,8 @@ export async function effectiveModelMeta(
     const cursorModel = cursorModels.find((model) => model.id === modelId)
     const catalogWindow = canonical?.contextWindow
     const providerWindow = cursorProviderContextWindow(cursorModel?.id ?? modelId)
-    const effective = resolveContextWindow({ providerWindow, catalogWindow })
+    const limit = getContextLimit(providerId, modelId)
+    const effective = resolveContextWindow({ limit, providerWindow, catalogWindow })
     const canonicalFields = canonical ? { ...canonical } : {}
     delete canonicalFields.contextWindow
     const legacyPricing = cursorPublishedUsagePricing(cursorModel?.id ?? modelId, false)
@@ -3220,18 +3248,20 @@ export async function effectiveModelMeta(
             ...canonicalFields,
             ...(legacyPricing ?? {}),
             ...(effective ? { contextWindow: effective } : {}),
+            ...manualContextLimitMeta(limit, effective),
+            // The Cursor agent runs the whole turn itself; Maestrly can only compact before the next one.
+            contextLimitBetweenTurns: true,
             ...(cursorModel
               ? {
                   chatCapable: true,
                   reasoning: reasoningEfforts.length > 0,
                   ...(reasoningEfforts.length ? { reasoningEfforts } : {}),
                   fastModeCapability: fastCapable,
-                  contextLimitEditable: false,
                 }
               : {}),
           }
         : null
-    return { meta, providerWindow, catalogWindow }
+    return { meta, providerWindow, catalogWindow, ...(limit ? { limit } : {}) }
   }
 
   if (isAntigravitySubscriptionProvider(providerId)) {
@@ -3250,6 +3280,9 @@ export async function effectiveModelMeta(
         ? {
             ...canonicalFields,
             ...(effective ? { contextWindow: effective } : {}),
+            ...manualContextLimitMeta(limit, effective),
+            // The ACP agent runs the whole turn itself; Maestrly can only compact before the next one.
+            contextLimitBetweenTurns: true,
             ...(entry ? { ...antigravityModelMeta(entry), fastModeCapability: false } : {}),
           }
         : null
@@ -3265,9 +3298,9 @@ export async function effectiveModelMeta(
   const limit = getContextLimit(providerId, modelId)
   const effective = resolveContextWindow({ limit, providerWindow, catalogWindow })
   const outMeta = baseMeta
-    ? { ...baseMeta, contextWindow: effective }
+    ? { ...baseMeta, contextWindow: effective, ...manualContextLimitMeta(limit, effective) }
     : effective != null
-      ? ({ contextWindow: effective } as ChatModelMeta)
+      ? ({ contextWindow: effective, ...manualContextLimitMeta(limit, effective) } as ChatModelMeta)
       : null
   if (outMeta?.reasoningEfforts?.includes('ultra')) {
     try {
@@ -3380,9 +3413,13 @@ async function preflightContext(
       if (!compatible) await deleteClaudeSessionForConversation(conversationId)
     }
   }
+  const physicalWindow =
+    hasPhysicalContextWindow && isClaudeSubscriptionProvider(selection.providerId)
+      ? claudeWindowWithManualLimit(selection, physicalContextWindow)
+      : physicalContextWindow
   const window = limitConversationContextWindow(
     conversationId,
-    hasPhysicalContextWindow ? (physicalContextWindow ?? undefined) : meta?.contextWindow
+    hasPhysicalContextWindow ? (physicalWindow ?? undefined) : meta?.contextWindow
   )
   if (!window && !isCodexSubscriptionProvider(selection.providerId)) return { ok: true, compacted: false }
   const projection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
@@ -5042,7 +5079,8 @@ async function startSend(
           ? Math.min(admittedCodexContextWindow, smallestPreflightedCodexWindow)
           : (admittedCodexContextWindow ?? smallestPreflightedCodexWindow)
         : useClaudeSubscription && !isolated
-          ? (smallestClaudeWindow ?? claudeRuntimeTarget?.contextWindow ?? undefined)
+          ? (claudeWindowWithManualLimit(selection, smallestClaudeWindow ?? claudeRuntimeTarget?.contextWindow) ??
+            undefined)
           : (await effectiveModelMeta(selection.modelId, selection.providerId).catch(() => null))?.meta?.contextWindow
     )
     const observeTurnContextWindow = (value: unknown): void => {
@@ -10616,9 +10654,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   deps.mhandle('chat:context-limit:set', (_e, providerId: string, modelId: string, value: number | null) => {
     if (typeof providerId !== 'string' || typeof modelId !== 'string' || !providerId || !modelId) return { ok: false }
-    if (isManagedProvider(providerId) && !isCodexSubscriptionProvider(providerId)) {
-      return { ok: false, error: 'unsupported' }
-    }
+    // Every other provider compacts through Maestrly; the web companion keeps its context inside ChatGPT.
+    if (isChatGptWebProvider(providerId)) return { ok: false, error: 'unsupported' }
     setContextLimit(providerId, modelId, typeof value === 'number' ? value : null)
     return { ok: true }
   })

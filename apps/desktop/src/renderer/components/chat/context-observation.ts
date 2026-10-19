@@ -26,9 +26,11 @@ export function contextMeterReading(
   const legacyUsage = sameContextModel(history?.lastModel, model) ? history?.lastUsage : null
   const used = observation?.usedTokens ?? projection?.usedTokens ?? (legacyUsage ? contextOccupancy(legacyUsage) : 0)
   // A sample with no runtime ceiling must not inherit an older request's denominator.
-  const window = observation
+  const reported = observation
     ? (observation.modelContextWindow ?? meta?.contextWindow)
     : (projection?.modelContextWindow ?? meta?.contextWindow)
+  // Runtimes report their real ceiling; with a manual limit, compaction happens at the limit instead.
+  const window = reported != null && meta?.contextLimit ? Math.min(reported, meta.contextLimit) : reported
   return {
     used,
     window,

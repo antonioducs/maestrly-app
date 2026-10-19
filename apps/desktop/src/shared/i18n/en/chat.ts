@@ -1184,6 +1184,9 @@ export default {
     limitCeilingUnknown: 'Real cap unknown',
     limitHint: 'Accepts 100k, 1M or the raw number.',
     limitClampNote: 'Above the real cap; will be limited to {{ceiling}}.',
+    limitSaveFailed: 'Could not save the limit. Try again.',
+    limitBetweenTurnsNote:
+      'This runtime runs each turn on its own: the limit compacts the conversation between turns, and a long turn can go past it.',
     limitSave: 'Save',
     limitClear: 'No limit',
     limitButtonTitle: 'Set context limit',

@@ -93,6 +93,7 @@ export function ChatContextMeter({
   const [open, setOpen] = useState(false)
   const [info, setInfo] = useState<LimitInfo | null>(null)
   const [draft, setDraft] = useState('')
+  const [saveFailed, setSaveFailed] = useState(false)
   const limitRequestRef = useRef(0)
   const ref = useRef<HTMLDivElement>(null)
   const canLimit = !!(providerId && modelId && meta?.contextLimitEditable !== false)
@@ -110,6 +111,7 @@ export function ChatContextMeter({
   useEffect(() => {
     if (!open || !canLimit) return
     let alive = true
+    setSaveFailed(false)
     const requestId = ++limitRequestRef.current
     api.chatContextLimitGet(providerId as string, modelId as string).then((r) => {
       if (!alive || requestId !== limitRequestRef.current) return
@@ -130,9 +132,14 @@ export function ChatContextMeter({
     const provider = providerId as string
     const model = modelId as string
     const requestId = ++limitRequestRef.current
+    setSaveFailed(false)
     try {
       const result = await api.chatContextLimitSet(provider, model, value)
-      if (!result.ok || requestId !== limitRequestRef.current) return
+      if (requestId !== limitRequestRef.current) return
+      if (!result.ok) {
+        setSaveFailed(true)
+        return
+      }
       const nextInfo = await api.chatContextLimitGet(provider, model)
       if (requestId !== limitRequestRef.current) return
       setInfo(nextInfo)
@@ -141,6 +148,7 @@ export function ChatContextMeter({
       onLimitChange?.()
     } catch {
       // Keep the popover open when persisting or re-reading the authoritative value fails.
+      if (requestId === limitRequestRef.current) setSaveFailed(true)
     }
   }
 
@@ -201,6 +209,9 @@ export function ChatContextMeter({
         <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-lg border border-white/[0.1] bg-[#161618] p-3 shadow-2xl">
           <div className="text-[13px] font-medium text-foreground">{t('meter.limitTitle')}</div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">{t('meter.limitDesc')}</div>
+          {meta?.contextLimitBetweenTurns && (
+            <div className="mt-1 text-[11px] text-muted-foreground">{t('meter.limitBetweenTurnsNote')}</div>
+          )}
           <div className="mt-1 text-[11px] text-muted-foreground">
             {info?.providerWindow != null
               ? t('meter.limitCeilingProvider', { ceiling: fmt(info.providerWindow) })
@@ -213,7 +224,10 @@ export function ChatContextMeter({
             inputMode="numeric"
             autoFocus
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              setSaveFailed(false)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') save(parsedDraft)
               else if (e.key === 'Escape') setOpen(false)
@@ -222,7 +236,11 @@ export function ChatContextMeter({
             className="mt-2 w-full rounded-md border border-white/[0.1] bg-black/20 px-2 py-1 text-[13px] text-foreground outline-none focus:border-indigo-500/60"
           />
           <div className="mt-1 min-h-[14px] text-[10px] text-muted-foreground">
-            {willClamp ? (
+            {saveFailed ? (
+              <span role="alert" className="text-red-400">
+                {t('meter.limitSaveFailed')}
+              </span>
+            ) : willClamp ? (
               <span className="text-amber-400">{t('meter.limitClampNote', { ceiling: fmt(ceiling as number) })}</span>
             ) : (
               t('meter.limitHint')

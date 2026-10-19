@@ -639,6 +639,10 @@ export interface ChatModelMeta extends UsagePricing {
   nativeUltraMode?: boolean
 
   contextLimitEditable?: boolean
+  /** Manual context limit in effect, already applied to `contextWindow`; caps the window a runtime reports. */
+  contextLimit?: number
+  /** The runtime runs each turn on its own: a manual limit only compacts between turns, never during one. */
+  contextLimitBetweenTurns?: boolean
 }
 
 export function usageMetaForModel(

@@ -24,6 +24,14 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- The context limit you set from the context meter now works with Claude,
+  GitHub Copilot, Grok, Cursor and Google AI subscriptions, not only with API
+  providers and Codex. Maestrly compacts the conversation at the limit, and the
+  meter shows the capped window. Cursor and Google AI compact only between
+  turns, so a long turn there can go past the limit. Before, Google AI let you
+  edit the limit but did not save it, and the other subscriptions hid the
+  option. A save that fails now shows an error. See
+  [context limit](docs/chat-context.md#context-limit).
 - The **Subscription usage** dialog in the desktop sidebar now includes
   connected Google AI (Antigravity) accounts alongside Claude and ChatGPT.
 - Conversations that use an OpenAI API key work again in **Ask** and **Agent**

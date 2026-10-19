@@ -499,6 +499,22 @@ triggers compaction. A failed compaction blocks the request and preserves the
 original history. A fresh Codex transfer is blocked if its context window is
 unknown. Token estimates can differ from the provider's actual count.
 
+### Context limit
+
+Click the context meter to cap a model's context window below its real one, for
+example 300k on a 1M model, to bound what each turn sends and costs. Enter a
+value such as `300k`, `1M` or a plain number; **No limit** removes it. The limit
+belongs to that model on that provider account and applies to every
+conversation that uses them. A value above the model's real window is clamped to
+it. The meter then shows the capped window with a lock, and Maestrly compacts
+the conversation at the limit before a turn. API providers and the Codex,
+Claude, GitHub Copilot and Grok subscriptions also compact during a turn that
+reaches it; Codex additionally sends the limit to its runtime when the model
+allows a configurable window. Cursor and Google AI run each turn on their own,
+so the limit compacts their conversations only between turns, and a long turn
+can go past it; the limit popover says so. ChatGPT Web keeps its context inside
+ChatGPT and has no limit.
+
 ## Background preparation
 
 Background compaction is optional and starts disabled. In Settings → Maestrly
