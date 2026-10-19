@@ -35,11 +35,14 @@ export function ClaudeCodeSetupNotice({
   need,
   host,
   checking,
+  savedSignIn,
   onCheckAgain,
 }: {
   need: ClaudeCodeSetupNeed
   host: Pick<HostView, 'os' | 'remote' | 'label' | 'server'>
   checking: boolean
+  /** The sign-in the account still holds, used again once Claude Code is ready; null when there is none. */
+  savedSignIn: { email: string | null } | null
   onCheckAgain: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -60,6 +63,13 @@ export function ClaudeCodeSetupNotice({
             ? t('settings.claudeCodeInstallHintRemote', { host: hostName })
             : t('settings.claudeCodeInstallHint')}
       </p>
+      {savedSignIn && (
+        <p className="mt-1 text-foreground/80" data-claude-code-sign-in-kept>
+          {savedSignIn.email
+            ? t('settings.claudeCodeSignInKept', { email: savedSignIn.email })
+            : t('settings.claudeCodeSignInKeptNoEmail')}
+        </p>
+      )}
       {need === 'install' && (
         <p className="mt-2 text-[11px] text-muted-foreground">{t(`settings.claudeCodeInstallShell_${host.os}`)}</p>
       )}

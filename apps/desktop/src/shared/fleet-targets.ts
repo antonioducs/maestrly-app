@@ -63,3 +63,7 @@ export const FLEET_EDIT_CONFLICT = 'FLEET_EDIT_CONFLICT'
 export const FLEET_RUNS_UNSUPPORTED = 'FLEET_RUNS_UNSUPPORTED'
 /** Raised when a routine run's conversation cannot change now: it is working, or it is gone. */
 export const FLEET_RUN_CONFLICT = 'FLEET_RUN_CONFLICT'
+/** Raised when the gateway or the bot cannot keep conversations with other bots apart yet (`peer-conversations`). */
+export const FLEET_PEER_THREADS_UNSUPPORTED = 'FLEET_PEER_THREADS_UNSUPPORTED'
+/** Raised when a thread's conversation cannot change now: it is working, or it is gone. */
+export const FLEET_PEER_THREAD_CONFLICT = 'FLEET_PEER_THREAD_CONFLICT'

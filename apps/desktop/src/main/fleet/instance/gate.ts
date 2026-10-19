@@ -8,9 +8,10 @@ const refusal = {
   paused: 'The owner has paused you. End your turn now.',
 }
 /**
- * The hold (takeover or pause) of one bot. `conversationId` names the bot's conversation: a hold cancels only that
- * conversation's screen actions, so holding one bot never interrupts another bot of the environment. Without it, the
- * conversation registered through `registerInstanceHoldGate` is used, and without either, every screen action.
+ * The hold (takeover or pause) of one bot. `conversationIds` names the bot's conversations whose screen actions a hold
+ * cancels (the one its desktop shows and every one working), so holding one bot never interrupts another bot of the
+ * environment. Without it, the conversation registered through `registerInstanceHoldGate` is used, and without either,
+ * every screen action.
  */
 export class InstanceHoldManager {
   private current: FleetInstanceHold = { state: 'none', reason: null, since: null, interruptedTurn: false }
@@ -22,12 +23,11 @@ export class InstanceHoldManager {
   gatedConversationId: string | null = null
   constructor(
     private readonly onChange: () => void = () => {},
-    private readonly conversationId?: () => string | null
+    private readonly conversationIds?: () => string[]
   ) {}
   private abortScreen(): void {
-    if (this.conversationId) {
-      const id = this.conversationId()
-      if (id) abortScreenActions(id)
+    if (this.conversationIds) {
+      for (const id of this.conversationIds()) abortScreenActions(id)
       return
     }
     abortScreenActions(this.gatedConversationId ?? undefined)

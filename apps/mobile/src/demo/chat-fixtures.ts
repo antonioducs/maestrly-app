@@ -5,6 +5,8 @@ import type {
   MobileChatMode,
   MobileExperience,
   MobilePermMode,
+  MobileSubscriptionUsageEntry,
+  MobileSubscriptionUsageWindow,
 } from '@maestrly/bot-fleet-protocol'
 
 /*
@@ -77,6 +79,71 @@ export const DEMO_MODEL_INFO: Record<string, { window: number; ultra: 'native' |
   'google::gemini-3-flash': { window: 1_000_000, ultra: 'maestrly' },
 }
 export const DEMO_DEFAULTS = { providerId: 'claude', modelId: 'claude-opus-5-5', reasoning: 'high', fastMode: false }
+
+/** The quota usage of the demo server's subscriptions as of `now`: ChatGPT, two Claude accounts and Google AI. */
+export function demoSubscriptionUsage(now: number): MobileSubscriptionUsageEntry[] {
+  const window = (
+    id: string,
+    kind: MobileSubscriptionUsageWindow['kind'],
+    usedPercent: number,
+    resetsInMinutes: number | null,
+    durationMins: number | null,
+    label?: string
+  ): MobileSubscriptionUsageWindow => ({
+    id,
+    kind,
+    usedPercent,
+    resetsAt: resetsInMinutes === null ? null : now + resetsInMinutes * 60_000,
+    durationMins,
+    ...(label ? { label } : {}),
+  })
+  const ready = { state: 'ready' as const, fetchedAt: now }
+  return [
+    {
+      providerId: 'builtin_codex_subscription',
+      providerKind: 'codex',
+      providerLabel: 'ChatGPT',
+      ...ready,
+      windows: [
+        window('primary', 'five-hour', 23, 3 * 60 + 5, 300),
+        window('secondary', 'weekly', 61, 3 * 24 * 60 + 4 * 60, 7 * 24 * 60),
+      ],
+    },
+    {
+      providerId: 'builtin_claude_subscription',
+      providerKind: 'claude',
+      providerLabel: 'Claude',
+      accountLabel: 'Personal',
+      ...ready,
+      windows: [
+        window('five_hour', 'five-hour', 86, 47, 300),
+        window('seven_day', 'weekly', 34, 5 * 24 * 60 + 2 * 60, 7 * 24 * 60),
+        window('seven_day_opus', 'weekly-model', 12, 5 * 24 * 60 + 2 * 60, 7 * 24 * 60, 'Opus'),
+      ],
+    },
+    {
+      providerId: 'builtin_claude_subscription@acc_work',
+      providerKind: 'claude',
+      providerLabel: 'Claude',
+      accountLabel: 'Work',
+      ...ready,
+      windows: [
+        window('five_hour', 'five-hour', 94, 2 * 60 + 18, 300),
+        window('seven_day', 'weekly', 72, 9 * 24 * 60, 7 * 24 * 60),
+      ],
+    },
+    {
+      providerId: 'builtin_antigravity_subscription',
+      providerKind: 'google',
+      providerLabel: 'Google AI',
+      ...ready,
+      windows: [
+        window('gemini-pro', 'weekly-model', 9, 6 * 24 * 60, null, 'Gemini 3 Pro'),
+        window('gemini-flash', 'weekly-model', 3, 6 * 24 * 60, null, 'Gemini 3 Flash'),
+      ],
+    },
+  ]
+}
 
 /** The demo server hosts two workspaces environments, one per scope of the owner's work, each with its own chats. */
 export const DEMO_ENVIRONMENTS = { personal: 'personal', company: 'company' } as const

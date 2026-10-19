@@ -107,7 +107,7 @@ export function permissionTool(
   const resource = request.resources.find((value) => value && value !== '*' && value !== name)
   return { name, target: target ?? (resource ? toolTarget({ command: resource }) : null) }
 }
-function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
+function peerOutput(output: unknown): { delivered?: boolean; name?: string; thread?: string } {
   if (typeof output === 'string') {
     try {
       return peerOutput(JSON.parse(output))
@@ -118,7 +118,12 @@ function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
   if (!output || typeof output !== 'object') return {}
   const value = output as Record<string, unknown>
   if (typeof value.delivered === 'boolean')
-    return { delivered: value.delivered, name: typeof value.name === 'string' ? value.name : undefined }
+    return {
+      delivered: value.delivered,
+      name: typeof value.name === 'string' ? value.name : undefined,
+      // The thread it went to (`peer-conversations`), which goes on in a conversation of its own.
+      thread: typeof value.thread === 'string' && /^[A-Za-z0-9-]{1,80}$/.test(value.thread) ? value.thread : undefined,
+    }
   if (typeof value.text === 'string') return peerOutput(value.text)
   return {}
 }
@@ -361,6 +366,7 @@ export function projectMessages(
               to: { botId: input.to, name: result.name ?? input.name ?? input.to },
               text: input.text,
               delivered: result.delivered === true,
+              ...(result.thread ? { thread: { id: result.thread } } : {}),
             })
         } else items.push(toolItem(message, part, index, toolImages(part)))
       } else if (

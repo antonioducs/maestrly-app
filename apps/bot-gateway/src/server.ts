@@ -28,6 +28,7 @@ import type { GatewayContext } from './context.js'
 import { GatewayError, failure } from './errors.js'
 import { publicRoute } from './routes/public.js'
 import { Peers } from './peers.js'
+import { PeerThreads } from './peer-threads.js'
 import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
@@ -91,7 +92,8 @@ function reject(res: ServerResponse, error: unknown) {
 }
 export function createGatewayServers(ctx: GatewayContext) {
   const ownerMemory = ctx.ownerMemory ?? new OwnerMemory(ctx.store, ctx.lifecycle)
-  const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
+  const peerThreads = ctx.peerThreads ?? new PeerThreads(ctx.store, ctx.lifecycle)
+  const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle, Date.now, peerThreads)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
   const network =
@@ -164,6 +166,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     push,
     ownerMemory,
     peers,
+    peerThreads,
     routines,
     screen,
     desktops,
@@ -172,8 +175,13 @@ export function createGatewayServers(ctx: GatewayContext) {
     hostEditor,
     revokeDevice,
   }
-  ctx.lifecycle.onTurnFinished = (id, event) =>
-    event.inputId
+  ctx.lifecycle.onTurnFinished = (id, event) => {
+    // A turn of a thread's conversation: the thread was active, and no routine run is about it.
+    if (event.runId && ctx.store.peerThreadSide(event.runId, id)) {
+      peerThreads.touched(id, event.runId)
+      return { threadId: event.runId }
+    }
+    return event.inputId
       ? routines.finishRun(id, {
           inputId: event.inputId,
           outcome: event.outcome,
@@ -182,6 +190,7 @@ export function createGatewayServers(ctx: GatewayContext) {
           media: event.media,
         })
       : undefined
+  }
   ctx.lifecycle.onReady = (id) => {
     void peers.retry(id)
   }
@@ -337,6 +346,10 @@ export function createGatewayServers(ctx: GatewayContext) {
           if (match.key === 'desktops') return send(res, 200, { desktops: desktops.links(caller!) })
           const result = await desktops.call(caller!, body as FleetInternalDesktopCallRequest)
           return send(res, 200, match.route.response!.parse(result))
+        } else if (match.key === 'peerThreadReport') {
+          // A bot reports from its own side of a thread, the one its token names.
+          const { text } = body as { text: string }
+          return send(res, 200, match.route.response!.parse(peerThreads.report(caller!, match.params.threadId, text)))
         } else {
           const result =
             match.key === 'peers'
@@ -395,6 +408,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     internalServer,
     routines,
     peers,
+    peerThreads,
     screen,
     bridge,
     sweepRevocations,
@@ -424,6 +438,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       desktops.close()
       await ctx.artifacts?.close()
       routines.stop()
+      peerThreads.stop()
       screen.close()
       bridge.close()
       hostFiles.close()

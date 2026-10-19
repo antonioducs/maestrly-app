@@ -31,6 +31,8 @@ describe('bot turn start retries', () => {
       at: NOW + 4 * 60_000,
       key: 'claude-accounts-exhausted',
       text: 'claude-accounts-exhausted until=2026-10-12T15:04:00.000Z',
+      // A usage limit holds every conversation of the bot: they share its accounts.
+      quota: true,
     })
     // The same failure on the next attempts keeps the same kind: the bot reports it once.
     expect(startRetry(new Error('claude-accounts-exhausted'), 7, () => PRIMARY, NOW, router).key).toBe(retry.key)
@@ -58,7 +60,13 @@ describe('bot turn start retries', () => {
       START_RETRY_MAX_MS,
       START_RETRY_MAX_MS,
     ])
-    expect(startRetry('not an error', 1, () => null, NOW, router)).toMatchObject({ key: '', text: 'Turn failed.' })
+    expect(startRetry('not an error', 1, () => null, NOW, router)).toMatchObject({
+      key: '',
+      text: 'Turn failed.',
+      quota: false,
+    })
+    // Any other failure holds only the conversation whose turn could not start.
+    expect(startRetry(new Error('unavailable'), 1, () => PRIMARY, NOW, router).quota).toBe(false)
   })
 
   it('falls back to backing off when the router already admits an account again', () => {
@@ -69,6 +77,7 @@ describe('bot turn start retries', () => {
       at: NOW + 2 * START_RETRY_MIN_MS,
       key: 'codex-accounts-exhausted',
       text: 'codex-accounts-exhausted',
+      quota: true,
     })
   })
 })

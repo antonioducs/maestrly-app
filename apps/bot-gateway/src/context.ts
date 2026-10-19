@@ -8,6 +8,7 @@ import type { EventHub } from './events.js'
 import type { HostMonitor } from './host.js'
 import type { Lifecycle } from './lifecycle.js'
 import type { Store } from './store.js'
+import type { PeerThreads } from './peer-threads.js'
 import type { Peers } from './peers.js'
 import type { Routines } from './routines.js'
 import type { ScreenProxy } from './screen.js'
@@ -26,6 +27,7 @@ export type GatewayContext = {
   store: Store
   ownerMemory?: OwnerMemory
   peers?: Peers
+  peerThreads?: PeerThreads
   routines?: Routines
   screen?: ScreenProxy
   bridge?: BridgeProxy

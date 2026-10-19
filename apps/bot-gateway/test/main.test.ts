@@ -193,7 +193,7 @@ describe('config and storage', () => {
   it('migrates empty database and reopens it', () => {
     const dir = temp(),
       store = new Store(dir)
-    expect(store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '18' })
+    expect(store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '19' })
     store.close()
     const reopened = new Store(dir)
     expect(reopened.listDevices()).toEqual([])

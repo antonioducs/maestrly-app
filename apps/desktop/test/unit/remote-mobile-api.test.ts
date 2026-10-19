@@ -69,6 +69,9 @@ function setup() {
     limit: null as number | null,
     subagents: true,
     defaults: null as Record<string, unknown> | null,
+    /** Subscription accounts `chat:config` lists, and what `chat:subscription-usage` answers for each account id. */
+    subscriptions: [] as unknown[],
+    usage: {} as Record<string, unknown>,
   }
   const handle = (channel: string, fn: (...args: unknown[]) => unknown, kind: 'invoke' | 'send' = 'invoke') =>
     table.record(channel, kind, (event: { sender: typeof sender }, ...args: unknown[]) => {
@@ -170,7 +173,7 @@ function setup() {
   }))
   handle('chat:skills:set-override', () => undefined)
   handle('chat:config', () => ({
-    providers: [{ id: 'claude', name: 'Claude', baseURL: '', apiKeyPresent: true }],
+    providers: [{ id: 'claude', name: 'Claude', baseURL: '', apiKeyPresent: true }, ...state.subscriptions],
     mcpServers: [
       { id: 'linear', name: 'Linear', transport: 'http', enabled: true },
       { id: 'off', name: 'Off', transport: 'http', enabled: false },
@@ -179,6 +182,12 @@ function setup() {
     defaultSelection: { providerId: 'claude', modelId: 'opus' },
   }))
   handle('chat:models', () => ['opus', 'sonnet'])
+  handle('chat:subscription-usage', (payload) => {
+    const { providerKind, accountId } = payload as { providerKind: string; accountId: string | null }
+    const answer = state.usage[accountId ?? providerKind]
+    if (answer instanceof Error) throw answer
+    return answer
+  })
   handle('chat:model-meta', () => ({ contextWindow: 200000, nativeUltraMode: false, contextLimitEditable: true }))
   handle('chat:context-limit:get', () => ({
     limit: state.limit,
@@ -837,6 +846,150 @@ describe('mobile API of a workspaces host', () => {
     // Each ends its own turn, after its answer.
     expect(items.map((item) => item.id).indexOf('m2:end')).toBe(items.map((item) => item.id).indexOf('m2:1') + 1)
     h.api.dispose()
+  })
+
+  it('reads the quota usage of each connected subscription account, naming none of its secrets', async () => {
+    const h = setup()
+    const account = (kind: string, base: string, accountId?: string, extra: Record<string, unknown> = {}) => ({
+      id: accountId ? `${base}@${accountId}` : base,
+      name: base,
+      baseURL: '',
+      kind,
+      builtIn: true,
+      connected: true,
+      ...(accountId ? { accountId } : {}),
+      ...extra,
+    })
+    h.state.subscriptions = [
+      account('claude-subscription', 'builtin_claude_subscription', 'acc_work', { accountLabel: 'Work' }),
+      account('claude-subscription', 'builtin_claude_subscription', undefined, { accountLabel: 'Personal' }),
+      account('claude-subscription', 'builtin_claude_subscription', 'acc_old', { connected: false }),
+      account('antigravity-subscription', 'builtin_antigravity_subscription'),
+      account('codex-subscription', 'builtin_codex_subscription'),
+      account('cursor-subscription', 'builtin_cursor_subscription'),
+      account('codex-subscription', 'builtin_codex_subscription', 'acc_team', { accountLabel: 'Team' }),
+    ]
+    const ready = (providerKind: string, accountId: string | null, windows: unknown[]) => ({
+      state: 'ready',
+      providerKind,
+      accountId,
+      fetchedAt: T0,
+      windows,
+    })
+    h.state.usage = {
+      'claude-subscription': ready('claude-subscription', null, [
+        { id: 'five_hour', kind: 'five-hour', usedPercent: 42.5, resetsAt: T0 + 3_600_000, durationMins: 300 },
+      ]),
+      acc_work: ready('claude-subscription', 'acc_work', [
+        { id: 'seven_day', kind: 'weekly', usedPercent: 140, resetsAt: null, durationMins: 10_080, extra: 'x' },
+        {
+          id: 'seven_day_opus',
+          kind: 'weekly-model',
+          usedPercent: 3,
+          resetsAt: Number.NaN,
+          durationMins: null,
+          label: 'Opus',
+        },
+      ]),
+      'codex-subscription': {
+        state: 'error',
+        providerKind: 'codex-subscription',
+        accountId: null,
+        error: 'Request failed: Bearer [REDACTED] user@example.com',
+      },
+      acc_team: { state: 'error', providerKind: 'codex-subscription', accountId: 'acc_team', error: 'unknown-account' },
+      'antigravity-subscription': {
+        state: 'unsupported',
+        providerKind: 'antigravity-subscription',
+        accountId: null,
+        reason: 'unavailable',
+      },
+      'cursor-subscription': new Error('never asked'),
+    }
+
+    const result = (await h.invoke('mobile:v1:subscription-usage', { force: true })) as {
+      entries: Array<Record<string, unknown>>
+    }
+    expect(result.entries).toEqual([
+      {
+        providerId: 'builtin_codex_subscription',
+        providerKind: 'codex',
+        providerLabel: 'ChatGPT',
+        state: 'error',
+        windows: [],
+        error: 'failed',
+      },
+      {
+        providerId: 'builtin_codex_subscription@acc_team',
+        providerKind: 'codex',
+        providerLabel: 'ChatGPT',
+        accountLabel: 'Team',
+        state: 'error',
+        windows: [],
+        error: 'unknown-account',
+      },
+      {
+        providerId: 'builtin_claude_subscription',
+        providerKind: 'claude',
+        providerLabel: 'Claude',
+        accountLabel: 'Personal',
+        state: 'ready',
+        fetchedAt: T0,
+        windows: [
+          { id: 'five_hour', kind: 'five-hour', usedPercent: 42.5, resetsAt: T0 + 3_600_000, durationMins: 300 },
+        ],
+      },
+      {
+        providerId: 'builtin_claude_subscription@acc_work',
+        providerKind: 'claude',
+        providerLabel: 'Claude',
+        accountLabel: 'Work',
+        state: 'ready',
+        fetchedAt: T0,
+        windows: [
+          { id: 'seven_day', kind: 'weekly', usedPercent: 100, resetsAt: null, durationMins: 10_080 },
+          {
+            id: 'seven_day_opus',
+            kind: 'weekly-model',
+            usedPercent: 3,
+            resetsAt: null,
+            durationMins: null,
+            label: 'Opus',
+          },
+        ],
+      },
+      {
+        providerId: 'builtin_antigravity_subscription',
+        providerKind: 'google',
+        providerLabel: 'Google AI',
+        state: 'error',
+        windows: [],
+        error: 'unavailable',
+      },
+    ])
+    expect(JSON.stringify(result)).not.toMatch(/REDACTED|example\.com/)
+    expect(h.called('chat:subscription-usage').map(([, args]) => args[0])).toEqual([
+      { providerKind: 'codex-subscription', accountId: null, force: true },
+      { providerKind: 'codex-subscription', accountId: 'acc_team', force: true },
+      { providerKind: 'claude-subscription', accountId: null, force: true },
+      { providerKind: 'claude-subscription', accountId: 'acc_work', force: true },
+      { providerKind: 'antigravity-subscription', accountId: null, force: true },
+    ])
+
+    // A read that throws fails only its own account; without `force` the host may answer from its cache.
+    h.state.usage['claude-subscription'] = new Error('socket hang up')
+    const again = (await h.invoke('mobile:v1:subscription-usage')) as { entries: Array<Record<string, unknown>> }
+    expect(again.entries.find((entry) => entry.providerId === 'builtin_claude_subscription')).toMatchObject({
+      state: 'error',
+      error: 'failed',
+    })
+    expect(again.entries.find((entry) => entry.providerId === 'builtin_claude_subscription@acc_work')).toMatchObject({
+      state: 'ready',
+    })
+    expect(h.called('chat:subscription-usage').at(-1)?.[1][0]).toMatchObject({ force: false })
+    await expect(
+      h.invoke('mobile:v1:subscription-usage', { force: true, accountId: 'acc_work' })
+    ).rejects.toMatchObject({ code: 'invalid' })
   })
 
   it('refuses unknown channels and stops hearing the host once disposed', async () => {

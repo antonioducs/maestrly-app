@@ -109,6 +109,7 @@ import {
   writeInstalledBots,
 } from './registry'
 import { BotRuntime, loadFleetAccountOptions, visibleFleetModels, type BotRuntimeHost, type BotScreen } from './runtime'
+import type { LaneComputers } from './lane-computers'
 import { readRunConversationIds } from './routine-runs'
 import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
@@ -158,6 +159,8 @@ export interface EnvironmentRuntimeDeps {
   closeConversation(conversationId: string): Promise<void>
   /** Deletes a conversation with its messages and files. */
   purgeConversation(conversationId: string): Promise<void>
+  /** The desktops of the bots' side conversations, on the bots' display manager; none outside a container. */
+  laneComputers?: LaneComputers | null
   /** Shows the environment screen (Maestrly's settings), optionally on one of its pages. */
   openSettings(target: FleetUiOpenRequest['target']): void | Promise<void>
   /**
@@ -267,6 +270,7 @@ export class EnvironmentRuntime {
       present: (conversationId, request) => this.desktopOf(conversationId)?.present(request),
       closeConversation: (conversationId) => this.deps.closeConversation(conversationId),
       purgeConversation: (conversationId) => this.deps.purgeConversation(conversationId),
+      laneComputers: deps.laneComputers ?? null,
     }
   }
 
@@ -295,6 +299,7 @@ export class EnvironmentRuntime {
     for (const botId of [...this.desktops.keys()]) await this.stopDesktop(botId)
     for (const bot of [...this.registry.values()]) await bot.dispose()
     this.registry.clear()
+    await this.deps.laneComputers?.dispose().catch((error: unknown) => log('error', errorMessage(error)))
     await this.displays?.dispose().catch((error: unknown) => log('error', errorMessage(error)))
     if (current === this) current = null
   }
@@ -618,6 +623,7 @@ export class EnvironmentRuntime {
     const { botId, slot } = bot
     try {
       const display = await this.displays.startBot(botId, slot)
+      if (!display.browserArea) throw new Error('A bot display always has a tile.')
       await this.startDesktop(bot, display)
       return {
         display: display.display,
@@ -650,8 +656,8 @@ export class EnvironmentRuntime {
       const handle = await this.deps.desktop({
         botId: bot.botId,
         display,
-        // The conversation the bot works in: a routine run's browser and terminals show while its turn runs.
-        conversationId: () => bot.activeConversationId,
+        // The conversation the bot's desktop shows: its own, or a side conversation while it asks the owner for help.
+        conversationId: () => bot.foregroundConversationId,
         hold: () => bot.holdManager.state,
       })
       this.desktops.set(bot.botId, handle)
@@ -684,10 +690,8 @@ export class EnvironmentRuntime {
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */
   private async purge(botId: string, conversationId: string | null): Promise<void> {
-    // Its routine runs' conversations first: they work in its conversation's folder.
-    for (const runConversationId of await readRunConversationIds(
-      botPaths(this.deps.userData, this.deps.home, botId).runs
-    ))
+    // Its side conversations first (routine runs' and threads'): they work in its conversation's folder.
+    for (const runConversationId of await readRunConversationIds(botPaths(this.deps.userData, this.deps.home, botId)))
       await this.deps.purgeConversation(runConversationId)
     if (conversationId) {
       await this.deps.purgeConversation(conversationId)

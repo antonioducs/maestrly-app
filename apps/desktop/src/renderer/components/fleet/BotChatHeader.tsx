@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
+import { ArrowRightLeft, History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
@@ -7,11 +7,12 @@ import { ChatWindowButton } from '@/components/chat/ChatWindowHost'
 import { startBot } from '@/lib/fleet/environments'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
 import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 
-/** Whether the conversation pane shows the bot's conversation or its routine runs. */
-export type BotConversationPane = 'conversation' | 'runs'
+/** Whether the conversation pane shows the bot's conversation, its routine runs or its conversations with other bots. */
+export type BotConversationPane = 'conversation' | 'runs' | 'threads'
 
 /** How long the run in progress has worked, as `m:ss`, ticking each second. */
 function RunElapsed({ since }: { since: string | null }) {
@@ -99,7 +100,7 @@ export function BotChatHeader({
   onOpenSettings,
   onOpenServer,
   onOpenEnvironment,
-  runs,
+  panes,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -113,16 +114,41 @@ export function BotChatHeader({
   onOpenSettings: () => void
   onOpenServer: () => void
   onOpenEnvironment?: () => void
-  /** The bot's routine runs (`routine-conversations`): the tabs between them and its conversation, and the run working. */
-  runs?: {
+  /**
+   * The bot's side conversations: its routine runs (`routine-conversations`) and its conversations with other bots
+   * (`peer-conversations`), each a tab beside its own conversation when the bot keeps them, and the turns working there.
+   */
+  panes?: {
     pane: BotConversationPane
-    unseen: number
+    runs: boolean
+    threads: boolean
+    unseenRuns: number
+    /** The conversations with other bots with something new, or waiting for the owner. */
+    unseenThreads: number
     onPane: (pane: BotConversationPane) => void
     onOpenRun: (runId: string) => void
+    onOpenThread: (threadId: string) => void
   }
 }) {
   const { t } = useTranslation('fleet')
   const host = fleet.state.snapshot.host?.hostname ?? t('view.server')
+  // The side conversations working now, each in a conversation of its own, beside the bot's own conversation.
+  const running = sideTurns(bot).filter((turn) => (turn.kind === 'routine' ? panes?.runs : panes?.threads))
+  const routineLabel = t('transcript.routine.label')
+  const turnLabel = (turn: (typeof running)[number]) =>
+    turn.title || (turn.kind === 'routine' ? routineLabel : t('threads.tabLabel'))
+  const tabs = panes
+    ? ([
+        'conversation',
+        ...(panes.runs ? ['runs'] : []),
+        ...(panes.threads ? ['threads'] : []),
+      ] as BotConversationPane[])
+    : []
+  const tabIcon = { conversation: MessageSquare, runs: History, threads: ArrowRightLeft }
+  const tabLabel = (pane: BotConversationPane) =>
+    t(pane === 'conversation' ? 'runs.tabConversation' : pane === 'runs' ? 'runs.tab' : 'threads.tab')
+  const tabCount = (pane: BotConversationPane) =>
+    pane === 'runs' ? (panes?.unseenRuns ?? 0) : pane === 'threads' ? (panes?.unseenThreads ?? 0) : 0
   return (
     <header className="@container flex h-[52px] shrink-0 items-center gap-2.5 pl-4 pr-3">
       <BotIdentity bot={bot}>
@@ -145,35 +171,43 @@ export function BotChatHeader({
           </>
         )}
       </BotIdentity>
-      {runs && (
+      {panes && tabs.length > 1 && (
         <div
           role="tablist"
-          aria-label={t('runs.title')}
+          aria-label={panes.threads ? t('threads.panes', { name: bot.name }) : t('runs.title')}
           className="ml-2 inline-flex shrink-0 gap-0.5 rounded-[9px] border border-border bg-white/[0.035] p-0.5"
         >
-          {(['conversation', 'runs'] as const).map((pane) => {
-            const Icon = pane === 'conversation' ? MessageSquare : History
-            const label = t(pane === 'conversation' ? 'runs.tabConversation' : 'runs.tab')
+          {tabs.map((pane) => {
+            const Icon = tabIcon[pane]
+            const label = tabLabel(pane)
+            const count = tabCount(pane)
             return (
               <button
                 key={pane}
                 type="button"
                 role="tab"
-                aria-selected={runs.pane === pane}
+                aria-selected={panes.pane === pane}
                 aria-label={
-                  pane === 'runs' && runs.unseen ? `${label} · ${t('runs.newCount', { count: runs.unseen })}` : label
+                  count
+                    ? `${pane === 'threads' ? t('threads.tabLabel') : label} · ${t(pane === 'runs' ? 'runs.newCount' : 'threads.newCount', { count })}`
+                    : pane === 'threads'
+                      ? t('threads.tabLabel')
+                      : label
                 }
-                onClick={() => runs.onPane(pane)}
+                title={pane === 'threads' ? t('threads.tabLabel') : undefined}
+                onClick={() => panes.onPane(pane)}
                 className={cn(
                   'inline-flex h-[26px] items-center gap-1.5 rounded-[7px] px-2.5 text-[12.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  runs.pane === pane ? 'bg-white/[0.08] text-foreground' : 'text-muted-foreground hover:text-foreground'
+                  panes.pane === pane
+                    ? 'bg-white/[0.08] text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 <Icon aria-hidden="true" className="size-3.5" />
                 <span className={cn(pane === 'conversation' && 'hidden @xl:inline')}>{label}</span>
-                {pane === 'runs' && runs.unseen > 0 && (
+                {count > 0 && (
                   <span className="grid h-[17px] min-w-[17px] place-items-center rounded-full bg-sky-400/20 px-1 text-[10.5px] font-semibold text-sky-300">
-                    {runs.unseen}
+                    {count}
                   </span>
                 )}
               </button>
@@ -182,16 +216,29 @@ export function BotChatHeader({
         </div>
       )}
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {runs && bot.runningRun && (
+        {panes && running[0] && (
           <button
             type="button"
-            onClick={() => runs.onOpenRun(bot.runningRun!.id)}
-            title={t('runs.runningChip', { title: bot.runningRun.title || t('transcript.routine.label') })}
+            onClick={() =>
+              running[0].kind === 'routine' ? panes.onOpenRun(running[0].id) : panes.onOpenThread(running[0].id)
+            }
+            title={
+              running.length > 1
+                ? t('runs.moreRunning', { titles: running.map(turnLabel).join(', ') })
+                : t(running[0].kind === 'routine' ? 'runs.runningChip' : 'threads.runningChip', {
+                    title: turnLabel(running[0]),
+                  })
+            }
             className="mr-1 hidden h-7 max-w-64 items-center gap-1.5 rounded-full border border-sky-400/30 bg-sky-400/[0.08] pl-2 pr-2.5 text-xs text-sky-300 hover:bg-sky-400/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring @lg:inline-flex"
           >
             <Loader2 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
-            <span className="truncate">{bot.runningRun.title || t('transcript.routine.label')}</span>
-            <RunElapsed since={bot.runningRun.startedAt} />
+            <span className="truncate">{turnLabel(running[0])}</span>
+            <RunElapsed since={running[0].startedAt} />
+            {running.length > 1 && (
+              <span className="shrink-0 rounded-full bg-sky-400/20 px-1.5 text-[10.5px] font-semibold tabular-nums">
+                +{running.length - 1}
+              </span>
+            )}
           </button>
         )}
         {narrow && <BotPaneSwitch active={activePane} onChange={onShowPane} />}

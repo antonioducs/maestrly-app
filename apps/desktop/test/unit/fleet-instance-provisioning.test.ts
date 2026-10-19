@@ -258,8 +258,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     accountOptions: [],
     stored: null,
     compactionProblem: 'missing',
-    turning: false,
-    cancelling: false,
+    turns: new Map(),
     ready: true,
     usage: null,
   })
@@ -280,6 +279,8 @@ it('advertises provisioning, environments, environment compaction and transcript
     'bot-move',
     'mcp-test-detail',
     'routine-conversations',
+    'parallel-turns',
+    'peer-conversations',
   ])
 })
 

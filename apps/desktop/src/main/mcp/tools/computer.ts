@@ -297,10 +297,10 @@ export interface ComputerToolOptions {
   /** Replaces the tools' description of the screen they act on. */
   description?: string
   /**
-   * Runs before each call: the screen to use and notes appended to the result. Throwing fails the call with its
-   * message.
+   * Runs before each call: the screen to use (`null`: the process's own display, as without a registered screen) and
+   * notes appended to the result. Throwing fails the call with its message.
    */
-  prepare?(conversationId: string): Promise<{ screen: ConversationScreen; notes: string[] }>
+  prepare?(conversationId: string): Promise<{ screen: ConversationScreen | null; notes: string[] }>
 }
 
 /** The screen a call acts on, and what its result should add. */

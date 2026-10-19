@@ -255,6 +255,17 @@ async function syntheticComputer(name) {
   }
 }
 const transcript = async (id) => (await request('GET', '/v1/bots/' + id + '/transcript?limit=500')).items
+/** A bot's thread with another bot (`peer-conversations`), which works in a conversation of its own. */
+const peerThread = async (id, peerId) =>
+  (await request('GET', '/v1/bots/' + id + '/peer-threads')).threads.find((thread) => thread.peer.botId === peerId)
+/** What a bot's conversation of its thread with another bot holds; nothing before the thread exists. */
+const peerThreadTranscript = async (id, peerId) => {
+  const thread = await peerThread(id, peerId)
+  return thread
+    ? (await request('GET', '/v1/bots/' + id + '/peer-threads/' + thread.id + '/transcript?limit=500')).items
+    : []
+}
+const peerQueued = (items) => items.some((item) => item.kind === 'user' && item.source === 'peer' && item.queued)
 const historyIds = async (id) => (await transcript(id)).map((item) => item.id)
 async function fleetImage(botId, imageId) {
   const response = await fetch(base + '/v1/bots/' + botId + '/images/' + imageId, {
@@ -1073,9 +1084,11 @@ async function main() {
   await poll('peer SSE event', () =>
     events.some((event) => event.type === 'peer.message' && event.message.id === peer.id)
   )
-  await poll('Dev peer queue', async () =>
-    (await transcript(devId)).some((item) => item.kind === 'user' && item.source === 'peer' && item.queued)
-  )
+  // Scout's message opened a thread: it waits in Dev's conversation of it, apart from Dev's conversation with its owner.
+  await poll('Dev peer queue', async () => peerQueued(await peerThreadTranscript(devId, scoutId)))
+  assert.ok(!(await transcript(devId)).some((item) => item.kind === 'user' && item.source === 'peer'))
+  assert.equal((await peerThread(scoutId, devId))?.origin, 'primary')
+  assert.equal((await peerThread(devId, scoutId))?.origin, 'peer')
   await approve('request_owner_help')
   await poll(
     'help inbox item',
@@ -2571,7 +2584,7 @@ async function main() {
   const devRoute = '/v1/environments/' + devEnvId
   await request('POST', '/v1/bots/' + devId + '/restart', undefined, { timeout: 300000 })
   await poll('Dev restarted', async () => (await bot(devId)).lifecycle === 'running', 120000)
-  assert.ok((await transcript(devId)).some((item) => item.kind === 'user' && item.source === 'peer' && item.queued))
+  assert.ok(peerQueued(await peerThreadTranscript(devId, scoutId)))
   // Archiving a bot uninstalls it from its environment, which keeps running with its container and home volume.
   const devContainer = await containerState(containers[0])
   await request('POST', '/v1/bots/' + devId + '/archive')
@@ -2597,8 +2610,9 @@ async function main() {
   assert.equal(archivedDev[0].environmentId, devEnvId)
   assert.equal((await request('POST', '/v1/archived-bots/' + devId + '/restore')).lifecycle, 'creating')
   await poll('Dev restored', async () => (await bot(devId)).lifecycle === 'running', 180000)
-  // Same environment and home: the conversation from before the archive is still there, and Scout is its peer again.
-  assert.ok((await transcript(devId)).some((item) => item.kind === 'user' && item.source === 'peer'))
+  // Same environment and home: the conversation with Scout from before the archive is still there, and Scout is its
+  // peer again.
+  assert.ok((await peerThreadTranscript(devId, scoutId)).some((item) => item.kind === 'user' && item.source === 'peer'))
   assert.deepEqual((await bot(devId)).talksTo, [scoutId])
   assert.deepEqual((await bot(scoutId)).talksTo, [devId])
   assert.deepEqual((await request('GET', '/v1/archived-bots')).bots, [])

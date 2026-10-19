@@ -8,6 +8,7 @@ import {
   encodeMobileValue,
   fleetBridgeOrigin,
   mobileChatItemSchema,
+  mobileSubscriptionUsageEntrySchema,
   type MobileBridgeSocket,
   type MobileBridgeState,
   type MobileEvent,
@@ -282,6 +283,58 @@ describe('mobile bridge client', () => {
     const channels = Object.values(MOBILE_CHANNELS).map((spec) => spec.channel)
     expect(new Set(channels).size).toBe(channels.length)
     expect(channels.every((channel) => channel.startsWith('mobile:v1:'))).toBe(true)
+  })
+
+  it('reads subscription usage with only a force flag, and keeps the entries it understands', () => {
+    const spec = MOBILE_CHANNELS.subscriptionUsage
+    expect(spec.args.parse({})).toEqual({})
+    expect(spec.args.parse({ force: true })).toEqual({ force: true })
+    expect(spec.args.safeParse({ force: true, accountId: 'acc_1' }).success).toBe(false)
+
+    const ready = {
+      providerId: 'builtin_claude_subscription@acc_1',
+      providerKind: 'claude',
+      providerLabel: 'Claude',
+      accountLabel: 'Work',
+      state: 'ready',
+      fetchedAt: 1_790_000_000_000,
+      windows: [
+        { id: 'five_hour', kind: 'five-hour', usedPercent: 42, resetsAt: 1_790_000_600_000, durationMins: 300 },
+        {
+          id: 'seven_day_opus',
+          kind: 'weekly-model',
+          usedPercent: 100,
+          resetsAt: null,
+          durationMins: null,
+          label: 'Opus',
+        },
+        { id: 'monthly', kind: 'monthly', usedPercent: 0, resetsAt: null, durationMins: 43_200 },
+      ],
+    }
+    const failed = {
+      providerId: 'builtin_codex_subscription',
+      providerKind: 'codex',
+      providerLabel: 'ChatGPT',
+      state: 'error',
+      windows: [],
+      error: 'token expired',
+    }
+    expect(mobileSubscriptionUsageEntrySchema.parse(ready).windows.map((window) => window.kind)).toEqual([
+      'five-hour',
+      'weekly-model',
+      'other',
+    ])
+    expect(mobileSubscriptionUsageEntrySchema.parse(failed).error).toBe('failed')
+    expect(mobileSubscriptionUsageEntrySchema.parse({ ...ready, error: undefined }).error).toBeUndefined()
+
+    const overUsed = { ...ready, windows: [{ ...ready.windows[0], usedPercent: 101 }] }
+    const negative = { ...ready, windows: [{ ...ready.windows[0], usedPercent: -1 }] }
+    expect(mobileSubscriptionUsageEntrySchema.safeParse(overUsed).success).toBe(false)
+    expect(mobileSubscriptionUsageEntrySchema.safeParse(negative).success).toBe(false)
+
+    // A provider a newer host adds, or a broken entry, leaves the others readable.
+    const result = spec.result.parse({ entries: [ready, { ...ready, providerKind: 'grok' }, overUsed, failed] })
+    expect(result.entries.map((entry) => entry.providerId)).toEqual([ready.providerId, failed.providerId])
   })
 
   it('creates a workspace chat on a new or an existing branch', () => {

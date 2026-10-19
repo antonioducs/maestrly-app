@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- The mobile app shows the subscription usage of the paired server in
+  **Settings → Subscription usage**: how much of each plan limit the connected
+  Claude, ChatGPT and Google AI subscriptions have used, one block per account
+  when a provider has several, with when each window resets. It only reads
+  them; the server needs this version to answer. See
+  [Mobile app](docs/mobile.md#what-it-does).
+
 ### Fixed
 
 - Moving a bot whose working folder holds a Git repository no longer fails
@@ -31,6 +40,15 @@ User-visible changes by version. Downloads are on
   browser**, and a **Copy code** button. If no browser opened, you can still
   finish signing in. The card shows and opens only
   `https://github.com/login/device`.
+- Claude Code installed while the app is open is found: **Check again** and
+  the refresh button on the Claude account look for it again, so a signed-in
+  account reconnects without restarting Maestrly. Before, on Windows, the card
+  stayed on **Claude Code unavailable** until a restart. While Claude Code is
+  missing or too old, a signed-in Claude account no longer moves to
+  **Available to connect**: it keeps its row in **Settings → Accounts** with
+  its email and **Claude Code not found** or **Claude Code needs an update**,
+  and counts as needing attention.
+  See [Install Claude Code](docs/claude.md#install-claude-code).
 - On Windows, Git installed while Maestrly is open is found without
   restarting. After **Git was not found. Install Git and try again.**, trying
   again after the install now adds the project, and project conversations,

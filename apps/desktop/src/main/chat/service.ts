@@ -1529,6 +1529,7 @@ function sameSubscriptionAuthStatus(a: ChatSubscriptionAuthStatus, b: ChatSubscr
     a.planType === b.planType &&
     a.enterpriseUrl === b.enterpriseUrl &&
     a.authUrl === b.authUrl &&
+    a.savedSignIn === b.savedSignIn &&
     a.error === b.error &&
     a.errorCode === b.errorCode
   )
@@ -1600,6 +1601,7 @@ function toClaudeAuthStatus(
     return {
       state: 'unavailable',
       authenticated: false,
+      ...(status.savedSignIn ? { savedSignIn: true, email: status.savedSignIn.email } : {}),
       ...(status.error ? { error: status.error } : {}),
       ...(status.errorCode ? { errorCode: status.errorCode } : {}),
     }
@@ -9826,9 +9828,14 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (!validSubscriptionAccountId('claude-subscription', accountId)) {
         return { state: 'unavailable', authenticated: false, accountId } satisfies ChatSubscriptionAuthStatus
       }
-      const status = await claudeAuthStatus(payload?.refresh === true, accountId)
+      const refresh = payload?.refresh === true
+      const previous = refresh ? claudeAuthSnapshot(accountId) : null
+      const status = await claudeAuthStatus(refresh, accountId)
       if (!accountId && status.authenticated) await retryManagedClaudeSessionCleanup().catch(() => undefined)
-      return accountId ? { ...status, accountId } : status
+      const answer = accountId ? { ...status, accountId } : status
+      // "Check again" found Claude Code installed (or gone): every window's model lists follow, without a restart.
+      if (previous && !sameSubscriptionAuthStatus(previous, status)) broadcastClaudeAuth(answer)
+      return answer
     }
   )
   deps.mhandle('chat:claude-subscription:login', async (_event, payload?: { accountId?: string | null }) => {

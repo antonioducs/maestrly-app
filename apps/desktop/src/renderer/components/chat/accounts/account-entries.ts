@@ -179,6 +179,10 @@ export function subscriptionAccountSummary(
   }
   if (state === 'signing-in') return { health: 'pending', connected: false, ...NO_USAGE }
   if (state === 'error') return { health: 'error', connected: false, ...NO_USAGE }
+  // Signed in, but the runtime it needs is missing or too old: it keeps its row and asks for the fix.
+  if (state === 'unavailable' && snapshot?.status?.savedSignIn) {
+    return { health: 'attention', connected: false, ...NO_USAGE }
+  }
   if (state === null) return { health: 'idle', connected: false, ...NO_USAGE }
   // An added account that is signed out is skipped by rotation; the default slot simply is not in use.
   return { health: entry.accountId ? 'attention' : 'idle', connected: false, ...NO_USAGE }

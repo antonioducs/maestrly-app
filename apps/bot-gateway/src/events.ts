@@ -1,6 +1,7 @@
 import type { ServerResponse } from 'node:http'
 import {
   fleetTranscriptItemReadable,
+  isFleetPeerThreadEvent,
   isFleetRoutineRunEvent,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
@@ -12,6 +13,8 @@ export class EventHub {
   private readonly reasoningReaders = new WeakSet<ServerResponse>()
   /** Subscribers that asked for routine runs (`routineRuns=1`); an older app would fail on their events. */
   private readonly routineRunReaders = new WeakSet<ServerResponse>()
+  /** Subscribers that asked for threads between bots (`peerThreads=1`); an older app would fail on their events. */
+  private readonly peerThreadReaders = new WeakSet<ServerResponse>()
   /**
    * Streams that asked for desktop calls, by device, newest last: a Mac is online for its bots while one is open, and
    * a call goes to its newest stream only.
@@ -30,10 +33,11 @@ export class EventHub {
     response: ServerResponse,
     lastActivitySeq: number,
     deviceId?: string,
-    options: { reasoning?: boolean; desktopBridge?: boolean; routineRuns?: boolean } = {}
+    options: { reasoning?: boolean; desktopBridge?: boolean; routineRuns?: boolean; peerThreads?: boolean } = {}
   ) {
     if (options.reasoning) this.reasoningReaders.add(response)
     if (options.routineRuns) this.routineRunReaders.add(response)
+    if (options.peerThreads) this.peerThreadReaders.add(response)
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -135,11 +139,14 @@ export class EventHub {
   }
   private send(response: ServerResponse, event: FleetGatewayEvent) {
     if (
-      (event.type === 'transcript.upsert' || event.type === 'routine_run.transcript.upsert') &&
+      (event.type === 'transcript.upsert' ||
+        event.type === 'routine_run.transcript.upsert' ||
+        event.type === 'peer_thread.transcript.upsert') &&
       !fleetTranscriptItemReadable(event.item, this.reasoningReaders.has(response))
     )
       return
     if (isFleetRoutineRunEvent(event) && !this.routineRunReaders.has(response)) return
+    if (isFleetPeerThreadEvent(event) && !this.peerThreadReaders.has(response)) return
     if (response.destroyed || this.behind(response)) {
       response.destroy()
       this.subscribers.delete(response)

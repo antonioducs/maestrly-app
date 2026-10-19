@@ -11,7 +11,7 @@ import {
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { ownsTakeover, takeoverBlocksResume, UNKNOWN_BOT_TINT } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
 import { accountsExhaustedNotice, isComputerTool } from '@/lib/fleet/format'
 import {
@@ -31,6 +31,7 @@ import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 import { BotTranscriptFiles } from './BotTranscriptFiles'
 import { BotPeerMessage } from './BotPeerMessage'
+import { PeerThreadBridge } from './PeerThreadBridge'
 import { BotRoutineMessage } from './BotRoutineMessage'
 import { RoutineRunMarker, RunCitationChip } from './RoutineRunMarker'
 import { runTitle } from '@/lib/fleet/runs'
@@ -44,10 +45,10 @@ import { findCaseInsensitiveRanges } from '@/lib/markdown-search-highlight'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { useChatOwnerWindow } from '@/lib/chat-window-context'
 import { searchTranscriptSegments, transcriptSegmentKey } from '@/lib/fleet/transcript-search'
+import { primaryWorking, runsInParallel, sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
 
 /** A bot this server no longer lists, or one in an environment this device cannot see. */
-const UNKNOWN_BOT_TINT = '#777'
 
 /** A bot's answer: each generated interface renders once its block is complete, and sends through the bot. */
 function BotAnswer({
@@ -197,6 +198,7 @@ export function TranscriptRow({
   repeatedRoutine,
   onExpand,
   onOpenRun,
+  onOpenThread,
   removeQueuedMessage,
 }: {
   bot: FleetBot
@@ -219,6 +221,8 @@ export function TranscriptRow({
   onExpand: () => void
   /** Opens the routine run an owner's message refers to. */
   onOpenRun?: (runId: string) => void
+  /** Opens the conversation with another bot that a message of the bot opened (`peer-conversations`). */
+  onOpenThread?: (threadId: string) => void
   /** Removes a queued message; a run's conversation removes its own. */
   removeQueuedMessage?: (inputId: string) => Promise<void>
 }) {
@@ -448,6 +452,20 @@ export function TranscriptRow({
     return <InteractionCard botId={bot.id} item={item} fleet={fleet} onOpenScreen={onOpenScreen} />
   if (item.kind === 'peer_out') {
     const peer = fleetBot(item.to.botId)
+    const threadId = item.thread?.id
+    if (threadId && onOpenThread) {
+      const threads = fleet.state.threads[bot.id]
+      return (
+        <PeerThreadBridge
+          bot={bot}
+          peer={{ name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+          text={item.text}
+          at={at}
+          thread={threads?.loaded ? (threads.threads.find((thread) => thread.id === threadId) ?? null) : undefined}
+          onOpen={() => onOpenThread(threadId)}
+        />
+      )
+    }
     return (
       <BotPeerMessage
         from={bot}
@@ -543,6 +561,7 @@ export function BotConversation({
   onOpenEnvironmentSettings,
   runMarkers = [],
   onOpenRun,
+  onOpenThread,
   citation = null,
   onClearCitation,
 }: {
@@ -559,6 +578,8 @@ export function BotConversation({
   /** Routine runs that finished, shown where they ended (`routine-conversations`); none before. */
   runMarkers?: FleetRoutineRun[]
   onOpenRun?: (runId: string) => void
+  /** Opens a conversation with another bot that this conversation opened (`peer-conversations`). */
+  onOpenThread?: (threadId: string) => void
   /** The run the owner's next message refers to, and how to drop it. */
   citation?: FleetRoutineRun | null
   onClearCitation?: () => void
@@ -678,8 +699,10 @@ export function BotConversation({
   }
 
   const latestTodoId = latestTodoItemId(shownItems)
-  // A routine run works in a conversation of its own: this one waits meanwhile, and is not working.
-  const working = (bot.status === 'working' || bot.status === 'waiting') && !bot.runningRun
+  // The routine run working beside this conversation, which the composer names.
+  const sideRun = sideTurns(bot).find((turn) => turn.kind === 'routine') ?? null
+  // A routine run works in a conversation of its own: only this conversation's own turn makes it work.
+  const working = primaryWorking(bot) || (bot.status === 'waiting' && !bot.runningRun)
 
   // --- Routine runs say how their routine runs, which the transcript does not carry. ---
   const hasRoutineRuns = useMemo(
@@ -971,6 +994,7 @@ export function BotConversation({
                         repeatedRoutine={repeatedRoutines.has(segment.item.id)}
                         onExpand={holdReadingPosition}
                         onOpenRun={onOpenRun}
+                        onOpenThread={onOpenThread}
                       />
                     )}
                   </div>,
@@ -978,7 +1002,7 @@ export function BotConversation({
               })}
               {markersBefore.trailing.map(marker)}
             </GenUiContext.Provider>
-            {bot.status === 'working' && !bot.runningRun && !runningToolLast && !liveLine && (
+            {primaryWorking(bot) && !runningToolLast && !liveLine && (
               <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
                 {t('transcript.working')}
@@ -1047,20 +1071,21 @@ export function BotConversation({
                 ))}
             </div>
           )}
-          {bot.runningRun && (
+          {sideRun && (
             <p role="status" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
               <span className="min-w-0 flex-1 truncate">
-                {t('runs.waiting', {
+                {/* Turns at once: the owner's message here does not wait for the run. */}
+                {t(runsInParallel(bot) ? 'runs.alsoWorking' : 'runs.waiting', {
                   name: bot.name,
-                  title: bot.runningRun.title || t('transcript.routine.label'),
+                  title: sideRun.title || t('transcript.routine.label'),
                 })}
               </span>
               {onOpenRun && (
                 <button
                   type="button"
                   className="shrink-0 text-sky-300 hover:underline"
-                  onClick={() => onOpenRun(bot.runningRun!.id)}
+                  onClick={() => onOpenRun(sideRun.id)}
                 >
                   {t('runs.waitingOpen')}
                 </button>

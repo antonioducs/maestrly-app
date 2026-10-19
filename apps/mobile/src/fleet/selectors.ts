@@ -1,4 +1,4 @@
-import type { FleetBot, FleetPendingInteraction } from '@maestrly/bot-fleet-protocol'
+import { type FleetBot, type FleetPendingInteraction, fleetPrimaryWorking } from '@maestrly/bot-fleet-protocol'
 import type { Text } from '../i18n/translate'
 import type { FleetState } from './state'
 
@@ -95,6 +95,14 @@ export function statusLineText(bot: FleetBot, line: StatusLine): string {
   if (line.tone === 'mono' && activity?.kind === 'tool' && activity.target && SHELL_TOOLS.has(activity.tool))
     return `$ ${activity.target}`
   return line.text
+}
+
+/**
+ * Whether the bot's own conversation (the one the phone shows) has a turn running: the bot's routine runs and its
+ * conversations with other bots work in conversations of their own.
+ */
+export function botWorksHere(bot: FleetBot): boolean {
+  return fleetPrimaryWorking({ turns: bot.turns ?? null, status: bot.status, runningRun: bot.runningRun })
 }
 
 /** A bot in these states takes no messages from the phone, as on the desktop. */

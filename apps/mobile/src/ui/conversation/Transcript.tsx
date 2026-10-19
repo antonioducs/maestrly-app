@@ -1,6 +1,7 @@
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { useCallback, useMemo } from 'react'
 import { useFleet, useFleetController } from '../../fleet/react'
+import { botWorksHere } from '../../fleet/selectors'
 import type { FleetState } from '../../fleet/state'
 import { useI18n } from '../../i18n'
 import { OutboxRow } from '../composer/OutboxRow'
@@ -32,7 +33,7 @@ export function Transcript({ bot }: { bot: FleetBot }) {
   )
   const items = transcript?.items ?? []
   const thinking =
-    bot.status === 'working' &&
+    botWorksHere(bot) &&
     bot.activity?.kind === 'thinking' &&
     !items.some((item) => (item.kind === 'assistant' || item.kind === 'reasoning') && item.streaming)
 

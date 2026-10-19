@@ -65,6 +65,24 @@ describe('routine run helpers', () => {
     expect(runState(run('r1', AT), idle)).toBe('ok')
   })
 
+  it("tells each run working beside the bot's own conversation, from the bot's turns", () => {
+    const turn = (kind: 'primary' | 'routine', id: string | null) => ({
+      kind,
+      id,
+      title: kind === 'primary' ? '' : 'Inbox',
+      startedAt: AT,
+      tool: null,
+      cancelling: false,
+    })
+    const bot = { runningRun: null, turns: [turn('primary', null), turn('routine', 'r1'), turn('routine', 'r2')] }
+    expect(runState(run('r1', AT, { status: 'delivered' }), bot)).toBe('running')
+    expect(runState(run('r2', AT, { status: 'delivered' }), bot)).toBe('running')
+    expect(runState(run('r3', AT, { status: 'delivered' }), bot)).toBe('queued')
+    // Turns tell everything: a run the bot no longer works on is not running, whatever an older field says.
+    const ended = { ...bot, turns: [turn('primary', null)] }
+    expect(runState(run('r1', AT, { status: 'delivered' }), ended)).toBe('queued')
+  })
+
   it('summarizes a run by its report, or else by the first line of its answer', () => {
     expect(runSummary(run('r1', AT, { report: { summary: 'Filed 3 invoices', pending: null, notes: null } }))).toBe(
       'Filed 3 invoices'

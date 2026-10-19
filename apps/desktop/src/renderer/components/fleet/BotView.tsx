@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Repeat, X } from 'lucide-react'
 import {
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   type FleetBot,
   type FleetRoutineRun,
@@ -18,7 +19,9 @@ import { ChatWindowHost } from '@/components/chat/ChatWindowHost'
 import type { EnvironmentSettingsSection } from './environment-settings/sections'
 import { BotChatHeader, type BotConversationPane } from './BotChatHeader'
 import { RoutineRunsView } from './RoutineRunsView'
-import { emptyRuns } from '@/lib/fleet/state'
+import { PeerThreadsView } from './PeerThreadsView'
+import { emptyRuns, emptyThreads } from '@/lib/fleet/state'
+import { readSeenThreads, threadSeenKey, unseenThreads, writeSeenThreads } from '@/lib/fleet/threads'
 import {
   readSeenRuns,
   runAlerts,
@@ -89,8 +92,43 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     setPane('runs')
     if (view.runId) setRunId(view.runId)
   }, [view.tab, view.runId])
-  const shownPane: BotConversationPane = runsSupported ? pane : 'conversation'
-  const { ensureRuns } = fleet
+  // --- Conversations with other bots, each in a conversation of its own (`peer-conversations`). ---
+  const threadsSupported =
+    fleet.state.connection.features.includes(FLEET_PEER_CONVERSATIONS_FEATURE) &&
+    bot.capabilities.includes(FLEET_PEER_CONVERSATIONS_FEATURE)
+  const [threadId, setThreadId] = useState<string | null>(null)
+  const shownPane: BotConversationPane =
+    (pane === 'runs' && runsSupported) || (pane === 'threads' && threadsSupported) ? pane : 'conversation'
+  const { ensureRuns, ensureThreads } = fleet
+  useEffect(() => {
+    if (threadsSupported) ensureThreads(bot.id)
+  }, [bot.id, ensureThreads, threadsSupported])
+  const threads = (fleet.state.threads[bot.id] ?? emptyThreads).threads
+  const threadsLoaded = !!fleet.state.threads[bot.id]?.loaded
+  // What the owner has seen of each thread, kept on this computer: activity after that, and a pause, count as new.
+  const threadSeenStorage = threadSeenKey(fleet.state.connection.url, bot.id)
+  const [seenThreads, setSeenThreads] = useState<Map<string, string> | null>(null)
+  useEffect(() => {
+    setSeenThreads(null)
+  }, [threadSeenStorage])
+  useEffect(() => {
+    if (threadsLoaded && !seenThreads) setSeenThreads(readSeenThreads(threadSeenStorage, threads))
+  }, [seenThreads, threadSeenStorage, threads, threadsLoaded])
+  const showingThread = active && shownPane === 'threads' ? threads.find((thread) => thread.id === threadId) : undefined
+  useEffect(() => {
+    if (!seenThreads || !showingThread || seenThreads.get(showingThread.id) === showingThread.lastActivityAt) return
+    const next = new Map(seenThreads).set(showingThread.id, showingThread.lastActivityAt)
+    writeSeenThreads(threadSeenStorage, next)
+    setSeenThreads(next)
+  }, [seenThreads, showingThread, threadSeenStorage])
+  const unseenThreadIds = useMemo(
+    () => new Set(seenThreads ? unseenThreads(threads, seenThreads).map((thread) => thread.id) : []),
+    [seenThreads, threads]
+  )
+  const openThread = useCallback((id: string | null) => {
+    setPane('threads')
+    setThreadId(id)
+  }, [])
   useEffect(() => {
     if (runsSupported) ensureRuns(bot.id)
   }, [bot.id, ensureRuns, runsSupported])
@@ -209,16 +247,20 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
               onOpenSettings={openSettings}
               onOpenServer={() => go({ kind: 'server' })}
               onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
-              runs={
-                runsSupported
+              panes={
+                runsSupported || threadsSupported
                   ? {
                       pane: shownPane,
-                      unseen,
+                      runs: runsSupported,
+                      threads: threadsSupported,
+                      unseenRuns: unseen,
+                      unseenThreads: unseenThreadIds.size,
                       onPane: (next) => {
                         setPane(next)
                         if (next === 'conversation' && view.tab === 'runs') onView(botView('conversation'))
                       },
                       onOpenRun: (id) => openRun(id),
+                      onOpenThread: (id) => openThread(id),
                     }
                   : undefined
               }
@@ -230,7 +272,19 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
               onReattach={() => go(botView('conversation'))}
             >
               {(inWindow) =>
-                shownPane === 'runs' ? (
+                shownPane === 'threads' ? (
+                  <PeerThreadsView
+                    bot={bot}
+                    fleet={fleet}
+                    selectedThreadId={threadId}
+                    unseen={unseenThreadIds}
+                    onSelect={setThreadId}
+                    visible={inWindow || (active && layout.showChat)}
+                    onOpenBot={onOpenBot}
+                    onOpenScreen={showComputer}
+                    onOpenMain={() => setPane('conversation')}
+                  />
+                ) : shownPane === 'runs' ? (
                   <RoutineRunsView
                     bot={bot}
                     fleet={fleet}
@@ -251,6 +305,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                     fleet={fleet}
                     runMarkers={markers}
                     onOpenRun={runsSupported ? (id) => openRun(id) : undefined}
+                    onOpenThread={threadsSupported ? (id) => openThread(id) : undefined}
                     citation={citation}
                     onClearCitation={() => setCitation(null)}
                     visible={inWindow || (active && layout.showChat)}

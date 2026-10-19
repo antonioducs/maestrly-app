@@ -177,6 +177,42 @@ describe('account entries', () => {
     })
   })
 
+  it('keeps a signed-in Claude account listed as needing attention while Claude Code is missing or too old', () => {
+    const groups = accountGroups({ providers: [codexDefault, claudeDefault] })
+    const claudeGroup = groups.find((group) => group.id === 'claude-subscription')!
+    const entry = claudeGroup.entries[0] as SubscriptionAccountEntry
+    const context = { selected: false, chatGptWebEnabled: false, group: claudeGroup }
+    const unavailable = (errorCode: 'claude-code-not-installed' | 'claude-code-incompatible', saved: boolean) =>
+      subscriptionAccountSummary(entry, {
+        status: {
+          state: 'unavailable',
+          authenticated: false,
+          errorCode,
+          ...(saved ? { savedSignIn: true, email: 'owner@example.com' } : {}),
+        },
+        usage: null,
+        runtime: null,
+      })
+
+    for (const errorCode of ['claude-code-not-installed', 'claude-code-incompatible'] as const) {
+      const kept = unavailable(errorCode, true)
+      expect(kept).toMatchObject({ health: 'attention', connected: false })
+      expect(needsAttention(kept)).toBe(true)
+      expect(isAccountListed(entry, kept, context)).toBe(true)
+    }
+    const kept = unavailable('claude-code-not-installed', true)
+    const offered = connectableGroups(
+      groups,
+      (candidate, group) => group === claudeGroup && isAccountListed(candidate, kept, context)
+    )
+    expect(offered.map((group) => group.id)).not.toContain('claude-subscription')
+
+    // Never signed in: nothing to fix on this slot, so Claude stays offered under "Available to connect".
+    const never = unavailable('claude-code-not-installed', false)
+    expect(never).toMatchObject({ health: 'idle', connected: false })
+    expect(isAccountListed(entry, never, context)).toBe(false)
+  })
+
   it('offers only unused providers to connect, never the API keys group', () => {
     const groups = accountGroups({ providers: [codexDefault, codexWork] })
     expect(groups.find((group) => group.id === 'api-keys')?.entries).toEqual([])

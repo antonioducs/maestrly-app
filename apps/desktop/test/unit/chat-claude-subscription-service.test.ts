@@ -298,6 +298,65 @@ describe('Claude subscription service integration', () => {
     })
   })
 
+  it('finds Claude Code installed after start on "Check again" and brings the saved account back', async () => {
+    const ready = h.state.status
+    const missing = {
+      ...ready,
+      state: 'unavailable',
+      available: false,
+      authenticated: false,
+      account: null,
+      accountFingerprint: null,
+      cliVersion: null,
+      error: 'Claude Code is not installed.',
+      errorCode: 'claude-code-not-installed',
+      savedSignIn: { email: 'dev@example.com' },
+    }
+    let next: any = missing
+    h.state.status = missing
+    h.manager.status.mockImplementation(async (options?: { refresh?: boolean }) => {
+      if (options?.refresh) h.state.status = next
+      return h.state.status
+    })
+    const { handlers } = register()
+    const status = (refresh: boolean) => handlers.get('chat:claude-subscription:status')?.({}, { refresh })
+    const claudeProvider = async () => {
+      const config = (await handlers.get('chat:config')?.({})) as { providers: Array<{ id: string }> }
+      return config.providers.find((provider) => provider.id === CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    }
+
+    await expect(status(false)).resolves.toEqual({
+      state: 'unavailable',
+      authenticated: false,
+      savedSignIn: true,
+      email: 'dev@example.com',
+      error: 'Claude Code is not installed.',
+      errorCode: 'claude-code-not-installed',
+    })
+    await expect(claudeProvider()).resolves.toMatchObject({ connected: false })
+    expect(h.webContents.send).not.toHaveBeenCalledWith('chat:claude-subscription:auth-changed', expect.anything())
+
+    // Still missing: a refresh probes again, and nothing changed to tell the windows.
+    await status(true)
+    expect(h.manager.status).toHaveBeenLastCalledWith({ refresh: true })
+    expect(h.webContents.send).not.toHaveBeenCalledWith('chat:claude-subscription:auth-changed', expect.anything())
+
+    // The person installs Claude Code with the app open and clicks "Check again".
+    next = ready
+    await expect(status(true)).resolves.toMatchObject({
+      state: 'signed-in',
+      authenticated: true,
+      email: 'dev@example.com',
+    })
+    await expect(claudeProvider()).resolves.toMatchObject({ connected: true })
+    // Every window hears of it, so model lists include Claude again without a restart.
+    expect(h.webContents.send).toHaveBeenCalledWith(
+      'chat:claude-subscription:auth-changed',
+      expect.objectContaining({ state: 'signed-in', authenticated: true })
+    )
+    expect(h.manager.abortAllQueries).not.toHaveBeenCalled()
+  })
+
   it('keeps a Claude id visible when the filter hides the alias that resolves to it', async () => {
     const catalogRow = (value: string) => ({ value, resolvedModel: value, displayName: value, description: '' })
     h.state.models = [

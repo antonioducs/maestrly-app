@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   FLEET_CONVERSATION_COMPUTER_LIMITS,
   FLEET_ENVIRONMENT_LIMITS,
@@ -35,27 +36,39 @@ export const BOT_GTK_THEME = 'Adwaita:dark'
 
 export interface BotDisplay {
   botId: string
-  slot: number
+  /** Its tile of the environment display; null for a desktop that shows no browser. */
+  slot: number | null
   /** The bot's apps display, such as `:2`. */
   display: string
   width: 1280
   height: 800
   /** Variables for the bot's shells and programs, so they use its display, bus and browser profile. */
   env: BotDisplayEnv
-  /** The bot's tile of the environment display. */
-  browserArea: ScreenArea
+  /** The bot's tile of the environment display; null for a desktop without a tile. */
+  browserArea: ScreenArea | null
 }
 
 /**
- * Whose desktop a display is: a bot, or a workspaces conversation's computer (its owner key). Bots use their slot as
- * their display number and keep their files under `maestrly-bots`; a conversation's computer has a display number of
- * its own, so a program it left running can never open on another conversation's computer.
+ * The owner key of a conversation's computer: a bot id's shape (32 lowercase characters) derived from the conversation
+ * id, so the paths of its bus and desktop socket stay short and name no conversation.
+ */
+export function computerOwnerKey(conversationId: string): string {
+  return 'c' + createHash('sha256').update(conversationId).digest('hex').slice(0, 31)
+}
+
+/**
+ * Whose desktop a display is: a bot, or a conversation's computer (its owner key). Bots use their slot as their display
+ * number and keep their files under `maestrly-bots`; a conversation's computer has a display number of its own, so a
+ * program it left running can never open on another conversation's computer.
  */
 export type DesktopOwner = {
   /** A bot id, or a conversation's owner key; matches `fleetBotIdSchema`. */
   key: string
-  /** 1 to 8: the tile of the environment display that shows its browser. */
-  slot: number
+  /**
+   * 1 to 8: the tile of the environment display that shows its browser. Null for a desktop that shows no browser (a
+   * bot's side conversation's own desktop), which needs a display number of its own under `maestrly-desktops`.
+   */
+  slot: number | null
   /** The X display number; the slot when left out, as for bots. From 10 to 4095 when given. */
   display?: number
   /** The folder under `~/.cache` and `~/.config` that holds its bus, desktop socket and browser profile. */
@@ -212,6 +225,11 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** The programs of a desktop beyond its bus and display server: one without a tile presents no browser. */
+function desktopPrograms(stack: BotStack): readonly Program[] {
+  return stack.display.slot === null ? DESKTOP.filter((program) => program !== PRESENTER) : DESKTOP
+}
+
 /** Starts, supervises and stops the apps displays of an environment's bots, and its screen encoders. */
 export class DisplayManager {
   private readonly deps: DisplayManagerDeps
@@ -256,13 +274,14 @@ export class DisplayManager {
         if (existing.state === 'failed') this.forget(existing)
         continue
       }
+      // Only owners with a tile compete for a slot; every owner needs a display number of its own.
       const holder = [...this.stacks.values()].find(
-        (stack) => stack.display.slot === slot || stack.number === described.number
+        (stack) => (slot !== null && stack.display.slot === slot) || stack.number === described.number
       )
       if (holder) {
         if (holder.state !== 'stopping')
           throw new Error(
-            holder.display.slot === slot
+            slot !== null && holder.display.slot === slot
               ? `Display slot ${slot} is already used by bot ${holder.display.botId}.`
               : `Display ${display.display} is already used by ${holder.display.botId}.`
           )
@@ -322,7 +341,7 @@ export class DisplayManager {
       stack.state = 'stopping'
       stack.teardown = (async () => {
         await failed
-        if (stack.ownsTile) await this.closeServers(stack.display.slot, ['browser'])
+        if (stack.ownsTile && stack.display.slot !== null) await this.closeServers(stack.display.slot, ['browser'])
         this.forget(stack)
       })()
     }
@@ -409,8 +428,11 @@ export class DisplayManager {
   } {
     const { key: botId, slot } = owner
     if (!fleetBotIdSchema.safeParse(botId).success) throw new TypeError(`Invalid bot id ${JSON.stringify(botId)}.`)
-    assertSlot(slot)
-    const number = owner.display ?? slot
+    if (slot === null) {
+      if (owner.folder !== 'maestrly-desktops' || owner.display === undefined)
+        throw new TypeError('A desktop without a tile needs its own display number in maestrly-desktops.')
+    } else assertSlot(slot)
+    const number = owner.display ?? (slot as number)
     const { firstDisplay, lastDisplay } = FLEET_CONVERSATION_COMPUTER_LIMITS
     if (owner.display !== undefined && (!Number.isInteger(number) || number < firstDisplay || number > lastDisplay))
       throw new RangeError(`Invalid display number ${number}: they go from ${firstDisplay} to ${lastDisplay}.`)
@@ -436,7 +458,7 @@ export class DisplayManager {
       width: FLEET_SCREEN.width,
       height: FLEET_SCREEN.height,
       env,
-      browserArea: Object.freeze(fleetEnvironmentTile(slot)),
+      browserArea: slot === null ? null : Object.freeze(fleetEnvironmentTile(slot)),
     })
     return { display, number, cache, ownsTile: folder === 'maestrly-bots' }
   }
@@ -451,7 +473,7 @@ export class DisplayManager {
       await this.startServer(stack)
       await this.decorating(stack)
       this.assertActive(stack)
-      for (const program of DESKTOP) this.launch(stack, program)
+      for (const program of desktopPrograms(stack)) this.launch(stack, program)
       stack.state = 'running'
       // A program that exited while the display was starting is restarted like any crash.
       for (const program of PROGRAMS) if (!stack.children.has(program)) this.scheduleRestart(stack, program)
@@ -599,7 +621,7 @@ export class DisplayManager {
    * desktop service closed its connection) does not count against the budget.
    */
   private presenterExited(stack: BotStack, code: number | null): void {
-    if (stack.state !== 'running' && stack.state !== 'starting') return
+    if ((stack.state !== 'running' && stack.state !== 'starting') || stack.display.slot === null) return
     const { botId, display } = stack.display
     if (code !== null && PRESENTER_CANNOT_RUN.has(code)) {
       this.deps.log(
@@ -638,7 +660,7 @@ export class DisplayManager {
     if (stack.state !== 'running' || stack.children.has(program)) return
     if (program === 'Xvfb' && stack.serverStarting) return
     // The window manager and taskbar come back with the display server.
-    if (DESKTOP.includes(program) && !stack.serverReady) return
+    if (desktopPrograms(stack).includes(program) && !stack.serverReady) return
     const { botId, display } = stack.display
     if (stack.recentRestarts >= RESTART_BUDGET) {
       stack.state = 'failed'
@@ -662,7 +684,8 @@ export class DisplayManager {
       .then(
         () => {
           if (stack.state !== 'running') return
-          for (const desktop of DESKTOP) if (!stack.children.has(desktop)) this.relaunchProgram(stack, desktop)
+          for (const desktop of desktopPrograms(stack))
+            if (!stack.children.has(desktop)) this.relaunchProgram(stack, desktop)
         },
         (error: unknown) => {
           if (stack.state !== 'running') return
@@ -695,9 +718,11 @@ export class DisplayManager {
     for (const probe of stack.probes) this.kill(probe, `a probe of bot ${stack.display.botId}`)
     const children = [...stack.children.entries()].reverse()
     stack.children.clear()
+    // A desktop without a tile streams no screen: no encoder belongs to it.
+    const { slot } = stack.display
     await Promise.all([
       ...children.map(([program, child]) => this.terminate(child, `${program} of bot ${stack.display.botId}`)),
-      this.closeServers(stack.display.slot, kinds),
+      ...(slot === null ? [] : [this.closeServers(slot, kinds)]),
     ])
   }
 
@@ -736,6 +761,7 @@ export class DisplayManager {
     const stack = this.stacks.get(surface.botId)
     if (!stack || stack.state === 'stopping') throw new Error(`Bot ${surface.botId} has no display.`)
     const { slot, display, browserArea } = stack.display
+    if (slot === null || !browserArea) throw new Error(`The desktop of ${surface.botId} has no screen to stream.`)
     if (surface.kind === 'browser')
       return { key: `browser:${slot}`, kind: 'browser', slot, display: ENVIRONMENT_DISPLAY, region: browserArea }
     if (stack.state !== 'running') throw new Error(`The apps display of bot ${surface.botId} is not running.`)

@@ -17,6 +17,7 @@ import { appendDictation } from '../../dictation/session'
 import { useDictation } from '../../dictation/useDictation'
 import { validateAttachments, type AttachmentIssue, type OutboxAttachment } from '../../fleet/attachments'
 import { useFleet, useFleetController } from '../../fleet/react'
+import { botWorksHere } from '../../fleet/selectors'
 import type { FleetState } from '../../fleet/state'
 import { useI18n } from '../../i18n'
 import { useServers } from '../../servers/ServersProvider'
@@ -451,7 +452,7 @@ export function Composer({
       placeholder={t('composer.placeholder', { name: bot.name })}
       filesEnabled={serverFiles && bot.capabilities.includes(FLEET_FILES_FEATURE)}
       setup={<SetupPill bot={bot} />}
-      stopLabel={bot.status === 'working' ? t('composer.stop', { name: bot.name }) : null}
+      stopLabel={botWorksHere(bot) ? t('composer.stop', { name: bot.name }) : null}
       onStop={() => controller.action(bot.id, 'cancel')}
       onSend={async (text, files) => {
         await controller.send(bot.id, text, files)

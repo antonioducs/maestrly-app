@@ -286,6 +286,47 @@ describe('DisplayManager desktops of any owner', () => {
     lease.release()
   })
 
+  it('starts a desktop without a tile: no browser presenter and no tile of its own', async () => {
+    const { manager, spawner } = setup()
+    const key = 'c' + 'd'.repeat(31)
+    const display = await manager.startDesktop({ key, slot: null, display: 40, folder: 'maestrly-desktops' })
+    expect(display).toMatchObject({ display: ':40', slot: null, browserArea: null })
+    expect(display.env.DISPLAY).toBe(':40')
+    expect(spawner.servers().map((child) => child.command)).toEqual(['dbus-daemon', 'Xvfb', 'openbox', 'tint2'])
+  })
+
+  it('runs desktops without a tile side by side, beside a bot, and one per display number', async () => {
+    const { manager } = setup()
+    await manager.startDesktop({ key: 'c' + 'e'.repeat(31), slot: null, display: 40, folder: 'maestrly-desktops' })
+    await manager.startDesktop({ key: 'c' + 'f'.repeat(31), slot: null, display: 41, folder: 'maestrly-desktops' })
+    await manager.startBot('alpha', 3)
+    await expect(
+      manager.startDesktop({ key: 'c' + '0'.repeat(31), slot: null, display: 40, folder: 'maestrly-desktops' })
+    ).rejects.toThrow(/Display :40 is already used by/)
+  })
+
+  it('refuses a desktop without a tile that has no display number of its own', async () => {
+    const { manager } = setup()
+    await expect(manager.startDesktop({ key: 'c' + '1'.repeat(31), slot: null })).rejects.toThrow(
+      new TypeError('A desktop without a tile needs its own display number in maestrly-desktops.')
+    )
+    await expect(manager.startDesktop({ key: 'c' + '1'.repeat(31), slot: null, display: 40 })).rejects.toThrow(
+      TypeError
+    )
+  })
+
+  it('stops a desktop without a tile without touching any browser screen', async () => {
+    const { manager, spawner } = setup()
+    const key = 'c' + '2'.repeat(31)
+    const tile = await manager.acquireScreen({ kind: 'tile', slot: 1 })
+    await manager.startDesktop({ key, slot: null, display: 42, folder: 'maestrly-desktops' })
+    await manager.stopBot(key)
+    const t = fleetEnvironmentTile(1)
+    expect(spawner.encoders(':0', `${t.x},${t.y},${t.width},${t.height}`).map((child) => child.running)).toEqual([true])
+    expect(spawner.running('Xvfb')).toEqual([])
+    tile.release()
+  })
+
   it("keeps a conversation's tile streaming when its computer stops", async () => {
     const { manager, spawner } = setup()
     const key = 'c' + 'b'.repeat(31)

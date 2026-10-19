@@ -82,6 +82,11 @@ export default function Settings() {
           <Cell icon="message" label={t('chat.defaults.title')} chevron onPress={() => router.push('/chat-defaults')} />
         </Group>
       ) : null}
+      {hosted ? (
+        <Group label={t('settings.subscriptions')} foot={t('settings.subscriptionsFoot', { server })}>
+          <Cell icon="gauge" label={t('usage.title')} chevron onPress={() => router.push('/usage')} />
+        </Group>
+      ) : null}
       <AppText
         variant="label"
         tone="muted"

@@ -40,7 +40,7 @@ import {
 import { botMemorySpaceId } from '../../memory/spaces'
 import { deleteLocalMemorySpace, getConversation, getDb, transaction } from '../../store'
 import { hashFile } from '../../transfer-io'
-import { readRunRecords, type RunRecord } from './routine-runs'
+import { readRunRecords, type LaneRecord } from './routine-runs'
 import {
   assertBotId,
   botPaths,
@@ -264,9 +264,9 @@ function conversationOf(botId: string): string | null {
   return id && getConversation(id) ? id : null
 }
 
-/** The routine runs of a bot whose conversations are here, in the order the bot keeps them. */
-async function runsOf(botId: string, roots: BotRoots): Promise<RunRecord[]> {
-  const records = await readRunRecords(botPaths(roots.userData, roots.home, botId).runs)
+/** The side conversations of a bot (routine runs and threads) whose conversations are here, as the bot keeps them. */
+async function runsOf(botId: string, roots: BotRoots): Promise<LaneRecord[]> {
+  const records = await readRunRecords(botPaths(roots.userData, roots.home, botId))
   return records.filter((record) => getConversation(record.conversationId))
 }
 

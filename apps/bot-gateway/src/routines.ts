@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto'
 import {
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  fleetInstanceTurns,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
   type FleetActivityEntry,
@@ -206,7 +207,7 @@ export class Routines {
     const status = this.lifecycle.statuses.get(botId)
     return new Set([
       ...(status?.queue.map((item) => item.inputId) ?? []),
-      ...(status?.turn.inputId ? [status.turn.inputId] : []),
+      ...(status ? fleetInstanceTurns(status).map((turn) => turn.inputId) : []),
     ])
   }
   /** Whether a bot's Maestrly runs routines in conversations of their own (`routine-conversations`). */
@@ -650,6 +651,9 @@ export class Routines {
     const inputId = this.store.routineLastInputId(routine.id)
     if (!inputId) return false
     const status = this.lifecycle.statuses.get(routine.botId)
-    return status?.queue.some((item) => item.inputId === inputId) === true || status?.turn.inputId === inputId
+    return (
+      status?.queue.some((item) => item.inputId === inputId) === true ||
+      (!!status && fleetInstanceTurns(status).some((turn) => turn.inputId === inputId))
+    )
   }
 }
