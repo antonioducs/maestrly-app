@@ -108,6 +108,11 @@ describe('finding Git installed while the app is open', () => {
       'C:\\Users\\ana\\AppData\\Local\\Programs\\Git\\cmd',
     ])
     expect(windowsGitDirectories({})).toEqual([])
+    // A copy of the environment is a plain object; launchers may spell names in upper case.
+    expect(windowsGitDirectories({ PROGRAMFILES: 'D:\\Apps', LocalAppData: 'C:\\L' })).toEqual([
+      'D:\\Apps\\Git\\cmd',
+      'C:\\L\\Programs\\Git\\cmd',
+    ])
   })
 
   it('runGitRaw fails while Git is absent, then works after it is installed, without restarting', async () => {

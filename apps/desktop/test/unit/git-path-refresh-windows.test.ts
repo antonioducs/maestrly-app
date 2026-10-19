@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { pathEnvKey, refreshWindowsPathFromRegistry } from '../../src/main/fix-path'
+import { pathEnvKey, refreshWindowsPathFromRegistry, windowsEnvValue } from '../../src/main/fix-path'
 import { refreshGitPath, windowsGitDirectories } from '../../src/main/git-command'
 
 const execFileAsync = promisify(execFile)
@@ -15,7 +15,7 @@ const installedGitDir = onWindows
 /** A copy of this process's environment whose PATH holds only System32, as before a tool was installed. */
 function staleEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
-  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? 'C:\\Windows'
+  const systemRoot = windowsEnvValue(env, 'SystemRoot') ?? 'C:\\Windows'
   env[pathEnvKey(env)] = path.win32.join(systemRoot, 'System32')
   return env
 }
@@ -36,7 +36,14 @@ describe.runIf(onWindows)('Windows PATH refresh against the real system', () => 
     await expect(execFileAsync('git', ['--version'], { env, windowsHide: true })).rejects.toMatchObject({
       code: 'ENOENT',
     })
-    expect(await refreshGitPath({ env, readKey: async () => null })).toBe(true)
+    const found = await refreshGitPath({ env, readKey: async () => null })
+    const context = JSON.stringify({
+      installedGitDir,
+      candidates: windowsGitDirectories(env),
+      path: env[pathEnvKey(env)],
+      keys: Object.keys(env).filter((key) => /^(path|programfiles|localappdata)/i.test(key)),
+    })
+    expect(found, context).toBe(true)
     expect(env[pathEnvKey(env)]?.split(';')).toContain(installedGitDir)
     const { stdout } = await execFileAsync('git', ['--version'], { env, windowsHide: true })
     expect(stdout).toMatch(/^git version \d+\.\d+/)

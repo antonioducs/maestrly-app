@@ -85,6 +85,17 @@ export function pathEnvKey(env: NodeJS.ProcessEnv): string {
   return Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
 }
 
+/**
+ * Reads a variable by name regardless of case. Only the real process.env is case-insensitive on Windows; a copy of
+ * it is a plain object, and launchers such as CI runners may spell names in upper case.
+ */
+export function windowsEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  if (env[name] !== undefined) return env[name]
+  const upper = name.toUpperCase()
+  const key = Object.keys(env).find((candidate) => candidate.toUpperCase() === upper)
+  return key === undefined ? undefined : env[key]
+}
+
 function windowsPathIdentity(dir: string): string {
   return dir
     .trim()

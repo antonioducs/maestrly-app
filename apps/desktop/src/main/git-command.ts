@@ -2,17 +2,19 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { pathEnvKey, refreshWindowsPathFromRegistry, type WindowsPathRefreshDeps } from './fix-path'
+import { pathEnvKey, refreshWindowsPathFromRegistry, windowsEnvValue, type WindowsPathRefreshDeps } from './fix-path'
 
 const execFileAsync = promisify(execFile)
 
 /** Directories where the Git for Windows installers put `git.exe`, used when the registry Path lacks Git. */
 export function windowsGitDirectories(env: NodeJS.ProcessEnv = process.env): string[] {
-  const programFilesX86 = env['ProgramFiles(x86)']
+  const programFiles = windowsEnvValue(env, 'ProgramFiles')
+  const programFilesX86 = windowsEnvValue(env, 'ProgramFiles(x86)')
+  const localAppData = windowsEnvValue(env, 'LOCALAPPDATA')
   return [
-    env.ProgramFiles && path.win32.join(env.ProgramFiles, 'Git', 'cmd'),
+    programFiles && path.win32.join(programFiles, 'Git', 'cmd'),
     programFilesX86 && path.win32.join(programFilesX86, 'Git', 'cmd'),
-    env.LOCALAPPDATA && path.win32.join(env.LOCALAPPDATA, 'Programs', 'Git', 'cmd'),
+    localAppData && path.win32.join(localAppData, 'Programs', 'Git', 'cmd'),
   ].filter((dir): dir is string => Boolean(dir))
 }
 
