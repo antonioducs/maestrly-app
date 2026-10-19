@@ -449,3 +449,6 @@ export const FLEET_BOT_MOVE_FEATURE = 'bot-move'
 export const FLEET_BOT_MOVE_LIMITS = { packageMaxBytes: 32 * 1024 ** 3, transferTimeoutMs: 2 * 60 * 60_000 } as const
 /** The header that carries a bot move package's SHA-256 (hex) with its bytes, on both legs of its transfer. */
 export const FLEET_BOT_MOVE_SHA256_HEADER = 'X-Maestrly-Package-Sha256'
+
+/** Gateway feature (`/v1/meta`, in `moreFeatures`): the server transcribes phone dictation with its own API key. */
+export const FLEET_DICTATION_FEATURE = 'dictation'

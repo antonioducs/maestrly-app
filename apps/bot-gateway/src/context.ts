@@ -16,6 +16,7 @@ import type { BridgeProxy } from './bridge.js'
 import type { HostFilesProxy } from './host-files.js'
 import type { HostEditorProxy } from './host-editor.js'
 import type { PushNotifier } from './push.js'
+import type { DictationService } from './dictation.js'
 export type GatewayContext = {
   artifacts?: ArtifactHosting
   network?: FleetNetwork
@@ -35,5 +36,6 @@ export type GatewayContext = {
   hostEditor?: HostEditorProxy
   desktops?: DesktopBridge
   push?: PushNotifier
+  dictation?: DictationService
   revokeDevice?: (deviceId: string) => Promise<void>
 }

@@ -5,7 +5,15 @@ export type AsrLanguage = 'pt' | 'en' | 'auto'
 /** User choice in the microphone menu: follow the app language, or detect automatically. */
 export type DictationLanguageMode = 'app' | 'auto'
 export type AsrSupport = { supported: true } | { supported: false; reason: 'platform' | 'os-version' }
-export type TranscribeError = 'silent' | 'model-missing' | 'unavailable'
+/** `key-*`, `quota` and `too-long` come only from an API engine. */
+export type TranscribeError =
+  | 'silent'
+  | 'model-missing'
+  | 'unavailable'
+  | 'key-missing'
+  | 'key-rejected'
+  | 'quota'
+  | 'too-long'
 
 const LANGUAGES: readonly AsrLanguage[] = ['pt', 'en', 'auto']
 

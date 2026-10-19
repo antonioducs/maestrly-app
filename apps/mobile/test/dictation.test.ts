@@ -2,10 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   appendDictation,
   createDictation,
+  createRecordedDictation,
+  DICTATION_RECORDING_MAX_MS,
   DICTATION_STOP_GRACE_MS,
   dictationLanguages,
   preferTranscriber,
   recognizerLanguage,
+  transcriptionLanguage,
+  type DictationState,
+  type RecordedTranscription,
+  type Recording,
+  type RecordingEngine,
   type SpeechEngine,
   type SpeechError,
   type SpeechResult,
@@ -438,5 +445,193 @@ describe('dictation with the transcriber', () => {
     dictation.cancel()
     await dictation.start('pt-BR')
     expect(calls).toBe(2)
+  })
+})
+
+function fakeRecorder({ granted = true } = {}) {
+  let level: ((value: number) => void) | null = null
+  const engine = {
+    started: 0,
+    stops: 0,
+    aborts: 0,
+    discarded: [] as Recording[],
+    calls: [] as Array<[Recording, string | null]>,
+    nextRecording: { uri: 'file:///rec-1.m4a', peakDb: -12 } as Recording | null,
+    outcomes: [] as Array<RecordedTranscription | Promise<RecordedTranscription>>,
+    available: () => true,
+    requestPermission: async () => granted,
+    async start(onLevel: (value: number) => void) {
+      engine.started++
+      level = onLevel
+    },
+    async stop() {
+      engine.stops++
+      return engine.nextRecording
+    },
+    abort() {
+      engine.aborts++
+    },
+    async transcribe(recording: Recording, language: string | null) {
+      engine.calls.push([recording, language])
+      return (await engine.outcomes.shift()) ?? { text: '' }
+    },
+    discard(recording: Recording) {
+      engine.discarded.push(recording)
+    },
+    emitLevel: (value: number) => level?.(value),
+  }
+  return engine satisfies RecordingEngine & Record<string, unknown>
+}
+
+/** Lets the session's awaited promises settle. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+describe('recorded dictation', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('records, sends the recording when stopped and hands its text over', async () => {
+    const engine = fakeRecorder()
+    engine.outcomes.push({ text: ' olá mundo ' })
+    const heard: string[] = []
+    const dictation = createRecordedDictation(engine, (text) => heard.push(text))
+    const phases: DictationState['phase'][] = []
+    dictation.subscribe((state) => phases.push(state.phase))
+    await dictation.start('pt-BR', 'en-US')
+    expect(dictation.state()).toEqual({ phase: 'listening', text: '', level: 0 })
+    dictation.stop()
+    await settle()
+    expect(phases).toContain('transcribing')
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
+    expect(heard).toEqual(['olá mundo'])
+    expect(engine.calls).toEqual([[{ uri: 'file:///rec-1.m4a', peakDb: -12 }, 'pt']])
+    expect(engine.discarded).toHaveLength(1)
+  })
+
+  it('sends the language part of the first wanted tag, or none', () => {
+    expect(transcriptionLanguage(['pt-BR', 'en-US'])).toBe('pt')
+    expect(transcriptionLanguage(['zh-Hant-TW'])).toBe('zh')
+    expect(transcriptionLanguage([])).toBeNull()
+    expect(transcriptionLanguage(['x'])).toBeNull()
+  })
+
+  it('does not send a silent recording', async () => {
+    const engine = fakeRecorder()
+    engine.nextRecording = { uri: 'file:///quiet.m4a', peakDb: -60 }
+    const dictation = createRecordedDictation(engine, () => {})
+    await dictation.start('en-US')
+    dictation.stop()
+    await settle()
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: 'noSpeech' })
+    expect(engine.calls).toHaveLength(0)
+    expect(engine.discarded).toEqual([{ uri: 'file:///quiet.m4a', peakDb: -60 }])
+  })
+
+  it('keeps a recording whose transcription failed and sends it again', async () => {
+    const engine = fakeRecorder()
+    engine.outcomes.push({ error: 'unavailable' }, { text: 'oi' })
+    const heard: string[] = []
+    const dictation = createRecordedDictation(engine, (text) => heard.push(text))
+    await dictation.start('pt-BR')
+    dictation.stop()
+    await settle()
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: 'transcribeFailed', retry: true })
+    expect(engine.discarded).toHaveLength(0)
+    dictation.retry()
+    await settle()
+    expect(heard).toEqual(['oi'])
+    expect(engine.calls.map(([recording]) => recording.uri)).toEqual(['file:///rec-1.m4a', 'file:///rec-1.m4a'])
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
+    expect(engine.discarded).toHaveLength(1)
+  })
+
+  it('says why the server refused, keeping the recording unless the server has no key', async () => {
+    const cases: Array<[RecordedTranscription, DictationState]> = [
+      [{ error: 'key-rejected' }, { phase: 'idle', issue: 'keyRejected', retry: true }],
+      [{ error: 'busy' }, { phase: 'idle', issue: 'serverBusy', retry: true }],
+      [{ error: 'quota' }, { phase: 'idle', issue: 'quota', retry: true }],
+      [{ error: 'not-configured' }, { phase: 'idle', issue: 'notConfigured' }],
+    ]
+    for (const [outcome, state] of cases) {
+      const engine = fakeRecorder()
+      engine.outcomes.push(outcome)
+      const dictation = createRecordedDictation(engine, () => {})
+      await dictation.start('en-US')
+      dictation.stop()
+      await settle()
+      expect(dictation.state()).toEqual(state)
+      expect(engine.discarded).toHaveLength('error' in outcome && outcome.error === 'not-configured' ? 1 : 0)
+    }
+  })
+
+  it('drops a transcription cancelled while the server works on it', async () => {
+    const engine = fakeRecorder()
+    let answer!: (outcome: RecordedTranscription) => void
+    engine.outcomes.push(new Promise<RecordedTranscription>((resolve) => (answer = resolve)))
+    const heard: string[] = []
+    const dictation = createRecordedDictation(engine, (text) => heard.push(text))
+    await dictation.start('en-US')
+    dictation.stop()
+    await settle()
+    expect(dictation.state()).toEqual({ phase: 'transcribing' })
+    dictation.cancel()
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
+    answer({ text: 'too late' })
+    await settle()
+    expect(heard).toEqual([])
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
+    expect(engine.discarded).toHaveLength(1)
+  })
+
+  it('stops by itself at the length limit', async () => {
+    vi.useFakeTimers()
+    const engine = fakeRecorder()
+    engine.outcomes.push({ text: 'long one' })
+    const heard: string[] = []
+    const dictation = createRecordedDictation(engine, (text) => heard.push(text))
+    await dictation.start('en-US')
+    await vi.advanceTimersByTimeAsync(DICTATION_RECORDING_MAX_MS - 1)
+    expect(engine.stops).toBe(0)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(engine.stops).toBe(1)
+    expect(heard).toEqual(['long one'])
+  })
+
+  it('needs the microphone', async () => {
+    const engine = fakeRecorder({ granted: false })
+    const dictation = createRecordedDictation(engine, () => {})
+    await dictation.start('en-US')
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: 'denied' })
+    expect(engine.started).toBe(0)
+  })
+
+  it('throws away a kept recording when a new dictation starts', async () => {
+    const engine = fakeRecorder()
+    engine.outcomes.push({ error: 'unavailable' })
+    const dictation = createRecordedDictation(engine, () => {})
+    await dictation.start('en-US')
+    dictation.stop()
+    await settle()
+    expect(engine.discarded).toHaveLength(0)
+    engine.nextRecording = { uri: 'file:///rec-2.m4a', peakDb: -10 }
+    await dictation.start('en-US')
+    expect(engine.discarded).toEqual([{ uri: 'file:///rec-1.m4a', peakDb: -12 }])
+    expect(dictation.state().phase).toBe('listening')
+  })
+
+  it('reports how loud the recording is', async () => {
+    const engine = fakeRecorder()
+    const dictation = createRecordedDictation(engine, () => {})
+    await dictation.start('en-US')
+    engine.emitLevel(0.5)
+    expect(dictation.state()).toEqual({ phase: 'listening', text: '', level: 0.5 })
+  })
+
+  it('leaves recognizer dictation without anything to retry', async () => {
+    const engine = fakeEngine()
+    const dictation = createDictation(engine, () => {})
+    dictation.retry()
+    expect(dictation.state()).toEqual({ phase: 'idle', issue: null })
   })
 })

@@ -8,7 +8,7 @@
  */
 
 import { availableParallelism } from 'node:os'
-import { cleanTranscript, floatToPcm16, speechSpan, type SpeechSegment } from './asr-audio'
+import { cleanTranscript, floatToPcm16, isSilentPcm, speechSpan, type SpeechSegment } from './asr-audio'
 
 interface WhisperContextLike {
   transcribeData(
@@ -114,8 +114,8 @@ parentPort.on('message', async (e) => {
       console.log(
         `[asr] samples: ${audio.length} (~${(audio.length / 16000).toFixed(1)}s) peak=${peak.toFixed(4)} rms=${rms.toFixed(4)}`
       )
-      const silent = rms < 0.0008 // effectively silent audio, such as denied microphone access producing zeros
-      if (silent || audio.length < 1600) {
+      // Effectively silent audio, such as denied microphone access producing zeros.
+      if (isSilentPcm(audio)) {
         parentPort.postMessage({ type: 'transcribe:result', id: msg.id, text: '', silent: true })
         return
       }

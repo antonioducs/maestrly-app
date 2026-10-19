@@ -70,7 +70,17 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   for the languages it covers, which punctuates and handles long messages
   much better. The first time you dictate in such a language, iOS downloads
   the language's model in the background, and that dictation uses the
-  previous recognizer. See [Data on the phone](#data-on-the-phone).
+  previous recognizer. When your bot server has a dictation key (OpenAI or
+  Groq), **Settings → Dictation** can switch to **Server**: the phone records
+  what you say, and when you stop, the server transcribes it with its key and
+  the text appears in the field. Words don't show while you speak; the field
+  says **Transcribing…** until the text arrives. A recording stops by itself
+  after 10 minutes. If the transcription fails, **Try again** sends the same
+  recording without speaking again. **Settings → Dictation** also sets,
+  replaces, or removes the server's key; **Use on my phone too** in the
+  desktop app's dictation settings does the same with your computer's key.
+  Servers without the feature, and the demo, always use the phone's
+  recognizer. See [Data on the phone](#data-on-the-phone).
 - **Artifacts:** a page an agent publishes shows as a card in the conversation;
   **Open** shows the version it published. See [Artifacts](#artifacts).
 - **Offline:** messages you send without a connection wait on the phone and go
@@ -184,12 +194,17 @@ phone also removes its push registration from the server.
 - The app talks only to the servers you paired and, when you turn notifications
   on, to Expo's push service and the phone's (Apple's or Google's) to get a push
   token. It sends no telemetry.
-- Dictation uses the phone's speech recognition: Apple's on iOS, Google's (or
-  the phone maker's) on Android. They may process the audio on their servers,
-  under their own privacy policies. On iOS 26 and later, the newer transcriber
-  keeps the audio on the phone for the languages it covers. Maestrly and your
-  server never receive the audio, only the text you then send. The microphone
-  is on only while the listening indicator shows.
+- With **This phone**, dictation uses the phone's speech recognition: Apple's
+  on iOS, Google's (or the phone maker's) on Android. They may process the
+  audio on their servers, under their own privacy policies. On iOS 26 and
+  later, the newer transcriber keeps the audio on the phone for the languages
+  it covers. Maestrly and your server never receive the audio, only the text
+  you then send.
+- With **Server**, the recording goes to your bot server, which sends it to
+  the provider of its dictation key (OpenAI or Groq) under that provider's
+  terms and that key's account, and keeps nothing of it. The phone deletes the
+  recording once its text arrives, or when you start another dictation.
+- The microphone is on only while the listening indicator shows.
 
 ## Develop
 
@@ -355,8 +370,9 @@ For App Review and the stores:
 - The app declares no tracking and no data collected by the developer, so
   **App Privacy** is **Data Not Collected**; its iOS privacy manifest lists the
   reasons for the system APIs React Native and Expo use. Everything the app
-  sends goes to servers the person runs, and to the phone's push and speech
-  services. App Store Connect offers these answers only on its website.
+  sends goes to servers the person runs, including dictation audio with the
+  **Server** engine, and to the phone's push and speech services. App Store
+  Connect offers these answers only on its website.
 - Export compliance: the app uses only the system's encryption
   (`ITSAppUsesNonExemptEncryption` is false).
 - The app is not offered in mainland China, which requires an ICP filing number.

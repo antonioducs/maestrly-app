@@ -77,6 +77,9 @@ const config: ExpoConfig = {
         speechRecognitionPermission: 'Maestrly turns what you dictate into text for your messages.',
       },
     ],
+    // Records dictation for the bot server. Background playback is on by default and adds a background audio mode
+    // and an Android playback service the app never uses.
+    ['expo-audio', { microphonePermission: MICROPHONE, enableBackgroundPlayback: false }],
     ['expo-notifications', { icon: './assets/images/notification-icon.png', color: '#c79a3a' }],
     [
       'expo-camera',

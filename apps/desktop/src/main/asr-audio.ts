@@ -18,6 +18,42 @@ export function floatToPcm16(samples: Float32Array): ArrayBuffer {
   return pcm.buffer
 }
 
+/**
+ * Effectively silent audio: under 0.1 s, or so quiet that the microphone gave zeros (permission missing). Neither
+ * engine is given it, because Whisper invents text from silence.
+ */
+export function isSilentPcm(samples: Float32Array): boolean {
+  if (samples.length < 1600) return true
+  let sumSq = 0
+  for (let i = 0; i < samples.length; i++) sumSq += samples[i] * samples[i]
+  return Math.sqrt(sumSq / samples.length) < 0.0008
+}
+
+/** Mono 16-bit PCM WAV, the format the speech-to-text APIs take from the desktop. */
+export function pcm16Wav(samples: Float32Array, sampleRate = 16000): ArrayBuffer {
+  const data = floatToPcm16(samples)
+  const out = new ArrayBuffer(44 + data.byteLength)
+  const view = new DataView(out)
+  const text = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i))
+  }
+  text(0, 'RIFF')
+  view.setUint32(4, 36 + data.byteLength, true)
+  text(8, 'WAVE')
+  text(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, 1, true) // mono
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  text(36, 'data')
+  view.setUint32(40, data.byteLength, true)
+  new Uint8Array(out, 44).set(new Uint8Array(data))
+  return out
+}
+
 /** Sample range covering every speech segment plus padding, or null when there is no speech in the recording. */
 export function speechSpan(
   segments: readonly SpeechSegment[],

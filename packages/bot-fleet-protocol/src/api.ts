@@ -1,4 +1,11 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
+import {
+  fleetDictationKeyRequestSchema,
+  fleetDictationKeyResponseSchema,
+  fleetDictationStatusSchema,
+  fleetDictationTranscribeRequestSchema,
+  fleetDictationTranscribeResponseSchema,
+} from './dictation.js'
 import { fleetBridgeOrigin } from './helpers.js'
 import {
   fleetChatAttentionKindSchema,
@@ -1865,6 +1872,21 @@ export const FLEET_GATEWAY_ROUTES = {
     path: '/v1/devices/self/push/test',
     body: z.object({}).strict(),
     response: z.object({ sent: z.literal(true) }),
+  },
+  // The server's speech-to-text key and the phones' dictation through it (`dictation`).
+  dictationGet: { method: 'GET', path: '/v1/dictation', body: null, response: fleetDictationStatusSchema },
+  dictationKeySet: {
+    method: 'PUT',
+    path: '/v1/dictation',
+    body: fleetDictationKeyRequestSchema,
+    response: fleetDictationKeyResponseSchema,
+  },
+  dictationKeyDelete: { method: 'DELETE', path: '/v1/dictation', body: null, response: null },
+  dictationTranscribe: {
+    method: 'POST',
+    path: '/v1/dictation/transcriptions',
+    body: fleetDictationTranscribeRequestSchema,
+    response: fleetDictationTranscribeResponseSchema,
   },
   environmentBridgeTicket: {
     method: 'POST',

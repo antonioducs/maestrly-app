@@ -224,3 +224,137 @@ test('a recording takes over the composer bar and the main button sends, queues 
     await removeTempDirEventually(root)
   }
 })
+
+// An API engine with this computer's key: main is replaced at `chat:transcribe`, which here fails once and then
+// answers, so the kept recording is sent again by Try again without speaking twice.
+test('an API engine needs its key, skips the voice model and retries a failed transcription', async ({
+  browserName: _browserName,
+}) => {
+  test.setTimeout(180_000)
+  await access(path.join(desktop, 'out/main/index.js'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-dictation-api-'))
+  let app: ElectronApplication | undefined
+  const model = createServer((req, res) => {
+    if (req.url === '/v1/models') {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ data: [{ id: 'dictation-fixture', object: 'model' }] }))
+      return
+    }
+    res.writeHead(404).end()
+  })
+  try {
+    await new Promise<void>((resolve) => model.listen(0, '127.0.0.1', resolve))
+    app = await electron.launch({
+      args: [
+        path.join(desktop, 'out/main/index.js'),
+        '--use-fake-device-for-media-stream',
+        '--use-fake-ui-for-media-stream',
+      ],
+      env: {
+        ...process.env,
+        AGENTS_E2E: '1',
+        AGENTS_CHANNEL: 'dev',
+        AGENTS_INSTANCE: 'composer-dictation-api-e2e',
+        AGENTS_USERDATA: path.join(root, 'profile'),
+        AGENTS_LOCALE: 'en',
+        ELECTRON_RENDERER_URL: '',
+        OPENAI_API_KEY: '',
+        ANTHROPIC_API_KEY: '',
+      },
+    })
+    const page = await app.firstWindow()
+    await page.waitForFunction(() => Boolean((window as any).api))
+    const call = (name: string, ...args: unknown[]) =>
+      page.evaluate(({ name, args }) => (window as any).api[name](...args), { name, args })
+
+    await app.evaluate(({ ipcMain }) => {
+      const state = { transcriptions: [] as number[], keyed: false }
+      ;(globalThis as any).__dictationE2E = state
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })
+        ._invokeHandlers
+      const status = handlers.get('runtime-assets:status')
+      if (!status) throw new Error('runtime-assets:status is not registered')
+      for (const channel of ['chat:asr-support', 'chat:transcribe', 'chat:dictation-config', 'runtime-assets:status'])
+        ipcMain.removeHandler(channel)
+      ipcMain.handle('chat:asr-support', () => ({ supported: true }))
+      ipcMain.handle('chat:dictation-config', () => ({ engine: 'openai', keys: { openai: state.keyed, groq: false } }))
+      ipcMain.handle('chat:transcribe', (_event, audio: ArrayBuffer) => {
+        state.transcriptions.push(audio.byteLength)
+        return state.transcriptions.length === 1 ? { error: 'unavailable' } : { text: 'olá' }
+      })
+      // The voice model is missing: an API engine must not offer to download it.
+      ipcMain.handle('runtime-assets:status', (event, id) =>
+        id === 'whisper-model'
+          ? {
+              id,
+              displayName: 'Voice model',
+              requiredBy: 'Voice dictation',
+              availableVersion: 'fixture',
+              downloadBytes: 0,
+              unpackedBytes: 0,
+              status: { id, state: 'not-installed', diskUsageBytes: 0 },
+            }
+          : status(event, id)
+      )
+    })
+    const dictationState = () =>
+      app!.evaluate(() => (globalThis as any).__dictationE2E as { transcriptions: number[]; keyed: boolean })
+
+    await page.getByRole('button', { name: 'Skip', exact: true }).click()
+    const provider = await call('chatAddProvider', {
+      name: 'Dictation fixture',
+      kind: 'openai',
+      key: 'fixture-key',
+      baseURL: `http://127.0.0.1:${(model.address() as { port: number }).port}/v1`,
+    })
+    expect(provider.ok).toBe(true)
+    await call('chatSetDefault', { providerId: provider.id, modelId: 'dictation-fixture' })
+    await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
+    await expect.poll(async () => (await call('listStandaloneConversations', true)).length).toBe(1)
+
+    const composer = page.locator('.chat-input[contenteditable="true"]:visible')
+    const mic = page.locator('button[title^="Dictate by voice"]:visible')
+    const insertRecording = page.getByRole('button', { name: 'Stop and add the text to the message', exact: true })
+    const discardRecording = page.getByRole('button', { name: 'Discard recording (Esc)', exact: true })
+
+    // The menu names the engine, which also shows the microphone has read it.
+    await mic.click({ button: 'right' })
+    await expect(page.getByText('Engine: OpenAI', { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // Without the key, the microphone asks for it and does not record.
+    await mic.click()
+    await expect(page.getByText('API key needed', { exact: true })).toBeVisible()
+    await expect(discardRecording).toHaveCount(0)
+    await expect(page.getByText('Voice model', { exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.getByText('API key needed', { exact: true })).toHaveCount(0)
+
+    // With the key, it records at once: no voice model card, though the model is not installed.
+    await app.evaluate(() => {
+      ;(globalThis as any).__dictationE2E.keyed = true
+    })
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(async () => {
+      await mic.click()
+      await expect(discardRecording).toBeVisible({ timeout: 1_000 })
+    }).toPass()
+    await expect(page.getByText('Voice model', { exact: true })).toHaveCount(0)
+    await page.waitForTimeout(1_000)
+    await insertRecording.click()
+
+    // The transcription fails; Try again sends the same recording and its text lands in the draft.
+    await expect(page.getByText("Couldn't transcribe. Try again.", { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Try again', exact: true }).click()
+    await expect(composer).toHaveText('olá')
+    const { transcriptions } = await dictationState()
+    expect(transcriptions).toHaveLength(2)
+    expect(transcriptions[0]).toBeGreaterThan(0)
+    expect(transcriptions[1]).toBe(transcriptions[0])
+    await expect(page.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0)
+  } finally {
+    await app?.close().catch(() => {})
+    await new Promise<void>((resolve) => model.close(() => resolve()))
+    await removeTempDirEventually(root)
+  }
+})

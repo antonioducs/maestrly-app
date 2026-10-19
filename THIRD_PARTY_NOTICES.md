@@ -136,8 +136,8 @@ SOFTWARE.
 ## Mobile app
 
 The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 58
-(`expo` 58.0.14 and the `expo-*` modules, such as `expo-video` 58.0.11 and
-`expo-sharing` 58.0.19, Expo Router 58.0.23) and
+(`expo` 58.0.14 and the `expo-*` modules, such as `expo-video` 58.0.11,
+`expo-audio` 58.0.9 and `expo-sharing` 58.0.19, Expo Router 58.0.23) and
 [React Native](https://reactnative.dev) 0.88.0, both under the MIT License. It
 also includes, under the MIT License,
 [react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2

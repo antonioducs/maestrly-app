@@ -14,6 +14,7 @@ import { Cell } from '../ui/primitives/Cell'
 import { Group } from '../ui/primitives/Group'
 import { Segmented } from '../ui/primitives/Segmented'
 import { AppText } from '../ui/primitives/Text'
+import { DictationSettings } from '../ui/sheets/DictationSettings'
 import { NotificationSettings } from '../ui/sheets/NotificationSettings'
 import { SheetScreen } from '../ui/SheetScreen'
 
@@ -126,6 +127,7 @@ export default function Settings() {
       <AppText variant="small" tone="muted" style={{ marginTop: 7, marginHorizontal: 6 }}>
         {t('settings.languageFoot')}
       </AppText>
+      <DictationSettings />
       {active ? (
         <Group label={t('settings.thisPhone')} foot={t('settings.unpairFoot', { server })}>
           <Cell label={t('settings.deviceName')} value={active.deviceName || deviceName} />

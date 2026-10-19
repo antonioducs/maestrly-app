@@ -1,5 +1,7 @@
 import type {
   FleetDevicesResponse,
+  FleetDictationKeyResponse,
+  FleetDictationStatus,
   FleetLoginAttempt,
   FleetLoginStartRequest,
   FleetPairingCodeResponse,
@@ -246,6 +248,11 @@ export const fleetApi = {
   fleetDevices: (): Promise<FleetDevicesResponse> => ipcRenderer.invoke('fleet:devices'),
   /** Removes another paired device; it can no longer reach the bot server. */
   fleetRevokeDevice: (deviceId: string): Promise<void> => ipcRenderer.invoke('fleet:revokeDevice', deviceId),
+  /** The bot server's dictation key for phones; null when the server predates it. */
+  fleetDictation: (): Promise<FleetDictationStatus | null> => ipcRenderer.invoke('fleet:dictation'),
+  /** Stores this computer's dictation engine and key on the bot server, for its phones. */
+  fleetDictationUseLocal: (): Promise<FleetDictationKeyResponse> => ipcRenderer.invoke('fleet:dictationUseLocal'),
+  fleetDictationRemove: (): Promise<void> => ipcRenderer.invoke('fleet:dictationRemove'),
   fleetGetSnapshot: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:getSnapshot'),
   fleetRefresh: (): Promise<FleetSnapshot> => ipcRenderer.invoke('fleet:refresh'),
   fleetGetHost: (): Promise<FleetHostInfo> => ipcRenderer.invoke('fleet:getHost'),
