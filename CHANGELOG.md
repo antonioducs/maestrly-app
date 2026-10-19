@@ -14,6 +14,21 @@ User-visible changes by version. Downloads are on
   them; the server needs this version to answer. See
   [Mobile app](docs/mobile.md#what-it-does).
 
+### Security
+
+- A saved "Always allow" rule for a command no longer covers a longer command
+  built to hide a second one. Before, a model could get, for example,
+  `echo $(echo ')'); rm x` past a saved `echo *` rule without asking: the check
+  that splits a command into the commands it runs ignored quotes inside
+  `$( )`, missed commands in backquotes with escaped backquotes, in comments
+  holding a quote, in heredocs, in `<( )` and in `$'...'`, and on Windows in
+  PowerShell comments and arguments in parentheses. It now reads them the way
+  the shell does. A command whose structure it cannot read with certainty no
+  longer matches any saved rule: it asks every time (unless the conversation
+  has full access) and offers no "Always allow". Ordinary commands such as
+  `git status`, `npm test -- --run` or pipes still match their rules. See
+  [Security model](docs/security-model.md#commands-files-and-git).
+
 ### Fixed
 
 - On Windows, the agent's commands run in Windows PowerShell 5.1 instead of

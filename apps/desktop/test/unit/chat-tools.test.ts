@@ -133,7 +133,7 @@ describe('chat tools', () => {
     expect(commandSegments("echo 'a && b'", 'sh')).toEqual(["echo 'a && b'"])
     expect(commandSegments('echo $(whoami)', 'sh')).toEqual(['whoami', 'echo $(whoami)'])
     expect(commandSegments('ls 2>&1', 'sh')).toEqual(['ls 2>&1'])
-    expect(commandSegments('cat <<EOF\nrm -rf /\nEOF', 'sh')).toEqual(['cat <<EOF\nrm -rf /\nEOF'])
+    expect(commandSegments('cat <<EOF\nrm -rf /\nEOF', 'sh')).toEqual(['cat <<EOF'])
   })
 
   it('serializes file operations by lock key', async () => {

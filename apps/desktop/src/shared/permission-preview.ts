@@ -21,9 +21,26 @@ export function permissionSubjectTitle(label: string, subject: string): string {
   return `${label}: ${line.length > TITLE_SUBJECT_MAX ? `${line.slice(0, TITLE_SUBJECT_MAX - 1)}…` : line}`
 }
 
+const UNPARSED_COMMAND_PREFIX = 'unparsed command: '
+
+/**
+ * The resource for a command the permission splitter cannot read with certainty. No saved rule covers it, only the
+ * conversation's permission mode: a crafted command must not ride on a prefix saved for a simpler one.
+ */
+export function unparsedCommandResource(command: string): string {
+  return UNPARSED_COMMAND_PREFIX + command.trim()
+}
+
+export function isUnparsedCommandResource(resource: string): boolean {
+  return resource.startsWith(UNPARSED_COMMAND_PREFIX)
+}
+
 /** Resources not already visible in the preview (a command's own segments are), so nothing is shown twice. */
 export function permissionExtraResources(request: { preview?: string; resources: string[] }): string[] {
   const preview = request.preview
   if (!preview) return request.resources
-  return request.resources.filter((resource) => !preview.includes(resource))
+  return request.resources.filter((resource) => {
+    const shown = isUnparsedCommandResource(resource) ? resource.slice(UNPARSED_COMMAND_PREFIX.length) : resource
+    return !preview.includes(shown)
+  })
 }

@@ -229,6 +229,16 @@ network. Permission modes map user intent to read-only, workspace-write, or
 full-access behavior where the provider supports it. Tool implementations also
 validate project scope and command/file arguments.
 
+An "Always allow" answer to a command saves a prefix rule such as `npm test *`.
+Before a command is checked against saved rules it is split into the commands it
+would run, with the rules of the shell that runs it (`/bin/sh`, or PowerShell on
+Windows): chains, pipes, subshells, command and process substitutions, heredoc
+bodies that expand, and on PowerShell arguments in parentheses and script
+blocks. Every one of them must be allowed. A command whose structure the
+splitter cannot read with certainty, such as an unterminated quote, a `case`
+statement, or syntax that shells read differently, matches no saved rule: it
+asks unless the conversation has full access, and it cannot be saved.
+
 Full-access mode intentionally permits broad local effects and should be used
 only for repositories and instructions the user trusts. A model prompt is not a
 security boundary. Provider-native tool systems are disabled or constrained in

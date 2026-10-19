@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -243,6 +243,33 @@ describe.runIf(process.platform === 'win32')('bash tool on a real Windows PowerS
     expect(result.exitCode).toBe(0)
     expect(result.output).toContain('progress')
   }, 60_000)
+
+  // Each command hides a `Set-Content hit`: if PowerShell runs it, the permission gate must have shown it as a segment
+  // of its own or refused to read the command.
+  it.each([
+    "Write-Output $(Write-Output ')'); Set-Content hit 1",
+    "Write-Output a # '\nSet-Content hit 1 #'",
+    "Write-Output a <# ' #> ; Set-Content hit 1 ; <# ' #>",
+    'Write-Output (Set-Content hit 1)',
+    'Write-Output @(Set-Content hit 1)',
+    'Write-Output "$(Set-Content hit 1)"',
+    'Write-Output a; & { Set-Content hit 1 }',
+    'Write-Output @{ a = $(Set-Content hit 1) }',
+    "Write-Output --% '\nSet-Content hit 1 # '",
+    "Write-Output a#'\nSet-Content hit 1 #'",
+    'Write-Output a`; Set-Content hit 1',
+    "Write-Output 'a''; Set-Content hit 1'",
+    'Write-Output @"\n"@ ; Set-Content hit 1 ; @"\n"@',
+  ])(
+    'shows every command PowerShell runs in %j',
+    async (command) => {
+      const segments = commandSegments(command, 'powershell')
+      await run(command)
+      if (existsSync(path.join(dir, 'hit')) && segments)
+        expect(segments.some((segment) => segment.startsWith('Set-Content hit'))).toBe(true)
+    },
+    60_000
+  )
 
   it('reports a parse error instead of running part of the command', async () => {
     const result = await run("Write-Output 'never'\nif (")
