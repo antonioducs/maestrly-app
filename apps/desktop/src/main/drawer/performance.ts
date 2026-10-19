@@ -11,7 +11,7 @@ import {
   visibleKind,
   type ConvDrawer,
 } from './state'
-import { PANEL_TABS, REMOTE_BROWSER_RESOURCE } from './state'
+import { PANEL_TABS, REMOTE_BROWSER_RESOURCE, REMOTE_COMPUTER_RESOURCE } from './state'
 
 type PlacementReason = 'floating' | 'popup' | 'stream'
 
@@ -53,6 +53,11 @@ function setPlacementReason(
     if (drawer.vscodeView) setResourcePlacementActive('vscode', convId, undefined, reason, active)
     return
   }
+  // A remote conversation's computer out of the slot watches its screen while this decision keeps it at full speed.
+  if (tab === 'computer') {
+    if (drawer.remoteComputerView) setResourcePlacementActive('panel', convId, REMOTE_COMPUTER_RESOURCE, reason, active)
+    return
+  }
   if (PANEL_TABS.includes(tab as (typeof PANEL_TABS)[number])) {
     if (drawer.panelViews.get(tab as (typeof PANEL_TABS)[number])) {
       setResourcePlacementActive('panel', convId, tab, reason, active)
@@ -81,6 +86,11 @@ function setSlotVisible(convId: string, drawer: ConvDrawer, tab: FloatTab, visib
     if (drawer.vscodeView) setResourceVisible('vscode', convId, undefined, visible)
     return
   }
+  // In the slot the computer is the main window's DOM: its panel only ever shows out of it.
+  if (tab === 'computer') {
+    if (drawer.remoteComputerView) setResourceVisible('panel', convId, REMOTE_COMPUTER_RESOURCE, false)
+    return
+  }
   if (drawer.panelViews.get(tab as (typeof PANEL_TABS)[number])) {
     setResourceVisible('panel', convId, tab, visible)
   }
@@ -96,7 +106,7 @@ export function syncDrawerResourcePerformance(): void {
   for (const [convId, drawer] of drawers) {
     const popupOpen = convHasPopup(convId)
     const visibleConversation = convId === activeConvId && slotLive && !popupOpen
-    const tabs: FloatTab[] = ['browser', 'vscode', 'chatgpt', ...PANEL_TABS]
+    const tabs: FloatTab[] = ['browser', 'vscode', 'chatgpt', 'computer', ...PANEL_TABS]
     for (const tab of tabs) {
       const placement = getPlacement(convId, tab)
       const visible =

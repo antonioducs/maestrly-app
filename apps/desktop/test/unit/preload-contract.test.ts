@@ -351,7 +351,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(638)
+    expect(keys).toHaveLength(640)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -499,6 +499,7 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     for (const [method, channel, payload] of [
       ['onBrowserFocusUrl', 'drawer:browser-focus-url', { convId: 'conv', placement: 'slot' }],
       ['onBrowserShortcut', 'drawer:browser-shortcut', 'close-tab'],
+      ['onTerminalShortcut', 'drawer:terminal-shortcut', 'create'],
     ] as const) {
       const callback = vi.fn()
       const off = api[method](callback) as () => void
@@ -820,6 +821,18 @@ describe('preload API — main-to-renderer events (ipcRenderer.on)', () => {
     expect(callback).toHaveBeenCalledExactlyOnceWith({ convId: 'server-1/workspaces#conv-1', fullSpeed: true })
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('drawer:browser-activity', listener)
+  })
+
+  it('onComputerPanelActivity registers its own channel, delivers state, and removes its listener', () => {
+    const callback = vi.fn()
+    const off = api.onComputerPanelActivity(callback) as () => void
+    expect(onSpy).toHaveBeenCalledWith('drawer:computer-activity', expect.any(Function))
+    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown, payload: unknown) => void
+    listener({}, { convId: 'server-1/workspaces#conv-1', fullSpeed: true })
+    listener({}, { convId: 'conv', fullSpeed: 'yes' })
+    expect(callback).toHaveBeenCalledExactlyOnceWith({ convId: 'server-1/workspaces#conv-1', fullSpeed: true })
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('drawer:computer-activity', listener)
   })
 
   it('reads and follows the tabs of a conversation out of the drawer slot', () => {

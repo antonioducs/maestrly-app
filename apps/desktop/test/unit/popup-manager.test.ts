@@ -158,6 +158,25 @@ describe("popup-manager — a remote host's conversation", () => {
     )
   })
 
+  it('opens its computer in a popup once its host gives conversations computers', () => {
+    popupManager.initPopupManager({
+      on: vi.fn(),
+      getContentSize: () => [1000, 800],
+      webContents: { getZoomFactor: () => 1, focus: vi.fn() },
+    } as never)
+    popupManager.showFor(REMOTE)
+
+    popupManager.openPopup(REMOTE, 'computer')
+    expect(popupManager.stateFor(REMOTE).stack).toEqual([])
+
+    setRemoteToolHosts((_hostId, tool) => tool === 'computer')
+    popupManager.openPopup(REMOTE, 'computer')
+    const [computer] = popupManager.stateFor(REMOTE).stack
+    expect(computer).toMatchObject({ tab: 'computer', browserChromeH: 0, chromeTop: 40 })
+    expect(h.ensureViewFor).toHaveBeenCalledWith(REMOTE, 'computer')
+    expect(h.setPlacement).toHaveBeenCalledWith(REMOTE, 'computer', 'popup')
+  })
+
   it("keeps the DOM toolbar of this computer's browser popup", () => {
     init()
     popupManager.openPopup('c1', 'browser')

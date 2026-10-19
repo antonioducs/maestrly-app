@@ -1004,12 +1004,16 @@ function registerIpc(): void {
     origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
   })
   setRemoteVSCodeHandlers(remoteVSCodeHandlers({ editors: remoteEditors }))
-  // A remote host's conversation shows a Browser and a Code tab once the host says it serves them.
+  // A remote host's conversation shows a Browser, a Code and a Computer tab once the host says it serves them.
   setRemoteToolHosts(
     (hostId, tool) =>
       hostRegistry()
         ?.list()
-        .some((host) => host.id === hostId && (tool === 'browser' ? host.browser : host.editor)) ?? false
+        .some(
+          (host) =>
+            host.id === hostId &&
+            (tool === 'browser' ? host.browser : tool === 'computer' ? host.computer : host.editor)
+        ) ?? false
   )
   app.once('before-quit', () => remoteEditors?.close())
   registerHostTransfersIpc(reg, { getMainWindow: () => mainWindow })

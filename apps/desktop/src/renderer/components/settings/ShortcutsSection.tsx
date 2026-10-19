@@ -67,8 +67,7 @@ export function ShortcutsSection({
   resetShortcuts: () => void
   chatGptWebEnabled: boolean
 }) {
-  // The Computer tab never opens as a pop-up or a floating window, so it has no shortcut to set.
-  const visibleTabs = FLOAT_TABS.filter((tab) => tab !== 'computer' && (chatGptWebEnabled || tab !== 'chatgpt'))
+  const visibleTabs = FLOAT_TABS.filter((tab) => chatGptWebEnabled || tab !== 'chatgpt')
   const conflicts = conflictingTabs(chatGptWebEnabled ? shortcuts : { ...shortcuts, chatgpt: null })
   const drawerConflictTabs = drawerShortcut
     ? visibleTabs.filter((tab) => shortcuts[tab] && bindingKey(shortcuts[tab]!) === bindingKey(drawerShortcut))

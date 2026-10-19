@@ -29,7 +29,7 @@ import {
 import { emitBrowserState, noteBrowserSurfaceVisibility } from './browser'
 import { noteVSCodeSurfaceVisibility } from './vscode'
 import { syncDrawerResourcePerformance } from './performance'
-import { closeRemoteBrowserView, scheduleColdPanelEviction } from './panels'
+import { closeRemoteBrowserView, closeRemoteComputerView, scheduleColdPanelEviction } from './panels'
 
 /**
  * Position all conversation views: only the active docked tab of the active conversation occupies the
@@ -151,8 +151,9 @@ export function setPlacement(convId: string, tab: FloatTab, p: Placement): void 
       m.delete(tab)
       if (m.size === 0) placementByConv.delete(convId)
     }
-    // Back in the slot a remote host's browser is the drawer's streamed surface again: its panel closes.
+    // Back in the slot a remote host's browser or computer is the drawer's own surface again: its panel closes.
     if (tab === 'browser') closeRemoteBrowserView(convId)
+    if (tab === 'computer') closeRemoteComputerView(convId)
   } else {
     if (m) m.set(tab, p)
     else placementByConv.set(convId, new Map([[tab, p]]))

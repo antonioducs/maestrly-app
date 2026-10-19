@@ -27,6 +27,9 @@ export interface BrowserFocusUrl {
 /** A browser tab shortcut the main window caught while the keyboard was in a browser chrome or a streamed page. */
 export type BrowserShortcut = 'new-tab' | 'close-tab'
 
+/** A terminal tab shortcut main caught in the terminal panel of a remote host's conversation, for the panel to run. */
+export type TerminalShortcut = 'create' | 'close'
+
 export interface FloatingBounds {
   x: number
   y: number
@@ -93,6 +96,7 @@ function panelActivity(channel: string): (cb: (state: PanelActivity) => void) =>
 
 const onTerminalPanelActivity = panelActivity('drawer:terminal-activity')
 const onBrowserPanelActivity = panelActivity('drawer:browser-activity')
+const onComputerPanelActivity = panelActivity('drawer:computer-activity')
 
 /** How this computer's window presents a conversation's tools: native views, floats, popups and panels. */
 export const drawerApi = {
@@ -158,6 +162,14 @@ export const drawerApi = {
   onTerminalPanelActivity,
   /** A remote host's browser panel (popup or floating window) streams its page while it is at full speed. */
   onBrowserPanelActivity,
+  /** A remote conversation's computer panel (popup or floating window) watches its screen while at full speed. */
+  onComputerPanelActivity,
+  /** Cmd/Ctrl+T and W in the terminal panel of a remote host's conversation: the panel acts on the host. */
+  onTerminalShortcut: (cb: (action: TerminalShortcut) => void): (() => void) => {
+    const listener = (_e: unknown, action: TerminalShortcut) => cb(action)
+    ipcRenderer.on('drawer:terminal-shortcut', listener)
+    return () => ipcRenderer.removeListener('drawer:terminal-shortcut', listener)
+  },
   onPrepareMemoryEviction: (
     cb: (payload: { requestId: string; convId: string; tab: string }) => void
   ): (() => void) => {

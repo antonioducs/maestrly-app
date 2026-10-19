@@ -82,7 +82,17 @@ export interface TermTab {
   label?: string
 }
 
-const DETACHABLE = new Set<Tab>(['vscode', 'notes', 'review', 'plan', 'browser', 'terminal', 'files', 'chatgpt'])
+const DETACHABLE = new Set<Tab>([
+  'vscode',
+  'notes',
+  'review',
+  'plan',
+  'browser',
+  'computer',
+  'terminal',
+  'files',
+  'chatgpt',
+])
 
 const SLOT_TABS = new Set<Tab>(['browser', 'vscode', 'notes', 'review', 'plan', 'terminal', 'files', 'chatgpt'])
 const PANEL_TABS_UI = new Set<Tab>(['notes', 'review', 'plan', 'terminal', 'files']) // panel.html hosts the second renderer.
@@ -160,8 +170,10 @@ export function Drawer({
   const isFloating = (t: Tab): boolean => floating.has(t)
   // The tabs main placed out of the slot (popup or floating window). Unknown until main answers for this conversation.
   const [placement, setPlacement] = useState<DrawerPlacement | null>(null)
-  // A host streams a browser to one viewer at a time: out of the slot, the popup or window streams it instead.
+  // A host streams a browser to one viewer at a time: out of the slot, the popup or window streams it instead. The
+  // computer, likewise, is watched from its popup or window while it is out of the slot.
   const remoteBrowserDocked = placement?.convId === convId && !placement.outOfSlot.includes('browser')
+  const remoteComputerDocked = placement?.convId === convId && !placement.outOfSlot.includes('computer')
   const [chatGptSession, setChatGptSession] = useState<ChatGptWebSessionInfo | null>(null)
   const [chatGptStarting, setChatGptStarting] = useState(false)
   const [chatGptError, setChatGptError] = useState<string | null>(null)
@@ -555,7 +567,7 @@ export function Drawer({
           <RemoteBrowserSurface key={convId} convId={hostConvId} active={visible} onFocusAddress={focusAddress} />
         )}
 
-        {tab === 'computer' && remoteConv && hostConvId && (
+        {tab === 'computer' && remoteConv && hostConvId && remoteComputerDocked && (
           <ConversationComputer key={convId} convId={hostConvId} active={visible} />
         )}
 

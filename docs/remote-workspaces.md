@@ -66,8 +66,10 @@ the server hosts one environment and predates several: **Update bots** too.
   **Code** is VS Code running on the server: see [Code](#code). **Files** moves files between this computer and the
   server: see [Files](#files). As for a conversation of this computer, the tool shortcuts open these tools in a pop-up
   over the chat, or with Shift in a floating window, and the drawer's **Open in a floating window** button detaches
-  them; only **Computer** stays in the drawer. A floating window is named after the conversation and closes when the
-  conversation leaves the server's list.
+  them. **Computer** has its own shortcut, **⌘⌃C** on a Mac and **Ctrl+Alt+C** elsewhere, which you can change in
+  **Settings → Tools & drawer**. A floating window is named after the conversation and closes when the conversation
+  leaves the server's list. In the **Terminal** tab, **⌘T**/**Ctrl+T** opens a new terminal on the server and
+  **⌘W**/**Ctrl+W** closes the one shown, as for a conversation of this computer.
 - **Settings of the host.** In **Settings**, the sections about a profile (**Maestrly Chat**, **Bots**,
   **Usage & cost**, and **Execution**) get a **Settings of** selector. Choose the server there to change the host's
   accounts, models, skills, plugins, and defaults. The other sections are this computer's and have no selector.
@@ -222,6 +224,9 @@ and test what the conversation produced (a dev server in its browser, a desktop 
   the tab again starts it again; what ran on it is gone. Archiving or deleting the conversation gives it back at once.
 - **Eight at most.** A server runs up to eight computers at a time. When all are in use, the tab names the
   conversations that hold them, with **Try again**.
+- **Pop-up and floating window.** The computer's shortcut, or **Open in a floating window**, moves it out of the
+  drawer. It is watched there instead of in the drawer, starting again in watch mode, and back in the drawer once you
+  close or reattach it.
 - **Update first.** A bot server from before computers asks to be updated; a workspaces environment on an older image
   has no **Computer** tab until it restarts onto the current one.
 
@@ -325,7 +330,6 @@ kept by the server: opening the conversation on one computer clears it on the ot
   arrives extracted. Revealing a file or folder of the server in a file manager is unavailable, because it would open
   on the server's own desktop, which nobody sees.
 - **Alert sounds** do not play for conversations on a server.
-- **The Computer tab stays in the drawer:** it opens in no pop-up or floating window, and has no shortcut by default.
 - **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
   survive a restart of the server's Maestrly.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between

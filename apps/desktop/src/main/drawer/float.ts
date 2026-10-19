@@ -18,7 +18,7 @@ import {
 } from './state'
 import { applyLayout, setPlacement } from './layout'
 import { emitBrowserState, ensureBrowser } from './browser'
-import { ensureBrowserChrome, ensurePanelView, ensureRemoteBrowserView } from './panels'
+import { ensureBrowserChrome, ensurePanelView, ensureRemoteBrowserView, ensureRemoteComputerView } from './panels'
 import { isRemoteConversation } from '../drawer-scope'
 import { presentedBrowserSize, presentsBrowserInArea } from '../conversation-screen'
 import { floatingStripHeight } from '../fleet/instance/window-bounds'
@@ -50,6 +50,7 @@ export function requestVSCodeForDebug(convId: string): void {
 function tabViews(d: ConvDrawer, tab: FloatTab): WebContentsView[] {
   if (tab === 'vscode') return d.vscodeView ? [d.vscodeView] : []
   if (tab === 'chatgpt') return d.chatgptView ? [d.chatgptView] : []
+  if (tab === 'computer') return d.remoteComputerView ? [d.remoteComputerView] : []
   if (tab === 'browser' && d.remoteBrowserView) return [d.remoteBrowserView]
   if (tab === 'browser') {
     const pages = d.browserTabs.flatMap((t) => (t.view ? [t.view] : []))
@@ -77,6 +78,10 @@ export function floatView(convId: string, tab: FloatTab, floatWin: BrowserWindow
     // A ChatGPT view is materialized only by an active companion session.
     // A direct detach request must not create a remote view by itself.
     if (!d.chatgptView) return false
+  } else if (tab === 'computer') {
+    // Only a remote conversation has a computer: it floats as a panel watching its screen.
+    if (!isRemoteConversation(convId)) return false
+    ensureRemoteComputerView(d, convId)
   } else if (tab !== 'vscode') ensurePanelView(d, convId, tab as PanelTab)
   const views = tabViews(d, tab)
   if (views.length === 0) return false
@@ -110,7 +115,9 @@ export function focusFloatingContent(convId: string, tab: FloatTab): void {
         ? d.vscodeView
         : tab === 'chatgpt'
           ? d.chatgptView
-          : d.panelViews.get(tab as PanelTab)
+          : tab === 'computer'
+            ? d.remoteComputerView
+            : d.panelViews.get(tab as PanelTab)
   primary?.webContents.focus()
 }
 
@@ -126,8 +133,9 @@ export function unfloatView(convId: string, tab: FloatTab, floatWin: BrowserWind
       } catch {
         /* Already detached from this parent. */
       }
-      // Back in the slot a remote host's browser is the drawer's own surface again; setPlacement closes its panel.
-      if (v === d.remoteBrowserView) continue
+      // Back in the slot a remote host's browser or computer is the drawer's own surface again; setPlacement closes
+      // its panel.
+      if (v === d.remoteBrowserView || v === d.remoteComputerView) continue
       if (tab === 'browser' && v === d.browserChromeView) {
         try {
           v.webContents.close() // chrome exists only while floating
