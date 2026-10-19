@@ -30,6 +30,7 @@ import { fleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 import { BotTranscriptFiles } from './BotTranscriptFiles'
+import { BotTaskItem } from './BotTaskItem'
 import { BotPeerMessage } from './BotPeerMessage'
 import { PeerThreadBridge } from './PeerThreadBridge'
 import { BotRoutineMessage } from './BotRoutineMessage'
@@ -416,6 +417,9 @@ export function TranscriptRow({
   if (item.kind === 'tool' && item.name === 'todo_write' && item.todos)
     return item.id === latestTodoId ? <TodoList todos={item.todos} /> : null
   if (item.kind === 'tool' && item.files?.length) return <BotTranscriptFiles botId={bot.id} files={item.files} />
+  // A task the bot started: a row of its own, with its difficulty, model and result. Older instances send no task.
+  if (item.kind === 'tool' && item.task)
+    return <BotTaskItem item={{ ...item, task: item.task }} bot={bot} imageCache={imageCache} />
   if (item.kind === 'tool' && ['artifact_create', 'artifact_update'].includes(baseToolName(item.name))) {
     const result = parseArtifactToolResult(item.output ?? '')
     if (result)

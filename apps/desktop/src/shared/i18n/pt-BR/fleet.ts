@@ -715,6 +715,22 @@ export default {
   },
   conversation: { recalled: 'Lembrou: {{titles}}' },
   transcript: {
+    task: {
+      untitled: 'Tarefa',
+      complexity: { simple: 'Tarefa simples', medium: 'Tarefa média', complex: 'Tarefa complexa' },
+      difficulty: { simple: 'simples', medium: 'média', complex: 'complexa' },
+      conversationModel: 'modelo da conversa',
+      prompt: 'O que o {{name}} pediu',
+      result: 'Resultado',
+      why: {
+        declared: 'O {{name}} indicou que é uma tarefa {{complexity}}.',
+        default: 'O {{name}} não indicou a dificuldade; contou como tarefa média.',
+        routed: 'Rodou num modelo {{tier}}: {{model}}.',
+        upgraded: 'Nenhum modelo {{wanted}} está liberado, então rodou num modelo {{tier}}: {{model}}.',
+        none: 'Nenhum modelo liberado serve para ela, então rodou com o modelo da conversa: {{model}}.',
+        conversationModel: 'Rodou com o modelo da conversa: {{model}}.',
+      },
+    },
     compaction: {
       heading: 'Contexto compactado',
       prepared: 'Resumo preparado em segundo plano',

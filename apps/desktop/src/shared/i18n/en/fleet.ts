@@ -711,6 +711,22 @@ export default {
   },
   conversation: { recalled: 'Recalled: {{titles}}' },
   transcript: {
+    task: {
+      untitled: 'Task',
+      complexity: { simple: 'Simple task', medium: 'Medium task', complex: 'Complex task' },
+      difficulty: { simple: 'simple', medium: 'medium', complex: 'complex' },
+      conversationModel: 'conversation model',
+      prompt: 'What {{name}} asked',
+      result: 'Result',
+      why: {
+        declared: '{{name}} marked it as a {{complexity}} task.',
+        default: '{{name}} did not say how hard it is, so it counted as medium.',
+        routed: 'It ran on a {{tier}} model: {{model}}.',
+        upgraded: 'No {{wanted}} model is allowed, so it ran on a {{tier}} model: {{model}}.',
+        none: "No allowed model fits it, so it ran on the conversation's model: {{model}}.",
+        conversationModel: "It ran on the conversation's model: {{model}}.",
+      },
+    },
     compaction: {
       heading: 'Context compacted',
       prepared: 'Summary prepared in the background',

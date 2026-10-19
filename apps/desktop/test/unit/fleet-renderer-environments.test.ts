@@ -371,6 +371,7 @@ describe('environment UI wiring', () => {
     'BotSaveBar',
     'BotMemorySection',
     'BotTasksSection',
+    'BotTaskItem',
     'SettingsSection',
     'SettingsSwitch',
     'EnvironmentRack',
