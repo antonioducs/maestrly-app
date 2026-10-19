@@ -21,7 +21,8 @@ import {
 import { broadcast } from '../../window-ipc'
 import { fleetAlertFor, type FleetAlert } from './alerts'
 import { FleetApiClient, FleetClientError } from './api'
-import { FleetEvents, type FleetConnectionState } from './events'
+import type { FleetConnectionView } from '../../../shared/fleet-servers'
+import { FleetEvents } from './events'
 import {
   clearFleetCredentials,
   readFleetSettings,
@@ -38,15 +39,7 @@ import { FleetMediaUrls, type FleetMediaRequest } from './media-protocol'
 import { FleetActiveDownloads, type FleetSettledDownload } from './active-downloads'
 import type { FleetDownloadProgress } from '../../../shared/fleet-downloads'
 
-export type FleetConnectionView = {
-  features: string[]
-  state: FleetConnectionState
-  deviceId: string | null
-  url: string | null
-  hostname: string | null
-  error: string | null
-  tokenPersistence: TokenPersistence
-}
+export type { FleetConnectionView } from '../../../shared/fleet-servers'
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]

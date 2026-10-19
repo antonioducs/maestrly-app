@@ -23,6 +23,7 @@ import type { FleetInstallerStatus } from '../shared/fleet-installer'
 import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
 import type { FleetDownloadEvent, FleetDownloadFileKey, FleetDownloadProgress } from '../shared/fleet-downloads'
 import { ipcRenderer } from 'electron'
+import type { FleetConnectionView } from '../shared/fleet-servers'
 import type {
   FleetOwnerMemory,
   FleetOwnerMemoryEntry,
@@ -106,15 +107,7 @@ type _OpsMatch = [keyof FleetConversationOps] extends [FleetConversationOp]
 const _opsMatch: _OpsMatch = true
 void _opsMatch
 
-export type FleetConnectionView = {
-  features: string[]
-  state: 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'incompatible'
-  deviceId: string | null
-  url: string | null
-  hostname: string | null
-  error: string | null
-  tokenPersistence: 'secure' | 'memory'
-}
+export type { FleetConnectionView } from '../shared/fleet-servers'
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]

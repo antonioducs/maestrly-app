@@ -8,15 +8,10 @@ import {
   fleetGatewayEventSchema,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
+import type { FleetConnectionState } from '../../../shared/fleet-servers'
 import { type FleetApiClient, FleetClientError } from './api'
 
-export type FleetConnectionState =
-  | 'unconfigured'
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-  | 'unauthorized'
-  | 'incompatible'
+export type { FleetConnectionState } from '../../../shared/fleet-servers'
 
 export class FleetEvents {
   private controller: AbortController | null = null
