@@ -15,6 +15,7 @@ import {
   getPlacement,
   OFFSCREEN,
   REMOTE_BROWSER_RESOURCE,
+  REMOTE_COMPUTER_RESOURCE,
   visibleKind,
   win,
   type ConvDrawer,
@@ -228,20 +229,50 @@ export function ensureBrowserChrome(d: ConvDrawer, convId: string): WebContentsV
   return v
 }
 
-function sendRemoteBrowserActivity(wc: WebContents, convId: string, fullSpeed: boolean): void {
-  if (!wc.isDestroyed()) wc.send('drawer:browser-activity', { convId, fullSpeed })
+/**
+ * The tools of a remote host's conversation that the drawer draws in its own DOM, and that leave it as panels of their
+ * own (panel.html?panel=…&host=…): the browser the host streams, and the conversation's computer.
+ */
+type RemotePanelTab = 'browser' | 'computer'
+
+const REMOTE_PANELS: Record<
+  RemotePanelTab,
+  {
+    field: 'remoteBrowserView' | 'remoteComputerView'
+    resource: string
+    activityChannel: string
+    attach?: (wc: WebContents) => void
+  }
+> = {
+  browser: {
+    field: 'remoteBrowserView',
+    resource: REMOTE_BROWSER_RESOURCE,
+    activityChannel: 'drawer:browser-activity',
+    // As in the main window's streamed page: main keeps Cmd/Ctrl+T and W from the menu while the page reports the
+    // keyboard in the browser, and the page acts on the host itself.
+    attach: attachMainWindowBrowserHotkeys,
+  },
+  computer: {
+    field: 'remoteComputerView',
+    resource: REMOTE_COMPUTER_RESOURCE,
+    activityChannel: 'drawer:computer-activity',
+  },
+}
+
+function sendRemotePanelActivity(wc: WebContents, channel: string, convId: string, fullSpeed: boolean): void {
+  if (!wc.isDestroyed()) wc.send(channel, { convId, fullSpeed })
 }
 
 /**
- * Idempotently create a remote host's browser as a panel, offscreen in mainWindow, for the popup or floating window
- * that shows it: its chrome over the page the host streams (panel.html?panel=browser&host=…). The page streams only
- * while this view is shown, which the governor's full-speed decision tells it; the drawer's own surface yields to it
- * meanwhile, since a host streams a browser to one viewer at a time.
+ * Idempotently create a remote host's tool as a panel, offscreen in mainWindow, for the popup or floating window that
+ * shows it. Its content streams only while this view is shown, which the governor's full-speed decision tells it; the
+ * drawer's own surface yields to it meanwhile, so the host serves one viewer of this window at a time.
  */
-export function ensureRemoteBrowserView(d: ConvDrawer, convId: string): WebContentsView {
-  const existing = d.remoteBrowserView
+function ensureRemotePanelView(d: ConvDrawer, convId: string, tab: RemotePanelTab): WebContentsView {
+  const { field, resource, activityChannel, attach } = REMOTE_PANELS[tab]
+  const existing = d[field]
   if (existing && !existing.webContents.isDestroyed()) return existing
-  if (existing) closeRemoteBrowserView(convId)
+  if (existing) closeRemotePanelView(convId, tab)
   const v = new WebContentsView({
     webPreferences: {
       preload: resolvePreload(),
@@ -253,35 +284,34 @@ export function ensureRemoteBrowserView(d: ConvDrawer, convId: string): WebConte
   v.setBackgroundColor('#0A0A0B')
   v.setBounds(OFFSCREEN)
   win!.contentView.addChildView(v)
-  d.remoteBrowserView = v
+  d[field] = v
   const wc = v.webContents
-  registerPanelTarget(wc, { convId, panel: 'browser', resourceId: REMOTE_BROWSER_RESOURCE })
-  registerThrottleTarget('panel', convId, REMOTE_BROWSER_RESOURCE, {
+  registerPanelTarget(wc, { convId, panel: tab, resourceId: resource })
+  registerThrottleTarget('panel', convId, resource, {
     setBackgroundThrottling: (throttled) => wc.setBackgroundThrottling(throttled),
     isDestroyed: () => wc.isDestroyed(),
     once: (event, listener) => wc.once(event, listener),
-    onFullSpeedChange: (fullSpeed) => sendRemoteBrowserActivity(wc, convId, fullSpeed),
+    onFullSpeedChange: (fullSpeed) => sendRemotePanelActivity(wc, activityChannel, convId, fullSpeed),
   })
   // The first decision can come before the page listens; it is sent again once the page loaded.
   wc.on('did-finish-load', () =>
-    sendRemoteBrowserActivity(wc, convId, resourceNeedsFullSpeed('panel', convId, REMOTE_BROWSER_RESOURCE))
+    sendRemotePanelActivity(wc, activityChannel, convId, resourceNeedsFullSpeed('panel', convId, resource))
   )
   attachHotkeyCapture(wc)
-  // As in the main window's streamed page: main keeps Cmd/Ctrl+T and W from the menu while the page reports the
-  // keyboard in the browser, and the page acts on the host itself.
-  attachMainWindowBrowserHotkeys(wc)
-  loadPanel(v, 'browser', convId)
+  attach?.(wc)
+  loadPanel(v, tab, convId)
   return v
 }
 
-/** Close the remote browser panel of `convId`; the browser is back in the drawer, or the conversation is gone. */
-export function closeRemoteBrowserView(convId: string): void {
+/** Close the remote panel of `convId`'s tool; the tool is back in the drawer, or the conversation is gone. */
+function closeRemotePanelView(convId: string, tab: RemotePanelTab): void {
+  const { field, resource } = REMOTE_PANELS[tab]
   const d = drawers.get(convId)
-  const v = d?.remoteBrowserView
+  const v = d?.[field]
   if (!d || !v) return
-  d.remoteBrowserView = null
+  d[field] = null
   unregisterPanelTarget(v.webContents)
-  unregisterThrottleTarget('panel', convId, REMOTE_BROWSER_RESOURCE)
+  unregisterThrottleTarget('panel', convId, resource)
   try {
     win?.contentView.removeChildView(v)
   } catch {
@@ -293,6 +323,18 @@ export function closeRemoteBrowserView(convId: string): void {
     /* already closed */
   }
 }
+
+/** A remote host's browser out of the drawer: its chrome over the page the host streams, to one viewer at a time. */
+export const ensureRemoteBrowserView = (d: ConvDrawer, convId: string): WebContentsView =>
+  ensureRemotePanelView(d, convId, 'browser')
+
+export const closeRemoteBrowserView = (convId: string): void => closeRemotePanelView(convId, 'browser')
+
+/** A remote conversation's computer out of the drawer: its screen, watched or controlled through the gateway. */
+export const ensureRemoteComputerView = (d: ConvDrawer, convId: string): WebContentsView =>
+  ensureRemotePanelView(d, convId, 'computer')
+
+export const closeRemoteComputerView = (convId: string): void => closeRemotePanelView(convId, 'computer')
 
 /** Ensure a docked React panel view when its tab opens. */
 export function ensurePanelTab(convId: string, tab: PanelTab): void {

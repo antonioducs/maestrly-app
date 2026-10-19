@@ -112,6 +112,7 @@ import {
   outOfSlotTabsOf,
   placementByConv,
   REMOTE_BROWSER_RESOURCE,
+  REMOTE_COMPUTER_RESOURCE,
 } from '../../src/main/drawer/state'
 import { ensureBrowser } from '../../src/main/drawer/browser'
 import { attachBrowserHotkeyCapture, attachMainWindowBrowserHotkeys } from '../../src/main/browser-hotkeys'
@@ -257,5 +258,87 @@ describe("a remote host's browser out of the drawer", () => {
     expect(ensureBrowser).toHaveBeenCalledWith('conv-1')
     expect(h.views).toEqual([])
     expect(getDrawer('conv-1').remoteBrowserView).toBeNull()
+  })
+})
+
+describe("a remote conversation's computer out of the drawer", () => {
+  it('opens as a panel watching its screen, and only for a remote conversation', () => {
+    expect(ensureViewFor('conv-1', 'computer')).toBe(false)
+    expect(h.views).toEqual([])
+
+    expect(ensureViewFor(REMOTE, 'computer')).toBe(true)
+    const view = getDrawer(REMOTE).remoteComputerView as unknown as (typeof h.views)[number]
+    expect(h.views).toEqual([view])
+    expect(view.webContents.loadURL).toHaveBeenCalledWith(
+      'http://renderer.test/panel.html?panel=computer&conv=conv-1&host=server-1%2Fworkspaces'
+    )
+    expect(registerPanelTarget).toHaveBeenCalledWith(view.webContents, {
+      convId: REMOTE,
+      panel: 'computer',
+      resourceId: REMOTE_COMPUTER_RESOURCE,
+    })
+    // Its keys go to the screen: no browser tab shortcuts are caught on it.
+    expect(attachMainWindowBrowserHotkeys).not.toHaveBeenCalled()
+    expect(getDrawer(REMOTE).remoteBrowserView).toBeNull()
+
+    ensureViewFor(REMOTE, 'computer')
+    expect(h.views).toHaveLength(1)
+    const bounds = { x: 100, y: 140, width: 800, height: 560 }
+    placeViewInMain(REMOTE, 'computer', bounds)
+    expect(view.setBounds).toHaveBeenLastCalledWith(bounds)
+  })
+
+  it('watches only while the governor keeps it at full speed', () => {
+    ensureViewFor(REMOTE, 'computer')
+    const view = h.views[0]
+    h.throttleTargets.get(`panel:${REMOTE}:${REMOTE_COMPUTER_RESOURCE}`)?.onFullSpeedChange?.(true)
+    expect(view.webContents.send).toHaveBeenLastCalledWith('drawer:computer-activity', {
+      convId: REMOTE,
+      fullSpeed: true,
+    })
+    view.webContents.emit('did-finish-load')
+    expect(view.webContents.send).toHaveBeenLastCalledWith('drawer:computer-activity', {
+      convId: REMOTE,
+      fullSpeed: false,
+    })
+    setDrawerPlacementPerformance(REMOTE, 'computer', 'floating', true)
+    expect(setResourcePlacementActive).toHaveBeenCalledWith('panel', REMOTE, REMOTE_COMPUTER_RESOURCE, 'floating', true)
+  })
+
+  it('closes once back in the slot, and floats whole below the strip', () => {
+    ensureViewFor(REMOTE, 'computer')
+    const popup = h.views[0]
+    setPlacement(REMOTE, 'computer', 'popup')
+    expect(outOfSlotTabsOf(REMOTE)).toEqual(['computer'])
+    setPlacement(REMOTE, 'computer', 'slot')
+    expect(popup.webContents.close).toHaveBeenCalledOnce()
+    expect(getDrawer(REMOTE).remoteComputerView).toBeNull()
+    expect(unregisterThrottleTarget).toHaveBeenCalledWith('panel', REMOTE, REMOTE_COMPUTER_RESOURCE)
+
+    const win = floatingWindow()
+    expect(floatView(REMOTE, 'computer', win as never)).toBe(true)
+    const floating = h.views[1]
+    expect(win.contentView.addChildView).toHaveBeenCalledExactlyOnceWith(floating)
+    expect(floating.setBounds).toHaveBeenLastCalledWith({
+      x: 0,
+      y: FLOAT_CHROME_H,
+      width: 900,
+      height: 700 - FLOAT_CHROME_H,
+    })
+    expect(floating.webContents.focus).toHaveBeenCalled()
+    mainWindow.contentView.addChildView.mockClear()
+
+    unfloatView(REMOTE, 'computer', win as never)
+    expect(mainWindow.contentView.addChildView).not.toHaveBeenCalled()
+    expect(floating.webContents.close).toHaveBeenCalledOnce()
+    expect(outOfSlotTabsOf(REMOTE)).toEqual([])
+    expect(floatView('conv-1', 'computer', floatingWindow() as never)).toBe(false)
+  })
+
+  it('closes with its conversation', () => {
+    ensureViewFor(REMOTE, 'computer')
+    const view = h.views[0]
+    disposeConversation(REMOTE)
+    expect(view.webContents.close).toHaveBeenCalledOnce()
   })
 })

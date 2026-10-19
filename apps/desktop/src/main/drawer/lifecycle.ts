@@ -52,6 +52,8 @@ function destroyDrawer(convId: string, d: ConvDrawer): void {
   d.browserChromeView = null
   closeView(d.remoteBrowserView)
   d.remoteBrowserView = null
+  closeView(d.remoteComputerView)
+  d.remoteComputerView = null
   // Close conversation-owned OAuth windows during archive/delete/quit so none become orphaned (#560).
   for (const w of d.oauthWindows) {
     try {

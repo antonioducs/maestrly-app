@@ -9,6 +9,7 @@ import { ReviewPanel } from '@/components/ReviewPanel'
 import { PlanPanel } from '@/components/PlanPanel'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { RemoteBrowserSurface } from '@/components/RemoteBrowserSurface'
+import { ConversationComputer } from '@/components/ConversationComputer'
 import { TerminalTabs } from '@/components/TerminalTabs'
 import { FilesPanel } from '@/components/files/FilesPanel'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -114,6 +115,26 @@ function RemoteBrowserPanel({ conv }: { conv: string }) {
   )
 }
 
+/**
+ * A remote conversation's computer out of the drawer, in a popup or a floating window. It watches the screen only
+ * while main says this panel is shown.
+ */
+function RemoteComputerPanel({ conv }: { conv: string }) {
+  const [active, setActive] = useState(false)
+  useEffect(
+    () =>
+      window.api.onComputerPanelActivity((state) => {
+        if (state.convId === convKey) setActive(state.fullSpeed)
+      }),
+    []
+  )
+  return (
+    <div className="relative h-full">
+      <ConversationComputer convId={conv} active={active} />
+    </div>
+  )
+}
+
 /** A panel of a remote host's conversation is mounted again each time the host answers again. */
 function HostPanel() {
   const info = useHostInfo()
@@ -147,6 +168,9 @@ function PanelRoot() {
       ) : (
         <RemoteBrowserPanel conv={conv} />
       )
+    case 'computer':
+      // Only a remote host's conversation has a computer.
+      return host === LOCAL_HOST_ID ? null : <RemoteComputerPanel conv={conv} />
     case 'terminal':
       return <TerminalPanelHost conv={conv} />
     case 'files':

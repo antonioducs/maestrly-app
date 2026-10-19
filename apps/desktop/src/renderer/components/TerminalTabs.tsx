@@ -58,6 +58,16 @@ export function TerminalTabs({ convId, active = true }: { convId: string; active
     if (terminals.length === 0) api.drawerCreateTerminal(convId)
   }, [loaded, convId, terminals.length, api])
 
+  // Cmd/Ctrl+T and W of a remote host's terminals: main catches them and this panel runs them on the host.
+  useEffect(
+    () =>
+      window.api.onTerminalShortcut((action) => {
+        if (action === 'create') api.drawerCreateTerminal(convId)
+        else if (activeId) api.drawerCloseTerminal(convId, activeId)
+      }),
+    [convId, api, activeId]
+  )
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border px-2 py-1">

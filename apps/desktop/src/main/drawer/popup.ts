@@ -14,7 +14,7 @@ import {
 } from './state'
 import { ensureBrowser } from './browser'
 import { ensureVSCodeView } from './vscode'
-import { ensurePanelView, ensureRemoteBrowserView } from './panels'
+import { ensurePanelView, ensureRemoteBrowserView, ensureRemoteComputerView } from './panels'
 
 // Centered popups reuse the same mainWindow WebContentsView without cross-window reparenting. Set bounds
 // and raise z-order while preserving view state; no remount occurs.
@@ -24,6 +24,7 @@ function singleView(d: ConvDrawer, tab: FloatTab): WebContentsView | null | unde
   if (tab === 'browser') return d.remoteBrowserView
   if (tab === 'vscode') return d.vscodeView
   if (tab === 'chatgpt') return d.chatgptView
+  if (tab === 'computer') return d.remoteComputerView
   return d.panelViews.get(tab as PanelTab)
 }
 
@@ -31,13 +32,17 @@ function singleView(d: ConvDrawer, tab: FloatTab): WebContentsView | null | unde
  * Ensure tab views exist offscreen in mainWindow; popup-manager positions them afterward. Create an
  * empty VS Code view and let its injected loader start serve-web. Browser popup chrome is DOM, so
  * ensure only pages, not floating browserChromeView. A remote host's browser has no page here: it is
- * a panel with its own chrome, streaming the host's page.
+ * a panel with its own chrome, streaming the host's page. A remote conversation's computer is a panel
+ * watching its screen; this computer's conversations have none.
  */
 export function ensureViewFor(convId: string, tab: FloatTab): boolean {
   const d = getDrawer(convId)
   if (tab === 'browser') {
     if (isRemoteConversation(convId)) ensureRemoteBrowserView(d, convId)
     else ensureBrowser(convId)
+  } else if (tab === 'computer') {
+    if (!isRemoteConversation(convId)) return false
+    ensureRemoteComputerView(d, convId)
   } else if (tab === 'vscode') ensureVSCodeView(d, convId)
   else if (tab === 'chatgpt') {
     // The companion view is created by the explicit session start. A shortcut/IPC cannot silently

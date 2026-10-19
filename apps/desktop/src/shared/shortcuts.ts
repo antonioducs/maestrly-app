@@ -34,8 +34,8 @@ export function osFromPlatform(platform: string): ShortcutOs {
 
 const DEFAULT_KEYS: Record<FloatTab, string | null> = {
   browser: 'b',
-  // A remote conversation's computer stays in its drawer: these shortcuts open pop-ups and floating windows.
-  computer: null,
+  // Only a conversation on a server's workspaces environment has a computer: elsewhere the shortcut does nothing.
+  computer: 'c',
   vscode: 'e',
   terminal: 'j',
   // F with these modifiers is the macOS full-screen shortcut.

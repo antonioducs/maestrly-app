@@ -25,6 +25,8 @@ export interface Bounds {
 export const OFFSCREEN: Bounds = { x: -100000, y: 0, width: 1000, height: 800 }
 /** The governor's resource of a remote host's browser panel; distinct from this computer's floating chrome. */
 export const REMOTE_BROWSER_RESOURCE = 'remote-browser'
+/** The governor's resource of a remote conversation's computer panel. */
+export const REMOTE_COMPUTER_RESOURCE = 'remote-computer'
 // Fixed DIP height for floating browser tabs/URL chrome; reparented page content fills the rest.
 export const BROWSER_CHROME_H = BROWSER_CHROME_HEIGHT
 
@@ -66,6 +68,11 @@ export interface ConvDrawer {
    * streams. In the slot that browser is DOM of the main window, so this view exists only while it is out of it.
    */
   remoteBrowserView: WebContentsView | null
+  /**
+   * A remote conversation's computer out of the drawer (popup or floating): a panel watching its screen. In the slot
+   * the computer is DOM of the main window, so this view exists only while it is out of it.
+   */
+  remoteComputerView: WebContentsView | null
   /**
    * OAuth windows opened by this conversation's embedded browser. ChatGPT Companion owns its popups
    * separately so resetting one session cannot close another tab's login. Close these windows on
@@ -169,6 +176,7 @@ export function getDrawer(convId: string): ConvDrawer {
       panelInactiveSince: new Map(),
       browserChromeView: null,
       remoteBrowserView: null,
+      remoteComputerView: null,
       oauthWindows: new Set(),
     }
     drawers.set(convId, d)
@@ -222,6 +230,7 @@ function viewForTab(drawer: ConvDrawer, tab: FloatTab): WebContentsView | null |
     return drawer.remoteBrowserView ?? drawer.browserTabs.find((item) => item.id === drawer.activeBrowserId)?.view
   if (tab === 'vscode') return drawer.vscodeView
   if (tab === 'chatgpt') return drawer.chatgptView
+  if (tab === 'computer') return drawer.remoteComputerView
   return drawer.panelViews.get(tab as PanelTab)
 }
 

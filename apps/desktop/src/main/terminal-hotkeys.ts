@@ -1,6 +1,7 @@
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import type { WebContents } from 'electron'
 import { eventKey, type KeyEventLike } from '../shared/shortcuts'
+import { isRemoteConversation } from './drawer-scope'
 import { getConversation } from './store'
 import { closeShellTerminal, createShellTerminal, getTerminalState } from './terminal-manager'
 
@@ -29,6 +30,12 @@ export function attachTerminalHotkeyCapture(wc: WebContents, convId: string): vo
 
     // Prevent Command/Control+W from closing BrowserWindow even when no terminal tabs remain.
     event.preventDefault()
+    // A remote host's terminals run on the host, which this computer's store and terminals do not know: the panel
+    // runs the shortcut through that host's API.
+    if (isRemoteConversation(convId)) {
+      if (!wc.isDestroyed()) wc.send('drawer:terminal-shortcut', action)
+      return
+    }
     if (action === 'create') {
       const conv = getConversation(convId)
       if (conv?.scope === 'standalone') {

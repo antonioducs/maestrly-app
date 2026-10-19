@@ -50,16 +50,16 @@ describe('defaultShortcuts', () => {
     expect(defaultShortcuts('mac').chatgpt).toEqual({ key: 'g', mods: ['meta', 'control'] })
   })
 
-  it('covers every tool but the Computer tab with distinct letters and at least two OS-safe modifiers', () => {
+  it('covers every tool with distinct letters and at least two OS-safe modifiers', () => {
     const mac = defaultShortcuts('mac')
     expect(Object.keys(mac).sort()).toEqual([...FLOAT_TABS].sort())
-    // The Computer tab never opens as a pop-up or a floating window: no default shortcut.
-    expect(mac.computer).toBeNull()
-    expect(defaultShortcuts('win').computer).toBeNull()
-    const bound = FLOAT_TABS.filter((t) => t !== 'computer')
-    const keys = bound.map((t) => mac[t]!.key)
-    expect(new Set(keys).size).toBe(bound.length) // No letter collisions.
-    for (const t of bound) expect(isValidBinding(mac[t]!)).toBe(true)
+    // A remote conversation's computer opens in a pop-up or a floating window like the other tools.
+    expect(mac.computer).toEqual({ key: 'c', mods: ['meta', 'control'] })
+    expect(defaultShortcuts('win').computer).toEqual({ key: 'c', mods: ['control', 'alt'] })
+    const keys = FLOAT_TABS.map((t) => mac[t]!.key)
+    expect(new Set(keys).size).toBe(FLOAT_TABS.length) // No letter collisions.
+    expect(keys).not.toContain(defaultDrawerShortcut('mac').key)
+    for (const t of FLOAT_TABS) expect(isValidBinding(mac[t]!)).toBe(true)
     expect(findConflicts(mac)).toHaveLength(0) // Defaults never conflict.
   })
 })

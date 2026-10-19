@@ -516,6 +516,18 @@ test('remote host tools: opened by their shortcuts in popups and floating window
         for (const type of ['keyDown', 'keyUp'] as const)
           main!.webContents.sendInputEvent({ type, keyCode, modifiers: modifiers.map((m) => m.toLowerCase()) as never })
       }, accelerator)
+    // The same, as a panel of the drawer receives it while the keyboard is in that panel.
+    const pressIn = (panel: string, accelerator: string) =>
+      client!.evaluate(
+        ({ webContents }, [panel, accelerator]) => {
+          const modifiers = accelerator.split('+')
+          const keyCode = modifiers.pop()!
+          const view = webContents.getAllWebContents().find((wc) => wc.getURL().includes(`panel.html?panel=${panel}`))
+          for (const type of ['keyDown', 'keyUp'] as const)
+            view!.sendInputEvent({ type, keyCode, modifiers: modifiers.map((m) => m.toLowerCase()) as never })
+        },
+        [panel, accelerator]
+      )
 
     // The terminal shortcut opens the host's terminal in a popup, and Control+Escape closes it. Main learns which
     // conversation the window shows just after it is shown; pressing again only raises an open popup.
@@ -527,6 +539,14 @@ test('remote host tools: opened by their shortcuts in popups and floating window
       .toEqual(['terminal'])
     const terminal = await panelOf(client, 'terminal')
     expect(new URL(terminal.url()).searchParams.get('host')).toBe(HOST_ID)
+    // Cmd/Ctrl+T and W in the host's terminal open and close terminals on the host, as they do on this computer.
+    const hostTerminals = async () => (await remote('getTerminalState', chat.id)).terminals.length as number
+    await expect.poll(hostTerminals, { timeout: 30_000 }).toBe(1)
+    const accel = process.platform === 'darwin' ? 'Meta' : 'Control'
+    await pressIn('terminal', `${accel}+T`)
+    await expect.poll(hostTerminals).toBe(2)
+    await pressIn('terminal', `${accel}+W`)
+    await expect.poll(hostTerminals).toBe(1)
     await press('Control+Escape')
     await expect.poll(popupTabs).toEqual([])
 

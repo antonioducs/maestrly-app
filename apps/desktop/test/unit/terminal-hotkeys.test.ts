@@ -32,14 +32,20 @@ interface Input {
 
 const primaryModifier = process.platform === 'darwin' ? { meta: true } : { control: true }
 
-function capture() {
+const panel = {
+  send: vi.fn(),
+  isDestroyed: vi.fn(() => false),
+}
+
+function capture(convId = 'conv-1') {
   let listener: ((event: { preventDefault(): void }, input: Input) => void) | undefined
   const wc = {
+    ...panel,
     on: vi.fn((_channel: string, cb: typeof listener) => {
       listener = cb
     }),
   }
-  attachTerminalHotkeyCapture(wc as never, 'conv-1')
+  attachTerminalHotkeyCapture(wc as never, convId)
   return (input: Input) => {
     const event = { preventDefault: vi.fn() }
     listener!(event, input)
@@ -104,6 +110,25 @@ describe('attachTerminalHotkeyCapture', () => {
     const event = fire({ type: 'keyDown', code: 'KeyW', ...primaryModifier })
 
     expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(closeShellTerminal).not.toHaveBeenCalled()
+  })
+
+  it("hands a remote host's terminal shortcuts to its panel, which runs them on the host", () => {
+    const fire = capture('server-1/workspaces#conv-1')
+    const create = fire({ type: 'keyDown', code: 'KeyT', ...primaryModifier })
+    const close = fire({ type: 'keyDown', code: 'KeyW', ...primaryModifier })
+
+    // Cmd/Ctrl+W still never reaches the window's menu.
+    expect(create.preventDefault).toHaveBeenCalledOnce()
+    expect(close.preventDefault).toHaveBeenCalledOnce()
+    expect(panel.send.mock.calls).toEqual([
+      ['drawer:terminal-shortcut', 'create'],
+      ['drawer:terminal-shortcut', 'close'],
+    ])
+    // This computer neither looks the conversation up nor touches its own terminals.
+    expect(getConversation).not.toHaveBeenCalled()
+    expect(getTerminalState).not.toHaveBeenCalled()
+    expect(createShellTerminal).not.toHaveBeenCalled()
     expect(closeShellTerminal).not.toHaveBeenCalled()
   })
 

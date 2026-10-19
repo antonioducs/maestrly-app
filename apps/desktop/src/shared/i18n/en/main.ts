@@ -51,6 +51,7 @@ export default {
   },
   floating: {
     browser: 'Browser',
+    computer: 'Computer',
     vscode: 'Code',
     terminal: 'Terminal',
     plan: 'Plan',

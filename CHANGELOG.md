@@ -21,11 +21,20 @@ User-visible changes by version. Downloads are on
   and result. **Normal** stays the default. It needs a bot server, a bot
   environment image and a desktop app on this version. See
   [delegate mode](docs/bot-fleet.md#delegate-mode).
+- The **Computer** tab of a conversation on a server's workspaces environment
+  opens in a pop-up over the chat or in a floating window, like the other
+  tools: with its shortcut, **⌘⌃C** on a Mac and **Ctrl+Alt+C** elsewhere (with
+  Shift for a floating window), or with the drawer's **Open in a floating
+  window** button. The shortcut can be changed in **Settings → Tools & drawer**.
+  See [remote workspaces](docs/remote-workspaces.md#computer).
 
 ### Fixed
 
 - The **Subscription usage** dialog in the desktop sidebar now includes
   connected Google AI (Antigravity) accounts alongside Claude and ChatGPT.
+- In the **Terminal** tab of a conversation on a server's workspaces
+  environment, **⌘T**/**Ctrl+T** opens a new terminal on the server and
+  **⌘W**/**Ctrl+W** closes the one shown. Before, both did nothing there.
 - Conversations that use an OpenAI API key work again in **Ask** and **Agent**
   modes, with the **OpenAI** preset or a custom OpenAI-compatible provider at
   `https://api.openai.com/v1`. Every first message failed with HTTP 400
