@@ -1,5 +1,6 @@
 import { tool, type ToolSet } from 'ai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { subagentEnvironment } from '../../src/main/chat/tools/command-shell'
 import { z } from 'zod'
 import { closeAntigravityHostMcpServer } from '../../src/main/chat/antigravity-subscription/host-mcp'
 import type { AntigravitySubscriptionManager } from '../../src/main/chat/antigravity-subscription/manager'
@@ -121,12 +122,11 @@ describe('Antigravity subagent runner', () => {
   it('runs the child in its own session with only its allowed tools', async () => {
     const progress: string[] = []
     const updates: unknown[] = []
-    const result = await runAntigravitySubagent(
-      args('TOOL read {"path":"a.ts"}', {
-        progress: (line) => progress.push(line),
-        onTextUpdate: (update) => updates.push(update),
-      })
-    )
+    const input = args('TOOL read {"path":"a.ts"}', {
+      progress: (line) => progress.push(line),
+      onTextUpdate: (update) => updates.push(update),
+    })
+    const result = await runAntigravitySubagent(input)
     expect(result).toEqual({
       text: 'tool-result:contents of a.ts',
       model: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro' },
@@ -137,6 +137,7 @@ describe('Antigravity subagent runner', () => {
     const prompt = lastPromptText()
     expect(prompt).toContain(MEMORY_TOOL_GUIDANCE)
     expect(prompt).toContain('You are the delegated Maestrly subagent "worker"')
+    expect(prompt).toContain(subagentEnvironment({ cwd: input.cwd, standalone: false, commandShell: false }))
     expect(prompt).toContain('- maestrly_read:')
     expect(prompt).toContain('- maestrly_write:')
     expect(prompt).not.toContain('maestrly_task')

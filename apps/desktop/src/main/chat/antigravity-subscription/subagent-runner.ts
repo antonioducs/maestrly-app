@@ -12,6 +12,7 @@ import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { selectSubagentToolNames } from '../tools'
+import { subagentEnvironment } from '../tools/command-shell'
 import { AntigravityModelUnavailableError, AntigravityToolsUnavailableError, antigravityErrorMessage } from './errors'
 import { type AntigravityHostToolset, registerAntigravityHostToolset } from './host-mcp'
 import {
@@ -89,6 +90,11 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
+    subagentEnvironment({
+      cwd: args.cwd,
+      standalone: getConversation(args.conversationId)?.scope === 'standalone',
+      commandShell: 'bash' in tools,
+    }),
   ]
     .filter(Boolean)
     .join('\n\n')

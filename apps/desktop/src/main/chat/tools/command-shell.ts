@@ -95,6 +95,39 @@ export function commandShellEnvironment(platform: NodeJS.Platform = process.plat
   return 'Shell: the `bash` tool runs commands with /bin/sh (POSIX sh).'
 }
 
+/** The OS name the prompts use. */
+export function platformName(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : platform
+}
+
+/**
+ * The environment line of an agent's or a subagent's prompt: the OS, the `bash` tool's shell when that tool is
+ * available, today's date and the working directory when there is one. It changes at most once a day, so it keeps a
+ * prompt cache valid within the day.
+ */
+export function environmentLine(args: {
+  cwd?: string
+  /** A chat outside any workspace works in a private directory rather than a project. */
+  privateDirectory?: boolean
+  commandShell: boolean
+  platform?: NodeJS.Platform
+}): string {
+  const platform = args.platform ?? process.platform
+  return [
+    `OS: ${platformName(platform)}.`,
+    args.commandShell ? commandShellEnvironment(platform) : '',
+    `Today's date: ${new Date().toISOString().slice(0, 10)}.`,
+    args.cwd ? `${args.privateDirectory ? 'Private working directory' : 'Project directory'}: ${args.cwd}.` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+/** The `# Environment` section each runtime appends to a delegated subagent's prompt. */
+export function subagentEnvironment(args: { cwd: string; standalone: boolean; commandShell: boolean }): string {
+  return `# Environment\n${environmentLine({ cwd: args.cwd, privateDirectory: args.standalone, commandShell: args.commandShell })}`
+}
+
 export function bashToolDescription(platform: NodeJS.Platform = process.platform): string {
   const use = 'Use it for builds, tests, git and inspecting the project.'
   if (platform === 'win32')

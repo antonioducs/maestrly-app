@@ -42,6 +42,13 @@ User-visible changes by version. Downloads are on
   command's own. On macOS and Linux commands still run in `/bin/sh`. Plugin
   hooks still run in `cmd.exe` on Windows.
   See [Plugins](docs/plugins.md#hooks).
+- Subagents are told the operating system, today's date and their directory,
+  and, when they can run commands, which shell the `bash` tool uses, as the
+  main agent already was. Before, a subagent on Windows learned about
+  PowerShell only from the tool description, and subagents of every runtime
+  had to guess the date. This applies to subagents run with an API key and to
+  those of the Claude, ChatGPT, GitHub Copilot, Cursor and Google Antigravity
+  subscriptions.
 - Moving a bot whose working folder holds a Git repository no longer fails
   while its data is packed. Its whole working folder now moves, `.git` folders,
   empty folders, files ending in `.tmp`, and the links that lead inside it (such

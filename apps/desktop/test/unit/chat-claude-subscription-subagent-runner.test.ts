@@ -10,6 +10,7 @@ import { harnessFor } from '../../src/main/chat/harness/execution'
 import { CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
 import type { SubagentTextUpdate } from '../../src/main/chat/subagent-text-stream'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
+import { subagentEnvironment } from '../../src/main/chat/tools/command-shell'
 import { closeDb, freshDb } from '../helpers/db'
 
 const identity: ClaudeSubscriptionAccountIdentity = {
@@ -242,6 +243,12 @@ describe('Claude isolated subagent runner', () => {
     expect(options.model).toBe('claude-fable-5-1')
     expect(options.systemPrompt).toContain('maestrly-fable-5.1-v1')
     expect(options.systemPrompt).toContain('report to the parent')
+    // The read-only child has no `bash`, so its environment leaves the shell out.
+    expect(options.allowedTools).not.toContain('mcp__maestrly__bash')
+    expect(options.systemPrompt).toContain(
+      subagentEnvironment({ cwd: '/repo', standalone: false, commandShell: false })
+    )
+    expect(options.systemPrompt).toContain("Today's date: ")
     expect(options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
     expect((options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
     expect(options.allowedTools).not.toContain('mcp__maestrly__task')

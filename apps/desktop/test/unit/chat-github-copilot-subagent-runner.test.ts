@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
+import { subagentEnvironment } from '../../src/main/chat/tools/command-shell'
 import type { CopilotSession, SessionEvent, Tool as CopilotTool } from '@github/copilot-sdk'
 import { runGitHubCopilotSubagent } from '../../src/main/chat/github-copilot/subagent-runner'
 import type {
@@ -139,6 +140,9 @@ describe('GitHub Copilot ephemeral subagent runner', () => {
       content: expect.stringContaining('Review carefully.'),
     })
     expect(manager.createCalls[0]?.systemMessage?.content).toContain('# Durable project memory')
+    expect(manager.createCalls[0]?.systemMessage?.content).toContain(
+      subagentEnvironment({ cwd: '/repo', standalone: false, commandShell: true })
+    )
     expect(manager.createCalls[0].availableTools).not.toContain('custom:task')
     expect(manager.createCalls[0].availableTools).not.toContain('custom:use_skill')
     expect(manager.createCalls[0].availableTools).toContain('custom:generate_image')

@@ -18,6 +18,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
+import { subagentEnvironment } from '../tools/command-shell'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { claudeRuntimeErrorMessage } from './errors'
@@ -188,7 +189,11 @@ async function runClaudeSubagentAttempt(
       resolvedModelId: args.resolvedModelId,
       flags: captureHarnessFlags(),
     })
-  const systemPrompt = harnessSubagentPrompt(legacySystemPrompt, harness)
+  const systemPrompt = `${harnessSubagentPrompt(legacySystemPrompt, harness)}\n\n${subagentEnvironment({
+    cwd: args.cwd,
+    standalone: args.conversationScope === 'standalone',
+    commandShell: 'bash' in tools,
+  })}`
   const postToolUseHook = createHarnessPostToolUseHooks(harness)
   chatDiag({
     kind: 'harness-behavior-profile',

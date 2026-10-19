@@ -11,6 +11,7 @@ import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../su
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { isSubagentToolAllowed } from '../tools'
+import { subagentEnvironment } from '../tools/command-shell'
 import { allowedConversationProcessEnv, type ConversationProcessEnv } from '../conversation-env'
 import type { CodexAppServerClient } from './client'
 import {
@@ -504,6 +505,12 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
           args.readOnly
             ? 'This delegated run is strictly read-only. Do not modify files, execute commands, or spawn subagents.'
             : 'Do not spawn subagents. Return a concise result to the parent when the task is complete.',
+          // Codex describes its own native shell; this names the shell of Maestrly's `bash` tool when it is bridged.
+          subagentEnvironment({
+            cwd: args.cwd,
+            standalone: args.conversationScope === 'standalone',
+            commandShell: providedDynamicToolNames.has('bash'),
+          }),
         ].join('\n\n'),
         personality: 'pragmatic',
       } as const

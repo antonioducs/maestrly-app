@@ -1,5 +1,6 @@
 import { withAutonomousPolicy } from '../../src/main/chat/autonomous'
 import { describe, expect, it, vi } from 'vitest'
+import { subagentEnvironment } from '../../src/main/chat/tools/command-shell'
 import {
   CodexAppServerRpcError,
   type CodexAppServerClient,
@@ -122,6 +123,22 @@ describe('Codex subagent quota classification', () => {
     )
   })
 
+  it("tells the child its environment, naming the shell only when Maestrly's bash is bridged", async () => {
+    const instructions = async (dynamicTools: RunCodexSubagentArgs['dynamicTools']) => {
+      const { client, args } = harness()
+      await runCodexSubagent({ ...args, dynamicTools }).catch(() => undefined)
+      return (client.startThread.mock.calls[0] as unknown as [{ developerInstructions: string }])[0]
+        .developerInstructions
+    }
+    expect(await instructions([])).toContain(
+      subagentEnvironment({ cwd: '/workspace', standalone: false, commandShell: false })
+    )
+    const bash = { name: 'bash', description: 'Run a command.', inputSchema: { type: 'object', properties: {} } }
+    expect(await instructions([bash] as RunCodexSubagentArgs['dynamicTools'])).toContain(
+      subagentEnvironment({ cwd: '/workspace', standalone: false, commandShell: true })
+    )
+  })
+
   it('gives a child of a conversation with plugin tool hooks no native shell, patches or web search', async () => {
     const { client, args } = harness()
     await runCodexSubagent({ ...args, pluginToolHooks: true }).catch(() => undefined)
@@ -152,8 +169,9 @@ describe('Codex subagent quota classification', () => {
   it('never offers native search together with the inherited host web_search tool', async () => {
     const native = harness()
     await runCodexSubagent(native.args).catch(() => undefined)
-    const nativeConfig = (native.client.startThread.mock.calls[0] as unknown as [{ config: Record<string, unknown> }])[0]
-      .config
+    const nativeConfig = (
+      native.client.startThread.mock.calls[0] as unknown as [{ config: Record<string, unknown> }]
+    )[0].config
     expect(nativeConfig).not.toHaveProperty('web_search')
 
     const host = harness()
