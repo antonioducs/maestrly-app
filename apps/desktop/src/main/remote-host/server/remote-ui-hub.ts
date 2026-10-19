@@ -34,6 +34,8 @@ export interface RemoteUiHubDeps {
   /** The locale of the computer that connected, for the strings this host's main process writes. */
   applyLocale: (locale: string) => void
   log: (level: 'info' | 'warn' | 'error', message: string) => void
+  /** A session was added or ended: what `tags()` lists may have changed. */
+  onSessionsChanged?: () => void
 }
 
 type ResultError = { message: string; code?: string }
@@ -64,6 +66,8 @@ class Session {
   constructor(
     private readonly deps: RemoteUiHubDeps,
     private readonly socket: BridgeSocket,
+    /** The paired computer this session is for, on a desktop shared with the owner's computers; null otherwise. */
+    readonly tag: string | null,
     private readonly onEnded: (session: Session) => void
   ) {
     socket.on('message', (data) => this.receive(text(data)))
@@ -299,17 +303,34 @@ export class RemoteUiHub {
 
   constructor(private readonly deps: RemoteUiHubDeps) {}
 
-  attach(socket: BridgeSocket): void {
-    this.sessions.add(new Session(this.deps, socket, (session) => this.sessions.delete(session)))
+  attach(socket: BridgeSocket, tag: string | null = null): void {
+    this.sessions.add(
+      new Session(this.deps, socket, tag, (session) => {
+        if (this.sessions.delete(session)) this.deps.onSessionsChanged?.()
+      })
+    )
+    this.deps.onSessionsChanged?.()
   }
 
   /** Completes the WebSocket handshake of an authenticated upgrade request and attaches the socket. */
-  handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
-    this.server.handleUpgrade(request, socket, head, (ws) => this.attach(ws))
+  handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer, tag: string | null = null): void {
+    this.server.handleUpgrade(request, socket, head, (ws) => this.attach(ws, tag))
   }
 
   sessionCount(): number {
     return this.sessions.size
+  }
+
+  /** The paired computers connected now, once each. */
+  tags(): string[] {
+    return [...new Set([...this.sessions].flatMap((session) => (session.tag ? [session.tag] : [])))]
+  }
+
+  /** Closes every session of one paired computer, which this host no longer lets use it. */
+  closeTagged(tag: string): void {
+    for (const session of [...this.sessions]) {
+      if (session.tag === tag) session.close(REMOTE_BRIDGE_CLOSE.removed, 'removed')
+    }
   }
 
   closeAll(): void {
