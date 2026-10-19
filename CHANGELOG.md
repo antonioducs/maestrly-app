@@ -13,6 +13,10 @@ User-visible changes by version. Downloads are on
   "Invalid schema for function 'start_conversations': … 'uri' is not a valid
   format", because the strict schema sent to OpenAI kept the `uri` string
   format.
+- On Windows, after Git is installed while Maestrly is open, ChatGPT
+  subscription conversations find `git` without restarting: refreshing `PATH`
+  closes idle Codex background processes so the next turn starts with the
+  updated `PATH`, while leaving any turn in progress untouched.
 
 ## [0.22.0] - 2026-10-19
 

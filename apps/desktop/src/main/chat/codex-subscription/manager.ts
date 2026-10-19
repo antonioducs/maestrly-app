@@ -902,10 +902,13 @@ export class CodexSubscriptionManager {
   async recycleConnection(unusedSince?: number): Promise<boolean> {
     if (this.disposed) return true
     if (this.resetPromise || this.clientPromise) return false
+    if (this.statusPromise || this.modelsPromise || this.rateLimitsPromise) return false
     if (unusedSince !== undefined && this.handouts !== unusedSince) return false
     if ([...this.loginRecords.values()].some((record) => record.completion === null)) return false
     const active = this.client
     if (!active) return true
+    const baseListeners = this.unsubscribeNotification ? 1 : 0
+    if (active.isBusy || (active.notificationListenerCount ?? 0) > baseListeners) return false
     const lease = this.runtimeLease
     this.runtimeLease = null
     this.detachClient(active)

@@ -1,6 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { recycleCodexConnections } from './chat/codex-subscription/manager'
 import { defaultPosixShell } from './platform'
 
 /**
@@ -157,6 +158,11 @@ export async function refreshWindowsPathFromRegistry(deps: WindowsPathRefreshDep
       added.push(dir)
     }
   }
-  if (added.length > 0) env[key] = [original.replace(/;+$/, ''), ...added].filter(Boolean).join(';')
+  if (added.length > 0) {
+    env[key] = [original.replace(/;+$/, ''), ...added].filter(Boolean).join(';')
+    // A running Codex app-server inherited the PATH from when it spawned; recycle idle connections so the
+    // next turn starts with the newly added directories.
+    await recycleCodexConnections()
+  }
   return added
 }

@@ -740,6 +740,45 @@ describe('CodexSubscriptionManager', () => {
     expect(manager.connectedRuntime).toBeNull()
   })
 
+  it('does not tear down a busy connection when recycling without unusedSince', async () => {
+    manager = new CodexSubscriptionManager({
+      resolveRuntime: () => runtime(process.execPath),
+      acquireRuntimeLease: async (runtimePath) => ({ id: 'codex-runtime', path: runtimePath, release: vi.fn() }),
+      connectClient,
+      getUserDataPath: () => userDataPath,
+      getAppVersion: () => '9.8.7-test',
+    })
+    const client = await manager.getClient()
+    expect(client.isBusy).toBe(false)
+
+    // Retained by an active turn (runCodexSubscriptionChat): must not be recycled.
+    const releaseTurn = client.retain()
+    expect(client.isBusy).toBe(true)
+    await expect(manager.recycleConnection()).resolves.toBe(false)
+    expect(client.state).toBe('ready')
+    expect(manager.connectedRuntimePath).toBe(process.execPath)
+    releaseTurn()
+    expect(client.isBusy).toBe(false)
+
+    // Active notification listener (turn/subagent/imagegen stream): must not be recycled.
+    const offNotification = client.onNotification(() => {})
+    await expect(manager.recycleConnection()).resolves.toBe(false)
+    expect(client.state).toBe('ready')
+    offNotification()
+
+    // In-flight RPC on the client: must not be recycled while pending.
+    const inFlight = client.readAccount({ refreshToken: false })
+    expect(client.isBusy).toBe(true)
+    await expect(manager.recycleConnection()).resolves.toBe(false)
+    await inFlight
+    expect(client.isBusy).toBe(false)
+
+    // Once idle again, recycleConnection closes it so the next getClient spawns a fresh process.
+    await expect(manager.recycleConnection()).resolves.toBe(true)
+    expect(client.state).toBe('closed')
+    expect(manager.connectedRuntimePath).toBeNull()
+  })
+
   it('releases leases on app-server initialization failure', async () => {
     const release = vi.fn()
     connectClient.mockRejectedValueOnce(new Error('fixture start failed'))

@@ -2270,6 +2270,7 @@ export async function runCodexSubscriptionChat(
   }
 
   let currentClient = args.client
+  let releaseCurrentClient = currentClient.retain?.() ?? (() => {})
   let threadAccountId = args.initialAccountId ?? subscriptionAccountId(args.selection.providerId)
   let currentProviderId = args.effectiveProviderId ?? args.selection.providerId
   let currentServiceTier = args.serviceTier ?? null
@@ -2606,6 +2607,7 @@ export async function runCodexSubscriptionChat(
       }
     }
   } catch (error) {
+    releaseCurrentClient()
     settleCurrentAttempt('other')
     apply(
       {
@@ -2869,7 +2871,9 @@ export async function runCodexSubscriptionChat(
   }
   const applyTarget = (next: CodexFailoverRuntimeTarget): void => {
     args.onTurnControl?.(null)
+    releaseCurrentClient()
     currentClient = next.client
+    releaseCurrentClient = currentClient.retain?.() ?? (() => {})
     threadAccountId = next.accountId
     currentProviderId = next.providerId
     currentServiceTier = next.serviceTier
@@ -6057,6 +6061,7 @@ export async function runCodexSubscriptionChat(
     coalescer.flush()
     coalescer.dispose()
     await dynamic.close()
+    releaseCurrentClient()
   }
 
   return { planSubmitted: state.planSubmitted, threadId }

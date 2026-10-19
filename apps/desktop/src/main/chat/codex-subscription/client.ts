@@ -190,6 +190,8 @@ export class CodexAppServerClient {
   private _initializeResult: CodexInitializeResponse | null = null
   private serverRequestHandler: CodexServerRequestHandler | undefined
   private _state: CodexAppServerState = 'starting'
+  private activeServerRequests = 0
+  private retainedCount = 0
 
   private constructor(options: CodexAppServerConnectOptions) {
     this.defaultRequestTimeoutMs = options.defaultRequestTimeoutMs ?? 30_000
@@ -304,6 +306,32 @@ export class CodexAppServerClient {
 
   get failure(): Error | null {
     return this.terminalError
+  }
+
+  /** Whether this client is establishing a connection, running a turn/RPC, or serving a server request. */
+  get isBusy(): boolean {
+    return (
+      this._state === 'starting' ||
+      this._state === 'initializing' ||
+      this.pending.size > 0 ||
+      this.activeServerRequests > 0 ||
+      this.retainedCount > 0
+    )
+  }
+
+  get notificationListenerCount(): number {
+    return this.notificationListeners.size
+  }
+
+  /** Marks the client as held by an active turn so background connection recycling skips it until released. */
+  retain(): () => void {
+    this.retainedCount += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.retainedCount = Math.max(0, this.retainedCount - 1)
+    }
   }
 
   onNotification(listener: NotificationListener): () => void {
@@ -629,6 +657,7 @@ export class CodexAppServerClient {
       return
     }
 
+    this.activeServerRequests += 1
     try {
       const result = await handler(request, this.serverRequestAbort.signal)
       await this.replyToServerRequest(message.id, { result: result === undefined ? null : result })
@@ -637,6 +666,8 @@ export class CodexAppServerClient {
       await this.replyToServerRequest(message.id, {
         error: { code: -32603, message: error.message },
       })
+    } finally {
+      this.activeServerRequests = Math.max(0, this.activeServerRequests - 1)
     }
   }
 
