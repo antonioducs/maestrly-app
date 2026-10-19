@@ -8,6 +8,7 @@ import type { IpcHandlerTable } from '../remote-host/ipc-handler-table'
 import type { RemoteHostInfo, RemoteOs } from '../../shared/remote-bridge'
 import { PeerHosting } from './hosting'
 import { loadOrCreateIdentity, type PeerIdentity } from './identity'
+import { PeerHosts } from './peer-hosts'
 import { appPeerStorage } from './storage'
 import { PeerStore } from './store'
 
@@ -16,11 +17,18 @@ const MAX_ADDRESSES = 8
 let store: PeerStore | null = null
 let identity: PeerIdentity | null = null
 let hosting: PeerHosting | null = null
+let hosts: PeerHosts | null = null
 
 /** The owner's other computers this profile paired with. */
 export function peerStore(): PeerStore {
   store ??= new PeerStore(appPeerStorage)
   return store
+}
+
+/** The paired computers as hosts of this computer's windows. */
+export function peerHosts(): PeerHosts {
+  hosts ??= new PeerHosts({ store: peerStore() })
+  return hosts
 }
 
 /** This profile's identity among the owner's computers, created on first use; null without a keyring. */

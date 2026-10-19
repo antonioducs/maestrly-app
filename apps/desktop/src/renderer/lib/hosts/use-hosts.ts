@@ -24,6 +24,7 @@ function localHost(): HostView {
     computer: false,
     folderTransfers: false,
     environment: null,
+    peer: null,
     hostVersion: null,
   }
 }

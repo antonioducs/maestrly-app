@@ -1,5 +1,6 @@
 import type { FleetServerId } from './fleet-servers'
 import type { HostId } from './host-key'
+import type { PeerHostView } from './peer'
 import type { RemoteOs } from './remote-bridge'
 
 /**
@@ -45,6 +46,8 @@ export interface HostView {
   /** Whether whole folders move to and from the host in its Files tab, not only files. */
   folderTransfers: boolean
   environment: HostEnvironmentView | null
+  /** Another computer of the owner this one paired with; null for this computer and a server's hosts. */
+  peer: PeerHostView | null
   /** The app version of a host that refused this computer's, when it said so. */
   hostVersion: string | null
 }

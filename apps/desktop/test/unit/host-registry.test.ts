@@ -4,9 +4,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { encodeBridgeFrame } from '../../src/main/remote-host/bridge-codec'
 import type { BridgeClientSocket } from '../../src/main/remote-host/client/host-connection'
 import { DIRECT_HOST_ID, HostRegistry, parseDirectHost } from '../../src/main/remote-host/client/host-registry'
+import type { PeerRecord } from '../../src/main/peer/schemas'
+import { issueToken, newPeerRecord } from '../../src/main/peer/store'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 import type { HostView } from '../../src/shared/hosts'
+import { type PeerProblem, peerHostId } from '../../src/shared/peer'
 import type { BridgeClientFrame, BridgeHostFrame } from '../../src/shared/remote-bridge'
+import { testIdentity } from './peer-helpers'
 
 const SERVER = '3f0c7a52-7d0e-4c55-9a53-0e6f4d1d2a10'
 const HOST = `${SERVER}/workspaces`
@@ -64,6 +68,40 @@ const environment = (patch: Partial<FleetEnvironment> = {}): FleetEnvironment =>
     ...patch,
   }) as FleetEnvironment
 
+/** Paired computers as the registry reads them: records, their problems, and the sockets their bridges open. */
+function fakePeers(records: PeerRecord[]) {
+  const listeners = new Set<() => void>()
+  const problems = new Map<string, PeerProblem>()
+  const connects: string[] = []
+  const sockets: FakeSocket[] = []
+  return {
+    records,
+    problems,
+    connects,
+    sockets,
+    list: () => records,
+    problem: (deviceId: string) => problems.get(deviceId) ?? null,
+    onChange: (listener: () => void) => {
+      listeners.add(listener)
+      return () => void listeners.delete(listener)
+    },
+    connect: async (deviceId: string) => {
+      connects.push(deviceId)
+      const socket = new FakeSocket(`peer:${deviceId}`)
+      sockets.push(socket)
+      return socket as unknown as BridgeClientSocket
+    },
+    endpoint: (deviceId: string) => ({
+      origin: `https://${deviceId}.local:7690`,
+      headers: () => ({ Authorization: 'Bearer t' }),
+      certPem: 'pem',
+    }),
+    change() {
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
 /** A paired server the test plays: where it is, its environments, and the tickets this computer asked for. */
 function fakeServer(id: string, listeners: Set<() => void>, deviceName: string | null = null) {
   return {
@@ -82,7 +120,7 @@ function fakeServer(id: string, listeners: Set<() => void>, deviceName: string |
   }
 }
 
-function setup(options: { direct?: boolean } = {}) {
+function setup(options: { direct?: boolean; peers?: ReturnType<typeof fakePeers> } = {}) {
   const listeners = new Set<() => void>()
   const fleet = fakeServer(SERVER, listeners)
   const paired = [fleet]
@@ -139,6 +177,7 @@ function setup(options: { direct?: boolean } = {}) {
           },
         }
       : null,
+    peers: options.peers ?? null,
     onChanged: (hosts) => changes.push(hosts),
     onEvent: (...args) => events.push(args),
     timings: { retryBaseMs: 5, retryMaxMs: 5 },
@@ -170,6 +209,7 @@ describe('host registry', () => {
         computer: false,
         folderTransfers: false,
         environment: null,
+        peer: null,
         hostVersion: null,
       },
     ])
@@ -217,6 +257,7 @@ describe('host registry', () => {
       computer: false,
       folderTransfers: false,
       environment: { id: 'workspaces', lifecycle: 'running', updateAvailable: false },
+      peer: null,
       hostVersion: null,
     })
     expect(h.changes.at(-1)).toEqual(h.registry.list())
@@ -444,5 +485,75 @@ describe('host registry', () => {
     expect(parseDirectHost('http://127.0.0.1:7680', true)).toBeNull()
     expect(parseDirectHost('file://ctl@host/x', true)).toBeNull()
     expect(parseDirectHost('not a url', true)).toBeNull()
+  })
+})
+
+describe('host registry with paired computers', () => {
+  const B = testIdentity('B')
+  const PEER = peerHostId(B.deviceId)
+  const record = (): PeerRecord =>
+    newPeerRecord({
+      deviceId: B.deviceId,
+      name: 'MacBook B',
+      os: 'mac',
+      certPem: B.certPem,
+      port: 7690,
+      addresses: ['10.0.0.5'],
+      issuedToken: issueToken(),
+      now: 1,
+    })
+
+  it('lists paired computers after this one and before the server, and dials them', async () => {
+    const peers = fakePeers([record()])
+    const h = setup({ peers })
+    h.fleet.change({ ...paired, environments: [environment()] })
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local', PEER, HOST])
+    expect(h.registry.list()[1]).toMatchObject({
+      id: PEER,
+      remote: true,
+      label: 'MacBook B',
+      server: '',
+      serverId: null,
+      environment: null,
+      peer: { deviceId: B.deviceId, problem: null },
+      state: 'connecting',
+    })
+    await vi.waitFor(() => expect(peers.connects).toEqual([B.deviceId]))
+    await vi.waitFor(() => expect(peers.sockets).toHaveLength(1))
+    peers.sockets[0].welcome()
+    expect(h.registry.list()[1]).toMatchObject({ state: 'online', epoch: 1 })
+    expect(h.registry.peerEndpoint(PEER)?.origin).toBe(`https://${B.deviceId}.local:7690`)
+    expect(h.registry.peerEndpoint(HOST)).toBeNull()
+    expect(h.registry.list()[0].peer).toBeNull()
+    expect(h.registry.list()[2].peer).toBeNull()
+  })
+
+  it('drops a computer that is no longer paired', async () => {
+    const peers = fakePeers([record()])
+    const h = setup({ peers })
+    await vi.waitFor(() => expect(peers.sockets).toHaveLength(1))
+    peers.records.splice(0)
+    peers.change()
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local'])
+    expect(peers.sockets[0].closed).toBe(true)
+    expect(h.registry.peerEndpoint(PEER)).toBeNull()
+  })
+
+  it('stops dialing a computer that removed this one', async () => {
+    const peers = fakePeers([record()])
+    const h = setup({ peers })
+    await vi.waitFor(() => expect(peers.sockets).toHaveLength(1))
+    peers.problems.set(B.deviceId, 'removed')
+    peers.change()
+    expect(h.registry.list()[1]).toMatchObject({ state: 'offline', peer: { problem: 'removed' } })
+    expect(peers.sockets[0].closed).toBe(true)
+  })
+
+  it('keeps paired computers when the server changes', async () => {
+    const peers = fakePeers([record()])
+    const h = setup({ peers })
+    h.fleet.change({ ...paired, environments: [environment()] })
+    h.fleet.change({ environments: [] })
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local', PEER])
   })
 })
