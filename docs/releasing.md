@@ -26,9 +26,9 @@ CI smoke checks do not replace those tests.
 ## QA builds
 
 [QA build](../.github/workflows/qa-build.yml) packages Linux x64 (`.AppImage`,
-`.deb`) and Windows x64 (`.exe`) installers from any branch, tag, or commit SHA
-for manual QA on clean machines without cutting a tag, bumping `package.json`,
-or publishing a release.
+`.deb`), Windows x64 (`.exe`), and macOS arm64 (`.dmg`, `.zip`) installers from
+any branch, tag, or commit SHA for manual QA on clean machines without cutting
+a tag, bumping `package.json`, or publishing a release.
 
 Trigger a run for a specific ref (defaults to `main`):
 
@@ -41,6 +41,7 @@ Download the staged artifact for the target OS using the 7-character commit SHA:
 ```sh
 gh run download <run-id> -n qa-build-linux-<sha7>
 gh run download <run-id> -n qa-build-windows-<sha7>
+gh run download <run-id> -n qa-build-macos-<sha7>
 ```
 
 Each artifact is retained for 7 days and contains the staged installer(s),
