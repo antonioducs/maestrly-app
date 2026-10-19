@@ -66,7 +66,7 @@ import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
 import { hostRegistry, onHostEvent, originRole, registerHostsIpc } from './remote-host/client/ipc'
 import { RemoteEditors } from './remote-host/client/editor'
 import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
-import { setRemoteVSCodeHandlers } from './drawer/vscode'
+import { noteRemoteEditorActivity, setRemoteVSCodeHandlers } from './drawer/vscode'
 import { hostTransferEngine, registerHostTransfersIpc } from './host-transfers/ipc'
 import { createLocalMoveEndpoint, type MoveEndpoint } from './conversation-move/endpoint'
 import { registerConversationMoveEndpointIpc } from './conversation-move/endpoint-ipc'
@@ -155,8 +155,12 @@ import {
   waitForEditorReady,
   stopVSCodeServer,
   isVSCodeServerRunning,
+  vscodeServerEndpoint,
 } from './vscode/vscode-server'
 import { registerHostEditorIpc } from './remote-host/server/host-editor-ipc'
+import { HostEditor } from './remote-host/server/host-editor'
+import { HostFiles } from './remote-host/server/host-files'
+import { localPeerOs, startPeerHosting } from './peer/service'
 import { requestVSCodeNavigation } from './vscode/vscode-navigation'
 import { hasVSCodeBridgeInFlight, requestVSCodeMemorySnapshot } from './vscode/vscode-memory'
 import { isVSCodeCliReady, hasStagedCliUpdate } from './vscode/vscode-cli-download'
@@ -238,7 +242,7 @@ import {
   startRuntimeAssetUpdates,
 } from './runtime-assets/app-service'
 import { cleanupToolOutputs } from './chat/tool-output-store'
-import { clearAttachmentPreviews } from './chat/attachment-artifacts'
+import { attachmentPreviewRoot, clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerBotIpc } from './bot/ipc'
 import { fleetScopedRegistrar, registerFleetClientIpc } from './fleet/client/ipc'
@@ -994,7 +998,7 @@ function registerIpc(): void {
   registerHostFsIpc(reg, { roots: hostFsRoots, conversationFolder: (id) => getConversation(id)?.cwd ?? null })
   // Another computer opens this host's editor (VS Code's serve-web) in its drawer: see remote-host/server/host-editor.
   registerHostEditorIpc(reg, {
-    isRemoteViewer: (sender) => isServerMode() && isRemoteUiTarget(sender),
+    isRemoteViewer: (sender) => isRemoteUiTarget(sender),
     conversation: (id) => getConversation(id) ?? null,
     standaloneFolder: validateStandaloneConversationDirectory,
     ignoreSidecars: ensureAppOwnedExcludes,
@@ -1285,6 +1289,42 @@ app.whenReady().then(async () => {
       app.exit(1)
       return
     }
+  }
+  if (!isHeadlessInstance() && mainWindow) {
+    // The owner's other computers use this one through the peer server while hosting is on (Settings → Computers).
+    const hostFiles = new HostFiles({
+      roots: () => hostFsRoots().map((root) => root.path),
+      readRoots: () => [attachmentPreviewRoot()],
+      uploadsDir: path.join(app.getPath('userData'), 'host-file-uploads'),
+      archivesDir: path.join(app.getPath('userData'), 'host-file-archives'),
+    })
+    const editor = new HostEditor({
+      ensureServer: async () => {
+        await startVSCodeServer()
+        return vscodeServerEndpoint()
+      },
+      onActivity: noteRemoteEditorActivity,
+    })
+    const hosting = startPeerHosting({
+      table: ipcHandlerTable,
+      hostFiles,
+      editor,
+      hostInfo: () => ({
+        os: localPeerOs(),
+        hostName: os.hostname(),
+        homeDir: os.homedir(),
+        roots: hostFsRoots().map((root) => root.path),
+        // The owner sits at this computer: nothing opens on its screen for another one.
+        desktopEffects: false,
+        editor: true,
+        // Linux desktops cannot hide the stream window yet (spec section 6, plan 3).
+        browser: process.platform !== 'linux',
+        computer: false,
+        folderTransfers: true,
+      }),
+    })
+    void hosting.start().catch((error) => console.error('[peer] hosting failed to start:', error))
+    app.once('before-quit', () => void hosting.stop())
   }
   void botHost.restore()
   app.on('activate', () => {

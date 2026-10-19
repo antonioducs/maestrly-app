@@ -15,6 +15,8 @@ const SETTING_KEY = 'preventSleepWhileWorking'
 
 /** Agent IDs currently working; other statuses leave the set. */
 const working = new Set<string>()
+/** Other reasons to stay awake, such as another computer of the owner using this one. */
+const held = new Set<string>()
 /** Active power assertion ID, or null when none exists. */
 let blockerId: number | null = null
 /** In-memory copy of the persisted flag, loaded by initPowerManager. */
@@ -22,7 +24,7 @@ let enabled = true
 
 /** Idempotently toggle the assertion when enabled and work exists. */
 function reconcile(): void {
-  const shouldBlock = enabled && working.size > 0
+  const shouldBlock = enabled && working.size + held.size > 0
   if (shouldBlock && blockerId === null) {
     // Linux logind/DBus may be unavailable in headless or container sessions. Catch start failures and
     // verify isStarted; leave blockerId null so future transitions retry without preventing sleep.
@@ -56,6 +58,15 @@ export function onAgentStatus(agentId: string, status: string): void {
   reconcile()
 }
 
+/** Keeps the system awake for `key`, under the same setting as working agents; returns its release. */
+export function holdAwake(key: string): () => void {
+  held.add(key)
+  reconcile()
+  return () => {
+    if (held.delete(key)) reconcile()
+  }
+}
+
 /** Remove a terminated agent; it can no longer emit ready after kill, deletion, CLI switch, or crash. */
 export function forgetAgent(agentId: string): void {
   if (working.delete(agentId)) reconcile()
@@ -76,6 +87,7 @@ export function setPreventSleepEnabled(value: boolean): void {
 /** Unconditionally release the assertion and clear state before quit. */
 export function releasePowerBlocker(): void {
   working.clear()
+  held.clear()
   if (blockerId !== null && powerSaveBlocker.isStarted(blockerId)) powerSaveBlocker.stop(blockerId)
   blockerId = null
 }

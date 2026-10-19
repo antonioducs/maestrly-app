@@ -61,4 +61,16 @@ describe('power-manager — best-effort powerSaveBlocker fallback', () => {
     pm.onAgentStatus('a', 'ready') // working→0 → stop(1)
     expect(h.stop).toHaveBeenCalledWith(1)
   })
+
+  it('(e) a hold keeps the computer awake with no agent working, until it is released', async () => {
+    const pm = await freshPM()
+    pm.initPowerManager()
+    const release = pm.holdAwake('peer-sessions')
+    expect(h.start).toHaveBeenCalledWith('prevent-app-suspension')
+    expect(h.stop).not.toHaveBeenCalled()
+    release()
+    expect(h.stop).toHaveBeenCalledWith(1)
+    release()
+    expect(h.stop).toHaveBeenCalledTimes(1)
+  })
 })

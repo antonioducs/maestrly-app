@@ -29,7 +29,6 @@ import { conversationBrowserArea, onConversationScreenChange } from '../conversa
 import { isRemoteUiTarget } from '../remote-ui-targets'
 import type { TileLease } from '../remote-host/server/computers'
 import { serverComputers } from '../remote-host/server/computers-registry'
-import { isServerMode } from '../remote-host/server/config'
 import { getConversation } from '../store'
 import { ensureBrowser, onBrowserPopupsChange, onBrowserStateChange, presentedBrowserViews } from './browser'
 import { chooseSelectOption, interceptSelects, readPageSelection, type PageSelectRequest } from './browser-stream-page'
@@ -504,8 +503,9 @@ class BrowserStreamError extends Error {
 }
 
 function checkViewer(sender: unknown): StreamViewer {
-  // A window of this host shows its browser natively; only another computer's renderer watches it here.
-  if (!isServerMode() || !isRemoteUiTarget(sender))
+  // A window of this computer shows its browser natively; only another computer's renderer watches it here, on a
+  // workspaces host or on a desktop shared with the owner's other computers.
+  if (!isRemoteUiTarget(sender))
     throw new BrowserStreamError('The browser stream is for remote viewers only.', 'remote-viewer-only')
   return sender as StreamViewer
 }
