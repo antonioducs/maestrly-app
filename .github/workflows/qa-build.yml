@@ -188,3 +188,86 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+  macos:
+    name: Build macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build macOS packages
+        run: node scripts/package.mjs prod --mac dmg zip --arm64
+      - name: Verify embedded build configuration
+        run: node scripts/check-release-build-config.mjs --bundle apps/desktop/out/main
+      - name: Stage macOS release assets
+        run: node scripts/stage-release-assets.mjs macos apps/desktop/dist .release-local-staging/macos
+      - name: Write QA build metadata and checksums
+        id: meta
+        env:
+          STAGING_DIR: .release-local-staging/macos
+          REQUESTED_REF: ${{ inputs.ref || github.head_ref || github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+          import { appendFileSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+          import path from 'node:path'
+
+          const stagingDir = process.env.STAGING_DIR
+          const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+          const sha7 = commit.slice(0, 7)
+          const ref = process.env.REQUESTED_REF?.trim()
+          const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+          const date = new Date().toISOString()
+          const runId = process.env.RUN_ID?.trim()
+
+          if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`Invalid commit SHA: ${commit}`)
+          if (!ref) throw new Error('Missing requested ref')
+          if (!version) throw new Error('Missing package.json version')
+          if (!runId) throw new Error('Missing workflow run ID')
+
+          const files = readdirSync(stagingDir).sort()
+          if (files.length === 0) throw new Error(`No staged files found in ${stagingDir}`)
+          const checksums = files.map((file) => {
+            const fullPath = path.join(stagingDir, file)
+            if (statSync(fullPath).size === 0) throw new Error(`Staged file is empty: ${file}`)
+            const digest = createHash('sha256').update(readFileSync(fullPath)).digest('hex')
+            return `${digest}  ${file}\n`
+          })
+          writeFileSync(path.join(stagingDir, 'SHA256SUMS.txt'), checksums.join(''))
+
+          const metadata = [
+            `commit=${commit}`,
+            `ref=${ref}`,
+            `version=${version}`,
+            `date=${date}`,
+            `run_id=${runId}`,
+            '',
+          ].join('\n')
+          writeFileSync(path.join(stagingDir, 'qa-build.txt'), metadata)
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha7=${sha7}\n`)
+          NODE
+      - name: Upload macOS QA build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qa-build-macos-${{ steps.meta.outputs.sha7 }}
+          path: .release-local-staging/macos
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
