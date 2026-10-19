@@ -177,6 +177,8 @@ describe('PowerShell permission segments', () => {
     ])
     expect(ps('npm test\r\nRemove-Item x')).toEqual(['npm test', 'Remove-Item x'])
     expect(ps('& git status')).toEqual(['git status'])
+    expect(ps('npm test 2>&1 | Select-String fail')).toEqual(['npm test 2>&1', 'Select-String fail'])
+    expect(ps('git fetch *>&1; & git status')).toEqual(['git fetch *>&1', 'git status'])
   })
 
   it('reads a backslash as a plain character and the backtick as the escape', () => {
@@ -216,13 +218,16 @@ describe.runIf(process.platform === 'win32')('bash tool on a real Windows PowerS
     )
     expect(result.exitCode).toBe(0)
     expect(result.output).toContain(`${process.env.COMPUTERNAME} ok`)
-    expect(result.output.toLowerCase()).toContain(dir.toLowerCase())
+    // Get-Location may print the long form of a short (8.3) temp path, so only the folder name is compared.
+    expect(result.output.toLowerCase()).toContain(path.basename(dir).toLowerCase())
     expect(result.output).not.toMatch(/not recognized/i)
   }, 60_000)
 
   it('keeps non-ASCII text intact both ways', async () => {
     const result = await run("Write-Output 'ação ✓'")
     expect(result.output).toContain('ação ✓')
+    // A table waits in PowerShell's formatter; it must still be printed before the command ends.
+    expect((await run('Get-Item . | Select-Object Name')).output).toContain(path.basename(dir))
   }, 60_000)
 
   it('reports the exit code of exit, of the last native command and of a failed cmdlet', async () => {

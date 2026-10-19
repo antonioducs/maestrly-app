@@ -127,13 +127,13 @@ describe('chat tools', () => {
   })
 
   it('splits command chains and substitutions outside single quotes', () => {
-    expect(commandSegments('npm test && rm -rf /')).toEqual(['npm test', 'rm -rf /'])
-    expect(commandSegments('cat f | sh')).toEqual(['cat f', 'sh'])
-    expect(commandSegments('a; b')).toEqual(['a', 'b'])
-    expect(commandSegments("echo 'a && b'")).toEqual(["echo 'a && b'"])
-    expect(commandSegments('echo $(whoami)')).toEqual(['whoami', 'echo $(whoami)'])
-    expect(commandSegments('ls 2>&1')).toEqual(['ls 2>&1'])
-    expect(commandSegments('cat <<EOF\nrm -rf /\nEOF')).toEqual(['cat <<EOF\nrm -rf /\nEOF'])
+    expect(commandSegments('npm test && rm -rf /', 'sh')).toEqual(['npm test', 'rm -rf /'])
+    expect(commandSegments('cat f | sh', 'sh')).toEqual(['cat f', 'sh'])
+    expect(commandSegments('a; b', 'sh')).toEqual(['a', 'b'])
+    expect(commandSegments("echo 'a && b'", 'sh')).toEqual(["echo 'a && b'"])
+    expect(commandSegments('echo $(whoami)', 'sh')).toEqual(['whoami', 'echo $(whoami)'])
+    expect(commandSegments('ls 2>&1', 'sh')).toEqual(['ls 2>&1'])
+    expect(commandSegments('cat <<EOF\nrm -rf /\nEOF', 'sh')).toEqual(['cat <<EOF\nrm -rf /\nEOF'])
   })
 
   it('serializes file operations by lock key', async () => {
@@ -213,13 +213,15 @@ describe('chat tools', () => {
 
   it('offers web_search as a read-only tool in every mode', () => {
     expect(READ_ONLY_TOOL_NAMES).toContain('web_search')
-    for (const mode of ['ask', 'plan', 'agent'] as const) expect(builtinToolNamesForMode(mode).has('web_search')).toBe(true)
+    for (const mode of ['ask', 'plan', 'agent'] as const)
+      expect(builtinToolNamesForMode(mode).has('web_search')).toBe(true)
     expect(buildTools({ enabled: new Set(['web_search']), makeCtx: () => ctx(dir) }).web_search).toBeDefined()
   })
 
   it('removes web_search everywhere when web search is turned off', () => {
     h.webSearchEnabled = false
-    for (const mode of ['ask', 'plan', 'agent'] as const) expect(builtinToolNamesForMode(mode).has('web_search')).toBe(false)
+    for (const mode of ['ask', 'plan', 'agent'] as const)
+      expect(builtinToolNamesForMode(mode).has('web_search')).toBe(false)
     expect(buildTools({ enabled: new Set(['web_search']), makeCtx: () => ctx(dir) }).web_search).toBeUndefined()
     expect(buildTools({ makeCtx: () => ctx(dir) }).web_search).toBeUndefined()
   })

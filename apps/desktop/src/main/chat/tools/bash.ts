@@ -185,7 +185,12 @@ function scanPowerShell(command: string, start: number, nested: boolean): { segs
         i++
         continue
       }
-      if (ch === '|' || ch === ';' || ch === '&' || ch === '\n' || ch === '\r') {
+      if (ch === '|' || ch === ';' || ch === '\n' || ch === '\r') {
+        push()
+        continue
+      }
+      // The call operator & starts a command; after > it is redirection (2>&1, *>&1).
+      if (ch === '&' && command[i - 1] !== '>') {
         push()
         continue
       }

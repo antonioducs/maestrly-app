@@ -61,7 +61,8 @@ const POWERSHELL_BOOTSTRAP = [
   '$global:__maestrlyOk = $true',
   'try {',
   '  $__maestrlyBlock = [ScriptBlock]::Create($__maestrlyCommand + "`n" + \'$global:__maestrlyOk = $?\')',
-  '  & $__maestrlyBlock',
+  // Formatted output (tables, lists) waits in the host's formatter; the bootstrap's own `exit` would drop it.
+  '  & $__maestrlyBlock | Out-Default',
   '} catch {',
   '  [Console]::Error.WriteLine(($_ | Out-String).TrimEnd())',
   '  exit 1',
@@ -101,7 +102,7 @@ export function bashToolDescription(platform: NodeJS.Platform = process.platform
       'Runs a command in Windows PowerShell 5.1 (powershell.exe -NoProfile -NonInteractive), not bash or cmd.exe, in the conversation directory and returns stdout/stderr.',
       'Write PowerShell: chain with `;` (`&&` and `||` do not exist in 5.1), read variables with `$env:NAME`, and use cmdlets such as Get-Content, Select-Object -First, Get-ChildItem and Select-String instead of cat, head, ls and grep.',
       'For a cmd.exe command use `cmd /c "..."`; use `bash -lc` only when Git Bash or WSL is installed; `pwsh` runs PowerShell 7 when installed.',
-      'Output is UTF-8. The exit code is the one `exit N` gives, else 0 when the last statement succeeded, else the last native exit code, else 1.',
+      'Output is UTF-8. The exit code is the one `exit N` gives, else 0 when the last statement succeeded, else the last native exit code, else 1, so ending with `exit $LASTEXITCODE` is not needed (an `exit` can drop the table output just before it).',
       'A program started with Start-Process keeps running after the command and is not stopped with the conversation.',
       use,
     ].join(' ')
