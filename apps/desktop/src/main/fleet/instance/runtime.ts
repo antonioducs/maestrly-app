@@ -23,6 +23,8 @@ import {
   type FleetInstanceReleaseRequest,
   type FleetSelectionOption,
   type FleetSelection,
+  type FleetBotDelegation,
+  FLEET_BOT_DELEGATION_DEFAULT,
   type FleetTranscriptItem,
   type FleetPendingInteraction,
   type FleetInputReceipt,
@@ -154,7 +156,11 @@ import {
   setConversationSkillSelection,
 } from '../../chat/skill-state'
 import { setSubagentConcurrency } from '../../chat/subagent-concurrency'
+import { setSubagentRouter, type SubagentRouter } from '../../chat/subagent-route'
+import { getSubscriptionFailoverRouter } from '../../chat/subscription-failover/router'
 import { parallelTasksPolicy, setBotTaskPolicy } from './task-policy'
+import { accountHeadroom, warmAccountHeadroom } from './account-headroom'
+import { createDelegationRouter, delegationPolicyPrompt } from './delegation'
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
@@ -306,8 +312,6 @@ function toFleetBotMemory(memory: LocalMemory): FleetBotMemory {
 }
 
 const COMPACTION_DISABLED: BackgroundCompactionConfig = { enabled: false, intervalTokens: 100_000, selection: null }
-/** How many tasks a bot runs at once, across all its conversations. */
-const BOT_TASKS_AT_ONCE = 4
 
 /** A bot's two screens: its apps display and the area of the environment display that holds its browser. */
 export interface BotScreen {
@@ -386,6 +390,7 @@ export class BotRuntime {
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
+  private delegationRouterCache: SubagentRouter | undefined
   private gatewayToken: string | null
   private screen: BotScreen | null = null
   private accountOptions: FleetSelectionOption[] = []
@@ -725,8 +730,7 @@ export class BotRuntime {
     this.registeredConversation = null
     const id = registered.id
     clearCompactionSummarizer(id)
-    setSubagentConcurrency(id, null)
-    setBotTaskPolicy(id, null)
+    this.clearTasks(id)
     setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
     clearMemoryCoreExtras(id)
@@ -845,6 +849,38 @@ export class BotRuntime {
     })
     this.stopGate = registerInstanceHoldGate(this.holdManager, id)
   }
+  private delegationSettings(): FleetBotDelegation {
+    return this.stored?.profile.delegation ?? FLEET_BOT_DELEGATION_DEFAULT
+  }
+  /** Routes the tasks of the bot's conversations that delegate to the models its owner allows. */
+  private delegationRouter(): SubagentRouter {
+    this.delegationRouterCache ??= createDelegationRouter({
+      settings: () => this.delegationSettings(),
+      options: () => visibleFleetModels(this.accountOptions, getHiddenChatModelsFor),
+      headroom: (providerId) => accountHeadroom(providerId),
+      admissible: (providerId) => getSubscriptionFailoverRouter().isAdmissible(providerId),
+      warm: (providerIds) => warmAccountHeadroom(providerIds),
+    })
+    return this.delegationRouterCache
+  }
+  /** How a conversation of the bot runs tasks: in parallel up to its limit, and routed when it delegates. */
+  private applyTasks(conversationId: string, delegates: boolean): void {
+    setSubagentConcurrency(conversationId, { pool: this.botId, limit: this.delegationSettings().maxTasks })
+    setSubagentRouter(conversationId, delegates ? this.delegationRouter() : null)
+    setBotTaskPolicy(conversationId, () =>
+      delegates
+        ? delegationPolicyPrompt({
+            settings: () => this.delegationSettings(),
+            options: () => visibleFleetModels(this.accountOptions, getHiddenChatModelsFor),
+          })
+        : parallelTasksPolicy(this.delegationSettings().maxTasks)
+    )
+  }
+  private clearTasks(conversationId: string): void {
+    setSubagentConcurrency(conversationId, null)
+    setSubagentRouter(conversationId, null)
+    setBotTaskPolicy(conversationId, null)
+  }
   private applyProfile(): void {
     if (!this.stored?.primaryConversationId || this.disposed) return
     const id = this.stored.primaryConversationId
@@ -858,8 +894,7 @@ export class BotRuntime {
       },
     })
     publishConvChatSettings(id)
-    setSubagentConcurrency(id, { pool: this.botId, limit: BOT_TASKS_AT_ONCE })
-    setBotTaskPolicy(id, () => parallelTasksPolicy(BOT_TASKS_AT_ONCE))
+    this.applyTasks(id, this.delegationSettings().mode === 'delegate')
     // The owner's cap on the conversation's window, whatever its model; the usage the Mac shows follows it at once.
     const limit = this.stored.profile.compaction?.contextLimitTokens ?? null
     if ((getConversationContextLimit(id) ?? null) !== limit) {
@@ -914,8 +949,7 @@ export class BotRuntime {
       stopObserving()
       stopGate()
       clearCompactionSummarizer(id)
-      setSubagentConcurrency(id, null)
-      setBotTaskPolicy(id, null)
+      this.clearTasks(id)
       setConversationContextLimit(id, null)
       clearConversationMemorySpace(id)
       clearMemoryCoreExtras(id)
@@ -946,8 +980,8 @@ export class BotRuntime {
         tools: { ...previous.tools, app: true },
       },
     })
-    setSubagentConcurrency(id, { pool: this.botId, limit: BOT_TASKS_AT_ONCE })
-    setBotTaskPolicy(id, () => parallelTasksPolicy(BOT_TASKS_AT_ONCE))
+    const delegation = this.delegationSettings()
+    this.applyTasks(id, delegation.mode === 'delegate' && delegation.sideConversations)
     setConversationContextLimit(id, this.stored.profile.compaction?.contextLimitTokens ?? null)
     const selection = this.currentSelection()
     if (selection)

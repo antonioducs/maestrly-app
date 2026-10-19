@@ -281,6 +281,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'routine-conversations',
     'parallel-turns',
     'peer-conversations',
+    'bot-delegation',
   ])
 })
 
