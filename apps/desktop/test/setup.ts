@@ -39,6 +39,13 @@ if (process.env.CI) {
 process.env.GIT_CONFIG_GLOBAL = fileURLToPath(new URL('./fixtures/empty.gitconfig', import.meta.url))
 process.env.GIT_CONFIG_NOSYSTEM = '1'
 
+// A Maestrly bot or workspace server that runs the suite exports its display and control settings, which change the
+// code under test. Tests that need them set their own, as on CI.
+delete process.env.DISPLAY
+for (const key of Object.keys(process.env)) {
+  if (/^MAESTRLY_(?:BOT_|SERVER_MODE$|EGRESS_GUARDED$|ENVIRONMENT_ID$)/.test(key)) delete process.env[key]
+}
+
 /**
  * Global test setup (vitest.config → setupFiles), run once per fork before the tests.
  * Suppress the expected `node:sqlite` ExperimentalWarning: tests use real Node to exercise
